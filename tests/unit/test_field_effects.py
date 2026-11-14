@@ -3015,6 +3015,22 @@ def test_a_cover_chosen_under_another_book_matching_level_closes_as_matching_cha
     assert effects.service.apply(unrelated.plan.plan_id).failure == "dependency"
 
 
+def test_a_reclassified_cover_effect_closes_as_matching_changed_not_authority(
+    effects: _EffectEnvironment,
+) -> None:
+    """Reclassifying under another level retires the old consideration's
+    authority too; the effect still says Book matching changed (Codex r5, 2)."""
+    cover = _plan(effects, "cover", None, "cover_" + "6" * 64, "d")
+    effects.authority.revoked.add(cover.plan.authority.decision_id)
+    effects.dependencies.current_value = False
+    effects.dependencies.matching_changed_value = True
+    assert effects.service.apply(cover.plan.plan_id).failure == "matching_changed"
+    other = _plan(effects, "cover", None, "cover_" + "7" * 64, "e")
+    effects.authority.revoked.add(other.plan.authority.decision_id)
+    effects.dependencies.matching_changed_value = False
+    assert effects.service.apply(other.plan.plan_id).failure == "authority"
+
+
 def test_preclaim_failures_are_field_local_and_pause_is_atomic(
     effects: _EffectEnvironment,
 ) -> None:

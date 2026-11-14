@@ -775,7 +775,16 @@ class GuardedFieldApplication:
             for member in (plan, plan.subtitle_plan())
             if member is not None
         ):
-            return self._stale(operation, "authority")
+            return self._stale(
+                operation,
+                "matching_changed"
+                if any(
+                    self._authority_failure(member) == "matching_changed"
+                    for member in (plan, plan.subtitle_plan())
+                    if member is not None
+                )
+                else "authority",
+            )
         try:
             with self._timing.measure("apply", "target"):
                 result = self._target.apply(plan)
@@ -974,6 +983,15 @@ class GuardedFieldApplication:
             self._recover_cleanup(result)
         return result
 
+    def _authority_failure(self, member: FieldEffectPlan) -> str:
+        """`matching_changed` for a cover chosen under another level, else `authority`."""
+        return (
+            "matching_changed"
+            if member.destination == "cover"
+            and self._dependencies.matching_changed(member.dependency_digests)
+            else "authority"
+        )
+
     def _preclaim(
         self,
         operation: FieldEffectOperation,
@@ -1049,7 +1067,9 @@ class GuardedFieldApplication:
             if capability.digest != member.capability_digest:
                 return self._stale(operation, "capability")
             if not self._authority.current(member.authority):
-                return self._stale(operation, "authority")
+                # Reclassifying under another Book matching level retires the
+                # old consideration's authority too; name the cause (#1355).
+                return self._stale(operation, self._authority_failure(member))
             if not self._consent.current(member.consent):
                 return self._stale(operation, "consent")
             if not self._dependencies.current(member.dependency_digests):
