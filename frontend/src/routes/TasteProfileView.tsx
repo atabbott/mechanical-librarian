@@ -26,13 +26,16 @@ const buildingPollMilliseconds = 5_000
 const lostCopy = 'No answer came back. Check whether the taste profile is being written.'
 
 const failureCopy = (
-  failure: Exclude<TasteBuildFailure, 'unconfigured'>,
+  failure: TasteBuildFailure,
   view: TasteProfile,
   retryAfter: number | null,
 ): string => {
   // The decoder holds a reset time to exactly the two failures that wait.
   const at = formatClock(retryAfter ?? 0)
   switch (failure) {
+    // A build that failed while no model was chosen is shown, once a model is
+    // chosen again, as one that was not written, with Try again.
+    case 'unconfigured':
     case 'unavailable':
       // Beside a profile in use, the line is about the new version only.
       return view.profile === null
@@ -115,7 +118,7 @@ function BuildState({ view }: { view: TasteProfile }) {
   const waiting = useWaitsUntil(build?.failure ? build.retry_after : null)
   const first = view.profile === null
   const heading = first ? <h2 id="taste-empty">No taste profile yet</h2> : null
-  if (!view.configured || build?.failure === 'unconfigured')
+  if (!view.configured)
     return first ? (
       <section className="taste-empty" aria-labelledby="taste-empty">
         {heading}
@@ -214,33 +217,44 @@ function Profile({ view }: { view: TasteProfile }) {
           <dd>{`${String(profile.rules.length)} of 40`}</dd>
         </div>
       </dl>
-      {sections.map(({ section, rules }) => (
-        <section key={section} className="taste-section" aria-labelledby={`taste-${section}`}>
-          <h2 id={`taste-${section}`}>{sectionHeadings[section]}</h2>
-          <ol>
-            {rules.map((rule) => (
-              <li key={rule.number} value={rule.number}>
-                {rule.text}
-              </li>
-            ))}
-          </ol>
-        </section>
-      ))}
-      <section className="taste-versions" aria-labelledby="taste-versions">
-        <h2 id="taste-versions">Versions</h2>
-        <ul>
-          {view.versions.map((version, index) => (
-            <li key={version.version}>
-              <strong>
-                {`Version ${String(version.version)}`}
-                {index === 0 ? ' (in use)' : null}
-              </strong>{' '}
-              <span>{`Built ${formatDay(version.built_at)} from ${String(version.decisions)} decisions`}</span>
-            </li>
+      {/* Wide screens put Versions beside the rules, as the prototype does. */}
+      <div className="taste-body">
+        <div className="taste-rules">
+          {sections.map(({ section, rules }) => (
+            <section key={section} className="taste-section" aria-labelledby={`taste-${section}`}>
+              <h2 id={`taste-${section}`}>{sectionHeadings[section]}</h2>
+              <ol>
+                {rules.map((rule) => (
+                  <li key={rule.number} value={rule.number}>
+                    <span>{rule.text}</span>
+                  </li>
+                ))}
+              </ol>
+            </section>
           ))}
-        </ul>
-      </section>
+        </div>
+        <Versions view={view} />
+      </div>
     </>
+  )
+}
+
+function Versions({ view }: { view: TasteProfile }) {
+  return (
+    <section className="taste-versions" aria-labelledby="taste-versions">
+      <h2 id="taste-versions">Versions</h2>
+      <ul>
+        {view.versions.map((version, index) => (
+          <li key={version.version}>
+            <strong>
+              {`Version ${String(version.version)}`}
+              {index === 0 ? ' (in use)' : null}
+            </strong>{' '}
+            <span>{`Built ${formatDay(version.built_at)} from ${String(version.decisions)} decisions`}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
   )
 }
 

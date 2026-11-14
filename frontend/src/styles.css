@@ -1569,10 +1569,15 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 .taste-meta div { display:grid; gap:2px; }
 .taste-meta dt { color:var(--soft); font-size:.75rem; }
 .taste-meta dd { margin:0; font-family:Georgia,serif; font-size:1.2rem; font-weight:700; font-variant-numeric:tabular-nums; }
+.taste-body, .taste-rules { display:grid; gap:1.25rem; min-width:0; }
+/* As the prototype's cr-taste-grid: Versions beside the rules on wide screens. */
+@media (min-width:1025px) { .taste-body { grid-template-columns:minmax(0, 1.6fr) minmax(min(18rem, 38%), 1fr); gap:1.25rem 2rem; align-items:start; } }
 .taste-section { max-width:calc(70ch + 4rem); min-width:0; }
 .taste-section h2 { margin:0 0 .4rem; font-size:.75rem; font-weight:800; letter-spacing:.07em; text-transform:uppercase; color:var(--soft); }
 .taste-section ol { display:grid; margin:0; padding:0; list-style:none; border:1px solid var(--line); border-radius:12px; background:var(--surface-strong); overflow:clip; }
-.taste-section li { display:grid; grid-template-columns:auto minmax(0,1fr); gap:.75rem; align-items:start; padding:.6rem .85rem; border-top:1px solid var(--line); font-size:.92rem; overflow-wrap:anywhere; }
+.taste-section li { display:grid; grid-template-columns:auto minmax(0,1fr); gap:.75rem; align-items:start; padding:.6rem .85rem; border-top:1px solid var(--line); font-size:.92rem; line-height:1.35; overflow-wrap:anywhere; }
+/* The first line of a rule centres on its 1.6rem chip; later lines follow. */
+.taste-section li > span { padding-top:calc((1.6rem - 1.35em) / 2); }
 .taste-section li:first-child { border-top:0; }
 /* The rule's own number (its `value`), shown as the prototype's chip. */
 .taste-section li::before { content:attr(value); display:inline-grid; place-items:center; min-width:1.6rem; height:1.6rem; box-sizing:border-box; padding:0 .3rem; border:1px solid var(--accent); border-radius:.35rem; color:var(--accent-strong); font-size:.75rem; font-weight:800; font-variant-numeric:tabular-nums; }

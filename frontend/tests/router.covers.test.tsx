@@ -1370,6 +1370,31 @@ describe('Covers → Taste profile (#1372)', () => {
   })
 
   it.each([
+    ['with no profile', tasteView({ chosen: 25 }), 'The taste profile could not be written.'],
+    ['beside a profile', ready, 'The taste profile could not be updated.'],
+  ] as const)(
+    'offers Try again for a build that failed while no model was chosen, once one is chosen, %s',
+    async (_case, base, copy) => {
+      renderRoute(
+        tasteRoute,
+        tasteHttp({
+          ...base,
+          configured: true,
+          build: {
+            build_id: `taste_build_${'8'.repeat(32)}`,
+            state: 'failed',
+            failure: 'unconfigured',
+            retry_after: null,
+          },
+        }),
+      )
+      expect(await screen.findByText(copy)).toBeVisible()
+      expect(screen.getByRole('button', { name: 'Try again' })).toBeVisible()
+      expect(screen.queryByText(/Choose a taste profile model in/u)).toBeNull()
+    },
+  )
+
+  it.each([
     ['unavailable', null, 'The taste profile could not be written.'],
     [
       'invalid_output',
@@ -1426,7 +1451,8 @@ describe('Covers → Taste profile (#1372)', () => {
     expect(screen.queryByRole('heading', { name: 'What you avoid' })).toBeNull()
     expect(screen.queryByRole('heading', { name: 'How you trade them off' })).toBeNull()
     const rule = screen.getByText(injected)
-    expect(rule.tagName).toBe('LI')
+    expect(rule.closest('li')).toHaveAttribute('value', '2')
+    expect(rule.children).toHaveLength(0)
     expect(rule.querySelector('b')).toBeNull()
     expect(screen.queryByRole('link', { name: /example/u })).toBeNull()
     const meta = screen.getByText('Rules').closest('div')

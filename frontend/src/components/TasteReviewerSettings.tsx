@@ -19,12 +19,22 @@ import { credentialRefused, failureCopy } from '../reviewerAccess'
 const prices = (metadata: CoverModelMetadata) =>
   `${metadata.prompt_price ?? 'Unavailable'} per input token, ${metadata.completion_price ?? 'Unavailable'} per output token, ${metadata.image_price ?? 'Unavailable'} per image, ${metadata.request_price ?? 'Unavailable'} per request.`
 
+// Covers → Taste profile reads whether a model is chosen, so a change here
+// makes its cached view stale.
+const tasteProfileKey = ['covers', 'taste'] as const
+
 const useTasteModel = (http: ReviewHttp, view: ReviewerAccessView) => {
   const cache = useQueryClient()
   const [model, setModel] = useState(view.taste_mapping?.model ?? '')
   const [key, setKey] = useState('')
   const [metadata, setMetadata] = useState<CoverModelMetadata | null>(null)
   const [latest, setLatest] = useState<'test' | 'selection' | 'without' | null>(null)
+  // A write that got no answer may have landed: read both again.
+  const rereadAfterUncertainWrite = () =>
+    Promise.all([
+      invalidateForegroundQueries(cache, { queryKey: ['reviewer-access'] }),
+      invalidateForegroundQueries(cache, { queryKey: tasteProfileKey }),
+    ])
   const test = useMutation({
     mutationFn: () =>
       http.testTasteModel({ expected_revision: view.revision, api_key: key, model }),
@@ -46,11 +56,11 @@ const useTasteModel = (http: ReviewHttp, view: ReviewerAccessView) => {
       setKey('')
       setMetadata(null)
       cache.setQueryData(['reviewer-access'], saved)
+      void cache.invalidateQueries({ queryKey: tasteProfileKey })
     },
     // A selection may have been saved although it answered a failure.
     onError: async (error) => {
-      if (uncertainWriteOutcome(error))
-        await invalidateForegroundQueries(cache, { queryKey: ['reviewer-access'] })
+      if (uncertainWriteOutcome(error)) await rereadAfterUncertainWrite()
     },
   })
   // Continue without a taste profile clears only this task (#1372 S11).
@@ -59,26 +69,31 @@ const useTasteModel = (http: ReviewHttp, view: ReviewerAccessView) => {
     retry: false,
     onMutate: () => setLatest('without'),
     onSuccess: (saved) => {
+      setModel('')
       setMetadata(null)
       cache.setQueryData(['reviewer-access'], saved)
+      void cache.invalidateQueries({ queryKey: tasteProfileKey })
     },
     onError: async (error) => {
-      if (uncertainWriteOutcome(error))
-        await invalidateForegroundQueries(cache, { queryKey: ['reviewer-access'] })
+      if (uncertainWriteOutcome(error)) await rereadAfterUncertainWrite()
     },
   })
   const error = latest === null ? null : { test, selection, without }[latest].error
   const failure =
     error === null
       ? null
-      : latest !== 'test' && uncertainWriteOutcome(error)
-        ? 'No answer came back. Check whether the taste profile model was saved before trying again.'
-        : credentialRefused(error)
-          ? failureCopy.credential_unavailable
-          : refusalCopy(
-              error,
-              'Taste profile setup did not complete. Check the model and key, then try again.',
-            )
+      : latest === 'without'
+        ? uncertainWriteOutcome(error)
+          ? 'No answer came back. Check whether the taste profile model was cleared before trying again.'
+          : refusalCopy(error, 'The taste profile model was not cleared. Try again.')
+        : latest === 'selection' && uncertainWriteOutcome(error)
+          ? 'No answer came back. Check whether the taste profile model was saved before trying again.'
+          : credentialRefused(error)
+            ? failureCopy.credential_unavailable
+            : refusalCopy(
+                error,
+                'Taste profile setup did not complete. Check the model and key, then try again.',
+              )
   const failureUnder = (at: 'test' | 'selection' | 'without') =>
     failure !== null && latest === at ? <p role="alert">{failure}</p> : null
   return {
@@ -91,13 +106,14 @@ const useTasteModel = (http: ReviewHttp, view: ReviewerAccessView) => {
     test,
     selection,
     without,
+    latest,
     failureUnder,
   }
 }
 
 function TasteModelSection({ http, view }: { http: ReviewHttp; view: ReviewerAccessView }) {
   const taste = useTasteModel(http, view)
-  const { model, key, metadata, test, selection, without, failureUnder } = taste
+  const { model, key, metadata, test, selection, without, latest, failureUnder } = taste
   const busy = test.isPending || selection.isPending || without.isPending
   const disclosure =
     metadata?.model === model
@@ -207,7 +223,10 @@ function TasteModelSection({ http, view }: { http: ReviewHttp; view: ReviewerAcc
             Use for taste profile
           </button>
           {failureUnder('selection')}
-          {selection.isSuccess ? <p role="status">Taste profile model saved.</p> : null}
+          {/* Said only for the latest action: Continue without replaces it. */}
+          {latest === 'selection' && selection.isSuccess ? (
+            <p role="status">Taste profile model saved.</p>
+          ) : null}
         </div>
       </div>
     </section>

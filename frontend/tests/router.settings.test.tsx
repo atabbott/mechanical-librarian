@@ -4022,4 +4022,76 @@ describe('taste profile model (#1372)', () => {
     await user.click(await within(taste).findByRole('button', { name: 'Use for taste profile' }))
     expect(await within(taste).findByRole('alert')).toHaveTextContent(copy)
   })
+
+  it('drops the saved line and the cleared model once the owner continues without', async () => {
+    const http = createHttp()
+    const selected: ReviewerAccessView = {
+      ...initial,
+      revision: 4,
+      taste_mapping: { engine: 'openrouter' as const, model: metadata.model },
+      taste_metadata: metadata,
+    }
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => initial)
+    http.testTasteModel = vi.fn(async () => metadata)
+    http.configureOpenRouter = vi.fn(async () => selected)
+    http.selectReviewer = vi.fn(async () => ({ ...initial, revision: 5 }))
+    const { queryClient } = renderRoute('/settings?group=reviewer', http)
+    queryClient.setQueryData(['covers', 'taste'], { stale: true })
+    const user = userEvent.setup()
+    const taste = await section()
+    const picker = within(taste).getByRole('combobox', { name: 'Taste profile model' })
+    await user.click(picker)
+    await user.click(screen.getByRole('option', { name: /anthropic\/claude-sonnet-5\.5/u }))
+    await user.click(
+      within(taste).getByRole('button', { name: 'Test taste profile model and prices' }),
+    )
+    await user.click(await within(taste).findByRole('button', { name: 'Use for taste profile' }))
+    expect(await within(taste).findByText('Taste profile model saved.')).toBeVisible()
+    // Choosing a model makes Covers → Taste profile read it again.
+    expect(queryClient.getQueryState(['covers', 'taste'])?.isInvalidated).toBe(true)
+    queryClient.setQueryData(['covers', 'taste'], { stale: true })
+    await user.click(
+      within(taste).getByRole('button', { name: 'Continue without a taste profile' }),
+    )
+    expect(await within(taste).findByText('No taste profile model selected.')).toBeVisible()
+    expect(within(taste).queryByText('Taste profile model saved.')).toBeNull()
+    expect(within(taste).getByRole('combobox', { name: 'Taste profile model' })).toHaveTextContent(
+      'Choose a model',
+    )
+    expect(within(taste).queryByText('Recommended. Measured for taste profiles.')).toBeNull()
+    expect(queryClient.getQueryState(['covers', 'taste'])?.isInvalidated).toBe(true)
+  })
+
+  it.each([
+    [
+      new UncertainMutationError({
+        operation: 'PUT /api/v1/reviewer-access/selection',
+        responseStatus: 200,
+        at: 'invalid_reviewer_access_response',
+        reason: 'invariant',
+      }),
+      'No answer came back. Check whether the taste profile model was cleared before trying again.',
+    ],
+    [new ApiError(409, 'access_changed'), 'The taste profile model was not cleared. Try again.'],
+  ])('says when continuing without a taste profile fails (%s)', async (failure, copy) => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => ({
+      ...initial,
+      taste_mapping: { engine: 'openrouter' as const, model: metadata.model },
+      taste_metadata: metadata,
+    }))
+    http.selectReviewer = vi.fn(async () => {
+      throw failure
+    })
+    renderRoute('/settings?group=reviewer', http)
+    const user = userEvent.setup()
+    const taste = await section()
+    await user.click(
+      within(taste).getByRole('button', { name: 'Continue without a taste profile' }),
+    )
+    expect(await within(taste).findByRole('alert')).toHaveTextContent(copy)
+    expect(within(taste).queryByText(/Taste profile setup did not complete/u)).toBeNull()
+  })
 })
