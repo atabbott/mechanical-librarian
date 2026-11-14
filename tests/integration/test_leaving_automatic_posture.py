@@ -19,9 +19,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
@@ -63,6 +63,7 @@ from mechanical_librarian.application.review_web import (
     InspectCurrentReviewCase,
 )
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
+from mechanical_librarian.domain.cover_evidence import CoverSource
 from mechanical_librarian.domain.field_effect import (
     FieldEffectError,
     FieldEffectOperation,
@@ -76,7 +77,10 @@ from mechanical_librarian.domain.metadata_policy import (
     human_review_destinations,
     resolve_policy,
 )
-from mechanical_librarian.domain.metadata_report import MetadataReport
+from mechanical_librarian.domain.metadata_report import (
+    MetadataReport,
+    ProviderObservation,
+)
 from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewAdmissionResult, ReviewCase
 from tests.support.author_evidence import author_report
@@ -93,6 +97,9 @@ class _Library:
     admissions: list[tuple[str, str | None]]
     evaluations: list[str]
     now: list[int]
+    # Every call that would read the file, Audiobookshelf or a provider in
+    # production, by stage, once the harness has prepared its work.
+    external: list[str] = field(default_factory=list)
 
     def drain(self) -> None:
         for _ in range(32):
@@ -178,14 +185,35 @@ def _resolved(
 
 
 @contextmanager
-def _prepared(tmp_path: Path, *, automatic: bool) -> Iterator[_Library]:
+def _prepared(
+    tmp_path: Path,
+    *,
+    automatic: bool,
+    covers: tuple[CoverSource, ...] = (),
+    providers: tuple[ProviderObservation, ...] | None = None,
+    before_projection: Callable[[ReviewPipelineRepository, Any], None] | None = None,
+    cover_order: str | None = None,
+) -> Iterator[_Library]:
     """One work prepared under a qualified Automatic contributor-names policy.
 
     With `automatic` false the owner stays in Preview, so the work is first
-    prepared there and nothing is decided automatically.
+    prepared there and nothing is decided automatically. `covers` become the
+    report's cover sources and `providers`, when given, its providers.
+    `before_projection`, when given, runs before each projection as the cover
+    stage does in production. `cover_order`, when given, makes covers
+    automatic under that cover-order option.
     """
     database = tmp_path / "application.sqlite3"
     report = author_report(tmp_path / "media", "supported")
+    if covers or providers is not None:
+        report = MetadataReport.create(
+            target=report.target,
+            file=report.file,
+            local_claims=report.local_claims,
+            local_reasons=report.local_reasons,
+            providers=report.providers if providers is None else providers,
+            cover_sources=covers,
+        )
     root = open_repository(database, cross_thread=True)
     options = dict(DEFAULT_OPTIONS)
     destinations = {
@@ -194,6 +222,9 @@ def _prepared(tmp_path: Path, *, automatic: bool) -> Iterator[_Library]:
     }
     options["contributor_names"] = "canonical"
     destinations["contributor_names"] = "automatic"
+    if cover_order is not None:
+        options["cover_order"] = cover_order
+        destinations["cover_order"] = "automatic"
     profile = MetadataPolicyProfile.create("Leave automatic", options, destinations)
     resolved = resolve_policy(profile, "ebooks")
     root.enter_shadow_preview(1, ())
@@ -238,9 +269,14 @@ def _prepared(tmp_path: Path, *, automatic: bool) -> Iterator[_Library]:
     evaluations: list[str] = []
     admissions: list[tuple[str, str | None]] = []
 
+    external: list[str] = []
+    prepared = [False]
+
     def extract(
         repository: ReviewPipelineRepository, _: PipelineAction, __: bool
     ) -> tuple[str, bool]:
+        if prepared[0]:
+            external.append("extraction")
         cast(SQLiteMetadataReportRepository, repository).publish(report, lambda: True)
         return report.report_id, False
 
@@ -284,14 +320,20 @@ def _prepared(tmp_path: Path, *, automatic: bool) -> Iterator[_Library]:
         propose=propose,
         admit=admit,
         project=project,
+        before_projection=(
+            (lambda *_args: None) if before_projection is None else before_projection
+        ),
         clock=lambda: now[0],
     )
-    value = _Library(root, pipeline, report, admissions, evaluations, now)
+    value = _Library(root, pipeline, report, admissions, evaluations, now, external)
     try:
         value.drain()
+        prepared[0] = True
         if automatic:
             assert root.shadow_posture() == "automatic"
-            assert value.automatic().outcome == "candidate"
+            # Replaced providers carry no authors candidate to decide.
+            if providers is None:
+                assert value.automatic().outcome == "candidate"
         else:
             assert root.shadow_posture() == "preview"
         yield value

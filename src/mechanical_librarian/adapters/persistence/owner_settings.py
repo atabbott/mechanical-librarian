@@ -14,11 +14,16 @@ from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.preparation_presentation import (
     reconcile_preparation_library_additions,
 )
+from mechanical_librarian.adapters.persistence.review_preparation import (
+    matching_check_counts,
+    request_matching_check,
+)
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
     local_operation,
 )
 from mechanical_librarian.domain.owner_settings import (
+    MatchingCheck,
     OwnerSettingsDocument,
     OwnerSettingsError,
     SecretWrite,
@@ -35,15 +40,26 @@ class OwnerSettingsStore(ConnectionScoped):
     """The only persistence boundary that ever receives raw settings secrets."""
 
     def __init__(
-        self, connection: sqlite3.Connection, serialization_lock: RLock | None = None
+        self,
+        connection: sqlite3.Connection,
+        serialization_lock: RLock | None = None,
+        *,
+        book_matching: bool = False,
     ) -> None:
+        """`book_matching` joins Book matching's re-check to each save (#1355).
+
+        Only the application database holds the review preparation and cover
+        consideration tables the re-check reads, so only its repository opens
+        the store with it.
+        """
         super().__init__(connection, serialization_lock=serialization_lock)
+        self._book_matching = book_matching
 
     def read(self) -> SettingsView:
         def read() -> SettingsView:
             try:
                 document, values = _load_owner_settings_authority(self._connection)
-                return _settings_view(document, values)
+                return _settings_view(document, values, self._matching_check(document))
             except OwnerSettingsError:
                 raise
             except sqlite3.Error as error:
@@ -200,7 +216,15 @@ class OwnerSettingsStore(ConnectionScoped):
             )
             if previous.description_advice != document.description_advice:
                 request_description_preparation(self._connection, accepted_at)
-            committed = _settings_view(document, values)
+            if self._book_matching:
+                # Every save re-runs Book matching's re-check for each
+                # comparison it has not reached, so saving again retries.
+                request_matching_check(
+                    self._connection,
+                    document.matching.work_identity,
+                    updated_at=accepted_at,
+                )
+            committed = _settings_view(document, values, self._matching_check(document))
             transaction.commit()
         except OwnerSettingsError:
             transaction.rollback()
@@ -288,6 +312,14 @@ class OwnerSettingsStore(ConnectionScoped):
         if not document.required_secret_fields().issubset(values):
             raise OwnerSettingsError("settings required secret is unavailable")
         return document, values, obsolete
+
+    def _matching_check(self, document: OwnerSettingsDocument) -> MatchingCheck | None:
+        if not self._book_matching:
+            return None
+        current, checking, failed = matching_check_counts(
+            self._connection, document.matching.work_identity
+        )
+        return MatchingCheck(current_works=current, checking=checking, failed=failed)
 
     @staticmethod
     def _validate_secret_writes(
@@ -397,10 +429,13 @@ def _validate_owner_settings_content(connection: sqlite3.Connection) -> None:
 
 
 def _settings_view(
-    document: OwnerSettingsDocument, values: dict[str, str]
+    document: OwnerSettingsDocument,
+    values: dict[str, str],
+    matching_check: MatchingCheck | None = None,
 ) -> SettingsView:
     projected = _available_settings_document(document)
     return SettingsView(
+        matching_check=matching_check,
         document=projected,
         fields=store_field_metadata(projected),
         secrets=tuple(

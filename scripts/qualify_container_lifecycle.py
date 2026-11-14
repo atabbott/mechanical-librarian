@@ -938,7 +938,7 @@ def _qualify_retained_recovery(
 
 def _configuration() -> dict[str, object]:
     return {
-        "schema_version": "config-v9",
+        "schema_version": "config-v10",
         "provider_recovery_generation": 1,
         "connections": [
             {

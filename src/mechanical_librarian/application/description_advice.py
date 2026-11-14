@@ -57,6 +57,7 @@ class DescriptionAdviceRepository(Protocol):
         case_current: Callable[[], bool],
         *,
         retry: bool = False,
+        reuse_only: bool = False,
     ) -> tuple[str, DescriptionAdviceCandidate | None] | None: ...
 
     def start(
@@ -131,7 +132,15 @@ class DescriptionAdviceService:
         case_current: Callable[[], bool],
         *,
         retry: bool = False,
+        reuse_only: bool = False,
     ) -> DescriptionAdviceCandidate | None:
+        """Prepare the case's description advice.
+
+        With `reuse_only`, as a Book matching check projects (#1355), an
+        earlier attempt or candidate for the same request is reused and no new
+        attempt starts, so no model request is made; a pending request is left
+        for the next ordinary preparation.
+        """
         identity = self._access.current_description_rewrite_identity()
         if identity is None:
             self._repository.consume_pending_if_unconfigured(binding.review_case_id)
@@ -165,7 +174,8 @@ class DescriptionAdviceService:
             model,
             self._clock(),
             case_current,
-            retry=retry,
+            retry=retry and not reuse_only,
+            reuse_only=reuse_only,
         )
         if attempt is None:
             return None
@@ -258,8 +268,12 @@ def prepare_staged_description(
     *,
     reviewer_access: ReviewerAccessOperations,
     review: ReviewWebConfiguration,
+    reuse_only: bool = False,
 ) -> None:
-    """Prepare a staged review case's description advice, if it needs one."""
+    """Prepare a staged review case's description advice, if it needs one.
+
+    With `reuse_only` (a Book matching check, #1355) no new attempt starts.
+    """
     if action.review_case_id is None:
         return
     repository = cast("DescriptionPreparationRepository", pipeline_repository)
@@ -310,6 +324,7 @@ def prepare_staged_description(
         report,
         binding,
         current,
+        reuse_only=reuse_only,
     )
 
 

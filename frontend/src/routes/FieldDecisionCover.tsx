@@ -337,7 +337,12 @@ function LibraryCoverChoicesContent({
           ? 'A source names a different author or contributor, so you cannot choose it.'
           : candidate.matchReason === 'matched_book'
             ? 'From the matched book, not a confirmed recording.'
-            : null
+            : candidate.matchReason === 'title_and_author' &&
+                Array.isArray(candidate.identity?.reasons) &&
+                candidate.identity.reasons.includes('creator_initials_folded')
+              ? // The title names the basis, so only folded initials add a line (#1355).
+                "An author's initials are written differently in this source."
+              : null
   const cardState = (candidate: (typeof candidates)[number]) => {
     const outcome = candidate.incumbent ? ('keep_current' as const) : ('accept' as const)
     const value: DecisionCommand['selectedValue'] = candidate.incumbent
@@ -459,7 +464,9 @@ function LibraryCoverChoicesContent({
                     : candidate.matchState === 'same_book' ||
                         candidate.matchReason === 'matched_book'
                       ? 'Same book'
-                      : 'Match not confirmed'}
+                      : candidate.matchReason === 'title_and_author'
+                        ? 'Same title and author'
+                        : 'Match not confirmed'}
               {/* The identity stays unverified: only the wording names its basis (#1642). */}
               {candidate.matchReason === 'matched_book' && !candidate.contradiction
                 ? ' · recording not confirmed'

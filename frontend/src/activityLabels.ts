@@ -19,10 +19,12 @@ const ledgerStateLabels: Readonly<Record<string, string>> = {
 // A change stopped only by a lost connection is still waiting to be prepared
 // again, so it reads as waiting rather than as a stopped stale (#1402). One
 // that closed because the item changed says so, without claiming nothing was
-// written: an earlier attempt may have landed (#1542).
+// written: an earlier attempt may have landed (#1542). A cover chosen under
+// another Book matching level closes saying that (#1355).
 const staleLabels: Readonly<Record<string, string>> = {
   connection: 'Waiting to retry',
   target_changed: 'Closed because the item changed',
+  matching_changed: 'Closed because Book matching changed',
 }
 export const stateLabel = (
   state: string,

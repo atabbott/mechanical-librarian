@@ -93,6 +93,7 @@ from mechanical_librarian.domain.preparation_presentation import (
     PreparationTrigger,
 )
 from mechanical_librarian.domain.proposal_set import work_route_cover_offered
+from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 
 if TYPE_CHECKING:
     from mechanical_librarian.application.cover_consideration import (
@@ -679,7 +680,8 @@ class ReviewApplication:
                             avoid_promotional_text=preferences.avoid_promotional_text,
                             avoid_tie_in_branding=preferences.avoid_tie_in_branding,
                             prefer_minimal_composition=preferences.prefer_minimal_composition,
-                        )
+                        ),
+                        WorkIdentityLevel(validated.matching.work_identity),
                     )
                     if self._cover_considerations is not None
                     else None
