@@ -122,7 +122,8 @@ and appears in the review list. The store-managed value changes only through
 the session-, CSRF- and Origin-bound settings command with an optimistic
 revision; a file-managed value is read-only in the browser. A change makes
 pending automatic cover decisions stale, and none executes under the old
-value. This stage prefers no different art over a fault-free current cover,
+value. When the work is prepared again, an automatic choice that was never
+written is withdrawn and the new value decides again. This stage prefers no different art over a fault-free current cover,
 so until a later preference source exists (ADR-0095), `unprotected` decides as
 `protected` does, unless the edition option below is on.
 

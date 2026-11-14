@@ -29,6 +29,10 @@ const protectionLines = {
   proposals_only: 'Nothing is replaced automatically. A cover with a fault is suggested.',
 } satisfies Record<Protection, string>
 const headingId = 'current-covers-heading'
+// A section's three states, in the shapes the other settings sections use:
+// loading, a read that failed (with Retry or Reload), and a save that failed.
+const loadFailed = 'Cover settings could not be loaded.'
+const saveFailed = 'Cover settings were not saved. Reload them, then try again.'
 type Draft = Pick<Preferences, 'current_protection' | 'prefer_edition'>
 const draftOf = (preferences: Preferences): Draft => ({
   current_protection: preferences.current_protection,
@@ -54,10 +58,10 @@ export const CurrentCoverSettings = ({ http }: { http: ReviewHttp }) => {
       {query.isPending ? (
         <p role="status">Loading cover settings…</p>
       ) : query.error instanceof BuildMismatchError ? (
-        <StaleBuildRead lead="Cover settings were not loaded." ref={settingsRetry} />
+        <StaleBuildRead lead={loadFailed} ref={settingsRetry} />
       ) : query.isError ? (
         <div role="alert">
-          <p>Cover settings could not be loaded.</p>
+          <p>{loadFailed}</p>
           <button
             ref={settingsRetry}
             onClick={() => {
@@ -107,7 +111,7 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
     },
     onError: (error) => {
       if (error instanceof BuildMismatchError) {
-        setStaleLead('Cover settings were not saved.')
+        setStaleLead(saveFailed)
         return
       }
       if (!uncertainWriteOutcome(error)) return
@@ -131,13 +135,8 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
         document.getElementById(headingId)?.focus()
       }
     },
-    onError: (error, source) => {
-      if (error instanceof BuildMismatchError)
-        setStaleLead(
-          source === 'unconfirmed' || unconfirmed
-            ? 'No answer came back for the cover settings save.'
-            : 'Saved cover settings were not loaded.',
-        )
+    onError: (error) => {
+      if (error instanceof BuildMismatchError) setStaleLead(loadFailed)
       focusAfterRetry(() => reloadButton.current)
     },
   })
@@ -210,12 +209,7 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
           <p>
             {!stale && unconfirmed
               ? 'No answer came back. Check whether the cover settings were saved before saving again.'
-              : stale
-                ? 'The settings changed since this page loaded. Reload them, then save again.'
-                : refusalCopy(
-                    mutation.error,
-                    'The settings changed since this page loaded. Reload them, then save again.',
-                  )}
+              : refusalCopy(stale ? null : mutation.error, saveFailed)}
           </p>
           <button
             ref={reloadButton}
@@ -227,7 +221,7 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
           >
             {reload.isPending ? 'Reloading cover settings…' : 'Reload cover settings'}
           </button>
-          {reload.isError ? <p>The saved cover settings could not be loaded. Try again.</p> : null}
+          {reload.isError ? <p>{loadFailed}</p> : null}
         </div>
       ) : null}
     </div>

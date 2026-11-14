@@ -2160,6 +2160,33 @@ it('saves current cover settings with their own button (#1363)', async () => {
   })
 })
 
+it("says a failed cover settings read or save in the settings sections' words (#1363)", async () => {
+  const user = userEvent.setup()
+  const http = createHttp()
+  const initial = view()
+  let reads = 0
+  http.getSettings = vi.fn(async () => {
+    reads += 1
+    if (reads === 1) throw new ApiError(503, 'settings_unavailable')
+    return initial
+  })
+  http.writeSettings = vi.fn<ReviewHttp['writeSettings']>(async () => {
+    throw new ApiError(409, 'settings_revision_conflict')
+  })
+  renderRoute('/policy?section=curation', http)
+  const region = await screen.findByRole('region', { name: 'Current covers' })
+  const alert = await within(region).findByRole('alert')
+  expect(alert).toHaveTextContent(/^Cover settings could not be loaded\.Retry cover settings$/)
+  await user.click(within(alert).getByRole('button', { name: 'Retry cover settings' }))
+  const protection = await within(region).findByRole('group', { name: 'Replace a current cover' })
+  await user.click(within(protection).getByRole('button', { name: 'Never' }))
+  await user.click(within(region).getByRole('button', { name: 'Save cover settings' }))
+  const refusal = await within(region).findByRole('alert')
+  expect(refusal).toHaveTextContent(
+    /^Cover settings were not saved\. Reload them, then try again\.Reload cover settings$/,
+  )
+})
+
 it('shows file-managed current cover settings read-only (#1363)', async () => {
   const http = createHttp()
   http.getSettings = vi.fn(async () => view('file'))

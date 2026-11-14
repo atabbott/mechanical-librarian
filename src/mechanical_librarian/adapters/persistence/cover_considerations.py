@@ -180,6 +180,47 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             occurred_at,
         )
 
+    def _retire_unwritten_automatic_cover(
+        self, review_case_id: str, policy_reference: object, occurred_at: int
+    ) -> None:
+        """Revoke an automatic switch a changed cover policy left unwritten.
+
+        Current covers is in the cover policy, so a changed setting stales a
+        planned switch before it writes. When the work is prepared again under
+        the new policy, the selection is revoked as a superseded one is, so no
+        screen shows the switch as chosen; the new comparison decides again.
+        A switch whose write started or verified stays, because it happened
+        (#1363).
+        """
+        # A comparison prepared under no cover policy decides nothing again.
+        if type(policy_reference) is not str:
+            return
+        row = self._connection.execute(
+            "SELECT selection.decision_id,"
+            "json_extract(json_extract(selection.document,'$.decision_document'),"
+            "'$.policy_reference'),current.connection_name,current.library_name,"
+            "current.item_id FROM current_review_case_lineages lineage "
+            "JOIN current_cover_selection_authorities current "
+            "ON current.connection_name=lineage.connection_name "
+            "AND current.library_name=lineage.library_name "
+            "AND current.item_id=lineage.item_id "
+            "JOIN cover_selection_authorities selection "
+            "ON selection.selection_id=current.selection_id "
+            "WHERE lineage.review_case_id=? AND selection.kind='automatic' "
+            "AND NOT EXISTS (SELECT 1 FROM field_effects effect "
+            "WHERE effect.decision_id=selection.decision_id "
+            "AND effect.state IN ('claimed','applying','reconciling','verified'))",
+            (review_case_id,),
+        ).fetchone()
+        if row is None or row[1] == policy_reference:
+            return
+        self._revoke_automatic(row[0], occurred_at)
+        self._connection.execute(
+            "DELETE FROM current_cover_selection_authorities "
+            "WHERE connection_name=? AND library_name=? AND item_id=?",
+            row[2:],
+        )
+
     def _cover_admission_basis(
         self, document: str
     ) -> (
@@ -711,6 +752,9 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             )
             self._record_cover_consideration_event(
                 consideration_id, review_case_id, preparation_kind, occurred_at
+            )
+            self._retire_unwritten_automatic_cover(
+                review_case_id, value.get("policy_reference"), occurred_at
             )
             self._admit_automatic_cover(document, occurred_at)
             transaction.commit()

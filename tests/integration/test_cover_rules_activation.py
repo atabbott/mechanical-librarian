@@ -354,6 +354,39 @@ def test_a_current_covers_change_stales_an_admitted_switch_before_it_writes(
         ).fetchone() == (1,)
         assert not authority.current(operation.plan.authority)
         assert repository.pending_field_effect_decision_documents(1) == ()
+        # The unwritten switch is revoked, so the book page and Library no
+        # longer show the suggested cover as chosen.
+        assert _selections(repository) == []
+        assert (
+            repository.read_current_review_case(
+                prepared.review_case_id, None
+            ).current_cover_selection
+            is None
+        )
+
+
+def test_a_written_switch_keeps_its_selection_after_a_current_covers_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The control for the revocation above: a switch that was written happened,
+    # so preparing the work again under a changed setting keeps its selection.
+    monkeypatch.setattr(
+        cover_qualification_policy,
+        "MEASURED_REPLACEMENT_QUALIFICATION_SHA256",
+        SYNTHETIC_MEASURED_RECORD,
+    )
+    with _prepared(tmp_path) as prepared:
+        application, operation, target = _planned(prepared)
+        service = _service(prepared)
+        target.seed(operation.plan)
+        assert application.apply(operation.plan.plan_id).state == "verified"
+        (written,) = _selections(prepared.repository)
+        service.update_policy(CoverPolicy(current_protection="proposals_only"))
+        after = _reprepare(service, prepared)
+        assert json.loads(after)["policy_reference"] == (
+            CoverPolicy(current_protection="proposals_only").reference
+        )
+        assert _selections(prepared.repository) == [written]
 
 
 @pytest.mark.parametrize(
