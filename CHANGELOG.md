@@ -190,6 +190,11 @@ brackets are GitHub issues.
   enter instead of naming an internal identifier. "Settings → Reviewer" and
   "Settings → Audiobookshelf" in reviewer errors and the library connection
   notice are links to that section (#1765).
+- Settings → Reviewer reads plainly. The cover reviewer and description
+  adviser drop internal terms such as "contained reviewer profile", "work
+  packet" and "engine", Codex profile and memory problems say what to fix, a
+  lost answer says "No answer came back", and the Codex rows say no cost is
+  shown because Codex uses your plan's allowance (#1765).
 - Description work saved while preparation is paused now starts as soon as
   preparation resumes. Before, it waited for the next library poll, and a
   library whose last scan had failures was not polled at all. Resuming also

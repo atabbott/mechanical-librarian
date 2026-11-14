@@ -78,12 +78,12 @@ const useDescriptionAdviser = (
     error === null
       ? null
       : (latest === 'selection' || latest === 'refresh') && uncertainWriteOutcome(error)
-        ? 'The description adviser change could not be confirmed. It may have been saved; reviewer access was reloaded. Check it before trying again.'
+        ? 'No answer came back. Check whether the description adviser change was saved before trying again.'
         : credentialRefused(error)
           ? failureCopy.credential_unavailable
           : refusalCopy(
               error,
-              'Description adviser setup could not complete. Check the model, key and available pricing, then retry. Reload the current status before retrying a selection whose result is uncertain.',
+              'Description adviser setup did not complete. Check the model and key, then try again.',
             )
   // The command the failure belongs to, so it renders under that button (#1663).
   const failedAt =
@@ -131,26 +131,22 @@ export const DescriptionReviewerSettings = ({
     <section aria-labelledby="description-reviewer-heading">
       <div className="settings-field-row">
         <div>
-          <h3 id="description-reviewer-heading">Optional description adviser</h3>
+          <h3 id="description-reviewer-heading">Description adviser</h3>
           <p>
-            Only provider-backed description alternatives and your cleanup choices are sent. Titles,
-            item identifiers, paths, owner choices and service credentials are excluded. Ordinary
-            description choices remain available without an adviser.
+            Only the descriptions from your sources and your cleanup choices are sent. Your
+            decisions, titles, IDs, file paths and keys are not.
           </p>
         </div>
         <div className="settings-field-control">
           <p role="status">
             {selected
-              ? `Selected: ${selected.engine === 'openrouter' ? selected.model : `contained Codex — ${view.codex.model ?? 'model unavailable'}`}. Advisory availability: ${view.description === null ? 'unavailable' : reviewerStateLabels[view.description.state]}.`
+              ? `Selected: ${selected.engine === 'openrouter' ? selected.model : `Codex (${view.codex.model ?? 'model unavailable'})`}. Status: ${view.description === null ? 'unavailable' : reviewerStateLabels[view.description.state]}.`
               : 'No description adviser selected.'}
           </p>
-          <a href="/policy?section=curation#description-advice">
-            Review cleanup preferences and the separate automatic application switch
-          </a>
+          <a href="/policy?section=curation#description-advice">Set description advice in Policy</a>
           <p>
-            Adviser availability does not grant permission to change your library.{' '}
-            <a href="/activity">Check current write consent in Activity</a>, including consent that
-            needs renewal. Your automatic application preference remains separate.
+            Advice is written to your library only with your write permission.{' '}
+            <a href="/activity">Review write permissions in Activity</a>.
           </p>
           {/* A pending command keeps focus: aria-disabled while it runs, natively
               disabled only for a state the press did not cause (#1584, #1663). */}
@@ -163,25 +159,19 @@ export const DescriptionReviewerSettings = ({
             Continue without description advice
           </button>
           {failureUnder('without')}
-          {selection.isSuccess ? (
-            <p role="status">
-              Description adviser selection saved. Automatic application is controlled separately in
-              Policy Curation.
-            </p>
-          ) : null}
+          {selection.isSuccess ? <p role="status">Description adviser saved.</p> : null}
         </div>
       </div>
       <div className="settings-field-row">
         <div>
-          <h4>Contained Codex</h4>
+          <h4>Codex</h4>
           <p>
-            Uses the installed contained profile and its exact model. Usage consumes the signed-in
-            plan allowance; a per-request monetary estimate is unavailable. Shared sign-in is
-            managed above.
+            Uses the Codex sign-in above. Advice counts against your plan’s usage limits, so no cost
+            is shown.
           </p>
         </div>
         <div className="settings-field-control">
-          <p>Model: {view.codex.model ?? 'Unavailable until provisioning is corrected'}</p>
+          <p>Model: {view.codex.model ?? 'Unavailable'}</p>
           <button
             disabled={view.codex.state === 'not_provisioned'}
             aria-disabled={busy || undefined}
@@ -189,7 +179,7 @@ export const DescriptionReviewerSettings = ({
               if (!busy) contained.mutate()
             }}
           >
-            Inspect contained description model
+            Check Codex model
           </button>
           {failureUnder('contained')}
           {contained.data ? (
@@ -199,10 +189,10 @@ export const DescriptionReviewerSettings = ({
                 <dd>{contained.data.model}</dd>
               </div>
               <div>
-                <dt>Advanced identity</dt>
+                <dt>Profile checksum</dt>
                 <dd>
                   <details>
-                    <summary>Inspect contained profile identity</summary>
+                    <summary>Show checksum</summary>
                     <p>{contained.data.profile_sha256}</p>
                   </details>
                 </dd>
@@ -249,9 +239,9 @@ function DescriptionOpenRouterRow({
       <div>
         <h4>OpenRouter</h4>
         <p>
-          Destination: OpenRouter (https://openrouter.ai/api/v1). The exact model below is used with
-          provider fallback disabled. Upstream retention and training practices vary and are not
-          verified by this application.
+          Requests go to OpenRouter (https://openrouter.ai/api/v1) and only to the model below, with
+          no fallback to another provider. Mechanical Librarian does not check how providers keep or
+          train on what they receive.
         </p>
       </div>
       <div className="settings-field-control">
@@ -284,9 +274,8 @@ function DescriptionOpenRouterRow({
           autoComplete="new-password"
         />
         <small id="description-openrouter-key-help">
-          Leave the key blank to use the saved credential. Cover and description models share this
-          credential. Saving a replacement key preserves both model selections and invalidates prior
-          dispatch snapshots.
+          Leave blank to use the saved key. Cover review uses the same key, and replacing it keeps
+          both model choices.
         </small>
         <button
           disabled={(!key && !view.openrouter_key_configured) || !model}
@@ -317,9 +306,7 @@ function DescriptionOpenRouterRow({
             </div>
           </dl>
         ) : (
-          <p>
-            Price and text capability metadata must be available before this task can be selected.
-          </p>
+          <p>Test this model to see its prices before you use it.</p>
         )}
         <dl className="settings-reviewer-facts" aria-live="polite">
           <ReviewerCost view={view} model={model} task="description" />
