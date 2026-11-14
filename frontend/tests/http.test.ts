@@ -6001,3 +6001,102 @@ describe('the retained original as a cover candidate (#1363)', () => {
     await expect(read(retained(overrides))).rejects.toThrow(ApiError)
   })
 })
+
+describe('a cover that contradicts the book (#1790)', () => {
+  const unconfirmed = (
+    identity: Record<string, unknown>,
+    overrides: Record<string, unknown> = {},
+  ) =>
+    coverCandidate({
+      identity: coverIdentity(identity),
+      manual_eligible: false,
+      match_state: 'match_not_confirmed',
+      selectable: false,
+      deterministic_rank: null,
+      deterministic_rank_key: null,
+      state: 'excluded',
+      ...overrides,
+    })
+  const read = (candidate: unknown, overrides: Record<string, unknown> = {}) =>
+    mapCoverConsideration(
+      coverConsideration({
+        candidates: [candidate],
+        choice_contexts: [choiceContext()],
+        policy: coverPolicyReport({ acceptable_candidate_references: [] }),
+        ...overrides,
+      }) as Parameters<typeof mapCoverConsideration>[0],
+    )
+
+  it.each([
+    ['a different book', 'conflict', ['unrelated_identifier'], 'book'],
+    ['a different work', 'conflict', ['edition_work_contradiction'], 'book'],
+    ['a different edition', 'conflict', ['manifestation_publication_incompatible'], 'edition'],
+    ['a different creator', 'unknown', ['retained_creator_or_contributor_disagreement'], 'creator'],
+  ])('names %s', (_name, outcome, reasons, contradiction) => {
+    const [mapped] = read(unconfirmed({ outcome, reasons })).candidates
+    expect(mapped).toMatchObject({ contradiction, manualEligible: false })
+  })
+
+  it('leaves an unconfirmed cover with no contradiction unmarked', () => {
+    const [mapped] = read(
+      unconfirmed(
+        { outcome: 'unknown', reasons: ['insufficient_identity_evidence'] },
+        { manual_eligible: true },
+      ),
+      {
+        ready: true,
+        choice_contexts: [
+          choiceContext(),
+          choiceContext({ alternative_id: 'candidate-1', selection: 'proposed' }),
+        ],
+      },
+    ).candidates
+    expect(mapped?.manualEligible).toBe(true)
+    expect(mapped).not.toHaveProperty('contradiction')
+  })
+
+  it('never marks the current cover', () => {
+    const [mapped] = read(
+      unconfirmed({ outcome: 'conflict', reasons: ['unrelated_identifier'] }, { incumbent: true }),
+      { incumbent: { reference: 'candidate-1', state: 'available' }, ready: true },
+    ).candidates
+    expect(mapped?.incumbent).toBe(true)
+    expect(mapped).not.toHaveProperty('contradiction')
+  })
+
+  it('never marks the retained original', () => {
+    const [mapped] = read(
+      coverCandidate({
+        candidate_kind: 'retained',
+        deterministic_rank: null,
+        deterministic_rank_key: null,
+        identity: null,
+        match_state: 'match_not_confirmed',
+        reference: 'retained-1',
+        source_kinds: ['retained'],
+        state: 'available',
+      }),
+      {
+        policy: null,
+        ready: true,
+        choice_contexts: [
+          choiceContext(),
+          choiceContext({ alternative_id: 'retained-1', selection: 'proposed' }),
+        ],
+      },
+    ).candidates
+    expect(mapped?.candidateKind).toBe('retained')
+    expect(mapped).not.toHaveProperty('contradiction')
+  })
+
+  it('refuses a contradicting cover the server says can be chosen', () => {
+    expect(() =>
+      read(
+        unconfirmed(
+          { outcome: 'conflict', reasons: ['unrelated_identifier'] },
+          { manual_eligible: true },
+        ),
+      ),
+    ).toThrow(expect.objectContaining({ code: 'contradictory_cover_manual_eligibility' }))
+  })
+})
