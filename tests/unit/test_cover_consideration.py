@@ -850,7 +850,7 @@ def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
         clock=lambda: case.now + 1,
     )
     assert model_free.replay_reference == (
-        "cover_replay_b84ed95c727e6b9c15c402c831d242c2fe72bc29d533a2f4ed3dce3e99d88b17"
+        "cover_replay_99c3e3923733224085aadb1adc1b16f04dd7edd3aab5cfce7d7a7731d7d45ed4"
     )
     assert (
         model_free.ensure(case_id, case.report.to_json(), case.proposal)[
@@ -893,7 +893,7 @@ def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
     assert len(dispatches) == 1
     replayed_qualified = qualified()
     assert replayed_qualified.replay_reference == (
-        "cover_replay_24df3b327600950ff51e4e775629f71aae06f3f6d7a04c5994d7b00dce30f3c4"
+        "cover_replay_2b6f0626855fd83c294ba0dce4978fd4764eca236632377fcdce1c61c6bcb8b0"
     )
     assert (
         replayed_qualified.ensure(

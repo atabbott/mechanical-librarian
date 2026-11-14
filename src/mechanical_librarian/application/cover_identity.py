@@ -113,6 +113,7 @@ _CLASSIFIER_RULES = (
     "provider-identity-without-identifier-level-predicate:title-creator-work-match",
     "provider-identity-without-identifier-level-refused-or-ambiguous:unchanged",
     "listed-edition-beside-another-source-contradiction:level-refused",
+    "level-one-work-rule-per-level:strictest-unambiguous-level",
 )
 CLASSIFIER_REFERENCE = (
     "cover_identity_classifier_"
@@ -598,6 +599,39 @@ def _classify_sources(
     )
 
 
+def _level_set(
+    report: MetadataReport, matches: tuple[_Match, ...], level: WorkIdentityLevel
+) -> tuple[str, LevelAdmission | None, bool]:
+    """The bound records' verdict at one level: met, ambiguous or refused.
+
+    S6's one-work rule counts only the records meeting `level`, so a record
+    may be one work at the exact level and ambiguous at the wide one. Met
+    names the strictest level met and whether only the initials fold met it.
+    """
+    records: list[LevelAdmissionRecord] = []
+    for _source, observation, candidate, _isbn, _recording in matches:
+        record = provider_candidate_level_admission(
+            report, observation, candidate, level
+        )
+        assert record is not None
+        records.append(record)
+    if any(record.refusal == "ambiguous" for record in records):
+        return "ambiguous", None, False
+    admitted = [record for record in records if record.admission is not None]
+    if not admitted:
+        return "refused", None, False
+    met = min(
+        (cast("LevelAdmission", record.admission) for record in admitted),
+        key=lambda admission: _LEVEL_WIDTH[admission.level],
+    )
+    folded = all(
+        record.creator_comparison == "initials_fold"
+        for record in admitted
+        if cast("LevelAdmission", record.admission).level is met.level
+    )
+    return "met", met, folded
+
+
 def _level_outcome(
     report: MetadataReport,
     matches: tuple[_Match, ...],
@@ -608,10 +642,12 @@ def _level_outcome(
 ) -> tuple[str, list[str], list[str]]:
     """Add ADR-0096's level facts to an unverified candidate (#1355, S8).
 
-    Every bound record runs the level seam at the widest level, so the reasons
-    say what any configured level would admit. Any contradiction wins, then an
-    ambiguous set, else the strictest level any record meets. When the
-    configured level is at or wider than that one, the outcome is
+    Any contradiction wins. Otherwise the reasons record the strictest level
+    at which the bound records are one work and meet the predicate, so they
+    say what a configured level would admit: met at the exact level, else
+    the wide level's verdict (met, ambiguous or refused). At the configured
+    wide level an ambiguous set is recorded as ambiguous. When the configured
+    level is at or wider than the level met, the outcome is
     ``title_creator_work_match`` and a creator disagreement the initials fold
     resolves is no longer a reason; otherwise the identifier outcome and its
     reasons stand, beside the level facts. A record in `contradicting` (a
@@ -620,35 +656,28 @@ def _level_outcome(
     outcome, reasons, evidence = identifier
     if any(
         level_contradiction(report, observation, candidate)
-        for _source, observation, candidate, _isbn, _recording in contradicting
-    ):
-        return outcome, [*reasons, "work_identity_level_refused"], evidence
-    records: list[LevelAdmissionRecord] = []
-    for _source, observation, candidate, _isbn, _recording in matches:
-        if level_contradiction(report, observation, candidate):
-            return outcome, [*reasons, "work_identity_level_refused"], evidence
-        record = provider_candidate_level_admission(
-            report, observation, candidate, WorkIdentityLevel.TITLE_AND_CREATOR
+        for _source, observation, candidate, _isbn, _recording in (
+            *contradicting,
+            *matches,
         )
-        assert record is not None
-        records.append(record)
-    if any(record.refusal == "ambiguous" for record in records):
-        return outcome, [*reasons, "work_identity_level_ambiguous"], evidence
-    admitted = [record for record in records if record.admission is not None]
-    if not admitted:
-        return outcome, [*reasons, "work_identity_level_refused"], evidence
-    met = min(
-        (cast("LevelAdmission", record.admission).level for record in admitted),
-        key=_LEVEL_WIDTH.__getitem__,
-    )
-    level_reasons = ["work_identity_level_met", f"work_identity:{met.value}"]
-    if all(
-        record.creator_comparison == "initials_fold"
-        for record in admitted
-        if cast("LevelAdmission", record.admission).level is met
     ):
+        return outcome, [*reasons, "work_identity_level_refused"], evidence
+    wide = _level_set(report, matches, WorkIdentityLevel.TITLE_AND_CREATOR)
+    exact = _level_set(report, matches, WorkIdentityLevel.TITLE_AND_CREATOR_EXACT)
+    state, met, folded = (
+        wide
+        if level is WorkIdentityLevel.TITLE_AND_CREATOR and wide[0] == "ambiguous"
+        else exact
+        if exact[0] == "met"
+        else wide
+    )
+    if state != "met":
+        return outcome, [*reasons, f"work_identity_level_{state}"], evidence
+    assert met is not None
+    level_reasons = ["work_identity_level_met", f"work_identity:{met.level.value}"]
+    if folded:
         level_reasons.append("creator_initials_folded")
-    if _LEVEL_WIDTH[level] < _LEVEL_WIDTH[met]:
+    if _LEVEL_WIDTH[level] < _LEVEL_WIDTH[met.level]:
         return outcome, [*reasons, *level_reasons], evidence
     return (
         "title_creator_work_match",

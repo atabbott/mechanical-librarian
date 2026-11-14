@@ -174,6 +174,52 @@ def test_two_books_meeting_the_level_in_one_set_are_ambiguous() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("level", "expected"),
+    (
+        (_IDENTIFIER, ("unknown", _MET_EXACT, [])),
+        (_EXACT, ("title_creator_work_match", _MET_EXACT, [])),
+        (_WIDE, ("unknown", ["work_identity_level_ambiguous"], [])),
+    ),
+    ids=lambda value: value.value if isinstance(value, WorkIdentityLevel) else "",
+)
+def test_the_one_work_rule_counts_only_records_meeting_the_level(
+    level: WorkIdentityLevel, expected: tuple[str, list[str], list[str]]
+) -> None:
+    """An exact match beside another work that matches only through title
+    decoration is one work at the exact level and two at the wide one, so
+    the cover agrees with the seam at each level (slot R1)."""
+    from types import SimpleNamespace
+
+    from mechanical_librarian.domain.proposal_set import (
+        provider_candidate_level_admission,
+    )
+
+    exact = _candidate(identity="record-1")
+    decorated = _candidate("Synthetic Title (2001)", identity="record-2")
+    decorated.work_identity = "hardcover-work-0000000008"
+    lane = SimpleNamespace(
+        kind=ProviderQueryKind.WORK,
+        candidates=tuple(
+            SimpleNamespace(
+                edition_identity=value.identity, work_identity=value.work_identity
+            )
+            for value in (exact, decorated)
+        ),
+    )
+    report = _report(exact, decorated, lanes=(lane,))
+    provider = cast("Any", report).providers[0]
+    seam = provider_candidate_level_admission(
+        report, provider, cast("Any", exact), _EXACT
+    )
+    assert seam is not None and seam.admission is not None
+    wide = provider_candidate_level_admission(
+        report, provider, cast("Any", exact), _WIDE
+    )
+    assert wide is not None and wide.refusal == "ambiguous"
+    assert _classify_sources(report, (_listed_source(),), level) == expected
+
+
 def test_the_level_rules_rotate_the_classifier_reference() -> None:
     assert {
         "listed-edition-work-identity-binding:level-outcome",

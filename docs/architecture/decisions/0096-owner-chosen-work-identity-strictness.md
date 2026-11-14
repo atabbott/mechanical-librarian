@@ -296,7 +296,10 @@ amendment when it lands.
   candidate carries the level facts at every configured level:
   `work_identity_level_met` with the rule `work_identity:<strictest level
   met>` (and `creator_initials_folded` when only the fold made it), or
-  `work_identity_level_refused`, or `work_identity_level_ambiguous`. These
+  `work_identity_level_refused`, or `work_identity_level_ambiguous`. The
+  one-work rule counts only the records meeting each level, so a record that
+  is one work at the exact level but ambiguous at the wide one is met at the
+  exact level, and ambiguous only where the wide level is configured. These
   replace #1778's listed-edition shadow reasons and rule, so every designation
   uses one vocabulary. When the configured level is at or wider than the rule,
   the outcome is `title_creator_work_match`, and a creator disagreement the
