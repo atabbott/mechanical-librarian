@@ -380,6 +380,9 @@ class OpenLibraryMetadataProvider:
                         dispatch_lineage=observation.dispatch_lineage,
                         transformation_lineage=observation.transformation_lineage,
                         exhausted_dispatch=lane_result.exhausted_dispatch,
+                        identity_refused_candidates=(
+                            lane_result.identity_refused_candidates
+                        ),
                     )
                 )
                 merged = merge_provider_cover_descriptors(
@@ -1560,6 +1563,7 @@ def _canonical_discovery_results(
             diagnostics=result.diagnostics,
             dispatch_lineage=result.dispatch_lineage,
             transformation_lineage=result.transformation_lineage,
+            identity_refused_candidates=result.identity_refused_candidates,
         )
         for result in results
     )

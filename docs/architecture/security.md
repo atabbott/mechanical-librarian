@@ -237,6 +237,8 @@ which enabling does not restore.
   responses. [Dispatch](../reference/configuration.md#dispatch) sends
   audiobooks only to `AUDIOBOOK_DISPATCH_ADAPTERS` and ebooks only to
   `EBOOK_DISPATCH_ADAPTERS`.
+- Retained refused WORK answers serve Book matching levels only; no live
+  reader, support bundle or diagnostic sees them ([refused work answers](../operations/metadata-report.md#refused-work-answers)).
 
 Per provider, where *5xx* means 500, 502, 503 and 504:
 

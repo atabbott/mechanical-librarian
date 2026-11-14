@@ -90,6 +90,7 @@ from mechanical_librarian.domain.metadata_report import (
     complete_creator_identity_bindings,
     creator_comparison_key,
     creator_sequence_methods,
+    derive_identifier_evidence,
     discovery_lane_identity,
     echoed_target_values,
     field_evidence_providers,
@@ -4283,7 +4284,7 @@ def provider_candidate_represents_target_work(
 
 
 CreatorComparison = Literal["closed", "initials_fold"]
-LevelRefusal = Literal["refused", "ambiguous"]
+LevelRefusal = Literal["refused", "ambiguous", "truncated"]
 _CREATOR_OR_CONTRIBUTOR_CLAIMS = frozenset({ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR})
 _CREATOR_OR_CONTRIBUTOR_EVIDENCE = frozenset(
     {ProviderEvidenceKind.AUTHOR_IDENTITY, ProviderEvidenceKind.CONTRIBUTOR_IDENTITY}
@@ -4296,7 +4297,10 @@ class LevelAdmissionRecord:
 
     Exactly one of ``admission`` and ``refusal`` is set. ``ambiguous`` is the
     set rule's refusal: candidates of more than one provider work identity met
-    the level in one set (S6). ``creator_comparison`` is lineage only: it says
+    the level in one set (S6). ``truncated`` refuses every retained refused
+    answer of an observation whose set lost records to its bound or the
+    report's byte budget, since the survivors cannot be shown to be one work
+    (S6 rule 3). ``creator_comparison`` is lineage only: it says
     whether the admission needed the dotted-initials fold (S13).
     """
 
@@ -4311,7 +4315,7 @@ class LevelAdmissionRecord:
                 self.admission is not None
                 and type(self.admission) is not LevelAdmission
             )
-            or self.refusal not in {None, "refused", "ambiguous"}
+            or self.refusal not in {None, "refused", "ambiguous", "truncated"}
             or self.creator_comparison not in {"closed", "initials_fold"}
             or (self.admission is None and self.creator_comparison != "closed")
         ):
@@ -4409,6 +4413,45 @@ def _level_work_claims(candidate: ProviderCandidate, kind: ClaimKind) -> list[st
     ]
 
 
+def _level_bound_identifiers(
+    report: MetadataReport,
+    provider: ProviderObservation,
+    candidate: ProviderCandidate,
+) -> tuple[IdentifierEvidence, ...]:
+    """The identifier evidence bound to a record on the level path (S6).
+
+    A live candidate's is the report's own. A retained refused answer has
+    none there, since the report classifies only live candidates (#1355), so
+    the same classification runs here as if that one record were the
+    provider's answer; an observation keeping refused answers has no live
+    candidate. It is never written into the report.
+    """
+    if candidate not in provider.identity_refused_candidates:
+        return provider_candidate_bound_identifiers(
+            report, provider.provider, candidate
+        )
+    beside = ProviderObservation(
+        provider.provider,
+        ProviderStatus.CANDIDATES,
+        (),
+        (candidate,),
+        ProviderQueryKind.WORK,
+        provider.authority,
+    )
+    return tuple(
+        item
+        for item in derive_identifier_evidence(
+            report.local_claims,
+            tuple(beside if value is provider else value for value in report.providers),
+            report.target,
+            report.audio,
+        )
+        if item.provider == provider.provider
+        and item.candidate_identity == candidate.identity
+        and item.work_identity == candidate.work_identity
+    )
+
+
 def level_contradiction(
     report: MetadataReport,
     provider: ProviderObservation,
@@ -4434,7 +4477,7 @@ def level_contradiction(
         is WorkIdentityContradiction.EXPLICIT
     ):
         return True
-    bound = provider_candidate_bound_identifiers(report, provider.provider, candidate)
+    bound = _level_bound_identifiers(report, provider, candidate)
     if any(item.relation is IdentifierRelation.UNRELATED for item in bound) or any(
         item.kind is ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION
         for item in candidate.evidence
@@ -4473,7 +4516,13 @@ def _level_work_key(candidate: ProviderCandidate) -> str:
 def _level_candidate_sets(
     provider: ProviderObservation, candidate: ProviderCandidate
 ) -> tuple[tuple[ProviderCandidate, ...], ...]:
-    """Every retained lane set holding the candidate, else the provider's set."""
+    """Every retained lane set holding the candidate, else the provider's set.
+
+    A retained refused answer's set is the observation's refused set
+    (#1355): the union its lanes refused, which no lane admitted.
+    """
+    if candidate in provider.identity_refused_candidates:
+        return (provider.identity_refused_candidates,)
     retained = {value.identity: value for value in provider.candidates}
     sets = tuple(
         tuple(
@@ -4546,12 +4595,19 @@ def provider_candidate_level_admission(
     record is its single valid work title and its valid work author creators.
     S6's set rule runs over every retained set holding the candidate: a work
     identity with a vetoed sibling is refused, and when candidates of more
-    than one work identity meet the level in one set, none is admitted.
+    than one work identity meet the level in one set, none is admitted. A
+    retained refused answer's set is its observation's refused set, and an
+    observation whose set was truncated admits none of it.
     """
     if type(level) is not WorkIdentityLevel:
         raise ReportValueError("work identity level is invalid")
     if level is WorkIdentityLevel.IDENTIFIER:
         return None
+    if (
+        provider.identity_refused_truncated
+        and candidate in provider.identity_refused_candidates
+    ):
+        return LevelAdmissionRecord(None, "truncated")
     key = _level_work_key(candidate)
     for members in _level_candidate_sets(provider, candidate):
         vetoed = {

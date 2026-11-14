@@ -2450,10 +2450,15 @@ def test_current_schema_cannot_relabel_falsely_valid_predecessor_title() -> None
     document["library_languages"] = []
     # v61 added each provider's refused products (#1307); an empty record
     # keeps the falsely valid title the first thing refused.
-    # v64 added each provider's audio editions (#962).
+    # v64 added each provider's audio editions (#962), and v80 its refused
+    # WORK answers and each lane's refused identities (#1355).
     for provider in document["providers"]:
         provider["refused_products"] = []
         provider["audio_editions"] = []
+        provider["identity_refused_candidates"] = []
+        provider["identity_refused_truncated"] = 0
+        for lane in provider["lanes"]:
+            lane["identity_refused_new"] = []
     # v63 added the companion ebook section (#1319).
     document["companion"] = None
     # v66 added the EPUB cover recovery (#1357).

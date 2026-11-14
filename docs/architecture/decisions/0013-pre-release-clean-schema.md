@@ -500,3 +500,10 @@ and decision-set versions do not move: the report records no level and live
 decisions are unchanged at every level. Every earlier application database is
 rejected before mutation and needs a clean rebuild; no adoption is supplied.
 
+Its activation B takes the clean-rebuild branch too. `metadata-report-v80`
+keeps each provider's refused WORK answers (`identity_refused_candidates`,
+`identity_refused_truncated`) and each lane's `identity_refused_new`, which a
+v79 producer never read again once refused, so a v79 report is refused. Every
+earlier application database is rejected before mutation and needs a clean
+rebuild; no adoption is supplied.
+

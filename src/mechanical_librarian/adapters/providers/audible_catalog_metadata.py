@@ -845,6 +845,7 @@ def _lane_result(
         exhausted_dispatch=qualified.exhausted_dispatch,
         recording_lookup_hints=qualified.recording_lookup_hints,
         admission_bases=qualified.admission_bases,
+        identity_refused_candidates=qualified.identity_refused_candidates,
     )
 
 

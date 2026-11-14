@@ -296,6 +296,9 @@ class GoogleBooksMetadataProvider:
                         dispatch_lineage=observation.dispatch_lineage,
                         transformation_lineage=observation.transformation_lineage,
                         exhausted_dispatch=lane_result.exhausted_dispatch,
+                        identity_refused_candidates=(
+                            lane_result.identity_refused_candidates
+                        ),
                     )
                 )
         return provider_observation(

@@ -3,6 +3,6 @@
     "queued": true
   },
   "method": "POST",
-  "path": "/api/v1/review-cases/review_case_9faafe6073075212b789c7033a5f20ecc836a6bd0559213a94ce2d46103a74ed/description-advice/retry",
+  "path": "/api/v1/review-cases/review_case_99fa6f3f729eca8d18e09173960f8eaac03912b36ece928ae5759a199e324e09/description-advice/retry",
   "status": 200
 }
