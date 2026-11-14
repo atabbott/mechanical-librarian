@@ -19,12 +19,12 @@ from mechanical_librarian.domain.automatic_decision import (
 )
 from mechanical_librarian.domain.cover_qualification_policy import (
     COVER_ELECTION_QUALIFICATION_MANIFEST_SHA256,
-    MEASURED_REPLACEMENT_IDENTITY,
-    measured_replacement_record,
+    REPLACEMENT_TARGET_STATES,
+    replacement_record,
 )
 from mechanical_librarian.domain.cover_rules import STAGE_REASONS
 
-SCHEMA_VERSION = "cover-automatic-decision-v4"
+SCHEMA_VERSION = "cover-automatic-decision-v5"
 
 
 def _canonical(value: object) -> str:
@@ -108,17 +108,18 @@ class CoverAutomaticDecision:
         qualification_identity: str | None = None,
         reason: str | None = None,
     ) -> "CoverAutomaticDecision":
-        measured = qualification_identity == MEASURED_REPLACEMENT_IDENTITY
+        # Either replacement identity binds its own record (ADR-0094).
+        replacement = qualification_identity in REPLACEMENT_TARGET_STATES
         if qualification_identity is not None and (
             (
-                not measured
+                not replacement
                 and qualification_identity not in F46_IDENTITIES_BY_DESTINATION["cover"]
             )
             or policy_option != qualification_identity.split(":", 1)[1]
         ):
             raise AutomaticDecisionError("invalid")
-        record = measured_replacement_record() if measured else None
-        if measured and record is None:
+        record = replacement_record(qualification_identity) if replacement else None
+        if replacement and record is None:
             raise AutomaticDecisionError("invalid")
         core: dict[str, object] = {
             "policy_option": policy_option,
@@ -169,7 +170,7 @@ class CoverAutomaticDecision:
                 COVER_ELECTION_QUALIFICATION_MANIFEST_SHA256
                 if qualification_identity is None
                 else cast("str", record)
-                if measured
+                if replacement
                 else qualification_manifest_sha256(qualification_identity)
             ),
             qualification_identity=qualification_identity,
@@ -222,9 +223,9 @@ class CoverAutomaticDecision:
             raise AutomaticDecisionError("invalid")
         if type(self.qualification_manifest_sha256) is not str:
             raise AutomaticDecisionError("invalid")
-        # Only a measured replacement records a reason, and it must (#1363).
+        # Only a replacement records a reason, and it must (#1363, #1362).
         if (self.reason is None) == (
-            self.qualification_identity == MEASURED_REPLACEMENT_IDENTITY
+            self.qualification_identity in REPLACEMENT_TARGET_STATES
         ) or (self.reason is not None and self.reason not in STAGE_REASONS):
             raise AutomaticDecisionError("invalid")
         if self.qualification_identity is None:
@@ -234,8 +235,8 @@ class CoverAutomaticDecision:
                 or self.policy_option != "fixed_source_order"
             ):
                 raise AutomaticDecisionError("invalid")
-        elif self.qualification_identity == MEASURED_REPLACEMENT_IDENTITY:
-            record = measured_replacement_record()
+        elif self.qualification_identity in REPLACEMENT_TARGET_STATES:
+            record = replacement_record(self.qualification_identity)
             if (
                 record is None
                 or self.qualification_manifest_sha256 != record

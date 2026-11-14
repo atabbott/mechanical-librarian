@@ -94,8 +94,22 @@ def manual_cover_eligible(candidate: Mapping[str, object]) -> bool:
             "plausible_match",
             "unknown",
         }
-        and "retained_creator_or_contributor_disagreement"
-        not in identity.get("reasons", ())
+        and not identity_contradicts(identity)
+    )
+
+
+def identity_contradicts(identity: Mapping[str, object]) -> bool:
+    """Whether a cover's identity row positively names another work.
+
+    A ``conflict`` outcome, or a retained creator or contributor disagreement.
+    ``work_identity_level_refused`` is not one: it is also written when no
+    level was met without any contradiction (ADR-0094). Owner choice refuses
+    such a candidate, and the measured stage holds such a current cover.
+    """
+    reasons = identity.get("reasons", ())
+    return identity.get("outcome") == "conflict" or (
+        isinstance(reasons, (list, tuple))
+        and "retained_creator_or_contributor_disagreement" in reasons
     )
 
 

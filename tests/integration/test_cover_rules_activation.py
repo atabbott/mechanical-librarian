@@ -9,6 +9,7 @@ none of it reaches an event, a diagnostic or the support bundle.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -55,10 +56,14 @@ from mechanical_librarian.application.owner_settings import OwnerSettingsOperati
 from mechanical_librarian.application.review_application import (
     compose_review_application,
 )
+from mechanical_librarian.application.review_covers import cover_page
 from mechanical_librarian.bootstrap import composition
 from mechanical_librarian.domain import cover_qualification_policy
 from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
-from mechanical_librarian.domain.cover_evidence import CoverDesignation
+from mechanical_librarian.domain.cover_evidence import (
+    CoverDesignation,
+    CoverSourceState,
+)
 from mechanical_librarian.domain.cover_rules import (
     COLOUR_BINS,
     LAYOUT_VALUES,
@@ -80,7 +85,11 @@ from mechanical_librarian.domain.owner_settings import (
 )
 from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
-from tests.support.audiobook_covers import SYNTHETIC_MEASURED_RECORD
+from tests.support.audiobook_covers import (
+    SYNTHETIC_MEASURED_RECORD,
+    SYNTHETIC_UNCONFIRMED_RECORD,
+)
+from tests.support.cover_producers import incumbent_identity
 from tests.support.field_effects import CAPABILITY, Clock
 from tests.unit.test_shadow_outcome_persistence import (
     _pipeline_configuration,
@@ -122,11 +131,14 @@ def _prepared(
     duplicate_size: tuple[int, int] | None = None,
     candidate_size: tuple[int, int] = (3000, 4500),
     shared_measures: CoverMeasures | None = None,
+    **current: Any,
 ) -> Iterator[_Prepared]:
     """Prepare one ebook whose 200x300 current cover is under the floor.
 
     ``duplicate_size`` adds an EPUB copy of the current cover's own picture
-    from another original at that size.
+    from another original at that size. ``current`` passes how the current
+    cover was read (``readable_current``, ``abs_state``, ``abs_digest``) to
+    the report (#1362).
     """
     os.chmod(root, 0o700)
     database = root / "reports.sqlite"
@@ -139,6 +151,7 @@ def _prepared(
         candidate_designation=CoverDesignation.EXACT_EDITION,
         typed_timeout=True,
         shared_measures=shared_measures,
+        **current,
     )
     options = dict(DEFAULT_OPTIONS)
     options["cover_order"] = "fixed_source_order"
@@ -228,11 +241,11 @@ def _reprepare(service: CoverConsiderationService, prepared: _Prepared) -> str:
 
 
 def _planned(
-    prepared: _Prepared,
+    prepared: _Prepared, reason: str = "below_floor"
 ) -> tuple[GuardedFieldApplication, FieldEffectOperation, FakeTargetService]:
     (selection,) = _selections(prepared.repository)
     automatic = CoverAutomaticDecision.from_json(selection["decision_document"])
-    assert automatic.reason == "below_floor"
+    assert automatic.reason == reason
     authority = PersistedFieldEffectAuthority(prepared.repository)
     snapshot = authority.resolve(automatic)
     prepared.repository.grant_field_effect_consents(
@@ -240,12 +253,16 @@ def _planned(
     )
     target = FakeTargetService()
     # The recovery copy is the current cover's own original, which the switch
-    # keeps for Put back as composition does.
+    # keeps for Put back as composition does; a 404 cover reads as nothing.
     originals = CoverArtifactStore(prepared.root / "artifacts")
     recovery = PrivateCoverRecoveryStore(
         prepared.root / "recovery",
-        lambda plan: originals.read_original_digest(
-            str(plan.pre_value).removeprefix("cover_")
+        lambda plan: (
+            None
+            if plan.pre_value is None
+            else originals.read_original_digest(
+                str(plan.pre_value).removeprefix("cover_")
+            )
         ),
     )
     clock = Clock()
@@ -644,16 +661,28 @@ def test_the_retained_store_bound_decides_whether_a_switch_is_admitted(
         ).fetchone() == (0,)
 
 
+@pytest.mark.parametrize("current", ("confirmed", "unconfirmed"))
 @pytest.mark.parametrize("condition", ("none", "owner", "hold", "fetching"))
 def test_owner_choice_hold_and_fetching_keep_the_measured_switch_a_suggestion(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, condition: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, condition: str, current: str
 ) -> None:
     # First prepared with no record, so nothing is admitted; the record then
-    # arrives and the work is prepared again under a changed policy.
-    monkeypatch.setattr(
-        cover_qualification_policy, "MEASURED_REPLACEMENT_QUALIFICATION_SHA256", None
+    # arrives and the work is prepared again under a changed policy. An
+    # unconfirmed current cover is switched only under its own identity, and
+    # never over an owner choice or hold either (#1362 A8).
+    unconfirmed = current == "unconfirmed"
+    record = (
+        "UNCONFIRMED_REPLACEMENT_QUALIFICATION_SHA256"
+        if unconfirmed
+        else "MEASURED_REPLACEMENT_QUALIFICATION_SHA256"
     )
-    with _prepared(tmp_path) as prepared:
+    monkeypatch.setattr(cover_qualification_policy, record, None)
+    identity = (
+        incumbent_identity("plausible_match")
+        if unconfirmed
+        else contextlib.nullcontext()
+    )
+    with identity, _prepared(tmp_path) as prepared:
         repository = prepared.repository
         first = repository.current_cover_consideration_document(prepared.review_case_id)
         assert first is not None
@@ -692,8 +721,8 @@ def test_owner_choice_hold_and_fetching_keep_the_measured_switch_a_suggestion(
             repository._connection.commit()
         monkeypatch.setattr(
             cover_qualification_policy,
-            "MEASURED_REPLACEMENT_QUALIFICATION_SHA256",
-            SYNTHETIC_MEASURED_RECORD,
+            record,
+            SYNTHETIC_UNCONFIRMED_RECORD if unconfirmed else SYNTHETIC_MEASURED_RECORD,
         )
         service = _service(prepared, fetching=condition == "fetching")
         service.update_policy(CoverPolicy(prefer_edition=True))
@@ -703,10 +732,21 @@ def test_owner_choice_hold_and_fetching_keep_the_measured_switch_a_suggestion(
             json.loads(after)["consideration_id"]
             != json.loads(first)["consideration_id"]
         )
-        kinds = [row["kind"] for row in _selections(repository)]
+        assert json.loads(json.loads(after)["policy_report_document"])[
+            "actual_target_state"
+        ] == ("unknown" if unconfirmed else "confirmed")
+        selections = _selections(repository)
+        kinds = [row["kind"] for row in selections]
         if condition == "none":
             assert kinds == ["automatic"]
             assert _stage(after)["outcome"] == "replace"
+            assert CoverAutomaticDecision.from_json(
+                selections[0]["decision_document"]
+            ).qualification_identity == (
+                cover_qualification_policy.UNCONFIRMED_REPLACEMENT_IDENTITY
+                if unconfirmed
+                else cover_qualification_policy.MEASURED_REPLACEMENT_IDENTITY
+            )
         elif condition == "owner":
             assert kinds == ["owner"]
         else:
@@ -739,26 +779,64 @@ def _support_export(repository: SQLiteMetadataReportRepository) -> str:
     )
 
 
+# Bytes the decoder refuses: a PNG signature over nothing decodable (#1362).
+_UNDECODABLE = b"\x89PNG\r\n\x1a\n" + b"Private undecodable cover bytes"
+
+
+@pytest.mark.parametrize(
+    ("case", "outcome", "reason"),
+    (
+        ("below_floor", "replace", "below_floor"),
+        ("undecodable", "replace", "unreadable"),
+        ("contradicted", "hold", "current_contradicted"),
+    ),
+    ids=("below_floor", "undecodable", "contradicted"),
+)
 def test_a_stage_outcome_and_a_store_full_suggestion_leak_nothing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     caplog: pytest.LogCaptureFixture,
+    case: str,
+    outcome: str,
+    reason: str,
 ) -> None:
-    """No title, path, URL or cover bytes reach an event, diagnostic or bundle (A15)."""
-    monkeypatch.setattr(
-        cover_qualification_policy,
-        "MEASURED_REPLACEMENT_QUALIFICATION_SHA256",
-        SYNTHETIC_MEASURED_RECORD,
-    )
+    """No title, path, URL or cover bytes reach an event, diagnostic or bundle (A15).
+
+    Neither do the bytes of an undecodable current cover or their digest, nor
+    does a contradiction hold add anything but its closed reason (#1362 S18).
+    """
+    for record, value in (
+        ("MEASURED_REPLACEMENT_QUALIFICATION_SHA256", SYNTHETIC_MEASURED_RECORD),
+        ("UNCONFIRMED_REPLACEMENT_QUALIFICATION_SHA256", SYNTHETIC_UNCONFIRMED_RECORD),
+    ):
+        monkeypatch.setattr(cover_qualification_policy, record, value)
     monkeypatch.setattr(retained_covers, "MAXIMUM_RETAINED_ENTRIES", 0)
-    with _prepared(tmp_path) as prepared:
+    digest = hashlib.sha256(_UNDECODABLE).hexdigest()
+    current: dict[str, Any] = (
+        {
+            "readable_current": False,
+            "abs_state": CoverSourceState.DECODE_FAILED,
+            "abs_digest": digest,
+        }
+        if case == "undecodable"
+        else {}
+    )
+    identity = (
+        incumbent_identity("conflict", ("edition_work_contradiction",))
+        if case == "contradicted"
+        else contextlib.nullcontext()
+    )
+    with identity, _prepared(tmp_path, **current) as prepared:
         repository = prepared.repository
         document = repository.current_cover_consideration_document(
             prepared.review_case_id
         )
         assert document is not None
-        assert _stage(document)["outcome"] == "replace"
+        assert (_stage(document)["outcome"], _stage(document)["reason"]) == (
+            outcome,
+            reason,
+        )
         assert _selections(repository) == []
         # Control: the private values are in the store these surfaces read.
         assert "Synthetic title" in document
@@ -778,7 +856,15 @@ def test_a_stage_outcome_and_a_store_full_suggestion_leak_nothing(
     logged = "\n".join(record.getMessage() for record in caplog.records)
     surfaces = "\n".join((written.out, written.err, logged, bundle, *diagnostics))
     assert diagnostics == [""]
-    for leaked in ("Synthetic title", str(tmp_path), "http://", "https://"):
+    for leaked in (
+        "Synthetic title",
+        str(tmp_path),
+        "http://",
+        "https://",
+        digest,
+        _UNDECODABLE.hex(),
+        _UNDECODABLE.decode("latin-1"),
+    ):
         assert leaked not in surfaces
     assert images
     for image in images:
@@ -1009,3 +1095,85 @@ def test_the_owner_can_choose_a_larger_copy_without_a_record(
         (selection,) = _selections(repository)
         assert selection["kind"] == "owner"
         assert selection["candidate_reference"] == larger["reference"]
+
+
+def test_an_automatic_switch_over_a_404_cover_is_written_as_a_fill(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A6 (#1362 S5): nothing is kept, no room is needed, and Switched says so.
+
+    Audiobookshelf answered 404 for a declared cover, so the switch is
+    admitted under the unconfirmed identity with a full retained store, writes
+    over a known-empty pre-value and lists as a fill.
+    """
+    monkeypatch.setattr(
+        cover_qualification_policy, "MEASURED_REPLACEMENT_QUALIFICATION_SHA256", None
+    )
+    monkeypatch.setattr(
+        cover_qualification_policy,
+        "UNCONFIRMED_REPLACEMENT_QUALIFICATION_SHA256",
+        SYNTHETIC_UNCONFIRMED_RECORD,
+    )
+    monkeypatch.setattr(retained_covers, "MAXIMUM_RETAINED_ENTRIES", 0)
+    with _prepared(
+        tmp_path, readable_current=False, abs_state=CoverSourceState.ABSENT
+    ) as prepared:
+        repository = prepared.repository
+        document = repository.current_cover_consideration_document(
+            prepared.review_case_id
+        )
+        assert document is not None
+        assert (_stage(document)["outcome"], _stage(document)["reason"]) == (
+            "replace",
+            "unreadable",
+        )
+        (selection,) = _selections(repository)
+        automatic = CoverAutomaticDecision.from_json(selection["decision_document"])
+        assert automatic.qualification_identity == (
+            cover_qualification_policy.UNCONFIRMED_REPLACEMENT_IDENTITY
+        )
+        # This process binds the live cover policy, as composition does.
+        _service(prepared)
+        application, operation, target = _planned(prepared, "unreadable")
+        assert operation.plan.pre_value is None
+        target.seed(operation.plan)
+        verified = application.apply(operation.plan.plan_id)
+        assert (verified.state, verified.failure) == ("verified", None)
+        assert target.read(operation.plan).value == automatic.artifact_id
+        assert repository._connection.execute(
+            "SELECT count(*) FROM retained_cover_bindings"
+        ).fetchone() == (0,)
+        switched = cast(
+            "dict[str, Any]", cover_page(repository, "switched", None, None)
+        )
+        (item,) = switched["items"]
+        assert item["review_case_id"] == prepared.review_case_id
+        assert item["switched"]["filled"] is True
+        assert item["switched"]["reason"] == "unreadable"
+
+
+def test_an_unconfirmed_switch_needs_its_own_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A10 (#1362 S9): the measured record never admits an unconfirmed switch."""
+    monkeypatch.setattr(
+        cover_qualification_policy,
+        "MEASURED_REPLACEMENT_QUALIFICATION_SHA256",
+        SYNTHETIC_MEASURED_RECORD,
+    )
+    monkeypatch.setattr(
+        cover_qualification_policy, "UNCONFIRMED_REPLACEMENT_QUALIFICATION_SHA256", None
+    )
+    with _prepared(
+        tmp_path,
+        readable_current=False,
+        abs_state=CoverSourceState.DECODE_FAILED,
+        abs_digest=hashlib.sha256(_UNDECODABLE).hexdigest(),
+    ) as prepared:
+        document = prepared.repository.current_cover_consideration_document(
+            prepared.review_case_id
+        )
+        assert document is not None
+        assert _stage(document)["outcome"] == "replace"
+        assert _selections(prepared.repository) == []
+        assert prepared.repository.pending_field_effect_decision_documents(1) == ()

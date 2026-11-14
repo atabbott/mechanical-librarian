@@ -590,8 +590,10 @@ function LibraryCoverChoicesContent({
         {/* The recommended card carries its own reason, so its header has no
             caption (#1765); a suggestion's fault pill is its only reason. A
             kept cover with a fault shows the pill alone, since "no fault" would
-            contradict it (#1363). */}
+            contradict it (#1363). Once the owner has chosen, the stage says
+            nothing beside their choice (#1362). */}
         {recommendedReference !== null ||
+        (!consideration.providerFetching && field.humanDecision) ||
         (consideration.ready &&
           !consideration.providerFetching &&
           stage?.outcome === 'keep' &&
@@ -600,10 +602,16 @@ function LibraryCoverChoicesContent({
             {consideration.providerFetching
               ? 'Covers found so far are shown. You can choose when the search finishes.'
               : stage?.outcome === 'hold'
-                ? 'The title names a different book from most covers. Check the title first.'
-                : consideration.ready && stage?.outcome === 'keep'
-                  ? 'The current cover has no fault, so it is kept.'
-                  : 'Only confirmed matches can be recommended.'}
+                ? stageReason === 'current_contradicted'
+                  ? 'A source of the current cover names a different book.'
+                  : 'The title names a different book from most covers. Check the title first.'
+                : stage?.outcome === 'keep' &&
+                    stageReason === null &&
+                    consideration.incumbent.state === 'unavailable'
+                  ? 'Audiobookshelf did not return the current cover. It is kept until the next scan.'
+                  : consideration.ready && stage?.outcome === 'keep'
+                    ? 'The current cover has no fault, so it is kept.'
+                    : 'Only confirmed matches can be recommended.'}
           </small>
         )}
       </header>

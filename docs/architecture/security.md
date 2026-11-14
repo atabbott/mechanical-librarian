@@ -134,10 +134,9 @@ verification every three seconds.
 - Every unsafe request needs the session, the CSRF token and an
   `x-ml-build-identity` header matching the installed build.
 - The build identity is a non-secret version gate, not a credential. It is
-  sent only to the audience that already receives it in the authenticated
-  shell: as a response header on `/api/v1` responses to requests that
-  authenticated an owner session. It is never sent on a 401, on sign-in, in
-  asset-recovery mode, on an early Host, Origin or body-size refusal, or to a
+  sent only to the audience that already has it in the authenticated shell: a
+  response header on `/api/v1` responses to owner-authenticated requests. It
+  is never sent on a 401, on sign-in, in asset-recovery mode, on an early Host, Origin or body-size refusal, or to a
   request without a valid session
   ([ADR-0091](decisions/0091-decode-browser-responses-and-report-uncertain-writes.md)).
 - Serving an authenticated page rotates the CSRF digest. The raw token lives
@@ -317,8 +316,7 @@ Allowed cover origins:
 - Audible on `m.media-amazon.com`, and iTunes on `is1-ssl` to
   `is5-ssl.mzstatic.com`.
 
-Open Library follows only that route. No other provider follows any
-redirect. Any other host is a typed `unsafe_remote` outcome and no socket
+No other provider follows a redirect. Any other host is a typed `unsafe_remote` outcome and no socket
 opens. Remote covers use their own address-pinned transport with
 bounded bytes, attempts and deadline. Embedded audiobook art is never
 acquired. Reports never keep the remote URL.
@@ -335,14 +333,13 @@ The row's stated language (`code2`, else `code3`) must be compatible with one
 of the library's languages, and its URL must be on `assets.hardcover.app`.
 Only a row whose cover is off that host, or whose cover or language is
 malformed, is counted. No refused row is fetched. The stated size only filters
-and orders rows. It never reaches the report.
+and orders rows, never reaching the report.
 
 After retrieval, two listed-edition covers from the same provider whose
 decoded measures are the same art by the measured cover rule
 (`cover_rules.same_art`) collapse to the larger one, and the other is
 recorded as truncated (`same_art`). A cover without measures never
-collapses, and covers from different providers never collapse into each
-other.
+collapses, nor do covers from different providers.
 
 Open Library's route is a code constant on its two cover descriptors, never
 configuration, and holds only for the constructed
@@ -364,9 +361,8 @@ Book matching (`review.work_identity`, #1355) changes which retrieved covers
 the owner may choose, never what is fetched: a level reads only records the
 report already retained. Saving it re-checks comparisons from stored data and
 makes no file, Audiobookshelf, provider, cover image or model request: the
-cover observer's earlier output is reused, and description advice reuses an
-earlier attempt and starts none. A
-cover that matches only by a level's title and author predicate keeps
+cover observer's earlier output and an earlier description advice attempt
+are reused. A cover that matches only by a level's title and author predicate keeps
 `match_not_confirmed`, needs the owner's explicit unverified-match
 confirmation, and is never elected automatically until #1418 qualifies it
 ([ADR-0096](decisions/0096-owner-chosen-work-identity-strictness.md)).
@@ -419,13 +415,12 @@ an XML or container parser.
 
 - An over-long, unreadable or non-UTF-8 sidecar is dropped whole; a badly
   shaped identifier is reported as malformed, not believed. A UTF-8 sidecar
-  that starts with one byte-order mark is also read once without it, in the
-  same child and under the same bounds. What only that reading finds is
-  recorded in the document's manifest entry and is never a claim, a refusal or
-  a reason to withhold one. Recorded values pass the projection grammar, carry
-  no excerpt or association text, and are dropped for size before they could
-  deny an item or its report. UTF-16 and UTF-32 sidecars are still dropped
-  whole.
+  starting with one byte-order mark is also read once without it, in the same
+  child under the same bounds; what only that reading finds is recorded in its
+  manifest entry, never as a claim, a refusal or a reason to withhold one.
+  Recorded values pass the projection grammar, carry no excerpt or
+  association text, and are dropped for size before they could deny an item
+  or its report. UTF-16 and UTF-32 sidecars are dropped whole.
 - A directory listing refuses past 1,024 entries; path evidence uses bare
   names only.
 - A description over 512 characters is checked whole, then kept only as
@@ -453,8 +448,7 @@ an XML or container parser.
   never a claim, persisted, logged or query text.
 - Refusals are closed codes in the report's sidecar manifest only. No sidecar
   name, path or text reaches an operational event, diagnostic, status or
-  support bundle. A sidecar fault means that one document is absent; it never
-  denies the item.
+  support bundle. A sidecar fault drops that document, never the item.
 - Currentness re-derives each document's kind, binding and parent-side refusal
   from the listing and the re-read target file list, so an added foreign file
   or an edited refused document makes the report stale.
@@ -539,8 +533,7 @@ ranking, winner or identity field. The local parser needs exactly one
 observation per admitted candidate and checks every binding. The adjudicator
 makes no model call and recomputes identity from the retained report, under
 the Book matching level the comparison binds. A level change re-adjudicates
-from the observer's earlier output and sends nothing to the observer, because
-the image and its observation do not depend on the level (#1355).
+from the observer's earlier output without sending anything (#1355).
 
 Each preview is verified against its report digest and re-encoded into a
 metadata-free single-frame PNG; admission requires byte equality after
@@ -576,9 +569,9 @@ owner-entered value. The decision and its audit event commit atomically and
 are append-only. Automation never overrides an owner decision.
 
 Withdrawal appends a valueless row, revokes unclaimed authority in the same
-transaction and never re-arms automation. The previous value offered as a
-suggestion grants no authority: choosing it is an ordinary owner-entered write
-that refuses as stale if the field has changed. A manual hold follows the work
+transaction and never re-arms automation. A previous value offered as a
+suggestion grants no authority: choosing it is an ordinary owner-entered write,
+stale if the field changed. A manual hold follows the work
 to its successor case; Return to automatic releases it only after the scan it
 requests succeeds, and only if no later owner decision replaced the hold
 ([ADR-0039](decisions/0039-continuous-guarded-application.md)).
@@ -590,14 +583,14 @@ reads an owner-entered value. Clearing, rollback and undo are not available
 An owner may choose a retained cover whose match is not confirmed, but not
 one with a positive contradiction.
 
-The original an automatic switch replaced is a `retained` cover source: read
-locally from the owner-only retained store, never placed in a reviewer packet,
-a provider request or a support bundle, and never served. Only the owner can
+The original an automatic switch replaced is a `retained` cover source, read
+locally from the owner-only retained store, never in a reviewer packet,
+provider request or support bundle, and never served. Only the owner can
 choose it. Put back is an owner cover decision
 ([ADR-0049](decisions/0049-owner-confirmed-cover-considerations.md)) under
 every effect guard; it is refused as stale before commit once the copy is
 released, and an original changed in Audiobookshelf first ends the write stale
-(#1363).
+(#1363). An undecodable original is offered with no preview (#1362).
 
 ### Automatic decisions
 
@@ -609,33 +602,38 @@ that allowed it; everything else abstains to the owner. Pause and suspension
 fail closed to the owner queue; only a CSRF-protected owner action lifts a
 suspension.
 
-Policy bodies are closed and capped at 16 KiB, and drafts and previews
-activate nothing. [Activation](../operations/review-case.md#policy-activation)
+Policy bodies are closed and capped at 16 KiB; drafts and previews activate
+nothing. [Activation](../operations/review-case.md#policy-activation)
 is a CSRF-protected mutation bound to the expected active policy and exact
 draft, and old proposals then fail as stale.
 
 Automation replaces a populated cover only for a fault the measured cover
 rules record, under Current covers, whose settings change stales any switch
-planned before it, and a qualification no release ships yet
-([ADR-0093](decisions/0093-measured-cover-rules-and-current-cover-protection.md)).
-Any other automatic cover write needs a known-empty target. It replaces a populated ebook
+planned before it, and a qualification no release ships yet, a separate one
+for an unconfirmed current cover
+([ADR-0093](decisions/0093-measured-cover-rules-and-current-cover-protection.md),
+[ADR-0094](decisions/0094-unconfirmed-current-covers-take-part.md)). Identity
+never replaces a cover, and one whose sources name another book is held.
+Unreadable means a 404 or decoder-refused bytes, never a transient read.
+Replaced bytes are kept, decoded or not, or there is no switch; a 404 is
+written as known-empty. Any other automatic cover write
+needs a known-empty target. It replaces a populated ebook
 description only through
 description advice with `description_automatic_application` on. Evidence
 never creates series, contributor, title or recording identity on its own;
 conflicts go to the owner, never to a write. The explicit flag is set only by
 an exact positive. A level admission under Book matching
 (`review.work_identity`) reaches owner review and the stored would-admit
-note only: it never decides automatically, under any qualified option,
-ADR-0093's switches and fills or ADR-0095's automatic mode, until #1418
-(#1355). Saving the setting is a CSRF-protected settings write with an
-optimistic revision; it writes no Activity row, and a pending cover effect
+note only, and decides nothing automatically (no qualified option, ADR-0093
+switch or fill, or ADR-0095 automatic mode) until #1418 (#1355). Saving the setting is a CSRF-protected settings write
+with an optimistic revision; it writes no Activity row, and a pending cover effect
 chosen under another level closes stale (`matching_changed`).
 
 ### Consent and guarded effects
 
 Writes need the owner's library-scoped consent for the exact destination set
 shown in Activity; adding a destination lapses it, and policy activation
-carries forward only current consent, never widening it. A grant must match
+carries forward only current consent, never wider. A grant must match
 a fresh capability probe. A policy or consent change between the browser's
 re-read and the grant is not detected; a capability or library change is
 still refused.
@@ -647,19 +645,18 @@ Failures suspend the connection or destination
 and a probe never clears `unexpected_effect_behavior`. Read-only keys cannot
 write; update-only keys cannot upload covers.
 
-Audiobookshelf has no compare-and-set. The adapter makes one minimal request
-after its final pre-read, then reads back and reconciles; another actor's
+Audiobookshelf has no compare-and-set: the adapter makes one minimal request
+after its final pre-read, then reads back and reconciles, so another actor's
 change to the same field in that gap can be lost.
 
-- A request with an unknown outcome is never resent. Anything retried passes
-  every guard again; withdrawn authority or consent cancels it without a
-  request, and a pre-read already showing the desired value verifies without
-  one.
+- A request with an unknown outcome is never resent. A retry passes every
+  guard again; withdrawn authority or consent cancels it without a request,
+  and a pre-read already showing the desired value verifies without one.
 - Paired title and subtitle go in one request; both must verify, and a
   partial result is reconciled, never blindly retried.
 - Descriptions are compared as the text Audiobookshelf shows, so another
   actor's markup-only edit is overwritten. Read-back verifies only when the
-  stored form shows the desired text, and a partially dropped value is never
+  stored form shows the desired text; a partially dropped value is never
   resent. A restore that would lose formatting is refused with
   `restore_unavailable`.
 - Cover upload reads only the digest-verified original. The private cover
@@ -678,9 +675,8 @@ claims with closed provenance and comparison facts, never a credential,
 private path, rejected provider value, response body or arbitrary EPUB text
 ([data privacy](data-privacy.md)). When Audiobookshelf names no author, an
 ebook's own EPUB creators may leave the host as query text: one to four
-distinct package creators with no role or an author role. The search sits on
-the shared ebook plan, so every enabled ebook metadata provider receives
-them: Google Books, Hardcover, Inventaire, iTunes and Open Library.
+distinct package creators with no role or an author role. Through the shared
+ebook plan, every enabled ebook metadata provider receives them: Google Books, Hardcover, Inventaire, iTunes and Open Library.
 
 ### Publication
 

@@ -1169,4 +1169,37 @@ describe('Measured cover rules (#1363)', () => {
     renderRoute('/library?lens=all&view=covers&tab=decide', coversHttp({ decide: decidePage }))
     expect(await screen.findByText('Title names another book')).toBeVisible()
   })
+
+  it('shows a contradiction hold To decide with its own pill (#1362)', async () => {
+    const decidePage = page('decide', [
+      work('case-1', 'choice', { hold: { reason: 'current_contradicted' } }),
+    ])
+    renderRoute('/library?lens=all&view=covers&tab=decide', coversHttp({ decide: decidePage }))
+    const [row] = await screen.findAllByRole('listitem')
+    if (!row) throw new Error('a hold row is required')
+    expect(within(row).getByText("Cover's source names another book")).toBeVisible()
+  })
+
+  it('says why an unreadable cover was switched and lists it under Show (#1362)', async () => {
+    const user = userEvent.setup()
+    const switched = page('switched', [
+      switchedFor('case-1', 'unreadable'),
+      switchedFor('case-2', 'below_floor'),
+    ])
+    renderRoute('/library?lens=all&view=covers&tab=switched', coversHttp({ switched }))
+    const [first] = await screen.findAllByRole('listitem')
+    if (!first) throw new Error('a switched row is required')
+    expect(within(first).getByText('Unreadable image')).toBeVisible()
+    expect(
+      within(first).getByText(
+        'Audiobookshelf had no image for the cover, or Mechanical Librarian could not read it.',
+      ),
+    ).toBeVisible()
+    await user.click(screen.getByRole('combobox', { name: 'Show' }))
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+      'All',
+      'Under 300 px',
+      'Unreadable image',
+    ])
+  })
 })

@@ -24,6 +24,14 @@ What remains keeps ADR-0059's order with its portrait-sane step replaced by the
 shape rule: verified manifestation before verified work, then pixel area, width,
 height, source precedence and the opaque reference.
 
+The current cover's read is typed (ADR-0094). A readable cover takes part
+whether or not its identity is confirmed. An unknown read (a transient
+Audiobookshelf answer or an unusable target value) decides nothing and keeps the
+cover. An unreadable cover takes the first eligible candidate, automatically
+only when its bytes can be kept for Put back or there is nothing to keep. A
+current cover whose own sources name another work holds selection in every
+mode, overriding any fault.
+
 A readable current cover with no detectable issue is kept. When the fault is
 the art's own (wrong shape, edition language), the first candidate in that order
 outside its art is taken; only when there is none may a sharper copy of the art
@@ -119,6 +127,7 @@ class CoverIssue(Enum):
     """A detectable issue with the current cover, in reason priority order."""
 
     TITLE_NAMES_OTHER_WORK = "title_names_other_work"
+    CURRENT_CONTRADICTED = "current_contradicted"
     UNREADABLE = "unreadable"
     WRONG_SHAPE = "wrong_shape"
     BELOW_FLOOR = "below_floor"
@@ -253,35 +262,60 @@ class CoverRuleCandidate:
         )
 
 
+class CurrentCoverRead(Enum):
+    """What reading the current cover settled (ADR-0094).
+
+    ``UNREADABLE`` is only a terminal answer: Audiobookshelf had no image for a
+    declared cover, or the decoder refused the bytes it served. ``UNKNOWN`` is
+    a read that settled nothing, such as a timeout or a throttled request.
+    """
+
+    READABLE = "readable"
+    UNREADABLE = "unreadable"
+    UNKNOWN = "unknown"
+
+
 @dataclass(frozen=True, slots=True)
 class CurrentCover:
-    """The target's actual current cover; an unreadable one has no pixels."""
+    """The target's actual current cover; only a readable one has pixels.
+
+    ``retainable`` says a replacement can keep what it replaces for Put back:
+    always for a readable cover, and for an unreadable one only when its exact
+    bytes are bound or there is nothing to keep. ``contradicted`` says a
+    readable cover's own identity row names another work.
+    """
 
     reference: str
     identity: str | None
-    readable: bool
+    read: CurrentCoverRead
+    retainable: bool
     width: int | None = None
     height: int | None = None
     measures: CoverMeasures | None = None
     edition_outside_library_languages: bool = False
+    contradicted: bool = False
 
     def __post_init__(self) -> None:
         if (
             not nonempty_text(self.reference)
             or (self.identity is not None and not _identity(self.identity))
-            or not boolean(self.readable)
+            or type(self.read) is not CurrentCoverRead
+            or not boolean(self.retainable)
             or (self.measures is not None and type(self.measures) is not CoverMeasures)
             or not boolean(self.edition_outside_library_languages)
+            or not boolean(self.contradicted)
         ):
             raise ValueError("current cover is invalid")
-        if self.readable:
-            if not _valid_dimensions(self.width, self.height):
+        if self.read is CurrentCoverRead.READABLE:
+            if not _valid_dimensions(self.width, self.height) or not self.retainable:
                 raise ValueError("current cover is invalid")
         elif (
             self.width is not None
             or self.height is not None
             or self.measures is not None
             or self.edition_outside_library_languages
+            or self.contradicted
+            or (self.read is CurrentCoverRead.UNKNOWN and self.retainable)
         ):
             raise ValueError("current cover is invalid")
 
@@ -551,20 +585,44 @@ def elect_measured_covers(
             reason if reason is not None else ordered[0] if ordered else None,
         )
 
+    contradicted = current is not None and current.contradicted
     if title_conflict and eligible:
         differing = sum(1 for c in eligible if c.title_differs)
         if 2 * differing > len(eligible):
-            return result(CoverOutcome.HOLD, None, (CoverIssue.TITLE_NAMES_OTHER_WORK,))
+            held: tuple[CoverIssue, ...] = (CoverIssue.TITLE_NAMES_OTHER_WORK,)
+            if contradicted:
+                held = (*held, CoverIssue.CURRENT_CONTRADICTED)
+            return result(CoverOutcome.HOLD, None, held)
 
     if current is None:
         if not ranked:
             return result(CoverOutcome.EMPTY, None)
         return result(CoverOutcome.FILL, ranked[0])
 
+    if contradicted:
+        # The current cover's own sources name another work: the owner
+        # decides, whatever its faults (ADR-0094).
+        return result(CoverOutcome.HOLD, None, (CoverIssue.CURRENT_CONTRADICTED,))
+    if current.read is CurrentCoverRead.UNKNOWN:
+        # A read that settled nothing decides nothing.
+        return result(CoverOutcome.KEEP, None)
+    if current.read is CurrentCoverRead.UNREADABLE:
+        # Every eligible candidate is the same work by tier, so the first is
+        # taken; automatically only when the replaced bytes can be kept.
+        unreadable = (CoverIssue.UNREADABLE,)
+        if not ranked:
+            return result(CoverOutcome.KEEP, None, unreadable)
+        automatic = (
+            protection is not CoverProtection.PROPOSALS_ONLY and current.retainable
+        )
+        return result(
+            CoverOutcome.REPLACE if automatic else CoverOutcome.SUGGEST,
+            ranked[0],
+            unreadable,
+        )
+
     issues: list[CoverIssue] = []
-    if readable is None or current_size is None:
-        issues.append(CoverIssue.UNREADABLE)
-    else:
+    if readable is not None and current_size is not None:
         if wrong_shape(*current_size):
             issues.append(CoverIssue.WRONG_SHAPE)
         if _below_floor(*current_size):
@@ -597,12 +655,7 @@ def elect_measured_covers(
             choice = other_art
         if choice is None:
             return result(CoverOutcome.KEEP, None, tuple(issues))
-        # An unreadable cover cannot be retained for Put back, so it is never
-        # switched automatically (#1363 S7).
-        automatic = (
-            protection is not CoverProtection.PROPOSALS_ONLY
-            and CoverIssue.UNREADABLE not in issues
-        )
+        automatic = protection is not CoverProtection.PROPOSALS_ONLY
         return result(
             CoverOutcome.REPLACE if automatic else CoverOutcome.SUGGEST,
             choice,
@@ -652,6 +705,7 @@ __all__ = [
     "CoverProtection",
     "CoverRuleCandidate",
     "CurrentCover",
+    "CurrentCoverRead",
     "MeasuredCoverElection",
     "SameArtGroup",
     "elect_measured_covers",

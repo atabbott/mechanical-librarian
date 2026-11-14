@@ -866,10 +866,19 @@ def _classify_field(
     # is settled the same way on every medium (#1661).
     single_source = _single_source_choice(proposal)
     # The measured stage's decision over a current comparison: a suggested
-    # switch is optional work, never attention, and a title hold always asks
-    # (#1363, S9), as `_REVIEW_FIELD_ATTENTION_REASON_SQL` reads it.
+    # switch is optional work, never attention, and a hold (a title naming
+    # another book, or a current cover whose sources do) asks (#1363 S9,
+    # #1362 S13), as `_REVIEW_FIELD_ATTENTION_REASON_SQL` reads it. Like SQL,
+    # the field's attention also needs an owner action (`has_owner_action`
+    # below), so a hold with nothing to choose shows on the book page only.
     stage_outcome = _cover_stage_outcome(destination, current_cover_consideration)
     cover_suggested = stage_outcome in {"suggest", "replace"}
+    # A cover the stage kept with no fault, read or not, is optional too: a
+    # read that settled nothing keeps the cover until the next scan and the
+    # owner has no keep to record for it (#1362, R1 as amended).
+    cover_optional = cover_suggested or _cover_stage_kept(
+        destination, current_cover_consideration
+    )
     policy_settled = (
         result["outcome"] == "unresolved_choice"
         and "work_alternative_immaterial" not in reasons
@@ -889,7 +898,7 @@ def _classify_field(
                     snapshot.automatic_attention_destinations,
                     policy_attention_destinations=snapshot.policy_attention_destinations,
                     settled_choice_destinations=snapshot.settled_choice_destinations,
-                    cover_suggested=cover_suggested,
+                    cover_suggested=cover_optional,
                 )
             )
             or (
@@ -899,7 +908,7 @@ def _classify_field(
                 and current_cover_consideration["ready"] is True
                 and (
                     stage_outcome == "hold"
-                    or (not _kept_cover(proposal) and not cover_suggested)
+                    or (not _kept_cover(proposal) and not cover_optional)
                 )
             )
         ),
@@ -959,8 +968,9 @@ def _classify_field(
                     context.case.media_kind == "audiobook"
                     or policy_settled
                     or single_source
-                    # A suggested switch is the owner's optional choice (S9).
-                    or cover_suggested
+                    # A suggested switch is the owner's optional choice (S9),
+                    # as is a cover kept with no fault (#1362).
+                    or cover_optional
                 )
                 and bool(actions)
             )
@@ -3411,6 +3421,27 @@ def _cover_stage_outcome(
         return None
     stage = policy.get("stage")
     return cast("str", stage["outcome"]) if type(stage) is dict else None
+
+
+def _cover_stage_kept(
+    destination: str, consideration: dict[str, object] | None
+) -> bool:
+    """Whether the measured stage kept the current cover with no fault.
+
+    Read or not, such a cover never asks: a read that settled nothing keeps
+    the cover until the next scan, and the owner has no keep to record for an
+    image nobody could read (#1362, R1 as amended). `_COVER_SUGGESTED_SQL`
+    reads the same stage facts.
+    """
+    if destination != "cover" or consideration is None:
+        return False
+    policy = consideration.get("policy")
+    stage = policy.get("stage") if type(policy) is dict else None
+    return (
+        type(stage) is dict
+        and stage.get("outcome") == "keep"
+        and stage.get("reason") is None
+    )
 
 
 def _kept_cover(proposal: dict[str, object]) -> bool:
