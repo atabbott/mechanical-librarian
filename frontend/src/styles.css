@@ -1326,7 +1326,7 @@ html[data-reduced-motion='always-reduced'] :is(.route-state, .settings-state, .d
 .preparation-outcomes dd strong { overflow-wrap:anywhere; }
 /* A number and its first word move to the next line together when they fit there, and break at their space only when wider than a line (#1366). */
 .count-pair { display:inline-block; }
-/* One line per completion at every width, so the rows are equal: a long title ends in an ellipsis, and the outcome label never wraps (#1516). */
+/* One line per completion at default text size, so the rows are equal: a long title ends in an ellipsis, and the outcome label never wraps. The container query below covers enlarged text (#1516). */
 .preparation-completions { min-width:0; container-type:inline-size; }
 .preparation-completions li { display:flex; min-width:0; align-items:center; gap:1rem; border-bottom:1px solid var(--line); }
 .preparation-completions li a { display:flex; flex:1 1 auto; min-width:0; min-height:2.75rem; align-items:center; }
