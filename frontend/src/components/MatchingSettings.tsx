@@ -75,9 +75,9 @@ const checkLine = (view: SettingsView, levelChanged: boolean) => {
   const check = view.matching_check
   if (check === null) return ''
   if (check.failed === 1)
-    return '1 work could not be checked against the new setting. Its changes wait until it is. Save the setting again to retry.'
+    return '1 work could not be checked against the new setting. Save the setting again to retry.'
   if (check.failed > 1)
-    return `${String(check.failed)} works could not be checked against the new setting. Their changes wait until they are. Save the setting again to retry.`
+    return `${String(check.failed)} works could not be checked against the new setting. Save the setting again to retry.`
   if (check.checking > 0) return 'Works are being checked against the new setting.'
   if (levelChanged && check.current_works === 0) return 'No works needed checking.'
   return ''
@@ -171,7 +171,7 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
         }}
       />
       {draft === 'identifier' ? null : (
-        <p>Covers from these records say Same title and author. None is chosen automatically.</p>
+        <p>Covers from these records say “Same title and author”. None is chosen automatically.</p>
       )}
       <button
         disabled={locked || stale}

@@ -117,8 +117,7 @@ _FAILURE_REASONS = {
     "cover_retention": "Mechanical Librarian could not save a copy of the current "
     "cover, so it left the cover unchanged",
     "dependency": "Something this change depended on moved",
-    "matching_changed": "Book matching changed, so the cover this was chosen "
-    "from is no longer the comparison",
+    "matching_changed": "Book matching changed after this was prepared",
     "not_applied": "Audiobookshelf did not apply the change",
     "not_sent": "This change was not sent to Audiobookshelf",
     "owner_abandoned": "You stopped this change",

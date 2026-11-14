@@ -1375,6 +1375,12 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
   max-width: 75ch;
   margin: 0.5rem 0;
 }
+/* Book matching's three levels run strict to wide; where they cannot sit in
+   one row they stack one per row, so the order still reads top to bottom. */
+.matching-settings { container-type: inline-size; }
+@container (max-width: 34rem) {
+  .matching-settings .cm-segmented { grid-template-columns: minmax(0, 1fr); }
+}
 .description-advice-fields { display:grid; max-width:52rem; border:1px solid var(--line); border-radius:.65rem; overflow:hidden; }
 .description-advice-fields .settings-field-row:last-child { border-bottom:0; }
 

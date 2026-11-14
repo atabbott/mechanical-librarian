@@ -62,7 +62,7 @@ describe('Book matching', () => {
     expect(option(scope, 'Confirmed matches only')).toHaveAttribute('aria-pressed', 'true')
     expect(
       within(scope).queryByText(
-        'Covers from these records say Same title and author. None is chosen automatically.',
+        'Covers from these records say “Same title and author”. None is chosen automatically.',
       ),
     ).toBeNull()
     const save = within(scope).getByRole('button', { name: 'Save book matching' })
@@ -71,7 +71,7 @@ describe('Book matching', () => {
     await user.click(option(scope, 'Same title and every author'))
     expect(
       within(scope).getByText(
-        'Covers from these records say Same title and author. None is chosen automatically.',
+        'Covers from these records say “Same title and author”. None is chosen automatically.',
       ),
     ).toBeVisible()
     expect(
@@ -110,14 +110,8 @@ describe('Book matching', () => {
   })
 
   it.each([
-    [
-      1,
-      '1 work could not be checked against the new setting. Its changes wait until it is. Save the setting again to retry.',
-    ],
-    [
-      3,
-      '3 works could not be checked against the new setting. Their changes wait until they are. Save the setting again to retry.',
-    ],
+    [1, '1 work could not be checked against the new setting. Save the setting again to retry.'],
+    [3, '3 works could not be checked against the new setting. Save the setting again to retry.'],
   ])(
     'names %i work(s) whose check gave up and retries with the same value',
     async (failed, line) => {
