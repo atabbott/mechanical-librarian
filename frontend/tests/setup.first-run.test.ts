@@ -42,9 +42,19 @@ const setupState = (nextStep: string, overrides: Record<string, unknown> = {}) =
   next_step: nextStep,
   providers: [],
   revision: 3,
-  schema_version: 'setup-state-v4',
+  schema_version: 'setup-state-v5',
   ...overrides,
 })
+
+// The sources step ticks the sources that suit the libraries once its read
+// returns; a test about one chosen source starts from none ticked.
+const untickSources = async () => {
+  await waitFor(() =>
+    expect(screen.queryByText('Loading your libraries…')).not.toBeInTheDocument(),
+  )
+  for (const box of screen.getAllByRole('checkbox'))
+    if (box instanceof HTMLInputElement && box.checked) fireEvent.click(box)
+}
 
 const requestUrl = (request: RequestInfo | URL) => {
   if (typeof request === 'string') return request
@@ -56,19 +66,23 @@ const jsonBody = (body: BodyInit | null | undefined): unknown => {
   return JSON.parse(body) as unknown
 }
 
-const runSetup = () => {
-  window.eval(script)
+// jsdom cannot navigate, and its `location.replace` cannot be spied on, so a
+// test that follows Start runs the shipped script against a stub location.
+type LocationStub = { protocol: string; href: string; origin: string; replace: (url: string) => void }
+const runSetup = (place?: LocationStub) => {
+  if (place) new Function('location', script)(place)
+  else window.eval(script)
 }
+const stubLocation = (protocol = 'http:'): LocationStub & { replace: ReturnType<typeof vi.fn> } => ({
+  protocol,
+  href: `${protocol}//setup.invalid/`,
+  origin: `${protocol}//setup.invalid`,
+  replace: vi.fn(),
+})
 
 const resetSetupDocument = () => {
   document.head.innerHTML = `<style>${css}</style>`
-  // The shipped shell states the prerequisites ahead of the ledger, and the
-  // kickoff step retires them, so the harness has to carry them too.
   document.body.innerHTML = `
-    <section class="prerequisites">
-      <h2>Before you start</h2>
-      <ul><li>A prepared owner-only review-bootstrap.json.</li></ul>
-    </section>
     <ol id="setup-ledger"></ol>
     <main id="setup-main"></main>
     <div id="setup-status"></div>
@@ -151,7 +165,7 @@ describe('shipped first-run setup script', () => {
     vi.stubGlobal('fetch', fetch)
     runSetup()
 
-    expect(await screen.findByRole('heading', { name: 'Create your owner password' })).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'Create your password' })).toBeVisible()
     // The token is copied from a log line or a file, so stray whitespace from
     // the copy never reaches the claim.
     fireEvent.input(screen.getByLabelText('Setup claim token'), {
@@ -163,9 +177,9 @@ describe('shipped first-run setup script', () => {
     fireEvent.input(screen.getByLabelText('Confirm owner password'), {
       target: { value: 'correct horse battery staple' },
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Create owner access' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Create your password' }))
 
-    expect(await screen.findByRole('heading', { name: 'Choose metadata providers' })).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'Choose metadata sources' })).toBeVisible()
   })
 
   it('names where the claim token is and recovers a refused token in place', async () => {
@@ -197,25 +211,27 @@ describe('shipped first-run setup script', () => {
     expect(token).toHaveAttribute('type', 'password')
     expect(token).toHaveAttribute('maxlength', '128')
     expect(screen.getByRole('button', { name: 'Show the setup claim token' })).toBeVisible()
-    expect(
-      screen.getByText(
-        'Copy the setup claim token from the container log, or from private/setup-claim-token on the data volume. A restart replaces the token, so use the newest one.',
-      ),
-    ).toBeVisible()
+    // The hint names the log and the command that prints it, and is said
+    // with the field.
+    const where = screen.getByText(/It’s in the container log\. Restarting the container replaces it\./u)
+    expect(where).toBeVisible()
+    expect(within(where).getByText('docker compose logs mechanical-librarian').tagName).toBe('CODE')
+    expect(token).toHaveAttribute('aria-describedby', where.id)
+    expect(screen.queryByText(/private\/setup-claim-token/u)).not.toBeInTheDocument()
     expect(screen.queryByText(/first visitor/u)).not.toBeInTheDocument()
     const password = screen.getByLabelText('Owner password')
     const confirmation = screen.getByLabelText('Confirm owner password')
     fireEvent.input(token, { target: { value: 'mistyped-token' } })
     fireEvent.input(password, { target: { value: 'correct horse battery staple' } })
     fireEvent.input(confirmation, { target: { value: 'correct horse battery staple' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Create owner access' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Create your password' }))
 
     const alert = await screen.findByRole('alert')
-    expect(alert).toHaveTextContent('That setup claim token was not accepted.')
-    expect(alert).toHaveTextContent('container log')
-    expect(alert).toHaveTextContent('a restart replaces it')
+    expect(alert).toHaveTextContent(
+      'That setup claim token was not accepted. Copy the newest one from the container log.',
+    )
     await waitFor(() => expect(token).toHaveAttribute('aria-invalid', 'true'))
-    expect(token).toHaveAttribute('aria-describedby', alert.id)
+    expect(token).toHaveAttribute('aria-describedby', `${alert.id} ${where.id}`)
     await waitFor(() => expect(token).toHaveFocus())
     // The refused request spent its nonce; a fresh one is fetched in place and
     // every typed field stays where it was.
@@ -227,9 +243,9 @@ describe('shipped first-run setup script', () => {
 
     fireEvent.input(token, { target: { value: 'deployment-held-claim-token' } })
     expect(token).not.toHaveAttribute('aria-invalid')
-    fireEvent.click(screen.getByRole('button', { name: 'Create owner access' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Create your password' }))
 
-    expect(await screen.findByRole('heading', { name: 'Choose metadata providers' })).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'Choose metadata sources' })).toBeVisible()
     expect(submitted).toEqual([
       { nonce: '1'.repeat(32), token: 'mistyped-token' },
       { nonce: '2'.repeat(32), token: 'deployment-held-claim-token' },
@@ -261,7 +277,7 @@ describe('shipped first-run setup script', () => {
     fireEvent.input(screen.getByLabelText('Confirm owner password'), {
       target: { value: 'correct horse battery staple' },
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Create owner access' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Create your password' }))
 
     expect(await screen.findByRole('heading', { name: 'Sign in to continue' })).toBeVisible()
     expect(screen.queryByLabelText('Setup claim token')).not.toBeInTheDocument()
@@ -293,7 +309,7 @@ describe('shipped first-run setup script', () => {
     fireEvent.input(screen.getByLabelText('Confirm owner password'), {
       target: { value: 'correct horse battery staple' },
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Create owner access' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Create your password' }))
 
     expect(await screen.findByRole('heading', { name: 'Sign in to continue' })).toBeVisible()
     expect(screen.queryByLabelText('Confirm owner password')).not.toBeInTheDocument()
@@ -326,7 +342,7 @@ describe('shipped first-run setup script', () => {
     fireEvent.input(screen.getByLabelText('Confirm owner password'), {
       target: { value: 'a different password' },
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Create owner access' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Create your password' }))
 
     expect(await screen.findByRole('heading', { name: 'Sign in to continue' })).toBeVisible()
     expect(screen.queryByLabelText('Confirm owner password')).not.toBeInTheDocument()
@@ -358,33 +374,32 @@ describe('shipped first-run setup script', () => {
     runSetup()
 
     const claimHeading = await screen.findByRole('heading', {
-      name: 'Create your owner password',
+      name: 'Create your password',
     })
     await waitFor(() => expect(claimHeading).toHaveFocus())
-    // The seven-step ledger is drawn on the very first screen, which is
-    // reached before any setup session exists.
-    expect(document.querySelectorAll('#setup-ledger .ledger-row')).toHaveLength(7)
+    // The ledger is drawn on the very first screen, which is reached before
+    // any setup session exists; the folder step shows only when it is asked.
+    expect(document.querySelectorAll('#setup-ledger .ledger-row')).toHaveLength(6)
     // #1384: the rules follow the password field they govern and describe it,
     // rather than reading as rules for the claim token above them.
-    const stated = screen.getByText(
-      'At least 12 characters. Any characters are allowed, including spaces.',
-    )
+    const stated = screen.getByText('At least 12 characters.')
     expect(stated).toBeVisible()
     const rulesList = stated.closest('ul')
     if (!rulesList) throw new Error('password rules missing')
     expect(rulesList.id).toBe('setup-password-rules')
-    expect(screen.getByText('Both fields must match exactly.').id).toBe('setup-password-match')
-    expect(screen.getByLabelText('Confirm owner password')).toHaveAttribute(
+    expect(screen.queryByText('Both fields must match exactly.')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Confirm owner password')).not.toHaveAttribute(
       'aria-describedby',
-      'setup-password-match',
     )
     expect(rulesList.previousElementSibling).toContainElement(
       screen.getByLabelText('Owner password'),
     )
-    expect(screen.getByText(/cannot be read back or reset/u)).toBeVisible()
+    expect(screen.getByText('There’s no password reset, so keep it somewhere safe.')).toBeVisible()
     // ADR-0072's supported default first run is plain HTTP, and jsdom serves
-    // this page over `http:`, so the clear-text statement is the live branch.
-    expect(screen.getByText(/travel in clear text across this network/u)).toBeVisible()
+    // this page over `http:`, so the one-line notice is the live branch.
+    expect(
+      screen.getByText('This page uses plain HTTP. Use it only on a network you trust.'),
+    ).toBeVisible()
 
     const password = screen.getByLabelText('Owner password')
     const confirmation = screen.getByLabelText('Confirm owner password')
@@ -441,7 +456,7 @@ describe('shipped first-run setup script', () => {
     expect(screen.getByRole('alert')).toHaveTextContent(
       settingsVocabulary.errors.owner_password_mismatch,
     )
-    expect(confirmation).toHaveAttribute('aria-describedby', 'setup-error setup-password-match')
+    expect(confirmation).toHaveAttribute('aria-describedby', 'setup-error')
     expect(confirmation).toHaveFocus()
     expect(password).not.toHaveAttribute('aria-invalid')
     expect(sessions).toBe(0)
@@ -504,7 +519,7 @@ describe('shipped first-run setup script', () => {
     expect(password).toHaveAttribute('aria-describedby', `${alert.id} setup-password-rules`)
     expect(alert.previousElementSibling).toContainElement(password)
     expect(confirmation).not.toHaveAttribute('aria-invalid')
-    expect(confirmation).toHaveAttribute('aria-describedby', 'setup-password-match')
+    expect(confirmation).not.toHaveAttribute('aria-describedby')
 
     // The marked field still clears its own refusal.
     fireEvent.input(password, { target: { value: 'second password again' } })
@@ -561,21 +576,21 @@ describe('shipped first-run setup script', () => {
   })
 
   it.each([
-    [422, 'invalid_endpoint', 'Enter only the scheme, host and port', 'endpoint'],
-    [502, 'unauthorized', 'Issue a key that can read your libraries', 'key'],
-    [502, 'name_resolution', 'that name does not resolve here', 'endpoint'],
+    [422, 'invalid_endpoint', 'Enter only the address and port', 'endpoint'],
+    [502, 'unauthorized', 'Create a key that can read your libraries', 'key'],
+    [502, 'name_resolution', 'could not find https://books.invalid:8443. Check the address', 'endpoint'],
     [502, 'refused', 'refused the connection', 'endpoint'],
-    [502, 'tls', 'Mechanical Librarian never skips verification.', 'endpoint'],
+    [502, 'tls', 'Use an address with a trusted certificate', 'endpoint'],
     [502, 'timeout', 'did not answer in time.', 'endpoint'],
-    [502, 'unavailable', 'could not be read, so nothing was recorded', 'endpoint'],
-    [502, 'redirect', 'Enter the direct Audiobookshelf address', 'endpoint'],
-    [502, 'malformed', 'not with the supported libraries response', 'endpoint'],
-    [502, 'oversize', 'more data than setup can safely read', 'endpoint'],
+    [502, 'unavailable', 'could not be read. Check that it is running', 'endpoint'],
+    [502, 'redirect', 'Enter Audiobookshelf’s own address.', 'endpoint'],
+    [502, 'malformed', 'did not answer like Audiobookshelf', 'endpoint'],
+    [502, 'oversize', 'more data than setup can read', 'endpoint'],
     [400, 'invalid_origin', 'one X-Forwarded-Host and one X-Forwarded-Proto', 'endpoint'],
     // Another tab rotated the form token: the step reloads and says so.
     [403, 'csrf', 'Setup changed in another tab.', null],
-    [401, 'unauthorized', 'Your setup sign-in expired', null],
-    [500, 'unavailable', 'Setup could not finish that step', null],
+    [401, 'unauthorized', 'Your sign-in expired', null],
+    [500, 'unavailable', 'That step was not saved.', null],
   ] as const)(
     'explains the %i %s connection refusal and keeps the entered address',
     async (status, code, copy, invalidField) => {
@@ -629,7 +644,8 @@ describe('shipped first-run setup script', () => {
         // A field refusal stays after its field, above the button.
         expect(alert.previousElementSibling).toBe(invalid.closest('.field'))
         expect(invalid).toHaveAttribute('aria-invalid', 'true')
-        expect(invalid).toHaveAttribute('aria-describedby', alert.id)
+        // The refusal leads, and the field's own hint is still said with it.
+        expect(invalid).toHaveAttribute('aria-describedby', `${alert.id} ${invalid.dataset.hint}`)
         expect(invalid).toHaveFocus()
         expect(released).not.toHaveAttribute('aria-invalid')
       }
@@ -690,7 +706,7 @@ describe('shipped first-run setup script', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Verify and continue' }))
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent(
-      'That address could not be used. Enter only the scheme, host and port Audiobookshelf serves on, such as https://audiobookshelf.example:13378, with no path, user name or password.',
+      'Enter only the address and port, such as http://192.168.1.10:13378, with no path, user name or password.',
     )
     for (const secret of ['owner', 'hunter2', 'query-secret', 'target-key-secret'])
       expect(alert.textContent).not.toContain(secret)
@@ -725,7 +741,7 @@ describe('shipped first-run setup script', () => {
       fireEvent.input(endpoint, { target: { value } })
       fireEvent.click(screen.getByRole('button', { name: 'Verify and continue' }))
       const alert = await screen.findByRole('alert')
-      await waitFor(() => expect(alert).toHaveTextContent('Enter only the scheme, host and port'))
+      await waitFor(() => expect(alert).toHaveTextContent('Enter only the address and port'))
       expect(endpoint).toHaveAttribute('aria-invalid', 'true')
       expect(endpoint).toHaveFocus()
       expect(attempts).toEqual([])
@@ -765,7 +781,7 @@ describe('shipped first-run setup script', () => {
       const alert = await screen.findByRole('alert')
       await waitFor(() => expect(alert).toHaveTextContent(settingsVocabulary.errors.secret))
       expect(key).toHaveAttribute('aria-invalid', 'true')
-      expect(key).toHaveAttribute('aria-describedby', alert.id)
+      expect(key).toHaveAttribute('aria-describedby', `${alert.id} ${key.dataset.hint}`)
       expect(key).toHaveFocus()
       expect(endpoint).not.toHaveAttribute('aria-invalid')
       expect(attempts).toEqual([])
@@ -791,6 +807,7 @@ describe('shipped first-run setup script', () => {
     runSetup()
 
     const openLibrary = await screen.findByLabelText('Open Library')
+    await untickSources()
     fireEvent.click(openLibrary)
     const email = screen.getByLabelText('Open Library contact email')
     const form = email.closest('form')
@@ -870,9 +887,9 @@ describe('shipped first-run setup script', () => {
 
   it.each([
     ['connect', 'Connect Audiobookshelf', '/api/setup/connect', 'Verify and continue'],
-    ['providers', 'Choose metadata providers', '/api/setup/providers', 'Continue'],
+    ['providers', 'Choose metadata sources', '/api/setup/providers', 'Continue'],
     ['libraries', 'Choose libraries', '/api/setup/libraries', 'Continue'],
-    ['mounts', 'Check read-only mounts', '/api/setup/mounts', 'Check mounts'],
+    ['mounts', 'Find library folders', '/api/setup/mounts', 'Check again'],
   ] as const)(
     'runs no %s client check for a repeat submit while the step is recorded (#1678)',
     async (step, heading, path, name) => {
@@ -902,7 +919,7 @@ describe('shipped first-run setup script', () => {
           if (step === 'mounts')
             return response(
               setupState('mounts', {
-                completed_steps: ['claim', 'connect', 'providers', 'libraries'],
+                completed_steps: ['claim', 'connect', 'libraries'],
                 libraries: [
                   {
                     connection: 'primary',
@@ -923,9 +940,6 @@ describe('shipped first-run setup script', () => {
 
       const title = await screen.findByRole('heading', { name: heading })
       await waitFor(() => expect(title).toHaveFocus())
-      await waitFor(() =>
-        expect(screen.queryByText('Reading your libraries to suggest providers…')).toBeNull(),
-      )
       // Each row fills the step so the first press passes its client checks, then
       // edits a field so that a second submit would fail them.
       let edited: HTMLElement
@@ -939,18 +953,20 @@ describe('shipped first-run setup script', () => {
         edited = endpoint
         edit = () => fireEvent.input(endpoint, { target: { value: 'not-a-url' } })
       } else if (step === 'providers') {
+        await untickSources()
         fireEvent.click(screen.getByLabelText('Open Library'))
         const email = screen.getByLabelText('Open Library contact email')
         fireEvent.input(email, { target: { value: 'owner@example.org' } })
         edited = email
         edit = () => fireEvent.input(email, { target: { value: 'not an email' } })
       } else if (step === 'libraries') {
+        // Every book library starts ticked.
         const books = await screen.findByRole('checkbox', { name: 'Reading Shelf' })
-        fireEvent.click(books)
+        expect(books).toBeChecked()
         edited = books
         edit = () => fireEvent.click(books)
       } else {
-        const typed = screen.getByLabelText('Reading Shelf service path')
+        const typed = screen.getByLabelText('Reading Shelf folder in Audiobookshelf')
         fireEvent.input(typed, { target: { value: '/owner/typed/books' } })
         edited = typed
         edit = () => fireEvent.input(typed, { target: { value: '' } })
@@ -975,13 +991,13 @@ describe('shipped first-run setup script', () => {
         // restored step shows the path that was sent, not the cleared one.
         release(response({ detail: { error: 'stale' } }, 409))
         expect(await screen.findByRole('alert')).toHaveTextContent('Setup changed in another tab.')
-        expect(screen.getByLabelText('Reading Shelf service path')).toHaveValue(
+        expect(screen.getByLabelText('Reading Shelf folder in Audiobookshelf')).toHaveValue(
           '/owner/typed/books',
         )
       } else {
         release(response({ detail: { error: 'unavailable' } }, 500))
         const alert = await screen.findByRole('alert')
-        await waitFor(() => expect(alert).toHaveTextContent('Setup could not finish that step'))
+        await waitFor(() => expect(alert).toHaveTextContent('That step was not saved.'))
         if (step === 'connect') expect(alert.previousElementSibling).toBe(pressed)
       }
       expect(attempts).toBe(1)
@@ -994,7 +1010,7 @@ describe('shipped first-run setup script', () => {
       vi.fn(async () => response(setupState('providers'))),
     )
     runSetup()
-    await screen.findByRole('heading', { name: 'Choose metadata providers' })
+    await screen.findByRole('heading', { name: 'Choose metadata sources' })
 
     const contributions = settingsVocabulary.provider_contributions as Record<string, string>
     for (const [adapter, label] of Object.entries(settingsVocabulary.provider_labels)) {
@@ -1011,19 +1027,21 @@ describe('shipped first-run setup script', () => {
         expect(screen.getByRole('button', { name: `Show the ${label} API key` })).toBeVisible()
       }
     }
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Open Library' }))
+    const openLibrary = screen.getByRole('checkbox', { name: 'Open Library' })
+    if (!openLibrary.matches(':checked')) fireEvent.click(openLibrary)
     expect(screen.getByLabelText('Open Library contact email')).toBeEnabled()
+    expect(openLibrary.closest('.option')).toHaveTextContent(
+      'Needs your email address. No account needed.',
+    )
     expect(screen.queryByLabelText('API key')).toBeNull()
     expect(screen.queryByLabelText('Contact email')).toBeNull()
 
-    // The wizard records `cover_enabled: false` for these two and says so.
-    for (const label of ['Audible', 'iTunes'])
-      expect(screen.getByRole('checkbox', { name: label }).closest('.option')).toHaveTextContent(
-        `Cover evidence from ${label} stays off until you turn it on in Settings.`,
-      )
-    expect(
-      screen.getByRole('checkbox', { name: 'Hardcover' }).closest('.option'),
-    ).not.toHaveTextContent('Cover evidence from Hardcover')
+    // Each card is one line: no cover line, and iTunes claims no covers.
+    expect(screen.queryByText(/Cover evidence from/u)).toBeNull()
+    expect(screen.getByRole('checkbox', { name: 'iTunes' }).closest('.option')).toHaveTextContent(
+      "Checks an ebook's title and author against iTunes audiobook listings.",
+    )
+    expect(screen.queryByText(/adds audiobook covers/u)).toBeNull()
   })
 
   it('keeps the entered service paths through a refused comparison and drops them on reopen', async () => {
@@ -1035,7 +1053,7 @@ describe('shipped first-run setup script', () => {
       name: 'books',
       provider_connections: [],
     }
-    let mounts: { library: string; state: string }[] = []
+    let mounts: { library: string; state: string }[] = [{ library: 'books', state: 'missing' }]
     let step = 'mounts'
     let revision = 5
     const changes: unknown[] = []
@@ -1054,32 +1072,27 @@ describe('shipped first-run setup script', () => {
           ],
         })
       if (url === '/api/setup/mounts' && init?.method === 'POST') {
-        const paths = jsonBody(init.body) as { service_paths: Record<string, string | null> }
         revision += 1
-        if (paths.service_paths.books === '/owner/typed/books')
-          mounts = [{ library: 'books', state: 'missing' }]
-        else {
-          mounts = [{ library: 'books', state: 'matched' }]
-          step = 'kick_off'
-        }
+        mounts = [{ library: 'books', state: 'missing' }]
+        return response({})
+      }
+      if (url === '/api/setup/libraries' && init?.method === 'POST') {
+        revision += 1
+        mounts = [{ library: 'books', state: 'missing' }]
+        step = 'mounts'
         return response({})
       }
       if (url === '/api/setup/change' && init?.method === 'POST') {
         changes.push(jsonBody(init.body))
         mounts = []
-        step = 'mounts'
+        step = 'libraries'
         revision += 1
         return response({})
       }
-      if (url === '/api/setup/reviewer-access')
-        return response({ mapping: null, revision, codex: { state: 'host_unsupported' } })
       return response(
         setupState(step, {
-          completed_steps:
-            step === 'kick_off'
-              ? ['claim', 'connect', 'providers', 'libraries', 'mounts', 'reviewer']
-              : ['claim', 'connect', 'providers', 'libraries'],
-          libraries: [library],
+          completed_steps: step === 'mounts' ? ['claim', 'connect', 'libraries'] : ['claim', 'connect'],
+          libraries: step === 'mounts' ? [library] : [],
           mounts,
           revision,
         }),
@@ -1088,42 +1101,43 @@ describe('shipped first-run setup script', () => {
     vi.stubGlobal('fetch', fetch)
     runSetup()
 
-    const path = await screen.findByLabelText('Reading Shelf service path')
+    const path = await screen.findByLabelText('Reading Shelf folder in Audiobookshelf')
     expect(path).toHaveValue('/discovered/books')
-    expect(screen.getByText(/the path inside that service/u)).toBeVisible()
+    expect(screen.queryByText(/the path inside that service/u)).toBeNull()
     fireEvent.input(path, { target: { value: '/owner/typed/books' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Check mounts' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Check again' }))
 
     // UX-008: the refused comparison keeps what the owner typed.
-    expect(await screen.findByRole('button', { name: 'Retest mounts' })).toBeVisible()
-    expect(screen.getByLabelText('Reading Shelf service path')).toHaveValue('/owner/typed/books')
-    const results = screen.getByRole('status')
-    expect(results).toHaveTextContent('Reading Shelf: No mapping')
-    expect(results).toHaveTextContent('Correct the Audiobookshelf service path')
-    expect(results.textContent).not.toContain('missing')
+    await waitFor(() => expect(revision).toBe(6))
+    expect(await screen.findByRole('button', { name: 'Check again' })).toBeVisible()
+    expect(screen.getByLabelText('Reading Shelf folder in Audiobookshelf')).toHaveValue(
+      '/owner/typed/books',
+    )
+    const result = document.querySelector('.mount-line')
+    if (!result) throw new Error('folder result missing')
+    expect(result).toHaveTextContent('Reading Shelf: Not found')
+    expect(result.textContent).not.toContain('missing')
 
-    fireEvent.input(screen.getByLabelText('Reading Shelf service path'), {
-      target: { value: '/discovered/books' },
-    })
-    fireEvent.click(screen.getByRole('button', { name: 'Retest mounts' }))
-    expect(await screen.findByRole('heading', { name: 'Kick off preparation' })).toBeVisible()
-
+    // Reopening an earlier step abandons the draft: the folder step shows the
+    // reported value again when it is asked next.
     const ledger = document.querySelector('#setup-ledger')
     if (!ledger) throw new Error('ledger missing')
-    const mountRow = [...ledger.querySelectorAll<HTMLElement>('.ledger-row')].find((row) =>
-      row.textContent.includes('Check read-only mounts'),
+    const librariesRow = [...ledger.querySelectorAll<HTMLElement>('.ledger-row')].find((row) =>
+      row.textContent.includes('Choose libraries'),
     )
-    if (!mountRow) throw new Error('mount ledger row missing')
-    fireEvent.click(within(mountRow).getByRole('button', { name: 'Change Check read-only mounts' }))
-
-    // Reopening the step abandons the draft and shows the discovered value.
+    if (!librariesRow) throw new Error('libraries ledger row missing')
+    fireEvent.click(within(librariesRow).getByRole('button', { name: 'Change Choose libraries' }))
+    expect(await screen.findByRole('heading', { name: 'Choose libraries' })).toBeVisible()
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue' }))
     await waitFor(() =>
-      expect(screen.getByLabelText('Reading Shelf service path')).toHaveValue('/discovered/books'),
+      expect(screen.getByLabelText('Reading Shelf folder in Audiobookshelf')).toHaveValue(
+        '/discovered/books',
+      ),
     )
-    expect(changes).toEqual([{ expected_revision: 7, step: 'mounts' }])
+    expect(changes).toEqual([{ expected_revision: 6, step: 'libraries' }])
   })
 
-  it('places a refused mount comparison under Check mounts and keeps the typed path (#1664)', async () => {
+  it('places a refused mount comparison under Check again and keeps the typed path (#1664)', async () => {
     const library = {
       connection: 'primary',
       display_name: 'Reading Shelf',
@@ -1152,7 +1166,7 @@ describe('shipped first-run setup script', () => {
           return response({ detail: { error: 'invalid_mounts' } }, 422)
         return response(
           setupState('mounts', {
-            completed_steps: ['claim', 'connect', 'providers', 'libraries'],
+            completed_steps: ['claim', 'connect', 'libraries'],
             libraries: [library],
             revision: 5,
           }),
@@ -1161,17 +1175,17 @@ describe('shipped first-run setup script', () => {
     )
     runSetup()
 
-    const heading = await screen.findByRole('heading', { name: 'Check read-only mounts' })
+    const heading = await screen.findByRole('heading', { name: 'Find library folders' })
     await waitFor(() => expect(heading).toHaveFocus())
-    const path = screen.getByLabelText('Reading Shelf service path')
+    const path = screen.getByLabelText('Reading Shelf folder in Audiobookshelf')
     fireEvent.input(path, { target: { value: '/owner/typed/books' } })
-    const check = screen.getByRole('button', { name: 'Check mounts' })
+    const check = screen.getByRole('button', { name: 'Check again' })
     check.focus()
     fireEvent.click(check)
 
     const alert = await screen.findByRole('alert')
     await waitFor(() =>
-      expect(alert).toHaveTextContent('One of those service paths could not be used.'),
+      expect(alert).toHaveTextContent('Those folders could not be checked. Reload the page, then check again.'),
     )
     expect(screen.getAllByRole('alert')).toHaveLength(1)
     expect(alert.previousElementSibling).toBe(check)
@@ -1217,7 +1231,7 @@ describe('shipped first-run setup script', () => {
       }
       return response(
         setupState('mounts', {
-          completed_steps: ['claim', 'connect', 'providers', 'libraries'],
+          completed_steps: ['claim', 'connect', 'libraries'],
           libraries: [library],
           mounts,
           revision,
@@ -1227,10 +1241,10 @@ describe('shipped first-run setup script', () => {
     vi.stubGlobal('fetch', fetch)
     runSetup()
 
-    const path = await screen.findByLabelText('Reading Shelf service path')
+    const path = await screen.findByLabelText('Reading Shelf folder in Audiobookshelf')
     fireEvent.input(path, { target: { value: '/owner/typed/books' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Check mounts' }))
-    expect(await screen.findByRole('button', { name: 'Retest mounts' })).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Check again' }))
+    await waitFor(() => expect(document.querySelector('.mount-line')).not.toBeNull())
 
     const ledger = document.querySelector('#setup-ledger')
     if (!ledger) throw new Error('ledger missing')
@@ -1245,19 +1259,19 @@ describe('shipped first-run setup script', () => {
     await waitFor(() => expect(changeAttempts).toBe(1))
     const status = document.querySelector('#setup-status')
     await waitFor(() => expect(status).toHaveTextContent('changed in another tab'))
-    expect(screen.getByRole('heading', { name: 'Check read-only mounts' })).toBeVisible()
-    expect(screen.getByLabelText('Reading Shelf service path')).toHaveValue('/owner/typed/books')
-    expect(screen.getByRole('status')).toHaveTextContent('Reading Shelf: No mapping')
+    expect(screen.getByRole('heading', { name: 'Find library folders' })).toBeVisible()
+    expect(screen.getByLabelText('Reading Shelf folder in Audiobookshelf')).toHaveValue('/owner/typed/books')
+    expect(document.querySelector('.mount-line')).toHaveTextContent('Reading Shelf: Not found')
   })
 
-  it('summarizes the configured scope with one reopen seam and clears it at kickoff', async () => {
+  it('summarizes the configured scope with one reopen seam in step order', async () => {
     const changes: unknown[] = []
     const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
       const url = requestUrl(request)
       if (url === '/api/setup/reviewer-access')
         return response({
           revision: 7,
-          mapping: { engine: 'openrouter', model: 'vendor/model' },
+          mapping: { engine: 'openrouter', model: 'openai/gpt-6-luna' },
           codex: { state: 'host_unsupported' },
         })
       if (url === '/api/setup/change' && init?.method === 'POST') {
@@ -1269,7 +1283,7 @@ describe('shipped first-run setup script', () => {
       if (url === '/api/v1/review-preparation') return response({ presentation: null })
       return response(
         setupState('kick_off', {
-          completed_steps: ['claim', 'connect', 'providers', 'libraries', 'mounts'],
+          completed_steps: ['claim', 'connect', 'libraries', 'mounts', 'providers', 'reviewer'],
           connection: { endpoint: 'https://books.invalid:8443', name: 'primary' },
           libraries: [
             {
@@ -1298,52 +1312,65 @@ describe('shipped first-run setup script', () => {
       if (!node) throw new Error('kickoff summary missing')
       return node
     })
-    expect(summary).toHaveTextContent('Audiobookshelf address')
+    expect(screen.getByRole('heading', { name: 'Start' })).toBeVisible()
+    expect(
+      screen.getByText(
+        'Check your choices, then start. Mechanical Librarian will read your library and suggest changes for you to review.',
+      ),
+    ).toBeVisible()
+    // Rows follow the step order: address, libraries, sources, reviewer.
+    expect([...summary.querySelectorAll('dt')].map((node) => node.textContent)).toEqual([
+      'Audiobookshelf address',
+      'Libraries',
+      'Metadata sources',
+      'Cover reviewer',
+    ])
     expect(summary).toHaveTextContent('https://books.invalid:8443')
-    expect(summary).toHaveTextContent('Metadata providers')
     expect(summary).toHaveTextContent('Open Library')
     expect(summary).not.toHaveTextContent('Hardcover')
-    expect(summary).toHaveTextContent('Reading Shelf — read-only mount matched')
-    expect(summary).toHaveTextContent('Cover reviewer')
-    expect(summary).toHaveTextContent('OpenRouter')
+    expect(summary).toHaveTextContent('Reading Shelf: files found')
+    expect(summary).toHaveTextContent('GPT-6 Luna on OpenRouter')
     // No credential and no filesystem path reaches the summary.
-    expect(summary.textContent).not.toContain('vendor/model')
+    expect(summary.textContent).not.toContain('openai/gpt-6-luna')
     expect(summary.textContent).not.toMatch(/(^|\s)\/[A-Za-z]/u)
+    // The write notice is said once, before Start.
+    expect(
+      screen.getAllByText(
+        'Nothing in your library changes. Writes stay off until you turn them on in Activity.',
+      ),
+    ).toHaveLength(1)
 
-    // One `reopen` seam: four recorded ledger rows plus four summary rows,
-    // and each control names the step it reopens.
+    // One `reopen` seam: the recorded ledger rows plus four summary rows, and
+    // each control names the step it reopens. The folder step is not listed
+    // once every folder was found.
     const ledgerChanges = [...document.querySelectorAll('#setup-ledger button')]
     expect(ledgerChanges.map((node) => node.getAttribute('aria-label'))).toEqual([
       'Change Connect Audiobookshelf',
-      'Change Choose metadata providers',
       'Change Choose libraries',
-      'Change Check read-only mounts',
+      'Change Choose metadata sources',
+      'Change Cover reviewer (optional)',
     ])
     const summaryChanges = [...summary.querySelectorAll('.summary-change')]
     expect(summaryChanges).toHaveLength(4)
     expect(summaryChanges.map((node) => node.getAttribute('aria-label'))).toEqual([
       'Change the Audiobookshelf address',
-      'Change the metadata providers',
       'Change the selected libraries',
+      'Change the metadata sources',
       'Change the cover reviewer',
     ])
 
     fireEvent.click(screen.getByRole('button', { name: 'Change the selected libraries' }))
     await waitFor(() => expect(changes).toEqual([{ expected_revision: 7, step: 'libraries' }]))
-
-    fireEvent.click(screen.getByRole('button', { name: 'Kick off preparation' }))
-    expect(await screen.findByRole('heading', { name: 'Preparation is starting' })).toBeVisible()
-    expect(document.querySelector('.summary')).toBeNull()
   })
 
   it.each([
-    [503, 'activation_failed', 'Preparation could not be started, so nothing changed.'],
-    [401, 'session_expired', 'Your setup sign-in expired, so nothing was recorded.'],
     [
-      422,
-      'mounts_unready',
-      'Every selected book library needs one matching read-only mount before kickoff.',
+      503,
+      'activation_failed',
+      'Mechanical Librarian could not start. Press Start again. If it fails again, the container log says why.',
     ],
+    [401, 'session_expired', 'Your sign-in expired, so that step was not saved.'],
+    [422, 'mounts_unready', 'A library’s folder was not found. Find it before you start.'],
   ] as const)(
     'posts one kickoff for two presses and places a %s %s failure under the button (#1677)',
     async (status, code, copy) => {
@@ -1362,16 +1389,16 @@ describe('shipped first-run setup script', () => {
         }
         return response(
           setupState('kick_off', {
-            completed_steps: ['claim', 'connect', 'providers', 'libraries', 'mounts'],
+            completed_steps: ['claim', 'connect', 'libraries', 'mounts', 'providers'],
           }),
         )
       })
       vi.stubGlobal('fetch', fetch)
       runSetup()
 
-      const heading = await screen.findByRole('heading', { name: 'Kick off preparation' })
+      const heading = await screen.findByRole('heading', { name: 'Start' })
       await waitFor(() => expect(heading).toHaveFocus())
-      const submit = await screen.findByRole('button', { name: 'Kick off preparation' })
+      const submit = await screen.findByRole('button', { name: 'Start' })
       const form = submit.closest('form')
       if (!form) throw new Error('kickoff form missing')
       submit.focus()
@@ -1393,7 +1420,7 @@ describe('shipped first-run setup script', () => {
       expect(submit).not.toHaveAttribute('aria-disabled')
       expect(submit).toBeEnabled()
       expect(submit).toHaveFocus()
-      expect(screen.getByRole('heading', { name: 'Kick off preparation' })).toBeVisible()
+      expect(screen.getByRole('heading', { name: 'Start' })).toBeVisible()
       expect(kickoffs).toBe(1)
     },
   )
@@ -1414,16 +1441,16 @@ describe('shipped first-run setup script', () => {
         if (url === '/api/setup/state') reads += 1
         return response(
           setupState('kick_off', {
-            completed_steps: ['claim', 'connect', 'providers', 'libraries', 'mounts'],
+            completed_steps: ['claim', 'connect', 'libraries', 'mounts', 'providers'],
           }),
         )
       })
       vi.stubGlobal('fetch', fetch)
       runSetup()
 
-      const heading = await screen.findByRole('heading', { name: 'Kick off preparation' })
+      const heading = await screen.findByRole('heading', { name: 'Start' })
       await waitFor(() => expect(heading).toHaveFocus())
-      const submit = screen.getByRole('button', { name: 'Kick off preparation' })
+      const submit = screen.getByRole('button', { name: 'Start' })
       submit.focus()
       fireEvent.click(submit)
 
@@ -1435,12 +1462,12 @@ describe('shipped first-run setup script', () => {
         ),
       )
       expect(screen.getAllByRole('alert')).toHaveLength(1)
-      const fresh = screen.getByRole('button', { name: 'Kick off preparation' })
+      const fresh = screen.getByRole('button', { name: 'Start' })
       expect(fresh).not.toBe(submit)
       expect(alert.closest('form')?.firstElementChild).toBe(alert)
       expect(fresh).not.toHaveAttribute('aria-disabled')
       await waitFor(() =>
-        expect(screen.getByRole('heading', { name: 'Kick off preparation' })).toHaveFocus(),
+        expect(screen.getByRole('heading', { name: 'Start' })).toHaveFocus(),
       )
     },
   )
@@ -1453,20 +1480,21 @@ describe('shipped first-run setup script', () => {
     runSetup()
 
     const openLibrary = await screen.findByRole('checkbox', { name: 'Open Library' })
-    const contact = document.querySelector<HTMLInputElement>('input[name="open-email"]')
-    expect(contact).not.toBeNull()
-    const contactField = contact?.closest('.field')
+    // A default-ticked source shows its fields on its own card.
+    await waitFor(() => expect(openLibrary).toBeChecked())
+    const contact = await screen.findByRole('textbox', { name: 'Open Library contact email' })
+    expect(contact).toBeEnabled()
+    const contactField = contact.closest('.field')
     if (!contactField) throw new Error('provider credential field missing')
+    expect(getComputedStyle(contactField).display).toBe('grid')
+
+    // Unticked, its fields leave the visual and accessibility trees.
+    fireEvent.click(openLibrary)
+
     expect(contact).toBeDisabled()
     expect(contactField).toHaveAttribute('hidden')
     expect(getComputedStyle(contactField).display).toBe('none')
     expect(screen.queryByRole('textbox', { name: 'Open Library contact email' })).toBeNull()
-
-    fireEvent.click(openLibrary)
-
-    expect(await screen.findByRole('textbox', { name: 'Open Library contact email' })).toBeEnabled()
-    expect(contactField).not.toHaveAttribute('hidden')
-    expect(getComputedStyle(contactField).display).toBe('grid')
   })
 
   it('offers the keyless audiobook providers with no credential control', async () => {
@@ -1483,6 +1511,8 @@ describe('shipped first-run setup script', () => {
     )
     runSetup()
 
+    await screen.findByRole('heading', { name: 'Choose metadata sources' })
+    await untickSources()
     for (const label of ['Audible', 'Audnexus', 'AudioSilo', 'iTunes']) {
       const control = await screen.findByRole('checkbox', { name: label })
       expect(control).toBeVisible()
@@ -1498,7 +1528,7 @@ describe('shipped first-run setup script', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
 
     await waitFor(() => expect(submitted).toBeDefined())
-    // Only the four the owner ticked: nothing is ticked on the owner's behalf.
+    // Only the four the owner left ticked.
     expect(submitted).toEqual({
       expected_revision: 3,
       providers: [
@@ -1535,10 +1565,11 @@ describe('shipped first-run setup script', () => {
               media_kind: 'book',
               mount: 'books',
               name: 'books',
-              display_name: 'My Reading Shelf',
+              display_name: 'Books',
               provider_connections: [],
             },
           ],
+          mounts: [{ library: 'books', state: 'missing' }],
           revision: 4,
         })
         return response({})
@@ -1554,7 +1585,17 @@ describe('shipped first-run setup script', () => {
     if (!form) throw new Error('library form missing')
     // The wizard's own refusal speaks first; no browser bubble precedes it.
     expect(form.noValidate).toBe(true)
+    // Every book library starts ticked; the podcast library is named once.
+    const books = screen.getByRole('checkbox', { name: 'Books' })
+    const audio = screen.getByRole('checkbox', { name: 'Audio' })
+    expect(books).toBeChecked()
+    expect(audio).toBeChecked()
+    expect(
+      screen.getByText('Podcast libraries aren’t supported, so they’re not shown.'),
+    ).toBeVisible()
 
+    fireEvent.click(books)
+    fireEvent.click(audio)
     fireEvent.submit(form)
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Select at least one supported book library.',
@@ -1564,75 +1605,20 @@ describe('shipped first-run setup script', () => {
     expect(screen.getByRole('alert').previousElementSibling).toBe(
       screen.getByRole('button', { name: 'Continue' }),
     )
-    // Each library's controls are named for that library (#1287).
-    expect(
-      screen
-        .getAllByRole('button', { name: /^Change name/u })
-        .map((node) => node.getAttribute('aria-label')),
-    ).toEqual(['Change name of Books', 'Change name of Audio'])
     expect(libraryMutations).toBe(0)
 
-    const selected = screen.getByRole('checkbox', { name: 'Books' })
-    fireEvent.click(selected)
-    expect(selected).toBeChecked()
-    expect(screen.getByText('1 unsupported podcast library excluded.')).toBeVisible()
-    expect(document.querySelector('input[name="name-books"]')).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: 'Change name of Books' }))
-    const displayName = screen.getByRole('textbox', { name: 'New name for Books' })
-    expect(displayName).toHaveValue('Books')
-    fireEvent.input(displayName, { target: { value: ' My Reading Shelf' } })
+    fireEvent.click(books)
     fireEvent.submit(form)
-    await waitFor(() =>
-      expect(screen.getByRole('alert')).toHaveTextContent(
-        'Use a library name from 1 to 256 characters without leading or trailing spaces.',
-      ),
-    )
-    expect(displayName).toHaveFocus()
-    // The refusal is bound to the name it describes (#1677).
-    expect(screen.getByRole('alert').previousElementSibling).toBe(displayName.closest('.field'))
-    expect(displayName).toHaveAttribute('aria-invalid', 'true')
-    expect(displayName.getAttribute('aria-describedby')).toContain('setup-error')
-    expect(libraryMutations).toBe(0)
-
-    // Two libraries may not share a name, whatever its case: the refusal is on
-    // the name being edited, and nothing is sent (#1287).
-    const audio = screen.getByRole('checkbox', { name: 'Audio' })
-    fireEvent.click(audio)
-    fireEvent.input(displayName, { target: { value: 'AUDIO' } })
-    fireEvent.submit(form)
-    await waitFor(() =>
-      expect(screen.getByRole('alert')).toHaveTextContent(
-        'That name is already used by another library. Choose a different name for this one.',
-      ),
-    )
-    expect(displayName).toHaveFocus()
-    expect(displayName).toHaveAttribute('aria-invalid', 'true')
-    expect(screen.getByLabelText('New name for Audio')).not.toBeVisible()
-    expect(libraryMutations).toBe(0)
-    fireEvent.click(audio)
-
-    fireEvent.input(displayName, { target: { value: 'My Reading Shelf' } })
-    fireEvent.submit(form)
-    expect(await screen.findByRole('heading', { name: 'Check read-only mounts' })).toBeVisible()
-    expect(document.querySelector('.confirmation')).toHaveTextContent(
-      'Libraries recorded: My Reading Shelf.',
-    )
+    expect(await screen.findByRole('heading', { name: 'Find library folders' })).toBeVisible()
     expect(libraryMutations).toBe(1)
     const mutation = fetch.mock.calls.find(
       ([request, init]) =>
         requestUrl(request) === '/api/setup/libraries' && init?.method === 'POST',
     )
+    // No owner name is sent: the server records the Audiobookshelf name.
     expect(jsonBody(mutation?.[1]?.body)).toEqual({
       expected_revision: 3,
-      libraries: [
-        {
-          display_name: 'My Reading Shelf',
-          library_id: 'books',
-          media_kind: 'book',
-          name: 'books',
-          provider_connections: [],
-        },
-      ],
+      libraries: [{ library_id: 'books', media_kind: 'book', name: 'books' }],
     })
   })
 
@@ -1655,13 +1641,13 @@ describe('shipped first-run setup script', () => {
     const heading = await screen.findByRole('heading', { name: 'Choose libraries' })
     await waitFor(() => expect(heading).toHaveFocus())
     const books = screen.getByRole('checkbox', { name: 'Books' })
-    fireEvent.click(books)
+    expect(books).toBeChecked()
     const next = screen.getByRole('button', { name: 'Continue' })
     next.focus()
     fireEvent.click(next)
 
     const alert = await screen.findByRole('alert')
-    await waitFor(() => expect(alert).toHaveTextContent('Setup could not finish that step'))
+    await waitFor(() => expect(alert).toHaveTextContent('That step was not saved.'))
     expect(screen.getAllByRole('alert')).toHaveLength(1)
     expect(alert.previousElementSibling).toBe(next)
     expect(books).toBeChecked()
@@ -1669,20 +1655,18 @@ describe('shipped first-run setup script', () => {
     expect(next).toHaveFocus()
   })
 
-  it('opens and binds an invalid library name the owner never opened (#1677)', async () => {
-    let libraryMutations = 0
+  it('uses each Audiobookshelf name with no rename control', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      vi.fn(async (request: RequestInfo | URL) => {
         const url = requestUrl(request)
         if (url.startsWith('/api/setup/libraries?'))
           return response({
-            libraries: [{ library_id: 'books', media_kind: 'book', name: 'Books ' }],
+            libraries: [
+              { library_id: 'books', media_kind: 'book', name: 'Books ' },
+              { library_id: 'audio', media_kind: 'book', name: 'Audio' },
+            ],
           })
-        if (url === '/api/setup/libraries' && init?.method === 'POST') {
-          libraryMutations += 1
-          return response({})
-        }
         return response(setupState('libraries'))
       }),
     )
@@ -1690,64 +1674,49 @@ describe('shipped first-run setup script', () => {
 
     const heading = await screen.findByRole('heading', { name: 'Choose libraries' })
     await waitFor(() => expect(heading).toHaveFocus())
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Books' }))
-    const changeName = screen.getByRole('button', { name: 'Change name of Books' })
-    const next = screen.getByRole('button', { name: 'Continue' })
-    next.focus()
-    fireEvent.click(next)
-
-    const alert = await screen.findByRole('alert')
-    await waitFor(() =>
-      expect(alert).toHaveTextContent(
-        'Use a library name from 1 to 256 characters without leading or trailing spaces.',
-      ),
+    expect(screen.getAllByRole('checkbox').map((node) => node.closest('label')?.textContent)).toEqual(
+      ['Books ', 'Audio'],
     )
-    expect(screen.getAllByRole('alert')).toHaveLength(1)
-    const displayName = document.querySelector<HTMLInputElement>('input[name="display-books"]')
-    if (!displayName) throw new Error('library name field missing')
-    expect(displayName).toBeVisible()
-    expect(displayName).toHaveFocus()
-    expect(displayName).toHaveAttribute('aria-invalid', 'true')
-    expect(alert.previousElementSibling).toBe(displayName.closest('.field'))
-    expect(changeName).not.toBeVisible()
-    expect(libraryMutations).toBe(0)
+    expect(screen.queryByRole('button', { name: /^Change name/u })).toBeNull()
+    expect(screen.queryByRole('textbox')).toBeNull()
+    expect(document.querySelector('input[name^="display-"]')).toBeNull()
   })
 
   it.each([
-    ['Google Books', 'google-key', true],
-    ['Hardcover', 'hardcover-key', false],
-  ] as const)(
-    'shares optional and required provider-key admission for %s',
-    async (label, keyName, shouldAdvance) => {
-      let providerMutations = 0
-      const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
-        if (requestUrl(request) === '/api/setup/providers' && init?.method === 'POST') {
-          providerMutations += 1
-          return response({})
-        }
-        return response(setupState('providers'))
-      })
-      vi.stubGlobal('fetch', fetch)
-      runSetup()
-      const heading = await screen.findByRole('heading', { name: 'Choose metadata providers' })
-      await waitFor(() => expect(heading).toHaveFocus())
-      fireEvent.click(await screen.findByRole('checkbox', { name: label }))
-      const key = document.querySelector<HTMLInputElement>(`input[name="${keyName}"]`)
-      const form = key?.closest('form')
-      if (!key || !form) throw new Error('provider form missing')
-
-      fireEvent.submit(form)
-
-      if (shouldAdvance) await waitFor(() => expect(providerMutations).toBe(1))
-      else {
-        expect(await screen.findByRole('alert')).toHaveTextContent(
-          settingsVocabulary.errors.provider_key,
-        )
-        expect(key).toHaveFocus()
-        expect(providerMutations).toBe(0)
+    ['Google Books', 'google-key'],
+    ['Hardcover', 'hardcover-key'],
+  ] as const)('refuses Continue for %s without a key on its card', async (label, keyName) => {
+    let providerMutations = 0
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      if (requestUrl(request) === '/api/setup/providers' && init?.method === 'POST') {
+        providerMutations += 1
+        return response({})
       }
-    },
-  )
+      return response(setupState('providers'))
+    })
+    vi.stubGlobal('fetch', fetch)
+    runSetup()
+    const heading = await screen.findByRole('heading', { name: 'Choose metadata sources' })
+    await waitFor(() => expect(heading).toHaveFocus())
+    await untickSources()
+    fireEvent.click(screen.getByRole('checkbox', { name: label }))
+    const key = document.querySelector<HTMLInputElement>(`input[name="${keyName}"]`)
+    const form = key?.closest('form')
+    if (!key || !form) throw new Error('provider form missing')
+
+    fireEvent.submit(form)
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(settingsVocabulary.errors.provider_key)
+    // The refusal sits on that source's own card, by its key.
+    expect(key.closest('.option')).toContainElement(alert)
+    expect(key).toHaveFocus()
+    expect(providerMutations).toBe(0)
+
+    fireEvent.input(key, { target: { value: 'a-real-looking-key' } })
+    fireEvent.submit(form)
+    await waitFor(() => expect(providerMutations).toBe(1))
+  })
 
   it('explains every mount comparison state without exposing raw enums', async () => {
     vi.stubGlobal(
@@ -1755,11 +1724,12 @@ describe('shipped first-run setup script', () => {
       vi.fn(async () =>
         response(
           setupState('mounts', {
+            completed_steps: ['claim', 'connect', 'libraries'],
             libraries: [
-              { library_id: 'books-id', media_kind: 'book', name: 'Books' },
-              { library_id: 'history-id', media_kind: 'book', name: 'History' },
-              { library_id: 'essays-id', media_kind: 'book', name: 'Essays' },
-              { library_id: 'archive-id', media_kind: 'book', name: 'Archive' },
+              { library_id: 'books-id', media_kind: 'book', name: 'books', display_name: 'Books' },
+              { library_id: 'history-id', media_kind: 'book', name: 'history', display_name: 'History' },
+              { library_id: 'essays-id', media_kind: 'book', name: 'essays', display_name: 'Essays' },
+              { library_id: 'archive-id', media_kind: 'book', name: 'archive', display_name: 'Archive' },
             ],
             mounts: [
               { library: 'books', state: 'matched' },
@@ -1773,39 +1743,88 @@ describe('shipped first-run setup script', () => {
     )
     runSetup()
 
-    const results = await screen.findByRole('status')
-    // Each line leads with the library and one short state, so a matched
-    // library is told apart from a failing one at a glance; only the failing
-    // states carry a remedy.
-    const lines = [...results.querySelectorAll<HTMLElement>('p')]
-    expect(
-      lines.map((line) => [
-        line.querySelector('.mount-state')?.textContent,
-        line.classList.contains('mount-line-attention'),
-      ]),
-    ).toEqual([
-      ['Matched', false],
-      ['No mapping', true],
-      ['More than one mapping', true],
-      ['No folder reported', true],
+    await screen.findByRole('heading', { name: 'Find library folders' })
+    const lines = await waitFor(() => {
+      const found = [...document.querySelectorAll<HTMLElement>('.mount-line')]
+      if (found.length !== 3) throw new Error('folder lines missing')
+      return found
+    })
+    // Each line leads with the library and one short state, then what to do.
+    expect(lines.map((line) => line.querySelector('span')?.textContent)).toEqual([
+      'History: Not found',
+      'Essays: Not found',
+      'Archive: Not found',
     ])
-    const matched = lines[0]
-    if (!matched) throw new Error('mount comparison lines missing')
-    expect(matched.textContent).toBe('Books: Matched')
-    expect(matched.querySelector('.mount-remedy')).toBeNull()
-    expect(results).toHaveTextContent('History: No mapping')
-    expect(results).toHaveTextContent(
-      'Correct the Audiobookshelf service path and compare again, or have the deployment declare a read-only mapping for it; Mechanical Librarian never creates or changes mounts.',
+    expect(lines.map((line) => line.querySelector('.mount-remedy')?.textContent)).toEqual([
+      'Mechanical Librarian can’t see this library’s folder. Add it to the container as a read-only volume, then check again.',
+      'More than one read-only volume matches this library’s folders. Keep one, then check again.',
+      'Audiobookshelf reported no folder for this library. Enter its folder, then check again.',
+    ])
+    // Only the folder that is not mounted links the deployment guide.
+    const guide = within(lines[0] as HTMLElement).getByRole('link', {
+      name: 'Media mounts in the deployment guide',
+    })
+    expect(guide).toHaveAttribute(
+      'href',
+      'https://github.com/atabbott/mechanical-librarian/blob/main/docs/operations/deployment.md#media-mounts',
     )
-    expect(results).toHaveTextContent('Essays: More than one mapping')
-    expect(results).toHaveTextContent(
-      'Correct the service path so exactly one deployment-owned read-only mapping matches.',
+    expect(guide).toHaveAttribute('rel', 'noreferrer')
+    expect(document.querySelectorAll('.mount-line a')).toHaveLength(1)
+    for (const raw of [/matched/u, /missing/u, /ambiguous/u, /unavailable/u, /No mapping/u])
+      expect(screen.queryByText(raw)).toBeNull()
+  })
+
+  it('shows only the libraries whose folder was not found', async () => {
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(request)
+      if (url.startsWith('/api/setup/libraries?'))
+        return response({
+          libraries: [
+            { library_id: 'books-id', media_kind: 'book', name: 'Books', service_path: '/books' },
+            { library_id: 'audio-id', media_kind: 'book', name: 'Listening', service_path: '/srv/listening' },
+          ],
+        })
+      if (url === '/api/setup/mounts' && init?.method === 'POST') return response({})
+      return response(
+        setupState('mounts', {
+          completed_steps: ['claim', 'connect', 'libraries'],
+          libraries: [
+            { library_id: 'books-id', media_kind: 'book', name: 'books', display_name: 'Books' },
+            { library_id: 'audio-id', media_kind: 'book', name: 'audio', display_name: 'Listening' },
+          ],
+          mounts: [
+            { library: 'books', state: 'matched' },
+            { library: 'audio', state: 'missing' },
+          ],
+        }),
+      )
+    })
+    vi.stubGlobal('fetch', fetch)
+    runSetup()
+
+    const folder = await screen.findByRole('textbox', { name: 'Listening folder in Audiobookshelf' })
+    expect(folder).toHaveValue('/srv/listening')
+    expect(folder).toHaveAttribute('placeholder', '/audiobooks')
+    expect(screen.queryByRole('textbox', { name: 'Books folder in Audiobookshelf' })).toBeNull()
+    expect(screen.queryByText(/^Books:/u)).toBeNull()
+    fireEvent.input(folder, { target: { value: ' /audiobooks ' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Check again' }))
+
+    await waitFor(() =>
+      expect(
+        fetch.mock.calls.some(
+          ([request, init]) => requestUrl(request) === '/api/setup/mounts' && init?.method === 'POST',
+        ),
+      ).toBe(true),
     )
-    expect(results).toHaveTextContent('Archive: No folder reported')
-    expect(results).toHaveTextContent(
-      'Audiobookshelf reported no folder path to compare. Enter the service path yourself and compare again; Mechanical Librarian never creates or changes mounts.',
+    const mutation = fetch.mock.calls.find(
+      ([request, init]) => requestUrl(request) === '/api/setup/mounts' && init?.method === 'POST',
     )
-    expect(within(results).queryByText(/^books: matched$/u)).toBeNull()
+    // A found library is compared as Audiobookshelf reports it.
+    expect(jsonBody(mutation?.[1]?.body)).toEqual({
+      expected_revision: 3,
+      service_paths: { books: null, audio: '/audiobooks' },
+    })
   })
 
   it('draws the providers form at once while the library read is pending', async () => {
@@ -1822,14 +1841,17 @@ describe('shipped first-run setup script', () => {
     )
     runSetup()
 
-    const heading = await screen.findByRole('heading', { name: 'Choose metadata providers' })
+    const heading = await screen.findByRole('heading', { name: 'Choose metadata sources' })
     await waitFor(() => expect(heading).toHaveFocus())
-    expect(screen.getByText('Reading your libraries to suggest providers…')).toBeVisible()
+    expect(screen.getByText('Loading your libraries…')).toBeVisible()
     for (const label of ['Inventaire', 'Open Library', 'Audible', 'iTunes'])
       expect(screen.getByRole('checkbox', { name: label })).toBeEnabled()
     expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled()
-    expect(screen.getByRole('button', { name: 'Skip providers' })).toBeEnabled()
-    expect(document.querySelector('.suggestion')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Skip providers' })).toBeNull()
+    // A source the owner ticks before the read returns is theirs to keep.
+    const audible = screen.getByRole('checkbox', { name: 'Audible' })
+    fireEvent.click(audible)
+    expect(audible).toBeChecked()
 
     release(
       response({
@@ -1843,37 +1865,55 @@ describe('shipped first-run setup script', () => {
         ],
       }),
     )
+    await waitFor(() => expect(screen.queryByText('Loading your libraries…')).toBeNull())
+    // Late defaults never override the owner's own choice.
     expect(
-      await screen.findByText('Suggested for Reading Shelf', { selector: '#suggested-books' }),
-    ).toBeVisible()
-    expect(screen.queryByText('Reading your libraries to suggest providers…')).toBeNull()
-    expect(document.querySelectorAll('input[type=checkbox]:checked')).toHaveLength(0)
+      [...document.querySelectorAll<HTMLInputElement>('input[type=checkbox]:checked')].map(
+        (box) => box.name,
+      ),
+    ).toEqual(['audible-enabled'])
   })
 
+  const allSources = [
+    'inventaire-enabled',
+    'open-enabled',
+    'hardcover-enabled',
+    'google-enabled',
+    'itunes-enabled',
+    'audible-enabled',
+    'audnexus-enabled',
+    'audiosilo-enabled',
+  ]
   it.each([
     [
-      'a book library and an audiobook-only library',
+      'a library not marked audiobooks-only',
+      [{ library_id: 'books', media_kind: 'book', name: 'Reading Shelf', audiobooks_only: false }],
+      allSources,
+    ],
+    [
+      'an audiobooks-only library',
+      [{ library_id: 'audio', media_kind: 'book', name: 'Listening Room', audiobooks_only: true }],
+      [
+        'open-enabled',
+        'hardcover-enabled',
+        'itunes-enabled',
+        'audible-enabled',
+        'audnexus-enabled',
+        'audiosilo-enabled',
+      ],
+    ],
+    [
+      'both kinds of library',
       [
         { library_id: 'books', media_kind: 'book', name: 'Reading Shelf', audiobooks_only: false },
         { library_id: 'audio', media_kind: 'book', name: 'Listening Room', audiobooks_only: true },
-        { library_id: 'pods', media_kind: 'unsupported', name: 'Podcasts', audiobooks_only: false },
       ],
-      ['Books and ebooks', 'Audiobooks'],
-      {
-        'Books and ebooks': 'Suggested for Reading Shelf',
-        Audiobooks: 'Suggested for Reading Shelf, Listening Room',
-      },
+      allSources,
     ],
-    [
-      'only audiobook-only libraries',
-      [{ library_id: 'audio', media_kind: 'book', name: 'Listening Room', audiobooks_only: true }],
-      ['Audiobooks', 'Books and ebooks'],
-      { Audiobooks: 'Suggested for Listening Room' },
-    ],
-    ['a discovery failure', null, ['Books and ebooks', 'Audiobooks'], {}],
+    ['a failed library read', null, allSources],
   ] as const)(
-    'groups providers and suggests those that fit %s without ticking any',
-    async (_name, libraries, order, suggestions) => {
+    'ticks the sources suited to the chosen libraries: %s',
+    async (_name, libraries, ticked) => {
       vi.stubGlobal(
         'fetch',
         vi.fn(async (request: RequestInfo | URL) => {
@@ -1881,47 +1921,66 @@ describe('shipped first-run setup script', () => {
             return libraries === null
               ? response({ detail: { error: 'refused' } }, 502)
               : response({ libraries })
-          return response(setupState('providers'))
+          return response(
+            setupState('providers', {
+              completed_steps: ['claim', 'connect', 'libraries', 'mounts'],
+              libraries: (libraries ?? [{ library_id: 'books' }]).map((item) => ({
+                library_id: item.library_id,
+                media_kind: 'book',
+                name: item.library_id,
+                provider_connections: [],
+              })),
+            }),
+          )
         }),
       )
       runSetup()
 
-      await screen.findByRole('heading', { name: 'Choose metadata providers' })
-      await waitFor(() =>
-        expect(screen.queryByText('Reading your libraries to suggest providers…')).toBeNull(),
-      )
-      const groups = await waitFor(() => {
-        const found = [...document.querySelectorAll('fieldset.provider-group')]
-        if (found.length !== 2) throw new Error('provider groups missing')
-        return found
-      })
-      expect(groups.map((group) => group.querySelector('legend')?.textContent)).toEqual(order)
-      for (const group of groups) {
-        const legend = group.querySelector('legend')?.textContent ?? ''
-        const expected = (suggestions as Record<string, string>)[legend]
-        const note = group.querySelector('.suggestion')
-        if (expected) {
-          expect(note).toHaveTextContent(expected)
-          expect(group).toHaveAttribute('aria-describedby', note?.id)
-        } else expect(note).toBeNull()
-      }
-      const books = within(
-        groups.find((group) => group.textContent.includes('Inventaire')) as HTMLElement,
-      )
-      for (const label of ['Inventaire', 'Open Library', 'Hardcover', 'Google Books', 'iTunes'])
-        expect(books.getByRole('checkbox', { name: label })).toBeInTheDocument()
-      const audio = within(
-        groups.find((group) => group.textContent.includes('Audible')) as HTMLElement,
-      )
-      for (const label of ['Audible', 'Audnexus', 'AudioSilo'])
-        expect(audio.getByRole('checkbox', { name: label })).toBeInTheDocument()
-      // No audiobook is sent to iTunes, so it is never suggested for one (#1458).
-      expect(audio.queryByRole('checkbox', { name: 'iTunes' })).toBeNull()
-      // A suggestion names libraries; it never ticks a provider for the owner.
-      expect(document.querySelectorAll('input[type=checkbox]:checked')).toHaveLength(0)
+      await screen.findByRole('heading', { name: 'Choose metadata sources' })
+      await waitFor(() => expect(screen.queryByText('Loading your libraries…')).toBeNull())
+      const groups = [...document.querySelectorAll('fieldset.provider-group')]
+      expect(groups.map((group) => group.querySelector('legend')?.textContent)).toEqual([
+        'Books and ebooks',
+        'Audiobooks',
+      ])
+      // No audiobook is sent to iTunes, so it sits with the book sources (#1458).
+      expect(within(groups[1] as HTMLElement).queryByRole('checkbox', { name: 'iTunes' })).toBeNull()
+      expect(
+        [...document.querySelectorAll<HTMLInputElement>('input[type=checkbox]:checked')].map(
+          (box) => box.name,
+        ),
+      ).toEqual(ticked)
+      // Every ticked source stays visible and can be unticked before Continue.
+      for (const box of document.querySelectorAll<HTMLInputElement>('input[type=checkbox]'))
+        expect(box).toBeVisible()
+      expect(document.querySelector('.suggestion')).toBeNull()
+      expect(screen.queryByText(/^Suggested for/u)).toBeNull()
       expect(document.querySelector('[role=alert]')).toBeNull()
     },
   )
+
+  it('says most ebooks will wait when neither Hardcover nor Google Books is ticked', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => response(setupState('providers'))),
+    )
+    runSetup()
+
+    await screen.findByRole('heading', { name: 'Choose metadata sources' })
+    await waitFor(() => expect(screen.queryByText('Loading your libraries…')).toBeNull())
+    const coverage = document.querySelector('.muted[role=status]')
+    expect(coverage?.textContent).toBe('')
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Hardcover' }))
+    expect(coverage?.textContent).toBe('')
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Google Books' }))
+    expect(coverage?.textContent).toBe(
+      'Without Hardcover or Google Books, most ebooks will wait for your review.',
+    )
+    // It only says so; Continue stays available.
+    expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled()
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Google Books' }))
+    expect(coverage?.textContent).toBe('')
+  })
 
   it('asks Open Library only for an email and links each key to the page that issues it', async () => {
     vi.stubGlobal(
@@ -1932,22 +1991,20 @@ describe('shipped first-run setup script', () => {
 
     const open = (await screen.findByRole('checkbox', { name: 'Open Library' })).closest('.option')
     expect(open?.querySelector('a')).toBeNull()
-    expect(open).toHaveTextContent(
-      'Needs only a contact email, sent with each request. No account or key.',
-    )
-    expect(screen.getByRole('link', { name: 'Get Hardcover access' })).toHaveAttribute(
+    expect(open).toHaveTextContent('Needs your email address. No account needed.')
+    expect(screen.getByRole('link', { name: 'Get a Hardcover key' })).toHaveAttribute(
       'href',
       'https://hardcover.app/account/api',
     )
-    expect(screen.getByRole('link', { name: 'Get Google Books access' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Get a Google Books key' })).toHaveAttribute(
       'href',
       'https://console.cloud.google.com/apis/credentials',
     )
   })
 
-  it('confirms the mounts it found on the next step and each earlier step in one line', async () => {
+  it('confirms the mounts it found on the next step in one line', async () => {
     let current = setupState('mounts', {
-      completed_steps: ['claim', 'connect', 'providers', 'libraries'],
+      completed_steps: ['claim', 'connect', 'libraries'],
       libraries: [
         {
           connection: 'primary',
@@ -1990,8 +2047,8 @@ describe('shipped first-run setup script', () => {
           ],
         })
       if (url === '/api/setup/mounts' && init?.method === 'POST') {
-        current = setupState('reviewer', {
-          completed_steps: ['claim', 'connect', 'providers', 'libraries', 'mounts'],
+        current = setupState('providers', {
+          completed_steps: ['claim', 'connect', 'libraries', 'mounts'],
           libraries: [
             {
               connection: 'primary',
@@ -2020,37 +2077,20 @@ describe('shipped first-run setup script', () => {
         })
         return response({})
       }
-      if (url === '/api/setup/reviewer-access')
-        return response({
-          revision: 1,
-          mapping: null,
-          codex: { state: 'host_unsupported', model: null },
-          free_tier_caveat: 'Limits apply.',
-          data_use_caveat: 'Data use applies.',
-          recommendations: [],
-          candidates: [],
-          cost_evidence: { models: [] },
-        })
       return response(current)
     })
     vi.stubGlobal('fetch', fetch)
     runSetup()
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Check mounts' }))
-    expect(
-      await screen.findByRole('heading', { name: 'Choose an optional cover reviewer' }),
-    ).toBeVisible()
+    fireEvent.click(await screen.findByRole('button', { name: 'Check again' }))
+    expect(await screen.findByRole('heading', { name: 'Choose metadata sources' })).toBeVisible()
     const confirmation = document.querySelector('.confirmation')
-    expect(confirmation).toHaveTextContent(
-      'Reading Shelf: found /discovered/books on read-only mount ebooks',
-    )
-    // Stat-only: setup never counts or lists media files.
-    expect(confirmation?.textContent).not.toMatch(/\bfiles?\b/u)
-    // Announced as sentences, one space between lines, never run together.
+    expect(confirmation).toHaveTextContent('Found the files for Reading Shelf and Listening Room.')
+    // Setup never counts, lists or names a mount or a path.
+    expect(confirmation?.textContent).not.toMatch(/\/discovered|mount/u)
     await waitFor(() =>
       expect(document.querySelector('#setup-status')?.textContent).toBe(
-        'Reading Shelf: found /discovered/books on read-only mount ebooks. ' +
-          'Listening Room: found /discovered/audio on read-only mount audio.',
+        'Found the files for Reading Shelf and Listening Room.',
       ),
     )
   })
@@ -2092,7 +2132,9 @@ describe('shipped first-run setup script', () => {
     )
     runSetup()
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Skip providers' }))
+    await screen.findByRole('heading', { name: 'Choose metadata sources' })
+    await untickSources()
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent(
       'Setup changed in another tab. The latest recorded step has been restored.',
@@ -2100,18 +2142,18 @@ describe('shipped first-run setup script', () => {
     // The reloaded step opens with the alert and focuses its heading.
     expect(alert.parentElement?.firstElementChild).toBe(alert)
     await waitFor(() =>
-      expect(screen.getByRole('heading', { name: 'Choose metadata providers' })).toHaveFocus(),
+      expect(screen.getByRole('heading', { name: 'Choose metadata sources' })).toHaveFocus(),
     )
     // The state was read again, which issues this tab a fresh form token.
     expect(reads).toBe(2)
   })
 
   it.each([
-    ['Continue', 422, 'invalid_providers', 'One of those provider entries could not be recorded.'],
-    ['Skip providers', 503, 'unavailable', 'Setup could not finish that step'],
+    [422, 'invalid_providers', 'A source could not be saved.'],
+    [503, 'unavailable', 'That step was not saved.'],
   ] as const)(
-    'places a failed %s under the providers action row (#1664)',
-    async (name, status, code, copy) => {
+    'places a failed Continue (%i) under the providers action row (#1664)',
+    async (status, code, copy) => {
       vi.stubGlobal(
         'fetch',
         vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
@@ -2124,9 +2166,10 @@ describe('shipped first-run setup script', () => {
       )
       runSetup()
 
-      const heading = await screen.findByRole('heading', { name: 'Choose metadata providers' })
+      const heading = await screen.findByRole('heading', { name: 'Choose metadata sources' })
       await waitFor(() => expect(heading).toHaveFocus())
-      const pressed = screen.getByRole('button', { name })
+      await untickSources()
+      const pressed = screen.getByRole('button', { name: 'Continue' })
       pressed.focus()
       fireEvent.click(pressed)
 
@@ -2137,14 +2180,13 @@ describe('shipped first-run setup script', () => {
       const row = alert.previousElementSibling
       expect(row).toHaveClass('actions')
       expect(row).toContainElement(screen.getByRole('button', { name: 'Continue' }))
-      expect(row).toContainElement(screen.getByRole('button', { name: 'Skip providers' }))
       expect(alert.nextElementSibling).toBeNull()
       expect(pressed).toBeEnabled()
       expect(pressed).toHaveFocus()
     },
   )
 
-  it('renders reviewer recommendations, the free catalogue option, and manual entry', async () => {
+  it('preselects the recommended OpenRouter model with its cost and hides the others behind Choose another model', async () => {
     const fetch = vi.fn(async (request: RequestInfo | URL) => {
       if (requestUrl(request) === '/api/setup/reviewer-access')
         return response({
@@ -2152,7 +2194,7 @@ describe('shipped first-run setup script', () => {
           cover_metadata: null,
           cost_evidence: {
             schema_version: 'reviewer-cost-evidence-v2',
-            models: [],
+            models: [{ model: 'openai/gpt-6-luna', task: 'cover', per_1000_usd: '4.2' }],
           },
           revision: 3,
           mapping: null,
@@ -2164,14 +2206,6 @@ describe('shipped first-run setup script', () => {
             model: 'gpt-5.6-sol',
             tier: null,
             host_headroom_bytes: 512,
-          },
-          openrouter: {
-            engine: 'openrouter',
-            state: 'unconfigured',
-            reason: null,
-            model: null,
-            tier: null,
-            host_headroom_bytes: null,
           },
           recommendations: ['openai/gpt-6-luna'],
           candidates: [
@@ -2190,435 +2224,169 @@ describe('shipped first-run setup script', () => {
         })
       return response(
         setupState('reviewer', {
-          completed_steps: ['claim', 'connect', 'providers', 'libraries', 'mounts'],
+          completed_steps: ['claim', 'connect', 'libraries', 'mounts', 'providers'],
         }),
       )
     })
     vi.stubGlobal('fetch', fetch)
     runSetup()
 
-    expect(await screen.findByText(/Recommended advisory cover reviewer/u)).toBeVisible()
-    expect(screen.getByText(/\(recommended; paid; observations remain advice\)/u)).toBeVisible()
-    expect(screen.getByText('Other OpenRouter models:')).toBeVisible()
+    expect(await screen.findByText('GPT-6 Luna: about $4.2 per 1,000 works.')).toBeVisible()
     expect(
-      screen.getByText(/\(free; listed by OpenRouter as capable, not yet qualified here\)/u),
+      screen.getByText(
+        'An AI model can look at cover images and tell you what it sees. It only advises, and you still choose. You can set this up later in Settings.',
+      ),
     ).toBeVisible()
-    // Limits and data use are reference detail, folded until the owner opens them.
+    // The recommended model is chosen; the others and the Model ID wait.
+    const model = document.querySelector<HTMLInputElement>('input[name="reviewer-model"]')
+    if (!model) throw new Error('reviewer model field missing')
+    expect(model).toHaveValue('openai/gpt-6-luna')
+    expect(model).not.toBeVisible()
+    const toggle = screen.getByRole('button', { name: 'Choose another model' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('button', { name: /^Use dots/u })).toBeNull()
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByRole('textbox', { name: 'Model ID' })).toBe(model)
+    // Rates and data use are reference detail, folded until the owner opens them.
     const limits = screen.getByText(
       '20 requests/minute; 50 requests/day before $10 in lifetime purchases or 1000 after.',
     )
     const about = limits.closest('details')
     if (!about) throw new Error('reviewer detail disclosure missing')
     expect(about).not.toHaveAttribute('open')
-    expect(about.querySelector('summary')).toHaveTextContent(
-      'OpenRouter limits, data use and key sharing',
-    )
+    expect(about.querySelector('summary')).toHaveTextContent('Prices and data use')
     about.open = true
     expect(limits).toBeVisible()
+    expect(screen.getByText('Check the key to see this model’s prices.')).toBeVisible()
+    expect(screen.getByText('One request per work, with every cover it compares.')).toBeVisible()
     expect(screen.getByText('Cover previews are sent to the selected provider.')).toBeVisible()
-    const model = screen.getByLabelText('Model ID')
-    fireEvent.click(screen.getByRole('button', { name: 'Use GPT-6 Luna (openai/gpt-6-luna)' }))
-    expect(model).toHaveValue('openai/gpt-6-luna')
-    expect(model).toHaveFocus()
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Use dots-studio/dots-3-note-preview:free' }),
+    expect(screen.getByRole('link', { name: 'Get a key' })).toHaveAttribute(
+      'href',
+      'https://openrouter.ai/settings/keys',
     )
+    fireEvent.click(screen.getByRole('button', { name: 'Use dots-studio/dots-3-note-preview:free (Free)' }))
     expect(model).toHaveValue('dots-studio/dots-3-note-preview:free')
+    expect(model).toHaveFocus()
+    expect(screen.getByText('dots-studio/dots-3-note-preview:free: cost not measured.')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Use GPT-6 Luna (Paid)' }))
+    expect(model).toHaveValue('openai/gpt-6-luna')
     fireEvent.input(model, { target: { value: 'manual/vision-model' } })
     expect(model).toHaveValue('manual/vision-model')
+    for (const gone of [
+      /Recommended advisory cover reviewer/u,
+      /Optional description advice/u,
+      /Current cover selection/u,
+    ])
+      expect(screen.queryByText(gone)).toBeNull()
   })
 
-  it.each([
-    [
-      'Preparing your library',
-      1,
-      false,
-      false,
-      'Open the workspace to browse works as they are prepared.',
-      false,
-    ],
-    ['Preparation paused', 0, false, true, 'Open the workspace to review recovery.', false],
-    [
-      'Preparation is complete',
-      1,
+  const startState = () =>
+    setupState('kick_off', {
+      completed_steps: ['claim', 'connect', 'libraries', 'mounts', 'providers', 'reviewer'],
+    })
+  // The Start target carries only the lens and, once known, the run.
+  const landedAt = (place: ReturnType<typeof stubLocation>) => {
+    expect(place.replace).toHaveBeenCalledTimes(1)
+    const target = new URL(String(place.replace.mock.calls[0]?.[0]), 'https://setup.invalid')
+    expect(target.pathname).toBe('/library')
+    expect([...target.searchParams.keys()].every((key) => ['lens', 'preparation'].includes(key))).toBe(
       true,
-      false,
-      'Open the workspace to review the completed preparation record.',
-      false,
-    ],
-    [
-      'Preparation is complete',
-      0,
-      true,
-      false,
-      'Open the workspace to review the completed preparation record.',
-      false,
-    ],
-    [
-      'Preparation is complete',
-      0,
-      true,
-      true,
-      'Open the workspace to review the completed preparation record.',
-      false,
-    ],
-    ['Preparation was dismissed', 0, true, false, 'Open the ordinary workspace.', true],
-  ] as const)(
-    'offers the setup bridge at %s without navigating',
-    async (title, ready, terminal, actionable, expectedCopy, dismissed = false) => {
-      const previousSetTimeout = globalThis.setTimeout
-      const previousClearTimeout = globalThis.clearTimeout
-      let firstPollScheduled = false
-      vi.stubGlobal(
-        'setTimeout',
-        vi.fn((callback: () => void, delay?: number) => {
-          if (delay === 1_500) {
-            if (!firstPollScheduled) {
-              firstPollScheduled = true
-              queueMicrotask(callback)
-            }
-            return 1
-          }
-          return previousSetTimeout(callback, delay)
-        }),
-      )
-      vi.stubGlobal('clearTimeout', vi.fn())
-      const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
-        const url = requestUrl(request)
-        if (url === '/api/setup/kick-off' && init?.method === 'POST')
-          return response({ message: 'Restarting into the normal workspace.' })
-        if (url === '/api/v1/review-preparation')
-          return response({
-            actionable,
-            first_boot_complete: terminal,
-            presentation: {
-              run_id: `preparation_run_${'a'.repeat(64)}`,
-              state: dismissed
-                ? 'dismissed'
-                : terminal
-                  ? actionable
-                    ? 'completed_with_failures'
-                    : 'completed_clean'
-                  : actionable
-                    ? 'blocked'
-                    : 'running',
-              passage: {
-                read: 1,
-                searches_finished: 1,
-                compared: 1,
-                checked: 1,
-                ready,
-                failed: terminal && actionable ? 1 : 0,
-              },
-              total: 1,
-            },
-            libraries: [
-              {
-                checked: 1,
-                ready,
-                total: 1,
-              },
-            ],
-            paused: actionable,
-          })
-        return response(
-          setupState('kick_off', {
-            completed_steps: ['claim', 'connect', 'providers', 'libraries', 'mounts'],
-          }),
-        )
-      })
-      vi.stubGlobal('fetch', fetch)
-      runSetup()
+    )
+    return `${target.pathname}${target.search}`
+  }
 
-      const kickoff = await screen.findByRole('button', { name: 'Kick off preparation' })
-      const ledger = document.querySelector('#setup-ledger')
-      if (!(ledger instanceof HTMLElement)) throw new Error('setup ledger missing')
-      const kickoffRow = within(ledger).getByText('Kick off preparation').closest('li')
-      if (!(kickoffRow instanceof HTMLElement)) throw new Error('kickoff ledger row missing')
-      expect(kickoffRow).toHaveAttribute('aria-current', 'step')
-      expect(within(kickoffRow).getByText('→')).toBeVisible()
-      expect(document.querySelectorAll('#setup-ledger button')).toHaveLength(4)
-      expect(document.querySelector('.prerequisites')).not.toHaveClass('complete')
-      fireEvent.click(kickoff)
+  it('lands in the library with the preparation run once it is known', async () => {
+    const run = `preparation_run_${'a'.repeat(64)}`
+    let reads = 0
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(request)
+      if (url === '/api/setup/kick-off' && init?.method === 'POST')
+        return response({ message: 'Restarting into the normal workspace.' }, 202)
+      if (url === '/api/v1/review-preparation') {
+        reads += 1
+        return response({ presentation: reads > 1 ? { run_id: run, state: 'running' } : null })
+      }
+      return response(startState())
+    })
+    vi.stubGlobal('fetch', fetch)
+    const place = stubLocation()
+    runSetup(place)
 
-      expect(await screen.findByRole('heading', { name: title })).toBeVisible()
-      expect(screen.getByText(expectedCopy)).toBeVisible()
-      const main = document.querySelector('#setup-main')
-      // The state is said once, and every funnel count reads against the run total.
-      expect(main?.textContent.split('Preparation continues')).toHaveLength(
-        title === 'Preparing your library' ? 2 : 1,
-      )
-      if (!dismissed)
-        expect(
-          [...document.querySelectorAll('.setup-passage dd')].map((node) => node.textContent),
-        ).toEqual([
-          '1 of 1',
-          '1 of 1',
-          '1 of 1',
-          '1 of 1',
-          `${String(ready)} of 1`,
-          `${String(terminal && actionable ? 1 : 0)} of 1`,
-        ])
-      expect(screen.getByRole('link', { name: 'Open workspace' })).toHaveAttribute(
-        'href',
-        dismissed
-          ? '/library?lens=all'
-          : `/library?lens=all&preparation=preparation_run_${'a'.repeat(64)}`,
-      )
-      expect(document.querySelectorAll('#setup-ledger button')).toHaveLength(0)
-      expect(screen.queryAllByRole('button')).toHaveLength(0)
-      // Nothing to prepare for once preparation has started.
-      expect(document.querySelector('.prerequisites')).toHaveClass('complete')
-      const completedRows = ledger.querySelectorAll('.ledger-row')
-      expect(completedRows).toHaveLength(7)
-      expect(
-        [...completedRows].every((row) => row.querySelector('span')?.textContent === '✓'),
-      ).toBe(true)
-      expect(ledger.querySelector('[aria-current]')).toBeNull()
-      vi.stubGlobal('setTimeout', previousSetTimeout)
-      vi.stubGlobal('clearTimeout', previousClearTimeout)
-    },
-  )
+    fireEvent.click(await screen.findByRole('button', { name: 'Start' }))
+    await waitFor(() => expect(place.replace).toHaveBeenCalled(), { timeout: 3000 })
+    expect(landedAt(place)).toBe(`/library?lens=all&preparation=${run}`)
+    expect(reads).toBe(2)
+    // No progress page is drawn on the way.
+    expect(screen.queryByRole('heading', { name: 'Preparing your library' })).toBeNull()
+    expect(screen.queryByRole('link', { name: 'Open workspace' })).toBeNull()
+  })
 
-  it('states large funnel counts with thousands separators on one line each', async () => {
+  it('lands in the library without a run when none appears in time', async () => {
     const previousSetTimeout = globalThis.setTimeout
-    let scheduled = false
+    const started = Date.now()
+    let offset = 0
+    vi.spyOn(Date, 'now').mockImplementation(() => started + offset)
+    // Each half-second wait passes at once, on a clock that moves with it.
     vi.stubGlobal(
       'setTimeout',
       vi.fn((callback: () => void, delay?: number) => {
-        if (delay === 1_500) {
-          if (!scheduled) {
-            scheduled = true
-            queueMicrotask(callback)
-          }
+        if (delay === 500) {
+          offset += 500
+          queueMicrotask(callback)
           return 1
         }
         return previousSetTimeout(callback, delay)
       }),
     )
+    let reads = 0
     vi.stubGlobal(
       'fetch',
       vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
         const url = requestUrl(request)
         if (url === '/api/setup/kick-off' && init?.method === 'POST')
-          return response({ message: 'Restarting into the normal workspace.' })
-        if (url === '/api/v1/review-preparation')
-          return response({
-            actionable: false,
-            first_boot_complete: false,
-            presentation: {
-              run_id: `preparation_run_${'a'.repeat(64)}`,
-              state: 'running',
-              passage: {
-                read: 12_345,
-                searches_finished: 1_500,
-                compared: 700,
-                checked: 0,
-                ready: 0,
-                failed: 0,
-              },
-              active_books: [],
-              active_overflow: 0,
-              recent_completions: [],
-              throughput_per_minute: 4,
-              total: 12_345,
-            },
-            libraries: [],
-            paused: false,
-          })
-        return response(
-          setupState('kick_off', {
-            completed_steps: ['claim', 'connect', 'providers', 'libraries', 'mounts'],
-          }),
-        )
+          return response({ message: 'Restarting into the normal workspace.' }, 202)
+        if (url === '/api/v1/review-preparation') {
+          reads += 1
+          return response({ presentation: null })
+        }
+        return response(startState())
       }),
     )
-    runSetup()
-    fireEvent.click(await screen.findByRole('button', { name: 'Kick off preparation' }))
-    await waitFor(() => expect(document.querySelectorAll('.setup-passage dd')).toHaveLength(6))
-    expect(
-      [...document.querySelectorAll('.setup-passage dd')].map((node) => node.textContent),
-    ).toEqual([
-      '12,345 of 12,345',
-      '1,500 of 12,345',
-      '700 of 12,345',
-      '0 of 12,345',
-      '0 of 12,345',
-      '0 of 12,345',
-    ])
-    expect(shipped('setup_frontend import SETUP_CSS as value')).toContain(
-      '.setup-passage dd{margin:0;font-weight:800;white-space:nowrap}',
-    )
-    vi.stubGlobal('setTimeout', previousSetTimeout)
+    const place = stubLocation()
+    runSetup(place)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Start' }))
+    await waitFor(() => expect(place.replace).toHaveBeenCalled())
+    expect(landedAt(place)).toBe('/library?lens=all')
+    // Every 500 ms for 10 seconds, then no more.
+    expect(reads).toBe(20)
+    expect(offset).toBe(10_000)
   })
 
-  it('serializes preparation polling, retains reconnect state, and stops on terminal adoption', async () => {
-    const previousSetTimeout = globalThis.setTimeout
-    const timers: (() => Promise<void>)[] = []
+  it('lands in the library after a 401', async () => {
+    let reads = 0
     vi.stubGlobal(
-      'setTimeout',
-      vi.fn((callback: () => void | Promise<void>, delay?: number) => {
-        if (delay === 1_500) {
-          timers.push(async () => await callback())
-          return timers.length
+      'fetch',
+      vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+        const url = requestUrl(request)
+        if (url === '/api/setup/kick-off' && init?.method === 'POST')
+          return response({ message: 'Restarting into the normal workspace.' }, 202)
+        if (url === '/api/v1/review-preparation') {
+          reads += 1
+          return response({ error: 'unauthorized' }, 401)
         }
-        return previousSetTimeout(() => void callback(), delay)
+        return response(startState())
       }),
     )
-    let releaseFailure!: (value: Response) => void
-    const heldFailure = new Promise<Response>((resolve) => {
-      releaseFailure = resolve
-    })
-    let preparationReads = 0
-    let inFlight = 0
-    let maximumInFlight = 0
-    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
-      const url = requestUrl(request)
-      if (url === '/api/setup/kick-off' && init?.method === 'POST')
-        return response({ message: 'Restarting into the normal workspace.' })
-      if (url === '/api/v1/review-preparation') {
-        preparationReads += 1
-        inFlight += 1
-        maximumInFlight = Math.max(maximumInFlight, inFlight)
-        const result =
-          preparationReads === 1
-            ? await heldFailure
-            : response({
-                presentation: {
-                  run_id: `preparation_run_${'a'.repeat(64)}`,
-                  state: 'completed_with_failures',
-                  // First finishes: two prepared and one stopped, of three.
-                  passage: {
-                    read: 3,
-                    searches_finished: 3,
-                    compared: 3,
-                    checked: 2,
-                    ready: 2,
-                    failed: 1,
-                  },
-                  // One prepared book has since failed: Library's current set,
-                  // which this history list must not show.
-                  now: {
-                    ready: 1,
-                    recorded: 0,
-                    not_matched: 0,
-                    failed: 2,
-                    in_progress: 0,
-                    scan_ids: [],
-                  },
-                  active_books: [],
-                  active_overflow: 0,
-                  recent_completions: [
-                    { name: 'Shelf one', outcome: 'failed', completed_at: 2 },
-                    { name: 'Shelf two', outcome: 'ready', completed_at: 1 },
-                  ],
-                  throughput_per_minute: 1,
-                  total: 3,
-                },
-              })
-        inFlight -= 1
-        return result
-      }
-      return response(
-        setupState('kick_off', {
-          completed_steps: ['claim', 'connect', 'providers', 'libraries', 'mounts'],
-        }),
-      )
-    })
-    vi.stubGlobal('fetch', fetch)
-    runSetup()
-    fireEvent.click(await screen.findByRole('button', { name: 'Kick off preparation' }))
-    await waitFor(() => expect(timers).toHaveLength(1))
+    const place = stubLocation()
+    runSetup(place)
 
-    const first = timers.shift()
-    if (!first) throw new Error('first preparation poll missing')
-    const pending = first()
-    expect(timers).toHaveLength(0)
-    expect(inFlight).toBe(1)
-    releaseFailure(response({ error: 'unavailable' }, 503))
-    await pending
-    expect(
-      screen.getByText(/Reconnecting… The progress shown is from before the connection dropped\./u),
-    ).toBeVisible()
-    expect(timers).toHaveLength(1)
-
-    const retry = timers.shift()
-    if (!retry) throw new Error('preparation retry missing')
-    await retry()
-    expect(await screen.findByRole('heading', { name: 'Preparation is complete' })).toBeVisible()
-    // The list is first-finish history on one time basis: its two outcomes
-    // account for every book, and no label is a phrase Library uses for the
-    // books as they stand now, so one phrase names one set (#1366).
-    const passage = [...document.querySelectorAll('.setup-passage div')].map((row) => [
-      row.querySelector('dt')?.textContent ?? '',
-      row.querySelector('dd')?.textContent ?? '',
-    ])
-    expect(passage).toEqual([
-      ['Files read', '3 of 3'],
-      ['Sources asked', '3 of 3'],
-      ['Sources compared', '3 of 3'],
-      ['Automatic choices checked', '2 of 3'],
-      ['Prepared', '2 of 3'],
-      ['Stopped before finishing', '1 of 3'],
-    ])
-    const figure = (label: string) =>
-      Number(passage.find(([term]) => term === label)?.[1]?.split(' of ')[0])
-    expect(figure('Prepared') + figure('Stopped before finishing')).toBe(3)
-    const completions = [...document.querySelectorAll('.setup-completions li')].map(
-      (item) => item.textContent,
-    )
-    expect(completions).toEqual(['Shelf one · Stopped before finishing', 'Shelf two · Prepared'])
-    const current = /ready to browse|recorded, nothing to decide|not matched|could not finish/iu
-    for (const label of [...passage.map(([term]) => term), ...completions])
-      expect(label).not.toMatch(current)
-    expect(timers).toHaveLength(0)
-    expect(maximumInFlight).toBe(1)
-  })
-
-  it('stops polling and offers normal sign-in when the one-hour setup session expires', async () => {
-    const claimedAt = new Date('2026-08-25T10:00:00Z')
-    let now = claimedAt.getTime()
-    vi.spyOn(Date, 'now').mockImplementation(() => now)
-    const previousSetTimeout = globalThis.setTimeout
-    let poll: (() => Promise<void>) | undefined
-    vi.stubGlobal(
-      'setTimeout',
-      vi.fn((callback: () => void | Promise<void>, delay?: number) => {
-        if (delay === 1_500) {
-          poll = async () => await callback()
-          return 1
-        }
-        return previousSetTimeout(() => void callback(), delay)
-      }),
-    )
-    const clear = vi.fn()
-    vi.stubGlobal('clearTimeout', clear)
-    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
-      const url = requestUrl(request)
-      if (url === '/api/setup/kick-off' && init?.method === 'POST')
-        return response({ message: 'Restarting into the normal workspace.' })
-      if (url === '/api/v1/review-preparation') return response({ error: 'unauthorized' }, 401)
-      return response(
-        setupState('kick_off', {
-          completed_steps: ['claim', 'connect', 'providers', 'libraries', 'mounts'],
-        }),
-      )
-    })
-    vi.stubGlobal('fetch', fetch)
-    runSetup()
-    fireEvent.click(await screen.findByRole('button', { name: 'Kick off preparation' }))
-    await waitFor(() => expect(poll).toBeDefined())
-
-    now = claimedAt.getTime() + 3_601_000
-    await poll?.()
-
-    expect(await screen.findByRole('heading', { name: 'Sign in to continue' })).toHaveFocus()
-    expect(screen.getByText(/setup sign-in expired/u)).toBeVisible()
-    expect(screen.getByRole('link', { name: 'Sign in to workspace' })).toHaveAttribute(
-      'href',
-      '/library?lens=all',
-    )
-    expect(clear).toHaveBeenCalled()
+    fireEvent.click(await screen.findByRole('button', { name: 'Start' }))
+    await waitFor(() => expect(place.replace).toHaveBeenCalled())
+    // The workspace's own sign-in returns the owner to Library.
+    expect(landedAt(place)).toBe('/library?lens=all')
+    expect(reads).toBe(1)
   })
 })
 
@@ -2635,6 +2403,20 @@ const reviewerAccess = (state: string, reason: string | null = null) => ({
   data_use_caveat: 'Cover previews are sent to the selected provider.',
 })
 
+// The reviewer step checks an existing sign-in once per visit, unasked.
+const recheckAs = (state: string, failure: string | null = null) =>
+  response({ state, failure, verification_url: null, user_code: null })
+const isRecheck = (url: string, init?: RequestInit) =>
+  url.endsWith('/codex/recheck') && init?.method === 'POST'
+// Sign in with ChatGPT waits while that check runs.
+const signInReady = async () => {
+  await screen.findByRole('heading', { name: 'Cover reviewer (optional)' })
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Sign in with ChatGPT' })).toBeEnabled(),
+  )
+  return screen.getByRole('button', { name: 'Sign in with ChatGPT' })
+}
+
 it('keeps alternatives usable when the contained profile is absent', async () => {
   vi.stubGlobal(
     'fetch',
@@ -2647,12 +2429,18 @@ it('keeps alternatives usable when the contained profile is absent', async () =>
     ),
   )
   runSetup()
-  expect(await screen.findByText(/The contained profile is missing/u)).toBeVisible()
-  expect(screen.getByRole('button', { name: 'Start device sign-in' })).toBeDisabled()
-  expect(screen.getByRole('button', { name: 'Check existing sign-in' })).toBeDisabled()
-  expect(screen.getByRole('button', { name: 'Continue without a reviewer' })).toBeEnabled()
-  expect(screen.getByRole('button', { name: 'Validate and use OpenRouter' })).toBeEnabled()
-  expect(screen.getByText(/Optional description advice is configured separately/u)).toBeVisible()
+  expect(
+    await screen.findByText(
+      'The Codex profile is missing. Restore the image’s profile or correct the profile path, then restart the service.',
+    ),
+  ).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Sign in with ChatGPT' })).toBeDisabled()
+  expect(screen.queryByRole('button', { name: 'Check existing sign-in' })).toBeNull()
+  expect(screen.getByRole('button', { name: 'Skip for now' })).toBeEnabled()
+  expect(screen.getByRole('button', { name: 'Check key and use OpenRouter' })).toBeEnabled()
+  expect(screen.getByText('Uses your ChatGPT plan.')).toBeVisible()
+  expect(screen.queryByText(/Model:/u)).toBeNull()
+  expect(screen.queryByText(/Optional description advice/u)).toBeNull()
 })
 
 it('resumes an issued device flow after reload, cancels it, and offers a restart', async () => {
@@ -2678,7 +2466,7 @@ it('resumes an issued device flow after reload, cancels it, and offers a restart
   runSetup()
   expect(await screen.findByRole('link', { name: 'Open the device sign-in page' })).toBeVisible()
   fireEvent.click(screen.getByRole('button', { name: 'Cancel sign-in' }))
-  expect(await screen.findByRole('button', { name: 'Restart device sign-in' })).toBeEnabled()
+  expect(await screen.findByRole('button', { name: 'Sign in with ChatGPT' })).toBeEnabled()
   expect(
     fetch.mock.calls.filter(
       ([request, init]) => requestUrl(request).endsWith('/device') && init?.method === 'POST',
@@ -2692,7 +2480,7 @@ it('resumes an issued device flow after reload, cancels it, and offers a restart
 const reviewerStepSettled = () =>
   waitFor(() =>
     expect(
-      screen.getByRole('heading', { name: 'Choose an optional cover reviewer' }),
+      screen.getByRole('heading', { name: 'Cover reviewer (optional)' }),
     ).toHaveFocus(),
   )
 
@@ -2715,13 +2503,18 @@ it('moves focus to Cancel sign-in after a pressed start (#1607)', async () => {
         verification_url: 'https://auth.openai.com/codex/device',
         user_code: 'ABCD-1234',
       })
+    if (isRecheck(url, init)) return recheckAs('ready')
     if (url.endsWith('/reviewer-access'))
       return response(reviewerAccess(cancelled ? 'cancelled' : started ? 'starting' : 'ready'))
     return response(setupState('reviewer'))
   })
   vi.stubGlobal('fetch', fetch)
   runSetup()
-  const start = await screen.findByRole('button', { name: 'Start device sign-in' })
+  await screen.findByRole('heading', { name: 'Cover reviewer (optional)' })
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Sign in with ChatGPT' })).toBeEnabled(),
+  )
+  const start = screen.getByRole('button', { name: 'Sign in with ChatGPT' })
   await reviewerStepSettled()
   start.focus()
   fireEvent.click(start)
@@ -2729,36 +2522,38 @@ it('moves focus to Cancel sign-in after a pressed start (#1607)', async () => {
   await waitFor(() => expect(cancel).toHaveFocus())
   expect(await screen.findByText('ABCD-1234')).toBeVisible()
   fireEvent.click(cancel)
-  expect(await screen.findByRole('button', { name: 'Restart device sign-in' })).toBeEnabled()
-  expect(screen.getByRole('heading', { name: 'Choose an optional cover reviewer' })).toBeVisible()
-  expect(screen.getByText('Status: sign-in cancelled')).toBeVisible()
+  expect(await screen.findByRole('button', { name: 'Sign in with ChatGPT' })).toBeEnabled()
+  expect(screen.getByRole('heading', { name: 'Cover reviewer (optional)' })).toBeVisible()
+  expect(screen.getByText('Not signed in', { selector: '.option p' })).toBeVisible()
 })
 
 it.each([
-  ['usable access', 'usable', null, null, 'Status: ready to use', null],
+  ['usable access', 'usable', null, null, 'Signed in', null],
   [
     'failed access (#1598 shape)',
     'failed',
     'permission_or_profile',
     null,
-    'Status: failed',
-    'The installed Codex sign-in could not be validated. Restart device sign-in, or check the existing sign-in.',
+    'Not signed in',
+    'Your ChatGPT sign-in could not be checked. Sign in with ChatGPT again.',
   ],
   [
     'a failed poll (main shape)',
     'waiting',
     null,
     'protocol_or_process',
-    'Status: failed',
-    'Codex returned an unexpected sign-in result. Restart the sign-in flow.',
+    'Not signed in',
+    'Codex returned an unexpected sign-in result. Sign in with ChatGPT again.',
   ],
-  ['cancelled access', 'cancelled', null, null, 'Status: sign-in cancelled', null],
+  ['cancelled access', 'cancelled', null, null, 'Not signed in', null],
 ] as const)(
   'names the Codex status in words, with its remedy, after %s (#1607)',
   async (_case, state, reason, pollFailure, status, remedy) => {
     let reads = 0
-    const fetch = vi.fn(async (request: RequestInfo | URL) => {
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
       const url = requestUrl(request)
+      // The automatic check proves what the recorded state says.
+      if (isRecheck(url, init)) return recheckAs(state, reason)
       if (url.endsWith('/device'))
         return response({
           state: 'failed',
@@ -2775,19 +2570,21 @@ it.each([
     })
     vi.stubGlobal('fetch', fetch)
     runSetup()
-    expect(await screen.findByText(status)).toBeVisible()
+    // The step draws again once the check or the flow settles.
+    await waitFor(() => expect(screen.getByText(status)).toBeVisible())
+    if (remedy) await waitFor(() => expect(screen.getByText(remedy)).toBeVisible())
     if (state === 'usable') expect(screen.getByRole('button', { name: 'Use Codex' })).toBeEnabled()
-    else expect(screen.getByRole('button', { name: 'Restart device sign-in' })).toBeEnabled()
+    else
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Sign in with ChatGPT' })).toBeEnabled(),
+      )
     if (remedy) expect(screen.getByText(remedy)).toBeVisible()
-    for (const copy of [
-      'Restart device sign-in, or check the existing sign-in.',
-      'Restart the sign-in flow.',
-    ])
-      if (!remedy?.endsWith(copy)) expect(screen.queryByText(new RegExp(copy, 'u'))).toBeNull()
+    expect(screen.queryAllByText(remedyCopy)).toHaveLength(remedy ? 1 : 0)
+    expect(screen.queryByText(/^Status:/u)).toBeNull()
   },
 )
 
-const remedyCopy = /Restart device sign-in, or check|Restart the sign-in flow/u
+const remedyCopy = /Sign in with ChatGPT again\./u
 
 it.each([
   ['failed', 'protocol_or_process'],
@@ -2808,14 +2605,18 @@ it.each([
           verification_url: 'https://auth.openai.com/codex/device',
           user_code: 'ABCD-1234',
         })
+      if (isRecheck(url, init)) return recheckAs(state, reason)
       if (url.endsWith('/reviewer-access'))
         return response(started ? reviewerAccess('starting') : reviewerAccess(state, reason))
       return response(setupState('reviewer'))
     })
     vi.stubGlobal('fetch', fetch)
     runSetup()
-    const restart = await screen.findByRole('button', { name: 'Restart device sign-in' })
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Sign in with ChatGPT' })).toBeEnabled(),
+    )
     expect(screen.getByText(remedyCopy)).toBeVisible()
+    const restart = screen.getByRole('button', { name: 'Sign in with ChatGPT' })
     await reviewerStepSettled()
     restart.focus()
     fireEvent.click(restart)
@@ -2826,7 +2627,7 @@ it.each([
   },
 )
 
-it('keys the remedy on the shown result when Check reports usable over a failed access (#1607)', async () => {
+it('keys the remedy on the shown result when the automatic check reports usable over a failed access (#1607)', async () => {
   const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
     const url = requestUrl(request)
     if (url.endsWith('/recheck') && init?.method === 'POST')
@@ -2837,14 +2638,12 @@ it('keys the remedy on the shown result when Check reports usable over a failed 
   })
   vi.stubGlobal('fetch', fetch)
   runSetup()
-  expect(await screen.findByText(remedyCopy)).toBeVisible()
-  fireEvent.click(screen.getByRole('button', { name: 'Check existing sign-in' }))
-  expect(await screen.findByText('Status: ready to use')).toBeVisible()
+  expect(await screen.findByText('Signed in')).toBeVisible()
   expect(screen.getByRole('button', { name: 'Use Codex' })).toBeEnabled()
   expect(screen.queryByText(remedyCopy)).toBeNull()
 })
 
-it.each(['usable access at load', 'a usable Check over failed access'] as const)(
+it.each(['usable access at load', 'a usable automatic check over failed access'] as const)(
   'shows the recorded failure after a refused Use Codex with %s (#1617)',
   async (shape) => {
     let refused = false
@@ -2866,26 +2665,27 @@ it.each(['usable access at load', 'a usable Check over failed access'] as const)
     })
     vi.stubGlobal('fetch', fetch)
     runSetup()
-    if (shape === 'a usable Check over failed access')
-      fireEvent.click(await screen.findByRole('button', { name: 'Check existing sign-in' }))
-    expect(await screen.findByText('Status: ready to use')).toBeVisible()
+    expect(await screen.findByText('Signed in')).toBeVisible()
     fireEvent.click(screen.getByRole('button', { name: 'Use Codex' }))
 
-    expect(await screen.findByText('Status: failed')).toBeVisible()
+    expect(await screen.findByText('Not signed in')).toBeVisible()
     expect(screen.getByText(remedyCopy)).toBeVisible()
     expect(screen.getByRole('alert')).toHaveTextContent(
-      'Codex sign-in is unavailable. Test or replace it, then select Codex.',
+      'You’re not signed in to ChatGPT. Sign in with ChatGPT, then choose Codex again.',
     )
-    // The refusal sits just above the fresh option's first control.
+    // The refusal sits just above the fresh option's first control, and the
+    // recorded refusal is not checked again on the same visit.
     expect(screen.getByRole('alert').nextElementSibling).toBe(
-      screen.getByRole('button', { name: 'Check existing sign-in' }),
+      screen.getByRole('button', { name: 'Sign in with ChatGPT' }),
     )
-    expect(screen.getByRole('button', { name: 'Check existing sign-in' })).toBeEnabled()
-    expect(screen.getByRole('button', { name: 'Restart device sign-in' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Sign in with ChatGPT' })).toBeEnabled()
+    expect(
+      fetch.mock.calls.filter(([request, init]) => isRecheck(requestUrl(request), init)),
+    ).toHaveLength(shape === 'usable access at load' ? 0 : 1)
     expect(screen.queryByRole('button', { name: 'Use Codex' })).toBeNull()
     await waitFor(() =>
       expect(
-        screen.getByRole('heading', { name: 'Choose an optional cover reviewer' }),
+        screen.getByRole('heading', { name: 'Cover reviewer (optional)' }),
       ).toHaveFocus(),
     )
   },
@@ -2910,7 +2710,7 @@ it('keeps the read failure when access cannot be read after a refused Use Codex 
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Use Codex' })).toBeNull())
   const alerts = await screen.findAllByRole('alert')
   expect(alerts).toHaveLength(1)
-  expect(alerts[0]).not.toHaveTextContent('Codex sign-in is unavailable')
+  expect(alerts[0]).not.toHaveTextContent('You’re not signed in to ChatGPT')
   // With no control to sit under, the read failure opens the form (#1618).
   expect(alerts[0]?.parentElement?.firstElementChild).toBe(alerts[0])
 })
@@ -2920,9 +2720,9 @@ it.each([
     'access_changed',
     409,
     { detail: { error: 'access_changed' } },
-    'Reviewer access changed in another session. Reload before trying again.',
+    'Reviewer settings changed elsewhere. Reload, then try again.',
   ],
-  ['unavailable', 503, { error: 'unavailable' }, 'Setup could not finish that step'],
+  ['unavailable', 503, { error: 'unavailable' }, 'That step was not saved.'],
 ])(
   'shows a failed Use Codex (%s) directly under the button (#1618)',
   async (_, status, body, message) => {
@@ -2946,34 +2746,60 @@ it.each([
     expect(alert.previousElementSibling).toBe(use)
     expect(use).toBeEnabled()
     expect(use).toHaveFocus()
-    expect(screen.getByText('Status: ready to use')).toBeVisible()
+    expect(screen.getByText('Signed in')).toBeVisible()
   },
 )
 
-it('shows a failed Check existing sign-in between Check and Restart (#1618)', async () => {
+it('shows a failed automatic check under Sign in with ChatGPT without moving focus (#1618)', async () => {
   const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
     const url = requestUrl(request)
-    if (url.endsWith('/recheck') && init?.method === 'POST')
-      return response({ error: 'unavailable' }, 503)
+    if (isRecheck(url, init)) return response({ error: 'unavailable' }, 503)
     if (url.endsWith('/reviewer-access'))
       return response(reviewerAccess('failed', 'permission_or_profile'))
     return response(setupState('reviewer'))
   })
   vi.stubGlobal('fetch', fetch)
   runSetup()
-  const check = await screen.findByRole('button', { name: 'Check existing sign-in' })
   await reviewerStepSettled()
-  check.focus()
-  fireEvent.click(check)
 
   const alert = await screen.findByRole('alert')
-  expect(alert).toHaveTextContent('Setup could not finish that step')
-  expect(alert.previousElementSibling).toBe(check)
-  expect(alert.nextElementSibling).toBe(
-    screen.getByRole('button', { name: 'Restart device sign-in' }),
-  )
-  expect(check).toBeEnabled()
-  expect(check).toHaveFocus()
+  expect(alert).toHaveTextContent('That step was not saved.')
+  const signIn = screen.getByRole('button', { name: 'Sign in with ChatGPT' })
+  expect(alert.previousElementSibling).toBe(signIn)
+  expect(signIn).toBeEnabled()
+  expect(screen.getByText('Not signed in')).toBeVisible()
+  expect(screen.getByRole('heading', { name: 'Cover reviewer (optional)' })).toHaveFocus()
+})
+
+it('checks an existing Codex sign-in once without a press', async () => {
+  let release: (() => void) | undefined
+  const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+    const url = requestUrl(request)
+    if (isRecheck(url, init)) {
+      await new Promise<void>((resolve) => {
+        release = resolve
+      })
+      return recheckAs('usable')
+    }
+    if (url.endsWith('/reviewer-access')) return response(reviewerAccess('ready'))
+    return response(setupState('reviewer'))
+  })
+  vi.stubGlobal('fetch', fetch)
+  runSetup()
+
+  // While it runs the line says so, and Sign in with ChatGPT waits.
+  expect(await screen.findByText('Checking your ChatGPT sign-in…')).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Sign in with ChatGPT' })).toBeDisabled()
+  await waitFor(() => expect(release).toBeDefined())
+  release?.()
+  expect(await screen.findByText('Signed in', { selector: '.option p' })).toBeVisible()
+  await waitFor(() => expect(document.querySelector('#setup-status')).toHaveTextContent('Signed in'))
+  expect(screen.getByRole('button', { name: 'Use Codex' })).toBeEnabled()
+  expect(screen.queryByRole('button', { name: 'Sign in with ChatGPT' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Check existing sign-in' })).toBeNull()
+  expect(
+    fetch.mock.calls.filter(([request, init]) => isRecheck(requestUrl(request), init)),
+  ).toHaveLength(1)
 })
 
 it('shows a failed Cancel sign-in under the button and above the code (#1618)', async () => {
@@ -2999,7 +2825,7 @@ it('shows a failed Cancel sign-in under the button and above the code (#1618)', 
   fireEvent.click(cancel)
 
   const alert = await screen.findByRole('alert')
-  expect(alert).toHaveTextContent('Setup could not finish that step')
+  expect(alert).toHaveTextContent('That step was not saved.')
   expect(alert.previousElementSibling).toBe(cancel)
   expect(alert.nextElementSibling).toBe(document.querySelector('[data-device-prompt]'))
   expect(screen.getByText('ABCD-1234')).toBeVisible()
@@ -3029,10 +2855,10 @@ it('shows a failed device poll under Cancel sign-in without moving focus (#1618)
   await reviewerStepSettled()
 
   const alert = await screen.findByRole('alert', {}, { timeout: 3000 })
-  expect(alert).toHaveTextContent('Setup could not finish that step')
+  expect(alert).toHaveTextContent('That step was not saved.')
   expect(screen.getAllByRole('alert')).toHaveLength(1)
   expect(alert.previousElementSibling).toBe(screen.getByRole('button', { name: 'Cancel sign-in' }))
-  expect(screen.getByRole('heading', { name: 'Choose an optional cover reviewer' })).toHaveFocus()
+  expect(screen.getByRole('heading', { name: 'Cover reviewer (optional)' })).toHaveFocus()
 })
 
 it('clears a failed Start once the next Start succeeds (#1618)', async () => {
@@ -3051,12 +2877,17 @@ it('clears a failed Start once the next Start succeeds (#1618)', async () => {
         verification_url: 'https://auth.openai.com/codex/device',
         user_code: 'ABCD-1234',
       })
+    if (isRecheck(url, init)) return recheckAs('ready')
     if (url.endsWith('/reviewer-access')) return response(reviewerAccess('ready'))
     return response(setupState('reviewer'))
   })
   vi.stubGlobal('fetch', fetch)
   runSetup()
-  const start = await screen.findByRole('button', { name: 'Start device sign-in' })
+  await screen.findByRole('heading', { name: 'Cover reviewer (optional)' })
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Sign in with ChatGPT' })).toBeEnabled(),
+  )
+  const start = screen.getByRole('button', { name: 'Sign in with ChatGPT' })
   await reviewerStepSettled()
   start.focus()
   fireEvent.click(start)
@@ -3092,7 +2923,7 @@ it.each([
     })
     vi.stubGlobal('fetch', fetch)
     runSetup()
-    const cancel = await screen.findByRole('button', { name: 'Cancel any active sign-in' })
+    const cancel = await screen.findByRole('button', { name: 'Cancel sign-in' })
     const feedback = cancel.nextElementSibling
     expect(feedback).toHaveAttribute('role', 'status')
     await reviewerStepSettled()
@@ -3105,10 +2936,10 @@ it.each([
     await waitFor(() => expect(cancel).not.toHaveAttribute('aria-disabled'))
 
     if (alert) {
-      expect(await screen.findByRole('alert')).toHaveTextContent('Setup could not finish that step')
+      expect(await screen.findByRole('alert')).toHaveTextContent('That step was not saved.')
       expect(feedback?.textContent).toBe('')
     } else {
-      expect(await screen.findByText('Any active sign-in was cancelled.')).toBeVisible()
+      expect(await screen.findByText('The sign-in was cancelled.')).toBeVisible()
       expect(screen.queryByRole('alert')).toBeNull()
     }
     expect(cancel).toHaveFocus()
@@ -3130,10 +2961,8 @@ it('restores a reviewer step whose form token rotated at the top of the fresh fo
     }),
   )
   runSetup()
-  const check = await screen.findByRole('button', { name: 'Check existing sign-in' })
-  await reviewerStepSettled()
-  check.focus()
-  fireEvent.click(check)
+  // The automatic check meets a token another tab rotated.
+  const check = await screen.findByRole('button', { name: 'Sign in with ChatGPT' })
 
   const alert = await screen.findByRole('alert')
   expect(alert).toHaveTextContent(
@@ -3184,16 +3013,17 @@ it('prevents duplicate starts and preserves the reviewer step after session expi
       return new Promise<Response>((resolve) => {
         release = resolve
       })
+    if (isRecheck(url, init)) return recheckAs('ready')
     if (url.endsWith('/reviewer-access')) return response(reviewerAccess('ready'))
     return response(
       setupState('reviewer', {
-        completed_steps: ['claim', 'connect', 'providers', 'libraries', 'mounts'],
+        completed_steps: ['claim', 'connect', 'libraries', 'mounts', 'providers'],
       }),
     )
   })
   vi.stubGlobal('fetch', fetch)
   runSetup()
-  const start = await screen.findByRole('button', { name: 'Start device sign-in' })
+  const start = await signInReady()
   await reviewerStepSettled()
   start.focus()
   fireEvent.click(start)
@@ -3206,20 +3036,20 @@ it('prevents duplicate starts and preserves the reviewer step after session expi
     ),
   ).toHaveLength(1)
   release?.(response({ error: 'unauthorized' }, 401))
-  expect(await screen.findByRole('alert')).toHaveTextContent('Your setup sign-in expired')
-  expect(screen.getByRole('heading', { name: 'Choose an optional cover reviewer' })).toBeVisible()
+  expect(await screen.findByRole('alert')).toHaveTextContent('Your sign-in expired')
+  expect(screen.getByRole('heading', { name: 'Cover reviewer (optional)' })).toBeVisible()
   expect(screen.getByRole('button', { name: 'Change Choose libraries' })).toBeVisible()
   expect(start).toBeEnabled()
 })
 
 it.each([
-  ['reviewer_unconfigured', 'The selected reviewer is no longer ready'],
-  ['not_provisioned', 'The contained reviewer profile is unavailable'],
+  ['reviewer_unconfigured', 'The chosen reviewer is not ready any more'],
+  ['not_provisioned', 'Codex is not set up on this host'],
   ['unreachable', 'OpenRouter could not be reached'],
   ['timed_out', 'OpenRouter did not answer in time. Check network access, then retry.'],
   [
     'malformed_response',
-    'OpenRouter returned an invalid response. Retry later or choose another model.',
+    'OpenRouter’s answer could not be read. Retry later, or choose another model.',
   ],
   [
     'response_too_large',
@@ -3231,6 +3061,7 @@ it.each([
     vi.stubGlobal(
       'fetch',
       vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+        if (isRecheck(requestUrl(request), init)) return recheckAs('ready')
         if (init?.method === 'POST') return response({ error: code }, 422)
         return response(
           requestUrl(request).endsWith('/reviewer-access')
@@ -3240,7 +3071,7 @@ it.each([
       }),
     )
     runSetup()
-    const start = await screen.findByRole('button', { name: 'Start device sign-in' })
+    const start = await signInReady()
     await reviewerStepSettled()
     start.focus()
     fireEvent.click(start)
@@ -3249,17 +3080,17 @@ it.each([
     // The alert sits directly under the button that was pressed (#1618).
     expect(alert.previousElementSibling).toBe(start)
     expect(start).toHaveFocus()
-    expect(screen.getByRole('button', { name: 'Continue without a reviewer' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Skip for now' })).toBeEnabled()
   },
 )
 
 it.each([
-  ['Continue without a reviewer', 503, 'unavailable', 'Setup could not finish that step', false],
+  ['Skip for now', 503, 'unavailable', 'That step was not saved.', false],
   [
-    'Continue with this reviewer',
+    'Continue',
     409,
     'reviewer_unconfigured',
-    'The selected reviewer is no longer ready',
+    'The chosen reviewer is not ready any more',
     true,
   ],
 ] as const)(
@@ -3271,6 +3102,7 @@ it.each([
         const url = requestUrl(request)
         if (url === '/api/setup/reviewer' && init?.method === 'POST')
           return response({ detail: { error: code } }, status)
+        if (isRecheck(url, init)) return recheckAs('ready')
         if (url.endsWith('/reviewer-access'))
           return response({
             ...reviewerAccess('ready'),
@@ -3280,7 +3112,8 @@ it.each([
       }),
     )
     runSetup()
-    const pressed = await screen.findByRole('button', { name })
+    await signInReady()
+    const pressed = screen.getByRole('button', { name })
     await reviewerStepSettled()
     pressed.focus()
     fireEvent.click(pressed)
@@ -3288,15 +3121,14 @@ it.each([
     const alert = await screen.findByRole('alert')
     await waitFor(() => expect(alert).toHaveTextContent(copy))
     expect(screen.getAllByRole('alert')).toHaveLength(1)
-    expect(alert.previousElementSibling).toBe(pressed)
-    if (mapped) expect(alert.nextElementSibling).toBeNull()
-    else
-      expect(alert.nextElementSibling).toBe(
-        screen.getByRole('heading', { name: 'Contained Codex' }).closest('.option'),
-      )
+    // After the row that holds Continue and Skip for now.
+    const row = alert.previousElementSibling
+    expect(row).toHaveClass('actions')
+    expect(row).toContainElement(pressed)
+    expect(alert.nextElementSibling).toBeNull()
     expect(pressed).toBeEnabled()
     expect(pressed).toHaveFocus()
-    expect(screen.getByText('Status: ready to sign in')).toBeVisible()
+    expect(screen.getByText(mapped ? 'Selected: GPT-6 Luna' : 'Not signed in')).toBeVisible()
   },
 )
 
@@ -3307,6 +3139,7 @@ it('keeps one alert when a failed Start is followed by a failed Continue (#1664)
       const url = requestUrl(request)
       if (url === '/api/setup/reviewer' && init?.method === 'POST')
         return response({ detail: { error: 'unavailable' } }, 503)
+      if (isRecheck(url, init)) return recheckAs('ready')
       if (init?.method === 'POST') return response({ error: 'unreachable' }, 422)
       return response(
         url.endsWith('/reviewer-access') ? reviewerAccess('ready') : setupState('reviewer'),
@@ -3314,7 +3147,7 @@ it('keeps one alert when a failed Start is followed by a failed Continue (#1664)
     }),
   )
   runSetup()
-  const start = await screen.findByRole('button', { name: 'Start device sign-in' })
+  const start = await signInReady()
   await reviewerStepSettled()
   start.focus()
   fireEvent.click(start)
@@ -3322,15 +3155,39 @@ it('keeps one alert when a failed Start is followed by a failed Continue (#1664)
   await waitFor(() => expect(first).toHaveTextContent('OpenRouter could not be reached'))
   expect(first.previousElementSibling).toBe(start)
 
-  const skip = screen.getByRole('button', { name: 'Continue without a reviewer' })
+  const skip = screen.getByRole('button', { name: 'Skip for now' })
   skip.focus()
   fireEvent.click(skip)
   await waitFor(() =>
-    expect(screen.getByRole('alert')).toHaveTextContent('Setup could not finish that step'),
+    expect(screen.getByRole('alert')).toHaveTextContent('That step was not saved.'),
   )
   const alerts = screen.getAllByRole('alert')
   expect(alerts).toHaveLength(1)
-  expect(alerts[0]?.previousElementSibling).toBe(skip)
+  expect(alerts[0]?.previousElementSibling).toContainElement(skip)
+})
+
+it('asks for a choice when Continue is pressed with no reviewer chosen', async () => {
+  const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+    const url = requestUrl(request)
+    if (isRecheck(url, init)) return recheckAs('ready')
+    if (url.endsWith('/reviewer-access')) return response(reviewerAccess('ready'))
+    return response(setupState('reviewer'))
+  })
+  vi.stubGlobal('fetch', fetch)
+  runSetup()
+  await signInReady()
+  const next = screen.getByRole('button', { name: 'Continue' })
+  expect(next).toHaveClass('primary')
+  fireEvent.click(next)
+
+  const alert = await screen.findByRole('alert')
+  expect(alert).toHaveTextContent('Choose Codex or OpenRouter, or skip for now.')
+  expect(alert.previousElementSibling).toContainElement(next)
+  expect(
+    fetch.mock.calls.filter(
+      ([request, init]) => requestUrl(request) === '/api/setup/reviewer' && init?.method === 'POST',
+    ),
+  ).toHaveLength(0)
 })
 
 it('leaves blocked Codex controls disabled after a failed Continue without a reviewer (#1664)', async () => {
@@ -3348,29 +3205,26 @@ it('leaves blocked Codex controls disabled after a failed Continue without a rev
     }),
   )
   runSetup()
-  const skip = await screen.findByRole('button', { name: 'Continue without a reviewer' })
+  const skip = await screen.findByRole('button', { name: 'Skip for now' })
   await reviewerStepSettled()
-  const start = screen.getByRole('button', { name: 'Start device sign-in' })
-  const check = screen.getByRole('button', { name: 'Check existing sign-in' })
+  const start = screen.getByRole('button', { name: 'Sign in with ChatGPT' })
   expect(start).toBeDisabled()
-  expect(check).toBeDisabled()
   skip.focus()
   fireEvent.click(skip)
 
   const alert = await screen.findByRole('alert')
-  await waitFor(() => expect(alert).toHaveTextContent('Setup could not finish that step'))
+  await waitFor(() => expect(alert).toHaveTextContent('That step was not saved.'))
   expect(skip).toBeEnabled()
   // Only what the press disabled is enabled again: the blocked host's
   // sign-in controls stay as they were.
   expect(start).toBeDisabled()
-  expect(check).toBeDisabled()
-  expect(screen.getByRole('button', { name: 'Validate and use OpenRouter' })).toBeEnabled()
+  expect(screen.getByRole('button', { name: 'Check key and use OpenRouter' })).toBeEnabled()
 })
 
 it.each([
-  ['cancelled', 'Any active sign-in was cancelled.'],
-  ['ready', 'No active sign-in remains.'],
-  ['failed', 'Cancellation could not be confirmed.'],
+  ['cancelled', 'The sign-in was cancelled.'],
+  ['ready', 'No sign-in was in progress.'],
+  ['failed', 'The sign-in was not cancelled. Try again.'],
 ])('keeps cancellation reachable after blocked reload: %s', async (state, message) => {
   const fetch = vi.fn(async (request: RequestInfo | URL) => {
     const url = requestUrl(request)
@@ -3382,19 +3236,20 @@ it.each([
   })
   vi.stubGlobal('fetch', fetch)
   runSetup()
-  fireEvent.click(await screen.findByRole('button', { name: 'Cancel any active sign-in' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Cancel sign-in' }))
   expect(await screen.findByText(new RegExp(message.replaceAll('.', '\\.')))).toBeVisible()
-  expect(screen.getByRole('button', { name: 'Start device sign-in' })).toBeDisabled()
-  expect(screen.getByText('Status: not set up on this host')).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Sign in with ChatGPT' })).toBeDisabled()
+  expect(screen.getByText('Not signed in')).toBeVisible()
+  expect(fetch.mock.calls.some(([request]) => requestUrl(request).endsWith('/recheck'))).toBe(false)
 })
 
 it.each([
-  ['succeeds', () => response({ state: 'cancelled' }), false, 'Any active sign-in was cancelled.'],
+  ['succeeds', () => response({ state: 'cancelled' }), false, 'The sign-in was cancelled.'],
   [
     'fails',
     () => response({ error: 'unavailable' }, 503),
     true,
-    'Setup could not finish that step',
+    'That step was not saved.',
   ],
 ])(
   'keeps focus on the blocked cancel while it runs and after it %s',
@@ -3413,7 +3268,7 @@ it.each([
     })
     vi.stubGlobal('fetch', fetch)
     runSetup()
-    const cancel = await screen.findByRole('button', { name: 'Cancel any active sign-in' })
+    const cancel = await screen.findByRole('button', { name: 'Cancel sign-in' })
     const feedback = cancel.nextElementSibling
     const cancels = () =>
       fetch.mock.calls.filter(([request]) => requestUrl(request).endsWith('/device/cancel')).length
@@ -3448,16 +3303,10 @@ it.each([
 // aria-disabled, and a repeat press sends nothing (#1678).
 it.each([
   ['Use Codex', 'usable', null, '/api/setup/reviewer/selection'],
-  [
-    'Check existing sign-in',
-    'failed',
-    'permission_or_profile',
-    '/api/setup/reviewer/codex/recheck',
-  ],
-  ['Start device sign-in', 'ready', null, '/api/setup/reviewer/codex/device'],
+  ['Sign in with ChatGPT', 'ready', null, '/api/setup/reviewer/codex/device'],
   ['Cancel sign-in', 'waiting', null, '/api/setup/reviewer/codex/device/cancel'],
   [
-    'Validate and use OpenRouter',
+    'Check key and use OpenRouter',
     'not_provisioned',
     'profile_not_provisioned',
     '/api/setup/reviewer/openrouter',
@@ -3470,6 +3319,7 @@ it.each([
       return new Promise<Response>((resolve) => {
         release = resolve
       })
+    if (isRecheck(url, init)) return recheckAs(state, reason)
     if (url === '/api/setup/reviewer/codex/device')
       return response({
         state: 'waiting',
@@ -3485,29 +3335,25 @@ it.each([
     ).length
   vi.stubGlobal('fetch', fetch)
   runSetup()
+  if (name === 'Sign in with ChatGPT') await signInReady()
   const pressed = await screen.findByRole('button', { name })
   await reviewerStepSettled()
-  const openRouter = name === 'Validate and use OpenRouter'
+  const openRouter = name === 'Check key and use OpenRouter'
   if (openRouter) {
+    fireEvent.click(screen.getByRole('button', { name: 'Choose another model' }))
     fireEvent.input(screen.getByRole('textbox', { name: 'Model ID' }), {
       target: { value: 'provider/model' },
     })
-    fireEvent.input(screen.getByLabelText('API key (write-only)'), {
+    fireEvent.input(screen.getByLabelText('OpenRouter API key'), {
       target: { value: 'synthetic-key' },
     })
   }
-  // Start disables Check while it runs; nothing focuses Check, so that stays native.
-  const check =
-    name === 'Start device sign-in'
-      ? screen.getByRole('button', { name: 'Check existing sign-in' })
-      : null
   pressed.focus()
   fireEvent.click(pressed)
 
   expect(pressed).not.toBeDisabled()
   expect(pressed).toHaveAttribute('aria-disabled', 'true')
   expect(pressed).toHaveFocus()
-  if (check) expect(check).toBeDisabled()
   fireEvent.click(pressed)
   expect(posts()).toBe(1)
 
@@ -3516,24 +3362,23 @@ it.each([
     const alert = await screen.findByRole('alert')
     await waitFor(() =>
       expect(alert).toHaveTextContent(
-        'OpenRouter rejected this key. Replace it and validate again.',
+        'OpenRouter rejected this key. Replace it and check it again.',
       ),
     )
     // A field refusal still focuses its field (#1618).
-    const key = screen.getByLabelText('API key (write-only)')
+    const key = screen.getByLabelText('OpenRouter API key')
     expect(key).toHaveFocus()
     expect(key).toHaveAttribute('aria-invalid', 'true')
     expect(alert.nextElementSibling).toBe(pressed)
   } else {
     release?.(response({ detail: { error: 'unavailable' } }, 503))
     const alert = await screen.findByRole('alert')
-    await waitFor(() => expect(alert).toHaveTextContent('Setup could not finish that step'))
+    await waitFor(() => expect(alert).toHaveTextContent('That step was not saved.'))
     expect(pressed.nextElementSibling).toBe(alert)
     expect(pressed).toHaveFocus()
   }
   expect(pressed).not.toHaveAttribute('aria-disabled')
   expect(pressed).toBeEnabled()
-  if (check) expect(check).toBeEnabled()
   expect(posts()).toBe(1)
 })
 
@@ -3557,20 +3402,11 @@ it.each([
   [
     'Continue',
     'providers',
-    'Choose metadata providers',
+    'Choose metadata sources',
     '/api/setup/providers',
     422,
     'invalid_providers',
-    'Skip providers',
-  ],
-  [
-    'Skip providers',
-    'providers',
-    'Choose metadata providers',
-    '/api/setup/providers',
-    503,
-    'unavailable',
-    'Continue',
+    null,
   ],
   [
     'Continue',
@@ -3579,39 +3415,39 @@ it.each([
     '/api/setup/libraries',
     502,
     'unavailable',
-    'Change name of Reading Shelf',
+    null,
   ],
   [
-    'Check mounts',
+    'Check again',
     'mounts',
-    'Check read-only mounts',
+    'Find library folders',
     '/api/setup/mounts',
     422,
     'invalid_mounts',
     null,
   ],
   [
-    'Continue without a reviewer',
+    'Skip for now',
     'reviewer',
-    'Choose an optional cover reviewer',
+    'Cover reviewer (optional)',
     '/api/setup/reviewer',
     503,
     'unavailable',
-    'Start device sign-in',
+    'Sign in with ChatGPT',
   ],
   [
-    'Continue with this reviewer',
+    'Continue',
     'reviewer',
-    'Choose an optional cover reviewer',
+    'Cover reviewer (optional)',
     '/api/setup/reviewer',
     409,
     'reviewer_unconfigured',
-    'Start device sign-in',
+    'Sign in with ChatGPT',
   ],
   [
-    'Kick off preparation',
+    'Start',
     'kick_off',
-    'Kick off preparation',
+    'Start',
     '/api/setup/kick-off',
     503,
     'activation_failed',
@@ -3628,18 +3464,19 @@ it.each([
           release = resolve
         })
       if (url.startsWith('/api/setup/libraries?')) return response({ libraries: [discoveredShelf] })
+      if (isRecheck(url, init)) return recheckAs('ready')
       if (url === '/api/setup/reviewer-access')
         return response({
           ...reviewerAccess('ready'),
           mapping:
-            name === 'Continue with this reviewer'
+            name === 'Continue'
               ? { engine: 'openrouter', model: 'openai/gpt-6-luna' }
               : null,
         })
       return response(
         step === 'mounts'
           ? setupState('mounts', {
-              completed_steps: ['claim', 'connect', 'providers', 'libraries'],
+              completed_steps: ['claim', 'connect', 'libraries'],
               libraries: [recordedShelf],
               revision: 5,
             })
@@ -3653,13 +3490,10 @@ it.each([
     vi.stubGlobal('fetch', fetch)
     runSetup()
 
+    if (step === 'reviewer') await signInReady()
     const title = await screen.findByRole('heading', { name: heading })
     await waitFor(() => expect(title).toHaveFocus())
-    await waitFor(() =>
-      expect(screen.queryByText('Reading your libraries to suggest providers…')).toBeNull(),
-    )
-    if (step === 'libraries')
-      fireEvent.click(await screen.findByRole('checkbox', { name: 'Reading Shelf' }))
+    if (step === 'providers') await untickSources()
     const pressed = await screen.findByRole('button', { name })
     const sibling = siblingName ? screen.getByRole('button', { name: siblingName }) : null
     pressed.focus()
@@ -3714,32 +3548,45 @@ it('keeps validated reviewer prices visible before Continue and on reopen', asyn
     }),
   )
   runSetup()
-  fireEvent.input(await screen.findByRole('textbox', { name: 'Model ID' }), {
+  fireEvent.click(await screen.findByRole('button', { name: 'Choose another model' }))
+  fireEvent.input(screen.getByRole('textbox', { name: 'Model ID' }), {
     target: { value: 'openai/gpt-6-luna' },
   })
-  fireEvent.input(screen.getByLabelText('API key (write-only)'), {
+  fireEvent.input(screen.getByLabelText('OpenRouter API key'), {
     target: { value: 'synthetic-key' },
   })
-  fireEvent.click(screen.getByRole('button', { name: 'Validate and use OpenRouter' }))
-  expect(await screen.findByText(/Observed USD rates: 0.000001/u)).toBeVisible()
-  expect(screen.getByText('Request cost: not measured for this model.')).toBeVisible()
-  expect(screen.getByText('Current cover selection: OpenRouter — GPT-6 Luna')).toBeVisible()
+  fireEvent.click(screen.getByRole('button', { name: 'Check key and use OpenRouter' }))
+  const rates =
+    'Prices in USD: 0.000001 per input token, Unavailable per output token, 0 per image, 0 per request.'
+  const prices = await screen.findByText(rates)
+  // The rates are reference detail, inside the closed Prices and data use.
+  const about = prices.closest('details')
+  if (!about) throw new Error('reviewer detail disclosure missing')
+  expect(about).not.toHaveAttribute('open')
+  about.open = true
+  expect(prices).toBeVisible()
+  expect(screen.getByText('GPT-6 Luna: cost not measured.')).toBeVisible()
+  expect(screen.getByText('Selected: GPT-6 Luna')).toBeVisible()
+  await waitFor(() =>
+    expect(document.querySelector('#setup-status')?.textContent).toBe('OpenRouter selected.'),
+  )
   expect(advanced).toBe(false)
-  expect(screen.getByRole('button', { name: 'Continue with this reviewer' })).toBeEnabled()
+  expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled()
   resetSetupDocument()
   runSetup()
-  expect(await screen.findByText(/Observed USD rates: 0.000001/u)).toBeVisible()
-  fireEvent.click(screen.getByRole('button', { name: 'Continue with this reviewer' }))
+  expect(await screen.findByText(rates)).toBeInTheDocument()
+  expect(screen.getByText('Selected: GPT-6 Luna')).toBeVisible()
+  fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
   await waitFor(() => expect(advanced).toBe(true))
 })
 
 it.each([
   [
     'invalid_key',
-    'API key (write-only)',
-    'OpenRouter rejected this key. Replace it and validate again.',
+    'OpenRouter API key',
+    'OpenRouter rejected this key. Replace it and check it again.',
   ],
-  ['model_unavailable', 'Model ID', 'That model is unavailable. Choose another vision model.'],
+  ['model_unavailable', 'Model ID', 'That model is unavailable. Choose another model.'],
 ])(
   'places a refused OpenRouter validation (%s) beside the submit button and keeps focus on its field',
   async (code, fieldName, message) => {
@@ -3755,17 +3602,18 @@ it.each([
       }),
     )
     runSetup()
-    fireEvent.input(await screen.findByRole('textbox', { name: 'Model ID' }), {
+    fireEvent.click(await screen.findByRole('button', { name: 'Choose another model' }))
+    fireEvent.input(screen.getByRole('textbox', { name: 'Model ID' }), {
       target: { value: 'provider/model' },
     })
-    fireEvent.input(screen.getByLabelText('API key (write-only)'), {
+    fireEvent.input(screen.getByLabelText('OpenRouter API key'), {
       target: { value: 'synthetic-key' },
     })
-    const save = screen.getByRole('button', { name: 'Validate and use OpenRouter' })
+    const save = screen.getByRole('button', { name: 'Check key and use OpenRouter' })
     fireEvent.click(save)
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent(message)
-    const keyField = screen.getByLabelText('API key (write-only)')
+    const keyField = screen.getByLabelText('OpenRouter API key')
     // The alert sits between the key field and the button that was pressed,
     // not at the top of a form that runs far above a phone viewport.
     expect(alert.previousElementSibling).toBe(keyField.closest('.field'))
@@ -3778,3 +3626,182 @@ it.each([
     expect(keyField).toHaveValue('')
   },
 )
+
+const ledgerLabels = () =>
+  [...document.querySelectorAll('#setup-ledger li')].map(
+    (row) => row.querySelectorAll('span')[1]?.textContent,
+  )
+
+it('orders the steps with libraries before sources and hides the folder step until a folder is not found', async () => {
+  let current: ReturnType<typeof setupState> = setupState('libraries')
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => response(current)),
+  )
+  runSetup()
+  await screen.findByRole('heading', { name: 'Choose libraries' })
+  expect(ledgerLabels()).toEqual([
+    'Create your password',
+    'Connect Audiobookshelf',
+    'Choose libraries',
+    'Choose metadata sources',
+    'Cover reviewer (optional)',
+    'Start',
+  ])
+
+  current = setupState('mounts', {
+    completed_steps: ['claim', 'connect', 'libraries'],
+    libraries: [{ library_id: 'books-id', media_kind: 'book', name: 'books', display_name: 'Books' }],
+    mounts: [{ library: 'books', state: 'missing' }],
+  })
+  resetSetupDocument()
+  runSetup()
+  await screen.findByRole('heading', { name: 'Find library folders' })
+  expect(ledgerLabels()).toEqual([
+    'Create your password',
+    'Connect Audiobookshelf',
+    'Choose libraries',
+    'Find library folders',
+    'Choose metadata sources',
+    'Cover reviewer (optional)',
+    'Start',
+  ])
+  const folders = within(document.querySelector('#setup-ledger') as HTMLElement)
+    .getByText('Find library folders')
+    .closest('li')
+  expect(folders).toHaveAttribute('aria-current', 'step')
+
+  // Once every folder is found, the step leaves the list again.
+  current = setupState('providers', {
+    completed_steps: ['claim', 'connect', 'libraries', 'mounts'],
+    libraries: [{ library_id: 'books-id', media_kind: 'book', name: 'books', display_name: 'Books' }],
+    mounts: [{ library: 'books', state: 'matched' }],
+  })
+  resetSetupDocument()
+  runSetup()
+  await screen.findByRole('heading', { name: 'Choose metadata sources' })
+  expect(ledgerLabels()).not.toContain('Find library folders')
+  expect(screen.queryByRole('button', { name: 'Change Find library folders' })).toBeNull()
+})
+
+it.each([
+  ['http://192.168.1.10:13378', false],
+  ['http://10.0.0.5:13378', false],
+  ['http://100.64.1.2:13378', false],
+  ['http://localhost:13378', false],
+  ['http://nas.local:13378', false],
+  ['http://abs:13378', false],
+  ['http://abs.example.com:13378', true],
+  ['http://8.8.8.8:13378', true],
+  ['https://abs.example.com', false],
+  ['https://8.8.8.8:13378', false],
+] as const)(
+  'warns about clear text only for an http address outside a private network: %s',
+  async (address, warned) => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        response(setupState('connect', { completed_steps: ['claim'], connection: null, revision: 2 })),
+      ),
+    )
+    runSetup()
+
+    const endpoint = await screen.findByLabelText('Audiobookshelf address')
+    const warning = document.querySelector<HTMLElement>('#setup-endpoint-warning')
+    if (!warning) throw new Error('clear-text warning missing')
+    expect(warning).not.toBeVisible()
+    fireEvent.input(endpoint, { target: { value: address } })
+    if (warned) {
+      expect(warning).toBeVisible()
+      expect(warning).toHaveTextContent(
+        'This address is outside your private network, so the API key would be sent unencrypted. Use an https:// address.',
+      )
+      expect(endpoint.getAttribute('aria-describedby')).toContain('setup-endpoint-warning')
+    } else {
+      expect(warning).not.toBeVisible()
+      expect(endpoint.getAttribute('aria-describedby') ?? '').not.toContain(
+        'setup-endpoint-warning',
+      )
+    }
+  },
+)
+
+it('resumes at the folder step with only the not-found libraries', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (request: RequestInfo | URL) => {
+      if (requestUrl(request).startsWith('/api/setup/libraries?'))
+        return response({ libraries: [] })
+      return response(
+        setupState('mounts', {
+          completed_steps: ['claim', 'connect', 'libraries'],
+          libraries: [
+            { library_id: 'books-id', media_kind: 'book', name: 'books', display_name: 'Books' },
+            { library_id: 'audio-id', media_kind: 'book', name: 'audio', display_name: 'Listening' },
+          ],
+          mounts: [
+            { library: 'books', state: 'matched' },
+            { library: 'audio', state: 'missing' },
+          ],
+          revision: 4,
+        }),
+      )
+    }),
+  )
+  runSetup()
+
+  const heading = await screen.findByRole('heading', { name: 'Find library folders' })
+  await waitFor(() => expect(heading).toHaveFocus())
+  expect(screen.getByRole('textbox', { name: 'Listening folder in Audiobookshelf' })).toBeVisible()
+  expect(screen.queryByRole('textbox', { name: 'Books folder in Audiobookshelf' })).toBeNull()
+  expect(document.querySelectorAll('.mount-line')).toHaveLength(1)
+  expect(screen.getByRole('button', { name: 'Change Choose libraries' })).toBeVisible()
+})
+
+it('resumes at the reviewer step after sources', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(request)
+      if (isRecheck(url, init)) return recheckAs('ready')
+      if (url.endsWith('/reviewer-access')) return response(reviewerAccess('ready'))
+      return response(
+        setupState('reviewer', {
+          completed_steps: ['claim', 'connect', 'libraries', 'mounts', 'providers'],
+          libraries: [{ library_id: 'books-id', media_kind: 'book', name: 'books', display_name: 'Books' }],
+          mounts: [{ library: 'books', state: 'matched' }],
+          revision: 6,
+        }),
+      )
+    }),
+  )
+  runSetup()
+
+  await signInReady()
+  await reviewerStepSettled()
+  const ledger = document.querySelector('#setup-ledger') as HTMLElement
+  expect(within(ledger).getByText('Cover reviewer (optional)').closest('li')).toHaveAttribute(
+    'aria-current',
+    'step',
+  )
+  for (const step of ['Connect Audiobookshelf', 'Choose libraries', 'Choose metadata sources'])
+    expect(within(ledger).getByRole('button', { name: `Change ${step}` })).toBeVisible()
+  expect(ledgerLabels()).not.toContain('Find library folders')
+})
+
+it('shows no plain-HTTP notice on a page served over HTTPS', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (request: RequestInfo | URL) => {
+      const url = requestUrl(request)
+      if (url === '/api/setup/claim')
+        return response({ claimed: false, nonce: 'n'.repeat(32), revision: 1 })
+      return response({ error: 'unauthorized' }, 401)
+    }),
+  )
+  runSetup(stubLocation('https:'))
+
+  await screen.findByRole('heading', { name: 'Create your password' })
+  expect(screen.getByText('At least 12 characters.')).toBeVisible()
+  expect(screen.queryByText(/plain HTTP/u)).toBeNull()
+})

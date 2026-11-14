@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from threading import Event, Thread, current_thread
@@ -14,6 +15,10 @@ from fastapi.testclient import TestClient
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.reviewers.codex_device_auth import (
     CodexDeviceAuthState,
+)
+from mechanical_librarian.application.configuration import (
+    AUDIOBOOK_DISPATCH_ADAPTERS,
+    EBOOK_DISPATCH_ADAPTERS,
 )
 from mechanical_librarian.application.review_web import OwnerSessionService
 from mechanical_librarian.application.reviewer_access import (
@@ -506,19 +511,15 @@ def test_setup_surface_exposes_only_health_shell_session_and_redacted_state() ->
     shell = client.get("/")
     assert shell.status_code == 200
     assert 'id="setup-ledger"' in shell.text
-    assert 'class="prerequisites"' in shell.text
-    # What setup needs is read before the steps that need it.
-    assert shell.text.index('class="prerequisites"') < shell.text.index(
-        'id="setup-ledger"'
-    )
+    # A first-time owner reads the steps, not deployment prerequisites (#1516).
+    assert "prerequisites" not in shell.text
     # The saved theme is applied by a blocking same-origin script before the
     # stylesheet, so the first frame is already in that theme.
     head = shell.text.split("</head>", 1)[0]
     assert '<script src="/assets/theme.js"></script>' in head
     assert head.index("/assets/theme.js") < head.index("/assets/setup.css")
-    assert "Before you start" in shell.text
-    assert "Bare Compose without this prepared bootstrap is not supported" in shell.text
-    assert shell.text.count("<li>") == 5
+    assert "Before you start" not in shell.text
+    assert "<li>" not in shell.text
     assert "https://openlibrary.org/account/create" not in shell.text
     assert '<script type="module" src="/assets/setup.js"></script>' in shell.text
     assert 'rel="preload" href="/assets/setup-handoff.css" as="style"' in shell.text
@@ -547,23 +548,10 @@ def test_setup_surface_exposes_only_health_shell_session_and_redacted_state() ->
     assert "sessionStorage" not in SETUP_JS
     assert "csrf=state.csrf_token" in SETUP_JS
     assert "location.assign('/library')" not in SETUP_JS
-    assert "const retired=visible?.state==='dismissed'" in SETUP_JS
-    assert "let open=null;let observed=true" in SETUP_JS
-    assert "if(!visible||retired){if(observed||retired)retire(retired)" in SETUP_JS
-    assert "dismissed?'Preparation was dismissed'" in SETUP_JS
-    assert "dismissed?'Open the ordinary workspace.'" in SETUP_JS
-    assert "if(!open){open=document.createElement('a')" in SETUP_JS
-    assert "open.href='/library?lens=all'" in SETUP_JS
-    assert (
-        "['completed_clean','completed_with_failures'].includes(visible.state)"
-        in SETUP_JS
-    )
-    assert "pollDelay=terminal?5000:1500" in SETUP_JS
-    assert "if(terminal)stop()" not in SETUP_JS
-    assert "encodeURIComponent(visible.run_id)" in SETUP_JS
+    # Start lands in Library with the existing session; no progress page polls.
+    assert "location.replace(" in SETUP_JS
     assert "setInterval" not in SETUP_JS
-    assert "const poll=async()=>" in SETUP_JS
-    assert "finally{if(!stopped)timer=setTimeout(poll,pollDelay)}" in SETUP_JS
+    assert "encodeURIComponent(visible.run_id)" not in SETUP_JS
     assert ".field[hidden]{display:none}" in css.text
     assert "input[aria-invalid=true]" in css.text
     assert "MutationObserver" not in SETUP_JS
@@ -1424,33 +1412,34 @@ def test_setup_library_step_uses_audiobookshelf_book_kind_without_owner_choice()
 ):
     assert "Library kind" not in SETUP_JS
     assert "media_kind:'book'" in SETUP_JS
-    assert "displayName.value=item.name" in SETUP_JS
-    assert "field(`New name for ${item.name}`,displayName)" in SETUP_JS
-    assert "display_name:row.querySelector('input[name^=display-]').value" in SETUP_JS
+    # Every book library starts ticked and keeps its Audiobookshelf name.
+    assert "selected.checked=true" in SETUP_JS
+    assert "display_name" not in SETUP_JS.split("const renderLibraries=", 1)[1].split(
+        "const renderMounts=", 1
+    )[0]
+    assert "New name for" not in SETUP_JS
+    assert "Change name" not in SETUP_JS
     assert "row.dataset.name=stableName" in SETUP_JS
-    assert "name:row.dataset.name" in SETUP_JS
-    assert "Preparation will begin in the workspace." in SETUP_JS
+    assert (
+        "libraries=selected.map(row=>({name:row.dataset.name,"
+        "library_id:row.dataset.id,media_kind:'book'}))" in SETUP_JS
+    )
+    assert "Podcast libraries aren’t supported, so they’re not shown." in SETUP_JS
     assert "className='provider-access'" in SETUP_JS
     assert "['inventaire','inventaire']" in SETUP_JS
-    # Nothing is ticked for the owner; suggestions only name the libraries.
-    assert "enabled.checked=" not in SETUP_JS
-    assert "Suggested for ${suggested[group].join(', ')}" in SETUP_JS
     assert "cover_enabled:row.adapter==='inventaire'" in SETUP_JS
+    assert "Suggested for" not in SETUP_JS
+    # The folder step asks only about the libraries whose folder was not found.
     assert (
-        "`${selectedLibrary?shown(selectedLibrary):humanName(item.library)}:"
-        in SETUP_JS
+        "const asked=state.libraries.filter(library=>"
+        "results.get(library.name)!=='matched')" in SETUP_JS
     )
-    assert "field(`${shown(library)} service path`,path)" in SETUP_JS
-    # One name per library: the recorded display name the summary also uses.
+    assert "field(`${shown(library)} folder in Audiobookshelf`,path)" in SETUP_JS
+    assert "button('Check again',true)" in SETUP_JS
     assert (
-        "return library?.display_name||evidence?.name||"
-        "humanName(library?.name||'library')" in SETUP_JS
+        "const mountState={matched:'Found',missing:'Not found',"
+        "ambiguous:'Not found',unavailable:'Not found'}" in SETUP_JS
     )
-    assert "state.mounts.length?'Retest mounts':'Check mounts'" in SETUP_JS
-    # Each comparison leads with the library and one short state, and only a
-    # failing state carries its remedy.
-    assert "const mountState={matched:'Matched',missing:'No mapping'," in SETUP_JS
-    assert "const remedy=mountRemedy[item.state];line.className=remedy?" in SETUP_JS
     assert "label.className='mount-state'" in SETUP_JS
     assert "mountCopy" not in SETUP_JS
     assert (
@@ -1458,10 +1447,11 @@ def test_setup_library_step_uses_audiobookshelf_book_kind_without_owner_choice()
         "(codexTerminal||access.codex)" in SETUP_JS
     )
     assert "codexTerminal=device;await render()" in SETUP_JS
-    assert "Check existing sign-in" in SETUP_JS
-    assert "check.disabled=blocked" in SETUP_JS
+    assert "Check existing sign-in" not in SETUP_JS
+    assert "button('Sign in with ChatGPT')" in SETUP_JS
+    assert "signIn.disabled=blocked" in SETUP_JS
     assert "/api/setup/reviewer/codex/recheck" in SETUP_JS
-    assert "reviewer_access_stale:'Reviewer access changed" in SETUP_JS
+    assert "reviewer_access_stale:'Reviewer settings changed elsewhere." in SETUP_JS
     assert "invalid_key:'OpenRouter rejected this key." in SETUP_JS
 
 
@@ -1504,30 +1494,26 @@ def test_first_run_states_its_rules_transport_and_recoveries_without_raw_codes()
     assert (
         "form.append(secretField('Owner password',password,'the owner password'));"
         "if(!claim.claimed){const list=rules([`At least "
-        "${settingsVocabulary.owner_password.minimum_characters} characters. Any "
-        "characters are allowed, including spaces.`,'Both fields must match "
-        "exactly.'," in SETUP_JS
+        "${settingsVocabulary.owner_password.minimum_characters} characters.`,"
+        "'There’s no password reset, so keep it somewhere safe.']);" in SETUP_JS
     )
     assert (
-        "list.id='setup-password-rules';list.children[1].id='setup-password-match';"
+        "list.id='setup-password-rules';"
         "password.dataset.hint=list.id;describe(password,false);form.append(list)}"
         in SETUP_JS
     )
-    assert (
-        "confirmation.dataset.hint='setup-password-match';describe(confirmation,false)"
-        in SETUP_JS
-    )
+    # The match rule and its hint are gone; the mismatch refusal stays.
+    assert "setup-password-match" not in SETUP_JS
     # ADR-0086: the unclaimed form asks for the deployment-held token, says
     # where it is and that a restart replaces it, and recovers a typo in place.
     assert (
-        "form.append(source,secretField('Setup claim token',claimToken,"
-        "'the setup claim token'))" in SETUP_JS
+        "const tokenField=secretField('Setup claim token',claimToken,"
+        "'the setup claim token');const source=hint(claimToken,"
+        "'It’s in the container log. Restarting the container replaces it.');"
+        in SETUP_JS
     )
-    assert (
-        "Copy the setup claim token from the container log, or from "
-        "private/setup-claim-token on the data volume. A restart replaces the "
-        "token, so use the newest one." in SETUP_JS
-    )
+    assert "command.textContent='docker compose logs mechanical-librarian'" in SETUP_JS
+    assert "private/setup-claim-token" not in SETUP_JS
     assert "claim_token:claimToken.value.trim()" in SETUP_JS
     assert (
         "if(claimToken&&['claim_token','invalid_password'].includes(e.message))"
@@ -1562,11 +1548,19 @@ def test_first_run_states_its_rules_transport_and_recoveries_without_raw_codes()
     assert "control.addEventListener('input',()=>{" in SETUP_JS
     assert "{once:true})" in SETUP_JS
 
-    # ADR-0072: both browser modes are stated, and the endpoint scheme is explained.
+    # ADR-0072: plain HTTP is stated once; HTTPS needs no notice, and a
+    # public http:// address is warned about while it is typed.
     assert "const insecureTransport=()=>location.protocol!=='https:'" in SETUP_JS
-    assert "travel in clear text across this network" in SETUP_JS
-    assert "https that your browser already trusts" in SETUP_JS
-    assert "never skips that check, never follows a redirect with your key" in SETUP_JS
+    assert (
+        "if(insecureTransport()){const transport=document.createElement('p');"
+        in SETUP_JS
+    )
+    assert "This page uses plain HTTP. Use it only on a network you trust." in SETUP_JS
+    assert "https that your browser already trusts" not in SETUP_JS
+    assert (
+        "warning.hidden=!/^http:\\/\\//i.test(address)||privateHost(address)"
+        in SETUP_JS
+    )
     assert "preserve TLS verification" not in SETUP_JS
 
     # UX-004/005: every named state carries a safe cause and a remedy.
@@ -1619,38 +1613,33 @@ def test_first_run_states_its_rules_transport_and_recoveries_without_raw_codes()
         "const emailInvalid=control=>!control.checkValidity()||"
         "!settingsOpenLibraryEmailValid(control.value)" in SETUP_JS
     )
-    # Every reopen control names its own step, and the prerequisites stop
-    # applying once preparation has started.
+    # Every reopen control names its own step.
     assert "change.setAttribute('aria-label',`Change ${label}`)" in SETUP_JS
-    assert (
-        "document.querySelector('.prerequisites')?.classList.add('complete')"
-        in SETUP_JS
-    )
+    assert "prerequisites" not in SETUP_JS
     assert "one X-Forwarded-Host and one X-Forwarded-Proto" in SETUP_JS
-    assert "Mechanical Librarian never skips verification." in SETUP_JS
+    assert "Mechanical Librarian never skips verification." not in SETUP_JS
     assert (
-        "reviewer_unconfigured:'The selected reviewer is no longer ready. "
-        "Check its access and select it again, or continue without a reviewer.'"
-        in SETUP_JS
+        "reviewer_unconfigured:'The chosen reviewer is not ready any more. "
+        "Choose it again, or skip for now.'" in SETUP_JS
     )
 
     # UX-006: per-provider relevance and disambiguated credential labels.
     assert "settingsVocabulary.provider_contributions[adapter]" in SETUP_JS
     assert "secretField(`${label} API key`,key,`the ${label} API key`)" in SETUP_JS
     assert "field(`${label} contact email`,email)" in SETUP_JS
-    assert (
-        "settingsVocabulary.cover_switch_provider_adapters.includes(adapter)"
-        in SETUP_JS
-    )
-    assert "stays off until you turn it on in Settings." in SETUP_JS
+    assert "stays off until you turn it on in Settings." not in SETUP_JS
 
     # UX-008/009: the entered service paths survive a refused comparison.
     assert "path.value=mountDraft&&library.name in mountDraft" in SETUP_JS
     assert "mountDraft=draft;" in SETUP_JS
     assert "if(state.next_step!=='mounts')mountDraft=null" in SETUP_JS
-    assert "the path inside that service" in SETUP_JS
-    assert "Correct the Audiobookshelf service path and compare again" in SETUP_JS
-    assert "Audiobookshelf reported no folder path to compare." in SETUP_JS
+    assert "the path inside that service" not in SETUP_JS
+    assert (
+        "Mechanical Librarian can’t see this library’s folder. Add it to the "
+        "container as a read-only volume, then check again." in SETUP_JS
+    )
+    assert "guide.textContent='Media mounts in the deployment guide'" in SETUP_JS
+    assert "Audiobookshelf reported no folder for this library." in SETUP_JS
 
     # UX-013: the kickoff summary reuses one reopen seam and hides no secret.
     assert "change.addEventListener('click',()=>reopen(step))" in SETUP_JS
@@ -1696,8 +1685,9 @@ def test_setup_enables_cross_document_motion_only_for_the_workspace_handoff() ->
     assert SETUP_HANDOFF_CSS == "@view-transition{navigation:auto}"
     assert "sessionStorage" not in SETUP_JS
     assert "createElement('style')" not in SETUP_JS
-    assert "target.pathname!=='/library'" in SETUP_JS
-    assert "/^preparation_run_[0-9a-f]{64}$/.test(run)" in SETUP_JS
+    # Only the handoff into a known run's detail turns the motion on.
+    assert "/^preparation_run_[0-9a-f]{64}$/.test(value)" in SETUP_JS
+    assert "if(run!==null)handoffMotion();" in SETUP_JS
     assert "motion.disabled=false" in SETUP_JS
     assert "addEventListener('pageswap'" in SETUP_JS
     assert "handoff.viewTransition.finished.then(disable,disable)" in SETUP_JS
@@ -1953,16 +1943,41 @@ def test_claimed_setup_login_still_requires_canonical_origin(mode: str) -> None:
     client.close()
 
 
-def test_setup_states_a_rate_only_while_preparation_moves() -> None:
-    # A finished, blocked or dismissed run has no current rate; printing one
-    # read as "0.0 books/min" on a finished run (#1366, #1286).
-    guard = (
-        "if((visible.state==='starting'||visible.state==='running')"
-        "&&typeof visible.throughput_per_minute==='number'){"
+def test_setup_has_no_progress_page() -> None:
+    # Start opens Library directly; the wizard keeps no progress page (#1516).
+    for removed in (
+        "renderPreparation",
+        "books/min",
+        "Preparation is starting",
+        "Open workspace",
+        "Sign in to workspace",
+        "setup-preparation",
+        "Recent completions",
+    ):
+        assert removed not in SETUP_JS, removed
+        assert removed not in SETUP_CSS, removed
+    assert (
+        "location.replace(run===null?'/library?lens=all':"
+        "`/library?lens=all&preparation=${run}`)" in SETUP_JS
     )
-    assert guard in SETUP_JS
-    assert SETUP_JS.count("books/min") == 1
-    assert "if(typeof visible.throughput_per_minute==='number')" not in SETUP_JS
+    assert "const deadline=Date.now()+10000" in SETUP_JS
+    assert "setTimeout(resolve,500)" in SETUP_JS
+    # No credential travels in the landing address, and none is added.
+    assert "document.cookie" not in SETUP_JS
+    assert "token=" not in SETUP_JS
+
+
+def test_setup_injects_the_dispatch_role_sets() -> None:
+    prefix = "const sourceRoles="
+    start = SETUP_JS.index(prefix) + len(prefix)
+    roles = json.JSONDecoder().raw_decode(SETUP_JS, start)[0]
+    assert roles == {
+        "ebook": sorted(EBOOK_DISPATCH_ADAPTERS),
+        "audiobook": sorted(AUDIOBOOK_DISPATCH_ADAPTERS),
+    }
+    # Injected ahead of the authored script, which only reads it.
+    assert SETUP_JS.index(prefix) < SETUP_JS.index(";const settingsTextValid=")
+    assert SETUP_JS.count(prefix) == 1
 
 
 _SETUP_FONTS = {
