@@ -933,9 +933,14 @@ describe('ReviewApiClient', () => {
         .candidates[0]?.matchReason,
     ).toBe('matched_book')
     expect('matchReason' in ((await retryCover(payload())).candidates[0] ?? {})).toBe(false)
+    // A title-and-author reason (#1355) maps without a 502, display only too.
+    expect(
+      (await retryCover(payload({ candidates: [candidate({ match_reason: 'title_and_author' })] })))
+        .candidates[0]?.matchReason,
+    ).toBe('title_and_author')
     await expect(
       retryCover(payload({ candidates: [candidate({ match_reason: 'same_book' })] })),
-    ).rejects.toMatchObject(uncertain('const@/candidates/0/match_reason'))
+    ).rejects.toMatchObject(uncertain('enum@/candidates/0/match_reason'))
   })
   it('maps only the fixed unavailable reviewer-contract reasons', async () => {
     const payload = (reviewer_unavailable_reason: unknown) =>
@@ -3087,13 +3092,18 @@ describe('ReviewApiClient', () => {
       'library_added',
       'title_recovery',
       'automatic_confirmed',
+      'matching_changed',
     ].map((trigger) => ({ ...presentation.triggers[0], trigger }))
-    expect((await read({ triggers: allTriggers })).presentation?.triggers).toHaveLength(5)
+    expect((await read({ triggers: allTriggers })).presentation?.triggers).toHaveLength(6)
     expect((await read({ triggers: [allTriggers[3]] })).presentation?.triggers[0]?.trigger).toBe(
       'title_recovery',
     )
     expect((await read({ triggers: [allTriggers[4]] })).presentation?.triggers[0]?.trigger).toBe(
       'automatic_confirmed',
+    )
+    // Saving Book matching re-checks current works as its own cause (#1355).
+    expect((await read({ triggers: [allTriggers[5]] })).presentation?.triggers[0]?.trigger).toBe(
+      'matching_changed',
     )
     await expect(
       read({ triggers: [...allTriggers, { ...allTriggers[0], trigger: 'unknown' }] }),

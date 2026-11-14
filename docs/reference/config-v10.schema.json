@@ -1213,6 +1213,16 @@
           "maxItems": 16,
           "title": "Trusted Proxy Ips",
           "type": "array"
+        },
+        "work_identity": {
+          "default": "identifier",
+          "enum": [
+            "identifier",
+            "title_and_creator_exact",
+            "title_and_creator"
+          ],
+          "title": "Work Identity",
+          "type": "string"
         }
       },
       "required": [
@@ -1286,7 +1296,7 @@
       "default": null
     },
     "schema_version": {
-      "const": "config-v9",
+      "const": "config-v10",
       "title": "Schema Version",
       "type": "string"
     }

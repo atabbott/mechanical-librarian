@@ -10,7 +10,7 @@ import unicodedata
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Callable, Mapping, Self, cast
+from typing import TYPE_CHECKING, Any, Callable, Literal, Mapping, Self, cast
 
 from mechanical_librarian.domain.audio_inspection import AudioInspectionField
 from mechanical_librarian.domain.audiobook_corroboration import (
@@ -84,6 +84,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
     TargetSeries,
     WorkIdentityContradiction,
+    _provider_candidate_has_work_identity_veto,
     canonical_asin,
     canonical_json,
     complete_creator_identity_bindings,
@@ -94,6 +95,7 @@ from mechanical_librarian.domain.metadata_report import (
     field_evidence_providers,
     isbn_family,
     manifestation_publication_compatible,
+    manifestation_publication_contradicted,
     normalize_date_value,
     normalize_title,
     provider_candidate_exact_work_identity_admission,
@@ -117,9 +119,16 @@ from mechanical_librarian.domain.work_identity import (
     WorkTitleElectionMatch,
     WorkTitleTransformationFamily,
     direct_work_title_election_matches,
+    initials_folded_name,
     series_label_name,
     series_label_segment,
     work_title_election_matches,
+)
+from mechanical_librarian.domain.work_identity_levels import (
+    LevelAdmission,
+    WorkIdentityLevel,
+    level_admission,
+    omnibus_against_volume,
 )
 
 if TYPE_CHECKING:
@@ -4273,6 +4282,309 @@ def provider_candidate_represents_target_work(
     return False
 
 
+CreatorComparison = Literal["closed", "initials_fold"]
+LevelRefusal = Literal["refused", "ambiguous"]
+_CREATOR_OR_CONTRIBUTOR_CLAIMS = frozenset({ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR})
+_CREATOR_OR_CONTRIBUTOR_EVIDENCE = frozenset(
+    {ProviderEvidenceKind.AUTHOR_IDENTITY, ProviderEvidenceKind.CONTRIBUTOR_IDENTITY}
+)
+
+
+@dataclass(frozen=True, slots=True)
+class LevelAdmissionRecord:
+    """One candidate's verdict at one ADR-0096 level (#1355, S5).
+
+    Exactly one of ``admission`` and ``refusal`` is set. ``ambiguous`` is the
+    set rule's refusal: candidates of more than one provider work identity met
+    the level in one set (S6). ``creator_comparison`` is lineage only: it says
+    whether the admission needed the dotted-initials fold (S13).
+    """
+
+    admission: LevelAdmission | None
+    refusal: LevelRefusal | None
+    creator_comparison: CreatorComparison = "closed"
+
+    def __post_init__(self) -> None:
+        if (
+            (self.admission is None) == (self.refusal is None)
+            or (
+                self.admission is not None
+                and type(self.admission) is not LevelAdmission
+            )
+            or self.refusal not in {None, "refused", "ambiguous"}
+            or self.creator_comparison not in {"closed", "initials_fold"}
+            or (self.admission is None and self.creator_comparison != "closed")
+        ):
+            raise ReportValueError("level admission record is invalid")
+
+
+def candidate_title_and_creator_evidence(
+    candidate: ProviderCandidate,
+    local_claims: tuple[LocalClaim, ...] | tuple[object, ...],
+    *,
+    fold_initials: bool = False,
+) -> tuple[bool, bool, bool]:
+    """Title agreement, creator agreement and creator disagreement of a record.
+
+    Agreement is an AGREEMENT link, or a creator or contributor value the item
+    states under the closed creator key; with ``fold_initials`` (ADR-0096's
+    level path only) also one that agrees once dotted initials fold, so a
+    respelled-initials record is not called contradicting (#1790).
+    """
+    title_agreement = False
+    agreement = False
+    disagreement = False
+    for claim in candidate.claims:
+        outcomes = {link.outcome for link in claim.links}
+        if claim.kind is ClaimKind.TITLE:
+            title_agreement = title_agreement or Comparison.AGREEMENT in outcomes
+        if claim.kind in _CREATOR_OR_CONTRIBUTOR_CLAIMS:
+            agreement = agreement or Comparison.AGREEMENT in outcomes
+            disagreement = disagreement or Comparison.DISAGREEMENT in outcomes
+    for item in candidate.evidence:
+        if item.kind not in _CREATOR_OR_CONTRIBUTOR_EVIDENCE:
+            continue
+        outcomes = {link.outcome for link in item.links}
+        agreement = agreement or Comparison.AGREEMENT in outcomes
+        disagreement = disagreement or Comparison.DISAGREEMENT in outcomes
+    # Both comprehensions filter on the attribute they then read, so the
+    # retained claims carry a value and the local claims are ``LocalClaim``.
+    retained = {
+        creator_comparison_key(cast("str", claim.value))
+        for claim in candidate.claims
+        if (
+            getattr(claim, "kind", None) in _CREATOR_OR_CONTRIBUTOR_CLAIMS
+            and getattr(claim, "value", None) is not None
+        )
+    }
+    local = {
+        creator_comparison_key(cast("LocalClaim", claim).observed)
+        for claim in local_claims
+        if (
+            getattr(claim, "kind", None) in _CREATOR_OR_CONTRIBUTOR_CLAIMS
+            and getattr(claim, "canonical", None) is not None
+        )
+    }
+    agreement = agreement or bool(retained & local)
+    if fold_initials and not agreement:
+        agreement = bool(
+            {initials_folded_name(key) or key for key in retained}
+            & {initials_folded_name(key) or key for key in local}
+        )
+    return title_agreement, agreement, disagreement
+
+
+def provider_candidate_bound_identifiers(
+    report: MetadataReport, provider: str, candidate: ProviderCandidate
+) -> tuple[IdentifierEvidence, ...]:
+    """The identifier evidence the report binds to exactly this candidate."""
+    return tuple(
+        item
+        for item in report.identifier_evidence
+        if item.provider == provider
+        and item.candidate_identity == candidate.identity
+        and item.work_identity == candidate.work_identity
+    )
+
+
+def _target_stored_authors(report: MetadataReport) -> tuple[str, ...]:
+    """The target's AUTHORS value as stored, in order; empty when not a value."""
+    for field in report.target.fields:
+        if field.destination is TargetDestination.AUTHORS:
+            if field.state is TargetFieldState.VALUE and type(field.value) is tuple:
+                return tuple(value for value in field.value if type(value) is str)
+            return ()
+    return ()
+
+
+def _level_work_claims(candidate: ProviderCandidate, kind: ClaimKind) -> list[str]:
+    return [
+        claim.value
+        for claim in sorted(candidate.claims, key=lambda claim: claim.raw_order)
+        if claim.kind is kind
+        and claim.scope is ClaimScope.WORK
+        and claim.state is FieldState.VALID
+        and type(claim.value) is str
+        and (kind is not ClaimKind.CREATOR or claim.role in {None, "author"})
+    ]
+
+
+def level_contradiction(
+    report: MetadataReport,
+    provider: ProviderObservation,
+    candidate: ProviderCandidate,
+) -> bool:
+    """Whether retained evidence contradicts a record on the level path (S6).
+
+    Any of: the classifier's explicit contradiction read with the initials
+    fold; an unrelated identifier bound to the record or an edition-work
+    contradiction; an accepted manifestation whose publication is
+    contradicted (an ISBN that merely differs is not a contradiction); an
+    audiobook recording variant conflict; or a creator disagreement with no
+    agreement, the fold counting as agreement.
+    """
+    target_title = report.target.current_title
+    target_authors = _target_stored_authors(report)
+    if (
+        target_title is not None
+        and target_authors
+        and provider_candidate_work_identity_contradiction(
+            candidate, target_title, target_authors, fold_initials=True
+        )
+        is WorkIdentityContradiction.EXPLICIT
+    ):
+        return True
+    bound = provider_candidate_bound_identifiers(report, provider.provider, candidate)
+    if any(item.relation is IdentifierRelation.UNRELATED for item in bound) or any(
+        item.kind is ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION
+        for item in candidate.evidence
+    ):
+        return True
+    if any(
+        item.relation is IdentifierRelation.ACCEPTED for item in bound
+    ) and manifestation_publication_contradicted(candidate, report.local_claims):
+        return True
+    if (
+        report.audio is not None
+        and recording_variant_conflict(
+            candidate,
+            report.local_claims,
+            target_title or "",
+            report.library_languages,
+            _echoed_languages(report),
+        )
+        is not None
+    ):
+        return True
+    _title, agreement, disagreement = candidate_title_and_creator_evidence(
+        candidate, report.local_claims, fold_initials=True
+    )
+    return disagreement and not agreement
+
+
+def _level_work_key(candidate: ProviderCandidate) -> str:
+    return (
+        candidate.identity
+        if candidate.work_identity in {"", "unresolved"}
+        else candidate.work_identity
+    )
+
+
+def _level_candidate_sets(
+    provider: ProviderObservation, candidate: ProviderCandidate
+) -> tuple[tuple[ProviderCandidate, ...], ...]:
+    """Every retained lane set holding the candidate, else the provider's set."""
+    retained = {value.identity: value for value in provider.candidates}
+    sets = tuple(
+        tuple(
+            retained[member.edition_identity]
+            for member in lane.candidates
+            if member.edition_identity in retained
+        )
+        for lane in provider.lanes
+        if any(
+            member.edition_identity == candidate.identity
+            and member.work_identity == candidate.work_identity
+            for member in lane.candidates
+        )
+    )
+    if sets:
+        return sets
+    return (provider.candidates if candidate in provider.candidates else (candidate,),)
+
+
+def _candidate_level_admission(
+    report: MetadataReport,
+    provider: ProviderObservation,
+    candidate: ProviderCandidate,
+    level: WorkIdentityLevel,
+    *,
+    fold_initials: bool,
+) -> LevelAdmission | None:
+    target_title = report.target.current_title
+    target_authors = _target_stored_authors(report)
+    if not target_authors:
+        return None
+    titles = _level_work_claims(candidate, ClaimKind.TITLE)
+    record_title = titles[0] if len(titles) == 1 else None
+    record_creators = tuple(
+        dict.fromkeys(_level_work_claims(candidate, ClaimKind.CREATOR))
+    )
+    omnibus = (
+        target_title is not None
+        and record_title is not None
+        and (
+            omnibus_against_volume(record_title, target_title)
+            or omnibus_against_volume(target_title, record_title)
+        )
+    )
+    return level_admission(
+        level,
+        target_title,
+        target_authors,
+        record_title,
+        record_creators,
+        omnibus_against_volume=omnibus,
+        contradicted=level_contradiction(report, provider, candidate),
+        fold_initials=fold_initials,
+    )
+
+
+def provider_candidate_level_admission(
+    report: MetadataReport,
+    provider: ProviderObservation,
+    candidate: ProviderCandidate,
+    level: WorkIdentityLevel,
+) -> LevelAdmissionRecord | None:
+    """ADR-0096's one level-admission seam for provider records (#1355, S5).
+
+    ``None`` at ``identifier``. At a wider level every candidate is evaluated,
+    including one ``provider_candidate_represents_target_work`` already admits.
+    The target is the report's stored title and AUTHORS, never a query
+    spelling, so an item with no stored author gets no level admission and an
+    inverted query-only creator form never reaches the predicate (#1380). The
+    record is its single valid work title and its valid work author creators.
+    S6's set rule runs over every retained set holding the candidate: a work
+    identity with a vetoed sibling is refused, and when candidates of more
+    than one work identity meet the level in one set, none is admitted.
+    """
+    if type(level) is not WorkIdentityLevel:
+        raise ReportValueError("work identity level is invalid")
+    if level is WorkIdentityLevel.IDENTIFIER:
+        return None
+    key = _level_work_key(candidate)
+    for members in _level_candidate_sets(provider, candidate):
+        vetoed = {
+            _level_work_key(value)
+            for value in members
+            if _provider_candidate_has_work_identity_veto(value)
+        }
+        if key in vetoed or _provider_candidate_has_work_identity_veto(candidate):
+            return LevelAdmissionRecord(None, "refused")
+        meeting = {
+            _level_work_key(value)
+            for value in members
+            if _level_work_key(value) not in vetoed
+            and _candidate_level_admission(
+                report, provider, value, level, fold_initials=True
+            )
+            is not None
+        }
+        if key in meeting and len(meeting) > 1:
+            return LevelAdmissionRecord(None, "ambiguous")
+    admission = _candidate_level_admission(
+        report, provider, candidate, level, fold_initials=True
+    )
+    if admission is None:
+        return LevelAdmissionRecord(None, "refused")
+    closed = _candidate_level_admission(
+        report, provider, candidate, admission.level, fold_initials=False
+    )
+    return LevelAdmissionRecord(
+        admission, None, "closed" if closed is not None else "initials_fold"
+    )
+
+
 def provider_candidate_represents_target_recording(
     report: MetadataReport,
     provider: ProviderObservation,
@@ -7066,6 +7378,11 @@ def _projection(value: object, maximum: int) -> str:
 
 __all__ = [
     "BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA",
+    "LevelAdmissionRecord",
+    "candidate_title_and_creator_evidence",
+    "level_contradiction",
+    "provider_candidate_bound_identifiers",
+    "provider_candidate_level_admission",
     "DECORATION_EQUIVALENCE_DECORATED_CONSENSUS_REASON",
     "DECORATION_EQUIVALENCE_PROVIDER_DISSENT_REASON",
     "DECORATION_EQUIVALENT_TITLE_REASONS",

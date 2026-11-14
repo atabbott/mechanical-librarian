@@ -64,7 +64,9 @@ def manual_cover_eligible(candidate: Mapping[str, object]) -> bool:
     this predicate neither validates a document nor grants automatic authority.
     A retained original has no identity to contradict: it is eligible while
     its projection still offers it, which requires its binding to be live
-    (#1363, D2).
+    (#1363, D2). A title-and-author match at a chosen Book matching level is
+    eligible as any unconfirmed cover is: it carries no creator disagreement
+    once the initials fold resolves one (#1355).
     """
     if candidate.get("candidate_kind") == "retained":
         return (
@@ -78,6 +80,7 @@ def manual_cover_eligible(candidate: Mapping[str, object]) -> bool:
         in {
             "verified_manifestation_match",
             "verified_work_match",
+            "title_creator_work_match",
             "plausible_match",
             "unknown",
         }

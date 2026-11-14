@@ -515,3 +515,15 @@ automatic decision, and the frontend labels and comparison notices. The private
 qualification runs the F35-route tidy challenge set, the F20 retained-document
 subtitle re-score, and the #870 compound corpus re-execution; only aggregates
 leave the private lab.
+
+## Level admissions (#1355, #1780)
+
+The dotted-initials fold reaches ebooks only through
+[ADR-0096](0096-owner-chosen-work-identity-strictness.md)'s level predicates,
+under that ADR's one-work and sibling-veto set rule, and review-only until
+#1418: a level-matched cover is labelled for the owner and never elected. A
+level admission records no production or transformation lineage. The band
+production and its `initials_fold` row above are unchanged. Activation B adds
+the retained refused WORK answers (`identity_refused_candidates`) to this
+section.
+

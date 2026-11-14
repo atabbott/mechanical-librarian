@@ -626,7 +626,7 @@ def test_kickoff_atomically_promotes_and_preserves_connection_secret() -> None:
     journey.kick_off(state.revision)
 
     document = connection.execute("SELECT document FROM owner_settings").fetchone()[0]
-    assert '"schema_version":"owner-settings-v4"' in document
+    assert '"schema_version":"owner-settings-v5"' in document
     assert '"pending_restart":[]' in document
     assert '"provider_connections":["google"]' in document
     assert connection.execute(

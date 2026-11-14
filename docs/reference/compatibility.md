@@ -71,9 +71,9 @@ refused.
 
 | Identifier | What it is |
 | --- | --- |
-| `config-v9` | The file-mode configuration document at `/data/config.json` ([schema](config-v9.schema.json)) |
+| `config-v10` | The file-mode configuration document at `/data/config.json` ([schema](config-v10.schema.json)) |
 | `review-bootstrap-v2` | The store-mode bootstrap document at `/run/secrets/review-bootstrap.json` |
-| `owner-settings-v4` | Store-mode owner settings in the application database |
+| `owner-settings-v5` | Store-mode owner settings in the application database, including Book matching (`matching.work_identity`) |
 | `setup-state-v5` | Incomplete first-run setup, with libraries and their folders recorded before sources, including the setup claim token digest ([ADR-0086](../architecture/decisions/0086-deployment-held-setup-claim-token.md)). An unfinished `setup-state-v4` setup is refused at startup |
 | `reviewer-access-v3` | Optional reviewer access for cover review and description advice |
 
@@ -101,8 +101,9 @@ refused.
 | --- | --- |
 | `human-decision-v3` | An owner decision, including `owner_entered` and `withdraw` outcomes |
 | `human-decision-event-v1`, `human-decision-ack-v1` | The decision event and its acknowledgement |
-| `cover-consideration-v6` | A cover consideration, bound to its report by identity and digest; each candidate names its kind, so the original an automatic switch replaced can be put back |
-| `cover-policy-report-v2` | Cover policy evaluation; owner readiness and automatic recommendation are independent |
+| `cover-consideration-v7` | A cover consideration, bound to its report by identity and digest and to the Book matching level it was made under; each candidate names its kind, so the original an automatic switch replaced can be put back; it stores the would-admit note, which nothing shows |
+| `cover-identity-report-v2` | Cover identity classification under one Book matching level, with the title-and-author outcome and level reasons |
+| `cover-policy-report-v3` | Cover policy evaluation, embedding the cover identity report; owner readiness and automatic recommendation are independent |
 | `cover-automatic-decision-v3` | An automatic cover decision |
 | `cover-selection-authority-v1`, `cover-selection-authority-v3` | Cover selections: v1 wraps an automatic choice, v3 an owner choice and the switch a Put back undoes |
 | `field-effect-consent-state-v2` | A library consent and its basis: the owner's grant or the policy activation that carried it |
@@ -159,7 +160,7 @@ These are refused rather than interpreted:
 
 - any earlier database, report, proposal, review, decision, outcome, consent,
   settings, setup or session state;
-- configuration documents other than `config-v9` and `review-bootstrap-v2`;
+- configuration documents other than `config-v10` and `review-bootstrap-v2`;
 - batch manifests other than `batch-manifest-v5`, subcommands not listed in
   Deployment, and any browser bundle whose identity does not match the build;
 - a database paired with an artifact store it did not create.

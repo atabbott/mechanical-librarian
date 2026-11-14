@@ -430,6 +430,13 @@ empty. A strictly better cover found later may replace an automatic choice.
 Once you choose a cover, Automatic no longer changes it. What you may choose is
 in the [review experience](review-experience.md#covers).
 
+Book matching in Policy, set wider than "Confirmed matches only", lets a cover
+from a source record with the book's title and author be labelled "Same title
+and author" for you to choose. Such a cover never takes part in an automatic
+choice under any option, including the deterministic switches and fills and
+automatic mode, until the owner-run qualification in #1418 passes
+([ADR-0096](../architecture/decisions/0096-owner-chosen-work-identity-strictness.md)).
+
 An audiobook cover is replaced only when the current cover's known shorter edge
 is under 300 pixels. The new cover must be eligible, portrait or square, and at
 least 500 pixels and twice the old edge on its shorter side. A current cover

@@ -8,7 +8,7 @@
   `review.work_identity`, work-scope fields may also admit by a level's
   predicate), ADR-0059 (which candidates are identity-confirmed for covers),
   ADR-0093 (the eligible set and its order)
-- Adopts: ADR-0092's would-admit note, unchanged
+- Adopts: ADR-0092, placement amended (see the activation amendment)
 - Supersedes: none
 - Superseded by: none
 
@@ -256,3 +256,107 @@ title rule relies on.
   would change value.
 - The owner-run qualification held by #1418, whose owner-labelled sample
   counts omnibus and volume confusions separately.
+
+## Amendment (activation, #1355 and #1780)
+
+Activation A (#1355) puts the setting and covers live; activation B carries the
+other work-scope fields and the retained refused answers, and extends this
+amendment when it lands.
+
+- **The report is level-free; consumers bind the level.** A metadata report
+  records no level. The cover identity document records the level it was
+  classified under (`work_identity_level`), the cover policy report embeds
+  that document, and the cover consideration's replay reference includes the
+  level, so a consideration of another level is not current. Changing the
+  level re-adjudicates each current comparison from retained evidence. It
+  makes no new reviewer or provider request: the observer's earlier output is
+  reused, because the image and the reviewer's answer do not depend on the
+  level.
+- **One seam.** `provider_candidate_level_admission` is the only provider
+  record consumer of the levels. It is silent at `identifier`. At a wider
+  level it compares the report's stored title and AUTHORS, never a query
+  spelling, with the record's single valid work title and its valid work
+  author creators. Covers evaluate every bound record the report represents,
+  including one the live rule already admits.
+- **Set rule and contradictions.** The seam runs over every retained set that
+  holds the record, never one record at a time. A work identity with a vetoed
+  sibling is refused, and when records of more than one work identity meet
+  the level in one set, none is admitted (`ambiguous`). Any contradiction
+  refuses at every level: an unrelated identifier, an edition-work
+  contradiction, an accepted identifier whose publication is contradicted (an
+  ISBN that merely differs or is absent is not a contradiction), an audiobook
+  recording variant conflict, a creator disagreement with no agreement, or
+  the classifier's explicit contradiction. On the level path only, the
+  classifier and the creator agreement read the dotted-initials fold; every
+  live caller keeps the default.
+- **Scope.** Covers read the level from this activation. Language stays a
+  manifestation fact. Description advice and sidecar belonging (ADR-0061) do
+  not read the level.
+- **Cover reasons and outcome.** Every unverified provider-bound cover
+  candidate carries the level facts at every configured level:
+  `work_identity_level_met` with the rule `work_identity:<strictest level
+  met>` (and `creator_initials_folded` when only the fold made it), or
+  `work_identity_level_refused`, or `work_identity_level_ambiguous`. The
+  one-work rule counts only the records meeting each level, so a record that
+  is one work at the exact level but ambiguous at the wide one is met at the
+  exact level, and ambiguous only where the wide level is configured. These
+  replace #1778's listed-edition shadow reasons and rule, so every designation
+  uses one vocabulary. When the configured level is at or wider than the rule,
+  the outcome is `title_creator_work_match`, and a creator disagreement the
+  fold resolves is no longer a reason; otherwise the outcome and reasons are
+  the identifier ones, plus the level facts. At `identifier` every outcome is
+  unchanged. In ADR-0093's order the outcome ranks after every verified
+  outcome.
+- **Cover policy and card.** The cover policy admits the outcome as a row but
+  never elects it. A level-matched cover keeps `match_not_confirmed` with the
+  display-only reason `title_and_author`; it is manual-eligible, not
+  selectable, has no rank key, and still needs the unverified-match flag on
+  the owner's choice until #1418 qualifies it. Live election, ADR-0093's
+  switches and fills, and ADR-0095's automatic mode never see it.
+- **Would-admit placement (amends ADR-0092 decision 4).** For covers the note
+  is the consideration's closed `would_admit` member, `{rule,
+  candidate_reference}`, set when the shadow election with level matches as a
+  third tier recommends a level match the live election does not. It is
+  stored and shown nowhere until #1418. A note stored beside an unchanged
+  live decision set needs no decision-policy version, hash or decision-set
+  schema move, because the live set's bytes and `_RULE_TABLE` (hashed into
+  `DECISION_POLICY_SHA256`) do not change. A note placed inside the set would
+  still need them, as decision 4 says. B's `level_decision_notes` follows the
+  same rule.
+- **The setting.** `matching.work_identity` is a group of the owner settings
+  document (`owner-settings-v5`); `review.work_identity` (`config-v10`) is its
+  file-managed equivalent. Saving it writes no Activity row. It asks review
+  preparation to project again every current-case work whose cover
+  comparison was classified under another level (trigger
+  `matching_changed`), and the settings view counts the works checked,
+  being checked and given up; saving again retries those that gave up. A
+  pending cover effect chosen under another level closes stale with
+  `matching_changed`. Each comparison records its level as the top-level
+  `work_identity_level`, so one with no classified preview is counted and
+  re-checked too. The re-check reads stored data only: it never sends a work
+  back to extraction, so no file, Audiobookshelf or provider read follows a
+  save, and no case is replaced. A work that failed at a stored-data stage
+  (provider, proposal or admission) is retried there; any other current
+  work that is neither queued nor running is bound back to its current case
+  and projected again, which prepares the comparison from the stored report
+  and observer output. Description advice does not depend on the level, so
+  on such a projection it reuses an earlier attempt and starts none: the
+  check makes no model request. A case whose report is no longer current for
+  its item, or for its item's file, is counted as neither being checked nor
+  given up: only the next scan, which replaces it, can bring it up to date.
+- **Lineage.** A cover row records the rule `work_identity:<level>` for the
+  strictest level met, plus the reason `creator_initials_folded` only when
+  the dotted-initials fold was needed to meet it, as ADR-0067 and ADR-0068 do
+  for theirs. A record met without the fold carries no comparison reason.
+- **No authority rotation.** Live decisions are unchanged at every level, so
+  no qualified authority rotates (ADR-0087). The cover classifier reference
+  rotates, and the identity, policy and consideration documents move to
+  `cover-identity-report-v2`, `cover-policy-report-v3` and
+  `cover-consideration-v7`: a clean rebuild under ADR-0013.
+- **Evidence.** On the #744 and #1294 snapshot copies, a replay at
+  `identifier` reproduces every persisted cover identity (4,449 and 274
+  candidates). At `title_and_creator`, 704 and 23 unverified cover candidates
+  become level matches, 9 and 0 of them newly choosable because the fold
+  resolves a respelled initial, and 10 and 0 depend on the fold. No automatic
+  decision changes.
+

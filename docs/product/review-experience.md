@@ -416,11 +416,13 @@ Visual check details. Nothing the visual review finds confirms a match, changes
 the order or lets Automatic choose a cover.
 
 You can choose any other cover whose image loads, even a lower-quality one or
-one marked "Match not confirmed", with no extra step. A cover that contradicts
-the book stays in the row, but you cannot choose it. It reads "Contradicts this
-book" and says whether a source says it belongs to a different book or edition,
-or names a different author or contributor. A choice against an outdated
-comparison shows the current one.
+one marked "Match not confirmed" or, with Book matching set wider, "Same title
+and author", with no extra step. A cover that contradicts the book stays in the
+row, but you cannot choose it. It reads "Contradicts this book" and says whether
+a source says it belongs to a different book or edition, or names a different
+author or contributor. With Book matching set wider, an author whose initials
+are written differently does not count as a contradiction. A choice against an
+outdated comparison shows the current one.
 
 ### Covers view
 

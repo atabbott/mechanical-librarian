@@ -57,6 +57,7 @@ FIELD_EFFECT_FAILURES = frozenset(
         "cover_recovery",
         "cover_retention",
         "dependency",
+        "matching_changed",
         "not_applied",
         "not_sent",
         "owner_abandoned",

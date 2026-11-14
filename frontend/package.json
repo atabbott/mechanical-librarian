@@ -5,9 +5,9 @@
   "type": "module",
   "engines": {
     "node": "24.22.1",
-    "npm": "11.19.0"
+    "npm": "12.2.2"
   },
-  "packageManager": "npm@11.19.0",
+  "packageManager": "npm@12.2.2",
   "overrides": {
     "js-yaml": "4.3.2",
     "minimatch": "11.0.3"
@@ -51,6 +51,6 @@
     "typescript": "5.9.3",
     "typescript-eslint": "8.72.1",
     "vite": "8.3.5",
-    "vitest": "4.1.12"
+    "vitest": "5.1.0"
   }
 }

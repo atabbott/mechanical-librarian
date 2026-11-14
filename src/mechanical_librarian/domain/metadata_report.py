@@ -98,6 +98,7 @@ from mechanical_librarian.domain.work_identity import (
     closed_creator_display_possibility,
     direct_work_title_election_matches,
     fold_lone_apostrophes,
+    initials_folded_name,
     narrowing_work_query,
     replay_provider_work_identity_admission,
     work_dispatch_lineage_from_data,
@@ -4382,8 +4383,18 @@ def provider_candidate_work_identity_contradiction(
     candidate: ProviderCandidate,
     target_title: str,
     target_authors: tuple[str, ...],
+    *,
+    fold_initials: bool = False,
 ) -> WorkIdentityContradiction:
-    """Classify only explicit contradiction from one complete work identity."""
+    """Classify only explicit contradiction from one complete work identity.
+
+    `fold_initials` is ADR-0096's level path only (#1355, #1780): a pair whose
+    title queries intersect and whose creator sets agree once dotted initials
+    are folded is then `UNAVAILABLE`, never `NOT_CONTRADICTED`. Every live
+    caller keeps the default, so its verdicts are unchanged.
+    """
+    if type(fold_initials) is not bool:
+        raise ReportValueError("work identity contradiction input is invalid")
     claims = _provider_candidate_work_identity_claims(candidate)
     if (
         claims is None
@@ -4425,8 +4436,31 @@ def provider_candidate_work_identity_contradiction(
         and (
             creator_sequence_methods(authors, target_authors)
             or closed_creator_display_possibility(target_authors, authors)
+            or (
+                fold_initials
+                and _creators_agree_by_initials_fold(authors, target_authors)
+            )
         )
         else WorkIdentityContradiction.EXPLICIT
+    )
+
+
+def _creators_agree_by_initials_fold(
+    left: tuple[str, ...], right: tuple[str, ...]
+) -> bool:
+    """Whether two creator lists name one set once dotted initials fold (#1780)."""
+
+    def folded(values: tuple[str, ...]) -> frozenset[str]:
+        keys = [creator_comparison_key(value) for value in values]
+        return frozenset(initials_folded_name(key) or key for key in keys)
+
+    left_keys, right_keys = folded(left), folded(right)
+    # A fold that merges two listed creators proves nothing (the collapse
+    # guard of `work_identity_levels`).
+    return (
+        len(left_keys) == len(left)
+        and len(right_keys) == len(right)
+        and left_keys == right_keys
     )
 
 
@@ -7031,6 +7065,31 @@ def manifestation_publication_compatible(
         for claim in candidate.claims
     ):
         return True
+    if not _manifestation_isbn_families_intersect(candidate, local):
+        return False
+    return _manifestation_publication_consistent(candidate)
+
+
+def manifestation_publication_contradicted(
+    candidate: ProviderCandidate,
+    local: tuple[LocalClaim, ...],
+) -> bool:
+    """Whether a manifestation sharing the local ISBN family contradicts it.
+
+    This is `manifestation_publication_compatible` without its ISBN-family
+    gate: a record whose ISBN merely differs from, or is absent beside, the
+    local one is not contradicted, because another edition of the same work
+    states another ISBN (#1355, S6; ADR-0096).
+    """
+    return _manifestation_isbn_families_intersect(
+        candidate, local
+    ) and not _manifestation_publication_consistent(candidate)
+
+
+def _manifestation_isbn_families_intersect(
+    candidate: ProviderCandidate,
+    local: tuple[LocalClaim, ...],
+) -> bool:
     local_families = {
         family
         for claim in local
@@ -7050,8 +7109,10 @@ def manifestation_publication_compatible(
         and claim.applicability in {"ebook", "unknown"}
         and (family := isbn_family(claim.value)) is not None
     }
-    if not local_families.intersection(provider_families):
-        return False
+    return bool(local_families.intersection(provider_families))
+
+
+def _manifestation_publication_consistent(candidate: ProviderCandidate) -> bool:
     if any(
         evidence.kind is ProviderEvidenceKind.PHYSICAL_FORMAT
         and evidence.scope is ClaimScope.EDITION
