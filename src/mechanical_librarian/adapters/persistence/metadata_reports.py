@@ -81,6 +81,7 @@ from mechanical_librarian.adapters.persistence.review_cases import (
 )
 from mechanical_librarian.adapters.persistence.review_preparation import (
     SQLiteReviewPreparationRepository,
+    matching_check_counts,
     request_matching_check,
 )
 from mechanical_librarian.adapters.persistence.review_projections import (
@@ -181,6 +182,7 @@ from mechanical_librarian.domain.metadata_policy import (
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
 )
+from mechanical_librarian.domain.owner_settings import MatchingCheck
 from mechanical_librarian.domain.preparation_presentation import (
     PreparationPresentation,
     PreparationTrigger,
@@ -1973,6 +1975,19 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
 
     def require_reconciled_case(self, review_case_id: str, refused_at: int) -> None:
         self._decisions.require_reconciled_case(review_case_id, refused_at)
+
+    def matching_check(self, work_identity_level: str) -> MatchingCheck:
+        """How far current works follow ``work_identity_level`` (Policy's counts).
+
+        File mode reads it here; a store reads it with its settings (#1355).
+        """
+        try:
+            current, checking, failed = matching_check_counts(
+                self._connection, work_identity_level
+            )
+        except sqlite3.Error as error:
+            raise MetadataReportError("matching check is unavailable") from error
+        return MatchingCheck(current_works=current, checking=checking, failed=failed)
 
     def review_case_checking(self, review_case_id: str) -> bool:
         """Whether the case waits for its Book matching check (the API's ``checking``)."""

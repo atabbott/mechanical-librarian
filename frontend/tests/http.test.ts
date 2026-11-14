@@ -3699,6 +3699,64 @@ it('binds a choice to the offer the field showed (#1355)', async () => {
   })
 })
 
+it('reads a case waiting for its check and a value offered for title and author (#1355)', async () => {
+  const { default: payload } = await import('./descriptionAdviceFixture.json')
+  const changed = {
+    ...payload,
+    checking: true,
+    fields: payload.fields.map((field) =>
+      field.destination === 'series'
+        ? {
+            ...field,
+            choice_contexts: field.choice_contexts.map((context) =>
+              context.selection === 'proposed'
+                ? { ...context, match_basis: 'title_and_author' }
+                : context,
+            ),
+          }
+        : field,
+    ),
+  }
+  const read = await readCase(changed)
+  expect(read.checking).toBe(true)
+  const series = read.fields.find((item) => item.destination === 'series')
+  if (!series) throw new Error('fixture requires its series field')
+  expect(series.choiceContexts.map((context) => context.matchBasis)).toEqual(
+    series.choiceContexts.map((context) =>
+      context.selection === 'proposed' ? 'title_and_author' : null,
+    ),
+  )
+  expect((await readCase(payload)).checking).toBe(false)
+})
+
+it.each(['digest_mismatch', 'unreconciled_case'])(
+  'carries why a choice was refused as offer_changed (%s)',
+  async (reason) => {
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      Response.json(
+        { schema_version: 'review-error-v1', error: { code: 'offer_changed', reason } },
+        { status: 409 },
+      ),
+    )
+    const client = new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) })
+    const refused = await client
+      .recordDecision('case-1', {
+        destination: 'series',
+        outcome: 'keep_current',
+        proposalId: 'proposal-1',
+        targetFingerprint: 'fingerprint-1',
+        offerDigest: 'offer-digest',
+        idempotencyKey: 'offer-changed-choice',
+      })
+      .then(
+        () => null,
+        (error: unknown) => error,
+      )
+    expect(refused).toBeInstanceOf(ApiError)
+    expect(refused).toMatchObject({ status: 409, code: 'offer_changed', reason })
+  },
+)
+
 it.each([undefined, 'applying', 'verified'])(
   'rejects an unbound or invalid description application outcome %s',
   async (outcome) => {

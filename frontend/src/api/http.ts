@@ -40,7 +40,8 @@ type DescriptionBindingDto = ResponseSchema<'DescriptionAdviceBinding'>
 type OwnerControlDto = ResponseSchema<'_OwnerControl'>
 type EvidenceDto = ResponseSchema<'_EvidenceResponse'>
 type HistoryDto = ResponseSchema<'_HistoryResponse'>
-type ChoiceContextDto = ResponseSchema<'_ChoiceContext'>
+type ChoiceContextDto = ResponseSchema<'_ChoiceContext'> &
+  Partial<Pick<ResponseSchema<'_FieldChoiceContext'>, 'match_basis'>>
 type CoverObservationDto = ResponseSchema<'_CoverObservation'>
 type CoverConsiderationDto = ResponseSchema<'_CoverConsiderationResponse'>
 type ProviderOutcomeDto = ResponseSchema<'_ProviderOutcome'>
@@ -658,6 +659,9 @@ export interface ChoiceContextView {
   recommendation: 'no_recommendation' | 'recommended'
   recommendationReason: string
   selection: 'current' | 'proposed'
+  // A value offered because its source record has the book's title and
+  // author, though not a confirmed match (#1355); null for any other.
+  matchBasis?: 'title_and_author' | null
 }
 export type DescriptionAdviceView = ResponseSchema<'_DescriptionAdviceResponse'>
 // The branch that chose a field's sentence; Library decides rows from it (#1791).
@@ -819,6 +823,9 @@ export interface CaseDetailView {
   comparisonNotices: readonly string[]
   mediaHealth: readonly MediaHealthObservationView[]
   writesConsented: boolean
+  // The work waits for its check against a changed Book matching setting:
+  // its choices are refused until the check finishes (#1355).
+  checking: boolean
   fields: readonly ReviewFieldView[]
 }
 export interface EvidenceObservationView {
@@ -1342,6 +1349,9 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     readonly code: string,
+    // Why a refusal applies, where the code has reasons: `offer_changed` says
+    // whether the work waits for its check or the field's offer changed (#1355).
+    readonly reason: string | null = null,
   ) {
     super(`Review API request failed (${String(status)}: ${code})`)
     this.name = 'ApiError'
@@ -2760,6 +2770,7 @@ export const mapCaseDetail = (value: CaseDetailDto): CaseDetailView => {
       value.recording_admission_basis,
     ),
     writesConsented: value.writes_consented,
+    checking: value.checking,
     fields: value.fields.map(mapReviewField),
   }
 }
@@ -2967,6 +2978,7 @@ const mapChoiceContexts = (
     recommendation: item.recommendation,
     recommendationReason: item.recommendation_reason,
     selection: item.selection,
+    matchBasis: item.match_basis ?? null,
   }))
   const [current, ...proposed] = contexts
   // current-first and proposed-count; X55 (the current context names no
@@ -3303,5 +3315,9 @@ const structuredError = async (response: Response) => {
   }
   if (!record(value) || !record(value.error) || typeof value.error.code !== 'string')
     return new ApiError(response.status, 'invalid_error_response')
-  return new ApiError(response.status, value.error.code)
+  return new ApiError(
+    response.status,
+    value.error.code,
+    typeof value.error.reason === 'string' ? value.error.reason : null,
+  )
 }

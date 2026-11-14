@@ -102,6 +102,7 @@ export const detail: CaseDetailView = {
   audiobookReviewScope: null,
   id: 'case-1',
   current: true,
+  checking: false,
   target: {
     connection: 'local',
     library: 'Books',

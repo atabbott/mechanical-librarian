@@ -126,6 +126,35 @@ def test_file_authority_projects_and_locks_book_matching() -> None:
         operations.write(_with_level(2, "identifier"), 1, ())
 
 
+def test_file_authority_reads_the_matching_check_for_its_level(tmp_path: Path) -> None:
+    """File mode checks its Book matching level at startup, so Policy reads the
+    check's counts for the file's level there too (#1355, amendment 5)."""
+    configuration = load_configuration_document(
+        json.dumps(
+            _review_with_work_identity(work_identity="title_and_creator_exact")
+        ).encode()
+    )
+    view = file_settings_projection(configuration)
+    assert view.matching_check is None
+    repository, _store = _seed_full_store(tmp_path / "file.sqlite3")
+    asked: list[str] = []
+
+    def counted(level: str) -> MatchingCheck:
+        asked.append(level)
+        return repository.matching_check(level)
+
+    try:
+        read = OwnerSettingsOperations(
+            FileOwnerSettingsRepository.of(view, counted)
+        ).read()
+    finally:
+        repository.close()
+    assert asked == ["title_and_creator_exact"]
+    assert read.authority == "file"
+    assert read.document == view.document
+    assert read.matching_check == MatchingCheck(current_works=0, checking=0, failed=0)
+
+
 def test_the_review_configuration_refuses_a_level_that_is_not_a_member() -> None:
     with pytest.raises(ValueError, match="review web configuration is invalid"):
         ReviewWebConfiguration(

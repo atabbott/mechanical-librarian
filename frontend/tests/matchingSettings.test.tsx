@@ -62,7 +62,7 @@ describe('Book matching', () => {
     expect(option(scope, 'Confirmed matches only')).toHaveAttribute('aria-pressed', 'true')
     expect(
       within(scope).queryByText(
-        'Covers from these records say “Same title and author”. None is chosen automatically.',
+        'Values from these records are offered when a field needs you, and their covers say “Same title and author”. None is chosen automatically.',
       ),
     ).toBeNull()
     const save = within(scope).getByRole('button', { name: 'Save book matching' })
@@ -71,7 +71,7 @@ describe('Book matching', () => {
     await user.click(option(scope, 'Same title and every author'))
     expect(
       within(scope).getByText(
-        'Covers from these records say “Same title and author”. None is chosen automatically.',
+        'Values from these records are offered when a field needs you, and their covers say “Same title and author”. None is chosen automatically.',
       ),
     ).toBeVisible()
     expect(
@@ -110,8 +110,14 @@ describe('Book matching', () => {
   })
 
   it.each([
-    [1, '1 work could not be checked against the new setting. Save the setting again to retry.'],
-    [3, '3 works could not be checked against the new setting. Save the setting again to retry.'],
+    [
+      1,
+      '1 work could not be checked against the new setting. Its changes wait until it is. Save the setting again to retry.',
+    ],
+    [
+      3,
+      '3 works could not be checked against the new setting. Their changes wait until they are. Save the setting again to retry.',
+    ],
   ])(
     'names %i work(s) whose check gave up and retries with the same value',
     async (failed, line) => {
@@ -154,6 +160,25 @@ describe('Book matching', () => {
     expect(option(scope, 'Same title and every author')).toHaveAttribute('aria-pressed', 'true')
     expect(option(scope, 'Confirmed matches only')).toBeDisabled()
     expect(within(scope).getByRole('button', { name: 'Save book matching' })).toBeDisabled()
+  })
+
+  it('shows the check lines in file mode too (#1355, amendment 5)', async () => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () =>
+      withMatching(view('file'), 'title_and_creator', check(4, 0, 2)),
+    )
+    renderRoute('/policy?section=curation', http)
+    const scope = await region()
+    expect(
+      await within(scope).findByText(
+        '2 works could not be checked against the new setting. Their changes wait until they are. Save the setting again to retry.',
+      ),
+    ).toBeVisible()
+    expect(
+      within(scope).getByText(
+        'Values from these records are offered when a field needs you, and their covers say “Same title and author”. None is chosen automatically.',
+      ),
+    ).toBeVisible()
   })
 
   it('offers a reload after a refused save', async () => {

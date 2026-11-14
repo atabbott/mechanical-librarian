@@ -74,6 +74,7 @@ import type { ReviewField } from '../fieldDecision'
 import { RecordedFieldObservations, MetadataChoice } from './FieldDecisionChoices'
 import { LibraryCoverChoices } from './FieldDecisionCover'
 import { LibraryViewSwitch } from '../components/LibraryViewSwitch'
+import { CaseCheckingLine } from '../components/CaseCheckingLine'
 import { ReviewCompletion } from './ReviewCompletion'
 import { useStaleCoverReview } from './StaleCoverReview'
 import { useCoverPrepareFailure } from '../coverChoices'
@@ -860,6 +861,7 @@ export default function LibraryPage({
   const controller = useReviewDecisionController({
     reviewCaseId: selectedReviewCaseId,
     fields: detail.data?.fields ?? [],
+    checking: detail.data?.checking ?? false,
     active: (destination) =>
       currentSearch.current.preview === search.preview &&
       search.preview !== undefined &&
@@ -1568,7 +1570,7 @@ export default function LibraryPage({
         automatic: automaticallySelected(selected, selectedProgress),
         context: choiceContext(selected, null),
         current: true,
-        disabled: false,
+        disabled: controller.checking,
         expanded: expandedChoices.has(`${selected.destination}:current`),
         label: 'Current value',
         longDescription: isLongDescription(selected.destination, selected.currentValue),
@@ -1598,7 +1600,7 @@ export default function LibraryPage({
             automatic: automaticallySelected(selected, selectedProgress),
             context,
             current: false,
-            disabled: false,
+            disabled: controller.checking,
             // A proposed card is named by its value, never "Alternative N" (#1519).
             evidenceName: isLongDescription(selected.destination, displayValue(value.value))
               ? `Evidence for proposed description ${String(index + 1)}`
@@ -1665,6 +1667,7 @@ export default function LibraryPage({
               !selected.editable ||
               !selectedAdvice.current ||
               controller.recording ||
+              controller.checking ||
               selectedAdvice.state === 'requested' ||
               selectedAdvice.state === 'running',
             expanded: false,
@@ -2010,6 +2013,7 @@ export default function LibraryPage({
                   ) : null}
                 </nav>
               </section>
+              <CaseCheckingLine checking={detail.data.checking} />
               {staleCoverNotice}
               {complete?.id === selectedReviewCaseId && completionInspection === null ? (
                 <ReviewCompletion
@@ -2108,7 +2112,9 @@ export default function LibraryPage({
                         reviewCaseId={selectedReviewCaseId}
                         mediaKind={detail.data.target.mediaKind}
                         field={selected}
-                        disabled={!selectedChoiceMode && !selectedCoverPreparation}
+                        disabled={
+                          (!selectedChoiceMode && !selectedCoverPreparation) || controller.checking
+                        }
                         expandedEvidence={expandedChoices}
                         progress={selectedProgress}
                         choose={(outcome, value) => choose(selected, outcome, value)}
@@ -2187,7 +2193,11 @@ export default function LibraryPage({
                           <DescriptionAdvicePreparation
                             advice={selectedAdvice}
                             reviewCaseId={selectedReviewCaseId}
-                            disabled={controller.recording || controller.reloadRequired}
+                            disabled={
+                              controller.recording ||
+                              controller.reloadRequired ||
+                              controller.checking
+                            }
                           />
                         ) : null}
                       </section>
@@ -2212,7 +2222,9 @@ export default function LibraryPage({
                     <OwnerControls
                       key={ownerKey}
                       field={selected}
-                      disabled={controller.recording || controller.reloadRequired}
+                      disabled={
+                        controller.recording || controller.reloadRequired || controller.checking
+                      }
                       progress={selectedProgress}
                       status={
                         ownerNotice?.caseId === selectedReviewCaseId &&

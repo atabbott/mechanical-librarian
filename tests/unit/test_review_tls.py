@@ -478,6 +478,9 @@ def test_server_uses_validated_tls_before_opening_the_database(mode: str) -> Non
         repository.align_book_matching.assert_called_once_with(
             review.work_identity.value, 1_700_000_000
         )
+        # Policy reads the file's matching check from the same repository.
+        file_settings = composed.call_args.kwargs["settings"]._repository
+        assert file_settings._matching_check is repository.matching_check
 
 
 def test_missing_or_invalid_tls_fails_before_database_or_server() -> None:

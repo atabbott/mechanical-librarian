@@ -32,6 +32,7 @@ from mechanical_librarian.adapters.persistence.review_preparation import (
 from mechanical_librarian.adapters.persistence.schema import (
     _review_case_field_fact_values_sql,
     refresh_offered_field_facts,
+    refresh_policy_settled_field_facts,
 )
 from mechanical_librarian.application.field_effects import GuardedApplicationError
 from mechanical_librarian.application.metadata_report import MetadataReportError
@@ -68,6 +69,7 @@ from tests.unit.test_level_offer_binding import (
     counts,
     field_of,
     level_description_report,
+    level_store,
     offer_of,
     owner_client,
 )
@@ -888,3 +890,72 @@ def test_works_list_and_attention_facts_follow_the_offer(tmp_path: Path) -> None
         ("case-1", "description", 0, 0, 1)
     ]
     connection.close()
+
+
+def test_facts_that_differ_from_live_are_checked_and_kept_by_the_offer(
+    tmp_path: Path,
+) -> None:
+    """A field whose offer reads differently from its live proposal keeps the
+    offer's facts: the open-time integrity check accepts them and a policy
+    refresh writes them again, so neither reads the live alternatives.
+
+    The case's stored offer at the other wider level offers no description
+    where live offers one; the marker moves to that level, as a check would.
+    """
+    exact = WorkIdentityLevel.TITLE_AND_CREATOR_EXACT.value
+    store = level_store(tmp_path / "store")
+    connection = store.repository._connection
+    case_id = store.case.review_case_id
+    try:
+        level_set, document = connection.execute(
+            "SELECT level_proposal_set_id,document FROM review_case_level_offers "
+            "WHERE review_case_id=?",
+            (case_id,),
+        ).fetchone()
+        offer = json.loads(document)
+        offer["work_identity_level"] = exact
+        for field in offer["fields"]:
+            if field["destination"] == "description":
+                field["alternatives"] = []
+        connection.execute(
+            "INSERT INTO review_case_level_offers VALUES(?,?,?,?,?)",
+            (case_id, exact, level_set, exact, json.dumps(offer)),
+        )
+        connection.execute(
+            "UPDATE review_case_level_reconciliation SET reconciled_level=? "
+            "WHERE review_case_id=?",
+            (exact, case_id),
+        )
+        connection.execute(
+            "UPDATE review_preparation_control SET work_identity_level=?", (exact,)
+        )
+        refresh_offered_field_facts(connection, case_id)
+        connection.commit()
+
+        def description_fact() -> int:
+            return int(
+                connection.execute(
+                    "SELECT has_owner_decision_actions FROM review_case_field_facts "
+                    "WHERE review_case_id=? AND destination='description'",
+                    (case_id,),
+                ).fetchone()[0]
+            )
+
+        # Live offers a description to choose; the offer offers none.
+        assert decision_actions(
+            next(p for p in store.case.proposals if p["destination"] == "description")
+        )
+        assert description_fact() == 0
+        (resolved_policy_id,) = connection.execute(
+            "SELECT policy.resolved_policy_id FROM proposal_set_browse_facts policy "
+            "JOIN review_cases rc ON rc.proposal_set_id=policy.proposal_set_id "
+            "WHERE rc.review_case_id=?",
+            (case_id,),
+        ).fetchone()
+        refresh_policy_settled_field_facts(connection, resolved_policy_id)
+        connection.commit()
+        assert description_fact() == 0
+    finally:
+        store.close()
+    # The integrity check derives the stored facts from the offer, not live.
+    open_repository(tmp_path / "store" / "owner.sqlite").close()

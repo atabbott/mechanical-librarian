@@ -2742,7 +2742,7 @@ def run_review_server(
             )
             projection = file_settings_projection(configuration, credentials)
             settings = OwnerSettingsOperations(
-                FileOwnerSettingsRepository(projection.document, projection.secrets)
+                FileOwnerSettingsRepository.of(projection, repository.matching_check)
             )
             password_binding = load_owner_password_binding(
                 Path(review.owner_password_hash_file)

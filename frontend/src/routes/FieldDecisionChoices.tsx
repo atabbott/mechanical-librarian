@@ -19,6 +19,15 @@ const limitationText = (limitation: string) => {
   if (label !== undefined) return `${label}.`
   return /^[a-z0-9_]+$/u.test(limitation) ? 'Another comparison condition applies.' : limitation
 }
+// A source record offered for the book's title and author, not a confirmed
+// match, says so beside its name (#1355). The library's own value never does.
+const sourceBasis = (
+  context: ChoiceContextView,
+  role: ChoiceContextView['evidence'][number]['role'],
+) =>
+  context.matchBasis === 'title_and_author' && role !== 'local_presence'
+    ? ' · same title and author'
+    : ''
 export function ChoiceEvidencePanel({
   context,
   evidenceId,
@@ -45,7 +54,10 @@ export function ChoiceEvidencePanel({
         <ul>
           {context.evidence.map((row, index) => (
             <li key={`${row.source}:${row.observation}:${String(index)}`}>
-              <strong>{row.source}</strong>
+              <strong>
+                {row.source}
+                {sourceBasis(context, row.role)}
+              </strong>
               <span>{evidenceRoleLabel(row.role)}</span>
               <p>{observationText(row)}</p>
             </li>

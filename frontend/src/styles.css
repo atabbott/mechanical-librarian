@@ -986,6 +986,7 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .choice-description-value { cursor:pointer; }
 .choice-description-value:focus-visible { outline:2px solid var(--accent-strong); outline-offset:3px; }
 .comparison-notice { margin-top:14px; padding:12px 14px; border:1px solid var(--notice); border-radius:8px; background:var(--notice-soft); color:var(--ink); }
+.case-checking-line { margin:0 0 14px; padding:10px 14px; border:1px solid var(--notice); border-radius:8px; background:var(--notice-soft); color:var(--ink); }
 .comparison-notice p { margin:0; overflow-wrap:anywhere; font-size:.75rem; line-height:1.45; }
 .comparison-notice p + p { margin-top:5px; }
 .library-cover-comparison { display: grid; min-width: 0; gap: 10px; }
