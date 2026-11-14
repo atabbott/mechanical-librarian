@@ -1040,7 +1040,7 @@ def _attention_mirrors(library: _Library) -> tuple[bool, bool]:
         ("contradicted_without_actions", False),
         ("title_hold_without_actions", False),
         ("kept_unconfirmed", False),
-        ("transient_with_choices", True),
+        ("transient_with_choices", False),
     ),
     ids=(
         "contradicted_with_choices",
@@ -1057,8 +1057,9 @@ def test_python_and_sql_attention_agree_on_holds_and_kept_covers(
     """#1362 S13, R1, R2: a hold asks only while the owner has a choice to make.
 
     A hold with nothing to choose shows on the book page but is not counted; a
-    kept unconfirmed cover is not counted; a read that settled nothing, with
-    covers to choose from, still asks under the unread-cover rule. Each case
+    kept unconfirmed cover is not counted; a read that settled nothing keeps
+    the cover with no fault, so even with covers to choose from it does not
+    ask (R1 as amended: the owner has no keep to record for it). Each case
     runs both mirrors over the same stored facts.
     """
     from contextlib import nullcontext

@@ -54,7 +54,9 @@ never replace a current cover.
 **Unreadable** is a typed terminal outcome only: no cover, or bytes the
 decoder rejects. An unreadable current cover is replaceable by the first
 eligible same-work candidate. A timeout, throttling, cancellation or unknown
-read result is not unreadable, stays unknown and never permits a replacement.
+read result is not unreadable, stays unknown, never permits a replacement and
+never asks the owner: the cover is kept until the next scan, and its covers
+stay optional choices.
 The stage reads the current cover's Audiobookshelf source as follows:
 
 | Audiobookshelf source or target | Read | Retainable |

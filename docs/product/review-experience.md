@@ -444,7 +444,8 @@ suggested switches; Library's Needs attention counts only the first. A readable
 cover with no fault, confirmed or not, is kept without asking, under Kept. A
 held cover's row under Choose names the hold in a pill, such as "Cover's source
 names another book". A current cover Audiobookshelf did not return is kept
-until the next scan, and its book says so. The counts follow each decision.
+without asking until the next scan, as its book says. Counts follow each
+decision.
 Pages hold 50 books; Show more covers loads the next from after the last book
 shown, so a decision never makes you miss one. The URL keeps the tab and the
 open book. A wall tile reads "No cover" when the cover field is empty and
