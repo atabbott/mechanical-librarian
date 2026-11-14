@@ -24,8 +24,8 @@ Audiobookshelf as it is.
 What works today:
 
 - Guided first-run setup in the browser. You claim the install, connect
-  Audiobookshelf, choose metadata sources and libraries, and match each
-  library's media folders to a read-only mount.
+  Audiobookshelf, choose libraries and metadata sources, and press Start to
+  open Library. Setup finds each library's folders on the read-only mounts.
 - Background preparation of every ebook and audiobook. Local evidence comes
   from EPUB packages and audio files. Ebook catalogue evidence comes from
   Hardcover, Open Library, Inventaire, Google Books and iTunes Search.

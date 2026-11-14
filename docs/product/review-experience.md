@@ -58,46 +58,56 @@ retries show as preparation status, never as a metadata choice.
 
 ## First run
 
-An empty data volume opens a seven-step setup: owner access, the
-Audiobookshelf connection, metadata sources, libraries, read-only mounts, an
-optional cover reviewer and kickoff. [Deployment](../operations/deployment.md)
+An empty data volume opens a six-step setup: your password, the
+Audiobookshelf connection, libraries, metadata sources, an optional cover
+reviewer and Start. A seventh step, Find library folders, appears only when
+setup cannot find a library's folder. [Deployment](../operations/deployment.md)
 covers the claim token and container.
 
-- Each step states its rules first. A refusal sits beside its field and clears
-  when the field changes. It gives a safe cause and one remedy, never a code,
-  and stays in view at 200% text.
+- Each step opens on its title and controls, with no checklist before it. A
+  refusal sits beside its field and clears when the field changes. It gives a
+  safe cause and one remedy, never a code, and stays in view at 200% text.
 - Completed steps collapse to a row with Change. The step list stays beside
   the step while it fits the window, and scrolls inside itself when it does
   not. Reopening a step removes only the answers and secrets that depend on
   it. Resuming setup returns to the first incomplete step. A change in another
   tab restores the latest recorded step.
+- The password step shows a one-line plain-HTTP notice only when the page is
+  not served over HTTPS.
 - A failed connection names its cause, the address and one remedy. The causes
   include a name that does not resolve, a refused connection, an unverified
   certificate, no answer in time and a rejected key. Setup refuses an address
   with a path, user name, password, query or fragment before it sends any
-  request.
-- Setup groups metadata sources as Books and ebooks, and Audiobooks, and each
-  is optional. Once setup has read your libraries, it suggests a group for
-  those it fits. It ticks nothing for you.
-- You can retry library discovery, and it summarises the podcast libraries it
-  skipped. Two libraries cannot share a name in any letter case. A library's
-  display name is only a label, so renaming it never changes which library it
-  is.
-- The mount check reports Matched, No mapping, More than one mapping or No
-  folder reported, with a remedy for every result except Matched. Setup never
-  creates a mount.
-- Setup presents the reviewer choices as equals, and each names its model and
-  status. You can cancel, resume or retry device sign-in. You set up
-  description advice later, in Settings.
+  request, and warns before sending a key over plain `http://` to an address
+  outside your private network.
+- Every book library starts ticked under its Audiobookshelf name, and setup
+  says once that podcast libraries are not shown. Two libraries cannot share a
+  name in any letter case; rename one in Audiobookshelf or untick one.
+- On Continue, setup checks each library's folder from the path
+  Audiobookshelf reports. When every folder is found, the next step says so
+  in one line. Otherwise Find library folders lists only the libraries it
+  could not find, each Found or Not found with what to do, and checks again.
+  Setup never creates a mount.
+- Setup groups metadata sources as Books and ebooks, and Audiobooks. The
+  sources that suit the chosen libraries start ticked, and each can be
+  unticked before Continue. Hardcover and Google Books need an API key while
+  they are on. Without either, setup says most ebooks will wait for your
+  review, and still lets you continue.
+- The reviewer step checks an existing Codex sign-in by itself and offers one
+  Sign in with ChatGPT button. OpenRouter starts on the recommended model with
+  its cost per 1,000 works; other models wait behind Choose another model, and
+  prices and data use sit in a closed section. Continue and Skip for now sit
+  together at the bottom. You set up description advice later, in Settings.
 - Secrets live only in their inputs, each with an accessible reveal control.
   Setup clears the reviewer key after each attempt. An expired session keeps
   every recorded step.
 
-Before kickoff a summary lists each answer, and each row reopens its step.
-Kickoff says exactly: `Nothing in your library changes. Writes stay off until
-you turn them on in Activity.` The same address then serves the workspace and
-preparation starts. Library's write handoff appears once a prepared change
-waits for write permission.
+Before Start a summary lists each answer in step order, and each row reopens
+its step. It says once: `Nothing in your library changes. Writes stay off until
+you turn them on in Activity.` Start then switches the same address to the
+workspace, starts preparation and opens Library, signed in, on the new run
+when it is known within a few seconds. Library's write handoff appears once a
+prepared change waits for write permission.
 
 ## Workspace shell
 
