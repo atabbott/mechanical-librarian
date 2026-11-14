@@ -307,7 +307,7 @@ never restates the reason already shown, and a decision carries no reminder
 that writes are protected. A disclosure never chooses a value.
 
 At a wider [Book matching](../reference/configuration.md#book-matching) value,
-a field that needs you may offer "same title and author" values; History says
+a field needing you may offer "same title and author" values; History says
 when it asked again.
 
 When a field set to Automatic gets no automatic choice, the canvas says why
