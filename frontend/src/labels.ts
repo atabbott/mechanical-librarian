@@ -437,10 +437,12 @@ export const coverFaultCodes = [
   'edition_language',
   'edition_preference',
   'title_names_other_work',
+  'current_contradicted',
 ] as const
 export type CoverFaultCode = (typeof coverFaultCodes)[number]
 const coverFaultLabels: Readonly<Record<Exclude<CoverFaultCode, 'wrong_shape'>, string>> = {
   title_names_other_work: 'Title names another book',
+  current_contradicted: "Cover's source names another book",
   unreadable: 'Unreadable image',
   below_floor: 'Under 300 px',
   edition_language: 'Edition in another language',
@@ -499,6 +501,8 @@ export const coverReasonLine = (
   if (code === 'edition_language')
     return language ? `The cover was from an edition in ${language}.` : null
   if (code === 'edition_preference') return "A cover from this book's edition."
+  if (code === 'unreadable')
+    return 'Audiobookshelf had no image for the cover, or Mechanical Librarian could not read it.'
   return null
 }
 

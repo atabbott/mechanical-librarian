@@ -556,9 +556,10 @@ def test_browse_with_a_warm_memo_equals_browse_without_one(
         return seen
 
     states: dict[str, set[str]] = {"fixture": compare()}
-    # A verified current cover is kept without asking (#1310), and a cover the
-    # measured rules suggest switching is not attention (#1363), so browse
-    # reads the currentness of every other case's cover.
+    # A verified current cover is kept without asking (#1310), a cover the
+    # measured rules suggest switching is not attention (#1363), and neither
+    # is a cover they kept with no fault (#1362), so browse reads the
+    # currentness of every other case's cover.
     stage = (
         "(SELECT json_extract(c.currentness_document,'$.cover_stage.outcome') "
         "FROM current_cover_considerations current JOIN cover_considerations c "
@@ -572,7 +573,11 @@ def test_browse_with_a_warm_memo_equals_browse_without_one(
         "json_each(result.value,'$.reasons') reason "
         "WHERE reason.value='current_cover_verified') AND COALESCE("
         + stage
-        + ",'') NOT IN ('suggest','replace'))"
+        + ",'') NOT IN ('suggest','replace') AND NOT (COALESCE("
+        + stage
+        + ",'')='keep' AND "
+        + stage.replace("$.cover_stage.outcome", "$.cover_stage.reason")
+        + " IS NULL))"
     ).fetchone()[0]
     assert 0 < asking < len(cases)
     assert _held(memo) >= asking

@@ -112,7 +112,7 @@ from mechanical_librarian.domain.cover_automatic_decision import (
     parse_automatic_authority,
 )
 from mechanical_librarian.domain.cover_qualification_policy import (
-    MEASURED_REPLACEMENT_IDENTITY,
+    REPLACEMENT_TARGET_STATES,
 )
 from mechanical_librarian.domain.description_advice import (
     AuthoredDescriptionDecision,
@@ -1119,11 +1119,11 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             # its next preparation decides again under the new setting (#1363).
             if cover.policy_reference != self._current_cover_policy_reference:
                 return False
-            # A measured replacement parses only under the current record,
-            # so its authority need only carry that record (#1363).
+            # Each replacement parses only under its own identity's record,
+            # so its authority need only carry that record (#1363, #1362).
             if cover.qualification_identity is not None and not (
                 authority.qualification_identity == cover.qualification_manifest_sha256
-                if cover.qualification_identity == MEASURED_REPLACEMENT_IDENTITY
+                if cover.qualification_identity in REPLACEMENT_TARGET_STATES
                 else qualification_manifest_is_current(
                     cover.policy_category,
                     cover.policy_option,

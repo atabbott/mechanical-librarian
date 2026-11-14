@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import inspect
 import json
 import os
@@ -47,6 +48,7 @@ from mechanical_librarian.application.field_effects import (
 )
 from mechanical_librarian.application.review_web import InspectCurrentReviewCase
 from mechanical_librarian.bootstrap import composition
+from mechanical_librarian.domain import cover_qualification_policy
 from mechanical_librarian.domain.cover_automatic_decision import (
     SCHEMA_VERSION as COVER_AUTOMATIC_DECISION_SCHEMA,
 )
@@ -59,6 +61,7 @@ from mechanical_librarian.domain.cover_evidence import (
 )
 from mechanical_librarian.domain.cover_qualification_policy import (
     MEASURED_REPLACEMENT_IDENTITY,
+    UNCONFIRMED_REPLACEMENT_IDENTITY,
 )
 from mechanical_librarian.domain.field_effect import (
     FieldEffectError,
@@ -94,14 +97,27 @@ from tests.unit.test_shadow_outcome_persistence import (
 )
 
 
-@pytest.mark.parametrize("scenario", ("known_empty", "upgrade", "downgrade"))
+@pytest.mark.parametrize(
+    "scenario",
+    ("known_empty", "upgrade", "downgrade", "unconfirmed", "unconfirmed_no_record"),
+)
 def test_real_automatic_cover_admission_controls_guarded_fake_service_effect(
     scenario: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # An empty cover is filled; an undersized one is replaced by the measured
     # rules, whose record a synthetic digest stands in for; a cover with no
-    # fault is kept (#1363).
+    # fault is kept (#1363). A cover the decoder refused is not confirmed, so
+    # its switch is admitted only under the unconfirmed identity's own record,
+    # and without one it stays a suggestion (#1362 A10).
     _measured_record(monkeypatch)
+    from tests.support.audiobook_covers import SYNTHETIC_UNCONFIRMED_RECORD
+
+    monkeypatch.setattr(
+        cover_qualification_policy,
+        "UNCONFIRMED_REPLACEMENT_QUALIFICATION_SHA256",
+        None if scenario == "unconfirmed_no_record" else SYNTHETIC_UNCONFIRMED_RECORD,
+    )
+    unconfirmed = scenario.startswith("unconfirmed")
     option = "fixed_source_order"
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -140,6 +156,11 @@ def test_real_automatic_cover_admission_controls_guarded_fake_service_effect(
                     else CoverDesignation.EXACT_EDITION
                 ),
                 typed_timeout=True,
+                readable_current=not unconfirmed,
+                abs_state=CoverSourceState.DECODE_FAILED if unconfirmed else None,
+                abs_digest=hashlib.sha256(b"incumbent-original").hexdigest()
+                if unconfirmed
+                else None,
             )
 
         options = dict(DEFAULT_OPTIONS)
@@ -208,7 +229,7 @@ def test_real_automatic_cover_admission_controls_guarded_fake_service_effect(
             "JOIN cover_selection_authorities selection "
             "ON selection.selection_id=current.selection_id"
         ).fetchall()
-        if scenario == "downgrade":
+        if scenario in {"downgrade", "unconfirmed_no_record"}:
             assert selection_rows == []
             assert repository.pending_field_effect_decision_documents(1) == ()
             assert repository._connection.execute(
@@ -222,14 +243,21 @@ def test_real_automatic_cover_admission_controls_guarded_fake_service_effect(
         automatic = CoverAutomaticDecision.from_json(
             json.loads(selection_rows[0][0])["decision_document"]
         )
-        measured = scenario == "upgrade"
+        measured = scenario in {"upgrade", "unconfirmed"}
+        identity = (
+            UNCONFIRMED_REPLACEMENT_IDENTITY
+            if unconfirmed
+            else MEASURED_REPLACEMENT_IDENTITY
+            if measured
+            else None
+        )
         assert automatic.policy_option == (
-            "fixed_source_order:measured_replacement" if measured else option
+            option if identity is None else identity.split(":", 1)[1]
         )
-        assert automatic.qualification_identity == (
-            MEASURED_REPLACEMENT_IDENTITY if measured else None
+        assert automatic.qualification_identity == identity
+        assert automatic.reason == (
+            "unreadable" if unconfirmed else "below_floor" if measured else None
         )
-        assert automatic.reason == ("below_floor" if measured else None)
         assert (
             json.loads(automatic.to_json())["schema_version"]
             == COVER_AUTOMATIC_DECISION_SCHEMA
@@ -286,6 +314,36 @@ def test_real_automatic_cover_admission_controls_guarded_fake_service_effect(
                 proposal,
                 consideration,
             )
+        if measured:
+            # Each replacement identity binds only its own actual target
+            # state: the measured one a confirmed cover, the unconfirmed one
+            # any other (#1362 S9).
+            swapped = (
+                MEASURED_REPLACEMENT_IDENTITY
+                if unconfirmed
+                else UNCONFIRMED_REPLACEMENT_IDENTITY
+            )
+            reverse = CoverAutomaticDecision.create(
+                **(
+                    automatic._core()
+                    | {
+                        "rank_key": automatic.rank_key,
+                        "citation_ids": automatic.citation_ids,
+                        "policy_option": swapped.split(":", 1)[1],
+                        "qualification_identity": swapped,
+                    }
+                ),
+                occurred_at=automatic.occurred_at,
+            )
+            with pytest.raises(FieldEffectError, match="authority_binding"):
+                _cover_automatic_decision_value(
+                    repository._connection,
+                    reverse,
+                    ReviewCase.from_json(case_document),
+                    report,
+                    proposal,
+                    consideration,
+                )
         # The pipeline wrote under the default Current covers; this process
         # binds the same live cover policy, as composition does (#1363).
         repository.bind_current_cover_policy(CoverPolicy().reference)

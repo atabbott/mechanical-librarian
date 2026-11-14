@@ -1,6 +1,6 @@
 # ADR-0094: Let an unconfirmed current cover take part in cover election
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-11-07
 - Owners: project maintainers
 - Issues: #1362
@@ -46,13 +46,35 @@ ADR-0093's current-cover protection:
 - under `proposals_only`, nothing is replaced automatically.
 
 A positive contradiction on the current cover, meaning a retained identifier,
-edition, work or creator disagreement, still sends the field to attention and
-never to a keep. Identity grounds alone never replace a current cover.
+edition, work or creator disagreement, holds the field for the owner and is
+never a keep. The hold counts in attention while there is a cover to choose;
+with nothing to choose it shows on the book page only. Identity grounds alone
+never replace a current cover.
 
 **Unreadable** is a typed terminal outcome only: no cover, or bytes the
 decoder rejects. An unreadable current cover is replaceable by the first
 eligible same-work candidate. A timeout, throttling, cancellation or unknown
-read result is not unreadable, stays unknown and never permits a replacement.
+read result is not unreadable, stays unknown, never permits a replacement and
+never asks the owner on its own account: the cover is kept until the next
+scan, and its covers stay optional choices.
+The stage reads the current cover's Audiobookshelf source as follows:
+
+| Audiobookshelf source or target | Read | Retainable |
+|---|---|---|
+| retrieved (the current cover's own candidate) | readable | yes |
+| absent over a declared cover (a 404, read twice) | unreadable | yes, nothing to keep |
+| decode failed, animated or multi-frame, oversized or unsupported format, with the bytes' digest recorded | unreadable | yes |
+| the same states with no digest recorded | unreadable | no |
+| timeout, unavailable, source changed, any other state, no read, or a malformed or oversized target value | unknown | — |
+| target missing, null or empty | known-empty, filled as before | — |
+
+An unknown read keeps the cover with no issue and no choice under every
+setting. An unreadable one is replaced automatically only when it is
+retainable and the setting is not `proposals_only`; otherwise it is suggested.
+A positive contradiction (a `conflict` identity outcome, or a retained creator
+or contributor disagreement, the same test that refuses an owner's choice of
+such a candidate) holds the field for the owner in every mode, whatever the
+cover's faults.
 
 **The write** binds the observed target state and goes through consent,
 backup readiness, plan validation, optimistic concurrency, read-back and
@@ -68,7 +90,14 @@ are never overridden, and candidates come only from ADR-0093's eligible set.
 cover election qualification's real cohorts re-run with the new eligible set
 at zero false admissions, and the replay over a full library with its cover
 images), replacing an unconfirmed current cover is offered to the owner and
-stays outside the qualified automatic matrix.
+stays outside the qualified automatic matrix. Every replacement of a current
+cover that is not confirmed, readable or unreadable, is admitted only under its
+own shadow identity, `cover_order:fixed_source_order:unconfirmed_replacement`,
+whose record no build carries; ADR-0093's measured identity covers a confirmed
+current cover only. Admission picks the identity by the actual target state,
+plan validation refuses either identity over the other's state, and the
+executor checks each against its own record, so #1418 can activate the two
+separately.
 
 ## Consequences
 
@@ -89,15 +118,12 @@ stays outside the qualified automatic matrix.
 
 ### Neutral or deferred
 
-- How often the current cover matches no provider art is measured on the
-  #1294 snapshot, and on #744 where perceptual hashes are persisted, during
-  delivery.
+- How often the current cover matches no provider art, measured on the #1294
+  snapshot: 36 of 85 audiobook covers with provider art and 5 of 15 ebook
+  covers match none. #744 has no current covers to measure.
 - No new egress, disclosure or model input. Reasons are closed codes, and no
   cover bytes or paths reach logs, diagnostics, status or support bundles.
 - Clean rebuild required under ADR-0013: the decision policy version changes.
-- On acceptance, `security.md` (the cover-admission paragraph under Automatic
-  decisions), `automation-policy.md` and the changelog change in the activation
-  pull request.
 
 ## Alternatives considered
 
@@ -122,13 +148,13 @@ keeps that from happening, as #1333 already requires of placeholders.
   `unprotected`: a readable unverified current cover with no detectable issue,
   kept while no judge exists; one with a detectable issue, replaced; an
   unreadable one, replaced by the first eligible same-work candidate; an
-  owner-final cover, never replaced; a positive contradiction, sent to
-  attention.
+  owner-final cover, never replaced; a positive contradiction, held for the
+  owner.
 - A timeout, a throttled read and an unknown read result each keep the current
   cover.
 - Application tests: a stale target is refused at the effect path;
   undecodable current bytes are retained, and a revert restores them.
-- An offline replay over the #744 and #1294 snapshots reports, as aggregates,
-  which current covers would change.
+- An offline replay over the #1294 snapshot reports, as aggregates, which
+  current covers would change (#744 has no current covers).
 - The owner-run qualification held by #1418 before any such replacement is
   automatic.

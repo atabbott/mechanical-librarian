@@ -677,6 +677,7 @@ class _CoverPolicyPreferences(_StoredDocumentCopy):
 
 _CoverStageReason = Literal[
     "title_names_other_work",
+    "current_contradicted",
     "unreadable",
     "wrong_shape",
     "below_floor",
@@ -706,13 +707,14 @@ class _CoverStage(_ClosedModel):
     issues: list[
         Literal[
             "title_names_other_work",
+            "current_contradicted",
             "unreadable",
             "wrong_shape",
             "below_floor",
             "edition_language",
             "sharper_copy",
         ]
-    ] = Field(max_length=6)
+    ] = Field(max_length=7)
     # The edition language a reason names, only when that is an issue.
     language: str | None = Field(max_length=280)
     outcome: Literal["keep", "replace", "suggest", "hold", "fill", "empty"]

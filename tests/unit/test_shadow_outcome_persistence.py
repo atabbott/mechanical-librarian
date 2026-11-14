@@ -4073,8 +4073,12 @@ def test_composed_projection_without_reviewer_persists_unavailable_before_f22(
         root = Path(temporary)
         database = root / "reports.sqlite"
         repository = open_repository(database)
+        # An unread current cover is one the decoder refused without a bound
+        # digest: the stage only suggests a switch (#1362 S4).
         report, proposal = _qualified_cover_report(
-            root, readable_current=readable_current
+            root,
+            readable_current=readable_current,
+            abs_state=None if readable_current else CoverSourceState.DECODE_FAILED,
         )
         recovery = composition.SQLiteProviderRecoveryStore.open(
             root / "provider-recovery.sqlite"

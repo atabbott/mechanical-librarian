@@ -5165,6 +5165,7 @@
           "reason": {
             "enum": [
               "title_names_other_work",
+              "current_contradicted",
               "unreadable",
               "wrong_shape",
               "below_floor",
@@ -5220,6 +5221,7 @@
             "items": {
               "enum": [
                 "title_names_other_work",
+                "current_contradicted",
                 "unreadable",
                 "wrong_shape",
                 "below_floor",
@@ -5228,7 +5230,7 @@
               ],
               "type": "string"
             },
-            "maxItems": 6,
+            "maxItems": 7,
             "title": "Issues",
             "type": "array"
           },
@@ -5261,6 +5263,7 @@
               {
                 "enum": [
                   "title_names_other_work",
+                  "current_contradicted",
                   "unreadable",
                   "wrong_shape",
                   "below_floor",
@@ -5392,6 +5395,7 @@
               {
                 "enum": [
                   "title_names_other_work",
+                  "current_contradicted",
                   "unreadable",
                   "wrong_shape",
                   "below_floor",

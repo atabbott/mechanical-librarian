@@ -430,9 +430,15 @@ rank it or approve it.
 
 The current cover stays unless it has a fault: the wrong shape, under 300
 pixels, unreadable, a sharper copy of the same art available, or an edition
-labelled in a language the library does not hold. A title that names a
-different book from most covers holds the cover until the title is settled.
-Size alone never replaces a readable cover that has no fault.
+labelled in a language the library does not hold. The faults apply whether or
+not the current cover is confirmed; a match alone never replaces it
+([ADR-0094](../architecture/decisions/0094-unconfirmed-current-covers-take-part.md)).
+Unreadable means Audiobookshelf had no image for the cover or the image could
+not be decoded. When Audiobookshelf did not return the cover this time, it is
+kept until the next scan. A title that names a different book from most covers
+holds the cover until the title is settled, and so does a current cover whose
+own source names a different book, until you choose. Size alone never replaces
+a readable cover that has no fault.
 
 Policy → Curation → Current covers says what happens to a current cover today,
 while no release can replace one automatically (below):
@@ -450,11 +456,12 @@ Prefer the edition's cover, off by default, suggests a cover from the book's
 own edition over a cover of the book in general; only When another is
 preferred lets it switch automatically.
 
-Replacing a cover automatically needs its own qualification, which no release
-has yet, so today every such replacement is a suggestion in Covers' To decide.
+Replacing a cover automatically needs its own qualification, and replacing one
+that is not confirmed needs a second, separate one. No release has either yet,
+so today every such replacement is a suggestion in Covers' To decide.
 It also needs room to keep the replaced cover to put back; while that store is
-full, the replacement is suggested. Automatic fills only an ebook cover known
-to be empty, with a confirmed cover and no lookup for that report running or
+full, the replacement is suggested, unless Audiobookshelf had no image to
+keep. Automatic fills only an ebook cover known to be empty, with a confirmed cover and no lookup for that report running or
 being checked; lookups waiting to retry do not hold it back. An audiobook cover
 is never filled or replaced automatically. Once you choose a cover, Automatic
 no longer changes it, and changing Current covers stops any automatic change

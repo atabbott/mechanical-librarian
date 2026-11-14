@@ -145,13 +145,22 @@ _VERIFIED_CURRENT_COVER_SQL = (
 _COVER_STAGE_OUTCOME_SQL = (
     "json_extract(consideration.currentness_document,'$.cover_stage.outcome')"
 )
+# A cover the stage kept with no fault, read or not, is optional too: a read
+# that settled nothing keeps it until the next scan, and the owner has no keep
+# to record for it (#1362, R1 as amended), as `review_web._cover_stage_kept`
+# reads it.
+_COVER_STAGE_KEPT_SQL = (
+    "(COALESCE(" + _COVER_STAGE_OUTCOME_SQL + ",'')='keep' AND json_extract("
+    "consideration.currentness_document,'$.cover_stage.reason') IS NULL)"
+)
 _COVER_SUGGESTED_SQL = (
     "(result.destination='cover' AND EXISTS (SELECT 1 "
     "FROM current_cover_considerations current_cover "
     "JOIN cover_considerations consideration "
     "ON consideration.consideration_id=current_cover.consideration_id "
     "WHERE current_cover.review_case_id=rc.review_case_id "
-    "AND " + _COVER_STAGE_OUTCOME_SQL + " IN ('suggest','replace')))"
+    "AND (" + _COVER_STAGE_OUTCOME_SQL + " IN ('suggest','replace') "
+    "OR " + _COVER_STAGE_KEPT_SQL + ")))"
 )
 _REVIEW_FIELD_ATTENTION_REASON_SQL = (
     "result.has_owner_decision_actions=1 AND ((result.unresolved_choice=1 "
@@ -164,6 +173,7 @@ _REVIEW_FIELD_ATTENTION_REASON_SQL = (
     "AND (" + _COVER_STAGE_OUTCOME_SQL + "='hold' OR ("
     "json_extract(consideration.currentness_document,'$.manual_ready')=1 "
     "AND COALESCE(" + _COVER_STAGE_OUTCOME_SQL + ",'') NOT IN ('suggest','replace') "
+    "AND NOT " + _COVER_STAGE_KEPT_SQL + " "
     "AND NOT " + _VERIFIED_CURRENT_COVER_SQL + ")))) "
     "OR "
     + _REVIEW_MANUAL_BIBLIOGRAPHIC_SQL
