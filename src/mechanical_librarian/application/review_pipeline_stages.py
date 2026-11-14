@@ -118,6 +118,8 @@ class ReviewStageRepository(ReviewPipelineRepository, Protocol):
 
     def atomic_cover_preparation(self, call: Callable[[], object]) -> object: ...
 
+    def current_cover_consideration_level(self, review_case_id: str) -> str | None: ...
+
 
 class ReviewPipelineStages:
     """The nine stage decisions, and the pipeline they are assembled into."""
@@ -147,8 +149,7 @@ class ReviewPipelineStages:
         google_burst_remaining: Callable[[], int | None] | None = None,
         admit_description: Callable[[ReviewPipelineRepository, PipelineAction], None]
         | None = None,
-        prepare_description: Callable[[ReviewPipelineRepository, PipelineAction], None]
-        | None = None,
+        prepare_description: Callable[..., None] | None = None,
         observation_repository_factory: Callable[[], ReviewPipelineRepository]
         | None = None,
     ) -> None:
@@ -433,9 +434,25 @@ class ReviewPipelineStages:
                 if work_route_cover_offered(report):
                     self.prepare_cover(repository, action)
                 return
+        # A projection that finds the case's cover comparison made under
+        # another Book matching level is a matching check (#1355). Description
+        # advice does not depend on the level, so it reuses any earlier
+        # attempt and starts none: a matching check makes no model request.
+        matching_check = self._matching_check(repository, action)
         self.prepare_cover(repository, action)
         if self._prepare_description is not None:
-            self._prepare_description(repository, action)
+            self._prepare_description(repository, action, reuse_only=matching_check)
+
+    def _matching_check(
+        self, repository: ReviewPipelineRepository, action: PipelineAction
+    ) -> bool:
+        review = self._configuration.review
+        if action.review_case_id is None or review is None:
+            return False
+        level = cast(
+            "ReviewStageRepository", repository
+        ).current_cover_consideration_level(action.review_case_id)
+        return level is not None and level != review.work_identity.value
 
     def prepare_cover(
         self, pipeline_repository: ReviewPipelineRepository, action: PipelineAction

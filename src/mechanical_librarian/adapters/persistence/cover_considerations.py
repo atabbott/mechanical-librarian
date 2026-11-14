@@ -467,6 +467,18 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         return None if row is None else expand_cover_consideration(*row)
 
     @local_operation
+    def current_cover_consideration_level(self, review_case_id: str) -> str | None:
+        """The Book matching level the case's current comparison was made at."""
+        row = self._connection.execute(
+            "SELECT json_extract(consideration.document,'$.work_identity_level') "
+            "FROM current_cover_considerations current "
+            "JOIN cover_considerations consideration "
+            "ON consideration.consideration_id=current.consideration_id "
+            "WHERE current.review_case_id=?",
+            (review_case_id,),
+        ).fetchone()
+        return None if row is None or type(row[0]) is not str else row[0]
+
     def current_cover_consideration_document(self, review_case_id: str) -> str | None:
         row = self._connection.execute(
             "SELECT consideration.document,report.document,report.document_digest,consideration.document_digest,consideration.report_id FROM current_cover_considerations current "

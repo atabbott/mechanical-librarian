@@ -2259,6 +2259,11 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             review_case_id, replay_digest
         )
 
+    def current_cover_consideration_level(self, review_case_id: str) -> str | None:
+        return self._cover_considerations.current_cover_consideration_level(
+            review_case_id
+        )
+
     def current_cover_consideration_document(self, review_case_id: str) -> str | None:
         return self._cover_considerations.current_cover_consideration_document(
             review_case_id
