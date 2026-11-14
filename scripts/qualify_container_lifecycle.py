@@ -26,8 +26,16 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from functools import partial
 from pathlib import Path
+from typing import Final
 
 from argon2 import PasswordHasher
+
+from mechanical_librarian.application.configuration import CONFIG_SCHEMA
+from mechanical_librarian.infrastructure.settings_authority import (
+    REVIEW_BOOTSTRAP_SCHEMA,
+)
+
+CONTAINER_LIFECYCLE_EVIDENCE_SCHEMA: Final = "container-lifecycle-evidence-v6"
 
 ROOT = Path(__file__).resolve().parents[1]
 OWNERSHIP_LABEL = "org.mechanical-librarian.qualification-run"
@@ -525,7 +533,7 @@ def _qualify_first_run(
             (source / "review-bootstrap.json").write_text(
                 json.dumps(
                     {
-                        "schema_version": "review-bootstrap-v2",
+                        "schema_version": REVIEW_BOOTSTRAP_SCHEMA,
                         "canonical_origin": f"{scheme}://review.test",
                         "tls_certificate_file": "/run/secrets/tls.crt"
                         if scheme == "https"
@@ -927,7 +935,7 @@ def _qualify_retained_recovery(
 
 def _configuration() -> dict[str, object]:
     return {
-        "schema_version": "config-v11",
+        "schema_version": CONFIG_SCHEMA,
         "provider_recovery_generation": 1,
         "connections": [
             {
@@ -1318,7 +1326,7 @@ def main() -> None:
                     "readiness": True,
                     "react_assets_validated": True,
                     "react_workspace_activated": True,
-                    "schema": "container-lifecycle-evidence-v6",
+                    "schema": CONTAINER_LIFECYCLE_EVIDENCE_SCHEMA,
                     "snapshot_build": True,
                     "workbench_excluded": True,
                     "single_data_volume": True,

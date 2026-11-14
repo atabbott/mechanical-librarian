@@ -39,9 +39,16 @@ from mechanical_librarian.application.review_pipeline import (
     ReviewPreparationSupervisor,
     pipeline_scan_id,
 )
-from mechanical_librarian.application.review_web import ReviewWebError
+from mechanical_librarian.application.review_web import (
+    REVIEW_CASE_DETAIL_SCHEMA,
+    REVIEW_LIBRARY_SCHEMA,
+    ReviewWebError,
+)
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
-from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
+from mechanical_librarian.domain.owner_settings import (
+    OWNER_SETTINGS_SCHEMA,
+    OwnerSettingsDocument,
+)
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.interfaces.web import create_review_app
@@ -140,7 +147,7 @@ def test_named_case_operation_returns_bounded_view(
 
     assert view.review_case_id == repository.case.review_case_id
     assert view.current
-    assert view.to_data()["schema_version"] == "review-case-detail-v7"
+    assert view.to_data()["schema_version"] == REVIEW_CASE_DETAIL_SCHEMA
 
 
 def test_named_browse_operations_return_bounded_views(
@@ -149,7 +156,7 @@ def test_named_browse_operations_return_bounded_views(
     library = application.library(lens="all", search=None, limit=20, cursor=None)
     attention = application.attention(search=None, limit=20, cursor=None)
 
-    assert library.schema_version == "review-library-v5"
+    assert library.schema_version == REVIEW_LIBRARY_SCHEMA
     assert library.counts["all"] == 1
     assert attention.schema_version == "review-attention-v1"
     assert attention.total == 1
@@ -160,7 +167,7 @@ def test_settings_commit_updates_live_cover_policy_inside_the_application_gate(
 ) -> None:
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v6",
+            "schema_version": OWNER_SETTINGS_SCHEMA,
             "revision": 2,
             "connections": [{"name": "primary", "endpoint": "https://example.invalid"}],
             "libraries": [
@@ -235,7 +242,7 @@ def test_live_cover_binding_fault_is_a_fixed_settings_failure(
 ) -> None:
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v6",
+            "schema_version": OWNER_SETTINGS_SCHEMA,
             "revision": 2,
             "connections": [{"name": "primary", "endpoint": "https://example.invalid"}],
             "libraries": [
@@ -1050,7 +1057,7 @@ def test_reviewer_change_publishes_when_preparation_refuses(
 def test_library_display_rename_preserves_case_and_target_identity(repository):
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v6",
+            "schema_version": OWNER_SETTINGS_SCHEMA,
             "revision": 1,
             "connections": [{"name": "primary", "endpoint": "https://example.invalid"}],
             "libraries": [

@@ -27,6 +27,7 @@ from mechanical_librarian.domain.field_outcomes import (
 )
 from mechanical_librarian.domain.metadata_report import AUDIOBOOK_MARKETPLACES
 from mechanical_librarian.domain.owner_settings import (
+    OWNER_SETTINGS_SCHEMA,
     PROVIDER_LABELS,
     AudibleCatalogProviderSettings,
     Marketplace,
@@ -37,6 +38,7 @@ from mechanical_librarian.domain.owner_settings import (
 )
 from mechanical_librarian.domain.validation import OWNER_PASSWORD_MINIMUM_CHARACTERS
 from mechanical_librarian.infrastructure.settings_authority import (
+    REVIEW_BOOTSTRAP_SCHEMA,
     ReviewBootstrap,
     load_review_bootstrap,
     resolve_startup_configuration,
@@ -63,7 +65,7 @@ def test_bootstrap_is_strict_private_and_closed(tmp_path: Path) -> None:
     path.write_text(
         json.dumps(
             {
-                "schema_version": "review-bootstrap-v2",
+                "schema_version": REVIEW_BOOTSTRAP_SCHEMA,
                 "canonical_origin": "https://review.example.invalid",
                 "tls_certificate_file": "/run/secrets/tls.crt",
                 "tls_private_key_file": "/run/secrets/tls.key",
@@ -80,7 +82,7 @@ def test_bootstrap_is_strict_private_and_closed(tmp_path: Path) -> None:
 def test_store_projection_combines_only_deploy_bootstrap_and_store_authority() -> None:
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v6",
+            "schema_version": OWNER_SETTINGS_SCHEMA,
             "revision": 1,
             "connections": [
                 {"name": "primary", "endpoint": "https://library.example.invalid"}
@@ -122,7 +124,7 @@ def test_store_projection_combines_only_deploy_bootstrap_and_store_authority() -
     )
     bootstrap = ReviewBootstrap.model_validate(
         {
-            "schema_version": "review-bootstrap-v2",
+            "schema_version": REVIEW_BOOTSTRAP_SCHEMA,
             "canonical_origin": "https://review.example.invalid",
             "tls_certificate_file": "/run/secrets/tls.crt",
             "tls_private_key_file": "/run/secrets/tls.key",
@@ -178,7 +180,7 @@ def test_store_projection_combines_only_deploy_bootstrap_and_store_authority() -
 def test_settings_projects_absent_fixed_provider_capabilities() -> None:
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v6",
+            "schema_version": OWNER_SETTINGS_SCHEMA,
             "revision": 1,
             "connections": [{"name": "primary", "endpoint": "https://library.invalid"}],
             "libraries": [
@@ -235,7 +237,7 @@ def _audiobook_document(**overrides: object) -> OwnerSettingsDocument:
     )
     return OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v6",
+            "schema_version": OWNER_SETTINGS_SCHEMA,
             "revision": 1,
             "connections": [{"name": "primary", "endpoint": "https://library.invalid"}],
             "providers": providers,
@@ -477,7 +479,7 @@ def test_every_surface_states_one_canonical_provider_label() -> None:
 def test_store_authority_carries_the_order_only_while_audible_is_enabled() -> None:
     bootstrap = ReviewBootstrap.model_validate(
         {
-            "schema_version": "review-bootstrap-v2",
+            "schema_version": REVIEW_BOOTSTRAP_SCHEMA,
             "canonical_origin": "https://review.example.invalid",
             "tls_certificate_file": "/run/secrets/tls.crt",
             "tls_private_key_file": "/run/secrets/tls.key",
@@ -595,7 +597,7 @@ def test_the_first_run_vocabulary_states_owner_rules_and_every_contribution() ->
 @pytest.mark.parametrize("mode", ["http", "direct", "proxy"])
 def test_bootstrap_accepts_exact_browser_modes(tmp_path: Path, mode: str) -> None:
     source = {
-        "schema_version": "review-bootstrap-v2",
+        "schema_version": REVIEW_BOOTSTRAP_SCHEMA,
         "canonical_origin": "http://review.test"
         if mode == "http"
         else "https://review.test",
@@ -633,7 +635,7 @@ def test_bootstrap_predecessor_and_invalid_modes_fail_closed(
     )
     document = json.loads(source.read_bytes())
     if amendment:
-        document.update({"schema_version": "review-bootstrap-v2", **amendment})
+        document.update({"schema_version": REVIEW_BOOTSTRAP_SCHEMA, **amendment})
     path = tmp_path / "bootstrap.json"
     payload = json.dumps(document).encode()
     path.write_bytes(payload)

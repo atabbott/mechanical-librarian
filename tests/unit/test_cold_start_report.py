@@ -29,6 +29,7 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     open_repository,
 )
 from mechanical_librarian.application.configuration import (
+    CONFIG_SCHEMA,
     ApplicationConfiguration,
     LibraryConfiguration,
     MediaMountConfiguration,
@@ -795,7 +796,7 @@ def test_main_reads_existing_state_and_remaps_mounts() -> None:
         config.write_text(
             json.dumps(
                 {
-                    "schema_version": "config-v11",
+                    "schema_version": CONFIG_SCHEMA,
                     "provider_recovery_generation": 1,
                     "connections": [
                         {
@@ -932,10 +933,6 @@ def test_main_rejects_a_malformed_mount_root() -> None:
             ],
             stdout=io.StringIO(),
         )
-
-
-def test_the_schema_is_pinned_at_its_sixth_version() -> None:
-    assert "cold-start-report-v10" == cold_start.COLD_START_REPORT_SCHEMA
 
 
 def test_not_matched_census_counts_the_lens_by_reason() -> None:

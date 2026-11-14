@@ -39,6 +39,7 @@ from mechanical_librarian.application.review_web import (
     _ADAPTER_FAULT_REASON,
     _PROVIDER_OUTCOME_REASONS,
     _REFUSED_PROVIDER_REASON,
+    REVIEW_LIBRARY_SCHEMA,
     BrowseReviewLibrary,
     ReviewWebError,
     _provider_outcomes,
@@ -625,7 +626,7 @@ def test_the_served_lens_agrees_with_the_store_double(
     served = web.client.get("/api/v1/library?lens=not_matched")
     assert served.status_code == 200, served.text
     body = served.json()
-    assert body["schema_version"] == "review-library-v5"
+    assert body["schema_version"] == REVIEW_LIBRARY_SCHEMA
     assert body["lens"] == "not_matched"
     assert body["counts"]["not_matched"] == 3
     assert {item["item"]: item["summary"]["state"] for item in body["items"]} == {

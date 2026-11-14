@@ -18,6 +18,7 @@ from mechanical_librarian.adapters.persistence.reviewer_access import (
 from mechanical_librarian.adapters.persistence.schema import _create_schema
 from mechanical_librarian.adapters.persistence.transactions import TransactionScope
 from mechanical_librarian.domain.reviewer_access import (
+    REVIEWER_ACCESS_SCHEMA,
     OpenRouterTaskSelection,
     ReviewerAccessDocument,
 )
@@ -26,7 +27,7 @@ from mechanical_librarian.domain.reviewer_access import (
 def _document(revision: int, model: str = "example/vision") -> ReviewerAccessDocument:
     return ReviewerAccessDocument.model_validate(
         {
-            "schema_version": "reviewer-access-v3",
+            "schema_version": REVIEWER_ACCESS_SCHEMA,
             "revision": revision,
             "cover_observation": {"engine": "openrouter", "model": model},
         }
@@ -44,7 +45,7 @@ def _store() -> ReviewerAccessStore:
     connection.execute(
         "INSERT INTO reviewer_access(singleton,revision,document) VALUES(1,1,?)",
         (
-            '{"cover_metadata":null,"cover_observation":null,"description_metadata":null,"description_rewrite":null,"revision":1,"schema_version":"reviewer-access-v3"}',
+            f'{{"cover_metadata":null,"cover_observation":null,"description_metadata":null,"description_rewrite":null,"revision":1,"schema_version":"{REVIEWER_ACCESS_SCHEMA}"}}',
         ),
     )
     return ReviewerAccessStore(connection)
@@ -110,7 +111,7 @@ def _connection_store() -> Iterator[tuple[sqlite3.Connection, ReviewerAccessStor
     connection.execute(
         "INSERT INTO reviewer_access(singleton,revision,document) VALUES(1,1,?)",
         (
-            '{"cover_metadata":null,"cover_observation":null,"description_metadata":null,"description_rewrite":null,"revision":1,"schema_version":"reviewer-access-v3"}',
+            f'{{"cover_metadata":null,"cover_observation":null,"description_metadata":null,"description_rewrite":null,"revision":1,"schema_version":"{REVIEWER_ACCESS_SCHEMA}"}}',
         ),
     )
     try:
@@ -193,7 +194,7 @@ def test_reviewer_replace_commit_release_propagates_process_control(
     connection.execute(
         "INSERT INTO reviewer_access(singleton,revision,document) VALUES(1,1,?)",
         (
-            '{"cover_metadata":null,"cover_observation":null,"description_metadata":null,"description_rewrite":null,"revision":1,"schema_version":"reviewer-access-v3"}',
+            f'{{"cover_metadata":null,"cover_observation":null,"description_metadata":null,"description_rewrite":null,"revision":1,"schema_version":"{REVIEWER_ACCESS_SCHEMA}"}}',
         ),
     )
     fault = fault_type("private reviewer commit release")
@@ -228,7 +229,7 @@ def test_nested_reviewer_read_release_preserves_outer_authority(
     connection.execute(
         "INSERT INTO reviewer_access(singleton,revision,document) VALUES(1,1,?)",
         (
-            '{"cover_metadata":null,"cover_observation":null,"description_metadata":null,"description_rewrite":null,"revision":1,"schema_version":"reviewer-access-v3"}',
+            f'{{"cover_metadata":null,"cover_observation":null,"description_metadata":null,"description_rewrite":null,"revision":1,"schema_version":"{REVIEWER_ACCESS_SCHEMA}"}}',
         ),
     )
     fault = fault_type("private nested reviewer read release")
@@ -272,7 +273,7 @@ def test_compare_and_swap_refuses_a_lost_writer() -> None:
         "DELETE FROM reviewer_access",
         "UPDATE reviewer_access SET revision=x'31'",
         "UPDATE reviewer_access SET document='{}'",
-        'INSERT INTO reviewer_access VALUES(1,1,\'{"cover_metadata":null,"cover_observation":null,"description_metadata":null,"description_rewrite":null,"revision":1,"schema_version":"reviewer-access-v3"}\')',
+        f'INSERT INTO reviewer_access VALUES(1,1,\'{{"cover_metadata":null,"cover_observation":null,"description_metadata":null,"description_rewrite":null,"revision":1,"schema_version":"{REVIEWER_ACCESS_SCHEMA}"}}\')',
     ),
 )
 def test_corrupt_duplicate_or_missing_singleton_state_fails_closed(
@@ -412,7 +413,7 @@ def test_predecessor_description_price_document_reads_as_current() -> None:
         '"prompt_price":"0.000001","request_price":"0","structured_outputs":true,'
         '"text_input":true,"text_output":true},"description_rewrite":'
         '{"engine":"openrouter","model":"example/b"},"revision":2,'
-        '"schema_version":"reviewer-access-v3"}'
+        f'"schema_version":"{REVIEWER_ACCESS_SCHEMA}"}}'
     )
     unpriced = predecessor.replace('"request_price":"0"', '"request_price":null')
     keyless = predecessor.replace('"request_price":"0",', "")

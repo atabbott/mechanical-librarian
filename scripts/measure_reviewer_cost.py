@@ -57,7 +57,11 @@ from mechanical_librarian.domain.reviewer_access import (
     DescriptionModelMetadata,
     OpenRouterTaskSelection,
 )
-from mechanical_librarian.domain.reviewer_cost import ReviewerCostEvidence, per_thousand
+from mechanical_librarian.domain.reviewer_cost import (
+    REVIEWER_COST_EVIDENCE_SCHEMA,
+    ReviewerCostEvidence,
+    per_thousand,
+)
 
 
 def digest(payload: bytes) -> str:
@@ -266,7 +270,7 @@ def installed_identity(
     purelib = Path(sysconfig.get_path("purelib")).resolve()
     manifest = qualifier._validate_wheel(wheel, "mechanical-librarian")
     if (
-        evidence.get("schema") != "exact-artifact-evidence-v4"
+        evidence.get("schema") != qualifier.EXACT_ARTIFACT_EVIDENCE_SCHEMA
         or evidence.get("status") != "passed"
         or evidence.get("source_sha") != source
         or evidence.get("wheel_sha256") != digest(wheel.read_bytes())
@@ -703,7 +707,7 @@ def execute(
             evidence = ReviewerCostEvidence.model_validate_json(
                 encoded(
                     {
-                        "schema_version": "reviewer-cost-evidence-v2",
+                        "schema_version": REVIEWER_COST_EVIDENCE_SCHEMA,
                         "models": rows,
                     }
                 )

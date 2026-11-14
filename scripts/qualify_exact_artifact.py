@@ -24,8 +24,10 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from email.parser import BytesParser
 from pathlib import Path, PurePosixPath
-from typing import BinaryIO, Protocol
+from typing import BinaryIO, Final, Protocol
 from zipfile import BadZipFile, ZipFile, ZipInfo
+
+EXACT_ARTIFACT_EVIDENCE_SCHEMA: Final = "exact-artifact-evidence-v4"
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _SOURCE_SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -495,7 +497,7 @@ def qualify_exact_artifact(
         _verify_source_checkout(source_root, expected_source_sha)
 
     return ExactArtifactEvidence(
-        schema="exact-artifact-evidence-v4",
+        schema=EXACT_ARTIFACT_EVIDENCE_SCHEMA,
         status="passed",
         source_sha=actual_sha,
         wheel_sha256=wheel_sha256,
@@ -1716,7 +1718,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     except QualificationFailure as error:
         # The evidence record goes to standard error and the narrative account
-        # to standard output, so no consumer of `exact-artifact-evidence-v4`
+        # to standard output, so no consumer of the exact-artifact evidence
         # sees narrative text on its stream and the record stays path-free.
         #
         # The record is written first, and the order is a guard. A consumer
@@ -1729,7 +1731,7 @@ def main(argv: list[str] | None = None) -> int:
             json.dumps(
                 {
                     "reason": error.reason,
-                    "schema": "exact-artifact-evidence-v4",
+                    "schema": EXACT_ARTIFACT_EVIDENCE_SCHEMA,
                     "status": "failed",
                 },
                 sort_keys=True,

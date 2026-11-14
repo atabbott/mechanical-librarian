@@ -11,6 +11,7 @@ import pytest
 from pydantic import ValidationError
 
 from mechanical_librarian.application.configuration import (
+    CONFIG_SCHEMA,
     ConfigurationError,
     MediaMountConfiguration,
     ProviderConnectionConfiguration,
@@ -35,6 +36,9 @@ from mechanical_librarian.infrastructure.security.credentials import (
     read_secret,
     target_client,
 )
+from mechanical_librarian.infrastructure.settings_authority import (
+    REVIEW_BOOTSTRAP_SCHEMA,
+)
 
 # `ConfigurationInput.model_validate` and `load_configuration_file` never open a
 # declared secret; the secrets named below are absolute paths that do not exist,
@@ -45,7 +49,7 @@ _SYNTHETIC_SECRET = str(_SYNTHETIC_ROOT / "provider.secret")
 
 def _source(root: Path) -> dict[str, object]:
     return {
-        "schema_version": "config-v11",
+        "schema_version": CONFIG_SCHEMA,
         "provider_recovery_generation": 1,
         "connections": [
             {
@@ -600,7 +604,10 @@ def test_multiple_referenced_cover_providers_share_the_bounded_gallery() -> None
 
 def test_generated_schema_is_current() -> None:
     expected = (
-        Path(__file__).parents[2] / "docs" / "reference" / "config-v11.schema.json"
+        Path(__file__).parents[2]
+        / "docs"
+        / "reference"
+        / f"{CONFIG_SCHEMA}.schema.json"
     ).read_text(encoding="utf-8")
     assert configuration_schema_json() == expected
 
@@ -1030,7 +1037,7 @@ def test_hardcover_raw_token_is_confined_to_the_exact_graphql_post() -> None:
 
 
 def test_the_audio_ceiling_is_a_default_a_config_document_need_not_carry() -> None:
-    """The optional audio ceiling remains optional within current `config-v11`.
+    """The optional audio ceiling remains optional within the current config.
 
     `LimitsInput` is closed, so a key added to it would reject every document
     written before it existed had it not carried a default. Both shapes an
@@ -1300,7 +1307,7 @@ def test_noncanonical_scheme_prefixes_cannot_disable_browser_security(
     }
     with pytest.raises(ValueError):
         ReviewBootstrap.model_validate(
-            {"schema_version": "review-bootstrap-v2", **bootstrap}
+            {"schema_version": REVIEW_BOOTSTRAP_SCHEMA, **bootstrap}
         )
     with pytest.raises(CredentialError):
         target_client_token(origin, "synthetic-token", 5)

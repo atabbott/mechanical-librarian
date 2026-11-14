@@ -11,6 +11,7 @@ from unittest.mock import patch
 import pytest
 
 from mechanical_librarian.application.continuous_field_effects import (
+    CONTINUOUS_FIELD_ACTIVITY_SCHEMA,
     ContinuousGuardedApplication,
 )
 from mechanical_librarian.application.field_effects import (
@@ -2893,7 +2894,7 @@ def test_history_defers_backup_and_permission_example() -> None:
     history = service.activity()
     assert history["backup_ready"] is None
     assert history["example"] is None
-    assert history["schema_version"] == "continuous-field-activity-v3"
+    assert history["schema_version"] == CONTINUOUS_FIELD_ACTIVITY_SCHEMA
     assert history["prepared"]["total"] == 1
 
 

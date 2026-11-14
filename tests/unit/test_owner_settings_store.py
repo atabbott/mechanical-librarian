@@ -25,6 +25,7 @@ from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.owner_settings import FileOwnerSettingsRepository
 from mechanical_librarian.domain.owner_settings import (
+    OWNER_SETTINGS_SCHEMA,
     OwnerSettingsDocument,
     OwnerSettingsError,
     SecretWrite,
@@ -32,6 +33,7 @@ from mechanical_librarian.domain.owner_settings import (
 )
 from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
 from mechanical_librarian.domain.reviewer_access import (
+    REVIEWER_ACCESS_SCHEMA,
     OpenRouterTaskSelection,
     ReviewerAccessDocument,
 )
@@ -42,7 +44,7 @@ from tests.support.review_cases import record_terminal_work
 def _document(revision: int = 1) -> OwnerSettingsDocument:
     return OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v6",
+            "schema_version": OWNER_SETTINGS_SCHEMA,
             "revision": revision,
             "connections": [
                 {"name": "primary", "endpoint": "https://library.example.invalid"}
@@ -86,13 +88,13 @@ def test_owner_settings_predecessors_are_rejected_and_clean_v4_restarts(
     path = tmp_path / "owner-settings.sqlite3"
     connection = sqlite3.connect(path)
     store = _store(connection)
-    assert store.read().document.schema_version == "owner-settings-v6"
+    assert store.read().document.schema_version == OWNER_SETTINGS_SCHEMA
     connection.close()
 
     reopened = sqlite3.connect(path)
     try:
         assert OwnerSettingsStore(reopened).read().document.schema_version == (
-            "owner-settings-v6"
+            OWNER_SETTINGS_SCHEMA
         )
     finally:
         reopened.close()
@@ -219,7 +221,7 @@ def _seed_full_store(
 
 def _reviewer_document() -> ReviewerAccessDocument:
     return ReviewerAccessDocument(
-        schema_version="reviewer-access-v3",
+        schema_version=REVIEWER_ACCESS_SCHEMA,
         revision=2,
         cover_observation=OpenRouterTaskSelection(
             engine="openrouter", model="provider/model"
@@ -439,7 +441,7 @@ _PRE_LANGUAGES_STORED_DOCUMENT = (
     '"matching":{"work_identity":"identifier"},'
     '"pending_restart":[],"provider_recovery_generation":1,'
     '"providers":[{"adapter":"google_books","cover_enabled":false,"enabled":true,"name":"books"},{"adapter":"open_library","contact_email":"owner@example.invalid","cover_enabled":false,"enabled":true,"name":"open"}],'
-    '"reduced_motion":"follow_system","revision":1,"schema_version":"owner-settings-v6",'
+    f'"reduced_motion":"follow_system","revision":1,"schema_version":"{OWNER_SETTINGS_SCHEMA}",'
     '"server":{"diagnostic_timings_enabled":false,"graceful_shutdown_seconds":30,"library_polling_interval_seconds":900,"session_lifetime_seconds":2592000}}'
 )
 

@@ -24,6 +24,7 @@ from pydantic import (
 
 from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
+    ConfigSchemaVersion,
     ConfigurationError,
     LibraryConfiguration,
     MediaMountConfiguration,
@@ -384,7 +385,7 @@ class ReviewInput(_Closed):
 
 
 class ConfigurationInput(_Closed):
-    schema_version: Literal["config-v11"]
+    schema_version: ConfigSchemaVersion
     provider_recovery_generation: Annotated[StrictInt, Field(ge=1)]
     connections: Annotated[list[ConnectionInput], Field(min_length=1, max_length=32)]
     libraries: Annotated[list[LibraryInput], Field(min_length=1, max_length=128)]

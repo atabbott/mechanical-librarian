@@ -64,6 +64,9 @@ from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
 from mechanical_librarian.application.cover_consideration import (
+    SCHEMA_VERSION as COVER_CONSIDERATION_SCHEMA,
+)
+from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
 )
 from mechanical_librarian.application.cover_packet_semantics import (
@@ -169,6 +172,7 @@ from mechanical_librarian.domain.proposal_set import (
 )
 from mechanical_librarian.domain.review_case import ReviewCase, ReviewTransition
 from mechanical_librarian.domain.reviewer_access import (
+    REVIEWER_ACCESS_SCHEMA,
     CodexTaskSelection,
     ReviewerAccessDocument,
 )
@@ -286,7 +290,7 @@ def _test_reviewer_access(
     if document.cover_observation is None:
         store.replace(
             ReviewerAccessDocument(
-                schema_version="reviewer-access-v3",
+                schema_version=REVIEWER_ACCESS_SCHEMA,
                 revision=document.revision + 1,
                 cover_observation=CodexTaskSelection(engine="codex"),
             ),
@@ -1690,7 +1694,7 @@ def test_atomic_cover_preparation_excludes_sibling_drift_and_rolls_back_every_po
                     (report_id,),
                 ).fetchone()[0],
                 "review_case_id": review_case_id,
-                "schema_version": "cover-consideration-v8",
+                "schema_version": COVER_CONSIDERATION_SCHEMA,
                 "supersedes_id": None,
             },
             separators=(",", ":"),
@@ -1786,7 +1790,7 @@ def test_manual_cover_predecessor_drift_rolls_back_and_releases_the_writer_lock(
                         (report_id,),
                     ).fetchone()[0],
                     "review_case_id": review_case_id,
-                    "schema_version": "cover-consideration-v8",
+                    "schema_version": COVER_CONSIDERATION_SCHEMA,
                     "supersedes_id": supersedes_id,
                 },
                 separators=(",", ":"),

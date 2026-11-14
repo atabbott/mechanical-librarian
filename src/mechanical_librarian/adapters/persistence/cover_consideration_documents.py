@@ -11,6 +11,9 @@ import json
 from collections.abc import Callable
 
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
+from mechanical_librarian.application.cover_consideration import (
+    SCHEMA_VERSION as COVER_CONSIDERATION_SCHEMA,
+)
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.metadata_report import MetadataReport
 
@@ -26,7 +29,7 @@ def compact_cover_consideration(
         report = (parse_report or MetadataReport.from_json)(report_document)
         if (
             type(value) is not dict
-            or value.get("schema_version") != "cover-consideration-v8"
+            or value.get("schema_version") != COVER_CONSIDERATION_SCHEMA
             or value.get("report_document") != report_document
             or value.get("report_id") != report.report_id
             or "report_document_digest" in value
@@ -66,7 +69,7 @@ def expand_cover_consideration(
         if (
             type(value) is not dict
             or "report_document" in value
-            or value.get("schema_version") != "cover-consideration-v8"
+            or value.get("schema_version") != COVER_CONSIDERATION_SCHEMA
             or value.get("report_id") != report_id
             or value.get("report_document_digest") != report_document_digest
             or hashlib.sha256(report_document.encode("utf-8")).hexdigest()

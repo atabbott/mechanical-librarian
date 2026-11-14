@@ -6,6 +6,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from ipaddress import ip_address
+from typing import Final, Literal
 from urllib.parse import urlsplit
 
 from mechanical_librarian.domain.cover_rules import CoverProtection
@@ -29,6 +30,9 @@ from mechanical_librarian.domain.validation import (
     owner_session_lifetime,
 )
 from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
+
+ConfigSchemaVersion = Literal["config-v11"]
+CONFIG_SCHEMA: Final[ConfigSchemaVersion] = "config-v11"
 
 _NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 _CONTACT_EMAIL = re.compile(
@@ -418,12 +422,12 @@ class ApplicationConfiguration:
     mounts: tuple[MediaMountConfiguration, ...]
     providers: tuple[ProviderConnectionConfiguration, ...]
     limits: ReportLimits = ReportLimits()
-    schema_version: str = "config-v11"
+    schema_version: str = CONFIG_SCHEMA
     provider_recovery_generation: int = 1
     review: ReviewWebConfiguration | None = None
 
     def __post_init__(self) -> None:
-        if self.schema_version != "config-v11":
+        if self.schema_version != CONFIG_SCHEMA:
             raise ConfigurationError("configuration schema is unsupported")
         # Recovery is deliberately tied to an operator-visible configuration
         # generation.  There is no file watcher, hash, or environment override:

@@ -10,7 +10,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
-from typing import Final, Mapping
+from typing import Final, Literal, Mapping
 
 from mechanical_librarian.domain.audiobook_decision_qualification import (
     F46_PASSING_AUTOMATIC_OPTIONS,
@@ -21,7 +21,8 @@ from mechanical_librarian.domain.rich_metadata_qualification import (
 )
 
 
-POLICY_SCHEMA_VERSION: Final = "metadata-policy-profile-v3"
+MetadataPolicyProfileSchema = Literal["metadata-policy-profile-v3"]
+POLICY_SCHEMA_VERSION: Final[MetadataPolicyProfileSchema] = "metadata-policy-profile-v3"
 DESTINATIONS: Final = ("ask", "ignore", "automatic", "unsupported")
 
 # The product catalogue is deliberately closed.  A destination is an owner
