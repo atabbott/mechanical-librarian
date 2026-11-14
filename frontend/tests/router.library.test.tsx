@@ -5756,6 +5756,90 @@ describe('Library route', () => {
       expect(within(ownerReadyComparison).queryByText(/· Recommended/u)).not.toBeInTheDocument()
     }
 
+    // A current cover whose own source names another book is held with its
+    // own pill and sentence; a read that settled nothing says so, not "no
+    // fault"; once the owner has chosen, the stage says nothing (#1362).
+    const stageReady = {
+      ...consideration,
+      providerFetching: false,
+      ready: true,
+      policy: {
+        ...consideration.policy,
+        recommended_candidate_reference: null,
+        status: 'abstained' as const,
+        reasons: ['current_cover_kept'],
+      },
+      stage: { language: null, outcome: 'keep' as const, reason: null },
+    }
+    for (const [field, pill, sentence] of [
+      [
+        {
+          ...coverField,
+          coverConsideration: {
+            ...stageReady,
+            policy: { ...stageReady.policy, reasons: ['current_contradicted'] },
+            stage: {
+              language: null,
+              outcome: 'hold' as const,
+              reason: 'current_contradicted' as const,
+            },
+          },
+        },
+        "Cover's source names another book",
+        'A source of the current cover names a different book.',
+      ],
+      [
+        {
+          ...coverField,
+          coverConsideration: {
+            ...stageReady,
+            incumbent: { reference: null, state: 'unavailable' as const },
+          },
+        },
+        null,
+        'Audiobookshelf did not return the current cover. It is kept until the next scan.',
+      ],
+      [
+        {
+          ...coverField,
+          humanDecision: {
+            actor: 'owner' as const,
+            application: 'apply' as const,
+            application_reason: null,
+            decision_id: 'recorded-cover',
+            destination: 'cover' as const,
+            occurred_at: 1,
+            outcome: 'keep_current' as const,
+            proposal_id: coverField.proposalId,
+            review_case_id: 'case-1',
+            target_fingerprint: coverField.targetFingerprint,
+            selected_value: null,
+          },
+          coverConsideration: stageReady,
+        },
+        null,
+        null,
+      ],
+    ] as const) {
+      cleanup()
+      renderRoute('/library?lens=all&preview=case-1&field=cover', {
+        ...createHttp(),
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+          ...detail,
+          target: { ...detail.target, mediaKind },
+          fields: [field],
+        })),
+      })
+      const comparison = await screen.findByLabelText('Choose a cover')
+      if (pill !== null) expect(within(comparison).getByText(pill)).toBeVisible()
+      const caption = comparison.querySelector(':scope > header > small')
+      if (sentence === null) expect(caption).toBeNull()
+      else expect(caption).toHaveTextContent(sentence)
+      expect(
+        within(comparison).queryByText('The current cover has no fault, so it is kept.'),
+      ).not.toBeInTheDocument()
+    }
+
     // A kept cover with a fault shows the fault's pill and no caption: "no
     // fault" would contradict the pill (#1363).
     cleanup()
