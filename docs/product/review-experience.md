@@ -407,10 +407,9 @@ audiobook's own title and authors also found the recording.
 
 ## Covers
 
-The cover comparison shows three covers or fewer side by side, equally. With
-more, the current cover is pinned beside a gallery headed Other covers. At 1024
-pixels or narrower they form one scrolling row. Each image sits whole in a 5:8
-frame.
+Three covers or fewer show side by side, equally. With more, the current cover
+is pinned beside a gallery headed Other covers. At 1024 pixels or narrower they
+form one scrolling row. Each image sits whole in a 5:8 frame.
 
 When the visual review has run, each cover sums up its defect checks: none
 found, the defects found, uncertain checks or no result. Other notes sit under
@@ -429,57 +428,58 @@ outdated comparison shows the current one.
 ### Covers view
 
 A control above each heading switches Library between Works and Covers. Covers
-groups every work with a case by what its cover asks of you, under four tabs
-with their counts. To decide lists suggested switches under Switch suggested,
-then open choices under Choose. Kept lists books that keep their current cover
-while you can still choose another. All is a wall of every cover, with each
-title and author.
+groups every work with a case by what its cover asks of you, under four counted
+tabs. To decide lists suggested switches under Switch suggested, then open
+choices under Choose. Kept lists books keeping their current cover while you
+can still choose another. All is a wall of every cover, with each title and
+author.
 
 A suggested switch is a cover the measured cover rules would replace
 ([ADR-0093](../architecture/decisions/0093-measured-cover-rules-and-current-cover-protection.md)),
-held for you because Current covers or the missing qualification does not let
-it switch by itself. Its row carries a pill naming the fault, such as "Under
-300 px" or "Square on an ebook", and its book reads "Suggested because" and
-the reason. To decide counts the works whose cover field is in Attention plus
-the suggested switches; Library's Needs attention counts only the first,
-because a suggestion is optional. A readable cover with no fault is kept
-without asking and appears under Kept. The counts follow each decision. Pages hold 50 books, and Show more covers loads the
-next. It starts after the last book shown, so a decision never makes you miss
-one. The URL keeps the tab and the open book. A wall tile reads "No cover" when
-the cover field is empty and "Image unavailable" when the library's cover cannot
-be read. A list thumbnail shows either state as an empty frame. Screen readers
-and the open book give the state.
+held because Current covers or the missing qualification keeps it from
+switching itself. Its row carries a pill naming the fault, such as "Under 300
+px" or "Square on an ebook", and its book reads "Suggested because" and the
+reason. To decide counts the works whose cover field is in Attention plus the
+suggested switches; Library's Needs attention counts only the first. A readable
+cover with no fault, confirmed or not, is kept without asking, under Kept. A
+held cover's row under Choose names the hold in a pill, such as "Cover's source
+names another book". A current cover Audiobookshelf did not return is kept
+until the next scan, and its book says so. The counts follow each decision.
+Pages hold 50 books; Show more covers loads the next from after the last book
+shown, so a decision never makes you miss one. The URL keeps the tab and the
+open book. A wall tile reads "No cover" when the cover field is empty and
+"Image unavailable" when the library's cover cannot be read. A list thumbnail
+shows either as an empty frame, named for screen readers and in the open book.
 
-Above 1024 pixels, To decide and Kept open their first undecided book beside the
-list. At 1024 or narrower the list comes first, and Back to books returns to it.
-One tap records your choice, as the work's own page does, and opens the next
-book. Skip for now moves on and decides nothing. In All, a book opens below its
-row with Close, and a choice closes it. If a book's covers changed since the
-page loaded, Covers refuses that choice and offers Reload, which reopens the
-book with its current covers. The other books stay usable. If no answer comes
-back, the book says so and asks you to check before choosing again.
+Above 1024 pixels, To decide and Kept open their first undecided book beside
+the list. At 1024 or narrower the list comes first, and Back to books returns
+to it. One tap records your choice and opens the next book. Skip for now moves
+on and decides nothing. In All, a book opens below its row with Close, and a
+choice closes it. If a book's covers changed since the page loaded, Covers
+refuses that choice and offers Reload, reopening the book with its current
+covers. The other books stay usable. If no answer comes back, the book asks you
+to check before choosing again.
 
-Switched lists automatic cover writes you have not answered since, newest first.
-Each row shows Before and Now with each cover's size, and a write that filled an
-empty cover reads "No cover" under Before. A replacement names its fault in a
-pill and says why in one line, such as "The cover was 200 × 300 px, under 300
-px on its short side." A Show menu above the list narrows it to one fault; a
-fill has no fault, so it appears only under All. A replacement stays listed only while
-Mechanical Librarian keeps a copy of the old cover
+Switched lists automatic cover writes you have not answered since, newest
+first. Each row shows Before and Now with each cover's size, and a write that
+filled an empty cover reads "No cover" under Before. A replacement names its
+fault in a pill and says why in one line, such as "The cover was 200 × 300 px,
+under 300 px on its short side." A Show menu narrows the list to one fault; a
+fill has none, so it appears only under All. A replacement stays listed only
+while Mechanical Librarian keeps a copy of the old cover
 ([ADR-0093](../architecture/decisions/0093-measured-cover-rules-and-current-cover-protection.md)).
 Keep records that you keep the current cover, releases that copy and marks the
 row Kept. Others opens the comparison. Both appear only when you can choose
 another cover.
 
-Once a replaced cover's work is prepared again after its switch, you can choose
-the old cover. Its row then also offers Put back, and the comparison names the
-old cover Replaced cover. An unreadable one shows "Image unavailable" there and
-under Before (#1362). Put back records choosing the
-old cover, and its write uploads it from the kept copy. The row reads Put back
-while that write runs, and leaves Switched when the write is verified, which
-releases the copy. If the cover was changed in Audiobookshelf first, the row
-says "The cover was changed in Audiobookshelf, so it was not put back." and
-offers Keep and Others again.
+Once a replaced cover's work is prepared again, you can choose the old cover.
+Its row then also offers Put back, and the comparison names the old cover
+Replaced cover. An unreadable one shows "Image unavailable" there and under
+Before (#1362). Put back records choosing the old cover and uploads it from the
+kept copy. The row reads Put back while that write runs, and leaves Switched
+once the write is verified, releasing the copy. If the cover was changed in
+Audiobookshelf first, the row says "The cover was changed in Audiobookshelf, so
+it was not put back." and offers Keep and Others again.
 
 A cover field's Covers link opens its book in All, wherever it falls.
 

@@ -1,6 +1,6 @@
 # ADR-0094: Let an unconfirmed current cover take part in cover election
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-11-07
 - Owners: project maintainers
 - Issues: #1362
@@ -53,6 +53,24 @@ never to a keep. Identity grounds alone never replace a current cover.
 decoder rejects. An unreadable current cover is replaceable by the first
 eligible same-work candidate. A timeout, throttling, cancellation or unknown
 read result is not unreadable, stays unknown and never permits a replacement.
+The stage reads the current cover's Audiobookshelf source as follows:
+
+| Audiobookshelf source or target | Read | Retainable |
+|---|---|---|
+| retrieved (the current cover's own candidate) | readable | yes |
+| absent over a declared cover (a 404, read twice) | unreadable | yes, nothing to keep |
+| decode failed, animated or multi-frame, oversized or unsupported format, with the bytes' digest recorded | unreadable | yes |
+| the same states with no digest recorded | unreadable | no |
+| timeout, unavailable, source changed, any other state, no read, or a malformed or oversized target value | unknown | — |
+| target missing, null or empty | known-empty, filled as before | — |
+
+An unknown read keeps the cover with no issue and no choice under every
+setting. An unreadable one is replaced automatically only when it is
+retainable and the setting is not `proposals_only`; otherwise it is suggested.
+A positive contradiction (a `conflict` identity outcome, or a retained creator
+or contributor disagreement, the same test that refuses an owner's choice of
+such a candidate) holds the field for the owner in every mode, whatever the
+cover's faults.
 
 **The write** binds the observed target state and goes through consent,
 backup readiness, plan validation, optimistic concurrency, read-back and
@@ -68,7 +86,14 @@ are never overridden, and candidates come only from ADR-0093's eligible set.
 cover election qualification's real cohorts re-run with the new eligible set
 at zero false admissions, and the replay over a full library with its cover
 images), replacing an unconfirmed current cover is offered to the owner and
-stays outside the qualified automatic matrix.
+stays outside the qualified automatic matrix. Every replacement of a current
+cover that is not confirmed, readable or unreadable, is admitted only under its
+own shadow identity, `cover_order:fixed_source_order:unconfirmed_replacement`,
+whose record no build carries; ADR-0093's measured identity covers a confirmed
+current cover only. Admission picks the identity by the actual target state,
+plan validation refuses either identity over the other's state, and the
+executor checks each against its own record, so #1418 can activate the two
+separately.
 
 ## Consequences
 
