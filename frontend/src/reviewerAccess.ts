@@ -23,29 +23,27 @@ type Action =
 
 export const failureCopy: Readonly<Record<string, string>> = {
   invalid_key: 'OpenRouter rejected this key. Replace it and validate again.',
-  quota_exhausted: 'OpenRouter credits are exhausted. Add credits, then retry the status test.',
-  rate_limited: 'OpenRouter is rate limited. Wait, then retry the status test.',
+  quota_exhausted: 'OpenRouter credits are used up. Add credits, then refresh the status.',
+  rate_limited: 'OpenRouter is rate limited. Wait, then refresh the status.',
   model_unavailable: 'That model is unavailable. Choose another vision model and validate again.',
   model_text_only: 'That model cannot inspect covers. Choose a model with image input.',
   malformed_response:
-    'OpenRouter returned an invalid response. Retry later or choose another model.',
+    'OpenRouter’s answer could not be read. Retry later, or choose another model.',
   unreachable: 'OpenRouter could not be reached. Check network access, then retry.',
   response_too_large:
     'OpenRouter returned an answer too large to read. Retry later, or choose another model.',
   timed_out: 'OpenRouter did not answer in time. Check network access, then retry.',
   data_policy_refused:
-    'No provider for this model accepts your OpenRouter data policy. Change your privacy settings on OpenRouter, or choose a model with a compliant provider.',
+    'No provider for this model accepts your OpenRouter data policy. Change your privacy settings on OpenRouter, or choose another model.',
   image_limit_exceeded:
     'That model accepts fewer images than a cover review sends. Choose another vision model.',
-  credential_clear_failed:
-    'The credential could not be removed. It remains protected; retry the clear action.',
-  not_provisioned:
-    'The contained reviewer is not ready in this deployment. Reload its status for the required remedy.',
-  host_unsupported: 'This host cannot safely run the contained Codex reviewer.',
+  credential_clear_failed: 'The OpenRouter key was not cleared. Try again.',
+  not_provisioned: 'Codex is not set up on this host. Reload the page to see what to fix.',
+  host_unsupported: 'Codex is not supported on this host. Reload the page to see what to fix.',
   credential_unavailable:
-    'Codex sign-in is unavailable. Test or replace the sign-in, then select Codex again.',
-  access_changed: 'Reviewer access changed in another session. Reload before trying again.',
-  reviewer_access_stale: 'Reviewer access changed in another session. Reload before trying again.',
+    'Codex sign-in is unavailable. Check or replace the sign-in, then try again.',
+  access_changed: 'Reviewer settings changed elsewhere. Reload, then try again.',
+  reviewer_access_stale: 'Reviewer settings changed elsewhere. Reload, then try again.',
 }
 
 // A refused Codex selection: the server records the failed sign-in into
@@ -61,14 +59,14 @@ const reviewerMutationFailure = (error: Error | null, action: Action | undefined
   error instanceof CsrfRenewedError
     ? sessionRefreshedCopy
     : action?.kind === 'codex-clear' || action?.kind === 'codex-start'
-      ? 'The change could not be fully confirmed. Your prior sign-in or reviewer selection may have changed. Reload reviewer access before trying again.'
+      ? 'The Codex sign-in change was not confirmed. Check whether the sign-in changed before trying again.'
       : // OpenRouter's probe raises these before anything is saved.
         error instanceof ApiError &&
           action?.kind === 'openrouter' &&
           (error.code === 'unreachable' || error.code === 'timed_out')
         ? (failureCopy[error.code] ?? 'The reviewer change was refused. Reload and try again.')
         : uncertainWriteOutcome(error)
-          ? 'The change could not be fully confirmed. It may have been saved; reviewer access was reloaded. Check it before trying again.'
+          ? 'No answer came back. Check whether the reviewer change was saved before trying again.'
           : error instanceof ApiError
             ? (failureCopy[error.code] ?? 'The reviewer change was refused. Reload and try again.')
             : 'The reviewer change was not applied. Reload and try again.'
