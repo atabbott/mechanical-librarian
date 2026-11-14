@@ -330,6 +330,8 @@ def adjudicate_cover_policy(
         # candidate outside the reviewed packet, kept only when it cures an
         # undersized or soft current cover (#1363, Codex P2).
         stage = stage_over((*rule_candidates, larger))
+        # Defensive: the copy shares the current cover's picture, identity and
+        # edition flag, so the stage takes it for no other reason today.
         if stage.choice == larger.reference and stage.reason in {
             CoverIssue.BELOW_FLOOR,
             CoverIssue.SHARPER_COPY,

@@ -2773,8 +2773,12 @@ const mapReviewField = (field: ReviewFieldDto): ReviewFieldView => ({
   manualReturnFailed: field.manual_return_failed,
   navigationRole: field.navigation_role,
   // An empty or unreadable current value says which, in Audiobookshelf's
-  // name, rather than one word for both (#1286).
-  currentValue: targetValueText(field.current.state, field.current.value),
+  // name, rather than one word for both (#1286). A cover's value is an
+  // artifact id, so it reads as the current cover, never as the id (#1363).
+  currentValue:
+    field.destination === 'cover' && field.current.state === 'value'
+      ? 'Current cover'
+      : targetValueText(field.current.state, field.current.value),
   currentRaw: field.current.value,
   proposedValues: field.proposed_values,
   choiceContexts: mapChoiceContexts(field.choice_contexts, field.proposed_values.length),

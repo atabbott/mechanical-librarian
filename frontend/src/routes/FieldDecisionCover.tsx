@@ -312,6 +312,24 @@ function LibraryCoverChoicesContent({
   const expanded = candidates.length > 3
   const incumbent = candidates.find((candidate) => candidate.incumbent)
   const alternatives = candidates.filter((candidate) => !candidate.incumbent)
+  // A larger copy of the current picture is its own card, so it is neither a
+  // merged duplicate nor one of the current cover's sources (#1363 M9).
+  const largerCopies = candidates.filter((candidate) => candidate.candidateKind === 'larger_copy')
+  const duplicates = consideration.omissions.filter(
+    (omission) =>
+      omission.reason === 'duplicate_preview' &&
+      !largerCopies.some((candidate) => candidate.reference === omission.reference),
+  )
+  // With no other duplicate of it left, the current cover's sources are its own.
+  const currentSourceKinds =
+    incumbent === undefined
+      ? []
+      : largerCopies.length &&
+          !duplicates.some((omission) => omission.retained_reference === incumbent.reference)
+        ? incumbent.sourceKinds.filter(
+            (kind) => !largerCopies.some((candidate) => candidate.sourceKinds.includes(kind)),
+          )
+        : incumbent.sourceKinds
   const coverContexts = consideration.choiceContexts
   const currentContext = coverContexts[0]
   const policyStatus =
@@ -486,7 +504,9 @@ function LibraryCoverChoicesContent({
             </span>
             {retained ? null : (
               <span className="cover-sources">
-                {candidate.sourceKinds.map((kind) => coverSourceLabels[kind]).join(' · ')}
+                {(candidate.incumbent ? currentSourceKinds : candidate.sourceKinds)
+                  .map((kind) => coverSourceLabels[kind])
+                  .join(' · ')}
               </span>
             )}
             {context?.rationale ? <em>{context.rationale}</em> : null}
@@ -542,9 +562,7 @@ function LibraryCoverChoicesContent({
   // candidate, so it is counted apart (#1290). An admission truncation stands
   // for covers that were never fetched, not for one image, so it is not a
   // cover not shown either (#1778).
-  const merged = consideration.omissions.filter(
-    (omission) => omission.reason === 'duplicate_preview',
-  ).length
+  const merged = duplicates.length
   const unavailable = consideration.omissions.filter(
     (omission) => omission.reason !== 'duplicate_preview' && omission.reason !== 'source_truncated',
   )

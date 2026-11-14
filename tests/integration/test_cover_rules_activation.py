@@ -918,3 +918,91 @@ def test_no_larger_copy_beside_a_reviewed_copy_at_least_as_large(
     assert [row["artifact_id"] for row in larger] == (
         [artifact_id] if larger_offered else []
     )
+
+
+def _larger_copy_artifact(prepared: _Prepared) -> str:
+    duplicate = next(
+        source
+        for source in prepared.report.cover_sources
+        if source.kind.value == "epub"
+    )
+    assert duplicate.artifact is not None
+    return duplicate.artifact.artifact_id
+
+
+def test_a_larger_copy_switch_is_planned_and_applied_to_verified(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The larger copy goes past selection: under the test qualification record
+    # its automatic decision plans and writes through the guarded path.
+    monkeypatch.setattr(
+        cover_qualification_policy,
+        "MEASURED_REPLACEMENT_QUALIFICATION_SHA256",
+        SYNTHETIC_MEASURED_RECORD,
+    )
+    with _prepared(
+        tmp_path, duplicate_size=(1200, 1800), candidate_size=(250, 375)
+    ) as prepared:
+        application, operation, target = _planned(prepared)
+        _service(prepared)
+        artifact_id = _larger_copy_artifact(prepared)
+        assert operation.plan.desired_value == artifact_id
+        target.seed(operation.plan)
+        assert application.apply(operation.plan.plan_id).state == "verified"
+        assert target.read(operation.plan).value == artifact_id
+
+
+def test_the_owner_can_choose_a_larger_copy_without_a_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # With no qualification record nothing is automatic, and the larger copy
+    # is the owner's choice like any other proposed cover.
+    monkeypatch.setattr(
+        cover_qualification_policy, "MEASURED_REPLACEMENT_QUALIFICATION_SHA256", None
+    )
+    with _prepared(
+        tmp_path, duplicate_size=(1200, 1800), candidate_size=(250, 375)
+    ) as prepared:
+        repository = prepared.repository
+        assert _selections(repository) == []
+        document = repository.current_cover_consideration_document(
+            prepared.review_case_id
+        )
+        assert document is not None
+        artifact_id = _larger_copy_artifact(prepared)
+        (larger,) = [
+            row
+            for row in json.loads(document)["candidates"]
+            if row["candidate_kind"] == "larger_copy"
+        ]
+        assert (larger["artifact_id"], larger["selectable"]) == (artifact_id, True)
+        assert (_stage(document)["outcome"], _stage(document)["choice"]) == (
+            "replace",
+            larger["reference"],
+        )
+        case = ReviewCase.create_from_data(
+            json.loads(repository.get_review_case(prepared.review_case_id))["case"]
+        )
+        proposal = next(row for row in case.proposals if row["destination"] == "cover")
+        _service(prepared)
+        repository.record_human_decision(
+            HumanDecision.create(
+                case,
+                proposal_id=str(proposal["proposal_id"]),
+                target_fingerprint=case.target_fingerprint,
+                destination="cover",
+                actor="owner",
+                outcome="accept",
+                selected_value={"kind": "cover", "value": artifact_id},
+                idempotency_key="synthetic-owner-takes-larger-copy-0001",
+                occurred_at=11,
+            ),
+            cover_consideration_id=json.loads(document)["consideration_id"],
+            cover_confirmation={
+                "expected_selection_id": None,
+                "confirm_unverified_match": False,
+            },
+        )
+        (selection,) = _selections(repository)
+        assert selection["kind"] == "owner"
+        assert selection["candidate_reference"] == larger["reference"]

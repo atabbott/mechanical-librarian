@@ -5790,6 +5790,95 @@ describe('Library route', () => {
       expect(document.querySelector('.library-cover-excluded')).toBeNull()
     })
 
+    it('names a larger copy once, on its own card (#1363 M9)', async () => {
+      // The EPUB copy of the current picture is shown as its own card, so the
+      // current card does not name the EPUB and nothing reads as merged.
+      renderRoute(
+        '/library?lens=all&preview=case-1&field=cover',
+        coverHttp((consideration) => {
+          const current = consideration.candidates.find((candidate) => candidate.incumbent)
+          const larger = consideration.candidates.find((candidate) => !candidate.incumbent)
+          if (current === undefined || larger === undefined) throw new Error('fixture')
+          return {
+            candidates: consideration.candidates.map((candidate) =>
+              candidate === current
+                ? { ...candidate, sourceKinds: ['abs', 'epub'] as const }
+                : candidate === larger
+                  ? {
+                      ...candidate,
+                      candidateKind: 'larger_copy' as const,
+                      sourceKinds: ['epub'] as const,
+                    }
+                  : candidate,
+            ),
+            omissions: [
+              {
+                reason: 'duplicate_preview',
+                reference: larger.reference,
+                retained_reference: current.reference,
+              },
+            ],
+          }
+        }),
+      )
+      const group = await screen.findByRole('radiogroup', {
+        name: 'Which cover should this work use?',
+      })
+      expect(
+        within(group)
+          .getByRole('radio', { name: 'Choose Current cover' })
+          .querySelector('.cover-sources'),
+      ).toHaveTextContent(/^Audiobookshelf$/u)
+      expect(document.querySelector('.cover-merged')).toBeNull()
+    })
+
+    it('still names a current cover duplicate beside a larger copy', async () => {
+      renderRoute(
+        '/library?lens=all&preview=case-1&field=cover',
+        coverHttp((consideration) => {
+          const current = consideration.candidates.find((candidate) => candidate.incumbent)
+          const larger = consideration.candidates.find((candidate) => !candidate.incumbent)
+          if (current === undefined || larger === undefined) throw new Error('fixture')
+          return {
+            candidates: consideration.candidates.map((candidate) =>
+              candidate === current
+                ? { ...candidate, sourceKinds: ['abs', 'epub', 'hardcover'] as const }
+                : candidate === larger
+                  ? {
+                      ...candidate,
+                      candidateKind: 'larger_copy' as const,
+                      sourceKinds: ['epub'] as const,
+                    }
+                  : candidate,
+            ),
+            omissions: [
+              {
+                reason: 'duplicate_preview',
+                reference: larger.reference,
+                retained_reference: current.reference,
+              },
+              {
+                reason: 'duplicate_preview',
+                reference: 'hardcover-copy',
+                retained_reference: current.reference,
+              },
+            ],
+          }
+        }),
+      )
+      const group = await screen.findByRole('radiogroup', {
+        name: 'Which cover should this work use?',
+      })
+      expect(
+        within(group)
+          .getByRole('radio', { name: 'Choose Current cover' })
+          .querySelector('.cover-sources'),
+      ).toHaveTextContent('Audiobookshelf · EPUB file · Hardcover')
+      expect(
+        screen.getByText('1 duplicate image merged. Each card names every source that offered it.'),
+      ).toBeVisible()
+    })
+
     it('never counts an admission truncation as a cover not shown', async () => {
       // A truncation row stands for covers never fetched, not an image (#1778).
       renderRoute(

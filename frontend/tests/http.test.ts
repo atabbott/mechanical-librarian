@@ -1081,6 +1081,17 @@ describe('ReviewApiClient', () => {
     ).toBe(shown)
   })
 
+  it('reads a cover’s current value as the current cover, never its id (#1363)', async () => {
+    const cover = (state: string, value: string | null) =>
+      readCase(closedDetail({ destination: 'cover', current: targetField({ state, value }) })).then(
+        (detail) => detail.fields[0],
+      )
+    const current = await cover('value', 'cover_' + 'a'.repeat(64))
+    expect(current?.currentValue).toBe('Current cover')
+    expect(current?.currentRaw).toBe('cover_' + 'a'.repeat(64))
+    expect((await cover('missing', null))?.currentValue).toBe('Not set in Audiobookshelf')
+  })
+
   it('uses Unicode code point bounds for readable case identity', async () => {
     const astral = '📚'
     const response = (target: Record<string, unknown>) =>
