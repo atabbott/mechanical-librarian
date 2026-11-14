@@ -147,7 +147,7 @@
         },
         {
           "label": "Adviser",
-          "value": "codex \u00b7 gpt-5.6-sol"
+          "value": "codex · gpt-5.6-sol"
         }
       ],
       "failure": "unavailable",
@@ -184,7 +184,7 @@
         },
         {
           "label": "Adviser",
-          "value": "codex \u00b7 gpt-5.6-sol"
+          "value": "codex · gpt-5.6-sol"
         }
       ],
       "failure": null,
@@ -204,11 +204,11 @@
       "category": "automatic",
       "change": "Kept Existing description.",
       "change_detail": "Kept Description as Existing description.",
-      "change_id": "automatic_decision_41d257c0d0cfc0c1284e9727135750f3f132c7ba733a08f77d185f4de5ee0d84",
-      "check_group": "report_20c3580bd52746af9c128a8f575235989ca6bc2549b0d60cb6f29c913dd3a473",
+      "change_id": "automatic_decision_286e0f7fec7e22a6956f9321f1b33f912779860a64614cc97e02d03d5caabcbc",
+      "check_group": "report_8e53c1ccbd3a192199c10a078e543b124d37813f04c54dbe47d33f88a45e3cf3",
       "destination": "description",
       "diagnostic": null,
-      "event_id": "automatic_decision_41d257c0d0cfc0c1284e9727135750f3f132c7ba733a08f77d185f4de5ee0d84",
+      "event_id": "automatic_decision_286e0f7fec7e22a6956f9321f1b33f912779860a64614cc97e02d03d5caabcbc",
       "event_type": "metadata",
       "evidence": [
         {

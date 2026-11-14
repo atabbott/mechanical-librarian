@@ -569,7 +569,9 @@ def test_a_title_and_author_pick_needs_the_unverified_match_flag(
 # --- 10. Guard: no automatic cover from a level match ------------------------
 
 
-_COVER_ORDERS = ("fixed_source_order", "replace_if_strictly_better")
+# The automatic cover orders the policy profile offers; ADR-0093 removed
+# `replace_if_strictly_better` (#1363).
+_COVER_ORDERS = ("fixed_source_order",)
 
 
 def _automatic_covers(library: _Library) -> list[tuple[str, str]]:

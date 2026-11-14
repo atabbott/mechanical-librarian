@@ -51,6 +51,7 @@ from mechanical_librarian.adapters.persistence.review_sessions import (
 from mechanical_librarian.application.batch import BatchSelection, batch_fingerprint
 from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.configuration import (
+    CONFIG_SCHEMA,
     ApplicationConfiguration,
     ReviewWebConfiguration,
 )
@@ -1608,7 +1609,7 @@ class _InstalledQualificationEnvironment:
         config_path.write_text(
             json.dumps(
                 {
-                    "schema_version": "config-v10",
+                    "schema_version": CONFIG_SCHEMA,
                     "provider_recovery_generation": 1,
                     "connections": [
                         {

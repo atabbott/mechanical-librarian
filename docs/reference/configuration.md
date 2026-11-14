@@ -3,7 +3,7 @@
 Settings come from one of two places, never both:
 
 - **File mode.** When `/data/config.json` exists, it is the complete authority.
-  It is one strict UTF-8 JSON document with schema version `config-v10`,
+  It is one strict UTF-8 JSON document with schema version `config-v11`,
   described below.
 - **Store mode.** When that file is absent, settings live in
   `/data/application.sqlite3` and the owner edits them on the Settings page.
@@ -67,7 +67,7 @@ The document:
 - rejects unknown fields, duplicate keys and the JSON constants `NaN` and
   `Infinity`;
 - is described by the generated
-  [`config-v10.schema.json`](config-v10.schema.json).
+  [`config-v11.schema.json`](config-v11.schema.json).
 
 Regenerate the schema after changing the model:
 
@@ -96,7 +96,7 @@ section:
 
 ```json
 {
-  "schema_version": "config-v10",
+  "schema_version": "config-v11",
   "provider_recovery_generation": 1,
   "connections": [
     {
@@ -168,7 +168,7 @@ section:
 
 | Field | Required | Rule |
 | --- | --- | --- |
-| `schema_version` | Yes | Exactly `config-v10` |
+| `schema_version` | Yes | Exactly `config-v11` |
 | `provider_recovery_generation` | Yes | Integer, at least 1 |
 | `connections` | Yes | 1–32 Audiobookshelf connections |
 | `libraries` | Yes | 1–128 libraries |
@@ -284,7 +284,7 @@ changes, each a map keyed by policy category.
 | `tags` | `off`, `fill_empty`, `add`, `replace` |
 | `description_fill` | `safe_plain_text`, `google_visible_text`, `replace_safe_plain_text` |
 | `isbn_form` | `preserve_exact`, `prefer_isbn13` |
-| `cover_order` | `fixed_source_order`, `replace_if_strictly_better` |
+| `cover_order` | `fixed_source_order` |
 | `asin` | `preserve_exact`, `ebook_manifestation` |
 | `explicit` | `unsupported`, `adult_product` |
 
@@ -334,8 +334,12 @@ A disabled provider must set `cover_enabled` to `false` and both
 | `hardcover` | Absolute path, required | `null` | Required |
 | `open_library` | `null` | Required email address, 3–254 characters | Required |
 
-- `inventaire` is keyless and preselected in guided setup.
-- `google_books` with `secret_file: null` uses credential-free access.
+- Guided setup ticks the sources that suit the chosen libraries: the
+  audiobook sources for an audiobooks-only library, and every source for any
+  other book library.
+- Guided setup and Settings ask for a Google Books API key while Google Books
+  is on, as they do for Hardcover. In file mode, `google_books` with
+  `secret_file: null` still works and uses credential-free access.
 - A Hardcover secret file holds the bare token, without a `Bearer` scheme.
 - `contact_email` only identifies Open Library HTTP requests. It never
   appears in reports, logs or stored artifacts, and changing it does not
@@ -435,6 +439,8 @@ environment.
 | `cover_avoid_promotional_text` | Boolean | `false` |
 | `cover_avoid_tie_in_branding` | Boolean | `false` |
 | `cover_prefer_minimal_composition` | Boolean | `false` |
+| `cover_current_protection` | `protected`, `unprotected` or `proposals_only` | `protected` |
+| `cover_prefer_edition` | Boolean | `false` |
 | `description_remove_marketing` | Boolean | `true` |
 | `description_remove_sales_boasts` | Boolean | `true` |
 | `description_remove_praise` | Boolean | `true` |
@@ -544,18 +550,41 @@ cost estimate are described in
 
 ### Cover advice
 
-The three `cover_*` booleans are the advisory cover policy. During
+The three `cover_avoid_*` and `cover_prefer_minimal_composition` booleans are
+the advisory cover policy. During
 preparation the selected reviewer makes one bounded comparison before the case
 is shown; if none is ready or it fails, the case shows the manual comparison.
 Advice never selects or writes a cover. Changing these booleans invalidates
 pending cover effects until the owner chooses again.
+
+### Current covers
+
+`cover_current_protection` says when the measured cover rules may replace a
+current cover
+([ADR-0093](../architecture/decisions/0093-measured-cover-rules-and-current-cover-protection.md)):
+`protected` replaces only a cover with a fault, `unprotected` also replaces a
+cover when another is preferred, and `proposals_only` replaces nothing and
+suggests instead. `cover_prefer_edition` prefers a cover from the book's own
+edition over a cover of the work. In store mode both live in
+`owner-settings-v6.cover_preferences`, and Policy → Curation saves them with
+their own button; in file mode they are read-only there. Changing either stales
+any planned automatic cover change before it writes, and a store-mode save
+requests a scan that compares each prepared cover again under the new policy.
+No release yet has the qualification to replace a cover automatically, so
+today `protected` and `unprotected` suggest the replacements they would make.
+
+An automatic replacement keeps the replaced original so it can be put back.
+The store holds at most 2,000 originals and 2 GiB; while it is full, a
+replacement is suggested instead. See
+[data privacy](../architecture/data-privacy.md) for how long an original is
+kept.
 
 ### Description advice
 
 `description_remove_marketing`, `description_remove_sales_boasts` and
 `description_remove_praise` remove marketing material, sales figures and
 bestseller boasts, and pull quotes and author praise. In store mode these and
-`automatic_application` live in `owner-settings-v5.description_advice` without
+`automatic_application` live in `owner-settings-v6.description_advice` without
 the `description_` prefix, and Policy → Curation saves them separately from the
 policy draft.
 
@@ -600,7 +629,7 @@ choose in one tap; nothing is chosen automatically until #1418. An author
 whose dotted initials are written differently ("R.F." for "R. F.") is not a
 contradiction at a wider value. The default changes nothing.
 
-In store mode the value lives in `owner-settings-v5.matching.work_identity`,
+In store mode the value lives in `owner-settings-v6.matching.work_identity`,
 and Policy → Curation saves it on its own, apart from the policy draft. A
 save writes no Activity row. It re-checks every current work under the new
 value: its cover comparison and what each field offers. Until a work is

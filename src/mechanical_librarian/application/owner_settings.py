@@ -8,6 +8,7 @@ from typing import Protocol
 
 from mechanical_librarian.application.configuration import ApplicationConfiguration
 from mechanical_librarian.domain.owner_settings import (
+    OWNER_SETTINGS_SCHEMA,
     MatchingCheck,
     OwnerSettingsDocument,
     OwnerSettingsError,
@@ -117,7 +118,7 @@ def file_settings_projection(
     review = configuration.review
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v5",
+            "schema_version": OWNER_SETTINGS_SCHEMA,
             "revision": 1,
             "connections": [
                 {"name": value.name, "endpoint": value.endpoint}
@@ -177,6 +178,8 @@ def file_settings_projection(
                 "avoid_promotional_text": review.cover_avoid_promotional_text,
                 "avoid_tie_in_branding": review.cover_avoid_tie_in_branding,
                 "prefer_minimal_composition": review.cover_prefer_minimal_composition,
+                "current_protection": review.cover_current_protection,
+                "prefer_edition": review.cover_prefer_edition,
             },
             "matching": {"work_identity": review.work_identity.value},
         }

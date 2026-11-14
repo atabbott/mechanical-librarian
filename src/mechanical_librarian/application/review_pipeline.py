@@ -557,6 +557,8 @@ class ReviewPipelineRepository(Protocol):
         fingerprint: str,
         entries: tuple[CatalogueEntry, ...],
         completed_at: int,
+        *,
+        cover_policy_reference: str | None = None,
     ) -> None: ...
 
     def advance_review_pipeline_action(
@@ -635,6 +637,7 @@ class ReviewPreparationPipeline:
         announce: Callable[[str, str | None], object] = lambda *_args: None,
         first_boot: bool = False,
         admission: OperationAdmission | None = None,
+        cover_policy_reference: str | None = None,
     ) -> None:
         if not libraries or len(libraries) != len(set(libraries)):
             raise ReviewPipelineError("configuration")
@@ -662,6 +665,7 @@ class ReviewPreparationPipeline:
         self._announce = announce
         self._timing = timing or StageTimer(None)
         self._first_boot = first_boot
+        self._cover_policy_reference = cover_policy_reference
         self._cooperative_wait: Callable[[], None] = lambda: time.sleep(
             _COOPERATIVE_ACTION_DWELL_SECONDS
         )
@@ -1322,7 +1326,12 @@ class ReviewPreparationPipeline:
     ) -> None:
         try:
             repository.complete_review_discovery(
-                action, generation, fingerprint, entries, self._clock()
+                action,
+                generation,
+                fingerprint,
+                entries,
+                self._clock(),
+                cover_policy_reference=self._cover_policy_reference,
             )
             self._own(None)
         except ReviewPipelineError:

@@ -65,7 +65,7 @@ preference; supersede or amend it.
 | [0056](0056-edition-overflow-work-witness.md) | accepted | Keep a work-only witness when editions overflow |
 | [0057](0057-sustain-explicit-sqlite-aggregate-topology.md) | accepted | Keep the explicit SQLite aggregate topology |
 | [0058](0058-settings-authority-and-first-boot.md) | accepted | Make the settings store authoritative after first boot |
-| [0059](0059-deterministic-cover-election.md) | accepted | Elect covers deterministically, apart from reviewer advice |
+| [0059](0059-deterministic-cover-election.md) | accepted; partly superseded by 0093 | Elect covers deterministically, apart from reviewer advice |
 | [0060](0060-dedicated-review-session-database.md) | accepted | Keep review sessions in a dedicated database |
 | [0061](0061-audiobook-provider-posture.md) | accepted | Admit keyless audiobook providers, Audible catalog first |
 | [0062](0062-owner-managed-reviewer-access.md) | accepted | Keep reviewer access owner-managed and task-scoped |
@@ -79,7 +79,7 @@ preference; supersede or amend it.
 | [0070](0070-isbn-backed-series-identity.md) | accepted | Format source-attested ISBN identity only for automatic series fill |
 | [0071](0071-book-media-guarded-application.md) | accepted | Extend guarded application to book-media fields and narrators |
 | [0072](0072-explicit-local-transport.md) | accepted | Admit explicit local HTTP and browser HTTPS |
-| [0073](0073-audiobook-decision-qualification.md) | accepted; partly superseded by 0087 | Qualify each audiobook decision tranche separately |
+| [0073](0073-audiobook-decision-qualification.md) | accepted; partly superseded by 0087 and 0093 | Qualify each audiobook decision tranche separately |
 | [0074](0074-headers-only-media-health-facts.md) | accepted | State media health from header facts |
 | [0075](0075-independent-evidence-led-titles.md) | accepted | Elect ISBN-linked ebook titles independently |
 | [0076](0076-dependency-build-provenance.md) | accepted; partly superseded by 0087 | Separate dependency build provenance from qualification |
@@ -99,7 +99,7 @@ preference; supersede or amend it.
 | [0090](0090-hardcover-audio-edition-witness.md) | accepted | Hardcover audio editions witness which recording an audiobook is |
 | [0091](0091-decode-browser-responses-and-report-uncertain-writes.md) | proposed | Decode every browser response and report uncertain writes truthfully |
 | [0092](0092-keep-the-automatic-decision-abstention-gate.md) | proposed | Keep the automatic-decision abstention gate and define the would-admit note |
-| [0093](0093-measured-cover-rules-and-current-cover-protection.md) | proposed | Choose covers by measured rules, protect fault-free current covers, and keep replaced covers for revert |
+| [0093](0093-measured-cover-rules-and-current-cover-protection.md) | accepted | Choose covers by measured rules, protect fault-free current covers, and keep replaced covers for revert |
 | [0094](0094-unconfirmed-current-covers-take-part.md) | proposed | Let an unconfirmed current cover take part in cover election |
 | [0095](0095-learned-cover-taste-profile.md) | proposed | Learn the owner's cover taste as a readable profile and let a closed judge verdict choose covers |
 | [0096](0096-owner-chosen-work-identity-strictness.md) | proposed | Let the owner choose how strictly title and creator agreement establishes work identity |

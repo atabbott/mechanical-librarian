@@ -18,7 +18,7 @@ from dataclasses import dataclass, replace
 from dataclasses import field as dataclass_field
 from functools import partial
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Final, Generic, Literal, Protocol, TypeVar, cast
 from urllib.parse import urlencode
 
 from mechanical_librarian.application.cover_consideration import (
@@ -44,6 +44,9 @@ from mechanical_librarian.domain.audio_inspection import (
 )
 from mechanical_librarian.domain.audiobook_corroboration import (
     candidate_recording_runtime_veto,
+)
+from mechanical_librarian.domain.cover_automatic_decision import (
+    SCHEMA_VERSION as COVER_AUTOMATIC_DECISION_SCHEMA,
 )
 from mechanical_librarian.domain.cover_automatic_decision import (
     CoverAutomaticDecision,
@@ -117,6 +120,29 @@ from mechanical_librarian.domain.review_field_classification import (
 from mechanical_librarian.domain.shadow_outcome import (
     ShadowFieldOutcome,
     ShadowOutcomeSet,
+)
+
+ReviewCaseDetailSchemaVersion = Literal["review-case-detail-v7"]
+REVIEW_CASE_DETAIL_SCHEMA: Final[ReviewCaseDetailSchemaVersion] = (
+    "review-case-detail-v7"
+)
+
+ReviewCaseEvidenceSchemaVersion = Literal["review-case-evidence-v5"]
+REVIEW_CASE_EVIDENCE_SCHEMA: Final[ReviewCaseEvidenceSchemaVersion] = (
+    "review-case-evidence-v5"
+)
+
+ReviewCaseHistorySchemaVersion = Literal["review-case-history-v3"]
+REVIEW_CASE_HISTORY_SCHEMA: Final[ReviewCaseHistorySchemaVersion] = (
+    "review-case-history-v3"
+)
+
+ReviewLibrarySchemaVersion = Literal["review-library-v5"]
+REVIEW_LIBRARY_SCHEMA: Final[ReviewLibrarySchemaVersion] = "review-library-v5"
+
+ReviewReportDetailSchemaVersion = Literal["review-report-detail-v6"]
+REVIEW_REPORT_DETAIL_SCHEMA: Final[ReviewReportDetailSchemaVersion] = (
+    "review-report-detail-v6"
 )
 
 # A degraded value with nothing proposed beside it is the current one (#1283).
@@ -218,7 +244,7 @@ def _automatic_decision_projection(document: str) -> dict[str, object] | None:
         raise ValueError
     if raw.get("schema_version") not in {
         "automatic-decision-v1",
-        "cover-automatic-decision-v3",
+        COVER_AUTOMATIC_DECISION_SCHEMA,
     }:
         return None
     decision = parse_automatic_authority(document)
@@ -858,6 +884,11 @@ def _classify_field(
     # proposed fill the evaluated policy keeps (tags while they are off)
     # is settled the same way on every medium (#1661).
     single_source = _single_source_choice(proposal)
+    # The measured stage's decision over a current comparison: a suggested
+    # switch is optional work, never attention, and a title hold always asks
+    # (#1363, S9), as `_REVIEW_FIELD_ATTENTION_REASON_SQL` reads it.
+    stage_outcome = _cover_stage_outcome(destination, current_cover_consideration)
+    cover_suggested = stage_outcome in {"suggest", "replace"}
     policy_settled = (
         result["outcome"] == "unresolved_choice"
         and "work_alternative_immaterial" not in reasons
@@ -877,6 +908,7 @@ def _classify_field(
                     snapshot.automatic_attention_destinations,
                     policy_attention_destinations=snapshot.policy_attention_destinations,
                     settled_choice_destinations=snapshot.settled_choice_destinations,
+                    cover_suggested=cover_suggested,
                 )
             )
             or (
@@ -884,7 +916,10 @@ def _classify_field(
                 and cover_is_current
                 and current_cover_consideration is not None
                 and current_cover_consideration["ready"] is True
-                and not _kept_cover(proposal)
+                and (
+                    stage_outcome == "hold"
+                    or (not _kept_cover(proposal) and not cover_suggested)
+                )
             )
         ),
         automatic_outcome=(
@@ -943,6 +978,8 @@ def _classify_field(
                     context.case.media_kind == "audiobook"
                     or policy_settled
                     or single_source
+                    # A suggested switch is the owner's optional choice (S9).
+                    or cover_suggested
                 )
                 and bool(actions)
             )
@@ -962,7 +999,7 @@ def _classify_field(
         # contextual row, which offers no controls (below).
         owner_entry=owner_entry and bool(alternatives),
         immaterial_alternatives="work_alternative_immaterial" in reasons,
-        kept_cover=_kept_cover(proposal),
+        kept_cover=_kept_cover(proposal) and not cover_suggested,
         kept_by_fill_policy=policy_settled and destination != "tags",
         kept_by_tags_off=policy_settled and destination == "tags",
         single_source=single_source,
@@ -1141,7 +1178,7 @@ class InspectCurrentReviewCase:
                 "recording_admission_basis": recording_admission_basis(report),
                 "audiobook_review_scope": audiobook_review_scope(report),
                 "review_case_id": case.review_case_id,
-                "schema_version": "review-case-detail-v7",
+                "schema_version": REVIEW_CASE_DETAIL_SCHEMA,
                 # Read models never learn write authority. The composition root
                 # stamps the truth before the view leaves the application, and
                 # the default keeps a surface that never asks honest.
@@ -1542,7 +1579,7 @@ class InspectCurrentReviewCase:
                 else None
             ),
             "review_case_id": review_case_id,
-            "schema_version": "review-case-evidence-v5",
+            "schema_version": REVIEW_CASE_EVIDENCE_SCHEMA,
             "source_ledger": _provider_outcomes(provider_lane_facts(report)),
         }
 
@@ -1678,7 +1715,7 @@ class InspectCurrentReviewCase:
             "items": list(items),
             "next_cursor": None,
             "review_case_id": review_case_id,
-            "schema_version": "review-case-history-v3",
+            "schema_version": REVIEW_CASE_HISTORY_SCHEMA,
         }
 
 
@@ -2076,7 +2113,7 @@ class BrowseReviewLibrary:
             ),
             "page": offset // bounded_limit + 1,
             "query": normalized,
-            "schema_version": "review-library-v5",
+            "schema_version": REVIEW_LIBRARY_SCHEMA,
         }
 
     def attention(
@@ -2428,7 +2465,7 @@ def _report_detail(
         "provider_evidence": provider_claims[:_EVIDENCE_CEILING],
         "provider_evidence_truncated": len(provider_claims) > _EVIDENCE_CEILING,
         "report_id": report["report_id"],
-        "schema_version": "review-report-detail-v6",
+        "schema_version": REVIEW_REPORT_DETAIL_SCHEMA,
         "title": _report_title(report),
     }
 
@@ -3435,6 +3472,19 @@ def _report_facts(report_document: str) -> LibraryReportFacts:
         raise ReviewWebError("unavailable") from error
 
 
+def _cover_stage_outcome(
+    destination: str, consideration: dict[str, object] | None
+) -> str | None:
+    """The measured stage's outcome over a cover's current comparison, if any."""
+    if destination != "cover" or consideration is None:
+        return None
+    policy = consideration.get("policy")
+    if type(policy) is not dict:
+        return None
+    stage = policy.get("stage")
+    return cast("str", stage["outcome"]) if type(stage) is dict else None
+
+
 def _kept_cover(proposal: dict[str, object]) -> bool:
     """A readable current cover is kept without asking (#1310).
 
@@ -3478,6 +3528,7 @@ def _needs_attention(
     *,
     policy_attention_destinations: tuple[str, ...] = (),
     settled_choice_destinations: tuple[str, ...] = (),
+    cover_suggested: bool = False,
 ) -> bool:
     """Whether one proposal is the owner's to answer rather than settled.
 
@@ -3506,6 +3557,7 @@ def _needs_attention(
             and not _kept_cover(proposal)
             and not _single_source_choice(proposal)
             and proposal["destination"] not in settled_choice_destinations
+            and not cover_suggested
         )
         or proposal["manual_required"] is True
         or "no_safe_bibliographic_combination" in reasons

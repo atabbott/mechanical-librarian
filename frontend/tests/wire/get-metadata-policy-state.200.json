@@ -155,42 +155,6 @@
         "record_sha256": null
       },
       {
-        "automatic_available": false,
-        "destination": "cover",
-        "field": "cover_order",
-        "identity": "cover_order:replace_if_strictly_better:audiobook_cover_fill",
-        "operation": "fill",
-        "option": "replace_if_strictly_better",
-        "record_sha256": null
-      },
-      {
-        "automatic_available": false,
-        "destination": "cover",
-        "field": "cover_order",
-        "identity": "cover_order:replace_if_strictly_better:audiobook_cover_preserve",
-        "operation": "preserve",
-        "option": "replace_if_strictly_better",
-        "record_sha256": null
-      },
-      {
-        "automatic_available": false,
-        "destination": "cover",
-        "field": "cover_order",
-        "identity": "cover_order:replace_if_strictly_better:audiobook_cover_normalize",
-        "operation": "normalize",
-        "option": "replace_if_strictly_better",
-        "record_sha256": null
-      },
-      {
-        "automatic_available": true,
-        "destination": "cover",
-        "field": "cover_order",
-        "identity": "cover_order:replace_if_strictly_better:audiobook_cover_replace",
-        "operation": "replace",
-        "option": "replace_if_strictly_better",
-        "record_sha256": "21ff5e5e1421cedf424e67a0892ce3ebfe4458a14d6fcebc2b749363aa777a0f"
-      },
-      {
         "automatic_available": true,
         "destination": "description",
         "field": "description_fill",
@@ -1330,16 +1294,8 @@
         "candidate_sha256": "b91ae72a8c4e55c9bfe1d514c28210e22427b57a03082d2b5d1ae0b40df7c457",
         "disposition": "pass",
         "field": "cover_order",
-        "operation_scope": "fill_or_replace",
-        "option": "fixed_source_order"
-      },
-      {
-        "automatic_available": true,
-        "candidate_sha256": "b91ae72a8c4e55c9bfe1d514c28210e22427b57a03082d2b5d1ae0b40df7c457",
-        "disposition": "pass",
-        "field": "cover_order",
         "operation_scope": "fill",
-        "option": "replace_if_strictly_better"
+        "option": "fixed_source_order"
       },
       {
         "automatic_available": false,

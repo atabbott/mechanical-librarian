@@ -48,7 +48,6 @@ from mechanical_librarian.domain.shadow_decision import decide_shadow_packet
 from mechanical_librarian.domain.shadow_review import (
     MAX_LINKAGE_FORMAT_FACTS,
     MAX_LINKAGE_IDENTIFIER_FACTS,
-    PACKET_SCHEMA,
     ShadowReviewPacket,
     ShadowReviewValueError,
     canonical_json,
@@ -188,7 +187,6 @@ def test_equivalent_language_forms_replay_as_one_candidate() -> None:
         "evidence_sufficiency": "candidate",
         "target_only_preservation": 0,
     } == language["decision_summary"]
-    assert "shadow-review-packet-v9" == PACKET_SCHEMA
     assert packet == ShadowReviewPacket.from_json(packet.to_json(), report)
     prior = json.loads(packet.to_json())
     prior["schema_version"] = "shadow-review-packet-v5"

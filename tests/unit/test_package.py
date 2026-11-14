@@ -11,6 +11,7 @@ import pytest
 
 import mechanical_librarian
 from mechanical_librarian.bootstrap import main
+from mechanical_librarian.domain.reviewer_cost import REVIEWER_COST_EVIDENCE_SCHEMA
 
 
 def test_installed_metadata_matches_exposed_version() -> None:
@@ -70,7 +71,7 @@ def test_installed_reviewer_cost_resource_ships_per_run_luna_rows() -> None:
 
     evidence = ReviewerCostEvidence.model_validate_json(
         files("mechanical_librarian")
-        .joinpath("resources/reviewer-cost-evidence-v2.json")
+        .joinpath(f"resources/{REVIEWER_COST_EVIDENCE_SCHEMA}.json")
         .read_bytes()
     )
     assert [(row.model, row.task) for row in evidence.models] == [

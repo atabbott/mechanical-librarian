@@ -176,21 +176,27 @@ If you lose it, restart the container and use the new one. While setup is
 unclaimed, protect the container log as you would the volume. The design is in
 [ADR-0086](../architecture/decisions/0086-deployment-held-setup-claim-token.md).
 
-**Steps.** The wizard has seven steps:
+**Steps.** The wizard has six steps, and a seventh only when it needs it:
 
-1. **Create owner access.** Enter the claim token and choose a password of at
+1. **Create your password.** Enter the claim token and choose a password of at
    least 12 characters. Claiming deletes the token file; resuming setup later
    needs only the password.
 2. **Connect Audiobookshelf.** The server URL and API key are stored only after
-   a test request succeeds.
-3. **Choose metadata providers.** Optional.
-4. **Choose libraries.**
-5. **Check read-only mounts.** Compares each library's folders with the
-   bootstrap mappings.
-6. **Choose reviewer.** Optional; see [optional reviewers](#optional-reviewers).
-7. **Kick off preparation.** Saves the complete settings, closes the setup
-   pages, switches to the normal workspace on the same address and starts
-   preparing the library.
+   a test request succeeds. Over plain `http://`, setup warns when the address
+   is outside your private network, because the key would be sent unencrypted.
+3. **Choose libraries.** Every book library starts ticked under its
+   Audiobookshelf name. On Continue, setup checks each library's folders,
+   using the paths Audiobookshelf reports, against the read-only
+   [media mounts](#media-mounts).
+4. **Find library folders.** Shown only when a folder is not found. It lists
+   only those libraries, says why, and checks again after you add the mount.
+5. **Choose metadata sources.** The sources that suit your libraries start
+   ticked. Hardcover and Google Books each need an API key while they are on;
+   untick any source you do not want.
+6. **Cover reviewer (optional).** See [optional reviewers](#optional-reviewers).
+7. **Start.** Saves the complete settings, closes the setup pages, switches to
+   the normal workspace on the same address, starts preparing the library and
+   opens Library, signed in.
 
 Interrupted setup resumes at the next start. After kickoff, change settings on
 the Settings page.
@@ -203,7 +209,7 @@ Activity. Until then the product only reads and proposes. See
 
 If `/data/config.json` exists, it is the complete settings authority and the
 bootstrap and settings store are not read. This is the case even if the file is
-invalid. The file is the `config-v10` document described in the
+invalid. The file is the `config-v11` document described in the
 [configuration reference](../reference/configuration.md#file-mode). Every
 secret, password-hash and TLS file it names must be an owner-only regular file,
 mounted read-only into the container at the path the configuration uses.

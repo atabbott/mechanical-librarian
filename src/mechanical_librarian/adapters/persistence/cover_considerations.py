@@ -15,7 +15,7 @@ import hashlib
 import json
 import sqlite3
 from collections.abc import Callable
-from typing import cast
+from typing import Any, cast
 
 from mechanical_librarian.adapters.persistence.cover_consideration_documents import (
     compact_cover_consideration,
@@ -25,22 +25,26 @@ from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.retained_covers import (
     live_retained_cover,
     release_kept_retained_covers,
+    retained_cover_store_has_room,
 )
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
     local_operation,
 )
 from mechanical_librarian.application.cover_consideration import (
+    SCHEMA_VERSION as COVER_CONSIDERATION_SCHEMA,
+)
+from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationError,
     _validated_cover_consideration,
     cover_consideration_currentness_document,
 )
+from mechanical_librarian.application.cover_policy import (
+    SCHEMA_VERSION as POLICY_REPORT_SCHEMA_VERSION,
+)
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.audiobook_corroboration import (
     admitted_audiobook_identity,
-)
-from mechanical_librarian.domain.audiobook_cover_replacement import (
-    material_audiobook_cover_reference,
 )
 from mechanical_librarian.domain.audiobook_decision_qualification import (
     AudiobookQualificationError,
@@ -48,11 +52,16 @@ from mechanical_librarian.domain.audiobook_decision_qualification import (
     qualification_manifest_sha256,
 )
 from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
+from mechanical_librarian.domain.cover_qualification_policy import (
+    MEASURED_REPLACEMENT_IDENTITY,
+    measured_replacement_record,
+)
 from mechanical_librarian.domain.deterministic_cover_election import (
     strictly_better_cover_rank,
 )
 from mechanical_librarian.domain.field_effect import FieldEffectOperation
 from mechanical_librarian.domain.human_decision import (
+    COVER_SELECTION_AUTHORITY_SCHEMA,
     HumanDecision,
     HumanDecisionError,
     manual_cover_eligible,
@@ -90,113 +99,20 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         raise HumanDecisionError("unavailable")
 
     def _admit_automatic_cover(self, document: str, occurred_at: int) -> None:
-        value = json.loads(document)
-        if value.get("provider_fetching") is not False:
+        """Mint automatic authority for the stage's fill or admitted replacement.
+
+        A fill of a known-empty cover keeps the fixed-source-order path. A
+        replacement of a populated cover is admitted only under the measured
+        rules' shadow identity, with room for its original in the retained
+        store and no owner choice or hold on the field; otherwise it stays the
+        suggestion the policy report records (ADR-0093).
+        """
+        basis = self._cover_admission_basis(document)
+        if basis is None:
             return
-        policy_report_document = value.get("policy_report_document")
-        if type(policy_report_document) is not str or not policy_report_document:
-            return
-        try:
-            policy_report = json.loads(policy_report_document)
-        except json.JSONDecodeError:
-            return
-        if (
-            policy_report.get("schema_version") != "cover-policy-report-v3"
-            or policy_report.get("owner_ready") is not True
-            or policy_report.get("actual_target_state")
-            not in {"known_empty", "confirmed"}
-        ):
-            return
-        case_row = self._connection.execute(
-            "SELECT document FROM review_cases WHERE review_case_id=?",
-            (value["review_case_id"],),
-        ).fetchone()
-        if case_row is None:
-            return
-        case = ReviewCase.from_json(case_row[0])
-        try:
-            report = MetadataReport.from_json(value["report_document"])
-        except (KeyError, TypeError, ValueError):
-            return
-        # A work-route cover on an audiobook with no admitted recording is an
-        # owner choice only; it never mints automatic authority (#1642).
-        if report.audio is not None and not admitted_audiobook_identity(report):
-            return
-        if (
-            report.report_id != case.report_id
-            or report.report_id != value.get("report_id")
-            or report.target.fingerprint != case.target_fingerprint
-        ):
-            return
-        qualification_identity = None
-        target = case.target
-        connection_name, library_name, item_id = (
-            target.get("connection"),
-            target.get("library"),
-            target.get("item"),
-        )
-        if not all(
-            type(item) is str and item
-            for item in (connection_name, library_name, item_id)
-        ):
-            return
-        lineage = (connection_name, library_name, item_id)
-        if self._connection.execute(
-            "SELECT proposal_set_id,report_id,review_case_id FROM current_review_case_lineages "
-            "WHERE connection_name=? AND library_name=? AND item_id=?",
-            lineage,
-        ).fetchone() != (case.proposal_set_id, case.report_id, case.review_case_id):
-            return
-        if self._connection.execute(
-            "SELECT report_id FROM current_metadata_reports WHERE connection_name=? "
-            "AND library_name=? AND item_id=? AND file_identity=?",
-            (*lineage, report.file.identity),
-        ).fetchone() != (case.report_id,):
-            return
-        if self._connection.execute(
-            "SELECT consideration_id FROM current_cover_considerations WHERE review_case_id=?",
-            (case.review_case_id,),
-        ).fetchone() != (value.get("consideration_id"),):
-            return
-        state = self._connection.execute(
-            "SELECT s.generation,s.posture,r.document FROM metadata_policy_state s "
-            "JOIN metadata_policy_resolutions r ON r.generation=s.generation "
-            "AND r.library_name=? WHERE s.singleton=1",
-            (library_name,),
-        ).fetchone()
-        if state is None or state[1] != "automatic":
-            return
-        resolved = ResolvedMetadataPolicy.from_data(json.loads(state[2]))
-        if dict(resolved.destinations).get("cover_order") != "automatic" or dict(
-            resolved.options
-        ).get("cover_order") not in {
-            "fixed_source_order",
-            "replace_if_strictly_better",
-        }:
-            return
-        if (
-            report.audio is None
-            and dict(resolved.options)["cover_order"] == "replace_if_strictly_better"
-            and policy_report.get("actual_target_state") != "known_empty"
-        ):
-            return
-        material_replacement = (
-            report.audio is not None
-            and dict(resolved.options)["cover_order"] == "replace_if_strictly_better"
-        )
-        current_cover = next(
-            f.value
-            for f in report.target.fields
-            if f.destination is TargetDestination.COVER
-        )
-        reference = (
-            material_audiobook_cover_reference(value.get("candidates"), current_cover)
-            if material_replacement
-            and policy_report.get("actual_target_state") == "confirmed"
-            else None
-            if material_replacement
-            else policy_report.get("recommended_candidate_reference")
-        )
+        value, policy_report, case, report, lineage, resolved, generation = basis
+        stage = cast("dict[str, object]", policy_report["stage"])
+        reference = policy_report.get("recommended_candidate_reference")
         candidate = next(
             (
                 row
@@ -209,38 +125,217 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             candidate is None
             or candidate.get("incumbent") is not False
             or candidate.get("selectable") is not True
-            or (
-                not material_replacement
-                and (
-                    candidate.get("deterministic_rank") != 1
-                    or policy_report.get("status") != "recommended"
-                )
-            )
+            or policy_report.get("status") != "recommended"
             or not candidate.get("deterministic_citations")
             or type(candidate.get("deterministic_rank_key")) is not list
         ):
             return
-        if report.audio is not None:
-            option = dict(resolved.options)["cover_order"]
+        qualification_identity: str | None
+        if stage["outcome"] == "fill":
+            if policy_report.get("actual_target_state") != "known_empty":
+                return
+            qualification_identity = None
+            if report.audio is not None:
+                current = next(
+                    f.value
+                    for f in report.target.fields
+                    if f.destination is TargetDestination.COVER
+                )
+                qualification_identity = identity_for_effect(
+                    "cover",
+                    "cover_order",
+                    "fixed_source_order",
+                    current,
+                    candidate.get("artifact_id"),
+                )
+                if qualification_identity is None:
+                    return
+                try:
+                    qualification_manifest_sha256(qualification_identity)
+                except AudiobookQualificationError:
+                    return
+        elif stage["outcome"] == "replace":
             if (
-                option == "fixed_source_order"
-                and policy_report.get("actual_target_state") != "known_empty"
+                measured_replacement_record() is None
+                or not retained_cover_store_has_room(self._connection)
+                or self._connection.execute(
+                    "SELECT 1 FROM field_effect_manual_holds WHERE review_case_id=? "
+                    "AND destination='cover' AND active=1",
+                    (case.review_case_id,),
+                ).fetchone()
+                is not None
             ):
                 return
-            current = next(
-                f.value
-                for f in report.target.fields
-                if f.destination is TargetDestination.COVER
-            )
-            qualification_identity = identity_for_effect(
-                "cover", "cover_order", option, current, candidate.get("artifact_id")
-            )
-            if qualification_identity is None:
-                return
-            try:
-                qualification_manifest_sha256(qualification_identity)
-            except AudiobookQualificationError:
-                return
+            qualification_identity = MEASURED_REPLACEMENT_IDENTITY
+        else:
+            return
+        self._mint_cover_authority(
+            document,
+            value,
+            case,
+            lineage,
+            resolved,
+            generation,
+            candidate,
+            qualification_identity,
+            cast("str | None", stage["reason"])
+            if stage["outcome"] == "replace"
+            else None,
+            occurred_at,
+        )
+
+    def _retire_unwritten_automatic_cover(
+        self, review_case_id: str, policy_reference: object, occurred_at: int
+    ) -> None:
+        """Revoke an automatic switch a changed cover policy left unwritten.
+
+        Current covers is in the cover policy, so a changed setting stales a
+        planned switch before it writes. When the work is prepared again under
+        the new policy, the selection is revoked as a superseded one is, so no
+        screen shows the switch as chosen; the new comparison decides again.
+        A switch whose write started stays, because it may have happened: one
+        claimed, applying, reconciling or verified, or a retry whose request
+        may have reached Audiobookshelf (#1363, #1402).
+        """
+        # A comparison prepared under no cover policy decides nothing again.
+        if type(policy_reference) is not str:
+            return
+        row = self._connection.execute(
+            "SELECT selection.decision_id,"
+            "json_extract(json_extract(selection.document,'$.decision_document'),"
+            "'$.policy_reference'),current.connection_name,current.library_name,"
+            "current.item_id FROM current_review_case_lineages lineage "
+            "JOIN current_cover_selection_authorities current "
+            "ON current.connection_name=lineage.connection_name "
+            "AND current.library_name=lineage.library_name "
+            "AND current.item_id=lineage.item_id "
+            "JOIN cover_selection_authorities selection "
+            "ON selection.selection_id=current.selection_id "
+            "WHERE lineage.review_case_id=? AND selection.kind='automatic' "
+            "AND NOT EXISTS (SELECT 1 FROM field_effects effect "
+            "WHERE effect.decision_id=selection.decision_id "
+            "AND (effect.state IN ('claimed','applying','reconciling','verified') "
+            # A retry whose request may have reached Audiobookshelf is a write
+            # that started (#1402).
+            "OR (effect.state='retryable' AND EXISTS (SELECT 1 "
+            "FROM field_effect_events event WHERE event.plan_id=effect.plan_id "
+            "AND event.kind='applying'))))",
+            (review_case_id,),
+        ).fetchone()
+        if row is None or row[1] == policy_reference:
+            return
+        self._revoke_automatic(row[0], occurred_at)
+        self._connection.execute(
+            "DELETE FROM current_cover_selection_authorities "
+            "WHERE connection_name=? AND library_name=? AND item_id=?",
+            row[2:],
+        )
+
+    def _cover_admission_basis(
+        self, document: str
+    ) -> (
+        tuple[
+            dict[str, Any],
+            dict[str, Any],
+            ReviewCase,
+            MetadataReport,
+            tuple[str, str, str],
+            ResolvedMetadataPolicy,
+            int,
+        ]
+        | None
+    ):
+        """Read what any automatic cover authority needs, or None to admit nothing.
+
+        The consideration must be the case's current one over its current
+        report and lineage, the provider must not be fetching, the posture
+        must route ``cover_order`` to Automatic with ``fixed_source_order``,
+        and automatic safety must permit it.
+        """
+        value = json.loads(document)
+        if value.get("provider_fetching") is not False:
+            return None
+        policy_report_document = value.get("policy_report_document")
+        if type(policy_report_document) is not str or not policy_report_document:
+            return None
+        try:
+            policy_report = json.loads(policy_report_document)
+        except json.JSONDecodeError:
+            return None
+        if (
+            policy_report.get("schema_version") != POLICY_REPORT_SCHEMA_VERSION
+            or policy_report.get("owner_ready") is not True
+            or type(policy_report.get("stage")) is not dict
+        ):
+            return None
+        case_row = self._connection.execute(
+            "SELECT document FROM review_cases WHERE review_case_id=?",
+            (value["review_case_id"],),
+        ).fetchone()
+        if case_row is None:
+            return None
+        case = ReviewCase.from_json(case_row[0])
+        try:
+            report = MetadataReport.from_json(value["report_document"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        # A work-route cover on an audiobook with no admitted recording is an
+        # owner choice only; it never mints automatic authority (#1642).
+        if report.audio is not None and not admitted_audiobook_identity(report):
+            return None
+        if (
+            report.report_id != case.report_id
+            or report.report_id != value.get("report_id")
+            or report.target.fingerprint != case.target_fingerprint
+        ):
+            return None
+        target = case.target
+        connection_name, library_name, item_id = (
+            target.get("connection"),
+            target.get("library"),
+            target.get("item"),
+        )
+        if not (
+            type(connection_name) is str
+            and connection_name
+            and type(library_name) is str
+            and library_name
+            and type(item_id) is str
+            and item_id
+        ):
+            return None
+        lineage = (connection_name, library_name, item_id)
+        if self._connection.execute(
+            "SELECT proposal_set_id,report_id,review_case_id FROM current_review_case_lineages "
+            "WHERE connection_name=? AND library_name=? AND item_id=?",
+            lineage,
+        ).fetchone() != (case.proposal_set_id, case.report_id, case.review_case_id):
+            return None
+        if self._connection.execute(
+            "SELECT report_id FROM current_metadata_reports WHERE connection_name=? "
+            "AND library_name=? AND item_id=? AND file_identity=?",
+            (*lineage, report.file.identity),
+        ).fetchone() != (case.report_id,):
+            return None
+        if self._connection.execute(
+            "SELECT consideration_id FROM current_cover_considerations WHERE review_case_id=?",
+            (case.review_case_id,),
+        ).fetchone() != (value.get("consideration_id"),):
+            return None
+        state = self._connection.execute(
+            "SELECT s.generation,s.posture,r.document FROM metadata_policy_state s "
+            "JOIN metadata_policy_resolutions r ON r.generation=s.generation "
+            "AND r.library_name=? WHERE s.singleton=1",
+            (library_name,),
+        ).fetchone()
+        if state is None or state[1] != "automatic":
+            return None
+        resolved = ResolvedMetadataPolicy.from_data(json.loads(state[2]))
+        if (
+            dict(resolved.destinations).get("cover_order") != "automatic"
+            or dict(resolved.options).get("cover_order") != "fixed_source_order"
+        ):
+            return None
         safety = self._connection.execute(
             "SELECT paused,global_suspension,category_suspensions_document "
             "FROM automatic_safety_state WHERE singleton=1"
@@ -251,7 +346,29 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             or safety[1] is not None
             or "cover_order" in dict(json.loads(safety[2]))
         ):
-            return
+            return None
+        return value, policy_report, case, report, lineage, resolved, int(state[0])
+
+    def _mint_cover_authority(
+        self,
+        document: str,
+        value: dict[str, Any],
+        case: ReviewCase,
+        lineage: tuple[str, str, str],
+        resolved: ResolvedMetadataPolicy,
+        generation: int,
+        candidate: dict[str, Any],
+        qualification_identity: str | None,
+        reason: str | None,
+        occurred_at: int,
+    ) -> None:
+        """Record one automatic selection over the case's proposal alternative.
+
+        Never over an owner's choice; a fill replaces an earlier automatic
+        choice only with a strictly better rank, while a measured replacement
+        supersedes it.
+        """
+        connection_name, library_name, item_id = lineage
         proposal_row = self._connection.execute(
             "SELECT document FROM proposal_sets WHERE proposal_set_id=?",
             (case.proposal_set_id,),
@@ -291,13 +408,13 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             "SELECT selection.document FROM current_cover_selection_authorities current "
             "JOIN cover_selection_authorities selection ON selection.selection_id=current.selection_id "
             "WHERE current.connection_name=? AND current.library_name=? AND current.item_id=?",
-            (connection_name, library_name, item_id),
+            lineage,
         ).fetchone()
         prior = None if current is None else json.loads(current[0])
         if prior is not None and (
             prior["kind"] == "owner"
             or (
-                not material_replacement
+                qualification_identity != MEASURED_REPLACEMENT_IDENTITY
                 and not strictly_better_cover_rank(
                     candidate["deterministic_rank_key"], prior.get("rank_key")
                 )
@@ -307,7 +424,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         supersedes = None if prior is None else prior["decision_id"]
         decision = CoverAutomaticDecision.create(
             policy_option=(
-                dict(resolved.options)["cover_order"]
+                "fixed_source_order"
                 if qualification_identity is None
                 else qualification_identity.split(":", 1)[1]
             ),
@@ -319,7 +436,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             target_fingerprint=case.target_fingerprint,
             candidate_id=alternative.alternative_id,
             resolved_policy_id=resolved.resolved_id,
-            policy_generation=state[0],
+            policy_generation=generation,
             consideration_id=value["consideration_id"],
             consideration_digest=hashlib.sha256(document.encode()).hexdigest(),
             replay_digest=value["replay_digest"],
@@ -330,6 +447,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             citation_ids=tuple(sorted(set(candidate["deterministic_citations"]))),
             supersedes_decision_id=supersedes,
             occurred_at=occurred_at,
+            reason=reason,
         )
         existing = self._connection.execute(
             "SELECT document FROM cover_selection_authorities WHERE decision_id=?",
@@ -579,7 +697,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             value = json.loads(document)
             if (
                 type(value) is not dict
-                or value.get("schema_version") != "cover-consideration-v7"
+                or value.get("schema_version") != COVER_CONSIDERATION_SCHEMA
                 or value.get("review_case_id") != review_case_id
                 or value.get("report_id") != report_id
                 or value.get("replay_digest") != replay_digest
@@ -657,6 +775,9 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             )
             self._record_cover_consideration_event(
                 consideration_id, review_case_id, preparation_kind, occurred_at
+            )
+            self._retire_unwritten_automatic_cover(
+                review_case_id, value.get("policy_reference"), occurred_at
             )
             self._admit_automatic_cover(document, occurred_at)
             transaction.commit()
@@ -944,7 +1065,7 @@ def _owner_selection_document(
     selection_id: str,
     supersedes_selection_id: str | None,
 ) -> str:
-    """The canonical ``cover-selection-authority-v3`` document of one owner choice."""
+    """The canonical cover-selection authority document of one owner choice."""
     candidate_kind, retained_plan_id = owner_cover_selection_kind(
         decision.outcome, selected
     )
@@ -962,7 +1083,7 @@ def _owner_selection_document(
                 None if selected is None else selected["deterministic_rank_key"]
             ),
             "retained_plan_id": retained_plan_id,
-            "schema_version": "cover-selection-authority-v3",
+            "schema_version": COVER_SELECTION_AUTHORITY_SCHEMA,
             "confirmation": confirmation,
             "observed_identity": None if selected is None else selected["identity"],
             "candidate_reference": None if selected is None else selected["reference"],

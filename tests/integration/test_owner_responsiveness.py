@@ -18,6 +18,10 @@ from mechanical_librarian.application.review_web import (
     ReviewWebError,
 )
 from mechanical_librarian.domain.metadata_report import MetadataReport
+from mechanical_librarian.domain.owner_settings import OWNER_SETTINGS_SCHEMA
+from mechanical_librarian.infrastructure.settings_authority import (
+    REVIEW_BOOTSTRAP_SCHEMA,
+)
 from tests.support.owner_responsiveness import (
     OwnerResponsivenessFixture,
     running_owner_fixture,
@@ -1000,7 +1004,7 @@ def test_overlapping_generations_share_root_admission_and_failed_activation_keep
         ):
             composition.compose_store_runtime_generation(
                 ReviewBootstrap(
-                    schema_version="review-bootstrap-v2",
+                    schema_version=REVIEW_BOOTSTRAP_SCHEMA,
                     canonical_origin="https://review.invalid",
                     tls_certificate_file="/synthetic/certificate",
                     tls_private_key_file="/synthetic/key",
@@ -1037,7 +1041,7 @@ def test_settings_publication_and_rollback_preserve_browse_final_recheck(
     try:
         document = OwnerSettingsDocument.model_validate(
             {
-                "schema_version": "owner-settings-v5",
+                "schema_version": OWNER_SETTINGS_SCHEMA,
                 "revision": 1,
                 "connections": [
                     {"name": "primary", "endpoint": "https://library.example.invalid"}

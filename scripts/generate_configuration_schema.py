@@ -1,11 +1,12 @@
-"""Regenerate the deterministic config-v10 JSON Schema reference."""
+"""Regenerate the deterministic JSON Schema reference for the current config."""
 
 from pathlib import Path
 
+from mechanical_librarian.application.configuration import CONFIG_SCHEMA
 from mechanical_librarian.infrastructure.configuration import configuration_schema_json
 
 ROOT = Path(__file__).parents[1]
-OUTPUT = ROOT / "docs" / "reference" / "config-v10.schema.json"
+OUTPUT = ROOT / "docs" / "reference" / f"{CONFIG_SCHEMA}.schema.json"
 
 
 def main() -> None:

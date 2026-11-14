@@ -157,6 +157,19 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
       focusAfterRetry(() => reloadButton.current)
     },
   })
+  // Another section's save moved the settings revision. With nothing unsaved
+  // here, the newer settings are taken as they are; only unsaved edits are
+  // stale, and say so (#1363).
+  if (
+    view.document.revision > base.revision &&
+    !changed &&
+    !unconfirmed &&
+    !mutation.isPending &&
+    !reload.isPending
+  ) {
+    setBase(view.document)
+    setDraft(view.document.matching.work_identity)
+  }
   // A pending or settled save keeps Save focusable; it ignores the press.
   const saveHeld =
     mutation.isPending || reload.isPending || !(changed || retryable) || staleLead !== null

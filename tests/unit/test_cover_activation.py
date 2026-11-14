@@ -40,21 +40,30 @@ from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
 )
 from mechanical_librarian.application.cover_policy import CoverPolicy
+from mechanical_librarian.application.cover_retention import retention_required
 from mechanical_librarian.application.field_effects import (
     GuardedApplicationError,
     GuardedFieldApplication,
 )
 from mechanical_librarian.application.review_web import InspectCurrentReviewCase
 from mechanical_librarian.bootstrap import composition
+from mechanical_librarian.domain.cover_automatic_decision import (
+    SCHEMA_VERSION as COVER_AUTOMATIC_DECISION_SCHEMA,
+)
 from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
     CoverSource,
+    CoverSourceKind,
     CoverSourceState,
+)
+from mechanical_librarian.domain.cover_qualification_policy import (
+    MEASURED_REPLACEMENT_IDENTITY,
 )
 from mechanical_librarian.domain.field_effect import (
     FieldEffectError,
     FieldEffectOperation,
+    field_value_version,
 )
 from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_policy import (
@@ -73,9 +82,11 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
+from tests.support.cover_producers import adapter_cover_value
 from tests.support.field_effects import CAPABILITY, Clock
 from tests.unit.test_cover_packets import _preview, _report, _source
 from tests.unit.test_shadow_outcome_persistence import (
+    _measured_record,
     _pipeline_configuration,
     _qualified_cover_report,
     _run_qualified_cover_pipeline,
@@ -83,12 +94,15 @@ from tests.unit.test_shadow_outcome_persistence import (
 )
 
 
-@pytest.mark.parametrize("option", ("fixed_source_order", "replace_if_strictly_better"))
 @pytest.mark.parametrize("scenario", ("known_empty", "upgrade", "downgrade"))
 def test_real_automatic_cover_admission_controls_guarded_fake_service_effect(
-    scenario: str,
-    option: str,
+    scenario: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # An empty cover is filled; an undersized one is replaced by the measured
+    # rules, whose record a synthetic digest stands in for; a cover with no
+    # fault is kept (#1363).
+    _measured_record(monkeypatch)
+    option = "fixed_source_order"
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         os.chmod(root, 0o700)
@@ -118,7 +132,7 @@ def test_real_automatic_cover_admission_controls_guarded_fake_service_effect(
         else:
             report, _ = _qualified_cover_report(
                 root,
-                incumbent_size=(3000, 4500) if scenario == "downgrade" else (300, 450),
+                incumbent_size=(3000, 4500) if scenario == "downgrade" else (200, 300),
                 candidate_size=(300, 450) if scenario == "downgrade" else (3000, 4500),
                 candidate_designation=(
                     CoverDesignation.WORK
@@ -194,9 +208,7 @@ def test_real_automatic_cover_admission_controls_guarded_fake_service_effect(
             "JOIN cover_selection_authorities selection "
             "ON selection.selection_id=current.selection_id"
         ).fetchall()
-        if scenario == "downgrade" or (
-            option == "replace_if_strictly_better" and scenario == "upgrade"
-        ):
+        if scenario == "downgrade":
             assert selection_rows == []
             assert repository.pending_field_effect_decision_documents(1) == ()
             assert repository._connection.execute(
@@ -210,11 +222,17 @@ def test_real_automatic_cover_admission_controls_guarded_fake_service_effect(
         automatic = CoverAutomaticDecision.from_json(
             json.loads(selection_rows[0][0])["decision_document"]
         )
-        assert automatic.policy_option == option
-        assert automatic.qualification_identity is None
+        measured = scenario == "upgrade"
+        assert automatic.policy_option == (
+            "fixed_source_order:measured_replacement" if measured else option
+        )
+        assert automatic.qualification_identity == (
+            MEASURED_REPLACEMENT_IDENTITY if measured else None
+        )
+        assert automatic.reason == ("below_floor" if measured else None)
         assert (
             json.loads(automatic.to_json())["schema_version"]
-            == "cover-automatic-decision-v3"
+            == COVER_AUTOMATIC_DECISION_SCHEMA
         )
         assert CoverAutomaticDecision.from_json(automatic.to_json()) == automatic
         other = CoverAutomaticDecision.create(
@@ -223,10 +241,22 @@ def test_real_automatic_cover_admission_controls_guarded_fake_service_effect(
                 | {
                     "rank_key": automatic.rank_key,
                     "citation_ids": automatic.citation_ids,
-                    "policy_option": "replace_if_strictly_better"
-                    if option == "fixed_source_order"
-                    else "fixed_source_order",
                 }
+                # The other kind of automatic cover authority, over the same
+                # comparison, binds nothing.
+                | (
+                    {
+                        "policy_option": "fixed_source_order",
+                        "qualification_identity": None,
+                        "reason": None,
+                    }
+                    if measured
+                    else {
+                        "policy_option": "fixed_source_order:measured_replacement",
+                        "qualification_identity": MEASURED_REPLACEMENT_IDENTITY,
+                        "reason": "below_floor",
+                    }
+                )
             ),
             occurred_at=automatic.occurred_at,
         )
@@ -256,6 +286,9 @@ def test_real_automatic_cover_admission_controls_guarded_fake_service_effect(
                 proposal,
                 consideration,
             )
+        # The pipeline wrote under the default Current covers; this process
+        # binds the same live cover policy, as composition does (#1363).
+        repository.bind_current_cover_policy(CoverPolicy().reference)
         authority = PersistedFieldEffectAuthority(repository)
         snapshot = authority.resolve(automatic)
         repository.grant_field_effect_consents(
@@ -491,14 +524,14 @@ def test_real_automatic_cover_admission_controls_guarded_fake_service_effect(
                 CoverAutomaticDecision.from_json(
                     json.loads(retained)["decision_document"]
                 ).policy_option
-                == option
+                == automatic.policy_option
             )
             assert reopened.get_field_effect(operation.plan.plan_id).state == "verified"
             events = reopened.field_effect_activity_page(
                 search=None, event_type="all", occurred_after=0, page=1, page_size=25
             )["events"]
             assert any(
-                event.get("record", {}).get("policy_option") == option
+                event.get("record", {}).get("policy_option") == automatic.policy_option
                 for event in events
             )
         finally:
@@ -507,7 +540,7 @@ def test_real_automatic_cover_admission_controls_guarded_fake_service_effect(
 
 @pytest.mark.parametrize("waiting", [False, True])
 def test_an_automatic_cover_selection_writes_only_in_the_automatic_posture(
-    waiting: bool,
+    waiting: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Leaving Automatic leaves the selection unwritten until Automatic (#1568).
 
@@ -518,6 +551,8 @@ def test_an_automatic_cover_selection_writes_only_in_the_automatic_posture(
     the unchanged policy: its case is due back, and only a field automatic
     decision belongs to the earlier generation for good (#1599).
     """
+    # The undersized cover is the measured rules' replacement (#1363).
+    _measured_record(monkeypatch)
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         os.chmod(root, 0o700)
@@ -525,7 +560,7 @@ def test_an_automatic_cover_selection_writes_only_in_the_automatic_posture(
         repository = open_repository(database)
         report, _ = _qualified_cover_report(
             root,
-            incumbent_size=(300, 450),
+            incumbent_size=(200, 300),
             candidate_size=(3000, 4500),
             candidate_designation=CoverDesignation.EXACT_EDITION,
             typed_timeout=True,
@@ -659,6 +694,9 @@ def test_an_automatic_cover_selection_writes_only_in_the_automatic_posture(
             repository.activate_qualified_automatic(now)
             assert (pending(), counted()) == ((automatic.to_json(),), ["automatic"])
 
+            # The pipeline wrote under the default Current covers; this process
+            # binds the same live cover policy, as composition does (#1363).
+            repository.bind_current_cover_policy(CoverPolicy().reference)
             authority = PersistedFieldEffectAuthority(repository)
             snapshot = authority.resolve(automatic)
             repository.grant_field_effect_consents(
@@ -793,21 +831,29 @@ class _SelectedCover(NamedTuple):
     review_case_id: str
 
 
-def _selected_cover(root: Path) -> _SelectedCover:
+def _selected_cover(root: Path, *, current_404: bool = False) -> _SelectedCover:
+    """With ``current_404`` Audiobookshelf answers 404 for the declared cover."""
     incumbent_preview = _preview(1)
     alternative_preview = _preview(2)
     sources = (
         _source(1, incumbent_preview, incumbent=True),
         _source(2, alternative_preview, embedded=True),
     )
-    base = _report(sources)
-    incumbent = sources[0].artifact
-    assert incumbent is not None
+    base = _report(
+        (
+            CoverSource(
+                sources[0].source_id, CoverSourceKind.ABS, CoverSourceState.ABSENT
+            ),
+            sources[1],
+        )
+        if current_404
+        else sources
+    )
     fields = tuple(
         TargetField(
             field.destination,
             TargetFieldState.VALUE,
-            incumbent.artifact_id,
+            adapter_cover_value(),
         )
         if field.destination is TargetDestination.COVER
         else field
@@ -989,6 +1035,11 @@ def test_selected_original_reaches_verified_guarded_fake_service_application() -
         )
         repository.bind_cover_consideration_currentness(lambda *_: False)
         snapshot = authority.resolve(decision)
+        # The target value is the adapter's path digest; the choice binds the
+        # current cover's bytes (#1853).
+        incumbent = sources[0].artifact
+        assert incumbent is not None
+        assert snapshot.pre_value == "cover_" + incumbent.original_digest
         dependencies = PersistedEffectDependencies(repository)
         consent = FakeConsentCurrentness(
             repository.field_effect_consent_envelope_identity
@@ -1160,6 +1211,75 @@ def test_selected_original_reaches_verified_guarded_fake_service_application() -
             persistence_schema._COVER_CONSIDERATION_NO_UPDATE_SQL
         )
         repository._connection.commit()
+        repository.close()
+
+
+def test_a_choice_over_a_cover_audiobookshelf_cannot_find_is_a_fill(
+    tmp_path: Path,
+) -> None:
+    # A declared cover Audiobookshelf answers 404 for has nothing to replace
+    # or keep: the write is bound as empty, as the target read sees it.
+    os.chmod(tmp_path, 0o700)
+    selected = _selected_cover(tmp_path, current_404=True)
+    repository = selected.repository
+    try:
+        repository.record_human_decision(
+            selected.decision,
+            cover_consideration_id=str(selected.consideration["consideration_id"]),
+            cover_confirmation={
+                "expected_selection_id": None,
+                "confirm_unverified_match": False,
+            },
+        )
+        authority = PersistedFieldEffectAuthority(repository)
+        snapshot = authority.resolve(selected.decision)
+        assert (snapshot.pre_value, snapshot.target_version) == (
+            None,
+            field_value_version("cover", None),
+        )
+        consent = FakeConsentCurrentness(
+            repository.field_effect_consent_envelope_identity
+        )
+        consent.allow(
+            connection=snapshot.connection,
+            library=snapshot.library,
+            destination=snapshot.destination,
+        )
+        application = GuardedFieldApplication(
+            repository,
+            FakeTargetService(),
+            FakeBackupReadiness(),
+            FakeCapabilityObserver(CAPABILITY),
+            authority,
+            PersistedEffectDependencies(repository),
+            consent,
+            PrivateCoverRecoveryStore(tmp_path / "recovery", lambda _plan: None),
+            FakeForwardReevaluation(),
+            Clock(),
+            FakePreclaimHook(),
+            FakePreclaimHook(),
+            FakePreclaimHook(),
+        )
+        operation = application.plan(
+            selected.decision,
+            connection=snapshot.connection,
+            library=snapshot.library,
+            work_id=snapshot.work_id,
+            destination=snapshot.destination,
+            pre_value=snapshot.pre_value,
+            desired_value=snapshot.decision_value,
+            target_fingerprint=snapshot.target_fingerprint,
+            target_version=snapshot.target_version,
+            dependency_digests=snapshot.dependency_digests,
+            capability_digest=CAPABILITY,
+        )
+        assert operation is not None
+        assert operation.plan.pre_value is None
+        assert not retention_required(operation.plan)
+        assert repository._connection.execute(
+            "SELECT count(*) FROM retained_cover_bindings"
+        ).fetchone() == (0,)
+    finally:
         repository.close()
 
 
@@ -1340,7 +1460,7 @@ def test_artifact_recovery_borrower_shares_admission_without_holding_it_for_file
     assert failures == []
 
 
-def test_cover_decision_v3_binds_option_and_rejects_v2_and_tampering():
+def test_cover_decision_v4_binds_option_and_reason_and_rejects_tampering():
     from mechanical_librarian.domain.automatic_decision import AutomaticDecisionError
     from mechanical_librarian.domain.cover_automatic_decision import (
         parse_automatic_authority,
@@ -1354,13 +1474,13 @@ def test_cover_decision_v3_binds_option_and_rejects_v2_and_tampering():
         parse_automatic_authority(prior)
     raw = json.loads(prior)
     arguments = {
-        name: raw[name]
+        name: raw.get(name)
         for name in inspect.signature(CoverAutomaticDecision.create).parameters
     }
     arguments.update(
         rank_key=tuple(raw["rank_key"]),
         citation_ids=tuple(raw["citation_ids"]),
-        policy_option="replace_if_strictly_better",
+        policy_option="fixed_source_order",
     )
     current = CoverAutomaticDecision.create(**arguments)
     assert "qualification_manifest_sha256" not in arguments
@@ -1373,10 +1493,25 @@ def test_cover_decision_v3_binds_option_and_rejects_v2_and_tampering():
         == COVER_ELECTION_QUALIFICATION_MANIFEST_SHA256
     )
     assert parse_automatic_authority(current.to_json()) == current
-    for bad in (None, "unknown", "replace_if_strictly_better:audiobook_cover_fill"):
+    # The ADR-0073 replacement option is retired (#1363 Q11).
+    for bad in (
+        None,
+        "unknown",
+        "replace_if_strictly_better",
+        "replace_if_strictly_better:audiobook_cover_fill",
+    ):
         with pytest.raises(AutomaticDecisionError):
             CoverAutomaticDecision.create(**(arguments | {"policy_option": bad}))
-    for bad in (None, "unknown", "fixed_source_order"):
+    # Only a measured replacement records a reason, and a fill never does.
+    with pytest.raises(AutomaticDecisionError):
+        CoverAutomaticDecision.create(**(arguments | {"reason": "below_floor"}))
+    altered = json.loads(current.to_json())
+    altered["reason"] = "below_floor"
+    with pytest.raises(AutomaticDecisionError):
+        parse_automatic_authority(
+            json.dumps(altered, sort_keys=True, separators=(",", ":"))
+        )
+    for bad in (None, "unknown", "replace_if_strictly_better"):
         altered = json.loads(current.to_json())
         altered["policy_option"] = bad
         with pytest.raises(AutomaticDecisionError):

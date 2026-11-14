@@ -11,7 +11,7 @@ import hashlib
 import json
 import re
 import sqlite3
-from typing import cast
+from typing import Final, cast
 
 from mechanical_librarian.adapters.persistence.cover_consideration_documents import (
     expand_cover_consideration,
@@ -19,9 +19,6 @@ from mechanical_librarian.adapters.persistence.cover_consideration_documents imp
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.audiobook_corroboration import (
     admitted_audiobook_identity,
-)
-from mechanical_librarian.domain.audiobook_cover_replacement import (
-    material_audiobook_cover_reference,
 )
 from mechanical_librarian.domain.audiobook_decision_qualification import (
     audiobook_identity,
@@ -36,6 +33,13 @@ from mechanical_librarian.domain.automatic_decision import (
 from mechanical_librarian.domain.cover_automatic_decision import (
     CoverAutomaticDecision,
     parse_automatic_authority,
+)
+from mechanical_librarian.domain.cover_evidence import (
+    CoverSourceKind,
+    CoverSourceState,
+)
+from mechanical_librarian.domain.cover_qualification_policy import (
+    MEASURED_REPLACEMENT_IDENTITY,
 )
 from mechanical_librarian.domain.description_advice import (
     AuthoredDescriptionDecision,
@@ -100,6 +104,10 @@ from mechanical_librarian.domain.validation import (
     text,
 )
 
+FIELD_EFFECT_CONSENT_STATE_SCHEMA: Final = "field-effect-consent-state-v2"
+
+FIELD_EFFECT_MANUAL_HOLD_SCHEMA: Final = "field-effect-manual-hold-v2"
+
 __all__ = [
     "_automatic_decision_value",
     "_consent_state",
@@ -116,7 +124,7 @@ _policy_activation = closed_document(
 )
 _consent_state = closed_document(
     "consent",
-    schema_version=literal("field-effect-consent-state-v2"),
+    schema_version=literal(FIELD_EFFECT_CONSENT_STATE_SCHEMA),
     basis=lambda value: _owner_grant(value) or _policy_activation(value),
     current=boolean,
     updated_at=non_negative_integer,
@@ -673,6 +681,35 @@ def _automatic_decision_value(
     return value
 
 
+def cover_pre_value(report: MetadataReport) -> str | None:
+    """The pre-value every cover write over ``report``'s current cover binds.
+
+    It names the exact bytes Audiobookshelf served, as the write's own target
+    read names them (``cover_`` and their SHA-256), decoded or refused by the
+    decoder. The report's target value names only the cover's path, so it is
+    never the binding (#1362). A known-empty cover and a declared cover that
+    Audiobookshelf answered 404 for are both empty: nothing is replaced, so
+    nothing is kept. Any other read holds no bytes to bind, and no write is
+    planned over it.
+    """
+    target = canonical_target_fields(report.target.fields)[TargetDestination.COVER]
+    if target.state in {
+        TargetFieldState.MISSING,
+        TargetFieldState.NULL,
+        TargetFieldState.EMPTY,
+    }:
+        return None
+    current = [
+        source for source in report.cover_sources if source.kind is CoverSourceKind.ABS
+    ]
+    if target.state is TargetFieldState.VALUE and len(current) == 1:
+        if current[0].bytes_digest is not None:
+            return "cover_" + current[0].bytes_digest
+        if current[0].state is CoverSourceState.ABSENT:
+            return None
+    raise FieldEffectError("authority_binding")
+
+
 def _cover_automatic_decision_value(
     connection: sqlite3.Connection,
     decision: CoverAutomaticDecision,
@@ -703,31 +740,29 @@ def _cover_automatic_decision_value(
         or resolved["destinations"]["cover_order"] != "automatic"
     ):
         raise FieldEffectError("authority_binding")
-    material_replacement = (
-        report.audio is not None
-        and decision.policy_option.split(":", 1)[0] == "replace_if_strictly_better"
-    )
-    if report.audio is not None:
-        target = canonical_target_fields(report.target.fields)[TargetDestination.COVER]
-        option = decision.policy_option.split(":", 1)[0]
-        expected = identity_for_effect(
-            "cover", "cover_order", option, target.value, decision.artifact_id
-        )
-        if (
-            decision.qualification_identity != expected
-            or expected is None
-            or (
-                option == "fixed_source_order"
-                and target.state
-                not in {
-                    TargetFieldState.MISSING,
-                    TargetFieldState.NULL,
-                    TargetFieldState.EMPTY,
-                }
-            )
-        ):
+    # A measured replacement changes a populated cover; any other automatic
+    # cover authority is a fill of a known-empty one (ADR-0093).
+    measured = decision.qualification_identity == MEASURED_REPLACEMENT_IDENTITY
+    target = canonical_target_fields(report.target.fields)[TargetDestination.COVER]
+    empty = target.state in {
+        TargetFieldState.MISSING,
+        TargetFieldState.NULL,
+        TargetFieldState.EMPTY,
+    }
+    if measured:
+        if empty:
             raise FieldEffectError("authority_binding")
-    elif decision.qualification_identity is not None:
+    elif report.audio is not None:
+        expected = identity_for_effect(
+            "cover",
+            "cover_order",
+            "fixed_source_order",
+            target.value,
+            decision.artifact_id,
+        )
+        if decision.qualification_identity != expected or expected is None or not empty:
+            raise FieldEffectError("authority_binding")
+    elif decision.qualification_identity is not None or not empty:
         raise FieldEffectError("authority_binding")
     try:
         consideration = json.loads(consideration_document)
@@ -749,25 +784,14 @@ def _cover_automatic_decision_value(
     except (KeyError, StopIteration, TypeError, json.JSONDecodeError) as error:
         raise FieldEffectError("authority_binding") from error
     policy_report = json.loads(consideration["policy_report_document"])
-    if report.audio is None and decision.policy_option == "replace_if_strictly_better":
-        target = canonical_target_fields(report.target.fields)[TargetDestination.COVER]
-        if (
-            target.state
-            not in {
-                TargetFieldState.MISSING,
-                TargetFieldState.NULL,
-                TargetFieldState.EMPTY,
-            }
-            or policy_report.get("actual_target_state") != "known_empty"
-        ):
-            raise FieldEffectError("authority_binding")
-    if material_replacement and (
-        policy_report.get("actual_target_state") != "confirmed"
-        or policy_report.get("owner_ready") is not True
-        or material_audiobook_cover_reference(
-            consideration.get("candidates"), target.value
-        )
+    stage = policy_report.get("stage")
+    if (
+        type(stage) is not dict
+        or stage.get("outcome") != ("replace" if measured else "fill")
+        or stage.get("reason") != decision.reason
+        or policy_report.get("recommended_candidate_reference")
         != decision.candidate_reference
+        or (not measured and policy_report.get("actual_target_state") != "known_empty")
     ):
         raise FieldEffectError("authority_binding")
     if (
@@ -783,11 +807,10 @@ def _cover_automatic_decision_value(
         or consideration.get("replay_digest") != decision.replay_digest
         or consideration.get("policy_reference") != decision.policy_reference
         or consideration.get("provider_fetching") is not False
-        or (not material_replacement and policy_report.get("status") != "recommended")
+        or policy_report.get("status") != "recommended"
         or candidate.get("artifact_id") != decision.artifact_id
         or candidate.get("selectable") is not True
         or candidate.get("incumbent") is not False
-        or (not material_replacement and candidate.get("deterministic_rank") != 1)
         or tuple(candidate.get("deterministic_rank_key", ())) != decision.rank_key
         or tuple(sorted(set(candidate.get("deterministic_citations", ()))))
         != decision.citation_ids
@@ -1149,7 +1172,7 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
             "destination",
             "pending_return",
             "review_case_id",
-            schema_version=literal("field-effect-manual-hold-v2"),
+            schema_version=literal(FIELD_EFFECT_MANUAL_HOLD_SCHEMA),
             active=boolean,
             decision_id=lambda value: (
                 type(value) is str

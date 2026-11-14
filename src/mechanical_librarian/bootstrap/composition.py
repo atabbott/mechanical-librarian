@@ -160,7 +160,7 @@ from mechanical_librarian.application.continuous_field_effects import (
 from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
 )
-from mechanical_librarian.application.cover_policy import CoverPolicy
+from mechanical_librarian.application.cover_policy import cover_policy_of
 from mechanical_librarian.application.cover_retention import CoverRetention
 from mechanical_librarian.application.decision_preview import preview_shadow_decision
 from mechanical_librarian.application.description_advice import (
@@ -502,7 +502,7 @@ class _PublicationReceiptRepository(Protocol):
 
 
 class _ManifestEntry(TypedDict):
-    """One ``batch-manifest-v5`` entry, exactly as ``parse_manifest`` validates it."""
+    """One batch-manifest entry, exactly as ``parse_manifest`` validates it."""
 
     connection: str
     library: str
@@ -514,7 +514,7 @@ class _ManifestEntry(TypedDict):
 
 
 class _Manifest(TypedDict):
-    """The closed ``batch-manifest-v5`` document ``parse_manifest`` returns.
+    """The closed batch-manifest document ``parse_manifest`` returns.
 
     ``parse_manifest`` rejects every document whose key set, value types, entry
     shape, and derived call maxima do not match this exactly, so reading it back
@@ -3193,11 +3193,7 @@ def _compose_cover_considerations(
             artifacts = CoverArtifactStore(artifact_store_path, create=False)
         return artifacts
 
-    policy = CoverPolicy(
-        avoid_promotional_text=review.cover_avoid_promotional_text,
-        avoid_tie_in_branding=review.cover_avoid_tie_in_branding,
-        prefer_minimal_composition=review.cover_prefer_minimal_composition,
-    )
+    policy = cover_policy_of(review)
 
     provider_fetching = (
         (lambda _report: False)

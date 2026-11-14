@@ -31,6 +31,7 @@ from mechanical_librarian.application.catalogue import (
     RefreshCurrentCatalogue,
     TargetConnectionError,
 )
+from mechanical_librarian.application.cover_policy import cover_policy_of
 from mechanical_librarian.application.metadata_report import (
     CredentialError,
     CurrentnessError,
@@ -225,6 +226,11 @@ class ReviewPipelineStages:
             propose=self.propose,
             admit=self.admit,
             first_boot=first_boot,
+            cover_policy_reference=(
+                None
+                if self._configuration.review is None
+                else cover_policy_of(self._configuration.review).reference
+            ),
             project=self.project,
             before_projection=self.prepare_advice,
             after_advance=self.after_advance,

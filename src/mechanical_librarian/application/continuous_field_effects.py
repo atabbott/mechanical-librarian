@@ -7,7 +7,7 @@ import threading
 import time
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
-from typing import Callable, Protocol, cast
+from typing import Callable, Final, Literal, Protocol, cast
 
 from mechanical_librarian.application.field_effects import (
     AuthorityCurrentness,
@@ -26,6 +26,9 @@ from mechanical_librarian.domain.activity_records import (
     project_readable_activity_event,
 )
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
+from mechanical_librarian.domain.cover_automatic_decision import (
+    SCHEMA_VERSION as COVER_AUTOMATIC_DECISION_SCHEMA,
+)
 from mechanical_librarian.domain.cover_automatic_decision import (
     CoverAutomaticDecision,
     parse_automatic_authority,
@@ -48,6 +51,11 @@ from mechanical_librarian.domain.metadata_report import (
     ReportValueError,
 )
 from mechanical_librarian.domain.provider_recovery import RECOVERY_FAILURES
+
+ContinuousFieldActivitySchemaVersion = Literal["continuous-field-activity-v3"]
+CONTINUOUS_FIELD_ACTIVITY_SCHEMA: Final[ContinuousFieldActivitySchemaVersion] = (
+    "continuous-field-activity-v3"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1536,7 +1544,7 @@ class ContinuousGuardedApplication:
                 "range_days": range_days,
                 "total": int(cast(int, page_projection["total"])),
             },
-            "schema_version": "continuous-field-activity-v3",
+            "schema_version": CONTINUOUS_FIELD_ACTIVITY_SCHEMA,
             "provider_recovery": provider_recovery,
         }
 
@@ -2033,6 +2041,6 @@ class ContinuousGuardedApplication:
             return HumanDecision.from_json(document)
         if raw.get("schema_version") == "automatic-decision-v1":
             return AutomaticDecision.from_json(document)
-        if raw.get("schema_version") == "cover-automatic-decision-v3":
+        if raw.get("schema_version") == COVER_AUTOMATIC_DECISION_SCHEMA:
             return parse_automatic_authority(document)
         raise FieldEffectError("authority_binding")

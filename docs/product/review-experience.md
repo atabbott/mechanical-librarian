@@ -58,46 +58,56 @@ retries show as preparation status, never as a metadata choice.
 
 ## First run
 
-An empty data volume opens a seven-step setup: owner access, the
-Audiobookshelf connection, metadata sources, libraries, read-only mounts, an
-optional cover reviewer and kickoff. [Deployment](../operations/deployment.md)
+An empty data volume opens a six-step setup: your password, the
+Audiobookshelf connection, libraries, metadata sources, an optional cover
+reviewer and Start. A seventh step, Find library folders, appears only when
+setup cannot find a library's folder. [Deployment](../operations/deployment.md)
 covers the claim token and container.
 
-- Each step states its rules first. A refusal sits beside its field and clears
-  when the field changes. It gives a safe cause and one remedy, never a code,
-  and stays in view at 200% text.
+- Each step opens on its title and controls, with no checklist before it. A
+  refusal sits beside its field and clears when the field changes. It gives a
+  safe cause and one remedy, never a code, and stays in view at 200% text.
 - Completed steps collapse to a row with Change. The step list stays beside
   the step while it fits the window, and scrolls inside itself when it does
   not. Reopening a step removes only the answers and secrets that depend on
   it. Resuming setup returns to the first incomplete step. A change in another
   tab restores the latest recorded step.
+- The password step shows a one-line plain-HTTP notice only when the page is
+  not served over HTTPS.
 - A failed connection names its cause, the address and one remedy. The causes
   include a name that does not resolve, a refused connection, an unverified
   certificate, no answer in time and a rejected key. Setup refuses an address
   with a path, user name, password, query or fragment before it sends any
-  request.
-- Setup groups metadata sources as Books and ebooks, and Audiobooks, and each
-  is optional. Once setup has read your libraries, it suggests a group for
-  those it fits. It ticks nothing for you.
-- You can retry library discovery, and it summarises the podcast libraries it
-  skipped. Two libraries cannot share a name in any letter case. A library's
-  display name is only a label, so renaming it never changes which library it
-  is.
-- The mount check reports Matched, No mapping, More than one mapping or No
-  folder reported, with a remedy for every result except Matched. Setup never
-  creates a mount.
-- Setup presents the reviewer choices as equals, and each names its model and
-  status. You can cancel, resume or retry device sign-in. You set up
-  description advice later, in Settings.
+  request, and warns before sending a key over plain `http://` to an address
+  outside your private network.
+- Every book library starts ticked under its Audiobookshelf name, and setup
+  says once that podcast libraries are not shown. Two libraries cannot share a
+  name in any letter case; rename one in Audiobookshelf or untick one.
+- On Continue, setup checks each library's folder from the path
+  Audiobookshelf reports. When every folder is found, the next step says so
+  in one line. Otherwise Find library folders lists only the libraries it
+  could not find, each Found or Not found with what to do, and checks again.
+  Setup never creates a mount.
+- Setup groups metadata sources as Books and ebooks, and Audiobooks. The
+  sources that suit the chosen libraries start ticked, and each can be
+  unticked before Continue. Hardcover and Google Books need an API key while
+  they are on. Without either, setup says most ebooks will wait for your
+  review, and still lets you continue.
+- The reviewer step checks an existing Codex sign-in by itself and offers one
+  Sign in with ChatGPT button. OpenRouter starts on the recommended model with
+  its cost per 1,000 works; other models wait behind Choose another model, and
+  prices and data use sit in a closed section. Continue and Skip for now sit
+  together at the bottom. You set up description advice later, in Settings.
 - Secrets live only in their inputs, each with an accessible reveal control.
   Setup clears the reviewer key after each attempt. An expired session keeps
   every recorded step.
 
-Before kickoff a summary lists each answer, and each row reopens its step.
-Kickoff says exactly: `Nothing in your library changes. Writes stay off until
-you turn them on in Activity.` The same address then serves the workspace and
-preparation starts. Library's write handoff appears once a prepared change
-waits for write permission.
+Before Start a summary lists each answer in step order, and each row reopens
+its step. It says once: `Nothing in your library changes. Writes stay off until
+you turn them on in Activity.` Start then switches the same address to the
+workspace, starts preparation and opens Library, signed in, on the new run
+when it is known within a few seconds. Library's write handoff appears once a
+prepared change waits for write permission.
 
 ## Workspace shell
 
@@ -140,9 +150,11 @@ to browse", "recorded, nothing to decide", "not matched", "could not finish"
 and "in progress". Ready to browse and in progress always show. The others hide
 at zero, and an unknown count reads `…`. Counts describe the run's books as
 they stand now. Each stage bar counts books that first reached it in this run.
-A book that could not finish stops at its last stage. Recent completions record
-each book's first finish. A rate appears only while the run is running. Each
-book links into Library by the name shown.
+A book that could not finish stops at its last stage. Bars glide to each new
+count unless reduced motion is set. The status line's wipe plays only when the
+run's state changes. Recent completions record each book's first finish, one
+row each: the title, linked into Library, then "Prepared" or "Couldn't
+finish". A rate in works a minute appears only while the run is running.
 
 The masthead's background-work control shows each library's scan state and
 counts, and marks a library outside the current run. At idle it reads
@@ -294,16 +306,10 @@ the library box appears only when a change for the field is recorded. A notice
 never restates the reason already shown, and a decision carries no reminder
 that writes are protected. A disclosure never chooses a value.
 
-With Book matching set wider, a field that needs you may also offer values
-from source records with the book's title and author. In such a value's
-evidence, each of those sources reads "same title and author" beside its name.
-While a work is checked against a new Book matching setting, a line above its
-fields says "Checking this work against the new Book matching setting.", its
-choices are unavailable, and the case refreshes when the check ends. A choice
-sent as Book matching changed the field's offer is not recorded, and the field
-says "Not recorded: Book matching changed what this field offers. Choose
-again." History says when a field asked again because Book matching changed
-what it offers.
+At a wider [Book matching](../reference/configuration.md#book-matching) value,
+a field that needs you may offer values whose sources read "same title and
+author". Its choices wait during a check, and History says when a field asked
+again.
 
 When a field set to Automatic gets no automatic choice, the canvas says why
 until the cause goes. An unknown reason reads as unknown. A hold from an
@@ -417,13 +423,12 @@ Visual check details. Nothing the visual review finds confirms a match, changes
 the order or lets Automatic choose a cover.
 
 You can choose any other cover whose image loads, even a lower-quality one or
-one marked "Match not confirmed" or, with Book matching set wider, "Same title
-and author", with no extra step. A cover that contradicts the book stays in the
+one marked "Match not confirmed" or "Same title and author", with no extra
+step. A cover that contradicts the book stays in the
 row, but you cannot choose it. It reads "Contradicts this book" and says whether
 a source says it belongs to a different book or edition, or names a different
-author or contributor. With Book matching set wider, an author whose initials
-are written differently does not count as a contradiction. A choice against an
-outdated comparison shows the current one.
+author or contributor. A choice against an outdated comparison shows the
+current one.
 
 ### Covers view
 
@@ -434,8 +439,15 @@ then open choices under Choose. Kept lists books that keep their current cover
 while you can still choose another. All is a wall of every cover, with each
 title and author.
 
-To decide counts exactly the works whose cover field is in Attention, and the
-counts follow each decision. Pages hold 50 books, and Show more covers loads the
+A suggested switch is a cover the measured cover rules would replace
+([ADR-0093](../architecture/decisions/0093-measured-cover-rules-and-current-cover-protection.md)),
+held for you because Current covers or the missing qualification does not let
+it switch by itself. Its row carries a pill naming the fault, such as "Under
+300 px" or "Square on an ebook", and its book reads "Suggested because" and
+the reason. To decide counts the works whose cover field is in Attention plus
+the suggested switches; Library's Needs attention counts only the first,
+because a suggestion is optional. A readable cover with no fault is kept
+without asking and appears under Kept. The counts follow each decision. Pages hold 50 books, and Show more covers loads the
 next. It starts after the last book shown, so a decision never makes you miss
 one. The URL keeps the tab and the open book. A wall tile reads "No cover" when
 the cover field is empty and "Image unavailable" when the library's cover cannot
@@ -453,7 +465,10 @@ back, the book says so and asks you to check before choosing again.
 
 Switched lists automatic cover writes you have not answered since, newest first.
 Each row shows Before and Now with each cover's size, and a write that filled an
-empty cover reads "No cover" under Before. A replacement stays listed only while
+empty cover reads "No cover" under Before. A replacement names its fault in a
+pill and says why in one line, such as "The cover was 200 × 300 px, under 300
+px on its short side." A Show menu above the list narrows it to one fault; a
+fill has no fault, so it appears only under All. A replacement stays listed only while
 Mechanical Librarian keeps a copy of the old cover
 ([ADR-0093](../architecture/decisions/0093-measured-cover-rules-and-current-cover-protection.md)).
 Keep records that you keep the current cover, releases that copy and marks the
@@ -579,7 +594,7 @@ file-managed deployment the list is read only.
 
 Reviewer sign-in, validation and tests take effect at once, outside Save
 settings. Each reviewer task has a model picker with an example cost per 1,000
-books. Both tasks share one OpenRouter key, and replacing it keeps both model
+works. Both tasks share one OpenRouter key, and replacing it keeps both model
 choices. Reviewer advice allows no write
 ([ADR-0062](../architecture/decisions/0062-owner-managed-reviewer-access.md)).
 

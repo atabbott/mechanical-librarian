@@ -1,4 +1,4 @@
-"""Application operations for the closed seven-step first-run ledger."""
+"""Application operations for the closed first-run ledger."""
 
 from __future__ import annotations
 
@@ -71,6 +71,112 @@ class SetupJourneyOperation:
             else mount_names
         )
 
+    def libraries(
+        self, expected_revision: int, libraries: Sequence[LibrarySettings]
+    ) -> SetupStateDocument:
+        current = self._current(expected_revision, "libraries")
+        connection = current.connection
+        if connection is None:
+            raise SetupJourneyError("stale")
+        available = {
+            value.library_id: value for value in self.discover(expected_revision)
+        }
+        if (
+            not libraries
+            or len({value.name for value in libraries}) != len(libraries)
+            or any(
+                value.connection != connection.name
+                or value.library_id not in available
+                or available[value.library_id].media_kind != "book"
+                # Sources are chosen on a later step.
+                or value.provider_connections
+                for value in libraries
+            )
+        ):
+            raise SetupJourneyError("invalid_libraries")
+        # Each library keeps the name Audiobookshelf gives it.
+        canonical = sorted(
+            (
+                value.model_copy(
+                    update={"display_name": available[value.library_id].name.strip()}
+                )
+                for value in libraries
+            ),
+            key=lambda value: value.name,
+        )
+        # One library carries one name everywhere, so two may not share one,
+        # whatever its case.
+        shown = [str(value.display_name).casefold() for value in canonical]
+        if len(set(shown)) != len(shown):
+            raise SetupJourneyError("invalid_library_display_name_duplicate")
+        # The folders are compared with the paths Audiobookshelf reported in
+        # this same write, so the folder step is asked only when one is not
+        # found.
+        compared, results = self._compare_folders(
+            canonical, {value.name: None for value in canonical}, available
+        )
+        successor = SetupStateDocument.model_validate(
+            {
+                **current.model_dump(),
+                "revision": current.revision + 1,
+                "completed_steps": ["claim", "connect", "libraries"]
+                + (["mounts"] if _all_matched(compared, results) else []),
+                "libraries": [value.model_dump() for value in compared],
+                "mounts": [value.model_dump() for value in results],
+            }
+        )
+        return self._write(successor, current.revision)
+
+    def mounts(
+        self, expected_revision: int, service_paths: dict[str, str | None]
+    ) -> SetupStateDocument:
+        current = self._current(expected_revision, "mounts")
+        if set(service_paths) != {value.name for value in current.libraries}:
+            raise SetupJourneyError("invalid_mounts")
+        discovered = {
+            value.library_id: value for value in self._discover_libraries(current)
+        }
+        # The folder step hides a library once its folder is found, so it comes
+        # back without a path. It keeps the folder it was found in, which may be
+        # a path the owner entered, rather than going back to the reported one.
+        recorded = {value.library: value.state for value in current.mounts}
+        kept = {
+            value.name
+            for value in current.libraries
+            if service_paths[value.name] is None
+            and value.mount is not None
+            and recorded.get(value.name) == "matched"
+        }
+        compared, compared_results = self._compare_folders(
+            [value for value in current.libraries if value.name not in kept],
+            service_paths,
+            discovered,
+        )
+        checked = {
+            library.name: (library, result)
+            for library, result in zip(compared, compared_results, strict=True)
+        }
+        libraries: list[LibrarySettings] = []
+        results: list[SetupMountResult] = []
+        for value in current.libraries:
+            library, result = checked.get(
+                value.name,
+                (value, SetupMountResult(library=value.name, state="matched")),
+            )
+            libraries.append(library)
+            results.append(result)
+        successor = SetupStateDocument.model_validate(
+            {
+                **current.model_dump(),
+                "revision": current.revision + 1,
+                "completed_steps": ["claim", "connect", "libraries"]
+                + (["mounts"] if _all_matched(libraries, results) else []),
+                "libraries": [value.model_dump() for value in libraries],
+                "mounts": [value.model_dump() for value in results],
+            }
+        )
+        return self._write(successor, current.revision)
+
     def providers(
         self,
         expected_revision: int,
@@ -79,12 +185,26 @@ class SetupJourneyOperation:
     ) -> SetupStateDocument:
         current = self._current(expected_revision, "providers")
         canonical = sorted(providers, key=lambda value: value.name)
+        # Every library compares every enabled source.
+        enabled = sorted(value.name for value in canonical if value.enabled)
         successor = SetupStateDocument.model_validate(
             {
                 **current.model_dump(),
                 "revision": current.revision + 1,
-                "completed_steps": ["claim", "connect", "providers"],
+                "completed_steps": [
+                    "claim",
+                    "connect",
+                    "libraries",
+                    "mounts",
+                    "providers",
+                ],
                 "providers": [value.model_dump() for value in canonical],
+                "libraries": [
+                    value.model_copy(
+                        update={"provider_connections": enabled}
+                    ).model_dump()
+                    for value in current.libraries
+                ],
             }
         )
         values: dict[str, str | None] = {
@@ -94,7 +214,7 @@ class SetupJourneyOperation:
 
     def discover(self, expected_revision: int) -> tuple[SetupLibraryCandidate, ...]:
         current = self._current(expected_revision)
-        # Providers reads it too, to suggest those that fit each library.
+        # Sources reads it too, to tick those that suit each library.
         if current.next_step() not in {"providers", "libraries", "mounts"}:
             raise SetupJourneyError("stale")
         try:
@@ -117,78 +237,20 @@ class SetupJourneyOperation:
                 code = "unavailable"
             raise SetupJourneyError(code) from None
 
-    def libraries(
-        self, expected_revision: int, libraries: Sequence[LibrarySettings]
-    ) -> SetupStateDocument:
-        current = self._current(expected_revision, "libraries")
-        connection = current.connection
-        if connection is None:
-            raise SetupJourneyError("stale")
-        available = {
-            value.library_id: value for value in self.discover(expected_revision)
-        }
-        if (
-            not libraries
-            or len({value.name for value in libraries}) != len(libraries)
-            or any(
-                value.connection != connection.name
-                or value.library_id not in available
-                or available[value.library_id].media_kind != "book"
-                or value.provider_connections != sorted(set(value.provider_connections))
-                or not set(value.provider_connections).issubset(
-                    {
-                        provider.name
-                        for provider in current.providers
-                        if provider.enabled
-                    }
-                )
-                for value in libraries
-            )
-        ):
-            raise SetupJourneyError("invalid_libraries")
-        canonical = sorted(
-            (
-                value
-                if value.display_name is not None
-                else value.model_copy(
-                    update={"display_name": available[value.library_id].name}
-                )
-                for value in libraries
-            ),
-            key=lambda value: value.name,
-        )
-        # One library carries one name everywhere, so two may not share one,
-        # whatever its case.
-        shown = [str(value.display_name).casefold() for value in canonical]
-        if len(set(shown)) != len(shown):
-            raise SetupJourneyError("invalid_library_display_name_duplicate")
-        successor = SetupStateDocument.model_validate(
-            {
-                **current.model_dump(),
-                "revision": current.revision + 1,
-                "completed_steps": [
-                    "claim",
-                    "connect",
-                    "providers",
-                    "libraries",
-                ],
-                "libraries": [value.model_dump() for value in canonical],
-            }
-        )
-        return self._write(successor, current.revision)
+    def _compare_folders(
+        self,
+        libraries: Sequence[LibrarySettings],
+        service_paths: dict[str, str | None],
+        discovered: dict[str, SetupLibraryCandidate],
+    ) -> tuple[list[LibrarySettings], list[SetupMountResult]]:
+        """Compare each library's folder with the read-only bootstrap mounts.
 
-    def mounts(
-        self, expected_revision: int, service_paths: dict[str, str | None]
-    ) -> SetupStateDocument:
-        current = self._current(expected_revision, "mounts")
-        if set(service_paths) != {value.name for value in current.libraries}:
-            raise SetupJourneyError("invalid_mounts")
-        libraries: list[LibrarySettings] = []
+        A supplied path replaces the paths Audiobookshelf reported; `None`
+        uses the reported ones. Nothing is created or widened.
+        """
+        compared: list[LibrarySettings] = []
         results: list[SetupMountResult] = []
-        discovered = {
-            value.library_id: value for value in self._discover_libraries(current)
-        }
-        for library in current.libraries:
+        for library in libraries:
             supplied = service_paths[library.name]
             evidence = discovered.get(library.library_id)
             paths = (
@@ -212,31 +274,9 @@ class SetupJourneyOperation:
                 else "matched"
             )
             mount = path_matches[0][0] if state == "matched" else None
-            libraries.append(library.model_copy(update={"mount": mount}))
+            compared.append(library.model_copy(update={"mount": mount}))
             results.append(SetupMountResult(library=library.name, state=state))
-        successor = SetupStateDocument.model_validate(
-            {
-                **current.model_dump(),
-                "revision": current.revision + 1,
-                "completed_steps": [
-                    "claim",
-                    "connect",
-                    "providers",
-                    "libraries",
-                ]
-                + (
-                    ["mounts"]
-                    if all(
-                        library.media_kind != "book" or result.state == "matched"
-                        for library, result in zip(libraries, results, strict=True)
-                    )
-                    else []
-                ),
-                "libraries": [value.model_dump() for value in libraries],
-                "mounts": [value.model_dump() for value in results],
-            }
-        )
-        return self._write(successor, current.revision)
+        return compared, results
 
     def change(self, expected_revision: int, step: SetupStep) -> SetupStateDocument:
         if step in {"claim", "kick_off"}:
@@ -261,9 +301,9 @@ class SetupJourneyOperation:
                 "completed_steps": [
                     "claim",
                     "connect",
-                    "providers",
                     "libraries",
                     "mounts",
+                    "providers",
                     "reviewer",
                 ],
                 "reviewer_setup": outcome,
@@ -329,6 +369,15 @@ class SetupJourneyOperation:
             )
         except SetupStateError:
             raise SetupJourneyError("stale") from None
+
+
+def _all_matched(
+    libraries: Sequence[LibrarySettings], results: Sequence[SetupMountResult]
+) -> bool:
+    return all(
+        library.media_kind != "book" or result.state == "matched"
+        for library, result in zip(libraries, results, strict=True)
+    )
 
 
 __all__ = [

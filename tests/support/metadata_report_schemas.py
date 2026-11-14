@@ -289,7 +289,9 @@ def retained_report_as_current(document: str) -> MetadataReport:
     truncation sets and their bounds for Hardcover's edition covers (#1778).
     v79 reports each cover artifact's width and height as oriented and adds
     the `retained` cover source, neither of which a v49 report, holding no
-    automatic switch, could carry (#1363). v80 added each provider's
+    automatic switch, could carry (#1363). v80 records the digest of
+    Audiobookshelf cover bytes the decoder refused: null here, since a v49
+    report's sources hold none (#1853). v81 added each provider's
     `identity_refused_candidates` and `identity_refused_truncated` and each
     lane's `identity_refused_new`: empty and zero here, since an earlier
     producer kept nothing of a refused WORK answer (#1355).
@@ -310,6 +312,7 @@ def retained_report_as_current(document: str) -> MetadataReport:
             and cover["state"] == CoverSourceState.RETRIEVED.value
             else None
         )
+        cover["original_digest"] = None
         if cover["artifact"] is not None:
             cover["artifact"]["measures"] = None
     for provider in data["providers"]:
@@ -424,6 +427,23 @@ PRIOR_HUMAN_DECIDED_SQL = (
 # Every producer before #1358 kept no case episodes.
 # Nor, before #1310, did their cover branch keep a verified current cover.
 _KEPT_COVER_SQL = " AND NOT " + review_sql._VERIFIED_CURRENT_COVER_SQL
+# Nor did they split a cover the measured rules hold or suggest (#1363): a
+# manually ready comparison asked unless its current cover was kept.
+MEASURED_COVER_ATTENTION_SQL = review_sql._REVIEW_FIELD_ATTENTION_REASON_SQL.partition(
+    "OR " + review_sql._REVIEW_MANUAL_BIBLIOGRAPHIC_SQL
+)[0]
+MANUAL_READY_COVER_ATTENTION_SQL = (
+    "result.has_owner_decision_actions=1 AND (result.unresolved_choice=1 "
+    "OR (result.destination='cover' AND EXISTS (SELECT 1 "
+    "FROM current_cover_considerations current_cover "
+    "JOIN cover_considerations consideration "
+    "ON consideration.consideration_id=current_cover.consideration_id "
+    "WHERE current_cover.review_case_id=rc.review_case_id "
+    "AND json_extract(consideration.currentness_document,'$.manual_ready')=1)"
+    + _KEPT_COVER_SQL
+    + ") "
+)
+assert MEASURED_COVER_ATTENTION_SQL != MANUAL_READY_COVER_ATTENTION_SQL
 # Nor did they admit a refreshing cover by its raw outcome.
 _RAW_REFRESH_SQL = "THEN " + review_sql._COVER_UNRESOLVED_OUTCOME_SQL + " END"
 
@@ -440,7 +460,8 @@ PRIOR_ATTENTION_FACT_OBJECTS = tuple(
     (
         kind,
         name,
-        sql.replace(HUMAN_DECIDED_SQL, PRIOR_HUMAN_DECIDED_SQL)
+        sql.replace(MEASURED_COVER_ATTENTION_SQL, MANUAL_READY_COVER_ATTENTION_SQL)
+        .replace(HUMAN_DECIDED_SQL, PRIOR_HUMAN_DECIDED_SQL)
         .replace(AUTOMATIC_DECIDED_SQL, PRIOR_AUTOMATIC_DECIDED_SQL)
         .replace(_KEPT_COVER_SQL, "")
         .replace(_RAW_REFRESH_SQL, "THEN result.unresolved_choice END"),

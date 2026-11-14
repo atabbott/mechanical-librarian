@@ -109,7 +109,10 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     default_target_fields,
 )
-from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
+from mechanical_librarian.domain.owner_settings import (
+    OWNER_SETTINGS_SCHEMA,
+    OwnerSettingsDocument,
+)
 from mechanical_librarian.domain.preparation_presentation import (
     PreparationRunState,
     PreparationTrigger,
@@ -139,7 +142,7 @@ class _UnsizedFingerprint:
 def _install_settings_authority(repository: object) -> None:
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v5",
+            "schema_version": OWNER_SETTINGS_SCHEMA,
             "revision": 1,
             "connections": [
                 {"name": "primary", "endpoint": "https://library.example.invalid"}

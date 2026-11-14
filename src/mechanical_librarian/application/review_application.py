@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import dataclass
 from threading import Condition
-from typing import TYPE_CHECKING, Literal, Protocol, TypeVar, cast
+from typing import TYPE_CHECKING, Final, Literal, Protocol, TypeVar, cast
 
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
@@ -99,6 +99,12 @@ if TYPE_CHECKING:
     from mechanical_librarian.application.cover_consideration import (
         _ObservationRequest,
     )
+
+
+ReviewPreparationSchemaVersion = Literal["review-preparation-v2"]
+REVIEW_PREPARATION_SCHEMA: Final[ReviewPreparationSchemaVersion] = (
+    "review-preparation-v2"
+)
 
 _Result = TypeVar("_Result")
 
@@ -293,7 +299,7 @@ class PreparationView:
     first_boot_complete: bool = False
     first_boot_works: int | None = None
     presentation: dict[str, object] | None = None
-    schema_version: str = "review-preparation-v2"
+    schema_version: str = REVIEW_PREPARATION_SCHEMA
     recovery_required: bool = False
     provider_throttling: dict[str, object] | None = None
 
@@ -686,6 +692,8 @@ class ReviewApplication:
                             avoid_promotional_text=preferences.avoid_promotional_text,
                             avoid_tie_in_branding=preferences.avoid_tie_in_branding,
                             prefer_minimal_composition=preferences.prefer_minimal_composition,
+                            current_protection=preferences.current_protection,
+                            prefer_edition=preferences.prefer_edition,
                         ),
                         WorkIdentityLevel(validated.matching.work_identity),
                     )

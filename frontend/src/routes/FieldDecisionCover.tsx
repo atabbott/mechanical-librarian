@@ -8,6 +8,7 @@ import { choiceRadios, moveChoiceFocus } from '../choiceGroup'
 import { useCoverChoiceData } from '../coverChoices'
 import type { CoverPrepareFailure, RecordCoverPrepareFailure } from '../coverChoices'
 import {
+  coverFaultLabel,
   coverNoteLabel,
   coverReviewerLabel,
   coverSourceLabels,
@@ -311,6 +312,24 @@ function LibraryCoverChoicesContent({
   const expanded = candidates.length > 3
   const incumbent = candidates.find((candidate) => candidate.incumbent)
   const alternatives = candidates.filter((candidate) => !candidate.incumbent)
+  // A larger copy of the current picture is its own card, so it is neither a
+  // merged duplicate nor one of the current cover's sources (#1363 M9).
+  const largerCopies = candidates.filter((candidate) => candidate.candidateKind === 'larger_copy')
+  const duplicates = consideration.omissions.filter(
+    (omission) =>
+      omission.reason === 'duplicate_preview' &&
+      !largerCopies.some((candidate) => candidate.reference === omission.reference),
+  )
+  // With no other duplicate of it left, the current cover's sources are its own.
+  const currentSourceKinds =
+    incumbent === undefined
+      ? []
+      : largerCopies.length &&
+          !duplicates.some((omission) => omission.retained_reference === incumbent.reference)
+        ? incumbent.sourceKinds.filter(
+            (kind) => !largerCopies.some((candidate) => candidate.sourceKinds.includes(kind)),
+          )
+        : incumbent.sourceKinds
   const coverContexts = consideration.choiceContexts
   const currentContext = coverContexts[0]
   const policyStatus =
@@ -320,11 +339,17 @@ function LibraryCoverChoicesContent({
     typeof consideration.policy?.recommended_candidate_reference === 'string'
       ? consideration.policy.recommended_candidate_reference
       : null
-  const policyReasons = Array.isArray(consideration.policy?.reasons)
-    ? consideration.policy.reasons
-        .filter((reason): reason is string => typeof reason === 'string')
-        .slice(0, 2)
-    : []
+  // The measured rules' stage (#1363): over a populated cover its choice is a
+  // suggestion, shown with the fault that prompted it; a fill is recommended.
+  const stage = consideration.stage ?? null
+  const audiobook = audioFileFormat(mediaKind) || mediaKind === 'audio'
+  const suggesting =
+    recommendedReference !== null && (stage?.outcome === 'suggest' || stage?.outcome === 'replace')
+  const stageReason = stage?.reason ?? null
+  const faultLabel =
+    stageReason !== null && stage?.outcome !== 'fill'
+      ? coverFaultLabel(stageReason, audiobook)
+      : null
   // A contradiction says why the cover cannot be chosen, ahead of the matched
   // book (#1790). Every other card the line reaches says Match not confirmed in
   // its title, so no line repeats it (#1765).
@@ -449,7 +474,9 @@ function LibraryCoverChoicesContent({
             <small>
               {/* A proposed cover's sources show below, so only the current one is labelled. */}
               {candidate.incumbent ? label : null}
-              {recommended ? `${candidate.incumbent ? ' · ' : ''}Recommended` : ''}
+              {recommended
+                ? `${candidate.incumbent ? ' · ' : ''}${suggesting ? 'Suggested' : 'Recommended'}`
+                : ''}
               {selected && actionableCandidate ? (
                 <b className="choice-chosen">Your choice</b>
               ) : null}
@@ -477,7 +504,9 @@ function LibraryCoverChoicesContent({
             </span>
             {retained ? null : (
               <span className="cover-sources">
-                {candidate.sourceKinds.map((kind) => coverSourceLabels[kind]).join(' · ')}
+                {(candidate.incumbent ? currentSourceKinds : candidate.sourceKinds)
+                  .map((kind) => coverSourceLabels[kind])
+                  .join(' · ')}
               </span>
             )}
             {context?.rationale ? <em>{context.rationale}</em> : null}
@@ -487,7 +516,7 @@ function LibraryCoverChoicesContent({
               excludedReason(candidate) === null ? null : (
                 <span className="choice-recommendation">{excludedReason(candidate)}</span>
               )
-            ) : recommended && context?.recommendationReason ? (
+            ) : recommended && !suggesting && context?.recommendationReason ? (
               <span className="choice-recommendation">{context.recommendationReason}</span>
             ) : null}
             {selected && progress?.phase === 'recording' ? <b>Recording…</b> : null}
@@ -533,9 +562,7 @@ function LibraryCoverChoicesContent({
   // candidate, so it is counted apart (#1290). An admission truncation stands
   // for covers that were never fetched, not for one image, so it is not a
   // cover not shown either (#1778).
-  const merged = consideration.omissions.filter(
-    (omission) => omission.reason === 'duplicate_preview',
-  ).length
+  const merged = duplicates.length
   const unavailable = consideration.omissions.filter(
     (omission) => omission.reason !== 'duplicate_preview' && omission.reason !== 'source_truncated',
   )
@@ -547,22 +574,32 @@ function LibraryCoverChoicesContent({
       <header>
         <strong>
           {recommendedReference !== null
-            ? 'Recommended cover ready'
+            ? suggesting
+              ? 'Switch suggested'
+              : 'Recommended cover ready'
             : consideration.ready
               ? 'Cover choices ready'
               : consideration.providerFetching
                 ? 'Still searching for covers'
                 : 'No cover recommended'}
         </strong>
-        {/* The recommended card carries its own reason, so its header has no caption (#1765). */}
-        {recommendedReference !== null ? null : (
+        {faultLabel !== null ? <StatusPill tone="notice">{faultLabel}</StatusPill> : null}
+        {/* The recommended card carries its own reason, so its header has no
+            caption (#1765); a suggestion's fault pill is its only reason. A
+            kept cover with a fault shows the pill alone, since "no fault" would
+            contradict it (#1363). */}
+        {recommendedReference !== null ||
+        (consideration.ready &&
+          !consideration.providerFetching &&
+          stage?.outcome === 'keep' &&
+          stageReason !== null) ? null : (
           <small>
-            {consideration.ready && policyReasons.includes('actual_target_unverified')
-              ? 'The cover in Audiobookshelf could not be confirmed, so it is not replaced automatically.'
-              : consideration.ready && policyReasons.includes('confirmed_incumbent_not_improved')
-                ? 'No confirmed cover is better than the current one, so it is not replaced automatically.'
-                : consideration.providerFetching
-                  ? 'Covers found so far are shown. You can choose when the search finishes.'
+            {consideration.providerFetching
+              ? 'Covers found so far are shown. You can choose when the search finishes.'
+              : stage?.outcome === 'hold'
+                ? 'The title names a different book from most covers. Check the title first.'
+                : consideration.ready && stage?.outcome === 'keep'
+                  ? 'The current cover has no fault, so it is kept.'
                   : 'Only confirmed matches can be recommended.'}
           </small>
         )}
@@ -584,7 +621,7 @@ function LibraryCoverChoicesContent({
         </p>
       ) : field.automaticDecision ? (
         <p className="reviewer-unavailable-detail">
-          Chosen automatically. Only a better confirmed cover, or your choice, replaces it.
+          Chosen automatically. It changes again only for a fault, or when you choose.
         </p>
       ) : null}
       {coversLink ? (

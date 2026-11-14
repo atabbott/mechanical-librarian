@@ -24,6 +24,7 @@ from pydantic import (
 
 from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
+    ConfigSchemaVersion,
     ConfigurationError,
     LibraryConfiguration,
     MediaMountConfiguration,
@@ -359,6 +360,10 @@ class ReviewInput(_Closed):
     cover_avoid_promotional_text: StrictBool = False
     cover_avoid_tie_in_branding: StrictBool = False
     cover_prefer_minimal_composition: StrictBool = False
+    cover_current_protection: Literal["protected", "unprotected", "proposals_only"] = (
+        "protected"
+    )
+    cover_prefer_edition: StrictBool = False
     description_remove_marketing: StrictBool = True
     description_remove_sales_boasts: StrictBool = True
     description_remove_praise: StrictBool = True
@@ -380,7 +385,7 @@ class ReviewInput(_Closed):
 
 
 class ConfigurationInput(_Closed):
-    schema_version: Literal["config-v10"]
+    schema_version: ConfigSchemaVersion
     provider_recovery_generation: Annotated[StrictInt, Field(ge=1)]
     connections: Annotated[list[ConnectionInput], Field(min_length=1, max_length=32)]
     libraries: Annotated[list[LibraryInput], Field(min_length=1, max_length=128)]
@@ -463,6 +468,8 @@ def load_configuration_document(payload: bytes) -> ApplicationConfiguration:
                 cover_avoid_promotional_text=value.review.cover_avoid_promotional_text,
                 cover_avoid_tie_in_branding=value.review.cover_avoid_tie_in_branding,
                 cover_prefer_minimal_composition=value.review.cover_prefer_minimal_composition,
+                cover_current_protection=value.review.cover_current_protection,
+                cover_prefer_edition=value.review.cover_prefer_edition,
                 description_remove_marketing=value.review.description_remove_marketing,
                 description_remove_sales_boasts=value.review.description_remove_sales_boasts,
                 description_remove_praise=value.review.description_remove_praise,

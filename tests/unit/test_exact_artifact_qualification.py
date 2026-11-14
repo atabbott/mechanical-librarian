@@ -17,6 +17,7 @@ from zipfile import ZipFile
 import pytest
 import scripts.qualify_exact_artifact as qualifier_module
 from scripts.qualify_exact_artifact import (
+    EXACT_ARTIFACT_EVIDENCE_SCHEMA,
     QualificationFailure,
     _decode_stdout,
     _qualification_environment,
@@ -614,7 +615,7 @@ def test_a_broken_narrative_stream_cannot_suppress_the_evidence_record(
 
     assert json.loads(capsys.readouterr().err) == {
         "reason": "installed_test_suite_failed",
-        "schema": "exact-artifact-evidence-v4",
+        "schema": EXACT_ARTIFACT_EVIDENCE_SCHEMA,
         "status": "failed",
     }
 
@@ -641,7 +642,7 @@ def test_the_narrative_diagnosis_stays_out_of_the_evidence_record(
     assert "/runner/work/checkout/tests/test_probe.py" in captured.out
     assert json.loads(captured.err) == {
         "reason": "installed_test_suite_failed",
-        "schema": "exact-artifact-evidence-v4",
+        "schema": EXACT_ARTIFACT_EVIDENCE_SCHEMA,
         "status": "failed",
     }
 

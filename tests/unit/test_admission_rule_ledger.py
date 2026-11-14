@@ -1634,8 +1634,13 @@ def test_the_attention_child_matches_the_cold_start_report_on_an_empty_database(
 
 
 def test_the_attention_child_drops_a_cover_only_case_without_covers(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # A held cover asks; a suggested one would not be attention (#1363 S9).
+    from mechanical_librarian.application import cover_policy
+    from tests.support.cover_producers import held_measured_stage
+
+    monkeypatch.setattr(cover_policy, "elect_measured_covers", held_measured_stage)
     database = tmp_path / "application.sqlite3"
     repository = open_repository(database)
     attention_work = _bibliographic_report(
@@ -2972,7 +2977,7 @@ def _levels_store(path: Path, reports: Sequence[str]) -> Path:
 
 
 def _predecessor(report_json: str) -> str:
-    """The same report as v79 wrote it: no retained refused answers."""
+    """The same report as v80 wrote it: no retained refused answers."""
     from mechanical_librarian.domain.metadata_report import (
         canonical_json,
         report_content_address,
@@ -2984,7 +2989,7 @@ def _predecessor(report_json: str) -> str:
         assert provider.pop("identity_refused_truncated") == 0
         for lane in provider["lanes"]:
             assert lane.pop("identity_refused_new") == []
-    data["schema_version"] = "metadata-report-v79"
+    data["schema_version"] = "metadata-report-v80"
     data.pop("report_id")
     data["report_id"] = report_content_address(data)
     return canonical_json(data)

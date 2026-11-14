@@ -10,8 +10,12 @@ from pathlib import Path
 
 import pytest
 
+from mechanical_librarian.application.configuration import CONFIG_SCHEMA
 from mechanical_librarian.bootstrap import container, container_health
 from mechanical_librarian.bootstrap.container_health import HEALTHY, check, main
+from mechanical_librarian.infrastructure.settings_authority import (
+    REVIEW_BOOTSTRAP_SCHEMA,
+)
 from tests.support.ports import ReservedPort
 from tests.support.tls import synthetic_tls_identity
 
@@ -84,7 +88,7 @@ def _configuration(
     config.write_text(
         json.dumps(
             {
-                "schema_version": "config-v10",
+                "schema_version": CONFIG_SCHEMA,
                 "provider_recovery_generation": 1,
                 "connections": [
                     {
@@ -267,7 +271,7 @@ def test_readiness_selects_actual_listener_transport(
             config.unlink()
             review.pop("owner_password_hash_file")
             bootstrap.write_text(
-                json.dumps({"schema_version": "review-bootstrap-v2", **review})
+                json.dumps({"schema_version": REVIEW_BOOTSTRAP_SCHEMA, **review})
             )
             bootstrap.chmod(0o600)
         else:

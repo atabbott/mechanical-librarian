@@ -4,7 +4,7 @@
 checkout's code, never the snapshot's own source: the levels exist only here
 (ADR-0096), so an own-source replay cannot evaluate them. Each report is read
 from the snapshot as stored and parsed by the current report parser. A report
-one schema behind (``metadata-report-v79``) is upgraded with the closed
+one schema behind (``metadata-report-v80``) is upgraded with the closed
 defaults the current schema added: no retained refused WORK answers, none
 truncated, and no refused identity added by any lane. A report on any other
 schema is counted as not replayed, never guessed at.
@@ -84,7 +84,7 @@ FIELD_COUNTS = ("changed", "gained", "substituted", "would_admit")
 FIELDS = tuple(LEVEL_OFFER_DESTINATIONS)
 NOT_REPLAYED = ("schema_unsupported", "replay_failed")
 # The one predecessor schema whose upgrade is a closed set of defaults.
-PREDECESSOR_SCHEMA = "metadata-report-v79"
+PREDECESSOR_SCHEMA = "metadata-report-v80"
 NOT_ESTIMABLE = "not estimable"
 
 _CURRENT_REPORTS_SQL = (
@@ -131,17 +131,17 @@ LevelsReader = Callable[[Path], LevelsProbe]
 
 
 def upgrade_predecessor(document: Mapping[str, object]) -> str:
-    """A v79 report as v80 with the closed defaults v80 added (#1355).
+    """A v80 report as v81 with the closed defaults v81 added (#1355).
 
-    v80 added, per provider observation, ``identity_refused_candidates`` and
+    v81 added, per provider observation, ``identity_refused_candidates`` and
     ``identity_refused_truncated``, and per lane ``identity_refused_new``. A
-    v79 report retained no refused answer, so each is empty. The report's
+    v80 report retained no refused answer, so each is empty. The report's
     content address is recomputed over the upgraded document.
     """
     data = cast("dict[str, object]", json.loads(json.dumps(document)))
     for provider in ledger._dicts(data["providers"]):
         if "identity_refused_candidates" in provider:
-            raise ValueError("predecessor report already carries a v80 field")
+            raise ValueError("predecessor report already carries a v81 field")
         provider["identity_refused_candidates"] = []
         provider["identity_refused_truncated"] = 0
         for lane in ledger._dicts(provider["lanes"]):

@@ -10,7 +10,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
-from typing import Final, Mapping
+from typing import Final, Literal, Mapping
 
 from mechanical_librarian.domain.audiobook_decision_qualification import (
     F46_PASSING_AUTOMATIC_OPTIONS,
@@ -21,7 +21,8 @@ from mechanical_librarian.domain.rich_metadata_qualification import (
 )
 
 
-POLICY_SCHEMA_VERSION: Final = "metadata-policy-profile-v3"
+MetadataPolicyProfileSchema = Literal["metadata-policy-profile-v3"]
+POLICY_SCHEMA_VERSION: Final[MetadataPolicyProfileSchema] = "metadata-policy-profile-v3"
 DESTINATIONS: Final = ("ask", "ignore", "automatic", "unsupported")
 
 # The product catalogue is deliberately closed.  A destination is an owner
@@ -39,7 +40,7 @@ OPTION_CATALOGUE: Final[dict[str, tuple[str, ...]]] = {
     "tags": ("off", "fill_empty", "add", "replace"),
     "description_fill": ("safe_plain_text", "google_visible_text", "replace_safe_plain_text"),
     "isbn_form": ("preserve_exact", "prefer_isbn13"),
-    "cover_order": ("fixed_source_order", "replace_if_strictly_better"),
+    "cover_order": ("fixed_source_order",),
     "asin": ("preserve_exact", "ebook_manifestation"),
     "explicit": ("unsupported", "adult_product"),
 }
@@ -64,9 +65,11 @@ DEFAULT_OPTIONS: Final = {
 # The shipped qualification envelope is deliberately closed.  This is a
 # category-level availability hint for the notebook; authority is admitted
 # only by the exact option/bundle manifest in ``automatic_decision``.
+# Cover order is qualified by the separate cover election manifest; it once
+# entered this set only through the retired F46 cover replacement (#1363).
 QUALIFIED_AUTOMATIC: Final[frozenset[str]] = frozenset({
     "title_layout", "date_precision", "language_rendering",
-    "contributor_names", "publisher_preference",
+    "contributor_names", "publisher_preference", "cover_order",
 }) | frozenset(
     identity.split(":", 1)[0] for identity in F20_PASSING_AUTOMATIC_OPTIONS
 ) | frozenset(

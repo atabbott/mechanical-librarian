@@ -1551,9 +1551,16 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         fingerprint: str,
         entries: tuple[CatalogueEntry, ...],
         completed_at: int,
+        *,
+        cover_policy_reference: str | None = None,
     ) -> None:
         self._review_preparation.complete_review_discovery(
-            action, generation, fingerprint, entries, completed_at
+            action,
+            generation,
+            fingerprint,
+            entries,
+            completed_at,
+            cover_policy_reference=cover_policy_reference,
         )
 
     def advance_review_pipeline_action(

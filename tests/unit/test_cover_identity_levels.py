@@ -17,6 +17,9 @@ import pytest
 
 from mechanical_librarian.application import cover_identity
 from mechanical_librarian.application.cover_consideration import (
+    SCHEMA_VERSION as COVER_CONSIDERATION_SCHEMA,
+)
+from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
 )
 from mechanical_librarian.application.cover_identity import (
@@ -25,6 +28,9 @@ from mechanical_librarian.application.cover_identity import (
     classify_cover_identity,
 )
 from mechanical_librarian.application.cover_packets import prepare_cover_packet
+from mechanical_librarian.application.cover_policy import (
+    SCHEMA_VERSION as COVER_POLICY_REPORT_SCHEMA,
+)
 from mechanical_librarian.application.cover_policy import (
     CoverPolicy,
     adjudicate_cover_policy,
@@ -228,7 +234,6 @@ def test_the_level_rules_rotate_the_classifier_reference() -> None:
         "listed-edition-beside-another-source-contradiction:level-refused",
     } <= set(_CLASSIFIER_RULES)
     assert not any("level-shadow" in rule for rule in _CLASSIFIER_RULES)
-    assert cover_identity.SCHEMA_VERSION == "cover-identity-report-v2"
 
 
 def _listed_document(level: WorkIdentityLevel) -> tuple[MetadataReport, Any, Any]:
@@ -295,7 +300,7 @@ def test_the_cover_policy_accepts_a_level_match_and_embeds_the_level() -> None:
         == hashlib.sha256(identity.encode("utf-8")).hexdigest()
     )
     assert wide["identity_report_sha256"] != narrow["identity_report_sha256"]
-    assert wide["schema_version"] == "cover-policy-report-v3"
+    assert wide["schema_version"] == COVER_POLICY_REPORT_SCHEMA
     # A level match never elects: nothing is recommended at either level.
     assert wide["recommended_candidate_reference"] is None
     assert narrow["recommended_candidate_reference"] is None
@@ -492,7 +497,7 @@ def test_the_new_documents_read_back_and_each_predecessor_is_refused() -> None:
     )
     stored = cast("Any", service)._store.current[case_id]
     value = json.loads(stored)
-    assert value["schema_version"] == "cover-consideration-v7"
+    assert value["schema_version"] == COVER_CONSIDERATION_SCHEMA
     _validated_cover_consideration(stored)
 
     def refused(document: dict[str, Any]) -> None:
@@ -536,7 +541,7 @@ def test_the_new_documents_read_back_and_each_predecessor_is_refused() -> None:
                 references,
             )
     policy = json.loads(value["policy_report_document"])
-    assert policy["schema_version"] == "cover-policy-report-v3"
+    assert policy["schema_version"] == COVER_POLICY_REPORT_SCHEMA
 
 
 def _shadow_candidate(

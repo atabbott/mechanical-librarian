@@ -59,8 +59,32 @@ brackets are GitHub issues.
   old paths gets 404. Stored outcome sets keep `shadow-outcome-set-v11`; no
   rebuild is needed (#1739).
 
+## 0.33.0 — First library (in progress)
+
+- **Clean rebuild required** only for an install whose setup was interrupted.
+  Setup now asks for libraries before sources, so its stored state is
+  `setup-state-v5`, and startup refuses an unfinished `setup-state-v4` setup. A
+  finished install is unaffected (#1516).
+- First-run setup has six steps. Every book library and the sources that suit
+  it start ticked, setup checks each library's folder itself and asks only
+  about folders it cannot find, and Start opens Library signed in. Google Books
+  needs an API key while it is on, in setup and Settings: an install that has
+  Google Books on with no key must add a key or turn Google Books off before
+  Settings can be saved (#1516, #1765).
+- Library's preparation panel moves less. Its status line plays its wipe only
+  when the run's state changes, and its stage bars glide to each new count
+  unless reduced motion is set. Each recent completion is one row: the title
+  is the link, labelled Prepared or Couldn't finish. The rate reads in works a
+  minute (#1516).
+- Settings → Reviewer counts its example costs and cover requests in works, as
+  setup does (#1852).
+
 ## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
 
+- **Clean rebuild required.** Choosing, putting back or automatically
+  switching a cover over one Audiobookshelf already holds no longer fails
+  before it writes. The write binds the current cover's exact bytes, even when
+  they are not a readable image (#1853).
 - **Clean rebuild required.** A book Hardcover finds now offers its editions'
   covers in review. Only editions in the library's languages, with at least
   300 px on the short side, are fetched, so a library with no languages gets
@@ -253,6 +277,14 @@ brackets are GitHub issues.
   description or series, from source records with the book's title and author.
   None is chosen automatically. Each report now keeps the records a title and
   author search found but did not match, so they can be offered (#1355, #1780).
+- **Clean rebuild required.** Covers follow measured rules: a readable cover
+  with no fault is kept without asking, and a cover with a fault (wrong shape,
+  under 300 px, unreadable, a sharper copy, another language's edition) is
+  suggested in Covers with that fault named. A larger copy of the same picture,
+  such as the one in the book's EPUB, can replace a cover that is under 300 px
+  or much smaller. Policy's new Current covers says when a cover may be replaced; the
+  replace-if-larger cover option is gone. A configuration file must be
+  rewritten as `config-v11` (#1363).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 

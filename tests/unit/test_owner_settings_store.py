@@ -25,6 +25,7 @@ from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.owner_settings import FileOwnerSettingsRepository
 from mechanical_librarian.domain.owner_settings import (
+    OWNER_SETTINGS_SCHEMA,
     OwnerSettingsDocument,
     OwnerSettingsError,
     SecretWrite,
@@ -32,6 +33,7 @@ from mechanical_librarian.domain.owner_settings import (
 )
 from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
 from mechanical_librarian.domain.reviewer_access import (
+    REVIEWER_ACCESS_SCHEMA,
     OpenRouterTaskSelection,
     ReviewerAccessDocument,
 )
@@ -42,7 +44,7 @@ from tests.support.review_cases import record_terminal_work
 def _document(revision: int = 1) -> OwnerSettingsDocument:
     return OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v5",
+            "schema_version": OWNER_SETTINGS_SCHEMA,
             "revision": revision,
             "connections": [
                 {"name": "primary", "endpoint": "https://library.example.invalid"}
@@ -86,13 +88,13 @@ def test_owner_settings_predecessors_are_rejected_and_clean_v4_restarts(
     path = tmp_path / "owner-settings.sqlite3"
     connection = sqlite3.connect(path)
     store = _store(connection)
-    assert store.read().document.schema_version == "owner-settings-v5"
+    assert store.read().document.schema_version == OWNER_SETTINGS_SCHEMA
     connection.close()
 
     reopened = sqlite3.connect(path)
     try:
         assert OwnerSettingsStore(reopened).read().document.schema_version == (
-            "owner-settings-v5"
+            OWNER_SETTINGS_SCHEMA
         )
     finally:
         reopened.close()
@@ -177,6 +179,9 @@ def _cover_document(revision: int) -> OwnerSettingsDocument:
         "avoid_promotional_text": True,
         "avoid_tie_in_branding": True,
         "prefer_minimal_composition": True,
+        # Current covers round-trip with the rest (#1363).
+        "current_protection": "proposals_only",
+        "prefer_edition": True,
     }
     return OwnerSettingsDocument.model_validate(value)
 
@@ -216,7 +221,7 @@ def _seed_full_store(
 
 def _reviewer_document() -> ReviewerAccessDocument:
     return ReviewerAccessDocument(
-        schema_version="reviewer-access-v3",
+        schema_version=REVIEWER_ACCESS_SCHEMA,
         revision=2,
         cover_observation=OpenRouterTaskSelection(
             engine="openrouter", model="provider/model"
@@ -425,17 +430,18 @@ def test_library_display_name_rejects_noncanonical_text(display_name: str) -> No
 
 
 # The stored document a producer before #1466 wrote for `_document()`, byte for
-# byte: no library carries a `languages` key.
+# byte but for #1363's schema and cover keys: no library carries a `languages`
+# key.
 _PRE_LANGUAGES_STORED_DOCUMENT = (
     '{"connections":[{"adapter":"audiobookshelf","endpoint":"https://library.example.invalid","name":"primary"}],'
-    '"cover_preferences":{"avoid_promotional_text":false,"avoid_tie_in_branding":false,"prefer_minimal_composition":false},'
+    '"cover_preferences":{"avoid_promotional_text":false,"avoid_tie_in_branding":false,"current_protection":"protected","prefer_edition":false,"prefer_minimal_composition":false},'
     '"description_advice":{"automatic_application":false,"remove_marketing":true,"remove_praise":true,"remove_sales_boasts":true},'
     '"libraries":[{"connection":"primary","library_id":"library-1","media_kind":"ebook","mount":"books","name":"ebooks","policy_override":null,"provider_connections":["books","open"]}],'
     '"limits":{"audio_source_bytes":8589934592,"provider_response_bytes":65536,"source_archive_bytes":268435456,"target_response_bytes":1048576,"timeout_seconds":30},'
     '"matching":{"work_identity":"identifier"},'
     '"pending_restart":[],"provider_recovery_generation":1,'
     '"providers":[{"adapter":"google_books","cover_enabled":false,"enabled":true,"name":"books"},{"adapter":"open_library","contact_email":"owner@example.invalid","cover_enabled":false,"enabled":true,"name":"open"}],'
-    '"reduced_motion":"follow_system","revision":1,"schema_version":"owner-settings-v5",'
+    f'"reduced_motion":"follow_system","revision":1,"schema_version":"{OWNER_SETTINGS_SCHEMA}",'
     '"server":{"diagnostic_timings_enabled":false,"graceful_shutdown_seconds":30,"library_polling_interval_seconds":900,"session_lifetime_seconds":2592000}}'
 )
 

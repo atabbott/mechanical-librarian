@@ -41,6 +41,7 @@ from mechanical_librarian.adapters.providers.hardcover_metadata import (
     HardcoverMetadataProvider,
 )
 from mechanical_librarian.application.configuration import (
+    CONFIG_SCHEMA,
     ApplicationConfiguration,
     LibraryConfiguration,
     TargetConnectionConfiguration,
@@ -217,7 +218,7 @@ def test_generated_field_effect_configuration_admits_the_current_schema(
     def admit(path: Path) -> None:
         document = json.loads(path.read_text(encoding="utf-8"))
         admitted = ConfigurationInput.model_validate(document)
-        assert admitted.schema_version == "config-v10"
+        assert admitted.schema_version == CONFIG_SCHEMA
         raise _ConfigurationAdmitted
 
     monkeypatch.setattr(qualification, "load_configuration_file", admit)
@@ -1197,3 +1198,34 @@ def test_a_non_shape_capability_refusal_aborts_the_audiobook_qualification(
 
     # It stops at the refusal rather than writing the destinations after it.
     assert ["narrators"] == applied
+
+
+def test_no_product_import_precedes_the_import_root_selection() -> None:
+    """The qualifier imports the product only after choosing the artifact root.
+
+    An earlier `mechanical_librarian` import would bind the checkout's package,
+    so an installed-artifact run would exercise the source tree instead.
+    """
+    script = (
+        Path(__file__).parents[2] / "scripts" / "qualify_audiobookshelf_field_effect.py"
+    )
+    body = ast.parse(script.read_text(encoding="utf-8")).body
+    selection = next(
+        index
+        for index, node in enumerate(body)
+        if isinstance(node, ast.If) and "IMPORT_ROOT" in ast.unparse(node)
+    )
+    early = [
+        ast.unparse(node)
+        for node in body[:selection]
+        if isinstance(node, ast.Import | ast.ImportFrom)
+        and any(
+            name.startswith("mechanical_librarian")
+            for name in (
+                [alias.name for alias in node.names]
+                if isinstance(node, ast.Import)
+                else [node.module or ""]
+            )
+        )
+    ]
+    assert early == []

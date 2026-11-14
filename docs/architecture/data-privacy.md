@@ -99,7 +99,8 @@ must hash to the plan's own pre-value; it is bound to the plan in an
 append-only record and then kept under its SHA-256 in an owner-only
 `retained-covers` directory beside the recovery directory. The directory holds
 at most 2,000 originals or 2 GiB. When it is full, nothing older is dropped:
-the new switch stops and nothing is written. If the write ends any way
+a switch that would need room is suggested instead, and a write that races to
+a full store stops and writes nothing. If the write ends any way
 other than verified, or a newer switch pushes it off the list of the most
 recent 1,000 switches, a persisted, retryable obligation removes the copy,
 queued in the same transaction as that change. A retained original is never

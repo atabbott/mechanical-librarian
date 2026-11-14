@@ -7,7 +7,7 @@ import json
 import re
 import unicodedata
 from dataclasses import dataclass, replace
-from typing import Literal, Mapping, Self, cast
+from typing import Final, Literal, Mapping, Self, cast
 
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
@@ -28,6 +28,10 @@ from mechanical_librarian.domain.review_case import (
 )
 from mechanical_librarian.domain.validation import owner_text_value
 from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
+
+COVER_SELECTION_AUTHORITY_SCHEMA: Final = "cover-selection-authority-v3"
+
+HUMAN_DECISION_SCHEMA: Final = "human-decision-v4"
 
 _IDEMPOTENCY_KEY = re.compile(r"^[A-Za-z0-9._:-]{16,128}$")
 # ``reject`` is readable history only; the last two are F59's owner commands
@@ -58,7 +62,6 @@ RECORDED_ONLY_REASON = (
     "recorded, not applied — decided before audiobook writes were available"
 )
 HumanDecisionAction = Literal["accept", "keep_current"]
-HUMAN_DECISION_SCHEMA = "human-decision-v4"
 # Why a decision row exists when the owner did not make it: absent for every
 # owner choice; `matching_changed` for the reconciliation's valueless row that
 # asks a field again after Book matching changed its offer (#1355, S10).
@@ -168,7 +171,7 @@ def manual_cover_eligible(candidate: Mapping[str, object]) -> bool:
 def owner_cover_selection_kind(
     outcome: str, candidate: Mapping[str, object] | None
 ) -> tuple[str | None, str | None]:
-    """A ``cover-selection-authority-v3`` choice's candidate kind and retained plan.
+    """A cover-selection authority choice's candidate kind and retained plan.
 
     Only an accept names a kind: ``retained`` with its switch's plan for the
     original an automatic switch replaced, else ``candidate``. Keep and reject

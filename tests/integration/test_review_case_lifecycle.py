@@ -27,7 +27,10 @@ from mechanical_librarian.domain.field_effect import (
     FieldEffectOperation,
     project_decision_value,
 )
-from mechanical_librarian.domain.human_decision import HumanDecision
+from mechanical_librarian.domain.human_decision import (
+    COVER_SELECTION_AUTHORITY_SCHEMA,
+    HumanDecision,
+)
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -1609,7 +1612,7 @@ def test_owner_confirmed_unknown_cover_lifecycle(
             "SELECT document FROM cover_selection_authorities"
         ).fetchone()[0]
     )
-    assert retained["schema_version"] == "cover-selection-authority-v3"
+    assert retained["schema_version"] == COVER_SELECTION_AUTHORITY_SCHEMA
     assert retained["observed_identity"]["outcome"] == "unknown"
     assert (retained["candidate_kind"], retained["retained_plan_id"]) == (
         "candidate",

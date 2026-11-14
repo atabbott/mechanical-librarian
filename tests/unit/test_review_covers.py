@@ -32,9 +32,9 @@ from mechanical_librarian.application.review_covers import (
 from mechanical_librarian.application.review_web import ReviewWebError
 from mechanical_librarian.domain import field_effect
 from mechanical_librarian.domain.cover_evidence import CoverArtifact
+from mechanical_librarian.domain.human_decision import COVER_SELECTION_AUTHORITY_SCHEMA
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
-    TargetDestination,
     report_content_address,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
@@ -106,13 +106,10 @@ def _library(
     repository = open_repository(root / "application.sqlite3", cross_thread=True)
     switch = None
     if put_back:
-        current = next(
-            field.value
-            for field in base.target.fields
-            if field.destination is TargetDestination.COVER
-        )
+        # The switch wrote the bytes Audiobookshelf now serves, whatever the
+        # target value names (#1853).
         switch = automatic_switch(
-            base.target, _ORIGINAL.artifact_id, cast(str, current)
+            base.target, _ORIGINAL.artifact_id, "cover_" + _abs_digest(base)
         )
         base = MetadataReport.create(
             target=base.target,
@@ -275,25 +272,71 @@ def test_a_readable_current_cover_with_choices_is_kept(tmp_path: Path) -> None:
     assert str(item["cover"]["url"]).startswith("/api/v1/library/cover?")
 
 
-def test_an_unreadable_current_cover_asks_for_a_choice(tmp_path: Path) -> None:
+def test_an_unreadable_current_cover_with_a_candidate_is_suggested(
+    tmp_path: Path,
+) -> None:
     with _library(tmp_path, readable_current=False) as library:
         decide = _page(library.repository, "decide", None)
         kept = _page(library.repository, "kept", None)
-        # The same work Library's Needs attention lens counts.
+        # A suggestion is To decide, never Library's Needs attention (#1363, S9).
         assert (
             library.repository.read_review_library(
                 None, 25, 0, "needs_attention"
             ).attention_total
-            == 1
+            == 0
         )
 
     assert decide["counts"]["decide"] == 1
-    assert [item["group"] for item in decide["items"]] == ["choice"]
+    assert [item["group"] for item in decide["items"]] == ["proposal"]
+    assert decide["items"][0]["suggestion"] == {"reason": "unreadable"}
+    assert decide["items"][0]["hold"] is None
     # The library holds a cover it could not read, which is not "No cover".
     (item,) = decide["items"]
     assert item["cover"] is None
     assert item["unreadable_cover"] is True
     assert kept["items"] == []
+
+
+def test_a_suggestion_the_owner_cannot_choose_is_not_to_decide(tmp_path: Path) -> None:
+    """With no decision to record, a suggestion is listed only under All (M4)."""
+    with _library(tmp_path, readable_current=False) as library:
+        library.repository._connection.execute(
+            "UPDATE review_case_field_facts SET has_owner_decision_actions=0 "
+            "WHERE destination='cover'"
+        )
+        library.repository._connection.commit()
+        decide = _page(library.repository, "decide", None)
+        everything = _page(library.repository, "all", None)
+
+    assert decide["items"] == []
+    assert everything["counts"] == {"decide": 0, "kept": 0, "switched": 0, "all": 1}
+    (item,) = everything["items"]
+    assert (item["group"], item["choosable"], item["suggestion"]) == (
+        "none",
+        False,
+        None,
+    )
+
+
+def test_a_held_switch_carries_its_reason(tmp_path: Path) -> None:
+    """A hold's reason reaches its row's pill, never as a suggestion (M7)."""
+    with _library(tmp_path, readable_current=False) as library:
+        # A synthetic hold over the stored stage the page reads.
+        library.repository._connection.execute(
+            "DROP TRIGGER cover_considerations_no_update"
+        )
+        library.repository._connection.execute(
+            "UPDATE cover_considerations SET currentness_document=json_set("
+            "currentness_document,'$.cover_stage.outcome','hold',"
+            "'$.cover_stage.reason','title_names_other_work')"
+        )
+        library.repository._connection.commit()
+        everything = _page(library.repository, "all", None)
+
+    (item,) = everything["items"]
+    assert item["hold"] == {"reason": "title_names_other_work"}
+    assert item["suggestion"] is None
+    assert item["group"] != "proposal"
 
 
 def test_switched_lists_listed_switches_newest_first_and_never_a_released_one(
@@ -331,8 +374,10 @@ def test_switched_lists_listed_switches_newest_first_and_never_a_released_one(
             "at": 50,
             "before": None,
             "filled": True,
+            "language": None,
             "put_back": None,
             "put_back_offered": False,
+            "reason": None,
         }
         assert (
             replaced_cover_preview(library.repository, older, before["preview_sha256"])
@@ -691,7 +736,7 @@ def _owner_answer(
     document = {
         "candidate_kind": "candidate" if retained_plan is None else "retained",
         "retained_plan_id": retained_plan,
-        "schema_version": "cover-selection-authority-v3",
+        "schema_version": COVER_SELECTION_AUTHORITY_SCHEMA,
     }
     connection = library.repository._connection
     connection.commit()

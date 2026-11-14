@@ -58,6 +58,16 @@ from mechanical_librarian.application.configuration import ReviewWebConfiguratio
 from mechanical_librarian.application.contained_reviewer_contract import (
     CoverUnavailableReason,
 )
+from mechanical_librarian.application.continuous_field_effects import (
+    ContinuousFieldActivitySchemaVersion,
+)
+from mechanical_librarian.application.cover_consideration import (
+    CoverConsiderationSchemaVersion,
+)
+from mechanical_librarian.application.cover_policy import (
+    CoverPolicyReportSchemaVersion,
+    CoverPolicySchemaVersion,
+)
 from mechanical_librarian.application.field_effects import GuardedApplicationError
 from mechanical_librarian.application.live_updates import (
     LiveUpdateCapacityError,
@@ -69,11 +79,18 @@ from mechanical_librarian.application.metadata_policy import (
 )
 from mechanical_librarian.application.operations import OperationsError
 from mechanical_librarian.application.review_application import (
+    REVIEW_PREPARATION_SCHEMA,
     ReviewApplication,
     ReviewApplicationError,
+    ReviewPreparationSchemaVersion,
 )
 from mechanical_librarian.application.review_web import (
     AutomaticWithheldCondition,
+    ReviewCaseDetailSchemaVersion,
+    ReviewCaseEvidenceSchemaVersion,
+    ReviewCaseHistorySchemaVersion,
+    ReviewLibrarySchemaVersion,
+    ReviewReportDetailSchemaVersion,
     ReviewWebError,
 )
 from mechanical_librarian.application.reviewer_access import (
@@ -100,7 +117,13 @@ from mechanical_librarian.domain.field_effect import (
     FieldEffectError,
     valid_activity_transition_id,
 )
-from mechanical_librarian.domain.metadata_policy import MetadataPolicyError
+from mechanical_librarian.domain.metadata_policy import (
+    POLICY_SCHEMA_VERSION as METADATA_POLICY_PROFILE_SCHEMA,
+)
+from mechanical_librarian.domain.metadata_policy import (
+    MetadataPolicyError,
+    MetadataPolicyProfileSchema,
+)
 from mechanical_librarian.domain.owner_settings import (
     OwnerSettingsDocument,
     ProviderAdapter,
@@ -115,6 +138,7 @@ from mechanical_librarian.domain.reviewer_access import (
     DescriptionModelMetadata,
     OpenRouterModelId,
 )
+from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSchemaVersion
 from mechanical_librarian.interfaces.web import live_stream, review_frontend
 from mechanical_librarian.interfaces.web.react_assets import (
     ReactAssetBundle,
@@ -477,7 +501,9 @@ class _CoverCandidate(_ClosedModel):
     artifact_id: str
     # A retained candidate is the original an automatic switch replaced: the
     # owner's way back, with no identity, rank or reviewer evidence (#1363).
-    candidate_kind: Literal["candidate", "retained"]
+    # A larger copy is a larger original of the current cover's own picture,
+    # which the packet does not review on its own (#1363, Codex P2).
+    candidate_kind: Literal["candidate", "larger_copy", "retained"]
     deterministic_citations: list[str]
     deterministic_rank: int | None = Field(ge=0)
     deterministic_rank_key: list[int | str] | None = Field(min_length=7, max_length=7)
@@ -530,8 +556,54 @@ class _CoverIncumbent(_ClosedModel):
 class _CoverPolicyPreferences(_ClosedModel):
     avoid_promotional_text: bool
     avoid_tie_in_branding: bool
+    current_protection: Literal["protected", "unprotected", "proposals_only"]
+    prefer_edition: bool
     prefer_minimal_composition: bool
-    schema_version: Literal["cover-policy-v1"]
+    schema_version: CoverPolicySchemaVersion
+
+
+_CoverStageReason = Literal[
+    "title_names_other_work",
+    "unreadable",
+    "wrong_shape",
+    "below_floor",
+    "edition_language",
+    "sharper_copy",
+    "edition_preference",
+]
+
+
+class _CoverStageGroup(_ClosedModel):
+    members: list[str] = Field(min_length=2, max_length=14)
+    representative: str
+
+
+class _CoverStageExclusion(_ClosedModel):
+    exclusion: Literal[
+        "wrong_shape", "below_floor", "edition_language", "omnibus_volume"
+    ]
+    reference: str
+
+
+class _CoverStage(_ClosedModel):
+    choice: str | None
+    edition_preferred: bool
+    exclusions: list[_CoverStageExclusion] = Field(max_length=13)
+    groups: list[_CoverStageGroup] = Field(max_length=13)
+    issues: list[
+        Literal[
+            "title_names_other_work",
+            "unreadable",
+            "wrong_shape",
+            "below_floor",
+            "edition_language",
+            "sharper_copy",
+        ]
+    ] = Field(max_length=6)
+    # The edition language a reason names, only when that is an issue.
+    language: str | None = Field(max_length=280)
+    outcome: Literal["keep", "replace", "suggest", "hold", "fill", "empty"]
+    reason: _CoverStageReason | None
 
 
 class _CoverPolicyReport(_ClosedModel):
@@ -550,13 +622,15 @@ class _CoverPolicyReport(_ClosedModel):
     policy_reference: str
     reasons: list[Annotated[str, Field(max_length=128)]] = Field(max_length=32)
     recommended_candidate_reference: str | None
-    schema_version: Literal["cover-policy-report-v3"]
+    schema_version: CoverPolicyReportSchemaVersion
+    stage: _CoverStage
     status: Literal["recommended", "abstained"]
 
 
 class _CoverConsiderationResponse(_ClosedModel):
-    # Twelve reviewed previews and at most one retained original.
-    candidates: list[_CoverCandidate] = Field(max_length=13)
+    # Twelve reviewed previews, at most one larger copy of the current
+    # picture and at most one retained original.
+    candidates: list[_CoverCandidate] = Field(max_length=14)
     choice_contexts: list["_ChoiceContext"]
     consideration_id: str
     current: bool
@@ -573,7 +647,7 @@ class _CoverConsiderationResponse(_ClosedModel):
     reviewer_failure_code: OpenRouterPublicFailure | None = None
     reviewer_status: Literal["completed", "failed", "unavailable"]
     reviewer_unavailable_reason: CoverUnavailableReason | None
-    schema_version: Literal["cover-consideration-v7"]
+    schema_version: CoverConsiderationSchemaVersion
     supersedes_id: str | None
     target_fingerprint: str
 
@@ -839,7 +913,7 @@ class _CaseDetailResponse(_ClosedModel):
         max_length=MAX_HEALTH_OBSERVATIONS
     )
     review_case_id: str
-    schema_version: Literal["review-case-detail-v7"]
+    schema_version: ReviewCaseDetailSchemaVersion
     target: _TargetIdentity
     writes_consented: bool
 
@@ -913,7 +987,7 @@ class _EvidenceResponse(_ClosedModel):
     missing_lineage_count: int = Field(ge=0, le=10_000)
     next_cursor: str | None
     review_case_id: str
-    schema_version: Literal["review-case-evidence-v5"]
+    schema_version: ReviewCaseEvidenceSchemaVersion
     source_ledger: list["_ProviderOutcome"] = Field(max_length=100)
 
 
@@ -1048,7 +1122,7 @@ class _HistoryResponse(_ClosedModel):
     ] = Field(max_length=150)
     next_cursor: str | None
     review_case_id: str
-    schema_version: Literal["review-case-history-v3"]
+    schema_version: ReviewCaseHistorySchemaVersion
 
 
 class _SessionResponse(_ClosedModel):
@@ -1266,6 +1340,14 @@ class _CoverSwitch(_ClosedModel):
     put_back: _CoverPutBack | None
     # Put back is offered only while the work's comparison has the original.
     put_back_offered: bool
+    # The measured rule's reason for a switch and the edition language it
+    # names; a fill has neither (#1363).
+    language: str | None = Field(max_length=280)
+    reason: _CoverStageReason | None
+
+
+class _CoverRuleReason(_ClosedModel):
+    reason: _CoverStageReason
 
 
 class _CoverWork(_ClosedModel):
@@ -1273,8 +1355,12 @@ class _CoverWork(_ClosedModel):
     choosable: bool
     cover: _CoverPreview | None
     group: Literal["proposal", "choice", "kept", "auto", "none"]
+    # Why the measured rules hold this cover's switch (#1363).
+    hold: _CoverRuleReason | None
     media_kind: _MediaKind
     review_case_id: str
+    # Why the measured rules suggest switching this cover (#1363).
+    suggestion: _CoverRuleReason | None
     switched: _CoverSwitch | None
     title: str
     # The library holds a cover that could not be read, as against no cover.
@@ -1436,7 +1522,7 @@ class _ReportDetailResponse(_ClosedModel):
     provider_evidence: list[_ReportProviderEvidence] = Field(max_length=1024)
     provider_evidence_truncated: bool
     report_id: str = Field(max_length=128)
-    schema_version: Literal["review-report-detail-v6"]
+    schema_version: ReviewReportDetailSchemaVersion
     title: str = Field(max_length=1024)
 
     @model_validator(mode="after")
@@ -1481,7 +1567,7 @@ class _LibraryResponse(_ClosedModel):
     # how `review-library-v1` gained a required `media_health` member and stayed
     # v1; the literal makes the declared version and the served shape the same
     # statement, and publishes it in the OpenAPI a client is built from.
-    schema_version: Literal["review-library-v5"]
+    schema_version: ReviewLibrarySchemaVersion
 
 
 class _AttentionItem(_ClosedModel):
@@ -1730,7 +1816,7 @@ class _ActivityResponse(_ClosedModel):
     provider_recovery: list[_ProviderRecoveryActivity] = Field(
         default_factory=list, max_length=100
     )
-    schema_version: Literal["continuous-field-activity-v3"]
+    schema_version: ContinuousFieldActivitySchemaVersion
     suspensions: list[_ActivitySuspension]
     waiting: _ActivityWaitingReasons
 
@@ -1893,7 +1979,7 @@ class _PreparationResponse(_ClosedModel):
     first_boot_works: int | None = Field(default=None, ge=0)
     presentation: _PreparationPresentation | None = None
     provider_throttling: _PreparationThrottling | None = None
-    schema_version: Literal["review-preparation-v2"] = "review-preparation-v2"
+    schema_version: ReviewPreparationSchemaVersion = REVIEW_PREPARATION_SCHEMA
 
 
 class _CoverConfirmation(_ClosedModel):
@@ -1935,14 +2021,14 @@ class _PolicyDraftRequest(_ClosedModel):
 
 class _PolicyDraftResponse(_ClosedModel):
     policy_id: str
-    schema_version: Literal["metadata-policy-profile-v3"] = "metadata-policy-profile-v3"
+    schema_version: MetadataPolicyProfileSchema = METADATA_POLICY_PROFILE_SCHEMA
 
 
 class _PolicyProfile(_ClosedModel):
     destinations: dict[StrictStr, StrictStr] = Field(max_length=16)
     name: StrictStr = Field(min_length=1, max_length=80)
     options: dict[StrictStr, StrictStr] = Field(max_length=16)
-    schema_version: Literal["metadata-policy-profile-v3"]
+    schema_version: MetadataPolicyProfileSchema
 
 
 class _RichQualificationBase(_ClosedModel):
@@ -2039,7 +2125,7 @@ class _CoverQualification(_RichQualificationBase):
     automatic_available: Literal[True]
     disposition: Literal["pass"]
     field: Literal["cover_order"]
-    option: Literal["fixed_source_order", "replace_if_strictly_better"]
+    option: Literal["fixed_source_order"]
 
 
 class _TitleEbookQualification(_RichQualificationBase):
@@ -2211,7 +2297,6 @@ class _AudiobookQualification(_ClosedModel):
         "replace_descriptive",
         "prefer_isbn13",
         "adult_product",
-        "replace_if_strictly_better",
     ]
     operation: Literal[
         "fill",
@@ -2453,7 +2538,7 @@ class _PreviewOutcomeSetResponse(_ClosedModel):
     report_id: str
     resolved_policy_id: str
     review_case_id: str
-    schema_version: Literal["shadow-outcome-set-v11"]
+    schema_version: ShadowOutcomeSchemaVersion
     source_decision_set_id: str
     target_fingerprint: str
 

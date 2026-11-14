@@ -56,13 +56,8 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
 )
 from mechanical_librarian.domain.review_case import (
-    REVIEW_CASE_SCHEMA,
     ReviewCase,
     current_offer,
-)
-from mechanical_librarian.domain.shadow_decision import (
-    DECISION_POLICY_VERSION,
-    DECISION_SET_SCHEMA,
 )
 from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 from tests.support.owner_values import OwnerStore
@@ -426,9 +421,8 @@ def test_v4_reads_back_and_v3_is_refused(tmp_path: Path) -> None:
     try:
         decision = choose(store, SYNOPSIS)
         document = decision.to_data()
-        assert (
-            document["schema_version"] == HUMAN_DECISION_SCHEMA == "human-decision-v4"
-        )
+        # The literal is pinned once, in tests/architecture/test_document_versions.py.
+        assert document["schema_version"] == HUMAN_DECISION_SCHEMA
         assert document["cause"] is None
         assert HumanDecision.from_json(decision.to_json()) == decision
         v3 = {
@@ -444,13 +438,6 @@ def test_v4_reads_back_and_v3_is_refused(tmp_path: Path) -> None:
                 resealed(decision, **changed)
     finally:
         store.repository.close()
-
-
-def test_the_case_and_decision_versions_do_not_move() -> None:
-    """Guard: binding the offer changes the human-decision document only."""
-    assert REVIEW_CASE_SCHEMA == "review-case-v2"
-    assert DECISION_SET_SCHEMA == "shadow-decision-set-v1"
-    assert DECISION_POLICY_VERSION == "deterministic-shadow-decision-policy-v27"
 
 
 # --- 17a: the digest is refused at the write and at readback ------------------

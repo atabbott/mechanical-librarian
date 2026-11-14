@@ -745,8 +745,11 @@ export interface CoverObservationView {
 }
 export interface CoverCandidateView {
   artifactId: string
-  /** `retained` is the original an automatic switch replaced: Put back (#1363). */
-  candidateKind: 'candidate' | 'retained'
+  /**
+   * `retained` is the original an automatic switch replaced: Put back (#1363).
+   * `larger_copy` is a larger original of the current cover's own picture.
+   */
+  candidateKind: 'candidate' | 'larger_copy' | 'retained'
   /** Why a proposed cover cannot be chosen: a source says it belongs to a different book or edition, or names a different author or contributor (#1790). */
   contradiction?: 'book' | 'edition' | 'creator'
   deterministicCitations: readonly string[]
@@ -784,6 +787,8 @@ export interface CoverConsiderationView {
   }
   omissions: readonly Readonly<Record<string, unknown>>[]
   policy: Readonly<Record<string, unknown>> | null
+  /** The measured cover rules' stage from the policy report (#1363). */
+  stage?: Pick<ResponseSchema<'_CoverStage'>, 'language' | 'outcome' | 'reason'> | null
   providerFetching: boolean
   ready: boolean
   policyPreferences: {
@@ -2791,8 +2796,12 @@ const mapReviewField = (field: ReviewFieldDto): ReviewFieldView => ({
   manualReturnFailed: field.manual_return_failed,
   navigationRole: field.navigation_role,
   // An empty or unreadable current value says which, in Audiobookshelf's
-  // name, rather than one word for both (#1286).
-  currentValue: targetValueText(field.current.state, field.current.value),
+  // name, rather than one word for both (#1286). A cover's value is an
+  // artifact id, so it reads as the current cover, never as the id (#1363).
+  currentValue:
+    field.destination === 'cover' && field.current.state === 'value'
+      ? 'Current cover'
+      : targetValueText(field.current.state, field.current.value),
   currentRaw: field.current.value,
   proposedValues: field.proposed_values,
   choiceContexts: mapChoiceContexts(field.choice_contexts, field.proposed_values.length),
@@ -3125,9 +3134,12 @@ export const mapCoverConsideration = (value: CoverConsiderationDto): CoverConsid
     const matchReason = candidate.match_reason
     if (matchReason !== null && (incumbent || identity.outcome === 'conflict'))
       throw new ApiError(502, 'contradictory_cover_match_reason')
+    // A larger copy is never the current cover and always confirmed (#1363).
+    if (candidate.candidate_kind === 'larger_copy' && (incumbent || !confirmed))
+      throw new ApiError(502, 'contradictory_cover_identity')
     return {
       artifactId: candidate.artifact_id,
-      candidateKind: 'candidate',
+      candidateKind: candidate.candidate_kind,
       ...(contradiction === undefined ? {} : { contradiction }),
       deterministicCitations: candidate.deterministic_citations,
       deterministicRank,
@@ -3284,6 +3296,14 @@ export const mapCoverConsideration = (value: CoverConsiderationDto): CoverConsid
     incumbent: { reference: value.incumbent.reference, state: incumbentState },
     omissions: value.omissions,
     policy,
+    stage:
+      policy === null
+        ? null
+        : {
+            language: policy.stage.language,
+            outcome: policy.stage.outcome,
+            reason: policy.stage.reason,
+          },
     providerFetching,
     ready,
     policyPreferences: {

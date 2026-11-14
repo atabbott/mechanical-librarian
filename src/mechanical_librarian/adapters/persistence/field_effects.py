@@ -51,6 +51,8 @@ from typing import cast
 
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
 from mechanical_librarian.adapters.persistence.field_effect_validation import (
+    FIELD_EFFECT_CONSENT_STATE_SCHEMA,
+    FIELD_EFFECT_MANUAL_HOLD_SCHEMA,
     _consent_state,
 )
 from mechanical_librarian.adapters.persistence.retained_covers import (
@@ -337,7 +339,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                                 "basis": raw["basis"],
                                 "consent": consent.to_data(),
                                 "current": False,
-                                "schema_version": "field-effect-consent-state-v2",
+                                "schema_version": FIELD_EFFECT_CONSENT_STATE_SCHEMA,
                                 "updated_at": granted_at,
                             }
                         )
@@ -361,7 +363,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                             "basis": {"kind": "owner_grant"},
                             "consent": consent.to_data(),
                             "current": True,
-                            "schema_version": "field-effect-consent-state-v2",
+                            "schema_version": FIELD_EFFECT_CONSENT_STATE_SCHEMA,
                             "updated_at": granted_at,
                         }
                     )
@@ -443,7 +445,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                                     "basis": raw["basis"],
                                     "consent": consent.to_data(),
                                     "current": False,
-                                    "schema_version": "field-effect-consent-state-v2",
+                                    "schema_version": FIELD_EFFECT_CONSENT_STATE_SCHEMA,
                                     "updated_at": granted_at,
                                 }
                             ),
@@ -480,7 +482,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                                         "basis": raw["basis"],
                                         "consent": consent.to_data(),
                                         "current": False,
-                                        "schema_version": "field-effect-consent-state-v2",
+                                        "schema_version": FIELD_EFFECT_CONSENT_STATE_SCHEMA,
                                         "updated_at": granted_at,
                                     }
                                 ),
@@ -508,7 +510,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                                     "basis": {"kind": "owner_grant"},
                                     "consent": consent.to_data(),
                                     "current": True,
-                                    "schema_version": "field-effect-consent-state-v2",
+                                    "schema_version": FIELD_EFFECT_CONSENT_STATE_SCHEMA,
                                     "updated_at": granted_at,
                                 }
                             ),
@@ -628,7 +630,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                         "basis": raw["basis"],
                         "consent": consent.to_data(),
                         "current": False,
-                        "schema_version": "field-effect-consent-state-v2",
+                        "schema_version": FIELD_EFFECT_CONSENT_STATE_SCHEMA,
                         "updated_at": changed_at,
                     }
                 )
@@ -729,7 +731,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                                 },
                                 "consent": carried.to_data(),
                                 "current": True,
-                                "schema_version": "field-effect-consent-state-v2",
+                                "schema_version": FIELD_EFFECT_CONSENT_STATE_SCHEMA,
                                 "updated_at": activated_at,
                             }
                         ),
@@ -750,7 +752,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 "decision_id": decision_id,
                 "pending_return": None,
                 "review_case_id": review_case_id,
-                "schema_version": "field-effect-manual-hold-v2",
+                "schema_version": FIELD_EFFECT_MANUAL_HOLD_SCHEMA,
                 "updated_at": changed_at,
             }
         )
@@ -926,7 +928,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                     "destination": destination,
                     "review_case_id": review_case_id,
                     "pending_return": None,
-                    "schema_version": "field-effect-manual-hold-v2",
+                    "schema_version": FIELD_EFFECT_MANUAL_HOLD_SCHEMA,
                     "updated_at": changed_at,
                 }
             )
@@ -1241,7 +1243,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                         else None,
                         "consent": member.consent.to_data(),
                         "current": True,
-                        "schema_version": "field-effect-consent-state-v2",
+                        "schema_version": FIELD_EFFECT_CONSENT_STATE_SCHEMA,
                         "updated_at": member.consent.granted_at,
                     }
                 )

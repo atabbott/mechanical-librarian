@@ -29,6 +29,9 @@ from mechanical_librarian.adapters.persistence.metadata_reports import open_repo
 from mechanical_librarian.application.metadata_report import (
     MetadataReportError,
 )
+from mechanical_librarian.domain.cover_automatic_decision import (
+    SCHEMA_VERSION as COVER_AUTOMATIC_DECISION_SCHEMA,
+)
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
     CoverSource,
@@ -37,6 +40,7 @@ from mechanical_librarian.domain.cover_evidence import (
     cover_source_id,
 )
 from mechanical_librarian.domain.field_effect import FieldEffectError
+from mechanical_librarian.domain.human_decision import COVER_SELECTION_AUTHORITY_SCHEMA
 from mechanical_librarian.domain.metadata_report import (
     AudioDiscoveryTitle,
     FileFacts,
@@ -486,7 +490,14 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             ),
         ),
         (
-            "immediate previous v78",
+            "previous v78",
+            lambda connection: create_prior_schema(
+                connection,
+                "metadata-report-v78",
+            ),
+        ),
+        (
+            "immediate previous v79",
             lambda connection: create_prior_schema(
                 connection,
                 PREVIOUS_REPORT_SCHEMA,
@@ -2460,7 +2471,7 @@ def test_current_schema_cannot_relabel_falsely_valid_predecessor_title() -> None
     document["library_languages"] = []
     # v61 added each provider's refused products (#1307); an empty record
     # keeps the falsely valid title the first thing refused.
-    # v64 added each provider's audio editions (#962), and v80 its refused
+    # v64 added each provider's audio editions (#962), and v81 its refused
     # WORK answers and each lane's refused identities (#1355).
     for provider in document["providers"]:
         provider["refused_products"] = []
@@ -2670,12 +2681,16 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
                     ).read_text()
                 )["cover_considerations_sql"],
             )
-        # Their owner selection CHECK named v2, before #1363's Put back.
+        # Their owner selection CHECK named v2, before #1363's Put back, and
+        # their automatic one decision v3, before the measured rules' reason.
         old.setattr(
             persistence_schema,
             "_COVER_SELECTION_AUTHORITIES_SQL",
             persistence_schema._COVER_SELECTION_AUTHORITIES_SQL.replace(
-                "'cover-selection-authority-v3'", "'cover-selection-authority-v2'"
+                f"'{COVER_SELECTION_AUTHORITY_SCHEMA}'",
+                "'cover-selection-authority-v2'",
+            ).replace(
+                f"'{COVER_AUTOMATIC_DECISION_SCHEMA}'", "'cover-automatic-decision-v3'"
             ),
         )
         # The earlier producers predate #1245's report discriminator; the v20

@@ -5,6 +5,7 @@ import json
 import pytest
 
 from mechanical_librarian.domain.human_decision import (
+    HUMAN_DECISION_SCHEMA,
     HumanDecision,
     HumanDecisionError,
     OwnerSuggestion,
@@ -79,7 +80,7 @@ def test_all_five_outcomes_are_canonical_and_exact_version_bound(
         occurred_at=1_000,
     )
     assert HumanDecision.from_json(decision.to_json()) == decision
-    assert json.loads(decision.to_json())["schema_version"] == "human-decision-v4"
+    assert json.loads(decision.to_json())["schema_version"] == HUMAN_DECISION_SCHEMA
     decision.validate_for(case)
     decision.validate_new_for(case)
 

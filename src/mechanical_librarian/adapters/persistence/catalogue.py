@@ -9,7 +9,7 @@ import stat
 import sys
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator, cast
+from typing import Final, Iterator, cast
 from urllib.parse import quote
 
 from mechanical_librarian.adapters.persistence.binding import (
@@ -26,9 +26,10 @@ from mechanical_librarian.application.catalogue import (
     CatalogueStaleError,
 )
 
-_SCHEMA = "catalogue-v2"
+CATALOGUE_SCHEMA: Final = "catalogue-v2"
+
 _SQL = (
-    "CREATE TABLE catalogue_schema (version TEXT PRIMARY KEY CHECK (version = 'catalogue-v2'));",
+    f"CREATE TABLE catalogue_schema (version TEXT PRIMARY KEY CHECK (version = '{CATALOGUE_SCHEMA}'));",
     "CREATE TABLE catalogue_generations (generation INTEGER PRIMARY KEY, fingerprint TEXT NOT NULL CHECK(length(fingerprint)=64), current INTEGER NOT NULL CHECK(current IN (0,1)), CHECK(current = 0 OR generation > 0));",
     "CREATE UNIQUE INDEX catalogue_one_current ON catalogue_generations(current) WHERE current = 1;",
     "CREATE TABLE catalogue_entries (generation INTEGER NOT NULL REFERENCES catalogue_generations(generation), connection TEXT NOT NULL, library TEXT NOT NULL, library_id TEXT NOT NULL, item_id TEXT NOT NULL, updated_at INTEGER NOT NULL, title TEXT NOT NULL, authors TEXT NOT NULL, has_ebook INTEGER NOT NULL CHECK(has_ebook IN (0,1)), has_audio INTEGER NOT NULL CHECK(has_audio IN (0,1)), classification TEXT NOT NULL CHECK(classification IN ('none','singular-supported','needs-attention')), file_identity TEXT, service_path TEXT, format TEXT, mount TEXT, source_fingerprint TEXT NOT NULL CHECK(length(source_fingerprint)=64 AND source_fingerprint NOT GLOB '*[^0-9a-f]*'), PRIMARY KEY(generation, connection, library, item_id));",
@@ -95,7 +96,7 @@ def _validate_schema(
             for actual, expected_item in zip(rows, expected, strict=True)
         )
         or connection.execute("SELECT version FROM catalogue_schema").fetchall()
-        != [(_SCHEMA,)]
+        != [(CATALOGUE_SCHEMA,)]
         or connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)]
         or connection.execute("PRAGMA foreign_key_check").fetchall()
     ):
@@ -217,7 +218,7 @@ class SQLiteCatalogueRepository:
                 for statement in _SQL:
                     self._connection.execute(statement)
                 self._connection.execute(
-                    "INSERT INTO catalogue_schema VALUES (?)", (_SCHEMA,)
+                    "INSERT INTO catalogue_schema VALUES (?)", (CATALOGUE_SCHEMA,)
                 )
                 self._connection.execute("COMMIT")
             except Exception:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import struct
 import zlib
@@ -21,6 +22,7 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverSourceState,
     cover_source_id,
 )
+from mechanical_librarian.domain.cover_rules import CoverMeasures
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -144,6 +146,16 @@ def _source(
     )
 
 
+def adapter_cover_value(item: str = "item-1") -> str:
+    """The target cover value the Audiobookshelf adapter states for a cover.
+
+    It is the digest of the cover's path, never of its bytes, so a write that
+    took it for the bytes' identity would bind nothing real (#1853).
+    """
+    path = f"/metadata/items/{item}/cover.jpg"
+    return hashlib.sha256(path.encode()).hexdigest()
+
+
 def _qualified_cover_report(
     root: Path,
     *,
@@ -155,10 +167,13 @@ def _qualified_cover_report(
     candidate_designation: CoverDesignation = CoverDesignation.EXACT_EDITION,
     typed_timeout: bool = False,
     readable_current: bool = True,
+    shared_measures: CoverMeasures | None = None,
 ) -> tuple[MetadataReport, object]:
     """`readable_current=False` leaves the current cover unread, so it asks.
 
-    A readable current cover is kept without asking (#1310).
+    A readable current cover is kept without asking (#1310). `shared_measures`
+    gives every image the same same-art measures, so the candidate shows the
+    current cover's picture too.
     """
     incumbent_payload = _preview(incumbent_index)
     candidate_payload = _preview(candidate_index)
@@ -175,6 +190,7 @@ def _qualified_cover_report(
         incumbent_payload,
         "image/png",
         *incumbent_dimensions,
+        measures=shared_measures,
     )
     incumbent_duplicate_artifact = (
         CoverArtifact.create(
@@ -182,6 +198,7 @@ def _qualified_cover_report(
             incumbent_payload,
             "image/png",
             *incumbent_duplicate_size,
+            measures=shared_measures,
         )
         if incumbent_duplicate_size is not None
         else incumbent_artifact
@@ -191,6 +208,7 @@ def _qualified_cover_report(
         candidate_payload,
         "image/png",
         *candidate_dimensions,
+        measures=shared_measures,
     )
     incumbent = replace(
         _source(1, incumbent_payload, incumbent=True),
@@ -237,7 +255,7 @@ def _qualified_cover_report(
         TargetField(
             value.destination,
             TargetFieldState.VALUE,
-            incumbent_artifact.artifact_id,
+            adapter_cover_value(),
         )
         if value.destination is TargetDestination.COVER
         else value
@@ -286,3 +304,24 @@ def _qualified_cover_report(
         assert source.artifact is not None
         artifacts.stage(source.artifact, original, payload)
     return report, evaluate_report(report)
+
+
+def held_measured_stage(*args: object, **kwargs: object) -> object:
+    """The measured stage, turned into a title hold."""
+    import dataclasses
+
+    from mechanical_librarian.domain.cover_rules import (
+        CoverIssue,
+        CoverOutcome,
+        elect_measured_covers,
+    )
+
+    election = elect_measured_covers(*args, **kwargs)  # type: ignore[arg-type]
+    return dataclasses.replace(
+        election,
+        outcome=CoverOutcome.HOLD,
+        choice=None,
+        issues=(CoverIssue.TITLE_NAMES_OTHER_WORK,),
+        reason=CoverIssue.TITLE_NAMES_OTHER_WORK,
+        edition_preferred=False,
+    )

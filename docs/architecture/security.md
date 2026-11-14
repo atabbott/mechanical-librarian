@@ -237,9 +237,9 @@ which enabling does not restore.
   responses. [Dispatch](../reference/configuration.md#dispatch) sends
   audiobooks only to `AUDIOBOOK_DISPATCH_ADAPTERS` and ebooks only to
   `EBOOK_DISPATCH_ADAPTERS`.
-- Retained refused WORK answers serve Book matching levels only; no live
-  reader, support bundle or diagnostic sees them, and no cover is fetched for
-  them ([refused work answers](../operations/metadata-report.md#refused-work-answers)).
+- Retained refused WORK answers serve Book matching levels only, never a live
+  reader, support bundle or diagnostic, and fetch no cover
+  ([refused work answers](../operations/metadata-report.md#refused-work-answers)).
 
 Per provider, where *5xx* means 500, 502, 503 and 504:
 
@@ -469,8 +469,8 @@ of two or more letters. Letter count and order still count, no NFKC,
 confusable mapping or other dot character applies, a fold that would merge two
 listed creators is not applied, and the fold never removes an agreement the
 unfolded comparison makes. Sidecar belonging compares creators exactly until
-#1418 (#1780). The fold is read only on ADR-0096's level path, at a wider
-`review.work_identity` level (#1355). Belonging never reads the level.
+#1418 (#1780). The fold is read only on ADR-0096's level path (#1355).
+Belonging never reads the level.
 
 Incumbent description HTML is rendered by the one provider renderer, which
 drops attributes and refuses event handlers and unbalanced markup; path and
@@ -589,11 +589,11 @@ reads an owner-entered value. Clearing, rollback and undo are not available
 An owner may choose a retained cover whose match is not confirmed, but not
 one with a positive contradiction.
 
-Saving Book matching is a CSRF-protected write with an optimistic revision. A
-decision binds its offer's digest. Until a case is checked at the saved level,
-its owner work-scope effects wait and new decisions refuse as `offer_changed`.
-A decision whose offer changed gets a valueless `matching_changed` row revoking
-its unclaimed authority; its pending effect, cover included, closes stale.
+Saving Book matching is a CSRF-protected, revision-checked write.
+Decisions bind their offer's digest. Until its case is checked at the saved
+level, an owner effect waits and a new decision refuses (`offer_changed`). A
+changed offer gets a valueless `matching_changed` row, and its pending effect,
+a cover's too, closes stale.
 
 The original an automatic switch replaced is a `retained` cover source: read
 locally from the owner-only retained store, never placed in a reviewer packet,
@@ -619,9 +619,12 @@ activate nothing. [Activation](../operations/review-case.md#policy-activation)
 is a CSRF-protected mutation bound to the expected active policy and exact
 draft, and old proposals then fail as stale.
 
-Automation replaces a populated cover only with a confirmed candidate
-against a confirmed incumbent, and any other automatic cover write needs a
-known-empty target. It replaces a populated ebook description only through
+Automation replaces a populated cover only for a fault the measured cover
+rules record, under Current covers, whose settings change stales any switch
+planned before it, and a qualification no release ships yet
+([ADR-0093](decisions/0093-measured-cover-rules-and-current-cover-protection.md)).
+Any other automatic cover write needs a known-empty target. It replaces a populated ebook
+description only through
 description advice with `description_automatic_application` on. Evidence
 never creates series, contributor, title or recording identity on its own;
 conflicts go to the owner, never to a write. The explicit flag is set only by

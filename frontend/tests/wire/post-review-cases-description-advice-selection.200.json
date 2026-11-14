@@ -4,26 +4,25 @@
     "confirmation": {
       "case": {
         "audiobook_review_scope": null,
+        "checking": false,
         "comparison_notices": [],
         "current": true,
-        "checking": false,
         "fields": [
           {
             "automatic_decision": null,
             "automatic_selection_sources": [],
-            "automatic_withheld_reason": null,
             "automatic_withheld_condition": null,
-            "earlier_automatic_value": null,
+            "automatic_withheld_reason": null,
             "choice_contexts": [
               {
                 "alternative_id": null,
                 "evidence": [],
                 "limitations": [],
+                "match_basis": null,
                 "rationale": "",
                 "recommendation": "no_recommendation",
                 "recommendation_reason": "",
-                "selection": "current",
-                "match_basis": null
+                "selection": "current"
               },
               {
                 "alternative_id": "alternative_1eefb174ae59e4445606ec7d8ab8cc8b3d1d66f84b61a78c9d8722d90605a9f7",
@@ -42,18 +41,17 @@
                   }
                 ],
                 "limitations": [],
+                "match_basis": null,
                 "rationale": "Hardcover",
                 "recommendation": "no_recommendation",
                 "recommendation_reason": "",
-                "selection": "proposed",
-                "match_basis": null
+                "selection": "proposed"
               }
             ],
             "classification": "needs_attention",
             "classification_cause": "review_needed",
             "classification_reason": "This field needs your review.",
             "corroboration_sources": [],
-            "offer_digest": "cd14d0d81af8a83722503509636cc98a6b6c5a6ed37a98140e2541259301cec5",
             "cover_consideration": null,
             "current": {
               "destination": "series",
@@ -66,20 +64,22 @@
             "description_advice": null,
             "destination": "series",
             "deterministic_disposition": "propose_change",
+            "earlier_automatic_value": null,
             "editable": true,
             "effect_capability": "unavailable",
             "human_decision": null,
             "inventory_role": "primary",
             "manual_hold": false,
             "manual_required": false,
-            "manual_return_requested": false,
             "manual_return_failed": false,
+            "manual_return_requested": false,
             "navigation_role": "attention",
             "needs_attention": true,
             "notices": ["unique_typed_candidate"],
+            "offer_digest": "7bb2254eb2ec85654cd922c61f3b9c87d23242a87f705c87901cef1065f9fe37",
             "owner_control": null,
             "preservation_only": false,
-            "proposal_id": "review_proposal_725655246d6755bd0299c76545f6d7b2e87710f1999d8771b78ce02de3e6ebae",
+            "proposal_id": "review_proposal_7645fe61646ac93d6cc65bdb90e4b544f1dcc3769fd90d6939dd14c0a5001ac0",
             "proposed_values": [
               {
                 "kind": "series",
@@ -101,19 +101,18 @@
           {
             "automatic_decision": null,
             "automatic_selection_sources": [],
-            "automatic_withheld_reason": null,
             "automatic_withheld_condition": null,
-            "earlier_automatic_value": null,
+            "automatic_withheld_reason": null,
             "choice_contexts": [
               {
                 "alternative_id": null,
                 "evidence": [],
                 "limitations": [],
+                "match_basis": null,
                 "rationale": "",
                 "recommendation": "no_recommendation",
                 "recommendation_reason": "",
-                "selection": "current",
-                "match_basis": null
+                "selection": "current"
               },
               {
                 "alternative_id": "alternative_e60dad4dce063390296b837737177625a2fd7143ffc557307666e08cd3b774af",
@@ -126,18 +125,17 @@
                   }
                 ],
                 "limitations": [],
+                "match_basis": null,
                 "rationale": "Hardcover",
                 "recommendation": "no_recommendation",
                 "recommendation_reason": "",
-                "selection": "proposed",
-                "match_basis": null
+                "selection": "proposed"
               }
             ],
             "classification": "needs_attention",
             "classification_cause": "review_needed",
             "classification_reason": "This field needs your review.",
             "corroboration_sources": [],
-            "offer_digest": "518d9e9781e90e6fbdc36289d2d8795d7deb5f3d7532a92ba4edfeb4665a0376",
             "cover_consideration": null,
             "current": {
               "destination": "genres",
@@ -150,17 +148,19 @@
             "description_advice": null,
             "destination": "genres",
             "deterministic_disposition": "propose_change",
+            "earlier_automatic_value": null,
             "editable": true,
             "effect_capability": "unavailable",
             "human_decision": null,
             "inventory_role": "primary",
             "manual_hold": false,
             "manual_required": false,
-            "manual_return_requested": false,
             "manual_return_failed": false,
+            "manual_return_requested": false,
             "navigation_role": "attention",
             "needs_attention": true,
             "notices": ["unique_typed_candidate"],
+            "offer_digest": "73ce63e53d96884eb1e227c95ce485b2e7d78508431771666691444f981deb33",
             "owner_control": {
               "entry": null,
               "subset": {
@@ -177,7 +177,7 @@
               "withdraw": null
             },
             "preservation_only": false,
-            "proposal_id": "review_proposal_8ab06abece773fdb1ce7de9ecf54fae4a2c8c65ae03eec84b08fe08c5e09f0a5",
+            "proposal_id": "review_proposal_d0d13456f99ff68b4cc4743ff6e15a54948239f1cf3d82ffac188d7799c8b41a",
             "proposed_values": [
               {
                 "kind": "list",
@@ -193,19 +193,18 @@
           {
             "automatic_decision": null,
             "automatic_selection_sources": [],
-            "automatic_withheld_reason": null,
             "automatic_withheld_condition": null,
-            "earlier_automatic_value": null,
+            "automatic_withheld_reason": null,
             "choice_contexts": [
               {
                 "alternative_id": null,
                 "evidence": [],
                 "limitations": [],
+                "match_basis": null,
                 "rationale": "",
                 "recommendation": "no_recommendation",
                 "recommendation_reason": "",
-                "selection": "current",
-                "match_basis": null
+                "selection": "current"
               },
               {
                 "alternative_id": "alternative_2eb8a4c331fe3a2c14d7d9b7833f40f59a0abeb32210f325f2f9d2d54d5383ae",
@@ -230,18 +229,17 @@
                   }
                 ],
                 "limitations": [],
+                "match_basis": null,
                 "rationale": "Hardcover",
                 "recommendation": "no_recommendation",
                 "recommendation_reason": "",
-                "selection": "proposed",
-                "match_basis": null
+                "selection": "proposed"
               }
             ],
             "classification": "needs_attention",
             "classification_cause": "review_needed",
             "classification_reason": "This field needs your review.",
             "corroboration_sources": [],
-            "offer_digest": "db86b005fc96d80718386e84f152443759518e861d97910061640247043a8425",
             "cover_consideration": null,
             "current": {
               "destination": "isbn",
@@ -254,20 +252,22 @@
             "description_advice": null,
             "destination": "isbn",
             "deterministic_disposition": "unresolved_choice",
+            "earlier_automatic_value": null,
             "editable": true,
             "effect_capability": "unavailable",
             "human_decision": null,
             "inventory_role": "primary",
             "manual_hold": false,
             "manual_required": false,
-            "manual_return_requested": false,
             "manual_return_failed": false,
+            "manual_return_requested": false,
             "navigation_role": "attention",
             "needs_attention": true,
             "notices": ["manifestation_verification_required"],
+            "offer_digest": "2af8b1c43cf9040b4262d490ec9cdde8d4f059ef72e3722d55be4c95695fbd01",
             "owner_control": null,
             "preservation_only": false,
-            "proposal_id": "review_proposal_f382c5a5f2295bf58d300aadcaf859032898695de0f1a2c599a2041864365b90",
+            "proposal_id": "review_proposal_fd49eebbb65dc2960bd1547f31f9db6250dbf554a06c0bc3e3f86df0332f51ec",
             "proposed_values": [
               {
                 "kind": "text",
@@ -285,9 +285,8 @@
           {
             "automatic_decision": null,
             "automatic_selection_sources": [],
-            "automatic_withheld_reason": null,
             "automatic_withheld_condition": null,
-            "earlier_automatic_value": null,
+            "automatic_withheld_reason": null,
             "choice_contexts": [
               {
                 "alternative_id": null,
@@ -306,11 +305,11 @@
                   }
                 ],
                 "limitations": [],
+                "match_basis": null,
                 "rationale": "",
                 "recommendation": "no_recommendation",
                 "recommendation_reason": "",
-                "selection": "current",
-                "match_basis": null
+                "selection": "current"
               },
               {
                 "alternative_id": "alternative_34ae580e00a343c1c8d75942faa76e827587bfbd550b76cb501d636324aca54b",
@@ -323,18 +322,17 @@
                   }
                 ],
                 "limitations": [],
+                "match_basis": null,
                 "rationale": "Hardcover",
                 "recommendation": "no_recommendation",
                 "recommendation_reason": "",
-                "selection": "proposed",
-                "match_basis": null
+                "selection": "proposed"
               }
             ],
             "classification": "needs_attention",
             "classification_cause": "review_needed",
             "classification_reason": "This field needs your review.",
             "corroboration_sources": [],
-            "offer_digest": "cd14d0d81af8a83722503509636cc98a6b6c5a6ed37a98140e2541259301cec5",
             "cover_consideration": null,
             "current": {
               "destination": "title",
@@ -347,17 +345,19 @@
             "description_advice": null,
             "destination": "title",
             "deterministic_disposition": "keep",
+            "earlier_automatic_value": null,
             "editable": false,
             "effect_capability": "unavailable",
             "human_decision": null,
             "inventory_role": "primary",
             "manual_hold": false,
             "manual_required": false,
-            "manual_return_requested": false,
             "manual_return_failed": false,
+            "manual_return_requested": false,
             "navigation_role": "attention",
             "needs_attention": false,
             "notices": ["positive_preservation_evidence"],
+            "offer_digest": "7bb2254eb2ec85654cd922c61f3b9c87d23242a87f705c87901cef1065f9fe37",
             "owner_control": {
               "entry": {
                 "max_characters": 512,
@@ -367,7 +367,7 @@
               "withdraw": null
             },
             "preservation_only": true,
-            "proposal_id": "review_proposal_a9708f9d91a356da7c622e8586b89eb6c14a6644f2d168aa534a9071213b5a47",
+            "proposal_id": "review_proposal_0db182edd396c7c443de216c681f94a37d5931c3d99291afe1e8cf0c19fd5640",
             "proposed_values": [],
             "provenance": [
               "provider_2971cd71b126c09d2fa6302f11d2415450509930da157f8b1d8be7f2ce069efc"
@@ -378,26 +378,24 @@
           {
             "automatic_decision": null,
             "automatic_selection_sources": [],
-            "automatic_withheld_reason": null,
             "automatic_withheld_condition": null,
-            "earlier_automatic_value": null,
+            "automatic_withheld_reason": null,
             "choice_contexts": [
               {
                 "alternative_id": null,
                 "evidence": [],
                 "limitations": [],
+                "match_basis": null,
                 "rationale": "",
                 "recommendation": "no_recommendation",
                 "recommendation_reason": "",
-                "selection": "current",
-                "match_basis": null
+                "selection": "current"
               }
             ],
             "classification": "needs_attention",
             "classification_cause": "review_needed",
             "classification_reason": "This field needs your review.",
             "corroboration_sources": [],
-            "offer_digest": "cd14d0d81af8a83722503509636cc98a6b6c5a6ed37a98140e2541259301cec5",
             "cover_consideration": null,
             "current": {
               "destination": "subtitle",
@@ -410,20 +408,22 @@
             "description_advice": null,
             "destination": "subtitle",
             "deterministic_disposition": "ineligible",
+            "earlier_automatic_value": null,
             "editable": false,
             "effect_capability": "unavailable",
             "human_decision": null,
             "inventory_role": "primary",
             "manual_hold": false,
             "manual_required": false,
-            "manual_return_requested": false,
             "manual_return_failed": false,
+            "manual_return_requested": false,
             "navigation_role": "attention",
             "needs_attention": false,
             "notices": ["no_supported_evidence"],
+            "offer_digest": "7bb2254eb2ec85654cd922c61f3b9c87d23242a87f705c87901cef1065f9fe37",
             "owner_control": null,
             "preservation_only": false,
-            "proposal_id": "review_proposal_ac6459c79a723bce695317e1d3c582ad42258d10d44274a47ff1870533061a03",
+            "proposal_id": "review_proposal_2c8e3401fef72289df04f8bc49445370296ccfe1e9b929c336f45390a626ea52",
             "proposed_values": [],
             "provenance": [],
             "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
@@ -432,9 +432,8 @@
           {
             "automatic_decision": null,
             "automatic_selection_sources": [],
-            "automatic_withheld_reason": null,
             "automatic_withheld_condition": null,
-            "earlier_automatic_value": null,
+            "automatic_withheld_reason": null,
             "choice_contexts": [
               {
                 "alternative_id": null,
@@ -453,11 +452,11 @@
                   }
                 ],
                 "limitations": [],
+                "match_basis": null,
                 "rationale": "",
                 "recommendation": "no_recommendation",
                 "recommendation_reason": "",
-                "selection": "current",
-                "match_basis": null
+                "selection": "current"
               },
               {
                 "alternative_id": "alternative_e4f80543aa92d81848e85b7df46baf25e3aa25f4c26463161be08e11540e75f9",
@@ -470,18 +469,17 @@
                   }
                 ],
                 "limitations": [],
+                "match_basis": null,
                 "rationale": "Hardcover",
                 "recommendation": "no_recommendation",
                 "recommendation_reason": "",
-                "selection": "proposed",
-                "match_basis": null
+                "selection": "proposed"
               }
             ],
             "classification": "needs_attention",
             "classification_cause": "review_needed",
             "classification_reason": "This field needs your review.",
             "corroboration_sources": [],
-            "offer_digest": "75270880b88cd51165dfdb51d1741574b50acf51667ba88fcfbf4337c0ba6a3b",
             "cover_consideration": null,
             "current": {
               "destination": "authors",
@@ -494,20 +492,22 @@
             "description_advice": null,
             "destination": "authors",
             "deterministic_disposition": "keep",
+            "earlier_automatic_value": null,
             "editable": false,
             "effect_capability": "unavailable",
             "human_decision": null,
             "inventory_role": "primary",
             "manual_hold": false,
             "manual_required": false,
-            "manual_return_requested": false,
             "manual_return_failed": false,
+            "manual_return_requested": false,
             "navigation_role": "attention",
             "needs_attention": false,
             "notices": ["positive_preservation_evidence"],
+            "offer_digest": "28681ae34b554f6c8a55bdb26a8dac37c1b86efadd3607b2749b242d962c9636",
             "owner_control": null,
             "preservation_only": true,
-            "proposal_id": "review_proposal_89c072e701760021603b5899d93598c7cd8831c4ee0bf11bbb0a285808cc7d53",
+            "proposal_id": "review_proposal_bd185ba4e9900add24f9a96ef392a8de0bb842736ca1cd25a9049ea0914e4530",
             "proposed_values": [],
             "provenance": [
               "provider_ea8a4dca284e531ebea622b06ded41aadb8982dd803f8ef277e870c4232dfb87"
@@ -518,26 +518,24 @@
           {
             "automatic_decision": null,
             "automatic_selection_sources": [],
-            "automatic_withheld_reason": null,
             "automatic_withheld_condition": null,
-            "earlier_automatic_value": null,
+            "automatic_withheld_reason": null,
             "choice_contexts": [
               {
                 "alternative_id": null,
                 "evidence": [],
                 "limitations": [],
+                "match_basis": null,
                 "rationale": "",
                 "recommendation": "no_recommendation",
                 "recommendation_reason": "",
-                "selection": "current",
-                "match_basis": null
+                "selection": "current"
               }
             ],
             "classification": "unsupported",
             "classification_cause": "nothing_to_decide",
             "classification_reason": "Nothing to decide for this field.",
             "corroboration_sources": [],
-            "offer_digest": "a013e23ea43b20a492c9c771e9a4030a2d56c1aedfc88dab7ddbb57b45d11361",
             "cover_consideration": null,
             "current": {
               "destination": "publishedDate",
@@ -550,20 +548,22 @@
             "description_advice": null,
             "destination": "publishedDate",
             "deterministic_disposition": "ineligible",
+            "earlier_automatic_value": null,
             "editable": false,
             "effect_capability": "unavailable",
             "human_decision": null,
             "inventory_role": "contextual",
             "manual_hold": false,
             "manual_required": false,
-            "manual_return_requested": false,
             "manual_return_failed": false,
+            "manual_return_requested": false,
             "navigation_role": "inspect",
             "needs_attention": false,
             "notices": ["no_supported_evidence"],
+            "offer_digest": "7823292386ce897d37149f86363ac53c841ccc492463172bcbc91abc0f066b48",
             "owner_control": null,
             "preservation_only": false,
-            "proposal_id": "review_proposal_045d82add492f9f24c9ee9739b2cb2c5b54e5ea09353c77f1bbd8d584c23404e",
+            "proposal_id": "review_proposal_3f117221b5691e09059384afb6cac45d5e25321502dc4402f50c8191caf46867",
             "proposed_values": [],
             "provenance": [],
             "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
@@ -572,26 +572,24 @@
           {
             "automatic_decision": null,
             "automatic_selection_sources": [],
-            "automatic_withheld_reason": null,
             "automatic_withheld_condition": null,
-            "earlier_automatic_value": null,
+            "automatic_withheld_reason": null,
             "choice_contexts": [
               {
                 "alternative_id": null,
                 "evidence": [],
                 "limitations": [],
+                "match_basis": null,
                 "rationale": "",
                 "recommendation": "no_recommendation",
                 "recommendation_reason": "",
-                "selection": "current",
-                "match_basis": null
+                "selection": "current"
               }
             ],
             "classification": "unsupported",
             "classification_cause": "nothing_to_decide",
             "classification_reason": "Nothing to decide for this field.",
             "corroboration_sources": [],
-            "offer_digest": "cb4c12c7ea42af58646cdf7bf04e901568b0c8e93a3beb26cdc13a64ac5d6e62",
             "cover_consideration": null,
             "current": {
               "destination": "publisher",
@@ -604,20 +602,22 @@
             "description_advice": null,
             "destination": "publisher",
             "deterministic_disposition": "ineligible",
+            "earlier_automatic_value": null,
             "editable": false,
             "effect_capability": "unavailable",
             "human_decision": null,
             "inventory_role": "contextual",
             "manual_hold": false,
             "manual_required": false,
-            "manual_return_requested": false,
             "manual_return_failed": false,
+            "manual_return_requested": false,
             "navigation_role": "inspect",
             "needs_attention": false,
             "notices": ["no_supported_evidence"],
+            "offer_digest": "bd95b0727aa01fc068717d050f97bddb81b8908d137d1e06b42dbbd556de04f3",
             "owner_control": null,
             "preservation_only": false,
-            "proposal_id": "review_proposal_e4e785c2e7be801f20d2d6a3c73de49dcff043422eaac9d63c846d3d8b2da886",
+            "proposal_id": "review_proposal_08cd2cb120c50e2ec9d1f6aefddfa06285d1477b0b9da4e8955954de72ee9b2f",
             "proposed_values": [],
             "provenance": [],
             "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
@@ -626,9 +626,8 @@
           {
             "automatic_decision": null,
             "automatic_selection_sources": [],
-            "automatic_withheld_reason": null,
             "automatic_withheld_condition": null,
-            "earlier_automatic_value": null,
+            "automatic_withheld_reason": null,
             "choice_contexts": [
               {
                 "alternative_id": null,
@@ -641,11 +640,11 @@
                   }
                 ],
                 "limitations": [],
+                "match_basis": null,
                 "rationale": "",
                 "recommendation": "recommended",
                 "recommendation_reason": "Your settings keep the current value.",
-                "selection": "current",
-                "match_basis": null
+                "selection": "current"
               },
               {
                 "alternative_id": "alternative_fb3c646d64076432433b3798fc56e0705e58fbdb1760152f7943021cdd428b86",
@@ -658,18 +657,17 @@
                   }
                 ],
                 "limitations": ["populated_subjective_field"],
+                "match_basis": null,
                 "rationale": "Hardcover",
                 "recommendation": "no_recommendation",
                 "recommendation_reason": "",
-                "selection": "proposed",
-                "match_basis": null
+                "selection": "proposed"
               }
             ],
             "classification": "human_recorded",
             "classification_cause": "human_decided",
             "classification_reason": "You decided this field. You can change it here.",
             "corroboration_sources": [],
-            "offer_digest": "f9360c4bc3b21227e520ba34fb0b80ed50f799fc7f48dca3e7c06d281fefa4fc",
             "cover_consideration": null,
             "current": {
               "destination": "description",
@@ -686,9 +684,9 @@
                 "access_revision": 2,
                 "policy_generation": 2,
                 "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-                "proposal_set_id": "proposal_set_01a31625108aebd9d86d8736c9e6c7710631d2ee128f0b859716e3d16ab636d3",
-                "report_id": "report_20c3580bd52746af9c128a8f575235989ca6bc2549b0d60cb6f29c913dd3a473",
-                "review_case_id": "review_case_99fa6f3f729eca8d18e09173960f8eaac03912b36ece928ae5759a199e324e09",
+                "proposal_set_id": "proposal_set_0ccabe5c92de57c20c4889a92ab19c47bf0f41c0c5e7dacd381627af2510f45f",
+                "report_id": "report_8e53c1ccbd3a192199c10a078e543b124d37813f04c54dbe47d33f88a45e3cf3",
+                "review_case_id": "review_case_5041ba4f53d23c4327ab78cc09ef54687e2608e67c97fd3248d542ae41f35ad6",
                 "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
               },
               "candidate": {
@@ -721,9 +719,9 @@
                   "access_revision": 2,
                   "policy_generation": 2,
                   "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-                  "proposal_set_id": "proposal_set_01a31625108aebd9d86d8736c9e6c7710631d2ee128f0b859716e3d16ab636d3",
-                  "report_id": "report_20c3580bd52746af9c128a8f575235989ca6bc2549b0d60cb6f29c913dd3a473",
-                  "review_case_id": "review_case_99fa6f3f729eca8d18e09173960f8eaac03912b36ece928ae5759a199e324e09",
+                  "proposal_set_id": "proposal_set_0ccabe5c92de57c20c4889a92ab19c47bf0f41c0c5e7dacd381627af2510f45f",
+                  "report_id": "report_8e53c1ccbd3a192199c10a078e543b124d37813f04c54dbe47d33f88a45e3cf3",
+                  "review_case_id": "review_case_5041ba4f53d23c4327ab78cc09ef54687e2608e67c97fd3248d542ae41f35ad6",
                   "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
                 },
                 "candidate": {
@@ -755,9 +753,9 @@
                   "access_revision": 2,
                   "policy_generation": 2,
                   "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-                  "proposal_set_id": "proposal_set_01a31625108aebd9d86d8736c9e6c7710631d2ee128f0b859716e3d16ab636d3",
-                  "report_id": "report_20c3580bd52746af9c128a8f575235989ca6bc2549b0d60cb6f29c913dd3a473",
-                  "review_case_id": "review_case_99fa6f3f729eca8d18e09173960f8eaac03912b36ece928ae5759a199e324e09",
+                  "proposal_set_id": "proposal_set_0ccabe5c92de57c20c4889a92ab19c47bf0f41c0c5e7dacd381627af2510f45f",
+                  "report_id": "report_8e53c1ccbd3a192199c10a078e543b124d37813f04c54dbe47d33f88a45e3cf3",
+                  "review_case_id": "review_case_5041ba4f53d23c4327ab78cc09ef54687e2608e67c97fd3248d542ae41f35ad6",
                   "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3"
                 },
                 "candidate_id": "description_candidate_0000000000000000000000000000000000000000000000000000000000000001",
@@ -775,20 +773,22 @@
             },
             "destination": "description",
             "deterministic_disposition": "unresolved_choice",
+            "earlier_automatic_value": null,
             "editable": true,
             "effect_capability": "unavailable",
             "human_decision": null,
             "inventory_role": "primary",
             "manual_hold": false,
             "manual_required": false,
-            "manual_return_requested": false,
             "manual_return_failed": false,
+            "manual_return_requested": false,
             "navigation_role": "inspect",
             "needs_attention": false,
             "notices": ["populated_subjective_field", "populated_value_meets_floor"],
+            "offer_digest": "d004b3c6440ed5c976fb583358515157d0e4aa6c091bc2cc5d077fc36f0ea0b8",
             "owner_control": null,
             "preservation_only": false,
-            "proposal_id": "review_proposal_f93278ad9a5b561fc7ff9266a6e4557a3c152f6d428a09eb523773a46bfe9ff2",
+            "proposal_id": "review_proposal_4b6f49ce1367e019f5496bfc06c2af4cb090e443f28b694f5dd3196a614e5085",
             "proposed_values": [
               {
                 "kind": "text",
@@ -804,26 +804,24 @@
           {
             "automatic_decision": null,
             "automatic_selection_sources": [],
-            "automatic_withheld_reason": null,
             "automatic_withheld_condition": null,
-            "earlier_automatic_value": null,
+            "automatic_withheld_reason": null,
             "choice_contexts": [
               {
                 "alternative_id": null,
                 "evidence": [],
                 "limitations": [],
+                "match_basis": null,
                 "rationale": "",
                 "recommendation": "no_recommendation",
                 "recommendation_reason": "",
-                "selection": "current",
-                "match_basis": null
+                "selection": "current"
               }
             ],
             "classification": "unsupported",
             "classification_cause": "nothing_to_decide",
             "classification_reason": "Nothing to decide for this field.",
             "corroboration_sources": [],
-            "offer_digest": "8aecba4af9c2474b4c7e29e6ddd026bc588d9ddd08f27cd0da0cb7823d6a369b",
             "cover_consideration": null,
             "current": {
               "destination": "asin",
@@ -836,20 +834,22 @@
             "description_advice": null,
             "destination": "asin",
             "deterministic_disposition": "ineligible",
+            "earlier_automatic_value": null,
             "editable": false,
             "effect_capability": "unavailable",
             "human_decision": null,
             "inventory_role": "contextual",
             "manual_hold": false,
             "manual_required": false,
-            "manual_return_requested": false,
             "manual_return_failed": false,
+            "manual_return_requested": false,
             "navigation_role": "inspect",
             "needs_attention": false,
             "notices": ["no_supported_evidence"],
+            "offer_digest": "79d6127728531f9bfe2e1c9de528faf2c9ece1ebcfe5ceb39c7093249844b9a7",
             "owner_control": null,
             "preservation_only": false,
-            "proposal_id": "review_proposal_cd0f3113da0bb1c09ee89821fe6f8a7126dc7a326fd1a5fa60942476777799b7",
+            "proposal_id": "review_proposal_831f71188fdbe8e0380014a0752581559ffb7845a5a5f3a568b4564e86f39a6a",
             "proposed_values": [],
             "provenance": [],
             "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
@@ -858,26 +858,24 @@
           {
             "automatic_decision": null,
             "automatic_selection_sources": [],
-            "automatic_withheld_reason": null,
             "automatic_withheld_condition": null,
-            "earlier_automatic_value": null,
+            "automatic_withheld_reason": null,
             "choice_contexts": [
               {
                 "alternative_id": null,
                 "evidence": [],
                 "limitations": [],
+                "match_basis": null,
                 "rationale": "",
                 "recommendation": "no_recommendation",
                 "recommendation_reason": "",
-                "selection": "current",
-                "match_basis": null
+                "selection": "current"
               }
             ],
             "classification": "unsupported",
             "classification_cause": "nothing_to_decide",
             "classification_reason": "Nothing to decide for this field.",
             "corroboration_sources": [],
-            "offer_digest": "8f5f1bbbdcd18155128200510acfb1a9d37c2173543c325c2419fcf079a2cd65",
             "cover_consideration": null,
             "current": {
               "destination": "language",
@@ -890,20 +888,22 @@
             "description_advice": null,
             "destination": "language",
             "deterministic_disposition": "ineligible",
+            "earlier_automatic_value": null,
             "editable": false,
             "effect_capability": "unavailable",
             "human_decision": null,
             "inventory_role": "contextual",
             "manual_hold": false,
             "manual_required": false,
-            "manual_return_requested": false,
             "manual_return_failed": false,
+            "manual_return_requested": false,
             "navigation_role": "inspect",
             "needs_attention": false,
             "notices": ["no_supported_evidence"],
+            "offer_digest": "f127f4980fb171db7d5d73806932feec6a5d9df6540b0b5b4c3df8b0f4785ef4",
             "owner_control": null,
             "preservation_only": false,
-            "proposal_id": "review_proposal_88cb466f97b4f1169229184e9ed7a66c891b80c79b9f5500f5b10f44e78f5f9f",
+            "proposal_id": "review_proposal_c14838d410b7dbaae18978b52eab152ddcc751463e2d3f636c6884ee2e2416ab",
             "proposed_values": [],
             "provenance": [],
             "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
@@ -912,19 +912,18 @@
           {
             "automatic_decision": null,
             "automatic_selection_sources": [],
-            "automatic_withheld_reason": null,
             "automatic_withheld_condition": null,
-            "earlier_automatic_value": null,
+            "automatic_withheld_reason": null,
             "choice_contexts": [
               {
                 "alternative_id": null,
                 "evidence": [],
                 "limitations": [],
+                "match_basis": null,
                 "rationale": "",
                 "recommendation": "no_recommendation",
                 "recommendation_reason": "",
-                "selection": "current",
-                "match_basis": null
+                "selection": "current"
               },
               {
                 "alternative_id": "alternative_ac56de9cfdac126ab8f6347f1e34942d28fcb775cf5d2fd93938cc414246dbe8",
@@ -937,18 +936,17 @@
                   }
                 ],
                 "limitations": [],
+                "match_basis": null,
                 "rationale": "Hardcover",
                 "recommendation": "no_recommendation",
                 "recommendation_reason": "",
-                "selection": "proposed",
-                "match_basis": null
+                "selection": "proposed"
               }
             ],
             "classification": "owner_choosable",
             "classification_cause": "owner_choosable",
             "classification_reason": "Tags are off in your settings, so your tags are left as they are and no review is needed. You can still choose proposed tags.",
             "corroboration_sources": [],
-            "offer_digest": "5aae89f9dc7388d8e73c64cb7ed37d743ef37e88d85037760fc48800538404ff",
             "cover_consideration": null,
             "current": {
               "destination": "tags",
@@ -961,20 +959,22 @@
             "description_advice": null,
             "destination": "tags",
             "deterministic_disposition": "propose_change",
+            "earlier_automatic_value": null,
             "editable": true,
             "effect_capability": "unavailable",
             "human_decision": null,
             "inventory_role": "primary",
             "manual_hold": false,
             "manual_required": false,
-            "manual_return_requested": false,
             "manual_return_failed": false,
+            "manual_return_requested": false,
             "navigation_role": "inspect",
             "needs_attention": false,
             "notices": ["unique_typed_candidate"],
+            "offer_digest": "ba0c12e0d22143c3930db9c9f6bf4a1e394d161f29565048903b64155a16275b",
             "owner_control": null,
             "preservation_only": false,
-            "proposal_id": "review_proposal_97777317c12d1f60a6f467b33d6ad2e9076013a9a2c19392bbda4e2dba06354c",
+            "proposal_id": "review_proposal_0db3f7424a8ed37cea1c1c39cf7d5e50879cdc514b962657b3111edb10469157",
             "proposed_values": [
               {
                 "kind": "list",
@@ -990,26 +990,24 @@
           {
             "automatic_decision": null,
             "automatic_selection_sources": [],
-            "automatic_withheld_reason": null,
             "automatic_withheld_condition": null,
-            "earlier_automatic_value": null,
+            "automatic_withheld_reason": null,
             "choice_contexts": [
               {
                 "alternative_id": null,
                 "evidence": [],
                 "limitations": [],
+                "match_basis": null,
                 "rationale": "",
                 "recommendation": "no_recommendation",
                 "recommendation_reason": "",
-                "selection": "current",
-                "match_basis": null
+                "selection": "current"
               }
             ],
             "classification": "unsupported",
             "classification_cause": "nothing_to_decide",
             "classification_reason": "Nothing to decide for this field.",
             "corroboration_sources": [],
-            "offer_digest": "374d2bc5c7472e874d761e2602042883278b85adf77b329089cc67b558667124",
             "cover_consideration": null,
             "current": {
               "destination": "cover",
@@ -1022,20 +1020,22 @@
             "description_advice": null,
             "destination": "cover",
             "deterministic_disposition": "ineligible",
+            "earlier_automatic_value": null,
             "editable": false,
             "effect_capability": "unavailable",
             "human_decision": null,
             "inventory_role": "contextual",
             "manual_hold": false,
             "manual_required": false,
-            "manual_return_requested": false,
             "manual_return_failed": false,
+            "manual_return_requested": false,
             "navigation_role": "inspect",
             "needs_attention": false,
             "notices": ["no_supported_evidence"],
+            "offer_digest": "0ff6304a71e10b8809d902df2e831c7398d79e4f76d9a2b56c8b96cbd694e557",
             "owner_control": null,
             "preservation_only": false,
-            "proposal_id": "review_proposal_bdb44f3b24e7f58d1d411233de40a51ea3d6820b096fe8fa0a6443d5ac5b27ef",
+            "proposal_id": "review_proposal_ea7d1a1b5850c4d4a55adbc2b7a932c1bc923dd3fe97b284ed1a4b007c2ede2a",
             "proposed_values": [],
             "provenance": [],
             "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
@@ -1045,7 +1045,7 @@
         "media_health": [],
         "recording_admission_basis": null,
         "recording_identity_basis": null,
-        "review_case_id": "review_case_99fa6f3f729eca8d18e09173960f8eaac03912b36ece928ae5759a199e324e09",
+        "review_case_id": "review_case_5041ba4f53d23c4327ab78cc09ef54687e2608e67c97fd3248d542ae41f35ad6",
         "schema_version": "review-case-detail-v7",
         "target": {
           "authors": ["Mick Herron"],
@@ -1065,6 +1065,6 @@
     "schema_version": "description-selection-ack-v1"
   },
   "method": "POST",
-  "path": "/api/v1/review-cases/review_case_99fa6f3f729eca8d18e09173960f8eaac03912b36ece928ae5759a199e324e09/description-advice/selection",
+  "path": "/api/v1/review-cases/review_case_5041ba4f53d23c4327ab78cc09ef54687e2608e67c97fd3248d542ae41f35ad6/description-advice/selection",
   "status": 200
 }

@@ -26,8 +26,16 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from functools import partial
 from pathlib import Path
+from typing import Final
 
 from argon2 import PasswordHasher
+
+from mechanical_librarian.application.configuration import CONFIG_SCHEMA
+from mechanical_librarian.infrastructure.settings_authority import (
+    REVIEW_BOOTSTRAP_SCHEMA,
+)
+
+CONTAINER_LIFECYCLE_EVIDENCE_SCHEMA: Final = "container-lifecycle-evidence-v6"
 
 ROOT = Path(__file__).resolve().parents[1]
 OWNERSHIP_LABEL = "org.mechanical-librarian.qualification-run"
@@ -525,7 +533,7 @@ def _qualify_first_run(
             (source / "review-bootstrap.json").write_text(
                 json.dumps(
                     {
-                        "schema_version": "review-bootstrap-v2",
+                        "schema_version": REVIEW_BOOTSTRAP_SCHEMA,
                         "canonical_origin": f"{scheme}://review.test",
                         "tls_certificate_file": "/run/secrets/tls.crt"
                         if scheme == "https"
@@ -688,36 +696,23 @@ def _qualify_first_run(
             "Origin": f"{scheme}://review.test",
             "X-CSRF-Token": csrf,
         }
-        steps = (
-            (
-                "/api/setup/connect",
-                {
-                    "expected_revision": 2,
-                    "name": "primary",
-                    "endpoint": "http://127.0.0.1:18080",
-                    "key": "synthetic-target-token",
-                },
-                3,
-            ),
-            ("/api/setup/providers", {"expected_revision": 3, "providers": []}, 4),
+        status, result = request_json(
+            opener,
+            port,
+            "/api/setup/connect",
+            method="POST",
+            payload={
+                "expected_revision": 2,
+                "name": "primary",
+                "endpoint": "http://127.0.0.1:18080",
+                "key": "synthetic-target-token",
+            },
+            headers=mutation_headers,
         )
-        for path, payload, revision in steps:
-            status, result = request_json(
-                opener,
-                port,
-                path,
-                method="POST",
-                payload=payload,
-                headers=mutation_headers,
-            )
-            if (
-                status != 200
-                or not isinstance(result, dict)
-                or result.get("revision") != revision
-            ):
-                raise QualificationError("first_run_step_failed")
+        if status != 200 or not isinstance(result, dict) or result.get("revision") != 3:
+            raise QualificationError("first_run_step_failed")
         status, discovery = request_json(
-            opener, port, "/api/setup/libraries?expected_revision=4"
+            opener, port, "/api/setup/libraries?expected_revision=3"
         )
         if (
             status != 200
@@ -726,52 +721,54 @@ def _qualify_first_run(
             or len(discovery["libraries"]) != 1
         ):
             raise QualificationError("first_run_discovery_failed")
+        # Libraries come before sources, and choosing them checks each folder
+        # from the path Audiobookshelf reports, in the same write (#1516).
         status, result = request_json(
             opener,
             port,
             "/api/setup/libraries",
             method="POST",
             payload={
-                "expected_revision": 4,
+                "expected_revision": 3,
                 "libraries": [
                     {
                         "name": "synthetic-books-essays",
-                        "display_name": "Synthetic Books & Essays",
                         "library_id": "books",
                         "media_kind": "book",
-                        "provider_connections": [],
                     }
                 ],
             },
             headers=mutation_headers,
         )
-        if status != 200 or not isinstance(result, dict) or result.get("revision") != 5:
+        if (
+            status != 200
+            or not isinstance(result, dict)
+            or result.get("revision") != 4
+            or result.get("next_step") != "providers"
+        ):
             raise QualificationError("first_run_library_selection_failed")
-        status, mounts = request_json(
+        status, result = request_json(
             opener,
             port,
-            "/api/setup/mounts",
+            "/api/setup/providers",
             method="POST",
-            payload={
-                "expected_revision": 5,
-                "service_paths": {"synthetic-books-essays": "/library/books"},
-            },
+            payload={"expected_revision": 4, "providers": []},
             headers=mutation_headers,
         )
-        if status != 200 or not isinstance(mounts, dict) or mounts.get("revision") != 6:
-            raise QualificationError("first_run_mount_failed")
+        if status != 200 or not isinstance(result, dict) or result.get("revision") != 5:
+            raise QualificationError("first_run_step_failed")
         status, reviewer = request_json(
             opener,
             port,
             "/api/setup/reviewer",
             method="POST",
-            payload={"expected_revision": 6, "outcome": "skipped"},
+            payload={"expected_revision": 5, "outcome": "skipped"},
             headers=mutation_headers,
         )
         if (
             status != 200
             or not isinstance(reviewer, dict)
-            or reviewer.get("revision") != 7
+            or reviewer.get("revision") != 6
             or reviewer.get("next_step") != "kick_off"
         ):
             raise QualificationError("first_run_reviewer_failed")
@@ -780,7 +777,7 @@ def _qualify_first_run(
             port,
             "/api/setup/kick-off",
             method="POST",
-            payload={"expected_revision": 7},
+            payload={"expected_revision": 6},
             headers=mutation_headers,
         )
         if status != 202:
@@ -938,7 +935,7 @@ def _qualify_retained_recovery(
 
 def _configuration() -> dict[str, object]:
     return {
-        "schema_version": "config-v10",
+        "schema_version": CONFIG_SCHEMA,
         "provider_recovery_generation": 1,
         "connections": [
             {
@@ -1329,7 +1326,7 @@ def main() -> None:
                     "readiness": True,
                     "react_assets_validated": True,
                     "react_workspace_activated": True,
-                    "schema": "container-lifecycle-evidence-v6",
+                    "schema": CONTAINER_LIFECYCLE_EVIDENCE_SCHEMA,
                     "snapshot_build": True,
                     "workbench_excluded": True,
                     "single_data_volume": True,

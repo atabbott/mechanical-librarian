@@ -104,7 +104,7 @@ describe('settings API field validation vocabulary', () => {
     expect(settingsLocalLibraryNameValid('books_1')).toBe(true)
     expect(settingsLocalLibraryNameValid('Not valid')).toBe(false)
     expect(settingsProviderKeyRequired('hardcover')).toBe(true)
-    expect(settingsProviderKeyRequired('google_books')).toBe(false)
+    expect(settingsProviderKeyRequired('google_books')).toBe(true)
     for (const adapter of ['audible_catalog', 'audiosilo', 'audnexus', 'itunes_search']) {
       expect(settingsProviderKeyless(adapter)).toBe(true)
       expect(settingsProviderKeyRequired(adapter)).toBe(false)
@@ -776,6 +776,37 @@ describe('owner settings route', () => {
     expect(http.writeSettings).not.toHaveBeenCalled()
   })
 
+  it('asks for a Google Books key while Google Books is on (#1516)', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => ({
+      ...view(),
+      document: {
+        ...document,
+        providers: [
+          ...document.providers,
+          {
+            adapter: 'google_books' as const,
+            cover_enabled: false as const,
+            enabled: true,
+            name: 'google',
+          },
+        ],
+      },
+    }))
+    renderRoute('/settings?group=providers', http)
+
+    const key = await screen.findByLabelText('New Google Books API key')
+    await user.click(screen.getByRole('button', { name: 'Save settings' }))
+    await waitFor(() => expect(key).toHaveAttribute('aria-invalid', 'true'))
+    expect(key).toHaveAccessibleDescription(/This source needs an API key while it is on/)
+    expect(http.writeSettings).not.toHaveBeenCalled()
+
+    // Turned off, Google Books needs no key.
+    await user.click(segment('Use Google Books', 'Off'))
+    await waitFor(() => expect(key).not.toHaveAttribute('aria-invalid'))
+  })
+
   it.each([
     ['mistralai/ministral-3b-2512', 'Ministral 3B'],
     ['openai/gpt-5.6-luna', 'GPT-5.6 Luna'],
@@ -984,7 +1015,7 @@ describe('owner settings route', () => {
       'Model',
       'Capabilities',
       'Prices in USD',
-      'Example cost per 1,000 books',
+      'Example cost per 1,000 works',
       'Cover request',
     ])
     expect(cover.getByText('openai/gpt-4o-mini', { selector: 'dd' })).toBeVisible()
@@ -992,7 +1023,7 @@ describe('owner settings route', () => {
     expect(cover.getByText('Validate this model to see its prices.')).toBeVisible()
     expect(cover.getByText('Cover review: not measured for this model.')).toBeVisible()
     expect(cover.getByText('Description advice: not measured for this model.')).toBeVisible()
-    expect(cover.getByText('One request per book, with every cover it compares.')).toBeVisible()
+    expect(cover.getByText('One request per work, with every cover it compares.')).toBeVisible()
     expect(cover.queryByText(/Metadata observed|Maximum-size|sample|methodology/u)).toBeNull()
     // The Model row tracks a controlled input, so the list must not be a live
     // region; the status paragraph above owns the announcements.
@@ -3050,7 +3081,7 @@ it('separates measured cover cost from observed rates and never lends prices to 
   renderRoute('/settings?group=reviewer', http)
   const cover = within(await screen.findByRole('region', { name: 'Cover reviewer' }))
   expect(
-    cover.getByText('Cover review: about $0.64, including about 2.7 cover images per book.'),
+    cover.getByText('Cover review: about $0.64, including about 2.7 cover images per work.'),
   ).toBeVisible()
   expect(cover.getByText('Description advice: not measured for this model.')).toBeVisible()
   expect(

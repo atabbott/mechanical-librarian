@@ -487,6 +487,17 @@ alternative, `cover-consideration-v6` names each candidate's kind, and
 verified Put back releases its copy. Every earlier application database is
 rejected before mutation and needs a clean rebuild; no adoption is supplied.
 
+Issue #1853 also takes the clean-rebuild branch. `metadata-report-v80`
+records `original_digest` on an Audiobookshelf cover source the decoder
+refused: the SHA-256 of the bytes it read. Every cover write now binds the
+bytes the report read, decoded or refused, rather than the report's target
+value, which names only the cover's path, and report publication rechecks a
+refused cover's bytes as it does a decoded one's. A v79 report holds no digest
+for a refused cover, and a report carries forward while its file and
+configuration fingerprints are unchanged, so a stored report could never bind
+such a cover. Every earlier application database is rejected before mutation
+and needs a clean rebuild; no adoption is supplied.
+
 Issue #1355's activation A takes the clean-rebuild branch. `config-v10` adds
 `review.work_identity`, and `owner-settings-v5` adds its store-managed
 equivalent, `matching.work_identity`; a v9 file and a v4 settings document are
@@ -500,10 +511,28 @@ and decision-set versions do not move: the report records no level and live
 decisions are unchanged at every level. Every earlier application database is
 rejected before mutation and needs a clean rebuild; no adoption is supplied.
 
-Its activation B takes the clean-rebuild branch too. `metadata-report-v80`
+Issue #1363's activation of the measured cover rules also takes the
+clean-rebuild branch, after #1355's activation A, so each version it moves takes
+the next number free on main. `cover-policy-v2` adds Current covers
+(`current_protection` and `prefer_edition`), so every cover policy reference
+moves. `cover-policy-report-v4` records the measured stage's outcome, reason,
+issues, same-art groups, exclusions and edition preference, and each
+consideration's currentness document now carries that outcome and reason, which
+attention reads. `cover-automatic-decision-v4` records the closed reason a
+replacement was made for and drops the `replace_if_strictly_better` option,
+which the metadata policy profile no longer offers. `owner-settings-v6` stores
+Current covers and `config-v11` admits `cover_current_protection` and
+`cover_prefer_edition`; a `config-v10` file must be rewritten by hand.
+`cover-consideration-v8` admits a `larger_copy` candidate, a larger original of
+the current cover's own picture that the stage took. Every earlier application
+database is rejected before mutation and needs a clean rebuild; no adoption is
+supplied.
+
+Issue #1355's activation B takes the clean-rebuild branch too, after #1853, so
+each version it moves takes the next number free on main. `metadata-report-v81`
 keeps each provider's refused WORK answers (`identity_refused_candidates`,
 `identity_refused_truncated`) and each lane's `identity_refused_new`, which a
-v79 producer never read again once refused, so a v79 report is refused. Owner
+v80 producer never read again once refused, so a v80 report is refused. Owner
 decisions move to `human-decision-v4`, which binds the digest of the field
 offer a choice was made in and a closed `cause`, both in its request digest, so
 a v3 decision is refused on readback; the `human_decisions` table does not
@@ -513,4 +542,3 @@ offer and each case's reconciled level (`level_proposal_sets`,
 `review_case_level_reconciliation`), and `review_preparation_control` gains
 `work_identity_level`. Every earlier application database is rejected before
 mutation and needs a clean rebuild; no adoption is supplied.
-

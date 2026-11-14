@@ -32,14 +32,12 @@ from mechanical_librarian.application.cover_observation import (
     SCHEMA_VERSION as OBSERVATION_SCHEMA_VERSION,
 )
 from mechanical_librarian.application.cover_packet_semantics import (
+    COVER_REVIEW_PACKET_SCHEMA,
     canonical_packet_json,
     read_cover_packet_document,
 )
 from mechanical_librarian.application.cover_packets import (
     PRODUCER_REVISION as PACKET_PRODUCER_REVISION,
-)
-from mechanical_librarian.application.cover_packets import (
-    SCHEMA_VERSION as PACKET_SCHEMA_VERSION,
 )
 from mechanical_librarian.application.cover_packets import (
     PreparedCoverPacket,
@@ -53,6 +51,7 @@ from mechanical_librarian.application.cover_policy import (
     _load_object,
     _observation_document_rows,
     adjudicate_cover_policy,
+    larger_copy_source,
     read_cover_policy_report,
 )
 from mechanical_librarian.application.cover_policy import (
@@ -74,6 +73,7 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverSourceState,
     cover_source_id,
 )
+from mechanical_librarian.domain.cover_rules import STAGE_REASONS, CoverOutcome
 from mechanical_librarian.domain.deterministic_cover_election import (
     CoverElectionCandidate,
 )
@@ -93,7 +93,8 @@ from mechanical_librarian.domain.proposal_set import (
 )
 from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 
-SCHEMA_VERSION = "cover-consideration-v7"
+CoverConsiderationSchemaVersion = Literal["cover-consideration-v8"]
+SCHEMA_VERSION: Final[CoverConsiderationSchemaVersion] = "cover-consideration-v8"
 _IDENTITY_ELIGIBLE = frozenset({"verified_manifestation_match", "verified_work_match"})
 CoverConsiderationCurrentness = Literal["current", "refresh_required", "inactive"]
 _CONSIDERATION_FIELDS = frozenset(
@@ -279,6 +280,95 @@ def _retained_candidate(
     }
 
 
+def _larger_copy_references(
+    report: MetadataReport, packet_candidates: list[dict[str, object]]
+) -> tuple[str, ...]:
+    source = larger_copy_source(report, packet_candidates)
+    return (
+        ()
+        if source is None
+        else (cover_source_reference(report.report_id, source.source_id),)
+    )
+
+
+def _larger_copy_candidate(
+    report: MetadataReport,
+    packet_candidates: list[dict[str, object]],
+    identity_rows: Mapping[str, dict[str, object]],
+    policy: Mapping[str, object],
+    unadmitted: bool,
+) -> dict[str, object] | None:
+    """The larger copy of the current cover, when the stage chose it.
+
+    The packet reviews one image per picture, so a larger original of the
+    current cover's own picture is never a packet candidate. The policy
+    offers it to the stage only to cure an undersized or soft current cover,
+    and lists it as acceptable only when the stage chose it; it is then a
+    card of its own. It carries the current cover's confirmed identity, since
+    it shows the same picture (#1363, Codex P2).
+    """
+    source = larger_copy_source(report, packet_candidates)
+    if source is None:
+        return None
+    reference = cover_source_reference(report.report_id, source.source_id)
+    stage = cast("Mapping[str, object]", policy["stage"])
+    acceptable = cast("list[str]", policy["acceptable_candidate_references"])
+    if stage["choice"] != reference or reference not in acceptable:
+        return None
+    incumbent = next(c for c in packet_candidates if c["incumbent"] is True)
+    identity_row = identity_rows[cast("str", incumbent["reference"])]
+    if identity_row["outcome"] not in _IDENTITY_ELIGIBLE:
+        raise CoverConsiderationError("incumbent_binding")
+    artifact = cast("CoverArtifact", source.artifact)
+    selectable = not unadmitted and policy.get("owner_ready") is True
+    rank_key = CoverElectionCandidate(
+        reference=reference,
+        identity=str(identity_row["outcome"]),
+        identity_citations=tuple(
+            cast("list[str]", identity_row["evidence_references"])
+        ),
+        source_citations=(reference,),
+        incumbent=False,
+        width=artifact.width,
+        height=artifact.height,
+        packet_ordinal=len(packet_candidates),
+    ).rank_key
+    return {
+        "artifact_id": artifact.artifact_id,
+        "candidate_kind": "larger_copy",
+        "height": artifact.height,
+        "identity": identity_row,
+        "deterministic_citations": list(
+            dict.fromkeys(
+                [*cast("list[str]", identity_row["evidence_references"]), reference]
+            )
+        ),
+        "deterministic_rank": acceptable.index(reference) + 1,
+        "deterministic_rank_key": list(rank_key),
+        "incumbent": False,
+        "match_state": {
+            "verified_manifestation_match": "same_edition",
+            "verified_work_match": "same_book",
+        }[str(identity_row["outcome"])],
+        "observation": None,
+        "ordinal": len(packet_candidates),
+        "original_sha256": artifact.original_digest,
+        "preview_sha256": artifact.preview_digest,
+        "reference": reference,
+        "selectable": selectable,
+        "source_kinds": [source.kind.value],
+        "state": (
+            "excluded"
+            if not selectable
+            else "recommended"
+            if reference == policy["recommended_candidate_reference"]
+            else "acceptable"
+        ),
+        "transport_sha256": artifact.preview_digest,
+        "width": artifact.width,
+    }
+
+
 def _retained_binding(candidate: Mapping[str, object]) -> tuple[str, str, str] | None:
     """The binding a stored retained candidate names, or None for any other."""
     if candidate.get("candidate_kind") != "retained":
@@ -406,19 +496,27 @@ def _validated_cover_consideration(
     avoid_promotional_text = policy_value.get("avoid_promotional_text")
     avoid_tie_in_branding = policy_value.get("avoid_tie_in_branding")
     prefer_minimal_composition = policy_value.get("prefer_minimal_composition")
-    if any(
-        type(option) is not bool
-        for option in (
-            avoid_promotional_text,
-            avoid_tie_in_branding,
-            prefer_minimal_composition,
+    prefer_edition = policy_value.get("prefer_edition")
+    current_protection = policy_value.get("current_protection")
+    if (
+        any(
+            type(option) is not bool
+            for option in (
+                avoid_promotional_text,
+                avoid_tie_in_branding,
+                prefer_minimal_composition,
+                prefer_edition,
+            )
         )
+        or type(current_protection) is not str
     ):
         raise ValueError("cover consideration policy is invalid")
     policy = CoverPolicy(
         avoid_promotional_text=cast(bool, avoid_promotional_text),
         avoid_tie_in_branding=cast(bool, avoid_tie_in_branding),
         prefer_minimal_composition=cast(bool, prefer_minimal_composition),
+        current_protection=current_protection,
+        prefer_edition=cast(bool, prefer_edition),
     )
     if policy.document != policy_document or policy.reference != policy_reference:
         raise ValueError("cover consideration policy is invalid")
@@ -492,7 +590,12 @@ def _validated_candidates(
                 identity_document=identity_document,
                 observation_document=observation_document,
                 observation_taxonomy_reference=observation_taxonomy_reference,
-                candidate_references=references,
+                # A larger copy of the current cover is the one stage
+                # candidate outside the packet (#1363, Codex P2).
+                candidate_references=(
+                    *references,
+                    *_larger_copy_references(report, packet_candidates),
+                ),
             )
             expected_candidates = CoverConsiderationService._candidates(
                 report,
@@ -714,6 +817,12 @@ def cover_consideration_currentness_document(
             )
         ):
             return "null"
+        policy_report = value.get("policy_report_document")
+        stage = (
+            None
+            if type(policy_report) is not str
+            else cast("dict[str, object]", json.loads(policy_report)["stage"])
+        )
         return canonical_packet_json(
             {
                 "connection": report.target.connection,
@@ -721,6 +830,13 @@ def cover_consideration_currentness_document(
                 "item": report.target.item,
                 "report_id": report.report_id,
                 "provider_fetching": fetching,
+                # The measured stage's decision, read by attention and the
+                # Covers groups in SQL (#1363, D10).
+                "cover_stage": (
+                    None
+                    if stage is None
+                    else {"outcome": stage["outcome"], "reason": stage["reason"]}
+                ),
                 "manual_ready": not fetching
                 and any(
                     candidate["incumbent"] is True or manual_cover_eligible(candidate)
@@ -757,7 +873,9 @@ def cover_currentness_facts(document: str) -> CoverCurrentnessFacts | None:
                 "provider_fetching",
                 "manual_ready",
                 "replay_reference",
+                "cover_stage",
             }
+            or not _currentness_stage(value["cover_stage"])
             or any(
                 type(value[key]) is not str or not value[key]
                 for key in (
@@ -782,6 +900,15 @@ def cover_currentness_facts(document: str) -> CoverCurrentnessFacts | None:
         )
     except Exception:
         return None
+
+
+def _currentness_stage(value: object) -> bool:
+    return value is None or (
+        type(value) is dict
+        and set(value) == {"outcome", "reason"}
+        and value["outcome"] in {outcome.value for outcome in CoverOutcome}
+        and (value["reason"] is None or value["reason"] in STAGE_REASONS)
+    )
 
 
 def cover_currentness_from_facts(
@@ -1137,7 +1264,7 @@ class CoverConsiderationService:
                 "observation_schema": OBSERVATION_SCHEMA_VERSION,
                 "observer_output_schema": OUTPUT_SCHEMA_VERSION,
                 "packet_producer_revision": PACKET_PRODUCER_REVISION,
-                "packet_schema": PACKET_SCHEMA_VERSION,
+                "packet_schema": COVER_REVIEW_PACKET_SCHEMA,
                 "policy_report_schema": POLICY_REPORT_SCHEMA_VERSION,
                 "policy_schema": POLICY_SCHEMA_VERSION,
                 "taxonomy_reference": TAXONOMY_REFERENCE,
@@ -1894,7 +2021,10 @@ class CoverConsiderationService:
                     "width": artifact.width,
                 }
             )
-        return result
+        larger = _larger_copy_candidate(
+            report, packet["candidates"], identity_rows, policy, unadmitted
+        )
+        return result if larger is None else [*result, larger]
 
     @staticmethod
     def _omissions(
@@ -2254,6 +2384,14 @@ def _cover_choice_contexts(
     bindings = {
         item["reference"]: item["source_bindings"] for item in packet["candidates"]
     }
+    # A larger copy is the one source it names (#1363, Codex P2).
+    bindings.update(
+        {
+            item["reference"]: [{"reference": item["reference"]}]
+            for item in candidates
+            if item.get("candidate_kind") == "larger_copy"
+        }
+    )
     sources = {
         cover_source_reference(report.report_id, source.source_id): source
         for source in report.cover_sources
