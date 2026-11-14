@@ -42,7 +42,6 @@ const setupState = (nextStep: string, overrides: Record<string, unknown> = {}) =
   next_step: nextStep,
   providers: [],
   revision: 3,
-  schema_version: 'setup-state-v5',
   ...overrides,
 })
 
@@ -2310,10 +2309,9 @@ describe('shipped first-run setup script', () => {
     const fetch = vi.fn(async (request: RequestInfo | URL) => {
       if (requestUrl(request) === '/api/setup/reviewer-access')
         return response({
-          schema_version: 'reviewer-access-view-v2',
+          schema_version: 'reviewer-access-view-v3',
           cover_metadata: null,
           cost_evidence: {
-            schema_version: 'reviewer-cost-evidence-v2',
             models: [{ model: 'openai/gpt-6-luna', task: 'cover', per_1000_usd: '4.2' }],
           },
           revision: 3,
@@ -2560,9 +2558,9 @@ describe('shipped first-run setup script', () => {
 })
 
 const reviewerAccess = (state: string, reason: string | null = null) => ({
-  schema_version: 'reviewer-access-view-v2',
+  schema_version: 'reviewer-access-view-v3',
   cover_metadata: null,
-  cost_evidence: { schema_version: 'reviewer-cost-evidence-v2', models: [] },
+  cost_evidence: { models: [] },
   revision: 3,
   mapping: null,
   codex: { state, reason, model: state === 'not_provisioned' ? null : 'gpt-5.6-sol' },

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Verify the live documentation corpus is reachable, linked, indexed, and lean.
 
-Six checks. `docs/README.md` claims to list every
+Seven checks. `docs/README.md` claims to list every
 live document, and `docs/architecture/decisions/README.md` claims to index
 every decision; both claims were true only for as long as somebody re-read the
 tree by hand. The 2026-08-15 audit found ten orphaned documents and four
@@ -18,7 +18,10 @@ missing index rows, so the claims are enforced here instead:
    `(#1070)`: a section named after the issue that added it is the start of a
    ledger, and the corpus once grew dozens of them before anyone noticed;
 6. no living document exceeds `WORD_BUDGET` words. A document that needs more
-   is several documents, or is carrying history that git already keeps.
+   is several documents, or is carrying history that git already keeps;
+7. every version identifier on the compatibility page is the code's current
+   one (`scripts/compatibility_versions.py`, which imports the product to
+   read them and rewrites the page with `--write`).
 
 ADRs are records of a decision and keep their original text, so checks 5 and
 6 do not apply to them; `CHANGELOG.md` is exempt from the word budget only.
@@ -28,9 +31,11 @@ exactly what `docs/README.md` says it lists. Files under `.github/` and
 `.impeccable/` are templates for tooling rather than documents that corpus
 claims, so they are outside it.
 
-Nothing here opens a socket. An `http`, `https`, or `mailto` target is skipped
-by construction rather than fetched, so the check is offline and stays that way
-whatever a document links to.
+Check 7 runs when the verified tree has the compatibility page; a minimal tree
+built for a test of the other six has none. Nothing here opens a socket. An
+`http`, `https`, or `mailto` target is skipped by construction rather than
+fetched, so the check is offline and stays that way whatever a document links
+to.
 """
 
 from __future__ import annotations
@@ -40,6 +45,11 @@ import re
 import sys
 from pathlib import Path
 from urllib.parse import unquote
+
+try:
+    from scripts import compatibility_versions
+except ImportError:  # pragma: no cover - direct `python scripts/...` execution
+    import compatibility_versions  # type: ignore[no-redef,import-not-found]  # reason: same module under both execution styles; only resolvable when scripts/ is sys.path[0]
 
 ADR_DIRECTORY = Path("docs") / "architecture" / "decisions"
 ADR_INDEX = ADR_DIRECTORY / "README.md"
@@ -370,6 +380,14 @@ def oversized_documents(root: Path) -> tuple[str, ...]:
     return tuple(findings)
 
 
+def stale_version_identifiers(root: Path) -> tuple[str, ...]:
+    """Compatibility-page identifiers that are not the code's current ones."""
+
+    if not (root / compatibility_versions.PAGE).is_file():
+        return ()
+    return compatibility_versions.version_findings(root)
+
+
 def integrity_findings(root: Path) -> tuple[str, ...]:
     """Every finding, links first: an orphan is often a broken link upstream."""
 
@@ -380,6 +398,7 @@ def integrity_findings(root: Path) -> tuple[str, ...]:
         *duplicate_adr_numbers(root),
         *issue_headings(root),
         *oversized_documents(root),
+        *stale_version_identifiers(root),
     )
 
 

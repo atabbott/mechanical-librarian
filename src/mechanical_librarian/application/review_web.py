@@ -119,9 +119,9 @@ from mechanical_librarian.domain.shadow_outcome import (
     ShadowOutcomeSet,
 )
 
-ReviewCaseDetailSchemaVersion = Literal["review-case-detail-v7"]
+ReviewCaseDetailSchemaVersion = Literal["review-case-detail-v8"]
 REVIEW_CASE_DETAIL_SCHEMA: Final[ReviewCaseDetailSchemaVersion] = (
-    "review-case-detail-v7"
+    "review-case-detail-v8"
 )
 
 ReviewCaseEvidenceSchemaVersion = Literal["review-case-evidence-v5"]
@@ -129,9 +129,12 @@ REVIEW_CASE_EVIDENCE_SCHEMA: Final[ReviewCaseEvidenceSchemaVersion] = (
     "review-case-evidence-v5"
 )
 
-ReviewCaseHistorySchemaVersion = Literal["review-case-history-v3"]
+HUMAN_DECISION_ACK_SCHEMA: Final = "human-decision-ack-v1"
+ReviewAttentionSchemaVersion = Literal["review-attention-v1"]
+REVIEW_ATTENTION_SCHEMA: Final[ReviewAttentionSchemaVersion] = "review-attention-v1"
+ReviewCaseHistorySchemaVersion = Literal["review-case-history-v4"]
 REVIEW_CASE_HISTORY_SCHEMA: Final[ReviewCaseHistorySchemaVersion] = (
-    "review-case-history-v3"
+    "review-case-history-v4"
 )
 
 ReviewLibrarySchemaVersion = Literal["review-library-v5"]
@@ -1790,7 +1793,7 @@ class RecordHumanDecision:
                     raise ReviewWebError("persistence") from error
                 return {
                     **_decision_projection(stored_replay),
-                    "schema_version": "human-decision-ack-v1",
+                    "schema_version": HUMAN_DECISION_ACK_SCHEMA,
                 }
             try:
                 case_document = self._repository.get_review_case(review_case_id)
@@ -1886,7 +1889,7 @@ class RecordHumanDecision:
                 )
             return {
                 **_decision_projection(stored),
-                "schema_version": "human-decision-ack-v1",
+                "schema_version": HUMAN_DECISION_ACK_SCHEMA,
             }
         except ReviewWebError:
             raise
@@ -2161,7 +2164,7 @@ class BrowseReviewLibrary:
                 else None
             ),
             "query": normalized,
-            "schema_version": "review-attention-v1",
+            "schema_version": REVIEW_ATTENTION_SCHEMA,
             "total": raw_total,
         }
 

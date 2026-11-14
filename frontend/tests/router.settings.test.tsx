@@ -31,9 +31,9 @@ import { createHttp, idlePreparation, renderRoute } from './fixtures'
 import { document, savedDocument, view } from './settingsFixtures'
 
 const reviewerView: ReviewerAccessView = {
-  schema_version: 'reviewer-access-view-v2',
+  schema_version: 'reviewer-access-view-v3',
   cover_metadata: null,
-  cost_evidence: { schema_version: 'reviewer-cost-evidence-v2', models: [] },
+  cost_evidence: { models: [] },
   revision: 3,
   mapping: null,
   description_mapping: null,
@@ -3056,7 +3056,6 @@ it('separates measured cover cost from observed rates and never lends prices to 
       request_price: null,
     },
     cost_evidence: {
-      schema_version: 'reviewer-cost-evidence-v2' as const,
       models: [
         {
           model: 'openai/gpt-6-luna',

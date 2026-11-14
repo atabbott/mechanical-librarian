@@ -97,7 +97,6 @@ from mechanical_librarian.domain.owner_settings import (
 from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
-from mechanical_librarian.domain.reviewer_cost import REVIEWER_COST_EVIDENCE_SCHEMA
 from mechanical_librarian.domain.setup_state import (
     SETUP_STATE_SCHEMA,
     SetupStateDocument,
@@ -6779,11 +6778,10 @@ def test_refused_openrouter_validation_is_shown_beside_its_button_on_a_phone() -
         base_url="https://testserver",
     )
     origin = "https://setup.test"
-    access = {
+    access: dict[str, object] = {
         "schema_version": REVIEWER_ACCESS_VIEW_SCHEMA,
         "cover_metadata": None,
         "cost_evidence": {
-            "schema_version": REVIEWER_COST_EVIDENCE_SCHEMA,
             "models": [],
         },
         "revision": 3,

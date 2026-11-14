@@ -6550,10 +6550,9 @@ describe('Library route', () => {
         ] as const) {
           cleanup()
           const access: ReviewerAccessView = {
-            schema_version: 'reviewer-access-view-v2',
+            schema_version: 'reviewer-access-view-v3',
             cover_metadata: null,
             cost_evidence: {
-              schema_version: 'reviewer-cost-evidence-v2',
               models: [],
             },
             revision: 9,
@@ -7004,9 +7003,9 @@ describe('Library route', () => {
     const base = detail.fields[0]
     if (!base) throw new Error('cover fixture requires a field')
     const access: ReviewerAccessView = {
-      schema_version: 'reviewer-access-view-v2',
+      schema_version: 'reviewer-access-view-v3',
       cover_metadata: null,
-      cost_evidence: { schema_version: 'reviewer-cost-evidence-v2', models: [] },
+      cost_evidence: { models: [] },
       revision: 9,
       mapping: { engine: 'codex' },
       description_mapping: null,
@@ -7116,9 +7115,9 @@ describe('Library route', () => {
 
   // A retry-capable reviewer for the #1595 cover alert tests below.
   const retryAccess: ReviewerAccessView = {
-    schema_version: 'reviewer-access-view-v2',
+    schema_version: 'reviewer-access-view-v3',
     cover_metadata: null,
-    cost_evidence: { schema_version: 'reviewer-cost-evidence-v2', models: [] },
+    cost_evidence: { models: [] },
     revision: 9,
     mapping: { engine: 'codex' },
     description_mapping: null,
@@ -13815,7 +13814,6 @@ it('offers advised text in the ordinary Description chooser with its immutable a
               ...advice,
               selected_advice: { candidate, binding: advice.binding, current: true },
               selection: {
-                schema_version: 'authored-description-decision-v1',
                 decision_id: `human_decision_${'a'.repeat(64)}`,
                 candidate_id: candidate.candidate_id,
                 binding: advice.binding,
@@ -14072,7 +14070,6 @@ it.each(['verified', 'no_change_required'] as const)(
         current: outcome === 'no_change_required',
       },
       selection: {
-        schema_version: 'authored-description-decision-v1',
         decision_id: `automatic_decision_${'a'.repeat(64)}`,
         candidate_id: advice.candidate.candidate_id,
         binding: advice.binding,
@@ -14130,7 +14127,6 @@ it.each([
       application_outcome: outcome,
       selected_advice: { candidate: advice.candidate, binding: advice.binding, current },
       selection: {
-        schema_version: 'authored-description-decision-v1',
         decision_id: `${origin === 'human' ? 'human' : 'automatic'}_decision_${'a'.repeat(64)}`,
         candidate_id: advice.candidate.candidate_id,
         binding: advice.binding,
@@ -14239,7 +14235,6 @@ it.each(['human', 'automatic_policy'] as const)(
           current: scenario.current,
         },
         selection: {
-          schema_version: 'authored-description-decision-v1',
           decision_id: `${origin === 'human' ? 'human' : 'automatic'}_decision_${'a'.repeat(64)}`,
           candidate_id: field.descriptionAdvice.candidate.candidate_id,
           binding: advice.binding,
@@ -14295,7 +14290,6 @@ it.each([true, false])(
       application_outcome: null,
       selected_advice: { candidate, binding: advice.binding, current: true },
       selection: {
-        schema_version: 'authored-description-decision-v1',
         decision_id: `automatic_decision_${'a'.repeat(64)}`,
         candidate_id: candidate.candidate_id,
         binding: advice.binding,

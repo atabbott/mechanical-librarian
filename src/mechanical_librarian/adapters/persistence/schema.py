@@ -69,6 +69,7 @@ from mechanical_librarian.domain.cover_automatic_decision import (
     CoverAutomaticDecision,
 )
 from mechanical_librarian.domain.human_decision import (
+    AUTOMATIC_COVER_SELECTION_AUTHORITY_SCHEMA,
     COVER_SELECTION_AUTHORITY_SCHEMA,
     HumanDecision,
     HumanDecisionError,
@@ -2314,7 +2315,7 @@ def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> Non
                 != (
                     COVER_SELECTION_AUTHORITY_SCHEMA
                     if row[4] == "owner"
-                    else "cover-selection-authority-v1"
+                    else AUTOMATIC_COVER_SELECTION_AUTHORITY_SCHEMA
                 )
                 or document.get("selection_id") != row[0]
                 or document.get("kind") != row[4]
@@ -2466,7 +2467,7 @@ def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> Non
                     "rank_key": expected_rank,
                     "schema_version": COVER_SELECTION_AUTHORITY_SCHEMA
                     if row[4] == "owner"
-                    else "cover-selection-authority-v1",
+                    else AUTOMATIC_COVER_SELECTION_AUTHORITY_SCHEMA,
                     "selection_id": expected_selection_id,
                     "supersedes_selection_id": row[7],
                 }

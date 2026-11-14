@@ -38,13 +38,14 @@ from mechanical_librarian.domain.reviewer_access import (
 )
 from mechanical_librarian.domain.reviewer_cost import (
     REVIEWER_COST_EVIDENCE_SCHEMA,
+    ReviewerCostEstimate,
     ReviewerCostEvidence,
 )
 from mechanical_librarian.domain.validation import credential
 
-ReviewerAccessViewSchemaVersion = Literal["reviewer-access-view-v2"]
+ReviewerAccessViewSchemaVersion = Literal["reviewer-access-view-v3"]
 REVIEWER_ACCESS_VIEW_SCHEMA: Final[ReviewerAccessViewSchemaVersion] = (
-    "reviewer-access-view-v2"
+    "reviewer-access-view-v3"
 )
 
 # Device-auth flow states that a Codex projection reports verbatim instead of
@@ -186,7 +187,17 @@ class OpenRouterRecommendation(_Closed):
     requests_per_day: StrictStr | None = None
 
 
-def _cost_evidence() -> ReviewerCostEvidence:
+class ReviewerCostView(_Closed):
+    """The measured cost rows the page shows.
+
+    The packaged evidence document's version stays with the document, so a
+    move of it changes nothing the browser reads (#1847).
+    """
+
+    models: tuple[ReviewerCostEstimate, ...] = Field(max_length=100)
+
+
+def _cost_evidence() -> ReviewerCostView:
     payload = (
         files("mechanical_librarian")
         .joinpath(f"resources/{REVIEWER_COST_EVIDENCE_SCHEMA}.json")
@@ -194,12 +205,13 @@ def _cost_evidence() -> ReviewerCostEvidence:
     )
     if len(payload) > 262144:
         raise ValueError("reviewer cost evidence is oversized")
-    return ReviewerCostEvidence.model_validate_json(payload)
+    evidence = ReviewerCostEvidence.model_validate_json(payload)
+    return ReviewerCostView(models=evidence.models)
 
 
 class ReviewerAccessView(_Closed):
     schema_version: ReviewerAccessViewSchemaVersion = REVIEWER_ACCESS_VIEW_SCHEMA
-    cost_evidence: ReviewerCostEvidence = Field(default_factory=_cost_evidence)
+    cost_evidence: ReviewerCostView = Field(default_factory=_cost_evidence)
     revision: StrictInt
     mapping: ReviewerTaskSelection | None
     description_mapping: ReviewerTaskSelection | None = None

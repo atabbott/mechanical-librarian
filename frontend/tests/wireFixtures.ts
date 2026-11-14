@@ -126,7 +126,7 @@ export const caseDetail = (overrides: Overrides = {}) => ({
   recording_admission_basis: null,
   recording_identity_basis: null,
   review_case_id: 'case-1',
-  schema_version: 'review-case-detail-v7',
+  schema_version: 'review-case-detail-v8',
   target: targetIdentity(),
   writes_consented: false,
   ...overrides,
@@ -181,7 +181,6 @@ export const coverPolicyReport = (overrides: Overrides = {}) => ({
   policy_reference: 'cover-policy-synthetic',
   reasons: [],
   recommended_candidate_reference: null,
-  schema_version: 'cover-policy-report-v4',
   stage: {
     choice: null,
     edition_preferred: false,
@@ -212,7 +211,6 @@ export const coverConsideration = (overrides: Overrides = {}) => ({
     current_protection: 'protected',
     prefer_edition: false,
     prefer_minimal_composition: false,
-    schema_version: 'cover-policy-v2',
   },
   policy_reference: 'cover-policy-synthetic',
   provider_fetching: false,
@@ -223,7 +221,6 @@ export const coverConsideration = (overrides: Overrides = {}) => ({
   reviewer_model: null,
   reviewer_status: 'unavailable',
   reviewer_unavailable_reason: null,
-  schema_version: 'cover-consideration-v8',
   supersedes_id: null,
   target_fingerprint: 'fingerprint-1',
   ...overrides,
@@ -287,7 +284,6 @@ export const historyCoverItem = (overrides: Overrides = {}) => ({
   kind: 'no_action',
   occurred_at: 3,
   review_case_id: 'case-1',
-  schema_version: 'cover-consideration-event-v1',
   ...overrides,
 })
 
@@ -309,7 +305,7 @@ export const caseHistory = (overrides: Overrides = {}) => ({
   items: [],
   next_cursor: null,
   review_case_id: 'case-1',
-  schema_version: 'review-case-history-v3',
+  schema_version: 'review-case-history-v4',
   ...overrides,
 })
 

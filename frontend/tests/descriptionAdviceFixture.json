@@ -684,8 +684,7 @@
           "provenance": "authored_content",
           "request_digest": "69714795d0ccb99e4555ddbf9ec989dd4e2b7479404cff51a64aaea173cbfc72",
           "request_identity": "4ebf3db299a6cc38d63f16eb69d99cfe1803203b9d95e0c3dafc21c1ba62b6b3",
-          "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6",
-          "schema_version": "description-advice-candidate-v1"
+          "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6"
         },
         "current": true,
         "engine": "codex",
@@ -955,7 +954,7 @@
   "recording_admission_basis": null,
   "recording_identity_basis": null,
   "review_case_id": "review_case_992154096c8e797cf79aeedf2bb9fcaa59782bc64fc9a819b9805a1743097fc8",
-  "schema_version": "review-case-detail-v7",
+  "schema_version": "review-case-detail-v8",
   "target": {
     "authors": ["Mick Herron"],
     "connection": "primary",
