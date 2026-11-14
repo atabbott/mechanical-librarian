@@ -243,8 +243,16 @@ def test_a_rule_whose_input_is_not_persisted_is_not_replayable(
             ["title"],
             {"medium": "ebook", "current": None, "candidates": [], "omnibus": True},
         ),
+        (
+            [],
+            {
+                "medium": "ebook",
+                "current": _current(edition_outside_library_languages=True),
+                "candidates": [],
+            },
+        ),
     ],
-    ids=["measures", "title_flag", "omnibus_flag"],
+    ids=["measures", "title_flag", "omnibus_flag", "edition_flag"],
 )
 def test_an_undeclared_input_is_refused(
     tmp_path: Path, persisted: list[str], field: dict[str, object]
@@ -254,6 +262,26 @@ def test_an_undeclared_input_is_refused(
         "",
         "replay-cover-rules: input carries an undeclared input\n",
     )
+
+
+def test_an_edition_outside_the_library_languages_is_replayed_by_its_key(
+    tmp_path: Path,
+) -> None:
+    # The flag is read under its #1363 name (formerly non_english_edition).
+    fields = [
+        {
+            "medium": "ebook",
+            "current": _current(edition_outside_library_languages=True),
+            "candidates": [_candidate(edition_outside_library_languages=False)],
+        }
+    ]
+
+    code, stdout, _ = _run(tmp_path, _document(["edition_language"], fields))
+
+    assert code == 0
+    report = json.loads(stdout)
+    assert report["rules"]["edition_language"] == "replayed"
+    assert report["issues"]["ebook"]["edition_language"] == 1
 
 
 SECRET = "Private Title /library/book"

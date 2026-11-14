@@ -2064,7 +2064,11 @@ it('saves description preferences independently next to Cover guidance and keeps
     'aria-pressed',
     'true',
   )
-  expect(screen.getByRole('region', { name: 'Cover' }).nextElementSibling).toBe(region)
+  // Current covers sits between Cover and Description advice (#1363).
+  expect(screen.getByRole('region', { name: 'Cover' }).nextElementSibling).toHaveAccessibleName(
+    'Current covers',
+  )
+  expect(screen.getByRole('region', { name: 'Current covers' }).nextElementSibling).toBe(region)
   expect(region.nextElementSibling).toHaveAccessibleName('ASIN')
   await userEvent.setup().click(choice('Remove marketing material', 'Off'))
   expect(within(region).getByText('Changed')).toBeVisible()
@@ -2090,6 +2094,85 @@ it('saves description preferences independently next to Cover guidance and keeps
     },
   })
   expect(within(region).getByRole('link')).toHaveAttribute('href', '/settings?group=reviewer')
+})
+
+it('saves current cover settings with their own button (#1363)', async () => {
+  const http = createHttp()
+  const initial = view()
+  http.getSettings = vi.fn(async () => initial)
+  http.writeSettings = vi.fn<ReviewHttp['writeSettings']>(async (write) => ({
+    ...initial,
+    document: savedDocument(write.document),
+  }))
+  renderRoute('/policy?section=curation', http)
+  const region = await screen.findByRole('region', { name: 'Current covers' })
+  const protection = await within(region).findByRole('group', { name: 'Replace a current cover' })
+  expect(
+    within(protection)
+      .getAllByRole('button')
+      .map((button) => button.textContent),
+  ).toEqual(['Only with a fault', 'When another is preferred', 'Never'])
+  expect(within(protection).getByRole('button', { name: 'Only with a fault' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+  expect(
+    within(region).getByText(
+      'A cover with a fault is replaced automatically. Other covers are suggested.',
+    ),
+  ).toBeVisible()
+  expect(within(region).getByRole('status')).toHaveTextContent(
+    'Saved with their own button, not with the policy.',
+  )
+  const user = userEvent.setup()
+  await user.click(within(protection).getByRole('button', { name: 'Never' }))
+  expect(
+    within(region).getByText(
+      'Nothing is replaced automatically. A cover with a fault is suggested.',
+    ),
+  ).toBeVisible()
+  const edition = within(region).getByRole('group', { name: "Prefer the edition's cover" })
+  await user.click(within(edition).getByRole('button', { name: 'On' }))
+  expect(
+    within(region).getByText(
+      "A cover from this book's edition is suggested over a cover of the book in general.",
+    ),
+  ).toBeVisible()
+  expect(within(region).getByRole('status')).toHaveTextContent(
+    'Unsaved. These save with their own button, not with the policy.',
+  )
+  await user.click(within(region).getByRole('button', { name: 'Save cover settings' }))
+  await waitFor(() =>
+    expect(within(region).getByRole('status')).toHaveTextContent('Cover settings saved.'),
+  )
+  expect(http.writeSettings).toHaveBeenCalledWith({
+    expected_revision: 3,
+    secrets: [],
+    document: {
+      ...initial.document,
+      revision: 4,
+      cover_preferences: {
+        ...initial.document.cover_preferences,
+        current_protection: 'proposals_only',
+        prefer_edition: true,
+      },
+    },
+  })
+})
+
+it('shows file-managed current cover settings read-only (#1363)', async () => {
+  const http = createHttp()
+  http.getSettings = vi.fn(async () => view('file'))
+  http.writeSettings = vi.fn<ReviewHttp['writeSettings']>()
+  renderRoute('/policy?section=curation', http)
+  const region = await screen.findByRole('region', { name: 'Current covers' })
+  expect(
+    within(region).getByText('These settings are managed by deployment configuration.'),
+  ).toBeVisible()
+  for (const button of within(region).getAllByRole('button', { pressed: false }))
+    expect(button).toBeDisabled()
+  expect(within(region).getByRole('button', { name: 'Save cover settings' })).toBeDisabled()
+  expect(http.writeSettings).not.toHaveBeenCalled()
 })
 
 it.each([

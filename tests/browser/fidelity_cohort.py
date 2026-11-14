@@ -1055,14 +1055,28 @@ def _case(case_id: str) -> dict[str, object]:
                         "policy_reference": "cover-policy-synthetic",
                         "reasons": ["policy_satisfied"],
                         "recommended_candidate_reference": "cover-ref-choice",
-                        "schema_version": "cover-policy-report-v2",
+                        "schema_version": "cover-policy-report-v3",
+                        # The measured rules fill an empty cover and suggest
+                        # replacing an undersized one (#1363).
+                        "stage": {
+                            "choice": "cover-ref-choice",
+                            "edition_preferred": False,
+                            "exclusions": [],
+                            "groups": [],
+                            "issues": [] if case_id == "case-3" else ["below_floor"],
+                            "language": None,
+                            "outcome": "fill" if case_id == "case-3" else "suggest",
+                            "reason": None if case_id == "case-3" else "below_floor",
+                        },
                         "status": "recommended",
                     },
                     "policy_preferences": {
                         "avoid_promotional_text": False,
                         "avoid_tie_in_branding": False,
+                        "current_protection": "protected",
+                        "prefer_edition": False,
                         "prefer_minimal_composition": False,
-                        "schema_version": "cover-policy-v1",
+                        "schema_version": "cover-policy-v2",
                     },
                     "policy_reference": "cover-policy-synthetic",
                     "provider_fetching": False,
@@ -1785,7 +1799,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
     if path == "/api/v1/settings":
         document = OwnerSettingsDocument.model_validate(
             {
-                "schema_version": "owner-settings-v4",
+                "schema_version": "owner-settings-v5",
                 "revision": 1,
                 "connections": [
                     {"name": "primary", "endpoint": "https://library.invalid"}

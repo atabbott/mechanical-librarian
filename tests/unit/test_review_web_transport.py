@@ -250,7 +250,7 @@ def test_settings_file_authority_transport_is_private_and_locked(
 ) -> None:
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v4",
+            "schema_version": "owner-settings-v5",
             "revision": 1,
             "connections": [
                 {"name": "primary", "endpoint": "https://library.example.invalid"}
@@ -322,7 +322,7 @@ def test_settings_store_transport_redacts_secret_and_derives_effects(
 ) -> None:
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v4",
+            "schema_version": "owner-settings-v5",
             "revision": 1,
             "connections": [
                 {"name": "primary", "endpoint": "https://library.example.invalid"}
@@ -2773,7 +2773,6 @@ def test_openapi_is_deterministic_and_secret_free(
     assert {
         **dict(F20_OPTION_DISPOSITIONS),
         "cover_order:fixed_source_order": "pass",
-        "cover_order:replace_if_strictly_better": "pass",
         **{
             key: "pass"
             for key in (

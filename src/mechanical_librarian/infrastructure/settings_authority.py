@@ -122,6 +122,8 @@ def store_runtime_configuration(
         cover_avoid_promotional_text=document.cover_preferences.avoid_promotional_text,
         cover_avoid_tie_in_branding=document.cover_preferences.avoid_tie_in_branding,
         cover_prefer_minimal_composition=document.cover_preferences.prefer_minimal_composition,
+        cover_current_protection=document.cover_preferences.current_protection,
+        cover_prefer_edition=document.cover_preferences.prefer_edition,
         description_remove_marketing=document.description_advice.remove_marketing,
         description_remove_sales_boasts=document.description_advice.remove_sales_boasts,
         description_remove_praise=document.description_advice.remove_praise,

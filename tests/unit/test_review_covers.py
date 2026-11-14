@@ -275,20 +275,23 @@ def test_a_readable_current_cover_with_choices_is_kept(tmp_path: Path) -> None:
     assert str(item["cover"]["url"]).startswith("/api/v1/library/cover?")
 
 
-def test_an_unreadable_current_cover_asks_for_a_choice(tmp_path: Path) -> None:
+def test_an_unreadable_current_cover_with_a_candidate_is_suggested(
+    tmp_path: Path,
+) -> None:
     with _library(tmp_path, readable_current=False) as library:
         decide = _page(library.repository, "decide", None)
         kept = _page(library.repository, "kept", None)
-        # The same work Library's Needs attention lens counts.
+        # A suggestion is To decide, never Library's Needs attention (#1363, S9).
         assert (
             library.repository.read_review_library(
                 None, 25, 0, "needs_attention"
             ).attention_total
-            == 1
+            == 0
         )
 
     assert decide["counts"]["decide"] == 1
-    assert [item["group"] for item in decide["items"]] == ["choice"]
+    assert [item["group"] for item in decide["items"]] == ["proposal"]
+    assert decide["items"][0]["suggestion"] == {"reason": "unreadable"}
     # The library holds a cover it could not read, which is not "No cover".
     (item,) = decide["items"]
     assert item["cover"] is None
@@ -331,8 +334,10 @@ def test_switched_lists_listed_switches_newest_first_and_never_a_released_one(
             "at": 50,
             "before": None,
             "filled": True,
+            "language": None,
             "put_back": None,
             "put_back_offered": False,
+            "reason": None,
         }
         assert (
             replaced_cover_preview(library.repository, older, before["preview_sha256"])

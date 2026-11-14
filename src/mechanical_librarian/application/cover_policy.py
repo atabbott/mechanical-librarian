@@ -9,20 +9,48 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import cast
 
+from mechanical_librarian.domain.cover_evidence import (
+    CoverArtifact,
+    CoverContextField,
+    CoverDesignation,
+    CoverSource,
+    CoverSourceKind,
+    CoverSourceState,
+)
+from mechanical_librarian.domain.cover_rules import (
+    EDITION_PREFERENCE,
+    STAGE_REASONS,
+    CoverExclusion,
+    CoverIssue,
+    CoverOutcome,
+    CoverProtection,
+    CoverRuleCandidate,
+    CurrentCover,
+    MeasuredCoverElection,
+    elect_measured_covers,
+)
 from mechanical_librarian.domain.deterministic_cover_election import (
     CoverActualTargetState,
     CoverElectionCandidate,
     elect_confirmed_covers,
 )
+from mechanical_librarian.domain.field_outcomes import (
+    language_canonical_name,
+    language_outcomes_compatible,
+)
+from mechanical_librarian.domain.field_value_comparison import values_match
 from mechanical_librarian.domain.metadata_report import (
+    AUDIO_FILE_FORMATS,
     MetadataReport,
     TargetDestination,
     TargetFieldState,
 )
+from mechanical_librarian.domain.proposal_set import ProposalOutcome, evaluate_report
 
 from .cover_identity import (
     CLASSIFIER_REFERENCE,
     _preview_reference,
+    _record_title,
     classify_cover_identity,
 )
 from .cover_identity import (
@@ -48,9 +76,10 @@ from .cover_observation import (
     SCHEMA_VERSION as OBSERVATION_SCHEMA_VERSION,
 )
 from .cover_packet_semantics import bind_cover_packet, canonical_packet_json
+from .cover_packets import cover_source_reference
 
-SCHEMA_VERSION = "cover-policy-report-v2"
-POLICY_SCHEMA_VERSION = "cover-policy-v1"
+SCHEMA_VERSION = "cover-policy-report-v3"
+POLICY_SCHEMA_VERSION = "cover-policy-v2"
 _IDENTITY_OUTCOMES = frozenset(
     {
         "conflict",
@@ -61,6 +90,25 @@ _IDENTITY_OUTCOMES = frozenset(
     }
 )
 _REFERENCE = re.compile(r"[a-z][a-z0-9_]{0,63}_[0-9a-f]{64}")
+# A current cover the target states but no retrieved image shows has no
+# packet reference, so the stage names it with this one.
+_UNREAD_CURRENT = "current_cover"
+_REPORT_REASONS = frozenset(
+    {
+        "current_cover_kept",
+        "deterministic_confirmed_order",
+        "no_confirmed_candidates",
+        "provider_fetching",
+        *STAGE_REASONS,
+    }
+)
+_CHOOSING_OUTCOMES = frozenset(
+    {CoverOutcome.REPLACE.value, CoverOutcome.SUGGEST.value, CoverOutcome.FILL.value}
+)
+# A title result this unsettled may name another book (#1363 Q3).
+_TITLE_CONFLICT_REASONS = frozenset(
+    {"competing_evidence", "isbn_title_material_conflict"}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +118,8 @@ class CoverPolicy:
     avoid_promotional_text: bool = False
     avoid_tie_in_branding: bool = False
     prefer_minimal_composition: bool = False
+    current_protection: str = CoverProtection.PROTECTED.value
+    prefer_edition: bool = False
 
     def __post_init__(self) -> None:
         if any(
@@ -78,9 +128,17 @@ class CoverPolicy:
                 self.avoid_promotional_text,
                 self.avoid_tie_in_branding,
                 self.prefer_minimal_composition,
+                self.prefer_edition,
             )
+        ) or (
+            type(self.current_protection) is not str
+            or self.current_protection not in {item.value for item in CoverProtection}
         ):
             raise ValueError("cover policy is invalid")
+
+    @property
+    def protection(self) -> CoverProtection:
+        return CoverProtection(self.current_protection)
 
     @property
     def document(self) -> str:
@@ -88,6 +146,8 @@ class CoverPolicy:
             {
                 "avoid_promotional_text": self.avoid_promotional_text,
                 "avoid_tie_in_branding": self.avoid_tie_in_branding,
+                "current_protection": self.current_protection,
+                "prefer_edition": self.prefer_edition,
                 "prefer_minimal_composition": self.prefer_minimal_composition,
                 "schema_version": POLICY_SCHEMA_VERSION,
             }
@@ -211,12 +271,29 @@ def adjudicate_cover_policy(
         and not has_retained_incumbent
         else CoverActualTargetState.UNKNOWN
     )
+    # The election keeps owner readiness and its own order; the measured
+    # stage decides what replaces, suggests or fills (ADR-0093).
     election = elect_confirmed_covers(
         election_candidates,
         provider_fetching=provider_fetching,
         actual_target_state=actual_target_state,
     )
     acceptable = tuple(item.candidate.reference for item in election.ranked)
+    rule_candidates, medium, current, current_language = _measured_inputs(
+        report, candidates, election_candidates
+    )
+    stage = elect_measured_covers(
+        rule_candidates,
+        medium=medium,
+        current=current,
+        protection=policy.protection,
+        prefer_edition=policy.prefer_edition,
+        title_conflict=_title_conflict(report),
+        # EPUB opening evidence of omnibus membership never reaches the
+        # report, so the omnibus rule has no input yet (#1363 Q6).
+        omnibus=False,
+    )
+    fetching = bool(acceptable) and provider_fetching
     return _report(
         packet["packet_reference"],
         classifier_reference,
@@ -225,24 +302,284 @@ def adjudicate_cover_policy(
         observation_document,
         observation_taxonomy_reference,
         acceptable,
-        None
-        if election.recommendation is None
-        else election.recommendation.candidate.reference,
+        stage.choice
+        if not fetching and stage.outcome.value in _CHOOSING_OUTCOMES
+        else None,
         election.ready,
         actual_target_state.value,
+        (_stage_report_reason(stage, fetching),),
+        _stage_document(stage, current_language),
+    )
+
+
+def _stage_report_reason(stage: MeasuredCoverElection, fetching: bool) -> str:
+    if fetching:
+        return "provider_fetching"
+    if stage.outcome is CoverOutcome.EMPTY:
+        return "no_confirmed_candidates"
+    if stage.outcome is CoverOutcome.FILL:
+        return "deterministic_confirmed_order"
+    reason = _stage_reason(stage)
+    return "current_cover_kept" if reason is None else reason
+
+
+def _stage_reason(stage: MeasuredCoverElection) -> str | None:
+    if stage.reason is not None:
+        return stage.reason.value
+    return EDITION_PREFERENCE if stage.edition_preferred else None
+
+
+def _stage_document(
+    stage: MeasuredCoverElection, current_language: str | None
+) -> dict[str, object]:
+    return {
+        "choice": stage.choice,
+        "edition_preferred": stage.edition_preferred,
+        "exclusions": [
+            {"exclusion": exclusion.value, "reference": reference}
+            for reference, exclusion in stage.excluded
+        ],
+        "groups": [
+            {"members": list(group.members), "representative": group.representative}
+            for group in stage.groups
+        ],
+        "issues": [issue.value for issue in stage.issues],
+        # The edition language a reason names, only when that is an issue.
+        "language": current_language
+        if CoverIssue.EDITION_LANGUAGE in stage.issues
+        else None,
+        "outcome": stage.outcome.value,
+        "reason": _stage_reason(stage),
+    }
+
+
+def _valid_stage(value: object, references: tuple[str, ...]) -> bool:
+    """Whether a stored stage has the closed shape ``_stage_document`` writes."""
+    if type(value) is not dict or set(value) != {
+        "choice",
+        "edition_preferred",
+        "exclusions",
+        "groups",
+        "issues",
+        "language",
+        "outcome",
+        "reason",
+    }:
+        return False
+    known = {*references, _UNREAD_CURRENT}
+    issues, exclusions, groups = value["issues"], value["exclusions"], value["groups"]
+    order = [issue.value for issue in CoverIssue]
+    return (
+        value["outcome"] in {outcome.value for outcome in CoverOutcome}
+        and (value["choice"] is None or value["choice"] in references)
+        and type(value["edition_preferred"]) is bool
+        and (
+            value["language"] is None
+            if CoverIssue.EDITION_LANGUAGE.value not in issues
+            else type(value["language"]) is str and 1 <= len(value["language"]) <= 280
+        )
+        and (value["reason"] is None or value["reason"] in STAGE_REASONS)
+        and type(issues) is list
+        and all(item in order for item in issues)
+        and issues == sorted(set(issues), key=order.index)
+        and type(exclusions) is list
+        and all(
+            type(item) is dict
+            and set(item) == {"exclusion", "reference"}
+            and item["reference"] in references
+            and item["exclusion"] in {exclusion.value for exclusion in CoverExclusion}
+            for item in exclusions
+        )
+        and type(groups) is list
+        and all(
+            type(item) is dict
+            and set(item) == {"members", "representative"}
+            and type(item["members"]) is list
+            and len(item["members"]) >= 2
+            and all(member in known for member in item["members"])
+            and item["representative"] in item["members"]
+            for item in groups
+        )
+    )
+
+
+def _title_conflict(report: MetadataReport) -> bool:
+    """Whether the case's title result is an unresolved choice that may name another book."""
+    title = next(
+        result
+        for result in evaluate_report(report).results
+        if result.destination is TargetDestination.TITLE
+    )
+    return title.outcome is ProposalOutcome.UNRESOLVED_CHOICE and bool(
+        _TITLE_CONFLICT_REASONS & set(title.reasons)
+    )
+
+
+def _measured_inputs(
+    report: MetadataReport,
+    candidates: list[dict[str, object]],
+    election_candidates: tuple[CoverElectionCandidate, ...],
+) -> tuple[tuple[CoverRuleCandidate, ...], str, CurrentCover | None, str | None]:
+    """Build the stage's candidates, medium and current cover from the report.
+
+    The last value names the current cover's edition language when it is
+    outside the library's, for the reason the owner reads.
+
+    Each candidate's measures and size come from the artifact the packet's
+    dimensions name; its edition and title facts come from the provider
+    sources it is bound to.
+    """
+    sources = {
+        cover_source_reference(report.report_id, source.source_id): source
+        for source in report.cover_sources
+        if source.state is CoverSourceState.RETRIEVED and source.artifact is not None
+    }
+    target_title = next(
         (
-            ("provider_fetching",)
-            if acceptable and provider_fetching
-            else ("actual_target_unverified",)
-            if acceptable and actual_target_state is CoverActualTargetState.UNKNOWN
-            else ("confirmed_incumbent_not_improved",)
-            if acceptable
-            and actual_target_state is CoverActualTargetState.CONFIRMED
-            and election.recommendation is None
-            else ("deterministic_confirmed_order",)
-            if acceptable
-            else ("no_confirmed_candidates",)
+            field.value
+            for field in report.target.fields
+            if field.destination is TargetDestination.TITLE
+            and field.state is TargetFieldState.VALUE
+            and type(field.value) is str
         ),
+        None,
+    )
+    eligible = {candidate.reference: candidate for candidate in election_candidates}
+    rule_candidates: list[CoverRuleCandidate] = []
+    current: CurrentCover | None = None
+    current_language: str | None = None
+    for candidate in candidates:
+        bound = [
+            sources[cast("str", binding["reference"])]
+            for binding in cast("list[dict[str, object]]", candidate["source_bindings"])
+        ]
+        reference = cast("str", candidate["reference"])
+        if candidate["incumbent"] is True:
+            abs_source = next(s for s in bound if s.kind is CoverSourceKind.ABS)
+            artifact = cast("CoverArtifact", abs_source.artifact)
+            # The current cover takes the edition flag from any provider
+            # source showing the same original.
+            same_original = [
+                source
+                for source in sources.values()
+                if source.provenance is not None
+                and cast("CoverArtifact", source.artifact).original_digest
+                == artifact.original_digest
+            ]
+            election = eligible.get(reference)
+            current_language = _edition_language(report, same_original)
+            current = CurrentCover(
+                reference=reference,
+                identity=None if election is None else election.identity,
+                readable=True,
+                width=artifact.width,
+                height=artifact.height,
+                measures=artifact.measures,
+                edition_outside_library_languages=current_language is not None,
+            )
+            continue
+        election = eligible.get(reference)
+        if election is None:
+            continue
+        artifact = cast(
+            "CoverArtifact",
+            max(
+                (
+                    source
+                    for source in bound
+                    if cast("CoverArtifact", source.artifact).width == election.width
+                    and cast("CoverArtifact", source.artifact).height == election.height
+                ),
+                key=lambda source: cast("CoverArtifact", source.artifact).artifact_id,
+            ).artifact,
+        )
+        rule_candidates.append(
+            CoverRuleCandidate(
+                reference=reference,
+                identity=election.identity,
+                width=election.width,
+                height=election.height,
+                packet_ordinal=election.packet_ordinal,
+                measures=artifact.measures,
+                edition_outside_library_languages=_edition_language(report, bound)
+                is not None,
+                title_differs=_title_differs(report, bound, target_title),
+            )
+        )
+    target = next(
+        field
+        for field in report.target.fields
+        if field.destination is TargetDestination.COVER
+    )
+    if current is None and target.state not in {
+        TargetFieldState.MISSING,
+        TargetFieldState.NULL,
+        TargetFieldState.EMPTY,
+    }:
+        # The target states a cover that no retrieved image shows.
+        current = CurrentCover(reference=_UNREAD_CURRENT, identity=None, readable=False)
+    medium = "audiobook" if report.file.format in AUDIO_FILE_FORMATS else "ebook"
+    return tuple(rule_candidates), medium, current, current_language
+
+
+def _edition_language(report: MetadataReport, sources: list[CoverSource]) -> str | None:
+    """Name the edition language the sources label when none is the library's.
+
+    The name is the one the Language field writes, or the label itself when
+    no name is known. With no library languages the rule does nothing
+    (#1363 Q4).
+    """
+    languages = [
+        context.value
+        for source in sources
+        if source.provenance is not None
+        for context in source.provenance.context
+        if context.field is CoverContextField.LANGUAGE
+    ]
+    if (
+        not report.library_languages
+        or not languages
+        or any(
+            language_outcomes_compatible(language, library)
+            for language in languages
+            for library in report.library_languages
+        )
+    ):
+        return None
+    return language_canonical_name(languages[0]) or languages[0]
+
+
+def _title_differs(
+    report: MetadataReport, sources: list[CoverSource], target_title: object
+) -> bool:
+    """Whether the provider records the sources bind to all title another book.
+
+    A source binds to a provider candidate as identity classification binds it;
+    a candidate with no bound titled record does not differ (#1363 Q5).
+    """
+    if type(target_title) is not str:
+        return False
+    titles: list[str] = []
+    for source in sources:
+        provenance = source.provenance
+        if provenance is None or provenance.designation is CoverDesignation.TRUNCATION:
+            continue
+        listed = provenance.designation is CoverDesignation.LISTED_EDITION
+        for observation in report.providers:
+            if observation.provider != provenance.provider:
+                continue
+            for record in observation.candidates:
+                if record.work_identity != provenance.work_identity or (
+                    not listed
+                    and provenance.edition_identity is not None
+                    and record.identity != provenance.edition_identity
+                ):
+                    continue
+                title = _record_title(record)
+                if title is not None:
+                    titles.append(title)
+    return bool(titles) and not any(
+        values_match(TargetDestination.TITLE, target_title, title) for title in titles
     )
 
 
@@ -550,6 +887,7 @@ def _report(
     owner_ready: bool,
     actual_target_state: str,
     reasons: tuple[str, ...],
+    stage: dict[str, object],
 ) -> CoverPolicyReport:
     if recommendation is not None and recommendation not in acceptable:
         raise ValueError("cover recommendation is invalid")
@@ -573,6 +911,7 @@ def _report(
         "reasons": list(reasons),
         "recommended_candidate_reference": recommendation,
         "schema_version": SCHEMA_VERSION,
+        "stage": stage,
         "status": status,
     }
     return CoverPolicyReport(canonical_packet_json(body))
@@ -604,6 +943,7 @@ def read_cover_policy_report(
         "reasons",
         "recommended_candidate_reference",
         "schema_version",
+        "stage",
         "status",
     }
     acceptable_value = value.get("acceptable_candidate_references")
@@ -635,18 +975,19 @@ def read_cover_policy_report(
         or type(reasons_value) is not list
         or len(reasons_value) != 1
         or any(
-            type(item) is not str
-            or item
-            not in {
-                "actual_target_unverified",
-                "confirmed_incumbent_not_improved",
-                "deterministic_confirmed_order",
-                "no_confirmed_candidates",
-                "provider_fetching",
-            }
+            type(item) is not str or item not in _REPORT_REASONS
             for item in reasons_value
         )
         or (recommendation is not None and type(recommendation) is not str)
+        or not _valid_stage(value.get("stage"), candidate_references)
+        or recommendation
+        != (
+            cast("dict[str, object]", value["stage"])["choice"]
+            if reasons_value != ["provider_fetching"]
+            and cast("dict[str, object]", value["stage"])["outcome"]
+            in _CHOOSING_OUTCOMES
+            else None
+        )
     ):
         raise ValueError("cover policy report is invalid")
     acceptable = tuple(cast("list[str]", acceptable_value))
@@ -664,6 +1005,7 @@ def read_cover_policy_report(
             cast("bool", value["owner_ready"]),
             cast("str", value["actual_target_state"]),
             reasons,
+            cast("dict[str, object]", value["stage"]),
         ).document
         != document
     ):

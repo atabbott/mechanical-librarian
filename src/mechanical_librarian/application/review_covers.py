@@ -101,6 +101,12 @@ class CoverRow:
     # Whether the work's current comparison offers the original, so Put back
     # can be recorded now (#1363).
     put_back_offered: bool = False
+    # The measured rule's reason an automatic switch recorded, and the edition
+    # language that reason names; a fill has neither (#1363).
+    switch_reason: str | None = None
+    switch_language: str | None = None
+    # Why the measured rules suggest switching this cover, for a suggestion.
+    suggestion_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,6 +190,8 @@ def _cover_item(row: CoverRow) -> dict[str, object]:
             if row.put_back is None
             else {"failure": row.put_back.failure, "state": row.put_back.state},
             "put_back_offered": row.put_back_offered,
+            "reason": row.switch_reason,
+            "language": row.switch_language,
         }
     return {
         "authors": _report_authors(target),
@@ -192,6 +200,9 @@ def _cover_item(row: CoverRow) -> dict[str, object]:
         "group": row.group,
         "media_kind": report.file.format,
         "review_case_id": row.review_case_id,
+        "suggestion": None
+        if row.suggestion_reason is None
+        else {"reason": row.suggestion_reason},
         "switched": switched,
         "title": target.current_title or "Untitled",
         "unreadable_cover": cover is None and report.cover_unreadable,

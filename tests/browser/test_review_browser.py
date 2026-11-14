@@ -187,7 +187,7 @@ def _report():
 
 _DEFAULT_SETTINGS_DOCUMENT = OwnerSettingsDocument.model_validate(
     {
-        "schema_version": "owner-settings-v4",
+        "schema_version": "owner-settings-v5",
         "revision": 1,
         "connections": [{"name": "primary", "endpoint": "https://library.invalid"}],
         "libraries": [
@@ -531,6 +531,7 @@ def _server(
     cover_shapes: tuple[tuple[int, int], ...] = ((1, 1), (1, 1)),
     cover_duplicate: bool = False,
     put_back: bool = False,
+    cover_incumbent_size: tuple[int, int] | None = None,
     cohort: int = 0,
     preparation: bool = False,
     preparation_terminal: bool = False,
@@ -667,6 +668,18 @@ def _server(
                 for index, payload in enumerate(payloads, 1)
             )
         )
+        if cover_incumbent_size is not None:
+            # The measured rules read the stored size, not the preview's
+            # (#1363), so a current cover with a fault is sized here.
+            sources = (
+                replace(
+                    sources[0],
+                    artifact=CoverArtifact.create(
+                        b"original-1", payloads[0], "image/png", *cover_incumbent_size
+                    ),
+                ),
+                *sources[1:],
+            )
         base = _cover_report(sources)
         incumbent = sources[0].artifact
         assert incumbent is not None
@@ -777,6 +790,9 @@ def _server(
                 cover_considerations.require_owner_cover
             )
             cover_considerations.update_policy(CoverPolicy())
+            # As composition binds it with no provider recovery: a cover's
+            # comparison is current while nothing is fetching (#1363).
+            repository.bind_cover_consideration_currentness(lambda *_identity: False)
     elif retained_decoration is not None:
         from tests.support.proposal_evidence import retained_decoration_report
 
@@ -9211,7 +9227,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
         certificate, key = _certificate(root)
         settings = OwnerSettingsDocument.model_validate(
             {
-                "schema_version": "owner-settings-v4",
+                "schema_version": "owner-settings-v5",
                 "revision": 1,
                 "connections": [
                     {
@@ -13632,7 +13648,7 @@ _FOCUSED = """() => {
 
 _NAMED_LIBRARIES = OwnerSettingsDocument.model_validate(
     {
-        "schema_version": "owner-settings-v4",
+        "schema_version": "owner-settings-v5",
         "revision": 1,
         "connections": [{"name": "primary", "endpoint": "https://library.invalid"}],
         "libraries": [
@@ -13906,3 +13922,205 @@ def test_works_no_provider_matched_have_their_own_lens_and_reasons(
                 expect(works).not_to_contain_text("Prepared synthetic work 0000")
             finally:
                 browser.close()
+
+
+@pytest.mark.parametrize(
+    ("journey", "incumbent"),
+    (
+        # J4: a readable 301x451 current cover has no fault, so it is kept.
+        ("J4", None),
+        # J1/J6: a 200x300 current cover is under the floor, so a switch is
+        # suggested; no qualification record ships, so nothing switches.
+        ("J6", (200, 300)),
+    ),
+)
+def test_measured_cover_rules_keep_or_suggest_through_covers(
+    journey: str, incumbent: tuple[int, int] | None
+) -> None:
+    """#1363 J1, J4 and J6 over the real server and its measured rules.
+
+    J4: the kept cover is listed in Kept, not in Library's Needs attention,
+    and its alternatives stay choosable; choosing the current cover keeps it.
+    J1/J6: the suggestion is To decide as "Switch suggested" with its fault,
+    still not Library's attention, and one tap on it records the choice.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        os.chmod(hash_path, 0o600)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True,
+                viewport={"width": 1280, "height": 900},
+                reduced_motion="reduce",
+            )
+            page = context.new_page()
+            decisions: list[dict[str, Any]] = []
+            page.on(
+                "request",
+                lambda request: (
+                    decisions.append(json.loads(request.post_data or "{}"))
+                    if request.method == "POST" and "/decisions" in request.url
+                    else None
+                ),
+            )
+            with (
+                closing(ReservedPort()) as reserved_port,
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=reserved_port,
+                    cover=True,
+                    cover_shapes=_COVER_SHAPES,
+                    cover_incumbent_size=incumbent,
+                ) as (origin, case_id),
+                _closing_context(context),
+            ):
+                _login(page, origin)
+                page.goto(f"{origin}/library?lens=all&preview={case_id}&field=cover")
+                page.get_by_role("button", name="Prepare cover comparison").click()
+                comparison = page.get_by_role("region", name="Choose a cover")
+                if journey == "J4":
+                    expect(
+                        comparison.get_by_text(
+                            "The current cover has no fault, so it is kept.", exact=True
+                        )
+                    ).to_be_visible()
+                else:
+                    expect(comparison.locator(".status-pill")).to_have_text(
+                        "Under 300 px"
+                    )
+                    expect(
+                        comparison.get_by_text(
+                            "Suggested because the cover was 200 × 300 px, under "
+                            "300 px on its short side.",
+                            exact=True,
+                        )
+                    ).to_be_visible()
+                # Neither is Library's attention: a kept cover has no fault and
+                # a suggestion is optional (S9).
+                page.goto(f"{origin}/library?lens=needs_attention")
+                expect(page.get_by_text("No works here.", exact=True)).to_be_visible()
+
+                tab = "kept" if journey == "J4" else "decide"
+                page.goto(f"{origin}/library?lens=all&view=covers&tab={tab}")
+                tabs = page.get_by_role("navigation", name="Cover views")
+                expect(tabs).to_contain_text(
+                    "To decide 0" if journey == "J4" else "To decide 1"
+                )
+                expect(tabs).to_contain_text("Kept 1" if journey == "J4" else "Kept 0")
+                if journey == "J6":
+                    expect(
+                        page.get_by_text("Switch suggested", exact=True).first
+                    ).to_be_visible()
+                group = page.get_by_role(
+                    "radiogroup", name="Which cover should this book use?"
+                )
+                cards = group.get_by_role("radio")
+                expect(cards).to_have_count(5)
+                for card in cards.all():
+                    expect(card).to_be_enabled()
+                choice = (
+                    group.get_by_role("radio", name=re.compile(r"^Choose Current"))
+                    if journey == "J4"
+                    else group.get_by_role("radio", name=re.compile(r"EPUB file"))
+                )
+                choice.click()
+                deadline = time.monotonic() + 10
+                while not decisions and time.monotonic() < deadline:
+                    page.wait_for_timeout(25)
+                assert len(decisions) == 1, decisions
+                (decision,) = decisions
+                if journey == "J4":
+                    assert decision["outcome"] == "keep_current", decision
+                else:
+                    assert decision["outcome"] == "accept", decision
+                    assert decision["selected_value"]["kind"] == "cover", decision
+            browser.close()
+
+
+def test_current_covers_saves_never_with_its_own_button() -> None:
+    """#1363 J5: Policy's Current covers saves "Never" as an owner setting."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        os.chmod(hash_path, 0o600)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True,
+                viewport={"width": 390, "height": 900},
+                reduced_motion="reduce",
+            )
+            page = context.new_page()
+            writes: list[dict[str, Any]] = []
+            page.on(
+                "request",
+                lambda request: (
+                    writes.append(json.loads(request.post_data or "{}"))
+                    if request.method != "GET"
+                    and request.url.split("?")[0].endswith("/api/v1/settings")
+                    else None
+                ),
+            )
+            with (
+                closing(ReservedPort()) as reserved_port,
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=reserved_port,
+                    cover=True,
+                ) as (origin, _case_id),
+                _closing_context(context),
+            ):
+                _login(page, origin)
+                page.goto(f"{origin}/policy?section=curation")
+                section = page.get_by_role("region", name="Current covers")
+                protection = section.get_by_role(
+                    "group", name="Replace a current cover"
+                )
+                expect(
+                    protection.get_by_role("button", name="Only with a fault")
+                ).to_have_attribute("aria-pressed", "true")
+                protection.get_by_role("button", name="Never").click()
+                expect(
+                    section.get_by_text(
+                        "Nothing is replaced automatically. A cover with a fault "
+                        "is suggested.",
+                        exact=True,
+                    )
+                ).to_be_visible()
+                section.get_by_role("button", name="Save cover settings").click()
+                expect(
+                    section.get_by_text("Cover settings saved.", exact=True)
+                ).to_be_visible()
+                assert len(writes) == 1, writes
+                preferences = writes[0]["document"]["cover_preferences"]
+                assert preferences["current_protection"] == "proposals_only"
+                assert preferences["prefer_edition"] is False
+                # The policy was not saved with it.
+                expect(page.get_by_role("button", name="Save policy")).to_have_count(0)
+                page.reload()
+                section = page.get_by_role("region", name="Current covers")
+                expect(
+                    section.get_by_role(
+                        "group", name="Replace a current cover"
+                    ).get_by_role("button", name="Never")
+                ).to_have_attribute("aria-pressed", "true")
+                overflow = page.evaluate(
+                    "() => document.scrollingElement.scrollWidth"
+                    " - document.scrollingElement.clientWidth"
+                )
+                assert overflow <= 0, overflow
+            browser.close()

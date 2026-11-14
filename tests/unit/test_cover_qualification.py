@@ -1,24 +1,31 @@
-import copy
 import hashlib
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
-from mechanical_librarian.domain.audiobook_cover_replacement import (
-    material_audiobook_cover_reference,
+from mechanical_librarian.domain.audiobook_decision_qualification import (
+    F46_IDENTITIES_BY_DESTINATION,
+    F46_PASSING_AUTOMATIC_OPTIONS,
 )
 from mechanical_librarian.domain.cover_qualification import (
     QUALIFICATION_CANDIDATE_SHA256,
     CoverQualificationCase,
     qualify_cover_election,
 )
+from mechanical_librarian.domain.cover_qualification_policy import (
+    MEASURED_REPLACEMENT_IDENTITY,
+    measured_replacement_record,
+)
 from mechanical_librarian.domain.deterministic_cover_election import (
     CoverActualTargetState,
     CoverElectionCandidate,
 )
-from tests.support.audiobook_covers import audiobook_cover_environment
+from tests.support.audiobook_covers import (
+    SYNTHETIC_MEASURED_RECORD,
+    audiobook_cover_environment,
+)
 
 
 def _candidate(
@@ -172,105 +179,75 @@ def test_prospective_target_states_separate_owner_readiness_from_automatic_choic
         assert summary["rank_order_disagreements"] == 0
 
 
-@pytest.mark.parametrize(
-    "sizes,expected_rank",
-    [
-        ([(80, 120), (640, 960)], 1),
-        ([(299, 448), (598, 897)], 1),
-        ([(300, 450), (1000, 1500)], None),
-        ([(250, 375), (499, 748)], None),
-        ([(250, 375), (500, 750)], 1),
-        ([(299, 448), (597, 895)], None),
-        ([(500, 500), (501, 501)], None),
-        ([(500, 500), (1000, 1500)], None),
-        ([(250, 375), (400, 800), (500, 500)], 2),
-    ],
-)
-def test_actual_consideration_boundaries(tmp_path, sizes, expected_rank):
-    with audiobook_cover_environment(tmp_path / "case", sizes) as state:
-        assert len(state.decisions) == int(expected_rank is not None)
-        if expected_rank is not None:
-            decision = state.decisions[0]
-            row = next(
-                x
-                for x in state.consideration["candidates"]
-                if x["reference"] == decision.candidate_reference
-            )
-            assert row["deterministic_rank"] == expected_rank
-            assert state.snapshots[0].decision_value == {
-                "kind": "cover",
-                "value": row["artifact_id"],
-            }
-            if expected_rank == 2:
-                policy = json.loads(state.consideration["policy_report_document"])
-                assert (
-                    policy["recommended_candidate_reference"]
-                    != decision.candidate_reference
-                )
+def _stage(state: Any) -> dict[str, Any]:
+    policy = json.loads(state.consideration["policy_report_document"])
+    return cast(dict[str, Any], policy["stage"])
 
 
-@pytest.mark.parametrize(
-    "unknown,option",
-    [(True, "replace_if_strictly_better"), (False, "fixed_source_order")],
-)
-def test_unknown_incumbent_and_existing_fill_preserve(tmp_path, unknown, option):
+def test_measured_replacement_without_a_record_is_a_suggestion(tmp_path):
+    # The incumbent is under the floor and a square copy clears it: the stage
+    # replaces, but no shipped record qualifies the switch, so it stays a
+    # suggestion and nothing is decided (#1363 D9).
+    assert measured_replacement_record() is None
+    with audiobook_cover_environment(
+        tmp_path / "case", [(200, 200), (600, 600)]
+    ) as state:
+        assert state.decisions == []
+        stage = _stage(state)
+        assert (stage["outcome"], stage["reason"]) == ("replace", "below_floor")
+        assert state.consideration["candidates"]
+
+
+def test_a_synthetic_measured_record_admits_the_switch(tmp_path):
     with audiobook_cover_environment(
         tmp_path / "case",
-        [(80, 120), (640, 960)],
-        unknown_incumbent=unknown,
-        option=option,
+        [(200, 200), (600, 600)],
+        measured_record=SYNTHETIC_MEASURED_RECORD,
     ) as state:
-        assert not state.decisions
+        assert len(state.decisions) == 1
+        decision = state.decisions[0]
+        assert decision.qualification_identity == MEASURED_REPLACEMENT_IDENTITY
+        assert decision.policy_option == "fixed_source_order:measured_replacement"
+        assert decision.qualification_manifest_sha256 == SYNTHETIC_MEASURED_RECORD
+        assert decision.reason == "below_floor"
+        stage = _stage(state)
+        assert decision.candidate_reference == stage["choice"]
+        row = next(
+            x
+            for x in state.consideration["candidates"]
+            if x["reference"] == decision.candidate_reference
+        )
+        assert state.snapshots[0].decision_value == {
+            "kind": "cover",
+            "value": row["artifact_id"],
+        }
 
 
-@pytest.mark.parametrize(
-    "change",
-    [
-        "missing_width",
-        "invalid_width",
-        "bool_width",
-        "unknown_identity",
-        "wrong_artifact",
-        "missing_incumbent",
-        "landscape",
-        "edition_only",
-        "ordinal_only",
-        "reference_only",
-    ],
-)
-def test_exact_predicate_negatives(tmp_path, change):
+def test_measured_record_never_admits_a_kept_cover(tmp_path):
     with audiobook_cover_environment(
-        tmp_path / "predicate", [(80, 120), (640, 960)]
+        tmp_path / "case",
+        [(600, 600), (1200, 1200)],
+        measured_record=SYNTHETIC_MEASURED_RECORD,
     ) as state:
-        rows = copy.deepcopy(state.consideration["candidates"])
-    incumbent = next(x for x in rows if x["incumbent"])
-    candidate = next(x for x in rows if not x["incumbent"])
-    artifact = incumbent["artifact_id"]
-    assert material_audiobook_cover_reference(rows, artifact) == candidate["reference"]
-    if change == "missing_width":
-        incumbent.pop("width")
-    elif change == "invalid_width":
-        incumbent["width"] = "80"
-    elif change == "bool_width":
-        incumbent["width"] = True
-    elif change == "unknown_identity":
-        incumbent["identity"]["outcome"] = "unknown"
-    elif change == "wrong_artifact":
-        artifact = "cover_wrong"
-    elif change == "missing_incumbent":
-        rows.remove(incumbent)
-    elif change == "landscape":
-        candidate.update(width=960, height=640)
-    else:
-        incumbent.update(width=500, height=500)
-        candidate.update(width=500, height=500)
-        if change == "edition_only":
-            candidate["identity"]["outcome"] = "verified_manifestation_match"
-        elif change == "ordinal_only":
-            candidate["ordinal"] = -1
-        else:
-            candidate["reference"] = "cover_ref_000"
-    assert material_audiobook_cover_reference(rows, artifact) is None
+        assert state.decisions == []
+        assert _stage(state)["outcome"] == "keep"
+
+
+def test_measured_identity_is_absent_from_every_shipped_manifest():
+    root = Path(__file__).parents[2]
+    shipped = [
+        path
+        for folder in ("docs/reference", "src")
+        for path in (root / folder).rglob("*.json")
+    ]
+    assert shipped
+    for path in shipped:
+        assert MEASURED_REPLACEMENT_IDENTITY not in path.read_text(encoding="utf-8")
+    assert MEASURED_REPLACEMENT_IDENTITY not in F46_PASSING_AUTOMATIC_OPTIONS
+    assert all(
+        MEASURED_REPLACEMENT_IDENTITY not in identities
+        for identities in F46_IDENTITIES_BY_DESTINATION.values()
+    )
 
 
 def test_retained_qualification_predecessor_bytes_are_frozen():
@@ -281,16 +258,10 @@ def test_retained_qualification_predecessor_bytes_are_frozen():
         assert hashlib.sha256((root / name).read_bytes()).hexdigest() == digest
 
 
-@pytest.mark.parametrize(
-    "invalid",
-    (None, "unknown", "ebook", "null", "bool", "identity", "unqualified_fill"),
-)
-def test_retained_audiobook_cover_rebinds_only_current_exact_permissions(invalid):
-    from mechanical_librarian.application.field_effects import authority_from_decision
-    from mechanical_librarian.domain.automatic_decision import (
-        F19A_QUALIFICATION_MANIFEST_SHA256,
-        AutomaticDecisionError,
-    )
+def test_retained_audiobook_cover_replacement_stays_refused():
+    import inspect
+
+    from mechanical_librarian.domain.automatic_decision import AutomaticDecisionError
     from mechanical_librarian.domain.cover_automatic_decision import (
         CoverAutomaticDecision,
     )
@@ -301,10 +272,11 @@ def test_retained_audiobook_cover_rebinds_only_current_exact_permissions(invalid
             / "support/retained_qualification_predecessors/cover.json"
         ).read_text()
     )
-    import inspect
-
     document = fixture["decision"]
     retained = json.loads(document)
+    assert retained["qualification_identity"] == (
+        "cover_order:replace_if_strictly_better:audiobook_cover_replace"
+    )
     # The retained decision's earlier F46 digest no longer decodes (ADR-0087).
     with pytest.raises(AutomaticDecisionError):
         CoverAutomaticDecision.from_json(document)
@@ -313,50 +285,21 @@ def test_retained_audiobook_cover_rebinds_only_current_exact_permissions(invalid
     values: dict[str, Any] = {
         key: tuple(retained[key])
         if key in {"rank_key", "citation_ids"}
-        else retained[key]
+        else retained.get(key)
         for key in parameters
     }
-    current = CoverAutomaticDecision.create(**values)
-    assert (
-        current.qualification_manifest_sha256
-        != retained["qualification_manifest_sha256"]
-    )
-    assert current.decision_id == retained["decision_id"]
-    assert authority_from_decision(current) is not None
-    assert CoverAutomaticDecision.from_json(current.to_json()) == current
-    if invalid is None:
-        return
-    decision = current
-    document = current.to_json()
-    data = json.loads(document)
-    if invalid == "identity":
-        data["idempotency_digest"] = "0" * 64
-    elif invalid == "unqualified_fill":
-        data["qualification_identity"] = (
-            "cover_order:fixed_source_order:audiobook_cover_fill"
-        )
-        data["policy_option"] = "fixed_source_order:audiobook_cover_fill"
-        core = {key: data[key] for key in decision._core()}
-
-        def digest(value):
-            return hashlib.sha256(
-                json.dumps(
-                    value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-                ).encode()
-            ).hexdigest()
-
-        data["idempotency_digest"] = digest(core)
-        data["decision_id"] = "automatic_decision_" + digest(
-            {**core, "occurred_at": data["occurred_at"]}
-        )
-    else:
-        data["qualification_manifest_sha256"] = {
-            "unknown": "0" * 64,
-            "ebook": F19A_QUALIFICATION_MANIFEST_SHA256,
-            "null": None,
-            "bool": True,
-        }[invalid]
+    # Its replacement option was removed with the material rule (#1363 Q11),
+    # so even a current digest cannot rebind it: the sentinel stays refused.
     with pytest.raises(AutomaticDecisionError):
-        CoverAutomaticDecision.from_json(
-            json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        CoverAutomaticDecision.create(**values)
+    # Rebinding it under the measured identity needs a stage reason and a
+    # qualification record, which no shipped build carries.
+    with pytest.raises(AutomaticDecisionError):
+        CoverAutomaticDecision.create(
+            **{
+                **values,
+                "qualification_identity": MEASURED_REPLACEMENT_IDENTITY,
+                "policy_option": "fixed_source_order:measured_replacement",
+                "reason": "below_floor",
+            }
         )

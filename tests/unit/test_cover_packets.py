@@ -3334,13 +3334,36 @@ def test_closed_policy_is_content_bound_and_plain_policy_uses_packet_order() -> 
         == report["acceptable_candidate_references"][0]
     )
     assert report["reasons"] == ["deterministic_confirmed_order"]
-    assert report["schema_version"] == "cover-policy-report-v2"
+    assert report["schema_version"] == "cover-policy-report-v3"
     assert report["actual_target_state"] == "known_empty"
     assert report["owner_ready"] is True
     assert report["observation_taxonomy_reference"] == TAXONOMY_REFERENCE
     assert CoverPolicy().reference != CoverPolicy(avoid_promotional_text=True).reference
     with pytest.raises(ValueError):
         CoverPolicy(avoid_promotional_text=1)
+
+
+def test_the_report_stage_fills_an_empty_target_or_reports_why_it_did_not() -> None:
+    # An empty target with confirmed candidates is filled with the stage's choice.
+    filled = _adjudicate()
+    assert filled["reasons"] == ["deterministic_confirmed_order"]
+    assert (filled["stage"]["outcome"], filled["stage"]["reason"]) == ("fill", None)
+    assert filled["stage"]["choice"] == filled["recommended_candidate_reference"]
+    # While a provider is still fetching, the stage stands but recommends nothing.
+    fetching = _adjudicate(provider_fetching=True)
+    assert fetching["reasons"] == ["provider_fetching"]
+    assert fetching["recommended_candidate_reference"] is None
+    assert fetching["stage"]["outcome"] == "fill"
+
+    def _unconfirmed(identity: dict[str, Any]) -> None:
+        for candidate in identity["candidates"]:
+            candidate["outcome"] = "unknown"
+
+    # With no confirmed candidate there is nothing to fill from.
+    empty = _adjudicate(identity_mutation=_unconfirmed)
+    assert empty["reasons"] == ["no_confirmed_candidates"]
+    assert empty["recommended_candidate_reference"] is None
+    assert (empty["stage"]["outcome"], empty["stage"]["choice"]) == ("empty", None)
 
 
 @pytest.mark.parametrize(

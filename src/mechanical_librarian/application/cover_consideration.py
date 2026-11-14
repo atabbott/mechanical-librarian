@@ -74,6 +74,7 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverSourceState,
     cover_source_id,
 )
+from mechanical_librarian.domain.cover_rules import STAGE_REASONS, CoverOutcome
 from mechanical_librarian.domain.deterministic_cover_election import (
     CoverElectionCandidate,
 )
@@ -385,19 +386,27 @@ def _validated_cover_consideration(
     avoid_promotional_text = policy_value.get("avoid_promotional_text")
     avoid_tie_in_branding = policy_value.get("avoid_tie_in_branding")
     prefer_minimal_composition = policy_value.get("prefer_minimal_composition")
-    if any(
-        type(option) is not bool
-        for option in (
-            avoid_promotional_text,
-            avoid_tie_in_branding,
-            prefer_minimal_composition,
+    prefer_edition = policy_value.get("prefer_edition")
+    current_protection = policy_value.get("current_protection")
+    if (
+        any(
+            type(option) is not bool
+            for option in (
+                avoid_promotional_text,
+                avoid_tie_in_branding,
+                prefer_minimal_composition,
+                prefer_edition,
+            )
         )
+        or type(current_protection) is not str
     ):
         raise ValueError("cover consideration policy is invalid")
     policy = CoverPolicy(
         avoid_promotional_text=cast(bool, avoid_promotional_text),
         avoid_tie_in_branding=cast(bool, avoid_tie_in_branding),
         prefer_minimal_composition=cast(bool, prefer_minimal_composition),
+        current_protection=current_protection,
+        prefer_edition=cast(bool, prefer_edition),
     )
     if policy.document != policy_document or policy.reference != policy_reference:
         raise ValueError("cover consideration policy is invalid")
@@ -594,6 +603,12 @@ def cover_consideration_currentness_document(
             )
         ):
             return "null"
+        policy_report = value.get("policy_report_document")
+        stage = (
+            None
+            if type(policy_report) is not str
+            else cast("dict[str, object]", json.loads(policy_report)["stage"])
+        )
         return canonical_packet_json(
             {
                 "connection": report.target.connection,
@@ -601,6 +616,13 @@ def cover_consideration_currentness_document(
                 "item": report.target.item,
                 "report_id": report.report_id,
                 "provider_fetching": fetching,
+                # The measured stage's decision, read by attention and the
+                # Covers groups in SQL (#1363, D10).
+                "cover_stage": (
+                    None
+                    if stage is None
+                    else {"outcome": stage["outcome"], "reason": stage["reason"]}
+                ),
                 "manual_ready": not fetching
                 and any(
                     candidate["incumbent"] is True or manual_cover_eligible(candidate)
@@ -637,7 +659,9 @@ def cover_currentness_facts(document: str) -> CoverCurrentnessFacts | None:
                 "provider_fetching",
                 "manual_ready",
                 "replay_reference",
+                "cover_stage",
             }
+            or not _currentness_stage(value["cover_stage"])
             or any(
                 type(value[key]) is not str or not value[key]
                 for key in (
@@ -662,6 +686,15 @@ def cover_currentness_facts(document: str) -> CoverCurrentnessFacts | None:
         )
     except Exception:
         return None
+
+
+def _currentness_stage(value: object) -> bool:
+    return value is None or (
+        type(value) is dict
+        and set(value) == {"outcome", "reason"}
+        and value["outcome"] in {outcome.value for outcome in CoverOutcome}
+        and (value["reason"] is None or value["reason"] in STAGE_REASONS)
+    )
 
 
 def cover_currentness_from_facts(

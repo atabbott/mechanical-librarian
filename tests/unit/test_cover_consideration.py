@@ -445,8 +445,10 @@ def test_exact_policy_preferences_are_persisted_and_projected(case: _Case) -> No
     assert value["policy_preferences"] == {
         "avoid_promotional_text": True,
         "avoid_tie_in_branding": True,
+        "current_protection": "protected",
+        "prefer_edition": False,
         "prefer_minimal_composition": True,
-        "schema_version": "cover-policy-v1",
+        "schema_version": "cover-policy-v2",
     }
     persisted = json.loads(case.store.current[case_id])
     assert json.loads(persisted["policy_document"]) == value["policy_preferences"]
@@ -601,6 +603,14 @@ def test_currentness_facts_derive_from_complete_producer(case: _Case) -> None:
         "provider_fetching": False,
         "manual_ready": True,
         "replay_reference": case.service.replay_reference,
+        "cover_stage": {
+            "outcome": json.loads(json.loads(document)["policy_report_document"])[
+                "stage"
+            ]["outcome"],
+            "reason": json.loads(json.loads(document)["policy_report_document"])[
+                "stage"
+            ]["reason"],
+        },
     }
     facts = cover_consideration_currentness_document(document)
     observed: list[tuple[str, str, str, str]] = []
@@ -849,7 +859,7 @@ def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
         clock=lambda: case.now + 1,
     )
     assert model_free.replay_reference == (
-        "cover_replay_7e01dc0df44fb20c807b63543128f0ca598a9c42b4a96d733ac438abac4c3eeb"
+        "cover_replay_fbfd35955dc7b4ad0d0487c0504c8f8e2acaeb6f59a5e169301c56a4486206e8"
     )
     assert (
         model_free.ensure(case_id, case.report.to_json(), case.proposal)[
@@ -892,7 +902,7 @@ def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
     assert len(dispatches) == 1
     replayed_qualified = qualified()
     assert replayed_qualified.replay_reference == (
-        "cover_replay_97e8f9dcef35140f8d252313b1b071cdee3c070fa67d1c87c46af9b28984dba0"
+        "cover_replay_5d990c13d89d8fbd1cb6ab9962d89ac62fd39df5ba4aed1a4f70558fd3a48619"
     )
     assert (
         replayed_qualified.ensure(
@@ -2036,7 +2046,7 @@ def test_a_verified_work_route_cover_never_gains_automatic_authority(
                 repository,
                 report,
                 ("cover_order",),
-                selected_options={"cover_order": "replace_if_strictly_better"},
+                selected_options={"cover_order": "fixed_source_order"},
             )
             case = ReviewCase.create_from_data(
                 json.loads(repository.get_review_case(case_id))["case"]

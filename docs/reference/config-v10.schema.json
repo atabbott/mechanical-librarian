@@ -1100,6 +1100,21 @@
           "title": "Cover Avoid Tie In Branding",
           "type": "boolean"
         },
+        "cover_current_protection": {
+          "default": "protected",
+          "enum": [
+            "protected",
+            "unprotected",
+            "proposals_only"
+          ],
+          "title": "Cover Current Protection",
+          "type": "string"
+        },
+        "cover_prefer_edition": {
+          "default": false,
+          "title": "Cover Prefer Edition",
+          "type": "boolean"
+        },
         "cover_prefer_minimal_composition": {
           "default": false,
           "title": "Cover Prefer Minimal Composition",
@@ -1286,7 +1301,7 @@
       "default": null
     },
     "schema_version": {
-      "const": "config-v9",
+      "const": "config-v10",
       "title": "Schema Version",
       "type": "string"
     }

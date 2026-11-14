@@ -22,7 +22,7 @@ How the pipeline prepares each work, stage by stage:
 ## Reference
 
 - [Configuration](reference/configuration.md), its
-  [schema](reference/config-v9.schema.json) and an
+  [schema](reference/config-v10.schema.json) and an
   [example](examples/synthetic-config.json)
 - [Review HTTP API](reference/review-openapi-v1.json) (generated)
 - [Compatibility and clean-state rules](reference/compatibility.md)

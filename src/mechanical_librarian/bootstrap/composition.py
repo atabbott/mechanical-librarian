@@ -3191,6 +3191,8 @@ def _compose_cover_considerations(
         avoid_promotional_text=review.cover_avoid_promotional_text,
         avoid_tie_in_branding=review.cover_avoid_tie_in_branding,
         prefer_minimal_composition=review.cover_prefer_minimal_composition,
+        current_protection=review.cover_current_protection,
+        prefer_edition=review.cover_prefer_edition,
     )
 
     def bind_policy(policy_reference: str, replay_reference: str) -> None:

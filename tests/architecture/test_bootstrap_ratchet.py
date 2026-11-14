@@ -69,8 +69,9 @@ CEILING = {
     # write and the owner check, and the coalesced scan request into each
     # guarded application: straight-line construction and keyword arguments.
     # The currentness check also skips a retained source, whose original is
-    # in the retained store only (one import).
-    "composition.py": 3243,
+    # in the retained store only (one import). 3245 since #1363's activation
+    # passed the two Current covers settings into the cover preferences.
+    "composition.py": 3245,
     "contained_reviewer.py": 124,
     **ENTRY_POINTS,
 }
@@ -124,8 +125,9 @@ RESIDUAL: dict[str, int | None] = {
     # composition, and the reviewer access around it.
     _C + "_compose_reviewer_access": 167,
     # Opens the cover artifact store and binds the SQLite repository's cover
-    # hooks to CoverConsiderationService; both are adapter calls.
-    _C + "_compose_cover_considerations": 82,
+    # hooks to CoverConsiderationService; both are adapter calls. 84 since
+    # #1363 passed the Current covers settings as two keyword arguments.
+    _C + "_compose_cover_considerations": 84,
     # Fail-closed session store for run_cover_review, its only user; the
     # optional move to application was not taken (A-U4).
     _C + "_OfflineSessionStore": 40,

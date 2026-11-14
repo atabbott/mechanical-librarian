@@ -182,6 +182,13 @@ prefix; reads show only presence and, from eight characters, the last four.
 Reviewer paths are never browser fields. When `/data/config.json` exists,
 covered writes are refused and the store is not read.
 
+Current covers (`cover_preferences.current_protection` and
+`cover_preferences.prefer_edition`) change only through this settings command:
+the session, the CSRF token, an allowed Origin and the expected revision. A
+file-managed value is read-only in the browser. A change moves the live cover
+policy reference, so a planned automatic cover change from before it is stale
+and never writes (#1363).
+
 New settings start a dormant successor runtime under one cutover lock. A
 commit failure keeps the predecessor; a fault after commit stops the server
 rather than run mismatched authority.
@@ -598,9 +605,12 @@ activate nothing. [Activation](../operations/review-case.md#policy-activation)
 is a CSRF-protected mutation bound to the expected active policy and exact
 draft, and old proposals then fail as stale.
 
-Automation replaces a populated cover only with a confirmed candidate
-against a confirmed incumbent, and any other automatic cover write needs a
-known-empty target. It replaces a populated ebook description only through
+Automation replaces a populated cover only for a fault the measured cover
+rules record, under the owner's Current covers setting and its own shadow
+qualification identity, with room to retain the original
+([ADR-0093](decisions/0093-measured-cover-rules-and-current-cover-protection.md));
+no shipped qualification record admits it, so every such switch is a
+suggestion. Any other automatic cover write needs a known-empty target. It replaces a populated ebook description only through
 description advice with `description_automatic_application` on. Evidence
 never creates series, contributor, title or recording identity on its own;
 conflicts go to the owner, never to a write. The explicit flag is set only by

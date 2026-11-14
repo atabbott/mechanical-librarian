@@ -160,7 +160,7 @@ def test_settings_commit_updates_live_cover_policy_inside_the_application_gate(
 ) -> None:
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v4",
+            "schema_version": "owner-settings-v5",
             "revision": 2,
             "connections": [{"name": "primary", "endpoint": "https://example.invalid"}],
             "libraries": [
@@ -235,7 +235,7 @@ def test_live_cover_binding_fault_is_a_fixed_settings_failure(
 ) -> None:
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v4",
+            "schema_version": "owner-settings-v5",
             "revision": 2,
             "connections": [{"name": "primary", "endpoint": "https://example.invalid"}],
             "libraries": [
@@ -1050,7 +1050,7 @@ def test_reviewer_change_publishes_when_preparation_refuses(
 def test_library_display_rename_preserves_case_and_target_identity(repository):
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v4",
+            "schema_version": "owner-settings-v5",
             "revision": 1,
             "connections": [{"name": "primary", "endpoint": "https://example.invalid"}],
             "libraries": [

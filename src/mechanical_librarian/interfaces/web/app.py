@@ -527,8 +527,54 @@ class _CoverIncumbent(_ClosedModel):
 class _CoverPolicyPreferences(_ClosedModel):
     avoid_promotional_text: bool
     avoid_tie_in_branding: bool
+    current_protection: Literal["protected", "unprotected", "proposals_only"]
+    prefer_edition: bool
     prefer_minimal_composition: bool
-    schema_version: Literal["cover-policy-v1"]
+    schema_version: Literal["cover-policy-v2"]
+
+
+_CoverStageReason = Literal[
+    "title_names_other_work",
+    "unreadable",
+    "wrong_shape",
+    "below_floor",
+    "edition_language",
+    "sharper_copy",
+    "edition_preference",
+]
+
+
+class _CoverStageGroup(_ClosedModel):
+    members: list[str] = Field(min_length=2, max_length=14)
+    representative: str
+
+
+class _CoverStageExclusion(_ClosedModel):
+    exclusion: Literal[
+        "wrong_shape", "below_floor", "edition_language", "omnibus_volume"
+    ]
+    reference: str
+
+
+class _CoverStage(_ClosedModel):
+    choice: str | None
+    edition_preferred: bool
+    exclusions: list[_CoverStageExclusion] = Field(max_length=13)
+    groups: list[_CoverStageGroup] = Field(max_length=13)
+    issues: list[
+        Literal[
+            "title_names_other_work",
+            "unreadable",
+            "wrong_shape",
+            "below_floor",
+            "edition_language",
+            "sharper_copy",
+        ]
+    ] = Field(max_length=6)
+    # The edition language a reason names, only when that is an issue.
+    language: str | None = Field(max_length=280)
+    outcome: Literal["keep", "replace", "suggest", "hold", "fill", "empty"]
+    reason: _CoverStageReason | None
 
 
 class _CoverPolicyReport(_ClosedModel):
@@ -547,7 +593,8 @@ class _CoverPolicyReport(_ClosedModel):
     policy_reference: str
     reasons: list[Annotated[str, Field(max_length=128)]] = Field(max_length=32)
     recommended_candidate_reference: str | None
-    schema_version: Literal["cover-policy-report-v2"]
+    schema_version: Literal["cover-policy-report-v3"]
+    stage: _CoverStage
     status: Literal["recommended", "abstained"]
 
 
@@ -1236,6 +1283,14 @@ class _CoverSwitch(_ClosedModel):
     put_back: _CoverPutBack | None
     # Put back is offered only while the work's comparison has the original.
     put_back_offered: bool
+    # The measured rule's reason for a switch and the edition language it
+    # names; a fill has neither (#1363).
+    language: str | None = Field(max_length=280)
+    reason: _CoverStageReason | None
+
+
+class _CoverSuggestion(_ClosedModel):
+    reason: _CoverStageReason
 
 
 class _CoverWork(_ClosedModel):
@@ -1245,6 +1300,8 @@ class _CoverWork(_ClosedModel):
     group: Literal["proposal", "choice", "kept", "auto", "none"]
     media_kind: _MediaKind
     review_case_id: str
+    # Why the measured rules suggest switching this cover (#1363).
+    suggestion: _CoverSuggestion | None
     switched: _CoverSwitch | None
     title: str
     # The library holds a cover that could not be read, as against no cover.
@@ -2001,7 +2058,7 @@ class _CoverQualification(_RichQualificationBase):
     automatic_available: Literal[True]
     disposition: Literal["pass"]
     field: Literal["cover_order"]
-    option: Literal["fixed_source_order", "replace_if_strictly_better"]
+    option: Literal["fixed_source_order"]
 
 
 class _TitleEbookQualification(_RichQualificationBase):
@@ -2173,7 +2230,6 @@ class _AudiobookQualification(_ClosedModel):
         "replace_descriptive",
         "prefer_isbn13",
         "adult_product",
-        "replace_if_strictly_better",
     ]
     operation: Literal[
         "fill",

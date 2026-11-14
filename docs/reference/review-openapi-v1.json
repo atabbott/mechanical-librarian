@@ -340,6 +340,21 @@
             "title": "Avoid Tie In Branding",
             "type": "boolean"
           },
+          "current_protection": {
+            "default": "protected",
+            "enum": [
+              "protected",
+              "unprotected",
+              "proposals_only"
+            ],
+            "title": "Current Protection",
+            "type": "string"
+          },
+          "prefer_edition": {
+            "default": false,
+            "title": "Prefer Edition",
+            "type": "boolean"
+          },
           "prefer_minimal_composition": {
             "default": false,
             "title": "Prefer Minimal Composition",
@@ -1022,6 +1037,8 @@
             "default": {
               "avoid_promotional_text": false,
               "avoid_tie_in_branding": false,
+              "current_protection": "protected",
+              "prefer_edition": false,
               "prefer_minimal_composition": false
             }
           },
@@ -1130,7 +1147,7 @@
             "type": "integer"
           },
           "schema_version": {
-            "const": "owner-settings-v4",
+            "const": "owner-settings-v5",
             "title": "Schema Version",
             "type": "string"
           },
@@ -3368,8 +3385,7 @@
               "fixed_source_order",
               "replace_descriptive",
               "prefer_isbn13",
-              "adult_product",
-              "replace_if_strictly_better"
+              "adult_product"
             ],
             "title": "Option",
             "type": "string"
@@ -4793,12 +4809,25 @@
             "title": "Avoid Tie In Branding",
             "type": "boolean"
           },
+          "current_protection": {
+            "enum": [
+              "protected",
+              "unprotected",
+              "proposals_only"
+            ],
+            "title": "Current Protection",
+            "type": "string"
+          },
+          "prefer_edition": {
+            "title": "Prefer Edition",
+            "type": "boolean"
+          },
           "prefer_minimal_composition": {
             "title": "Prefer Minimal Composition",
             "type": "boolean"
           },
           "schema_version": {
-            "const": "cover-policy-v1",
+            "const": "cover-policy-v2",
             "title": "Schema Version",
             "type": "string"
           }
@@ -4806,6 +4835,8 @@
         "required": [
           "avoid_promotional_text",
           "avoid_tie_in_branding",
+          "current_protection",
+          "prefer_edition",
           "prefer_minimal_composition",
           "schema_version"
         ],
@@ -4888,9 +4919,12 @@
             "title": "Recommended Candidate Reference"
           },
           "schema_version": {
-            "const": "cover-policy-report-v2",
+            "const": "cover-policy-report-v3",
             "title": "Schema Version",
             "type": "string"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/_CoverStage"
           },
           "status": {
             "enum": [
@@ -4914,6 +4948,7 @@
           "reasons",
           "recommended_candidate_reference",
           "schema_version",
+          "stage",
           "status"
         ],
         "title": "_CoverPolicyReport",
@@ -5053,10 +5088,7 @@
             "type": "string"
           },
           "option": {
-            "enum": [
-              "fixed_source_order",
-              "replace_if_strictly_better"
-            ],
+            "const": "fixed_source_order",
             "title": "Option",
             "type": "string"
           }
@@ -5070,6 +5102,186 @@
           "option"
         ],
         "title": "_CoverQualification",
+        "type": "object"
+      },
+      "_CoverStage": {
+        "additionalProperties": false,
+        "properties": {
+          "choice": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Choice"
+          },
+          "edition_preferred": {
+            "title": "Edition Preferred",
+            "type": "boolean"
+          },
+          "exclusions": {
+            "items": {
+              "$ref": "#/components/schemas/_CoverStageExclusion"
+            },
+            "maxItems": 13,
+            "title": "Exclusions",
+            "type": "array"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/_CoverStageGroup"
+            },
+            "maxItems": 13,
+            "title": "Groups",
+            "type": "array"
+          },
+          "issues": {
+            "items": {
+              "enum": [
+                "title_names_other_work",
+                "unreadable",
+                "wrong_shape",
+                "below_floor",
+                "edition_language",
+                "sharper_copy"
+              ],
+              "type": "string"
+            },
+            "maxItems": 6,
+            "title": "Issues",
+            "type": "array"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "maxLength": 280,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "outcome": {
+            "enum": [
+              "keep",
+              "replace",
+              "suggest",
+              "hold",
+              "fill",
+              "empty"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "title_names_other_work",
+                  "unreadable",
+                  "wrong_shape",
+                  "below_floor",
+                  "edition_language",
+                  "sharper_copy",
+                  "edition_preference"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "choice",
+          "edition_preferred",
+          "exclusions",
+          "groups",
+          "issues",
+          "language",
+          "outcome",
+          "reason"
+        ],
+        "title": "_CoverStage",
+        "type": "object"
+      },
+      "_CoverStageExclusion": {
+        "additionalProperties": false,
+        "properties": {
+          "exclusion": {
+            "enum": [
+              "wrong_shape",
+              "below_floor",
+              "edition_language",
+              "omnibus_volume"
+            ],
+            "title": "Exclusion",
+            "type": "string"
+          },
+          "reference": {
+            "title": "Reference",
+            "type": "string"
+          }
+        },
+        "required": [
+          "exclusion",
+          "reference"
+        ],
+        "title": "_CoverStageExclusion",
+        "type": "object"
+      },
+      "_CoverStageGroup": {
+        "additionalProperties": false,
+        "properties": {
+          "members": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 14,
+            "minItems": 2,
+            "title": "Members",
+            "type": "array"
+          },
+          "representative": {
+            "title": "Representative",
+            "type": "string"
+          }
+        },
+        "required": [
+          "members",
+          "representative"
+        ],
+        "title": "_CoverStageGroup",
+        "type": "object"
+      },
+      "_CoverSuggestion": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "enum": [
+              "title_names_other_work",
+              "unreadable",
+              "wrong_shape",
+              "below_floor",
+              "edition_language",
+              "sharper_copy",
+              "edition_preference"
+            ],
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "_CoverSuggestion",
         "type": "object"
       },
       "_CoverSwitch": {
@@ -5094,6 +5306,18 @@
             "title": "Filled",
             "type": "boolean"
           },
+          "language": {
+            "anyOf": [
+              {
+                "maxLength": 280,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
           "put_back": {
             "anyOf": [
               {
@@ -5107,6 +5331,26 @@
           "put_back_offered": {
             "title": "Put Back Offered",
             "type": "boolean"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "title_names_other_work",
+                  "unreadable",
+                  "wrong_shape",
+                  "below_floor",
+                  "edition_language",
+                  "sharper_copy",
+                  "edition_preference"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
           }
         },
         "required": [
@@ -5114,7 +5358,9 @@
           "before",
           "filled",
           "put_back",
-          "put_back_offered"
+          "put_back_offered",
+          "language",
+          "reason"
         ],
         "title": "_CoverSwitch",
         "type": "object"
@@ -5170,6 +5416,16 @@
             "title": "Review Case Id",
             "type": "string"
           },
+          "suggestion": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_CoverSuggestion"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "switched": {
             "anyOf": [
               {
@@ -5196,6 +5452,7 @@
           "group",
           "media_kind",
           "review_case_id",
+          "suggestion",
           "switched",
           "title",
           "unreadable_cover"

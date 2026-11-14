@@ -8,7 +8,9 @@ import { choiceRadios, moveChoiceFocus } from '../choiceGroup'
 import { useCoverChoiceData } from '../coverChoices'
 import type { CoverPrepareFailure, RecordCoverPrepareFailure } from '../coverChoices'
 import {
+  coverFaultLabel,
   coverNoteLabel,
+  coverReasonLine,
   coverReviewerLabel,
   coverSourceLabels,
   reviewerFailureCopy,
@@ -337,6 +339,29 @@ function LibraryCoverChoicesContent({
         .filter((reason): reason is string => typeof reason === 'string')
         .slice(0, 2)
     : []
+  // The measured rules' stage (#1363): over a populated cover its choice is a
+  // suggestion, said with the fault that prompted it; a fill is recommended.
+  const stage = consideration.stage ?? null
+  const audiobook = audioFileFormat(mediaKind) || mediaKind === 'audio'
+  const suggesting =
+    recommendedReference !== null && (stage?.outcome === 'suggest' || stage?.outcome === 'replace')
+  const stageReason = stage?.reason ?? null
+  const suggestedCandidate = suggesting
+    ? candidates.find((candidate) => candidate.reference === recommendedReference)
+    : undefined
+  const suggestionLine =
+    suggesting && stageReason !== null
+      ? coverReasonLine(stageReason, {
+          audiobook,
+          before: incumbent ?? null,
+          after: suggestedCandidate ?? null,
+          language: stage.language,
+        })
+      : null
+  const faultLabel =
+    stageReason !== null && stage?.outcome !== 'fill'
+      ? coverFaultLabel(stageReason, audiobook)
+      : null
   const excludedReason = (candidate: (typeof candidates)[number]) =>
     candidate.matchReason === 'matched_book'
       ? 'From the matched book, not a confirmed recording.'
@@ -347,7 +372,7 @@ function LibraryCoverChoicesContent({
           ? 'The reviewer did not check this cover.'
           : policyStatus !== null && !acceptableReferences.includes(candidate.reference)
             ? policyReasons.length
-              ? policyReasons.map(coverNoteLabel).join(', ')
+              ? policyReasons.map((reason) => coverNoteLabel(reason, audiobook)).join(', ')
               : 'Your cover settings do not accept this cover.'
             : coverStateLabels[candidate.state]
   const cardState = (candidate: (typeof candidates)[number]) => {
@@ -456,7 +481,9 @@ function LibraryCoverChoicesContent({
             <small>
               {/* A proposed cover's sources show below, so only the current one is labelled. */}
               {candidate.incumbent ? label : null}
-              {recommended ? `${candidate.incumbent ? ' · ' : ''}Recommended` : ''}
+              {recommended
+                ? `${candidate.incumbent ? ' · ' : ''}${suggesting ? 'Suggested' : 'Recommended'}`
+                : ''}
               {selected && actionableCandidate ? (
                 <b className="choice-chosen">Your choice</b>
               ) : null}
@@ -554,15 +581,24 @@ function LibraryCoverChoicesContent({
                 ? 'Still searching for covers'
                 : 'No cover recommended'}
         </strong>
-        {/* The recommended card carries its own reason, so its header has no caption (#1765). */}
-        {recommendedReference !== null ? null : (
+        {faultLabel !== null ? <StatusPill tone="notice">{faultLabel}</StatusPill> : null}
+        {/* The recommended card carries its own reason, so its header has no
+            caption (#1765), unless it is a suggestion, which says why. */}
+        {suggesting ? (
+          suggestionLine !== null ? (
+            <small>
+              {/* The reason line is a sentence; here it continues one. */}
+              Suggested because {suggestionLine.charAt(0).toLowerCase() + suggestionLine.slice(1)}
+            </small>
+          ) : null
+        ) : recommendedReference !== null ? null : (
           <small>
-            {consideration.ready && policyReasons.includes('actual_target_unverified')
-              ? 'The cover in Audiobookshelf could not be confirmed, so it is not replaced automatically.'
-              : consideration.ready && policyReasons.includes('confirmed_incumbent_not_improved')
-                ? 'No confirmed cover is better than the current one, so it is not replaced automatically.'
-                : consideration.providerFetching
-                  ? 'Covers found so far are shown. You can choose when the search finishes.'
+            {consideration.providerFetching
+              ? 'Covers found so far are shown. You can choose when the search finishes.'
+              : stage?.outcome === 'hold'
+                ? 'The title names a different book from most covers. Check the title first.'
+                : consideration.ready && stage?.outcome === 'keep'
+                  ? 'The current cover has no fault, so it is kept.'
                   : 'Only confirmed matches can be recommended.'}
           </small>
         )}
@@ -580,7 +616,7 @@ function LibraryCoverChoicesContent({
         </p>
       ) : field.automaticDecision ? (
         <p className="reviewer-unavailable-detail">
-          Chosen automatically. Only a better confirmed cover, or your choice, replaces it.
+          Chosen automatically. It changes again only for a fault, or when you choose.
         </p>
       ) : null}
       {coversLink ? (

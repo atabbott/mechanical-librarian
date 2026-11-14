@@ -306,8 +306,10 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(
         "policy_preferences": {
             "avoid_promotional_text": False,
             "avoid_tie_in_branding": False,
+            "current_protection": "protected",
+            "prefer_edition": False,
             "prefer_minimal_composition": False,
-            "schema_version": "cover-policy-v1",
+            "schema_version": "cover-policy-v2",
         },
         "policy_reference": "cover_policy_" + "2" * 64,
         "provider_fetching": False,
@@ -3355,7 +3357,8 @@ def test_current_policy_exposes_exact_accepted_audiobook_operations(web):
     ]
     available = {entry["identity"] for entry in entries if entry["automatic_available"]}
     assert available == audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS
-    assert len(available) == 71
+    # #1363 retired the audiobook cover replacement, F46's only cover option.
+    assert len(available) == 70
     assert {
         entry["destination"] for entry in entries if entry["automatic_available"]
     } == {
@@ -3366,7 +3369,6 @@ def test_current_policy_exposes_exact_accepted_audiobook_operations(web):
         "series",
         "genres",
         "asin",
-        "cover",
         "publishedDate",
         "description",
         "explicit",
@@ -4602,7 +4604,7 @@ def _retry_settings_document(generation: int):
 
     return OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v4",
+            "schema_version": "owner-settings-v5",
             "revision": 1,
             "connections": [
                 {"name": "primary", "endpoint": "https://library.example.invalid"}

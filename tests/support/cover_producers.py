@@ -286,3 +286,24 @@ def _qualified_cover_report(
         assert source.artifact is not None
         artifacts.stage(source.artifact, original, payload)
     return report, evaluate_report(report)
+
+
+def held_measured_stage(*args: object, **kwargs: object) -> object:
+    """The measured stage, turned into a title hold."""
+    import dataclasses
+
+    from mechanical_librarian.domain.cover_rules import (
+        CoverIssue,
+        CoverOutcome,
+        elect_measured_covers,
+    )
+
+    election = elect_measured_covers(*args, **kwargs)  # type: ignore[arg-type]
+    return dataclasses.replace(
+        election,
+        outcome=CoverOutcome.HOLD,
+        choice=None,
+        issues=(CoverIssue.TITLE_NAMES_OTHER_WORK,),
+        reason=CoverIssue.TITLE_NAMES_OTHER_WORK,
+        edition_preferred=False,
+    )

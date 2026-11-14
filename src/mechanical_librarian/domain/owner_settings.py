@@ -273,10 +273,14 @@ class CoverPreferenceSettings(_Closed):
     avoid_promotional_text: StrictBool = False
     avoid_tie_in_branding: StrictBool = False
     prefer_minimal_composition: StrictBool = False
+    current_protection: Literal["protected", "unprotected", "proposals_only"] = (
+        "protected"
+    )
+    prefer_edition: StrictBool = False
 
 
 class OwnerSettingsDocument(_Closed):
-    schema_version: Literal["owner-settings-v4"]
+    schema_version: Literal["owner-settings-v5"]
     revision: Annotated[StrictInt, Field(ge=1)]
     connections: Annotated[list[TargetSettings], Field(min_length=1, max_length=32)]
     providers: Annotated[list[ProviderSettings], Field(max_length=32)] = []
@@ -476,6 +480,8 @@ def store_field_metadata(document: OwnerSettingsDocument) -> tuple[SettingField,
                 "description_advice.automatic_application",
                 "cover_preferences.avoid_promotional_text",
                 "cover_preferences.avoid_tie_in_branding",
+                "cover_preferences.current_protection",
+                "cover_preferences.prefer_edition",
                 "cover_preferences.prefer_minimal_composition",
             }
         )

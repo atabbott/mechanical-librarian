@@ -5548,15 +5548,10 @@ describe('Library route', () => {
     ).toHaveTextContent(/^Recommended$/u)
     expect(within(recommendedComparison).queryByText(/Alternative \d cover/u)).toBeNull()
 
-    for (const [reason, explanation] of [
-      [
-        'actual_target_unverified',
-        'The cover in Audiobookshelf could not be confirmed, so it is not replaced automatically.',
-      ],
-      [
-        'confirmed_incumbent_not_improved',
-        'No confirmed cover is better than the current one, so it is not replaced automatically.',
-      ],
+    // The measured rules' stage says why nothing is recommended (#1363).
+    for (const [outcome, explanation] of [
+      ['keep', 'The current cover has no fault, so it is kept.'],
+      ['hold', 'The title names a different book from most covers. Check the title first.'],
     ] as const) {
       cleanup()
       const ownerReady = {
@@ -5567,7 +5562,12 @@ describe('Library route', () => {
           ...consideration.policy,
           recommended_candidate_reference: null,
           status: 'abstained' as const,
-          reasons: [reason],
+          reasons: [outcome === 'keep' ? 'current_cover_kept' : 'title_names_other_work'],
+        },
+        stage: {
+          language: null,
+          outcome,
+          reason: outcome === 'keep' ? null : ('title_names_other_work' as const),
         },
       }
       renderRoute('/library?lens=all&preview=case-1&field=cover', {
@@ -5583,6 +5583,40 @@ describe('Library route', () => {
       expect(within(ownerReadyComparison).getByText(explanation)).toBeVisible()
       expect(within(ownerReadyComparison).queryByText(/· Recommended/u)).not.toBeInTheDocument()
     }
+
+    // Over a populated cover the stage's choice is a suggestion, said with its
+    // fault and the reason line (#1363).
+    cleanup()
+    renderRoute('/library?lens=all&preview=case-1&field=cover', {
+      ...createHttp(),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        target: { ...detail.target, mediaKind },
+        fields: [
+          {
+            ...coverField,
+            coverConsideration: {
+              ...recommended,
+              stage: {
+                language: null,
+                outcome: 'suggest' as const,
+                reason: 'below_floor' as const,
+              },
+            },
+          },
+        ],
+      })),
+    })
+    const suggested = await screen.findByLabelText('Choose a cover')
+    expect(within(suggested).getByText('Under 300 px')).toBeVisible()
+    expect(suggested.querySelector(':scope > header > small')).toHaveTextContent(
+      /^Suggested because the cover was \d+ × \d+ px, under 300 px on its short side\.$/u,
+    )
+    expect(
+      within(suggested)
+        .getByRole('radio', { name: 'Choose Open Library cover, 800 × 1200 px (2)' })
+        .querySelector('small'),
+    ).toHaveTextContent(/^Suggested$/u)
   })
 
   describe('cover choices (#1290)', () => {

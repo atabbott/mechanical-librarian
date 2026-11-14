@@ -418,8 +418,13 @@ def test_attention_per_case_splits_media_covers_and_rounds() -> None:
 
 
 def test_current_cover_pointer_marks_attention_counts_unavailable(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # A held cover asks; a suggested one would not be attention (#1363 S9).
+    from mechanical_librarian.application import cover_policy
+    from tests.support.cover_producers import held_measured_stage
+
+    monkeypatch.setattr(cover_policy, "elect_measured_covers", held_measured_stage)
     database = tmp_path / "application.sqlite3"
     repository = open_repository(database)
     attention_work = _bibliographic_report(
@@ -790,7 +795,7 @@ def test_main_reads_existing_state_and_remaps_mounts() -> None:
         config.write_text(
             json.dumps(
                 {
-                    "schema_version": "config-v9",
+                    "schema_version": "config-v10",
                     "provider_recovery_generation": 1,
                     "connections": [
                         {

@@ -771,6 +771,8 @@ export interface CoverConsiderationView {
   }
   omissions: readonly Readonly<Record<string, unknown>>[]
   policy: Readonly<Record<string, unknown>> | null
+  /** The measured cover rules' stage from the policy report (#1363). */
+  stage?: Pick<ResponseSchema<'_CoverStage'>, 'language' | 'outcome' | 'reason'> | null
   providerFetching: boolean
   ready: boolean
   policyPreferences: {
@@ -3244,6 +3246,14 @@ export const mapCoverConsideration = (value: CoverConsiderationDto): CoverConsid
     incumbent: { reference: value.incumbent.reference, state: incumbentState },
     omissions: value.omissions,
     policy,
+    stage:
+      policy === null
+        ? null
+        : {
+            language: policy.stage.language,
+            outcome: policy.stage.outcome,
+            reason: policy.stage.reason,
+          },
     providerFetching,
     ready,
     policyPreferences: {

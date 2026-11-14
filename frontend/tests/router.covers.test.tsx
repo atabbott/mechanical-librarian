@@ -140,6 +140,7 @@ const work = (
   group,
   media_kind: 'epub',
   review_case_id: id,
+  suggestion: null,
   switched: null,
   title: titles[id] ?? id,
   unreadable_cover: false,
@@ -387,10 +388,20 @@ describe('Covers view (#1633)', () => {
           filled: false,
           put_back: null,
           put_back_offered: true,
+          language: null,
+          reason: null,
         },
       }),
       work('case-2', 'auto', {
-        switched: { at, before: null, filled: true, put_back: null, put_back_offered: false },
+        switched: {
+          at,
+          before: null,
+          filled: true,
+          put_back: null,
+          put_back_offered: false,
+          language: null,
+          reason: null,
+        },
       }),
     ])
     const http = coversHttp({ switched })
@@ -438,7 +449,15 @@ describe('Covers view (#1633)', () => {
     const at = Math.floor(Date.now() / 1000) - 7200
     const switched = page('switched', [
       work('case-1', 'auto', {
-        switched: { at, before: null, filled: false, put_back: null, put_back_offered: false },
+        switched: {
+          at,
+          before: null,
+          filled: false,
+          put_back: null,
+          put_back_offered: false,
+          language: null,
+          reason: null,
+        },
       }),
     ])
     renderRoute('/library?lens=all&view=covers&tab=switched', coversHttp({ switched }))
@@ -504,6 +523,8 @@ describe('Covers view (#1633)', () => {
           filled: false,
           put_back: null,
           put_back_offered: true,
+          language: null,
+          reason: null,
         },
       }),
     ])
@@ -811,6 +832,8 @@ describe('Put back (#1363)', () => {
           filled: false,
           put_back,
           put_back_offered,
+          language: null,
+          reason: null,
         },
       }),
     ])
@@ -953,5 +976,79 @@ describe('Put back (#1363)', () => {
       value: `cover_${'4'.repeat(64)}`,
     })
     expect(await screen.findByText('Put back First Book.')).toBeVisible()
+  })
+})
+
+describe('Measured cover rules (#1363)', () => {
+  const at = Math.floor(Date.now() / 1000) - 60
+  const switchedFor = (
+    id: string,
+    reason: NonNullable<CoverWorkView['switched']>['reason'],
+    extra: Partial<CoverWorkView> = {},
+  ): CoverWorkView =>
+    work(id, 'auto', {
+      switched: {
+        at,
+        before: reason === null ? null : preview('b', 200, 300),
+        filled: reason === null,
+        put_back: null,
+        put_back_offered: false,
+        language: null,
+        reason,
+      },
+      ...extra,
+    })
+
+  it('names the fault and says why each switch happened', async () => {
+    const switched = page('switched', [
+      switchedFor('case-1', 'below_floor'),
+      switchedFor('case-2', 'wrong_shape', { media_kind: 'm4b' }),
+    ])
+    renderRoute('/library?lens=all&view=covers&tab=switched', coversHttp({ switched }))
+    const [first, second] = await screen.findAllByRole('listitem')
+    if (!first || !second) throw new Error('two switched rows are required')
+    expect(within(first).getByText('Under 300 px')).toBeVisible()
+    expect(
+      within(first).getByText('The cover was 200 × 300 px, under 300 px on its short side.'),
+    ).toBeVisible()
+    // The shape fault names the medium it is wrong for.
+    expect(within(second).getByText('Book shape on an audiobook')).toBeVisible()
+    expect(
+      within(second).getByText('Square art for an audiobook whose cover was book-shaped.'),
+    ).toBeVisible()
+  })
+
+  it('filters switches by fault, showing fills only under All', async () => {
+    const user = userEvent.setup()
+    const switched = page('switched', [
+      switchedFor('case-1', 'below_floor'),
+      switchedFor('case-2', null),
+      switchedFor('case-3', 'sharper_copy'),
+    ])
+    renderRoute('/library?lens=all&view=covers&tab=switched', coversHttp({ switched }))
+    expect(await screen.findAllByRole('listitem')).toHaveLength(3)
+    const show = screen.getByRole('combobox', { name: 'Show' })
+    expect(show).toHaveTextContent('All')
+    await user.click(show)
+    // Only the faults present, in the copy table's order; a fill has none.
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+      'All',
+      'Sharper copy available',
+      'Under 300 px',
+    ])
+    await user.click(screen.getByRole('option', { name: 'Sharper copy available' }))
+    const [only, ...rest] = screen.getAllByRole('listitem')
+    if (!only) throw new Error('a shown row is required')
+    expect(rest).toHaveLength(0)
+    expect(within(only).getByRole('link', { name: 'Third Book' })).toBeVisible()
+  })
+
+  it('shows a suggestion To decide with its fault and no filter', async () => {
+    const decidePage = page('decide', [
+      work('case-1', 'proposal', { suggestion: { reason: 'unreadable' } }),
+    ])
+    renderRoute('/library?lens=all&view=covers&tab=decide', coversHttp({ decide: decidePage }))
+    expect(await screen.findByText('Unreadable image')).toBeVisible()
+    expect(screen.queryByRole('combobox', { name: 'Show' })).toBeNull()
   })
 })

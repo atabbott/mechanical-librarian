@@ -486,3 +486,16 @@ alternative, `cover-consideration-v6` names each candidate's kind, and
 `cover-selection-authority-v3` records the switch a Put back undoes, so a
 verified Put back releases its copy. Every earlier application database is
 rejected before mutation and needs a clean rebuild; no adoption is supplied.
+
+Issue #1363's activation of the measured cover rules also takes the
+clean-rebuild branch. `cover-policy-v2` adds Current covers (`current_protection`
+and `prefer_edition`), so every cover policy reference moves.
+`cover-policy-report-v3` records the measured stage's outcome, reason, issues,
+same-art groups, exclusions and edition preference, and each consideration's
+currentness document now carries that outcome and reason, which attention reads.
+`cover-automatic-decision-v4` records the closed reason a replacement was made
+for and drops the `replace_if_strictly_better` option, which the metadata policy
+profile no longer offers. `owner-settings-v5` stores Current covers and
+`config-v10` admits `cover_current_protection` and `cover_prefer_edition`; a
+`config-v9` file must be rewritten by hand. Every earlier application database
+is rejected before mutation and needs a clean rebuild; no adoption is supplied.

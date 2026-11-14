@@ -137,15 +137,34 @@ _VERIFIED_CURRENT_COVER_SQL = (
     "WHERE json_extract(cover_result.value,'$.destination')='cover' "
     "AND cover_reason.value='current_cover_verified')"
 )
+# A cover the measured stage suggests replacing, or would replace were the
+# switch admitted, is optional work: it is in Covers' To decide, never in
+# attention (#1363, S9). A title that names another book holds the cover and
+# always asks; any other comparison asks only while it is manually ready over
+# a cover that is not kept.
+_COVER_STAGE_OUTCOME_SQL = (
+    "json_extract(consideration.currentness_document,'$.cover_stage.outcome')"
+)
+_COVER_SUGGESTED_SQL = (
+    "(result.destination='cover' AND EXISTS (SELECT 1 "
+    "FROM current_cover_considerations current_cover "
+    "JOIN cover_considerations consideration "
+    "ON consideration.consideration_id=current_cover.consideration_id "
+    "WHERE current_cover.review_case_id=rc.review_case_id "
+    "AND " + _COVER_STAGE_OUTCOME_SQL + " IN ('suggest','replace')))"
+)
 _REVIEW_FIELD_ATTENTION_REASON_SQL = (
-    "result.has_owner_decision_actions=1 AND (result.unresolved_choice=1 "
+    "result.has_owner_decision_actions=1 AND ((result.unresolved_choice=1 "
+    "AND NOT " + _COVER_SUGGESTED_SQL + ") "
     "OR (result.destination='cover' AND EXISTS (SELECT 1 "
     "FROM current_cover_considerations current_cover "
     "JOIN cover_considerations consideration "
     "ON consideration.consideration_id=current_cover.consideration_id "
     "WHERE current_cover.review_case_id=rc.review_case_id "
-    "AND json_extract(consideration.currentness_document,'$.manual_ready')=1) "
-    "AND NOT " + _VERIFIED_CURRENT_COVER_SQL + ") "
+    "AND (" + _COVER_STAGE_OUTCOME_SQL + "='hold' OR ("
+    "json_extract(consideration.currentness_document,'$.manual_ready')=1 "
+    "AND COALESCE(" + _COVER_STAGE_OUTCOME_SQL + ",'') NOT IN ('suggest','replace') "
+    "AND NOT " + _VERIFIED_CURRENT_COVER_SQL + ")))) "
     "OR "
     + _REVIEW_MANUAL_BIBLIOGRAPHIC_SQL
     + " OR "

@@ -214,7 +214,7 @@ def test_actual_embedded_predecessor_refused_without_mutation(
             "_COVER_SELECTION_AUTHORITIES_SQL",
             schema._COVER_SELECTION_AUTHORITIES_SQL.replace(
                 "'cover-selection-authority-v3'", "'cover-selection-authority-v2'"
-            ),
+            ).replace("'cover-automatic-decision-v4'", "'cover-automatic-decision-v3'"),
         ),
     ):
         schema._create_schema(connection)

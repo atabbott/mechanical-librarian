@@ -114,6 +114,7 @@ def test_cover_currentness_sql_binding_fails_closed_for_unknown_and_failure(
             "provider_fetching": False,
             "manual_ready": True,
             "replay_reference": replay,
+            "cover_stage": {"outcome": "keep", "reason": None},
         }
     )
 
@@ -3709,7 +3710,7 @@ def test_active_labels_filter_current_and_terminal_before_count_and_page(
     repository.fail_review_pipeline_action(action, "unreadable_media", False, 14)
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v4",
+            "schema_version": "owner-settings-v5",
             "revision": 1,
             "connections": [
                 {"name": connection, "endpoint": "https://example.invalid"}

@@ -66,13 +66,13 @@ RULE_INPUTS: Mapping[str, str | None] = {
 _FIELD_KEYS = {"title_conflict": "title", "omnibus": "omnibus"}
 _CANDIDATE_KEYS = {
     "measures": "same_art_measures",
-    "non_english_edition": "edition_language",
+    "edition_outside_library_languages": "edition_language",
     "omnibus_volume": "omnibus",
     "title_differs": "title",
 }
 _CURRENT_KEYS = {
     "measures": "same_art_measures",
-    "non_english_edition": "edition_language",
+    "edition_outside_library_languages": "edition_language",
 }
 
 
@@ -139,7 +139,9 @@ def _field(
             width=data.get("width"),  # type: ignore[arg-type]  # reason: as above
             height=data.get("height"),  # type: ignore[arg-type]  # reason: as above
             measures=_measures(data),
-            non_english_edition=_flag(data, "non_english_edition"),
+            edition_outside_library_languages=_flag(
+                data, "edition_outside_library_languages"
+            ),
         )
     candidates = []
     for index, raw in enumerate(raw_candidates):
@@ -155,7 +157,9 @@ def _field(
                 data["height"],  # type: ignore[arg-type]  # reason: as above
                 data["packet_ordinal"],  # type: ignore[arg-type]  # reason: as above
                 measures=_measures(data),
-                non_english_edition=_flag(data, "non_english_edition"),
+                edition_outside_library_languages=_flag(
+                    data, "edition_outside_library_languages"
+                ),
                 omnibus_volume=_flag(data, "omnibus_volume"),
                 title_differs=_flag(data, "title_differs"),
             )
