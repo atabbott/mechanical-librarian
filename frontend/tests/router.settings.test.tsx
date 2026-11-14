@@ -1015,7 +1015,7 @@ describe('owner settings route', () => {
       'Model',
       'Capabilities',
       'Prices in USD',
-      'Example cost per 1,000 books',
+      'Example cost per 1,000 works',
       'Cover request',
     ])
     expect(cover.getByText('openai/gpt-4o-mini', { selector: 'dd' })).toBeVisible()
@@ -1023,7 +1023,7 @@ describe('owner settings route', () => {
     expect(cover.getByText('Validate this model to see its prices.')).toBeVisible()
     expect(cover.getByText('Cover review: not measured for this model.')).toBeVisible()
     expect(cover.getByText('Description advice: not measured for this model.')).toBeVisible()
-    expect(cover.getByText('One request per book, with every cover it compares.')).toBeVisible()
+    expect(cover.getByText('One request per work, with every cover it compares.')).toBeVisible()
     expect(cover.queryByText(/Metadata observed|Maximum-size|sample|methodology/u)).toBeNull()
     // The Model row tracks a controlled input, so the list must not be a live
     // region; the status paragraph above owns the announcements.
@@ -3081,7 +3081,7 @@ it('separates measured cover cost from observed rates and never lends prices to 
   renderRoute('/settings?group=reviewer', http)
   const cover = within(await screen.findByRole('region', { name: 'Cover reviewer' }))
   expect(
-    cover.getByText('Cover review: about $0.64, including about 2.7 cover images per book.'),
+    cover.getByText('Cover review: about $0.64, including about 2.7 cover images per work.'),
   ).toBeVisible()
   expect(cover.getByText('Description advice: not measured for this model.')).toBeVisible()
   expect(

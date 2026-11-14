@@ -494,7 +494,7 @@ function OpenRouterReviewer({
           <ReviewerCost view={view} model={effectiveModel} task="cover" />
           <div>
             <dt>Cover request</dt>
-            <dd>One request per book, with every cover it compares.</dd>
+            <dd>One request per work, with every cover it compares.</dd>
           </div>
         </dl>
       </div>

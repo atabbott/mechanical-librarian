@@ -12884,7 +12884,7 @@ def test_packaged_description_cost_in_settings_and_cover_only_setup(width: int) 
                     expect(adviser).to_contain_text("Description advice: about $0.17.")
                     cover = page.get_by_role("region", name="Cover reviewer")
                     expect(cover).to_contain_text(
-                        "Cover review: about $0.64, including about 2.7 cover images per book."
+                        "Cover review: about $0.64, including about 2.7 cover images per work."
                     )
                     expect(adviser).not_to_contain_text("1790929488")
                     expect(adviser).not_to_contain_text("2026")
