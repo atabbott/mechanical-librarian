@@ -20,6 +20,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetDestination,
 )
 from mechanical_librarian.domain.proposal_set import ProposalSet
+from mechanical_librarian.domain.reviewer_access import REVIEWER_ACCESS_SCHEMA
 
 
 def test_installed_owner_decision_activity_smoke() -> None:
@@ -311,6 +312,14 @@ def test_current_authority_and_predecessor_refusal_without_history(
             schema, "_ATTENTION_FACT_SOURCE_SQL", PRIOR_ATTENTION_FACT_SOURCE_SQL
         )
         old_schema.setattr(schema, "_REVIEW_WORK_SQL", PRIOR_REVIEW_WORK_SQL)
+        # The frozen producer's reviewer access CHECK names v3 (#1372 moved it).
+        old_schema.setattr(
+            schema,
+            "_REVIEWER_ACCESS_SQL",
+            schema._REVIEWER_ACCESS_SQL.replace(
+                f"'{REVIEWER_ACCESS_SCHEMA}'", "'reviewer-access-v3'"
+            ),
+        )
         # The producer predates #1245's report discriminator.
         old_schema.setattr(
             schema,
@@ -322,7 +331,8 @@ def test_current_authority_and_predecessor_refusal_without_history(
         with closing(open_repository(old_path)) as repository:
             # The producer predates #1199's report browse facts, #1202's
             # history indexes, #1204's indexes, #1211's case indexes, #1232's
-            # attention facts and #1363's retained cover tables.
+            # attention facts, #1363's retained cover tables and #1372's taste
+            # tables.
             repository._connection.executescript(
                 "".join(
                     f"DROP {kind.upper()} {name};"
@@ -331,6 +341,9 @@ def test_current_authority_and_predecessor_refusal_without_history(
                 + "DROP TABLE retained_cover_listings;"
                 "DROP TABLE retained_cover_removals;"
                 "DROP TABLE retained_cover_bindings;"
+                "DROP TABLE cover_taste_profile_versions;"
+                "DROP TABLE cover_taste_builds;"
+                "DROP TABLE reviewer_task_requests;"
                 "DROP TRIGGER metadata_reports_project_browse_facts;"
                 "DROP TABLE metadata_report_browse_authors;"
                 "DROP TABLE metadata_report_browse_facts;"
