@@ -16,10 +16,38 @@ from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
 from mechanical_librarian.adapters.persistence.owner_settings import _settings_view
+from mechanical_librarian.application.continuous_field_effects import (
+    CONTINUOUS_FIELD_ACTIVITY_SCHEMA,
+)
+from mechanical_librarian.application.cover_consideration import (
+    SCHEMA_VERSION as COVER_CONSIDERATION_SCHEMA,
+)
+from mechanical_librarian.application.cover_policy import (
+    POLICY_SCHEMA_VERSION as COVER_POLICY_SCHEMA,
+)
+from mechanical_librarian.application.cover_policy import (
+    SCHEMA_VERSION as COVER_POLICY_REPORT_SCHEMA,
+)
 from mechanical_librarian.application.metadata_policy import rich_qualification
+from mechanical_librarian.application.review_application import (
+    REVIEW_PREPARATION_SCHEMA,
+)
+from mechanical_librarian.application.review_web import (
+    REVIEW_CASE_DETAIL_SCHEMA,
+    REVIEW_CASE_EVIDENCE_SCHEMA,
+    REVIEW_CASE_HISTORY_SCHEMA,
+    REVIEW_LIBRARY_SCHEMA,
+)
 from mechanical_librarian.domain import audiobook_decision_qualification
+from mechanical_librarian.domain.metadata_policy import (
+    POLICY_SCHEMA_VERSION as METADATA_POLICY_PROFILE_SCHEMA,
+)
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
-from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
+from mechanical_librarian.domain.owner_settings import (
+    OWNER_SETTINGS_SCHEMA,
+    OwnerSettingsDocument,
+)
+from mechanical_librarian.domain.shadow_outcome import SHADOW_OUTCOME_SCHEMA
 
 BUILD_IDENTITY = "a" * 64
 HOSTILE_TEXT = "Hostile <img src=x onerror=window.__metadataExecuted=true>"
@@ -574,7 +602,7 @@ def _field(
 def _case(case_id: str) -> dict[str, object]:
     if case_id == "case-stale":
         return {
-            "schema_version": "review-case-detail-v7",
+            "schema_version": REVIEW_CASE_DETAIL_SCHEMA,
             "recording_identity_basis": None,
             "recording_admission_basis": None,
             "audiobook_review_scope": None,
@@ -1055,7 +1083,7 @@ def _case(case_id: str) -> dict[str, object]:
                         "policy_reference": "cover-policy-synthetic",
                         "reasons": ["policy_satisfied"],
                         "recommended_candidate_reference": "cover-ref-choice",
-                        "schema_version": "cover-policy-report-v4",
+                        "schema_version": COVER_POLICY_REPORT_SCHEMA,
                         # The measured rules fill an empty cover and suggest
                         # replacing an undersized one (#1363).
                         "stage": {
@@ -1076,7 +1104,7 @@ def _case(case_id: str) -> dict[str, object]:
                         "current_protection": "protected",
                         "prefer_edition": False,
                         "prefer_minimal_composition": False,
-                        "schema_version": "cover-policy-v2",
+                        "schema_version": COVER_POLICY_SCHEMA,
                     },
                     "policy_reference": "cover-policy-synthetic",
                     "provider_fetching": False,
@@ -1091,7 +1119,7 @@ def _case(case_id: str) -> dict[str, object]:
                     ),
                     "reviewer_status": reviewer_status,
                     "reviewer_unavailable_reason": None,
-                    "schema_version": "cover-consideration-v8",
+                    "schema_version": COVER_CONSIDERATION_SCHEMA,
                     "supersedes_id": (
                         "cover-consideration-historical"
                         if reviewer_status == "failed"
@@ -1106,7 +1134,7 @@ def _case(case_id: str) -> dict[str, object]:
         LIBRARY_WORKS[0],
     )
     return {
-        "schema_version": "review-case-detail-v7",
+        "schema_version": REVIEW_CASE_DETAIL_SCHEMA,
         "recording_identity_basis": None,
         "recording_admission_basis": None,
         "audiobook_review_scope": None,
@@ -1163,7 +1191,7 @@ def _library(query: dict[str, list[str]]) -> dict[str, object]:
     start = (page - 1) * 6
     end = start + 6
     return {
-        "schema_version": "review-library-v5",
+        "schema_version": REVIEW_LIBRARY_SCHEMA,
         "lens": lens,
         "query": needle or None,
         "next_cursor": f"page-{page + 1}" if len(works) > end else None,
@@ -1465,7 +1493,7 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
         ),
     ]
     return {
-        "schema_version": "continuous-field-activity-v3",
+        "schema_version": CONTINUOUS_FIELD_ACTIVITY_SCHEMA,
         "current_waiting": None,
         "owner_action_required": 0,
         "backup_ready": True,
@@ -1753,7 +1781,7 @@ def _shadow_outcome_set(
 ) -> dict[str, object]:
     """Return one preview outcome set with every member the server sends."""
     return {
-        "schema_version": "shadow-outcome-set-v11",
+        "schema_version": SHADOW_OUTCOME_SCHEMA,
         "authority": "none",
         "posture": "preview",
         "outcome_set_id": outcome_set_id,
@@ -1799,7 +1827,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
     if path == "/api/v1/settings":
         document = OwnerSettingsDocument.model_validate(
             {
-                "schema_version": "owner-settings-v6",
+                "schema_version": OWNER_SETTINGS_SCHEMA,
                 "revision": 1,
                 "connections": [
                     {"name": "primary", "endpoint": "https://library.invalid"}
@@ -1817,7 +1845,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
         return _settings_view(document, {}).model_dump(mode="json")
     if path == "/api/v1/review-preparation":
         return {
-            "schema_version": "review-preparation-v2",
+            "schema_version": REVIEW_PREPARATION_SCHEMA,
             "recovery_required": False,
             "active": True,
             "actionable": True,
@@ -1889,7 +1917,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
             cursor = query.get("cursor", [""])[0]
             page = 2 if cursor == "evidence-page-2" else 1
             return {
-                "schema_version": "review-case-evidence-v5",
+                "schema_version": REVIEW_CASE_EVIDENCE_SCHEMA,
                 "review_case_id": case_id,
                 "next_cursor": "evidence-page-2" if page == 1 else None,
                 "missing_lineage_count": 2,
@@ -2010,7 +2038,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                     }
                 )
             return {
-                "schema_version": "review-case-history-v3",
+                "schema_version": REVIEW_CASE_HISTORY_SCHEMA,
                 "review_case_id": case_id,
                 "next_cursor": None,
                 "items": items,
@@ -2031,7 +2059,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
             ],
             "rich_qualification": list(_RICH_QUALIFICATION),
             "profile": {
-                "schema_version": "metadata-policy-profile-v3",
+                "schema_version": METADATA_POLICY_PROFILE_SCHEMA,
                 "name": "Household metadata policy",
                 "options": {
                     "title_layout": "title_and_subtitle",
@@ -2075,7 +2103,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
     if path == "/api/v1/metadata-policy/drafts":
         return {
             "policy_id": "policy_" + "d" * 64,
-            "schema_version": "metadata-policy-profile-v3",
+            "schema_version": METADATA_POLICY_PROFILE_SCHEMA,
         }
     if path == "/api/v1/metadata-policy/preview":
         fields = [

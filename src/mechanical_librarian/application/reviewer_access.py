@@ -6,7 +6,7 @@ import hashlib
 from collections.abc import Callable
 from importlib.resources import files
 from threading import RLock
-from typing import Annotated, Literal, Protocol, cast
+from typing import Annotated, Final, Literal, Protocol, cast
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr
 
@@ -36,8 +36,16 @@ from mechanical_librarian.domain.reviewer_access import (
     ReviewerTask,
     ReviewerTaskSelection,
 )
-from mechanical_librarian.domain.reviewer_cost import ReviewerCostEvidence
+from mechanical_librarian.domain.reviewer_cost import (
+    REVIEWER_COST_EVIDENCE_SCHEMA,
+    ReviewerCostEvidence,
+)
 from mechanical_librarian.domain.validation import credential
+
+ReviewerAccessViewSchemaVersion = Literal["reviewer-access-view-v2"]
+REVIEWER_ACCESS_VIEW_SCHEMA: Final[ReviewerAccessViewSchemaVersion] = (
+    "reviewer-access-view-v2"
+)
 
 # Device-auth flow states that a Codex projection reports verbatim instead of
 # the installed credential's status. The selected and passive branches and
@@ -181,7 +189,7 @@ class OpenRouterRecommendation(_Closed):
 def _cost_evidence() -> ReviewerCostEvidence:
     payload = (
         files("mechanical_librarian")
-        .joinpath("resources/reviewer-cost-evidence-v2.json")
+        .joinpath(f"resources/{REVIEWER_COST_EVIDENCE_SCHEMA}.json")
         .read_bytes()
     )
     if len(payload) > 262144:
@@ -190,7 +198,7 @@ def _cost_evidence() -> ReviewerCostEvidence:
 
 
 class ReviewerAccessView(_Closed):
-    schema_version: Literal["reviewer-access-view-v2"] = "reviewer-access-view-v2"
+    schema_version: ReviewerAccessViewSchemaVersion = REVIEWER_ACCESS_VIEW_SCHEMA
     cost_evidence: ReviewerCostEvidence = Field(default_factory=_cost_evidence)
     revision: StrictInt
     mapping: ReviewerTaskSelection | None

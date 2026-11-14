@@ -14,7 +14,10 @@ from mechanical_librarian.adapters.persistence.transactions import ConnectionSco
 from mechanical_librarian.application.reviewer_access import (
     ReviewerAccessRepositoryError,
 )
-from mechanical_librarian.domain.reviewer_access import ReviewerAccessDocument
+from mechanical_librarian.domain.reviewer_access import (
+    REVIEWER_ACCESS_SCHEMA,
+    ReviewerAccessDocument,
+)
 from mechanical_librarian.domain.validation import credential
 
 _OPENROUTER_SECRET = "openrouter.api_key"
@@ -190,7 +193,7 @@ class ReviewerAccessStore(ConnectionScoped):
                     raise ReviewerAccessStoreError("reviewer access is unavailable")
                 return (
                     ReviewerAccessDocument(
-                        schema_version="reviewer-access-v3", revision=1
+                        schema_version=REVIEWER_ACCESS_SCHEMA, revision=1
                     ),
                     None,
                 )

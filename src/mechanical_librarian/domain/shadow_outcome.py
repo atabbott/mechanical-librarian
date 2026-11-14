@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
-from typing import cast
+from typing import Final, Literal, cast
 
 from mechanical_librarian.domain import audiobook_decision_qualification
 from mechanical_librarian.domain.audio_inspection import AudioInspectionField
@@ -58,7 +58,8 @@ from mechanical_librarian.domain.shadow_decision import (
 )
 from mechanical_librarian.domain.shadow_review import MAX_CITATIONS
 
-SHADOW_OUTCOME_SCHEMA = "shadow-outcome-set-v11"
+ShadowOutcomeSchemaVersion = Literal["shadow-outcome-set-v11"]
+SHADOW_OUTCOME_SCHEMA: Final[ShadowOutcomeSchemaVersion] = "shadow-outcome-set-v11"
 MAX_SHADOW_OUTCOME_BYTES = 1_048_576
 
 _POLICY_CATEGORY_BY_DESTINATION = {

@@ -40,6 +40,7 @@ from mechanical_librarian.application.operation_admission import OperationAdmiss
 from mechanical_librarian.application.review_pipeline import pipeline_scan_id
 from mechanical_librarian.bootstrap import composition
 from mechanical_librarian.domain.owner_settings import (
+    OWNER_SETTINGS_SCHEMA,
     OwnerSettingsDocument,
     SettingsView,
 )
@@ -48,7 +49,10 @@ from mechanical_librarian.infrastructure.first_boot import (
     FirstBootMode,
     select_first_boot_mode,
 )
-from mechanical_librarian.infrastructure.settings_authority import ReviewBootstrap
+from mechanical_librarian.infrastructure.settings_authority import (
+    REVIEW_BOOTSTRAP_SCHEMA,
+    ReviewBootstrap,
+)
 from mechanical_librarian.interfaces.web.runtime_dispatch import (
     MutableRuntimeDispatcher,
     RuntimeGeneration,
@@ -147,7 +151,7 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover(
             with pytest.raises(RuntimeError, match="activation failed"):
                 composition.compose_store_runtime_generation(
                     ReviewBootstrap(
-                        schema_version="review-bootstrap-v2",
+                        schema_version=REVIEW_BOOTSTRAP_SCHEMA,
                         canonical_origin="https://library.invalid",
                         tls_certificate_file="/synthetic/certificate",
                         tls_private_key_file="/synthetic/private-key",
@@ -161,7 +165,7 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover(
             assert close_order == ["root"]
             return
         bootstrap = ReviewBootstrap(
-            schema_version="review-bootstrap-v2",
+            schema_version=REVIEW_BOOTSTRAP_SCHEMA,
             canonical_origin="https://library.invalid",
             tls_certificate_file="/synthetic/certificate",
             tls_private_key_file="/synthetic/private-key",
@@ -281,7 +285,7 @@ def test_setup_runtime_reserves_codex_lease_until_admission(
     reviewer_access = Mock()
     setup_app = Mock()
     bootstrap = ReviewBootstrap(
-        schema_version="review-bootstrap-v2",
+        schema_version=REVIEW_BOOTSTRAP_SCHEMA,
         canonical_origin="https://library.invalid",
         tls_certificate_file="/synthetic/certificate",
         tls_private_key_file="/synthetic/private-key",
@@ -337,7 +341,7 @@ def test_store_runtime_activation_reuses_outer_control_authority_for_successors(
     )
     activation = composition._StoreRuntimeActivation(
         ReviewBootstrap(
-            schema_version="review-bootstrap-v2",
+            schema_version=REVIEW_BOOTSTRAP_SCHEMA,
             canonical_origin="https://library.invalid",
             tls_certificate_file="/synthetic/certificate",
             tls_private_key_file="/synthetic/private-key",
@@ -381,7 +385,7 @@ def test_settings_activation_keeps_addition_intent_out_of_candidate_closure() ->
     )
     activation = composition._StoreRuntimeActivation(
         ReviewBootstrap(
-            schema_version="review-bootstrap-v2",
+            schema_version=REVIEW_BOOTSTRAP_SCHEMA,
             canonical_origin="https://library.invalid",
             tls_certificate_file="/synthetic/certificate",
             tls_private_key_file="/synthetic/private-key",
@@ -456,7 +460,7 @@ def test_setup_and_settings_successors_open_through_live_outer_control(
     )
     activation = composition._StoreRuntimeActivation(
         ReviewBootstrap(
-            schema_version="review-bootstrap-v2",
+            schema_version=REVIEW_BOOTSTRAP_SCHEMA,
             canonical_origin="https://library.invalid",
             tls_certificate_file="/synthetic/certificate",
             tls_private_key_file="/synthetic/private-key",
@@ -611,7 +615,7 @@ def test_ordinary_server_releases_first_owner_state_for_interruption_and_resume(
     database = tmp_path / "application.sqlite3"
     repository = composition.open_repository(database)
     bootstrap = ReviewBootstrap(
-        schema_version="review-bootstrap-v2",
+        schema_version=REVIEW_BOOTSTRAP_SCHEMA,
         tls_certificate_file="/synthetic/certificate",
         tls_private_key_file="/synthetic/private-key",
         canonical_origin="https://setup.invalid",
@@ -717,7 +721,7 @@ def test_setup_start_rotates_the_claim_token_and_refuses_the_earlier_one(
     database = tmp_path / "application.sqlite3"
     token_file = tmp_path / "private" / "setup-claim-token"
     bootstrap = ReviewBootstrap(
-        schema_version="review-bootstrap-v2",
+        schema_version=REVIEW_BOOTSTRAP_SCHEMA,
         tls_certificate_file="/synthetic/certificate",
         tls_private_key_file="/synthetic/private-key",
         canonical_origin="https://setup.invalid",
@@ -832,7 +836,7 @@ def test_store_server_construction_failure_surfaces_and_closes_what_opened(
     setup_store = Mock()
     activation = Mock()
     bootstrap = ReviewBootstrap(
-        schema_version="review-bootstrap-v2",
+        schema_version=REVIEW_BOOTSTRAP_SCHEMA,
         tls_certificate_file="/synthetic/certificate",
         tls_private_key_file="/synthetic/private-key",
         canonical_origin="https://setup.invalid",
@@ -930,7 +934,7 @@ def test_setup_mount_reachability_is_exact_bounded_and_directory_only(
     regular.write_text("synthetic", encoding="utf-8")
     bootstrap = ReviewBootstrap.model_validate(
         {
-            "schema_version": "review-bootstrap-v2",
+            "schema_version": REVIEW_BOOTSTRAP_SCHEMA,
             "tls_certificate_file": "/synthetic/certificate",
             "tls_private_key_file": "/synthetic/key",
             "canonical_origin": "https://review.invalid",
@@ -971,7 +975,7 @@ def test_first_preparation_marker_survives_settings_edit_and_repository_reopen(
     assert not repository.has_first_boot_preparation()
     settings = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v6",
+            "schema_version": OWNER_SETTINGS_SCHEMA,
             "revision": 1,
             "connections": [{"name": "primary", "endpoint": "https://library.invalid"}],
             "providers": [],

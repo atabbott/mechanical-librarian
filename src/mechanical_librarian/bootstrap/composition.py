@@ -502,7 +502,7 @@ class _PublicationReceiptRepository(Protocol):
 
 
 class _ManifestEntry(TypedDict):
-    """One ``batch-manifest-v5`` entry, exactly as ``parse_manifest`` validates it."""
+    """One batch-manifest entry, exactly as ``parse_manifest`` validates it."""
 
     connection: str
     library: str
@@ -514,7 +514,7 @@ class _ManifestEntry(TypedDict):
 
 
 class _Manifest(TypedDict):
-    """The closed ``batch-manifest-v5`` document ``parse_manifest`` returns.
+    """The closed batch-manifest document ``parse_manifest`` returns.
 
     ``parse_manifest`` rejects every document whose key set, value types, entry
     shape, and derived call maxima do not match this exactly, so reading it back

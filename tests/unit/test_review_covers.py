@@ -32,6 +32,7 @@ from mechanical_librarian.application.review_covers import (
 from mechanical_librarian.application.review_web import ReviewWebError
 from mechanical_librarian.domain import field_effect
 from mechanical_librarian.domain.cover_evidence import CoverArtifact
+from mechanical_librarian.domain.human_decision import COVER_SELECTION_AUTHORITY_SCHEMA
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     TargetDestination,
@@ -738,7 +739,7 @@ def _owner_answer(
     document = {
         "candidate_kind": "candidate" if retained_plan is None else "retained",
         "retained_plan_id": retained_plan,
-        "schema_version": "cover-selection-authority-v3",
+        "schema_version": COVER_SELECTION_AUTHORITY_SCHEMA,
     }
     connection = library.repository._connection
     connection.commit()

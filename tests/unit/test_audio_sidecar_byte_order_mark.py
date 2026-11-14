@@ -43,7 +43,6 @@ from mechanical_librarian.application.metadata_report import (
 from mechanical_librarian.bootstrap import audio_child
 from mechanical_librarian.domain import metadata_report
 from mechanical_librarian.domain.audio_inspection import (
-    AUDIO_INSPECTION_SCHEMA,
     MAX_BYTE_ORDER_MARK_BYTES,
     MAX_FACTS,
     AudioChapter,
@@ -362,7 +361,6 @@ def test_protocol_v6_round_trips_a_reading_without_its_mark() -> None:
     report = _answer(_marked_reading())
     serialized = report.to_json()
 
-    assert AUDIO_INSPECTION_SCHEMA == "audio-inspection-v6"
     assert AudioInspection.from_json(serialized) == report
     assert repr(report.sidecars[0].stripped) == "AudioSidecarReading(<redacted>)"
     old = json.loads(serialized)

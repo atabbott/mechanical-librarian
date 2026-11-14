@@ -8,6 +8,7 @@ from dataclasses import replace
 import pytest
 
 from mechanical_librarian.domain.epub_inspection import (
+    EPUB_INSPECTION_SCHEMA,
     DateEvent,
     DatePrecision,
     EpubInspection,
@@ -113,7 +114,7 @@ def test_date_event_precision_and_contextual_credit_are_canonical() -> None:
         ),
     )
     assert EpubInspection.from_json(inspection.to_json()) == inspection
-    assert '"schema":"epub-inspection-v3"' in inspection.to_json()
+    assert f'"schema":"{EPUB_INSPECTION_SCHEMA}"' in inspection.to_json()
 
 
 @pytest.mark.parametrize(

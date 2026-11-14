@@ -7,6 +7,7 @@ from typing import Protocol
 
 from mechanical_librarian.application.configuration import ApplicationConfiguration
 from mechanical_librarian.domain.owner_settings import (
+    OWNER_SETTINGS_SCHEMA,
     OwnerSettingsDocument,
     OwnerSettingsError,
     SecretPresence,
@@ -97,7 +98,7 @@ def file_settings_projection(
     review = configuration.review
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v6",
+            "schema_version": OWNER_SETTINGS_SCHEMA,
             "revision": 1,
             "connections": [
                 {"name": value.name, "endpoint": value.endpoint}

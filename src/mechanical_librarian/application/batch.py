@@ -7,11 +7,13 @@ import json
 import re
 import unicodedata
 from dataclasses import asdict, dataclass
-from typing import Protocol
+from typing import Final, Protocol
 
 from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.configuration import ApplicationConfiguration
 from mechanical_librarian.domain.metadata_report import canonical_json
+
+BATCH_MANIFEST_SCHEMA: Final = "batch-manifest-v5"
 
 
 class BatchError(RuntimeError):
@@ -180,7 +182,7 @@ def manifest(
     ):
         raise BatchError("batch manifest is invalid")
     body = {
-        "schema": "batch-manifest-v5",
+        "schema": BATCH_MANIFEST_SCHEMA,
         "catalogue_generation": snapshot.generation,
         "catalogue_fingerprint": snapshot.fingerprint,
         "batch_config_fingerprint": config_fingerprint,
@@ -223,7 +225,7 @@ def parse_manifest(raw: bytes) -> dict[str, object]:
             "provider_adapters",
             "call_maxima",
         }
-        or value.get("schema") != "batch-manifest-v5"
+        or value.get("schema") != BATCH_MANIFEST_SCHEMA
         or not _digest(value.get("id"))
     ):
         raise BatchError("batch manifest is invalid")

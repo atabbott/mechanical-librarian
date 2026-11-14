@@ -35,6 +35,9 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _VERIFIED_CURRENT_COVER_SQL,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.domain.cover_automatic_decision import (
+    SCHEMA_VERSION as COVER_AUTOMATIC_DECISION_SCHEMA,
+)
 from tests.support.audiobook_reports import (
     admitted_audiobook_report,
     publish_audiobook_preview,
@@ -656,7 +659,7 @@ def _steps(repository: SQLiteMetadataReportRepository) -> Iterator[_Step]:
                     json.dumps(
                         {
                             "decision_document": json.dumps(
-                                {"schema_version": "cover-automatic-decision-v4"}
+                                {"schema_version": COVER_AUTOMATIC_DECISION_SCHEMA}
                             )
                         }
                     ),

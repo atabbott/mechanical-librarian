@@ -35,6 +35,9 @@ from mechanical_librarian.domain.validation import (
     credential,
 )
 
+OwnerSettingsSchemaVersion = Literal["owner-settings-v6"]
+OWNER_SETTINGS_SCHEMA: Final[OwnerSettingsSchemaVersion] = "owner-settings-v6"
+
 Name = Annotated[StrictStr, Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")]
 Email = Annotated[StrictStr, Field(min_length=3, max_length=254)]
 Marketplace = Literal["us", "uk", "de", "fr", "au", "in", "ca", "jp", "it", "es"]
@@ -294,7 +297,7 @@ class MatchingSettings(_Closed):
 
 
 class OwnerSettingsDocument(_Closed):
-    schema_version: Literal["owner-settings-v6"]
+    schema_version: OwnerSettingsSchemaVersion
     revision: Annotated[StrictInt, Field(ge=1)]
     connections: Annotated[list[TargetSettings], Field(min_length=1, max_length=32)]
     providers: Annotated[list[ProviderSettings], Field(max_length=32)] = []

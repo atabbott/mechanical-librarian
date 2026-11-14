@@ -5,12 +5,15 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from typing import Final
 
 from mechanical_librarian.domain.deterministic_cover_election import (
     CoverActualTargetState,
     CoverElectionCandidate,
     elect_confirmed_covers,
 )
+
+COVER_ELECTION_QUALIFICATION_SCHEMA: Final = "cover-election-qualification-v2"
 
 COHORTS = ("development", "holdout_a", "holdout_b")
 MINIMUM_PACKETS = {"development": 30, "holdout_a": 10, "holdout_b": 10}
@@ -33,7 +36,7 @@ MANIFEST = {
     ],
     "minimum_packets": MINIMUM_PACKETS,
     "requirements": REQUIREMENTS,
-    "schema_version": "cover-election-qualification-v2",
+    "schema_version": COVER_ELECTION_QUALIFICATION_SCHEMA,
 }
 MANIFEST_DOCUMENT = json.dumps(
     MANIFEST, ensure_ascii=False, separators=(",", ":"), sort_keys=True

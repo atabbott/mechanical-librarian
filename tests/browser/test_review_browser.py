@@ -59,7 +59,11 @@ from mechanical_librarian.application.metadata_report import (
     qualify_provider_observation,
 )
 from mechanical_librarian.application.owner_settings import OwnerSettingsOperations
+from mechanical_librarian.application.review_application import (
+    REVIEW_PREPARATION_SCHEMA,
+)
 from mechanical_librarian.application.reviewer_access import (
+    REVIEWER_ACCESS_VIEW_SCHEMA,
     ReviewerAccessOperations,
     ReviewerAccessView,
     ReviewerEngineStatus,
@@ -86,11 +90,16 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
     default_target_fields,
 )
-from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
+from mechanical_librarian.domain.owner_settings import (
+    OWNER_SETTINGS_SCHEMA,
+    OwnerSettingsDocument,
+)
 from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
+from mechanical_librarian.domain.reviewer_cost import REVIEWER_COST_EVIDENCE_SCHEMA
 from mechanical_librarian.domain.setup_state import (
+    SETUP_STATE_SCHEMA,
     SetupStateDocument,
     claim_token_digest,
 )
@@ -187,7 +196,7 @@ def _report():
 
 _DEFAULT_SETTINGS_DOCUMENT = OwnerSettingsDocument.model_validate(
     {
-        "schema_version": "owner-settings-v6",
+        "schema_version": OWNER_SETTINGS_SCHEMA,
         "revision": 1,
         "connections": [{"name": "primary", "endpoint": "https://library.invalid"}],
         "libraries": [
@@ -2242,7 +2251,7 @@ def _setup_asset_server(
     class State:
         def read(self, _verifier: str) -> SetupStateDocument:
             return SetupStateDocument(
-                schema_version="setup-state-v5",
+                schema_version=SETUP_STATE_SCHEMA,
                 revision=1,
                 bootstrap_verifier_digest="0" * 64,
                 claim_token_digest=claim_token_digest(_CLAIM_TOKEN),
@@ -6759,7 +6768,7 @@ def test_refused_openrouter_validation_is_shown_beside_its_button_on_a_phone() -
     class State:
         def read(self, _verifier: str) -> SetupStateDocument:
             return SetupStateDocument(
-                schema_version="setup-state-v5",
+                schema_version=SETUP_STATE_SCHEMA,
                 revision=1,
                 bootstrap_verifier_digest="0" * 64,
                 claim_token_digest=claim_token_digest(_CLAIM_TOKEN),
@@ -6771,9 +6780,12 @@ def test_refused_openrouter_validation_is_shown_beside_its_button_on_a_phone() -
     )
     origin = "https://setup.test"
     access = {
-        "schema_version": "reviewer-access-view-v2",
+        "schema_version": REVIEWER_ACCESS_VIEW_SCHEMA,
         "cover_metadata": None,
-        "cost_evidence": {"schema_version": "reviewer-cost-evidence-v2", "models": []},
+        "cost_evidence": {
+            "schema_version": REVIEWER_COST_EVIDENCE_SCHEMA,
+            "models": [],
+        },
         "revision": 3,
         "mapping": None,
         "codex": {
@@ -6909,7 +6921,7 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                 class State:
                     def read(self, _verifier: str) -> SetupStateDocument:
                         return SetupStateDocument(
-                            schema_version="setup-state-v5",
+                            schema_version=SETUP_STATE_SCHEMA,
                             revision=1,
                             bootstrap_verifier_digest="0" * 64,
                             claim_token_digest=claim_token_digest(_CLAIM_TOKEN),
@@ -6995,7 +7007,7 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                     if state is None:
                         route.fulfill(
                             json={
-                                "schema_version": "review-preparation-v2",
+                                "schema_version": REVIEW_PREPARATION_SCHEMA,
                                 "recovery_required": False,
                                 "active": False,
                                 "actionable": False,
@@ -7017,7 +7029,7 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                     failed = 1 if state == "completed_with_failures" else 0
                     route.fulfill(
                         json={
-                            "schema_version": "review-preparation-v2",
+                            "schema_version": REVIEW_PREPARATION_SCHEMA,
                             "recovery_required": False,
                             "active": not terminal,
                             "actionable": terminal,
@@ -9194,7 +9206,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
         certificate, key = _certificate(root)
         settings = OwnerSettingsDocument.model_validate(
             {
-                "schema_version": "owner-settings-v6",
+                "schema_version": OWNER_SETTINGS_SCHEMA,
                 "revision": 1,
                 "connections": [
                     {
@@ -12841,7 +12853,7 @@ def test_packaged_description_cost_in_settings_and_cover_only_setup(width: int) 
                     else:
                         route.fulfill(
                             json={
-                                "schema_version": "setup-state-v5",
+                                "schema_version": SETUP_STATE_SCHEMA,
                                 "revision": 6,
                                 "csrf_token": "synthetic-csrf",
                                 "completed_steps": [
@@ -13606,7 +13618,7 @@ _FOCUSED = """() => {
 
 _NAMED_LIBRARIES = OwnerSettingsDocument.model_validate(
     {
-        "schema_version": "owner-settings-v6",
+        "schema_version": OWNER_SETTINGS_SCHEMA,
         "revision": 1,
         "connections": [{"name": "primary", "endpoint": "https://library.invalid"}],
         "libraries": [
