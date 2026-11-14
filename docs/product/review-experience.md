@@ -590,7 +590,7 @@ file-managed deployment the list is read only.
 
 Reviewer sign-in, validation and tests take effect at once, outside Save
 settings. Each reviewer task has a model picker with an example cost per 1,000
-books. Both tasks share one OpenRouter key, and replacing it keeps both model
+works. Both tasks share one OpenRouter key, and replacing it keeps both model
 choices. Reviewer advice allows no write
 ([ADR-0062](../architecture/decisions/0062-owner-managed-reviewer-access.md)).
 
