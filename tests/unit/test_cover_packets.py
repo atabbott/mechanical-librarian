@@ -2654,7 +2654,7 @@ def _classify_sources(
     with mock.patch.object(
         cover_identity,
         "_level_outcome",
-        side_effect=lambda _report, _matches, identifier, _level: identifier,
+        side_effect=lambda _report, _matches, identifier, _level, **_: identifier,
     ):
         return cover_identity._classify_sources(
             cast(MetadataReport, report), sources, WorkIdentityLevel.IDENTIFIER

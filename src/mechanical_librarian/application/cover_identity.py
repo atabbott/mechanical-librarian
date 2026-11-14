@@ -112,6 +112,7 @@ _CLASSIFIER_RULES = (
     "listed-edition-work-identity-binding:level-outcome",
     "provider-identity-without-identifier-level-predicate:title-creator-work-match",
     "provider-identity-without-identifier-level-refused-or-ambiguous:unchanged",
+    "listed-edition-beside-another-source-contradiction:level-refused",
 )
 CLASSIFIER_REFERENCE = (
     "cover_identity_classifier_"
@@ -562,12 +563,16 @@ def _classify_sources(
             evidence,
         )
     unverified = tuple(match for match in matches if not _listed(match[0]))
+    # A listed edition's record never raises the outcome, but its
+    # contradiction still refuses the level: any contradiction wins (S8).
+    listed_matches = tuple(match for match in matches if _listed(match[0]))
     if creator_or_contributor_disagreement and not creator_or_contributor_agreement:
         return _level_outcome(
             report,
             unverified,
             ("unknown", ["retained_creator_or_contributor_disagreement"], []),
             level,
+            contradicting=listed_matches,
         )
     if not title_agreement:
         return _level_outcome(
@@ -575,6 +580,7 @@ def _classify_sources(
             unverified,
             ("unknown", ["retained_title_evidence_insufficient"], []),
             level,
+            contradicting=listed_matches,
         )
     return _level_outcome(
         report,
@@ -588,6 +594,7 @@ def _classify_sources(
             [],
         ),
         level,
+        contradicting=listed_matches,
     )
 
 
@@ -596,6 +603,8 @@ def _level_outcome(
     matches: tuple[_Match, ...],
     identifier: tuple[str, list[str], list[str]],
     level: WorkIdentityLevel,
+    *,
+    contradicting: tuple[_Match, ...] = (),
 ) -> tuple[str, list[str], list[str]]:
     """Add ADR-0096's level facts to an unverified candidate (#1355, S8).
 
@@ -605,9 +614,15 @@ def _level_outcome(
     configured level is at or wider than that one, the outcome is
     ``title_creator_work_match`` and a creator disagreement the initials fold
     resolves is no longer a reason; otherwise the identifier outcome and its
-    reasons stand, beside the level facts.
+    reasons stand, beside the level facts. A record in `contradicting` (a
+    listed edition beside another source) only refuses: it never admits.
     """
     outcome, reasons, evidence = identifier
+    if any(
+        level_contradiction(report, observation, candidate)
+        for _source, observation, candidate, _isbn, _recording in contradicting
+    ):
+        return outcome, [*reasons, "work_identity_level_refused"], evidence
     records: list[LevelAdmissionRecord] = []
     for _source, observation, candidate, _isbn, _recording in matches:
         if level_contradiction(report, observation, candidate):

@@ -139,9 +139,7 @@ def test_the_matching_check_on_an_empty_library_requeues_nothing(
     connection = repository._connection
     before = _row_counts(connection)
     connection.execute("BEGIN")
-    request_matching_check(
-        connection, "title_and_creator", updated_at=100
-    )
+    request_matching_check(connection, "title_and_creator", updated_at=100)
     connection.execute("COMMIT")
     assert _row_counts(connection) == before
     assert matching_check_counts(connection, "title_and_creator") == (0, 0, 0)

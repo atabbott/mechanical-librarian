@@ -153,9 +153,7 @@ _MATCHING_UNCHECKED_SQL = (
     + _MATCHING_CONSIDERATION_SQL
     + "JOIN review_preparation_work w ON w.connection_name=c.connection_name "
     "AND w.library_name=c.library_name AND w.item_id=c.item_id "
-    "WHERE c.review_case_id IS NOT NULL AND "
-    + _MATCHING_LEVEL_SQL
-    + "<>? "
+    "WHERE c.review_case_id IS NOT NULL AND " + _MATCHING_LEVEL_SQL + "<>? "
 )
 
 

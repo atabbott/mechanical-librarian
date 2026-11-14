@@ -412,6 +412,39 @@ def test_a_mixed_candidate_takes_a_listed_editions_conflict() -> None:
     )
 
 
+def test_a_mixed_candidate_takes_a_listed_records_level_contradiction() -> None:
+    """Beside another source, a listed edition's record still refuses the
+    level when it contradicts, as any conflict or contradiction wins (S8;
+    reviewer observation 4)."""
+    exact = CoverSource(
+        cover_source_id(CoverSourceKind.HARDCOVER, "hardcover:edition:8"),
+        CoverSourceKind.HARDCOVER,
+        CoverSourceState.RETRIEVED,
+        CoverArtifact.create(b"edition-8", _preview(8), "image/png", 400, 600),
+        provenance=CoverProvenance(
+            "hardcover", CoverDesignation.EXACT_EDITION, _BOOK, _EDITION
+        ),
+    )
+    disagreement = (SimpleNamespace(outcome=Comparison.DISAGREEMENT),)
+    plain = _report(_candidate(identity=_EDITION), _candidate(identity=_ISBN_EDITION))
+    contradicting = _report(
+        _candidate(identity=_EDITION),
+        _candidate(identity=_ISBN_EDITION, creator_links=disagreement),
+    )
+    wide = WorkIdentityLevel.TITLE_AND_CREATOR
+    # Without a contradiction, the edition's own record meets the level.
+    assert _classify(plain, (exact, _listed_source()), wide)[0] == (
+        "title_creator_work_match"
+    )
+    # Only the listed edition binds the contradicting record; it still wins.
+    assert _classify(contradicting, (exact,), wide)[0] == "title_creator_work_match"
+    assert _classify(contradicting, (exact, _listed_source()), wide) == (
+        "unknown",
+        ["retained_title_evidence_insufficient", "work_identity_level_refused"],
+        [],
+    )
+
+
 def test_the_classifier_reference_names_the_listed_edition_rule() -> None:
     assert (
         "listed-edition-work-identity-binding:level-outcome"

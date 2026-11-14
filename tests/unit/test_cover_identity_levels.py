@@ -179,6 +179,7 @@ def test_the_level_rules_rotate_the_classifier_reference() -> None:
         "listed-edition-work-identity-binding:level-outcome",
         "provider-identity-without-identifier-level-predicate:title-creator-work-match",
         "provider-identity-without-identifier-level-refused-or-ambiguous:unchanged",
+        "listed-edition-beside-another-source-contradiction:level-refused",
     } <= set(_CLASSIFIER_RULES)
     assert not any("level-shadow" in rule for rule in _CLASSIFIER_RULES)
     assert cover_identity.SCHEMA_VERSION == "cover-identity-report-v2"
@@ -535,9 +536,7 @@ def test_the_shadow_election_confirms_a_level_matched_incumbent(
         "MetadataReport",
         SimpleNamespace(
             audio=None,
-            target=TargetFacts(
-                target.connection, target.library, target.item, fields
-            ),
+            target=TargetFacts(target.connection, target.library, target.item, fields),
         ),
     )
     candidates = [
