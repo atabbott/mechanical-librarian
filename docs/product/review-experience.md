@@ -153,7 +153,7 @@ they stand now. Each stage bar counts books that first reached it in this run.
 A book that could not finish stops at its last stage. Bars glide to each new
 count unless reduced motion is set. The status line's wipe plays only when the
 run's state changes. Recent completions record each book's first finish, one
-line each: the title, linked into Library, then "Prepared" or "Couldn't
+row each: the title, linked into Library, then "Prepared" or "Couldn't
 finish". A rate in works a minute appears only while the run is running.
 
 The masthead's background-work control shows each library's scan state and

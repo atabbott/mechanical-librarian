@@ -73,7 +73,7 @@ brackets are GitHub issues.
   Settings can be saved (#1516, #1765).
 - Library's preparation panel moves less. Its status line plays its wipe only
   when the run's state changes, and its stage bars glide to each new count
-  unless reduced motion is set. Each recent completion is one line: the title
+  unless reduced motion is set. Each recent completion is one row: the title
   is the link, labelled Prepared or Couldn't finish. The rate reads in works a
   minute (#1516).
 

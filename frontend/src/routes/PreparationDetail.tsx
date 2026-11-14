@@ -353,7 +353,7 @@ export const PreparationDetail = ({
           {/*
            * A rate is only a fact while the run is moving. A finished, paused
            * or dismissed run has no current rate, and a reconnected page has
-           * no current anything -- printing 0.0 books/min there read as a
+           * no current anything -- printing 0.0 works a minute there read as a
            * performance fault rather than as silence.
            */}
           {!recoveryRequired && !reconnecting && presentation.state === 'running' ? (

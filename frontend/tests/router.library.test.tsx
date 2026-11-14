@@ -1193,6 +1193,24 @@ describe('Library route', () => {
     await waitFor(() =>
       expect(document.querySelector('.preparation-run-state')).toHaveClass('reported-change'),
     )
+    // A service that needs a restart is the "Preparation stopped" state, so it
+    // plays the wipe too, though the run's own state has not moved.
+    await waitFor(
+      () =>
+        expect(document.querySelector('.preparation-run-state')).not.toHaveClass('reported-change'),
+      { timeout: 1_000 },
+    )
+    act(() => {
+      queryClient.setQueryData(['review-preparation'], { ...confirmed, recovery_required: true })
+    })
+    expect(await screen.findByRole('heading', { name: 'Preparation stopped' })).toBeVisible()
+    await waitFor(() =>
+      expect(document.querySelector('.preparation-run-state')).toHaveClass('reported-change'),
+    )
+    act(() => {
+      queryClient.setQueryData(['review-preparation'], confirmed)
+    })
+    expect(await screen.findByRole('heading', { name: 'Preparing libraries' })).toBeVisible()
 
     await user.click(screen.getByRole('button', { name: 'Attention 1 work' }))
     const attentionRail = await screen.findByLabelText('Attention queue')
