@@ -7262,6 +7262,9 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                 # Without a run to open, Start opens Library on its own.
                 presentation_state["value"] = None
                 page.goto(setup_url)
+                # The normal landing logged nothing; the refusal below is
+                # injected, so its one failed-resource line is expected.
+                assert console_errors == []
                 page.unroute("**/api/v1/review-preparation")
                 page.route(
                     "**/api/v1/review-preparation",
@@ -7273,7 +7276,10 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                 page.wait_for_url(re.compile(r"/library\?lens=all$"))
                 assert parse_qs(urlparse(page.url).query) == {"lens": ["all"]}
                 page.unroute("**/api/v1/review-preparation")
-                assert console_errors == []
+                assert len(console_errors) <= 1
+                assert all(
+                    "503 (Service Unavailable)" in error for error in console_errors
+                ), console_errors
                 assert page_errors == []
                 setup_client.close()
                 context.close()
@@ -7405,15 +7411,18 @@ def test_a_short_owner_password_is_refused_on_its_own_field() -> None:
                 expect(page.locator("#setup-password-rules")).to_contain_text(
                     "At least 12 characters."
                 )
-                expect(confirmation).to_have_attribute(
-                    "aria-describedby", "setup-password-match"
-                )
+                # The match rule is gone (#1516); Confirm owner password has
+                # no hint of its own until a mismatch is refused on it.
+                assert confirmation.get_attribute("aria-describedby") is None
                 expect(password).to_have_attribute(
                     "aria-describedby", "setup-password-rules"
                 )
                 follows = """selector => document.querySelector(selector)
                   .previousElementSibling
                   .contains(document.querySelector('input[name=password]'))"""
+                follows_confirmation = """selector => document.querySelector(selector)
+                  .previousElementSibling
+                  .contains(document.querySelector('input[name=confirmation]'))"""
                 # The rules follow the password field, not the claim token.
                 assert page.evaluate(follows, "#setup-password-rules")
                 claim_token.fill(token)
@@ -7445,6 +7454,18 @@ def test_a_short_owner_password_is_refused_on_its_own_field() -> None:
                 assert "/api/setup/session" not in requests
                 password.fill(_PASSWORD)
                 expect(page.get_by_role("alert")).to_be_empty()
+                # A mismatch is still refused, on the confirmation.
+                confirmation.fill(_PASSWORD + "x")
+                page.get_by_role("button", name="Create your password").click()
+                expect(page.get_by_role("alert")).to_have_text(
+                    "The two passwords do not match. Retype the confirmation."
+                )
+                expect(confirmation).to_have_attribute("aria-invalid", "true")
+                expect(confirmation).to_have_attribute(
+                    "aria-describedby", "setup-error"
+                )
+                assert page.evaluate(follows_confirmation, "#setup-error")
+                assert "/api/setup/session" not in requests
                 confirmation.fill(_PASSWORD)
 
                 # A refusal from the server itself spends the nonce: the page
@@ -7757,8 +7778,10 @@ def test_setup_connection_failures_name_the_address_and_remedy() -> None:
                 set_root_text(page, "")
                 page.set_viewport_size({"width": 375, "height": 812})
                 # Every default-ticked source can be unticked before Continue.
-                for box in page.locator("input[type=checkbox]:checked").all():
-                    box.uncheck()
+                # Untick one at a time: the ticked list shrinks as it goes.
+                ticked = page.locator("input[type=checkbox]:checked")
+                while ticked.count():
+                    ticked.first.uncheck()
                 expect(
                     page.get_by_role("status").filter(
                         has_text="most ebooks will wait for your review"
@@ -8855,9 +8878,9 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                 while compared["count"] == 0 and time.monotonic() < deadline:
                     page.wait_for_timeout(50)
                 assert compared["count"] == 1
-                page.wait_for_function(
-                    "document.querySelector('#setup-main').getAttribute('aria-busy')"
-                    " === 'false'"
+                # The page's CSP refuses eval, so wait with a locator.
+                expect(page.locator("#setup-main")).to_have_attribute(
+                    "aria-busy", "false"
                 )
                 expect(
                     page.get_by_label("Books folder in Audiobookshelf")
@@ -8960,8 +8983,10 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                     page.get_by_text("stays off until you turn it on", exact=False)
                 ).to_have_count(0)
                 assert page.get_by_label("API key", exact=True).count() == 0
-                for box in page.locator("input[type=checkbox]:checked").all():
-                    box.uncheck()
+                # Untick one at a time: the ticked list shrinks as it goes.
+                ticked = page.locator("input[type=checkbox]:checked")
+                while ticked.count():
+                    ticked.first.uncheck()
                 page.get_by_role("button", name="Continue").click()
                 expect(
                     page.get_by_role("heading", name="Cover reviewer (optional)")
