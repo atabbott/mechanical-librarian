@@ -475,8 +475,8 @@ def test_terminal_failed_work_is_library_only_and_safe() -> None:
         # A provider-credential terminal says nothing about the media.
         "media_health": [],
         "provider": "hardcover-main",
-        "reason": "A source refused its credentials.",
-        "recovery": "Replace them in Settings → Metadata sources, then scan this library again.",
+        "reason": "A source refused access.",
+        "recovery": "Check it in Settings → Metadata sources, then scan this library again.",
         "recovery_attempt": 0,
         "stage": "provider",
         "status": "authentication",
@@ -486,7 +486,7 @@ def test_terminal_failed_work_is_library_only_and_safe() -> None:
     # names the condition instead of presenting an empty record.
     assert item["summary"] == {
         "fields": [],
-        "reason": "A source refused its credentials.",
+        "reason": "A source refused access.",
         "state": "preparation_failed",
     }
     assert "credential unavailable" not in json.dumps(item)
@@ -639,8 +639,8 @@ _NO_LIBRARY_STEP = "Library has no step that fixes this."
         ),
         (
             "authentication",
-            "A source refused its credentials.",
-            "Replace them in Settings → Metadata sources, then scan this library again.",
+            "A source refused access.",
+            "Check it in Settings → Metadata sources, then scan this library again.",
         ),
         (
             "stale",

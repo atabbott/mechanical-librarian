@@ -5019,9 +5019,10 @@ def _register_html_routes(
 def _react_asset_recovery_response() -> HTMLResponse:
     return HTMLResponse(
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
-        "<title>Review workspace unavailable</title></head><body>"
-        "<main><h1>Review workspace unavailable</h1>"
-        "<p>Ask the owner to restart after rebuilding the installed assets.</p>"
+        "<title>Mechanical Librarian could not be loaded</title></head><body>"
+        "<main><h1>Mechanical Librarian could not be loaded</h1>"
+        "<p>The page files are missing or do not match this version. "
+        "Rebuild the image, then restart the container.</p>"
         "</main></body></html>",
         status_code=503,
     )

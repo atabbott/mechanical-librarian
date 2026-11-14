@@ -66,23 +66,23 @@ const unmanagedProfileCopy =
 
 const codexReasonCopy: Readonly<Record<ReviewerReason, string>> = {
   profile_not_provisioned:
-    'The contained reviewer profile is missing. A deployment owner must restore the supported image profile or its explicit override. OpenRouter and no reviewer remain available.',
+    'The Codex profile is missing. Restore the image’s profile or correct the profile path, then restart the service.',
   profile_unreadable:
-    'The contained reviewer profile cannot be read safely. A deployment owner must correct its ownership, permissions or contents, then restart.',
+    'The Codex profile cannot be read. Fix the file’s permissions or contents, then restart the service.',
   profile_contract_mismatch:
-    'The contained reviewer profile does not match the required model and resource limits. A deployment owner must replace it with a current supported profile, then restart.',
+    'The Codex profile does not match the model and limits this version needs. Restore the image’s profile or regenerate it, then restart the service.',
   host_evidence_unavailable:
-    'Host memory evidence is unavailable. Fix the host or container memory reporting before using Codex.',
+    'Mechanical Librarian cannot read the host’s free memory. Fix the host or container memory reporting before using Codex.',
   cgroup_limit_below_1_gib:
     'The container memory limit is below 1 GB. Increase it before using Codex.',
   headroom_below_1_gib:
-    'Less than 1 GB of memory headroom is available. Free memory or raise the container limit.',
+    'Less than 1 GB of memory is free. Free some memory or raise the container limit.',
   permission_or_profile:
     'The installed Codex sign-in could not be validated. Replace the sign-in and retry.',
   permission_or_process: 'Codex could not complete sign-in. Restart the sign-in flow.',
   protocol_or_process: 'Codex returned an unexpected result. Restart the sign-in flow.',
   restart_interrupted: 'A prior sign-in was interrupted. Restart the sign-in flow.',
-  not_selected: 'Codex is not selected. Check the sign-in, then select it for cover observations.',
+  not_selected: 'Codex is not selected. Check the sign-in, then use it for cover review.',
   ...reviewerFailureCopy,
 }
 
@@ -176,15 +176,12 @@ function CodexSignIn({
     <div className="settings-field-row">
       <div>
         <h3 tabIndex={-1}>Shared Codex sign-in</h3>
-        <p>
-          One sign-in serves cover observations and description advice. Select each task separately
-          below.
-        </p>
-        <p>Model: {view.codex.model ?? 'Unavailable until provisioning is corrected'}</p>
-        <p aria-live="polite">Advisory availability: {reviewerStateLabels[codexState]}</p>
+        <p>Cover review and description advice both use it. Choose Codex for each task below.</p>
+        <p>Model: {view.codex.model ?? 'Unavailable'}</p>
+        <p aria-live="polite">Status: {reviewerStateLabels[codexState]}</p>
         {codexReason ? <p role="alert">{codexReason}</p> : null}
         {view.codex.host_headroom_bytes !== null ? (
-          <small>Available reviewer headroom: {headroom(view.codex.host_headroom_bytes)}</small>
+          <small>Free memory for Codex: {headroom(view.codex.host_headroom_bytes)}</small>
         ) : null}
       </div>
       <div className="settings-field-control">
@@ -311,7 +308,7 @@ function CodexSignIn({
               ? 'Any active sign-in was cancelled.'
               : device?.state === 'ready' || device?.state === 'usable'
                 ? 'No active sign-in remains.'
-                : 'Cancellation could not be confirmed. Retry or ask the deployment owner to inspect the reviewer.'}
+                : 'The sign-in was not cancelled. Try again.'}
           </p>
         ) : null}
         {mutation.isError && mutation.variables.kind.startsWith('codex-') ? (
@@ -353,7 +350,7 @@ function OpenRouterReviewer({
     <div className="settings-field-row">
       <div>
         <h4>OpenRouter</h4>
-        <p>A vision model with strict structured output reviews each book’s covers.</p>
+        <p>A vision model reviews each book’s covers.</p>
         <p>{view.data_use_caveat}</p>
       </div>
       <div className="settings-field-control">
@@ -365,11 +362,11 @@ function OpenRouterReviewer({
           models={[
             ...view.recommendations.map((recommendation) => ({
               model: recommendation,
-              note: 'Recommended. Paid; observations remain advice.',
+              note: 'Recommended. Paid.',
             })),
             ...view.candidates.map((candidate) => ({
               model: candidate.model,
-              note: `${candidate.tier === 'free' ? 'Free' : candidate.tier}; listed by OpenRouter as capable, not yet qualified here.${candidate.requests_per_minute === null ? '' : ` ${view.free_tier_caveat}`}`,
+              note: `${candidate.tier === 'free' ? 'Free' : candidate.tier}. OpenRouter lists it as able to read images. Not yet tested by Mechanical Librarian.${candidate.requests_per_minute === null ? '' : ` ${view.free_tier_caveat}`}`,
             })),
           ]}
         />
@@ -382,7 +379,7 @@ function OpenRouterReviewer({
           maxLength={2048}
           onChange={(event) => setKey(event.currentTarget.value)}
         />
-        <small>The key is write-only and is never returned to this page.</small>
+        <small>Sent once when you validate and never shown again.</small>
         <button
           ref={openrouterReplaceTrigger}
           type="button"
@@ -464,7 +461,7 @@ function OpenRouterReviewer({
               : 'alert'
           }
         >
-          Advisory availability:{' '}
+          Status:{' '}
           {mutation.isPending && mutation.variables.kind === 'openrouter'
             ? reviewerStateLabels.validating
             : reviewerStateLabels[view.openrouter.state]}
@@ -479,30 +476,25 @@ function OpenRouterReviewer({
           <div>
             <dt>Model</dt>
             <dd>
-              {disclosedCoverModel === ''
-                ? 'None yet. Choose a model above; it is checked for image, text and structured output when you validate.'
-                : disclosedCoverModel}
+              {disclosedCoverModel === '' ? 'None yet. Choose a model above.' : disclosedCoverModel}
             </dd>
           </div>
           <div>
             <dt>Capabilities</dt>
-            <dd>
-              Image input, text output and structured output are required and are checked before a
-              cover model can be selected.
-            </dd>
+            <dd>Image input, text output and structured output. Validating checks all three.</dd>
           </div>
           <div>
-            <dt>Observed prices in USD</dt>
+            <dt>Prices in USD</dt>
             <dd>
               {view.cover_metadata?.model === effectiveModel
-                ? `${view.cover_metadata.prompt_price ?? 'Unavailable'} per input token; ${view.cover_metadata.completion_price ?? 'Unavailable'} per output token; ${view.cover_metadata.image_price ?? 'Unavailable'} per image; ${view.cover_metadata.request_price ?? 'Unavailable'} per request.`
-                : 'Validate and save this model to observe its prices.'}
+                ? `${view.cover_metadata.prompt_price ?? 'Unavailable'} per input token, ${view.cover_metadata.completion_price ?? 'Unavailable'} per output token, ${view.cover_metadata.image_price ?? 'Unavailable'} per image, ${view.cover_metadata.request_price ?? 'Unavailable'} per request.`
+                : 'Validate this model to see its prices.'}
             </dd>
           </div>
           <ReviewerCost view={view} model={effectiveModel} task="cover" />
           <div>
             <dt>Cover request</dt>
-            <dd>One work packet, which may contain several cover images.</dd>
+            <dd>One request per book, with every cover it compares.</dd>
           </div>
         </dl>
       </div>
@@ -521,12 +513,12 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
     return (
       <div key="access-status" ref={accessStatus} tabIndex={-1}>
         {query.isPending ? (
-          <p aria-busy="true">Reading reviewer access…</p>
+          <p aria-busy="true">Loading reviewer settings…</p>
         ) : query.error instanceof BuildMismatchError ? (
-          <StaleBuildRead lead="Reviewer access was not loaded." ref={accessRetryTrigger} />
+          <StaleBuildRead lead="Reviewer settings were not loaded." ref={accessRetryTrigger} />
         ) : (
           <div role="alert" className="settings-reviewer-unavailable">
-            <p>Reviewer access is unavailable.</p>
+            <p>Reviewer settings could not be loaded.</p>
             <button
               ref={accessRetryTrigger}
               type="button"
@@ -561,14 +553,12 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
     view.mapping === null
       ? 'No reviewer'
       : view.mapping.engine === 'openrouter'
-        ? `OpenRouter — ${coverReviewerLabel(view.mapping.model)}`
+        ? `${coverReviewerLabel(view.mapping.model)} on OpenRouter`
         : view.codex.model === null
-          ? 'Contained Codex'
-          : `Contained Codex — ${view.codex.model}`
+          ? 'Codex'
+          : `Codex (${view.codex.model})`
   const coverModelNote =
-    view.mapping?.engine === 'codex' && view.codex.model === null
-      ? ' — no model selection; the installed profile fixes the model'
-      : ''
+    view.mapping?.engine === 'codex' && view.codex.model === null ? ' (model unavailable)' : ''
   return (
     <div className="settings-reviewer">
       <CodexSignIn
@@ -581,15 +571,12 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
       <section aria-labelledby="reviewer-access-heading">
         <div className="settings-field-row">
           <div>
-            <h3 id="reviewer-access-heading">Optional cover reviewer</h3>
-            <p>
-              Reviews are advice only. You can keep using Mechanical Librarian without configuring
-              an engine, and your choice remains final.
-            </p>
+            <h3 id="reviewer-access-heading">Cover reviewer</h3>
+            <p>Reviews are advice. The reviewer cannot change your library.</p>
           </div>
           <div className="settings-field-control">
             <p>
-              Current selection: <strong>{coverEngine}</strong>
+              Selected: <strong>{coverEngine}</strong>
               {coverModelNote}
             </p>
             <button
@@ -611,11 +598,8 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
         {codexManaged && !waiting ? (
           <div className="settings-field-row">
             <div>
-              <h4>Contained Codex</h4>
-              <p>
-                Use the shared sign-in above for cover observations. Usage consumes your plan
-                allowance; no per-request monetary estimate is available.
-              </p>
+              <h4>Codex</h4>
+              <p>Reviews count against your plan’s usage limits, so no cost is shown.</p>
             </div>
             <div className="settings-field-control">
               <button
@@ -627,7 +611,7 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
                     mutation.mutate({ kind: 'codex', revision: view.revision })
                 }}
               >
-                Use Codex for cover observations
+                Use Codex for cover review
               </button>
               {mutation.isError && mutation.variables.kind === 'codex' ? (
                 <p role="alert">{mutationFailure}</p>

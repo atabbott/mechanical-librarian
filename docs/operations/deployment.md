@@ -148,7 +148,8 @@ issues certificates or sets up trust for you.
 
 If a browser reaches first-run setup through any other address, or through a
 proxy whose forwarding headers are incomplete, setup is refused with a page
-naming the cause and the published address to use.
+that says to open the published address and which forwarding headers the proxy
+must send.
 
 Allow the container outbound access only to your Audiobookshelf server, the
 metadata providers you enable and, if used, OpenRouter or the Codex service.

@@ -2497,8 +2497,8 @@ describe('Library route', () => {
         diagnosticReference: 'prep-0123456789abcdef',
         mediaHealth: [],
         provider: 'hardcover-main',
-        reason: 'A source refused its credentials.',
-        recovery: 'Replace them in Settings → Metadata sources, then scan this library again.',
+        reason: 'A source refused access.',
+        recovery: 'Check it in Settings → Metadata sources, then scan this library again.',
         recoveryAttempt: 0,
         stage: 'provider' as const,
         status: 'authentication' as const,
@@ -2510,14 +2510,13 @@ describe('Library route', () => {
           providerRequests: 1,
           laneKind: 'work' as const,
           provider: 'hardcover-main',
-          reason:
-            'Nothing was recorded from it. Check its credentials in Settings → Metadata sources.',
+          reason: 'Nothing was recorded from it. Check it in Settings → Metadata sources.',
           status: 'authentication' as const,
         },
       ],
       summary: {
         state: 'preparation_failed' as const,
-        reason: 'A source refused its credentials.',
+        reason: 'A source refused access.',
         fields: [],
       },
     }
@@ -2544,7 +2543,7 @@ describe('Library route', () => {
     expect(terminal?.querySelector('button, a, details, [tabindex]')).toBeNull()
     expect(screen.queryByRole('button', { name: /^Preparation unavailable\./u })).toBeNull()
     expect(terminal).toHaveTextContent(
-      'Replace them in Settings → Metadata sources, then scan this library again.',
+      'Check it in Settings → Metadata sources, then scan this library again.',
     )
     expect(screen.getByText('prep-0123456789abcdef')).toBeVisible()
 
@@ -2962,8 +2961,8 @@ describe('Library route', () => {
         diagnosticReference: 'prep-masked-0123456789',
         mediaHealth: [],
         provider: 'hardcover-main',
-        reason: 'A source refused its credentials.',
-        recovery: 'Replace them in Settings → Metadata sources, then scan this library again.',
+        reason: 'A source refused access.',
+        recovery: 'Check it in Settings → Metadata sources, then scan this library again.',
         recoveryAttempt: 0,
         stage: 'provider' as const,
         status: 'authentication' as const,
@@ -5980,10 +5979,14 @@ describe('Library route', () => {
           timed_out: /Retry, or choose a faster model in Settings → Reviewer\./u,
         } as const
         if (reviewerFailureCode) {
-          const detail = screen.getByText(failureCopy[reviewerFailureCode])
-          expect(detail).toHaveClass('reviewer-unavailable-detail')
           // The remedy sits directly under the unavailable line it explains.
-          expect(detail.previousElementSibling).toHaveTextContent('Visual review is unavailable.')
+          const detail = screen.getByText('Visual review is unavailable.').nextElementSibling
+          expect(detail).toHaveClass('reviewer-unavailable-detail')
+          expect(detail).toHaveTextContent(failureCopy[reviewerFailureCode])
+          // Its Settings → Reviewer path links to that section (#1765).
+          expect(
+            within(detail as HTMLElement).getByRole('link', { name: 'Settings → Reviewer' }),
+          ).toHaveAttribute('href', '/settings?group=reviewer')
         } else expect(screen.queryByText(/The reviewer|No provider for this model/u)).toBeNull()
       } else {
         expect(
@@ -13936,8 +13939,14 @@ it.each(['requested', 'running', 'failed', 'interrupted', 'succeeded'] as const)
       )
       if (state === 'requested' || state === 'running')
         expect(screen.getByText(/Preparing description advice/)).toBeVisible()
-      if (state === 'failed')
+      if (state === 'failed') {
         expect(screen.getByText(/The description adviser is unavailable/)).toBeVisible()
+        // Its Settings → Reviewer path links to that section (#1765).
+        expect(screen.getByRole('link', { name: 'Settings → Reviewer' })).toHaveAttribute(
+          'href',
+          '/settings?group=reviewer',
+        )
+      }
       if (state === 'succeeded') {
         expect(choices[1]).toBeEnabled()
         expect(choices[1]).toHaveAttribute('aria-checked', 'false')

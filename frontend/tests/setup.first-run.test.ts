@@ -571,7 +571,7 @@ describe('shipped first-run setup script', () => {
     [502, 'redirect', 'Enter the direct Audiobookshelf address', 'endpoint'],
     [502, 'malformed', 'not with the supported libraries response', 'endpoint'],
     [502, 'oversize', 'more data than setup can safely read', 'endpoint'],
-    [400, 'invalid_origin', 'canonical forwarded host and protocol pair', 'endpoint'],
+    [400, 'invalid_origin', 'one X-Forwarded-Host and one X-Forwarded-Proto', 'endpoint'],
     // Another tab rotated the form token: the step reloads and says so.
     [403, 'csrf', 'Setup changed in another tab.', null],
     [401, 'unauthorized', 'Your setup sign-in expired', null],

@@ -1578,7 +1578,7 @@ def test_first_run_states_its_rules_transport_and_recoveries_without_raw_codes()
         "document.querySelector('.prerequisites')?.classList.add('complete')"
         in SETUP_JS
     )
-    assert "canonical forwarded host and protocol pair" in SETUP_JS
+    assert "one X-Forwarded-Host and one X-Forwarded-Proto" in SETUP_JS
     assert "Mechanical Librarian never skips verification." in SETUP_JS
     assert (
         "reviewer_unconfigured:'The selected reviewer is no longer ready. "
@@ -1801,7 +1801,7 @@ def test_refused_navigation_reads_the_origin_remedy_and_callers_keep_json() -> N
     wrong_host = {"host": "evil.invalid", "x-forwarded-host": "evil.invalid"}
     # One authored sentence reaches both the refused navigation and the loaded
     # wizard, through the same shared vocabulary.
-    remedy = "canonical forwarded host and protocol pair"
+    remedy = "one X-Forwarded-Host and one X-Forwarded-Proto"
     assert remedy in SETUP_JS
 
     for headers in (

@@ -16,6 +16,7 @@ import {
 import { useReviewContext } from '../router'
 import { Button } from '../components/Button'
 import { StatusPill } from '../components/StatusPill'
+import { SettingsPathText } from '../components/SettingsPathText'
 
 import {
   coverNames,
@@ -576,7 +577,11 @@ function LibraryCoverChoicesContent({
         )}
       </header>
       <p className="reviewer-unavailable-detail">{reviewerLabel}</p>
-      {reviewerDetail ? <p className="reviewer-unavailable-detail">{reviewerDetail}</p> : null}
+      {reviewerDetail ? (
+        <p className="reviewer-unavailable-detail">
+          <SettingsPathText text={reviewerDetail} />
+        </p>
+      ) : null}
       {consideration.reviewerModel ? (
         <p>Reviewer: {coverReviewerLabel(consideration.reviewerModel)}</p>
       ) : null}
