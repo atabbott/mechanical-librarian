@@ -392,13 +392,7 @@ const PRESENCE_SITES: readonly (readonly [string, Family, string, Case, string])
   ],
   ['reviewerStatus:2020', 'ReviewerAccess', 'ReviewerEngineStatus', codexCleared, '/codex'],
   ['mapDescriptionMetadata:2067', 'ReviewerAccess', 'DescriptionModelMetadata', modelTest, ''],
-  [
-    'mapCostEvidence:2111',
-    'ReviewerAccess',
-    'ReviewerCostView',
-    codexCleared,
-    '/cost_evidence',
-  ],
+  ['mapCostEvidence:2111', 'ReviewerAccess', 'ReviewerCostView', codexCleared, '/cost_evidence'],
   [
     'mapCostEvidence:2123',
     'ReviewerAccess',
