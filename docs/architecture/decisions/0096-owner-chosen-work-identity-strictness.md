@@ -330,10 +330,15 @@ amendment when it lands.
   pending cover effect chosen under another level closes stale with
   `matching_changed`. Each comparison records its level as the top-level
   `work_identity_level`, so one with no classified preview is counted and
-  re-checked too. A work whose preparation failed before projection is
-  retried at its own stage, and any other work that cannot simply be
-  projected again is prepared again from extraction, so saving again always
-  has something to retry.
+  re-checked too. The re-check reads stored data only: it never sends a work
+  back to extraction, so no file, Audiobookshelf or provider read follows a
+  save, and no case is replaced. A work that failed at a stored-data stage
+  (provider, proposal or admission) is retried there; any other current
+  work that is neither queued nor running is bound back to its current case
+  and projected again, which prepares the comparison from the stored report
+  and observer output. A case whose report is no longer its item's current
+  report is counted as neither being checked nor given up: only the next
+  scan, which replaces it, can bring it up to date.
 - **Lineage.** A cover row records the rule `work_identity:<level>` for the
   strictest level met, plus the reason `creator_initials_folded` only when
   the dotted-initials fold was needed to meet it, as ADR-0067 and ADR-0068 do
