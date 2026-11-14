@@ -93,8 +93,8 @@ from mechanical_librarian.domain.proposal_set import (
 )
 from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 
-CoverConsiderationSchemaVersion = Literal["cover-consideration-v8"]
-SCHEMA_VERSION: Final[CoverConsiderationSchemaVersion] = "cover-consideration-v8"
+CoverConsiderationSchemaVersion = Literal["cover-consideration-v9"]
+SCHEMA_VERSION: Final[CoverConsiderationSchemaVersion] = "cover-consideration-v9"
 _IDENTITY_ELIGIBLE = frozenset({"verified_manifestation_match", "verified_work_match"})
 CoverConsiderationCurrentness = Literal["current", "refresh_required", "inactive"]
 _CONSIDERATION_FIELDS = frozenset(
@@ -818,11 +818,12 @@ def cover_consideration_currentness_document(
         ):
             return "null"
         policy_report = value.get("policy_report_document")
-        stage = (
+        policy = (
             None
             if type(policy_report) is not str
-            else cast("dict[str, object]", json.loads(policy_report)["stage"])
+            else cast("dict[str, object]", json.loads(policy_report))
         )
+        stage = None if policy is None else cast("dict[str, object]", policy["stage"])
         return canonical_packet_json(
             {
                 "connection": report.target.connection,
@@ -831,11 +832,20 @@ def cover_consideration_currentness_document(
                 "report_id": report.report_id,
                 "provider_fetching": fetching,
                 # The measured stage's decision, read by attention and the
-                # Covers groups in SQL (#1363, D10).
+                # Covers groups in SQL (#1363, D10), and how many distinct arts
+                # it offered, read by the taste profile's count (#1372 S10).
                 "cover_stage": (
                     None
-                    if stage is None
-                    else {"outcome": stage["outcome"], "reason": stage["reason"]}
+                    if stage is None or policy is None
+                    else {
+                        "arts": _stage_arts(
+                            policy,
+                            stage,
+                            cast("list[dict[str, object]]", value["candidates"]),
+                        ),
+                        "outcome": stage["outcome"],
+                        "reason": stage["reason"],
+                    }
                 ),
                 "manual_ready": not fetching
                 and any(
@@ -902,10 +912,47 @@ def cover_currentness_facts(document: str) -> CoverCurrentnessFacts | None:
         return None
 
 
+def _stage_arts(
+    policy: dict[str, object],
+    stage: dict[str, object],
+    candidates: list[dict[str, object]],
+) -> int:
+    """Distinct arts after same-art collapse: the readable current cover and the
+    stage's eligible candidates, joined by the stage's same-art groups."""
+    excluded = {
+        item["reference"] for item in cast("list[dict[str, str]]", stage["exclusions"])
+    }
+    members = {
+        cast(str, reference)
+        for reference in cast("list[object]", policy["acceptable_candidate_references"])
+        if reference not in excluded
+    }
+    if "unreadable" not in cast("list[str]", stage["issues"]):
+        members.update(
+            cast(str, candidate["reference"])
+            for candidate in candidates
+            if candidate["incumbent"] is True
+        )
+    parent = {member: member for member in members}
+
+    def root(member: str) -> str:
+        while parent[member] != member:
+            member = parent[member]
+        return member
+
+    for group in cast("list[dict[str, list[str]]]", stage["groups"]):
+        joined = [member for member in group["members"] if member in parent]
+        for member in joined[1:]:
+            parent[root(member)] = root(joined[0])
+    return len({root(member) for member in members})
+
+
 def _currentness_stage(value: object) -> bool:
     return value is None or (
         type(value) is dict
-        and set(value) == {"outcome", "reason"}
+        and set(value) == {"arts", "outcome", "reason"}
+        and type(value["arts"]) is int
+        and 0 <= value["arts"] <= 64
         and value["outcome"] in {outcome.value for outcome in CoverOutcome}
         and (value["reason"] is None or value["reason"] in STAGE_REASONS)
     )
