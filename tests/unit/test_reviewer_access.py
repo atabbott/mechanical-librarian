@@ -167,3 +167,56 @@ def test_description_request_price_is_optional_but_bounded(changes, admitted) ->
         return
     with pytest.raises(ValidationError):
         DescriptionModelMetadata.model_validate(document)
+
+
+_TASTE_PRICES = {
+    "model": "example/vision",
+    "observed_at": 1,
+    "prompt_price": "0.000003",
+    "completion_price": None,
+    "image_price": "0.0048",
+    "request_price": None,
+}
+
+
+def test_taste_build_is_openrouter_only_with_prices_for_its_model() -> None:
+    """The taste profile builder is its own OpenRouter task (#1372 R3)."""
+    document = ReviewerAccessDocument.model_validate(
+        {
+            "schema_version": REVIEWER_ACCESS_SCHEMA,
+            "revision": 1,
+            "cover_taste_build": {"engine": "openrouter", "model": "example/vision"},
+            "taste_metadata": _TASTE_PRICES,
+        }
+    )
+    assert document.cover_taste_build == OpenRouterTaskSelection(
+        engine="openrouter", model="example/vision"
+    )
+    for refused in (
+        {"cover_taste_build": {"engine": "codex"}},
+        {
+            "cover_taste_build": {
+                "engine": "openrouter",
+                "model": "example/vision",
+                "x": 1,
+            }
+        },
+        {"taste_metadata": _TASTE_PRICES},
+        {
+            "cover_taste_build": {"engine": "openrouter", "model": "example/other"},
+            "taste_metadata": _TASTE_PRICES,
+        },
+        {"cover_taste_judge": {"engine": "openrouter", "model": "example/vision"}},
+    ):
+        with pytest.raises(ValidationError):
+            ReviewerAccessDocument.model_validate(
+                {"schema_version": REVIEWER_ACCESS_SCHEMA, "revision": 1, **refused}
+            )
+
+
+def test_frozen_v3_document_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        ReviewerAccessDocument.model_validate_json(
+            '{"cover_metadata":null,"cover_observation":null,"description_metadata":null,'
+            '"description_rewrite":null,"revision":1,"schema_version":"reviewer-access-v3"}'
+        )

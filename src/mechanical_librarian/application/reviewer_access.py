@@ -6,11 +6,15 @@ import hashlib
 from collections.abc import Callable
 from importlib.resources import files
 from threading import RLock
-from typing import Annotated, Final, Literal, Protocol, cast
+from typing import Annotated, Final, Literal, Protocol, cast, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr
 
 from mechanical_librarian.application.cover_observation import Reviewer
+from mechanical_librarian.application.cover_taste_contract import (
+    AdmittedTasteBuildRequest,
+    TasteBuildReply,
+)
 from mechanical_librarian.application.reviewer_contracts import (
     CodexDeviceAuthState,
     DeviceAuthStatus,
@@ -23,6 +27,7 @@ from mechanical_librarian.application.reviewer_contracts import (
     ReviewerStatusReason,
     openrouter_cover_profile,
     openrouter_profile,
+    openrouter_taste_profile,
 )
 from mechanical_librarian.application.reviewer_host import ReviewerHostStatus
 from mechanical_librarian.domain.reviewer_access import (
@@ -43,10 +48,12 @@ from mechanical_librarian.domain.reviewer_cost import (
 )
 from mechanical_librarian.domain.validation import credential
 
-ReviewerAccessViewSchemaVersion = Literal["reviewer-access-view-v3"]
+ReviewerAccessViewSchemaVersion = Literal["reviewer-access-view-v4"]
 REVIEWER_ACCESS_VIEW_SCHEMA: Final[ReviewerAccessViewSchemaVersion] = (
-    "reviewer-access-view-v3"
+    "reviewer-access-view-v4"
 )
+# The measured default for taste profile builds (#1372 R5).
+TASTE_RECOMMENDED_MODEL: Final = "anthropic/claude-sonnet-5.5"
 
 # Device-auth flow states that a Codex projection reports verbatim instead of
 # the installed credential's status. The selected and passive branches and
@@ -152,6 +159,17 @@ class OpenRouterClient(Protocol):
     def close(self) -> None: ...
 
 
+@runtime_checkable
+class OpenRouterTasteClient(Protocol):
+    """What a taste build needs from an OpenRouter client (#1372)."""
+
+    def run_taste_build(
+        self, profile: bytes, request: AdmittedTasteBuildRequest
+    ) -> TasteBuildReply: ...
+
+    def close(self) -> None: ...
+
+
 class _Closed(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -217,6 +235,10 @@ class ReviewerAccessView(_Closed):
     description_mapping: ReviewerTaskSelection | None = None
     description_metadata: DescriptionModelMetadata | None = None
     cover_metadata: CoverModelMetadata | None = None
+    taste_mapping: OpenRouterTaskSelection | None = None
+    taste_metadata: CoverModelMetadata | None = None
+    taste_daily_requests: Annotated[StrictInt, Field(ge=1, le=100)] = 8
+    taste_recommendations: tuple[_OpenRouterModel, ...] = (TASTE_RECOMMENDED_MODEL,)
     description: ReviewerEngineStatus | None = None
     openrouter_key_configured: StrictBool
     codex: ReviewerEngineStatus
@@ -260,7 +282,9 @@ class ReviewerAccessOperations:
         codex_binding: CodexBinding,
         openrouter_factory: OpenRouterFactory,
         codex_description_binding: CodexBinding | None = None,
+        taste_daily_requests: int = 8,
     ) -> None:
+        self._taste_daily_requests = taste_daily_requests
         self._command_lock = RLock()
         self._changed: Callable[[], None] = lambda: None
         self._repository = repository
@@ -519,6 +543,9 @@ class ReviewerAccessOperations:
             description_mapping=document.description_rewrite,
             description_metadata=document.description_metadata,
             cover_metadata=document.cover_metadata,
+            taste_mapping=document.cover_taste_build,
+            taste_metadata=document.taste_metadata,
+            taste_daily_requests=self._taste_daily_requests,
             description=(
                 description
                 or (
@@ -613,6 +640,52 @@ class ReviewerAccessOperations:
 
         return test()
 
+    def test_taste_model(self, api_key: str, model: str) -> CoverModelMetadata:
+        """Observe image input, structured output and prices before selecting."""
+        document, saved_key = self._snapshot()
+        key = api_key or saved_key or ""
+        if not credential(key):
+            raise ValueError("invalid reviewer credential")
+        try:
+            account = self._probe_openrouter(key, model, "cover_taste_build")
+        except OpenRouterReviewerError as error:
+            raise ReviewerAccessApplicationError(
+                _public_openrouter_failure(error)
+            ) from None
+        self._require_revision(document.revision)
+        return _cover_metadata(account)
+
+    def current_taste_build_model(self) -> str | None:
+        """The selected taste model while its key is saved, without any transport."""
+        document, key = self._snapshot()
+        selection = document.cover_taste_build
+        return None if selection is None or key is None else selection.model
+
+    def open_taste_build(self) -> tuple[int, str, bytes, OpenRouterTasteClient]:
+        """One client for one taste build, bound to the current access revision."""
+        document, key = self._snapshot()
+        selection = document.cover_taste_build
+        if selection is None:
+            raise ReviewerAccessApplicationError("not_configured")
+        if key is None:
+            raise ReviewerAccessApplicationError("credential_unavailable")
+        try:
+            client = self._openrouter_factory(key, selection.model)
+        except Exception:
+            raise ReviewerAccessApplicationError("unreachable") from None
+        if not isinstance(client, OpenRouterTasteClient):
+            client.close()
+            raise ReviewerAccessApplicationError("unreachable")
+        if not self._repository.revision_is_current(document.revision):
+            client.close()
+            raise ReviewerAccessApplicationError("access_changed")
+        return (
+            document.revision,
+            selection.model,
+            openrouter_taste_profile(selection.model),
+            client,
+        )
+
     def _configure_openrouter(
         self,
         *,
@@ -622,7 +695,7 @@ class ReviewerAccessOperations:
         task: ReviewerTask = "cover_observation",
     ) -> ReviewerAccessView:
         document, saved_key = self._snapshot()
-        if task == "description_rewrite" and not api_key:
+        if task != "cover_observation" and not api_key:
             api_key = saved_key or ""
         if not credential(api_key):
             raise ReviewerAccessApplicationError("reviewer_access_invalid")
@@ -647,6 +720,11 @@ class ReviewerAccessOperations:
                     _cover_metadata(account)
                     if task == "cover_observation"
                     else document.cover_metadata
+                ),
+                "taste_metadata": (
+                    _cover_metadata(account)
+                    if task == "cover_taste_build"
+                    else document.taste_metadata
                 ),
                 "description_metadata": (
                     DescriptionModelMetadata.model_validate(
@@ -686,6 +764,9 @@ class ReviewerAccessOperations:
     def _select_codex(
         self, *, expected_revision: int, task: ReviewerTask = "cover_observation"
     ) -> ReviewerAccessView:
+        if task == "cover_taste_build":
+            # Taste profiles run on OpenRouter only in 0.31.0 (#1372 R3).
+            raise ReviewerAccessApplicationError("reviewer_access_invalid")
         host = self._admit_codex()
         with self._command_lock:
             credential = self._codex_auth.recheck_credential_status()
@@ -729,6 +810,8 @@ class ReviewerAccessOperations:
                 "cover_observation": selection,
                 "cover_metadata": None,
                 "description_metadata": None,
+                "cover_taste_build": None,
+                "taste_metadata": None,
                 "description_rewrite": (
                     None
                     if isinstance(document.description_rewrite, OpenRouterTaskSelection)
@@ -964,6 +1047,9 @@ class ReviewerAccessOperations:
                     None
                     if task == "description_rewrite"
                     else document.description_metadata
+                ),
+                "taste_metadata": (
+                    None if task == "cover_taste_build" else document.taste_metadata
                 ),
             }
         )
