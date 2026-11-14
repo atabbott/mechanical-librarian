@@ -15,30 +15,19 @@ export type PreparationPresentation = NonNullable<PreparationView['presentation'
 export const librarySearchIdentity = (search: object) =>
   JSON.stringify(Object.entries(search).sort(([left], [right]) => left.localeCompare(right)))
 
-/** Whether the selected run's detail shows a change it has just been reported. */
+/**
+ * Whether the selected run's status line shows a state it has just been
+ * reported. Only the run's state counts (starting, running, paused, finished,
+ * stopped for a restart, or a new run): counts, books and completions change on
+ * every poll and would replay the wipe each time (#1516).
+ */
 export const usePreparationChange = (
   presentation: PreparationPresentation | null,
+  recoveryRequired: boolean,
   preparationSelected: boolean,
 ) => {
   const presentationVersion = presentation
-    ? JSON.stringify({
-        run_id: presentation.run_id,
-        state: presentation.state,
-        triggers: presentation.triggers.map(({ trigger, accepted_count }) => ({
-          trigger,
-          accepted_count,
-        })),
-        passage: presentation.passage,
-        active_books: presentation.active_books,
-        active_overflow: presentation.active_overflow,
-        recent_completions: presentation.recent_completions.map(({ name, outcome }) => ({
-          name,
-          outcome,
-        })),
-        total: presentation.total,
-        dismissible: presentation.dismissible,
-        now: presentation.now,
-      })
+    ? JSON.stringify([presentation.run_id, presentation.state, recoveryRequired])
     : null
   const adoptedPresentationVersion = useRef<string | null>(null)
   const [animatedPresentationVersion, setAnimatedPresentationVersion] = useState<string | null>(
