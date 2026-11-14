@@ -33,6 +33,7 @@ from mechanical_librarian.application.configuration import (
     TargetConnectionConfiguration,
 )
 from mechanical_librarian.domain.field_outcomes import MAX_LIBRARY_LANGUAGES
+from mechanical_librarian.domain.owner_settings import WorkIdentityLevelValue
 from mechanical_librarian.domain.validation import (
     OWNER_SESSION_LIFETIME_DEFAULT,
     OWNER_SESSION_LIFETIME_MAXIMUM,
@@ -364,9 +365,7 @@ class ReviewInput(_Closed):
     description_automatic_application: StrictBool = False
     # Book matching (#1355, ADR-0096): the closed `review.work_identity`
     # levels. No other source sets it.
-    work_identity: Literal[
-        "identifier", "title_and_creator_exact", "title_and_creator"
-    ] = "identifier"
+    work_identity: WorkIdentityLevelValue = "identifier"
 
     @model_validator(mode="after")
     def validate_transport(self) -> ReviewInput:
