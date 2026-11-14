@@ -311,6 +311,14 @@ def _browser_copy(
     return create_model(model.__name__, __base__=base, __module__=__name__, **fields)
 
 
+def _stored_settings(body: BaseModel) -> OwnerSettingsDocument:
+    """The owner settings document a browser body stands for."""
+
+    return OwnerSettingsDocument.model_validate(
+        {**body.model_dump(), "schema_version": OWNER_SETTINGS_SCHEMA}
+    )
+
+
 class _OwnerSettingsBody(_ClosedModel):
     """Owner settings as the browser reads and writes them.
 
@@ -321,16 +329,11 @@ class _OwnerSettingsBody(_ClosedModel):
     @model_validator(mode="after")
     def _valid_document(self) -> Self:
         try:
-            self.stored()
+            _stored_settings(self)
         except ValueError as error:
             # Pydantic's own error, re-raised as a value error this model owns.
             raise ValueError("invalid owner settings") from error
         return self
-
-    def stored(self) -> OwnerSettingsDocument:
-        return OwnerSettingsDocument.model_validate(
-            {**self.model_dump(), "schema_version": OWNER_SETTINGS_SCHEMA}
-        )
 
 
 if TYPE_CHECKING:
@@ -3106,7 +3109,7 @@ def _register_settings_routes(
             raise HTTPException(503, detail={"code": "settings_unavailable"})
         try:
             value = application.write_owner_settings(
-                request.document.stored(),
+                _stored_settings(request.document),
                 request.expected_revision,
                 tuple(request.secrets),
             )

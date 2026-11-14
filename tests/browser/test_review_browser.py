@@ -6778,7 +6778,7 @@ def test_refused_openrouter_validation_is_shown_beside_its_button_on_a_phone() -
         base_url="https://testserver",
     )
     origin = "https://setup.test"
-    access = {
+    access: dict[str, object] = {
         "schema_version": REVIEWER_ACCESS_VIEW_SCHEMA,
         "cover_metadata": None,
         "cost_evidence": {
