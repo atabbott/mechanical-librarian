@@ -74,6 +74,7 @@ from mechanical_librarian.adapters.persistence.field_effect_validation import (
     _consent_state,
     _cover_automatic_decision_value,
     _validate_automatic_decision_authority,
+    cover_pre_value,
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
     _active_generation_automatic_sql,
@@ -737,6 +738,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         case_pre_value = (
             target_field.get("value") if target_field["state"] == "value" else None
         )
+        if decision.destination == "cover":
+            case_pre_value = self._cover_pre_value(case)
         pre_value = case_pre_value
         predecessor = None
         if type(decision) is HumanDecision:
@@ -813,62 +816,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 decision.consideration_digest,
             )
         if type(decision) is HumanDecision and decision.destination == "cover":
-            consideration_row = self._connection.execute(
-                "SELECT consideration.document,report.document,report.document_digest,consideration.document_digest,consideration.report_id FROM current_cover_considerations current "
-                "JOIN cover_considerations consideration ON consideration.consideration_id=current.consideration_id "
-                "LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id "
-                "JOIN cover_consideration_events event ON event.consideration_id=consideration.consideration_id "
-                "WHERE current.review_case_id=? AND event.kind='selected' AND event.decision_id=?",
-                (decision.review_case_id, decision.decision_id),
-            ).fetchone()
-            if consideration_row is None:
-                raise FieldEffectError("authority_binding")
-            try:
-                expanded_document = expand_cover_consideration(*consideration_row)
-            except MetadataReportError as error:
-                raise FieldEffectError("authority_binding") from error
-            consideration = json.loads(expanded_document)
-            selected_artifact = value.get("value") if type(value) is dict else None
-            selected_authority = self._connection.execute(
-                "SELECT 1 FROM current_cover_selection_authorities current JOIN cover_selection_authorities selection ON selection.selection_id=current.selection_id WHERE selection.decision_id=? AND selection.kind='owner'",
-                (decision.decision_id,),
-            ).fetchone()
-            if selected_authority != (1,):
-                raise FieldEffectError("authority_binding")
-            try:
-                self._require_owner_cover(expanded_document, selected_artifact)
-            except (ValueError, RuntimeError) as error:
-                raise FieldEffectError("authority_binding") from error
-            selected_candidate = next(
-                (
-                    candidate
-                    for candidate in consideration.get("candidates", ())
-                    if type(candidate) is dict
-                    and candidate.get("artifact_id") == selected_artifact
-                    and manual_cover_eligible(candidate)
-                    and candidate.get("incumbent") is False
-                ),
-                None,
-            )
-            incumbent_digest = consideration.get("incumbent_digest")
-            if (
-                selected_candidate is None
-                or consideration.get("target_fingerprint")
-                != decision.target_fingerprint
-                or consideration.get("policy_reference")
-                != self._current_cover_policy_reference
-                or consideration.get("replay_reference")
-                != self._current_cover_replay_reference
-                or (
-                    predecessor is None
-                    and incumbent_digest is not None
-                    and pre_value != "cover_" + str(incumbent_digest)
-                )
-            ):
-                raise FieldEffectError("authority_binding")
-            dependency_digests = (
-                decision.target_fingerprint,
-                hashlib.sha256(expanded_document.encode("utf-8")).hexdigest(),
+            dependency_digests = self._owner_cover_dependencies(
+                decision, value, pre_value, predecessor is None
             )
         return {
             "paired_bundle_id": paired_bundle_id,
@@ -885,6 +834,89 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             "pre_value": pre_value,
             "dependency_digests": dependency_digests,
         }
+
+    def _cover_pre_value(self, case: ReviewCase) -> str | None:
+        """Bind a cover write to the bytes its case's report read (#1362)."""
+        row = self._connection.execute(
+            "SELECT document FROM metadata_reports WHERE report_id=?",
+            (case.report_id,),
+        ).fetchone()
+        if row is None:
+            raise FieldEffectError("authority_binding")
+        try:
+            return cover_pre_value(MetadataReport.from_json(row[0]))
+        except (MetadataReportError, ReportValueError) as error:
+            raise FieldEffectError("authority_binding") from error
+
+    def _owner_cover_dependencies(
+        self,
+        decision: HumanDecision,
+        value: object,
+        pre_value: object,
+        unwritten: bool,
+    ) -> tuple[str, ...]:
+        """Bind an owner cover choice to its exact current consideration.
+
+        ``unwritten`` means no earlier verified write changed the cover since
+        the report, so the report's current cover must still be the one the
+        consideration compared.
+        """
+        consideration_row = self._connection.execute(
+            "SELECT consideration.document,report.document,report.document_digest,consideration.document_digest,consideration.report_id FROM current_cover_considerations current "
+            "JOIN cover_considerations consideration ON consideration.consideration_id=current.consideration_id "
+            "LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id "
+            "JOIN cover_consideration_events event ON event.consideration_id=consideration.consideration_id "
+            "WHERE current.review_case_id=? AND event.kind='selected' AND event.decision_id=?",
+            (decision.review_case_id, decision.decision_id),
+        ).fetchone()
+        if consideration_row is None:
+            raise FieldEffectError("authority_binding")
+        try:
+            expanded_document = expand_cover_consideration(*consideration_row)
+        except MetadataReportError as error:
+            raise FieldEffectError("authority_binding") from error
+        consideration = json.loads(expanded_document)
+        selected_artifact = value.get("value") if type(value) is dict else None
+        selected_authority = self._connection.execute(
+            "SELECT 1 FROM current_cover_selection_authorities current JOIN cover_selection_authorities selection ON selection.selection_id=current.selection_id WHERE selection.decision_id=? AND selection.kind='owner'",
+            (decision.decision_id,),
+        ).fetchone()
+        if selected_authority != (1,):
+            raise FieldEffectError("authority_binding")
+        try:
+            self._require_owner_cover(expanded_document, selected_artifact)
+        except (ValueError, RuntimeError) as error:
+            raise FieldEffectError("authority_binding") from error
+        selected_candidate = next(
+            (
+                candidate
+                for candidate in consideration.get("candidates", ())
+                if type(candidate) is dict
+                and candidate.get("artifact_id") == selected_artifact
+                and manual_cover_eligible(candidate)
+                and candidate.get("incumbent") is False
+            ),
+            None,
+        )
+        incumbent_digest = consideration.get("incumbent_digest")
+        if (
+            selected_candidate is None
+            or consideration.get("target_fingerprint") != decision.target_fingerprint
+            or consideration.get("policy_reference")
+            != self._current_cover_policy_reference
+            or consideration.get("replay_reference")
+            != self._current_cover_replay_reference
+            or (
+                unwritten
+                and incumbent_digest is not None
+                and pre_value != "cover_" + str(incumbent_digest)
+            )
+        ):
+            raise FieldEffectError("authority_binding")
+        return (
+            decision.target_fingerprint,
+            hashlib.sha256(expanded_document.encode("utf-8")).hexdigest(),
+        )
 
     @local_operation
     def previous_field_values(

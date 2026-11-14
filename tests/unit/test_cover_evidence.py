@@ -1,6 +1,7 @@
 import pytest
 
 from mechanical_librarian.domain.cover_evidence import (
+    DECODER_REJECTED_STATES,
     LOCAL_COVER_SOURCE_KINDS,
     CoverArtifact,
     CoverContext,
@@ -577,4 +578,83 @@ def test_an_artifact_carries_its_measures_or_none() -> None:
             2,
             3,
             measures=measures.to_data(),  # type: ignore[arg-type]  # reason: proves the runtime refusal
+        )
+
+
+_REFUSED = "d" * 64
+
+
+@pytest.mark.parametrize(
+    "state",
+    sorted(DECODER_REJECTED_STATES),
+    ids=[state.value for state in sorted(DECODER_REJECTED_STATES)],
+)
+def test_an_audiobookshelf_cover_the_decoder_refused_binds_its_digest(
+    state: CoverSourceState,
+) -> None:
+    source = CoverSource(
+        cover_source_id(CoverSourceKind.ABS, "descriptor"),
+        CoverSourceKind.ABS,
+        state,
+        original_digest=_REFUSED,
+    )
+    assert source.to_data()["original_digest"] == _REFUSED
+    assert source.bytes_digest == _REFUSED
+    # The reader may refuse bytes before the decoder sees them: no digest.
+    assert (
+        CoverSource(source.source_id, CoverSourceKind.ABS, state).bytes_digest is None
+    )
+
+
+def test_a_retrieved_source_is_bound_by_its_artifact_alone() -> None:
+    artifact = CoverArtifact.create(b"original", b"preview", "image/png", 1, 1)
+    source = CoverSource(
+        cover_source_id(CoverSourceKind.ABS, "descriptor"),
+        CoverSourceKind.ABS,
+        CoverSourceState.RETRIEVED,
+        artifact,
+    )
+    assert source.to_data()["original_digest"] is None
+    assert source.bytes_digest == artifact.original_digest
+    with pytest.raises(CoverEvidenceError):
+        CoverSource(
+            source.source_id,
+            CoverSourceKind.ABS,
+            CoverSourceState.RETRIEVED,
+            artifact,
+            original_digest=artifact.original_digest,
+        )
+
+
+@pytest.mark.parametrize(
+    ("kind", "state", "digest"),
+    (
+        (CoverSourceKind.ABS, CoverSourceState.TIMEOUT, _REFUSED),
+        (CoverSourceKind.ABS, CoverSourceState.UNAVAILABLE, _REFUSED),
+        (CoverSourceKind.ABS, CoverSourceState.SOURCE_CHANGED, _REFUSED),
+        (CoverSourceKind.ABS, CoverSourceState.ABSENT, _REFUSED),
+        (CoverSourceKind.EPUB, CoverSourceState.DECODE_FAILED, _REFUSED),
+        (CoverSourceKind.ABS, CoverSourceState.DECODE_FAILED, "D" * 64),
+        (CoverSourceKind.ABS, CoverSourceState.DECODE_FAILED, "d" * 63),
+    ),
+    ids=(
+        "timeout",
+        "unavailable",
+        "source_changed",
+        "absent",
+        "epub",
+        "upper_case",
+        "short",
+    ),
+)
+def test_only_refused_audiobookshelf_bytes_carry_a_digest(
+    kind: CoverSourceKind, state: CoverSourceState, digest: str
+) -> None:
+    with pytest.raises(CoverEvidenceError):
+        CoverSource(
+            cover_source_id(kind, "descriptor"),
+            kind,
+            state,
+            timeout_scope=("attempted" if state is CoverSourceState.TIMEOUT else None),
+            original_digest=digest,
         )

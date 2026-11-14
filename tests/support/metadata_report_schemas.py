@@ -289,7 +289,9 @@ def retained_report_as_current(document: str) -> MetadataReport:
     truncation sets and their bounds for Hardcover's edition covers (#1778).
     v79 reports each cover artifact's width and height as oriented and adds
     the `retained` cover source, neither of which a v49 report, holding no
-    automatic switch, could carry (#1363).
+    automatic switch, could carry (#1363). v80 records the digest of
+    Audiobookshelf cover bytes the decoder refused: null here, since a v49
+    report's sources hold none (#1853).
     """
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(document)
@@ -307,6 +309,7 @@ def retained_report_as_current(document: str) -> MetadataReport:
             and cover["state"] == CoverSourceState.RETRIEVED.value
             else None
         )
+        cover["original_digest"] = None
         if cover["artifact"] is not None:
             cover["artifact"]["measures"] = None
     for provider in data["providers"]:

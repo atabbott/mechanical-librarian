@@ -486,6 +486,12 @@ null for every other source. A `-1` in an Open Library cover list is its "no
 cover" marker and is ignored. Any other entry that is not a cover id still
 makes the list `rejected`.
 
+An Audiobookshelf cover source whose bytes the decoder refused carries
+`original_digest`, the SHA-256 of those bytes; every other source's is null. A
+cover write binds the current cover's bytes: the retrieved artifact's digest,
+or this one. A declared cover Audiobookshelf answers 404 for is written as
+empty, and any other unread cover is not written over.
+
 An EPUB whose cover declaration is malformed keeps an `absent` cover source.
 When it declares a cover another way, `local.cover_recovery` records the
 attempt as shadow evidence: `authority` is `shadow`, `fallbacks` names the
