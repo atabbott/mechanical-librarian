@@ -1081,6 +1081,17 @@ describe('ReviewApiClient', () => {
     ).toBe(shown)
   })
 
+  it('reads a cover’s current value as the current cover, never its id (#1363)', async () => {
+    const cover = (state: string, value: string | null) =>
+      readCase(closedDetail({ destination: 'cover', current: targetField({ state, value }) })).then(
+        (detail) => detail.fields[0],
+      )
+    const current = await cover('value', 'cover_' + 'a'.repeat(64))
+    expect(current?.currentValue).toBe('Current cover')
+    expect(current?.currentRaw).toBe('cover_' + 'a'.repeat(64))
+    expect((await cover('missing', null))?.currentValue).toBe('Not set in Audiobookshelf')
+  })
+
   it('uses Unicode code point bounds for readable case identity', async () => {
     const astral = '📚'
     const response = (target: Record<string, unknown>) =>
@@ -1646,7 +1657,7 @@ describe('ReviewApiClient', () => {
             ...cover,
             consideration: {
               ...cover.consideration,
-              candidates: Array.from({ length: 14 }, () => coverCandidate()),
+              candidates: Array.from({ length: 15 }, () => coverCandidate()),
             },
           },
         ],
@@ -5999,6 +6010,113 @@ describe('the retained original as a cover candidate (#1363)', () => {
     ['another source', { source_kinds: ['open_library'] }],
   ])('refuses an original with %s', async (_name, overrides) => {
     await expect(read(retained(overrides))).rejects.toThrow(ApiError)
+  })
+})
+
+describe('a larger copy of the current cover as a candidate (#1363)', () => {
+  const read = (candidate: unknown) =>
+    mapCoverConsideration(
+      coverConsideration({
+        candidates: [candidate],
+        ready: true,
+        choice_contexts: [
+          choiceContext(),
+          choiceContext({ alternative_id: 'candidate-1', selection: 'proposed' }),
+        ],
+        policy: coverPolicyReport(),
+      }) as Parameters<typeof mapCoverConsideration>[0],
+    )
+
+  it('keeps its kind beside its confirmed identity and rank', () => {
+    const [mapped] = read(coverCandidate({ candidate_kind: 'larger_copy' })).candidates
+    expect(mapped).toMatchObject({
+      candidateKind: 'larger_copy',
+      matchState: 'same_book',
+      deterministicRank: 1,
+      selectable: true,
+    })
+  })
+
+  it('refuses one with no confirmed match', () => {
+    expect(() =>
+      read(
+        coverCandidate({
+          candidate_kind: 'larger_copy',
+          identity: coverIdentity({ outcome: 'unknown' }),
+          match_state: 'match_not_confirmed',
+          selectable: false,
+          deterministic_rank: null,
+          deterministic_rank_key: null,
+          state: 'excluded',
+        }),
+      ),
+    ).toThrow(expect.objectContaining({ code: 'contradictory_cover_identity' }))
+  })
+})
+
+describe('a full comparison with a larger copy and a Put back (#1363, Codex R1)', () => {
+  // Twelve reviewed previews, the larger copy and the retained original.
+  const consideration = (cards: number) => {
+    const card = (ordinal: number) => {
+      const reference = `candidate-${String(ordinal)}`
+      const kind =
+        ordinal === cards - 1 ? 'retained' : ordinal === cards - 2 ? 'larger_copy' : 'candidate'
+      return kind === 'retained'
+        ? coverCandidate({
+            artifact_id: `artifact-${String(ordinal)}`,
+            candidate_kind: 'retained',
+            deterministic_rank: null,
+            deterministic_rank_key: null,
+            identity: null,
+            match_state: 'match_not_confirmed',
+            ordinal,
+            reference,
+            source_kinds: ['retained'],
+            state: 'available',
+          })
+        : coverCandidate({
+            artifact_id: `artifact-${String(ordinal)}`,
+            candidate_kind: kind,
+            deterministic_rank: null,
+            deterministic_rank_key: [1, 0, -10000, -100, -100, ordinal, reference],
+            identity: coverIdentity({ candidate_reference: reference }),
+            incumbent: ordinal === 0,
+            manual_eligible: ordinal !== 0,
+            ordinal,
+            reference,
+            selectable: ordinal !== 0,
+            state: ordinal === 0 ? 'excluded' : 'available',
+          })
+    }
+    return coverConsideration({
+      candidates: Array.from({ length: cards }, (_, ordinal) => card(ordinal)),
+      choice_contexts: [
+        choiceContext(),
+        ...Array.from({ length: cards - 1 }, (_, index) =>
+          choiceContext({
+            alternative_id: `candidate-${String(index + 1)}`,
+            selection: 'proposed',
+          }),
+        ),
+      ],
+      incumbent: { reference: 'candidate-0', state: 'available' },
+      policy: coverPolicyReport({ acceptable_candidate_references: [] }),
+      ready: true,
+    })
+  }
+
+  it('reads all fourteen cards', async () => {
+    const read = await retryCover(consideration(14))
+    expect(read.candidates.map((candidate) => candidate.candidateKind)).toEqual([
+      ...Array<string>(12).fill('candidate'),
+      'larger_copy',
+      'retained',
+    ])
+  })
+
+  it('refuses a fifteenth card', async () => {
+    const refusal: unknown = await retryCover(consideration(15)).catch((error: unknown) => error)
+    expect(refusal).toMatchObject({ at: '/candidates' })
   })
 })
 

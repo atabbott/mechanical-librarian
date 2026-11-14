@@ -81,7 +81,7 @@ uv run python scripts/generate_configuration_schema.py
 ```
 
 They rewrite `docs/reference/review-openapi-v1.json` and
-`docs/reference/config-v10.schema.json`; commit the result with the change.
+`docs/reference/config-v11.schema.json`; commit the result with the change.
 
 When the dependency graph changes, update `pyproject.toml` and `uv.lock`
 together, and add the dependency's grant to

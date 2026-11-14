@@ -5562,15 +5562,10 @@ describe('Library route', () => {
     ).toHaveTextContent(/^Recommended$/u)
     expect(within(recommendedComparison).queryByText(/Alternative \d cover/u)).toBeNull()
 
-    for (const [reason, explanation] of [
-      [
-        'actual_target_unverified',
-        'The cover in Audiobookshelf could not be confirmed, so it is not replaced automatically.',
-      ],
-      [
-        'confirmed_incumbent_not_improved',
-        'No confirmed cover is better than the current one, so it is not replaced automatically.',
-      ],
+    // The measured rules' stage says why nothing is recommended (#1363).
+    for (const [outcome, explanation] of [
+      ['keep', 'The current cover has no fault, so it is kept.'],
+      ['hold', 'The title names a different book from most covers. Check the title first.'],
     ] as const) {
       cleanup()
       const ownerReady = {
@@ -5581,7 +5576,12 @@ describe('Library route', () => {
           ...consideration.policy,
           recommended_candidate_reference: null,
           status: 'abstained' as const,
-          reasons: [reason],
+          reasons: [outcome === 'keep' ? 'current_cover_kept' : 'title_names_other_work'],
+        },
+        stage: {
+          language: null,
+          outcome,
+          reason: outcome === 'keep' ? null : ('title_names_other_work' as const),
         },
       }
       renderRoute('/library?lens=all&preview=case-1&field=cover', {
@@ -5597,6 +5597,89 @@ describe('Library route', () => {
       expect(within(ownerReadyComparison).getByText(explanation)).toBeVisible()
       expect(within(ownerReadyComparison).queryByText(/· Recommended/u)).not.toBeInTheDocument()
     }
+
+    // A kept cover with a fault shows the fault's pill and no caption: "no
+    // fault" would contradict the pill (#1363).
+    cleanup()
+    renderRoute('/library?lens=all&preview=case-1&field=cover', {
+      ...createHttp(),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        target: { ...detail.target, mediaKind },
+        fields: [
+          {
+            ...coverField,
+            coverConsideration: {
+              ...consideration,
+              providerFetching: false,
+              ready: true,
+              policy: {
+                ...consideration.policy,
+                recommended_candidate_reference: null,
+                status: 'abstained' as const,
+                reasons: ['below_floor'],
+              },
+              stage: { language: null, outcome: 'keep' as const, reason: 'below_floor' as const },
+            },
+          },
+        ],
+      })),
+    })
+    const keptWithFault = await screen.findByLabelText('Choose a cover')
+    expect(within(keptWithFault).getByText('Cover choices ready')).toBeVisible()
+    expect(within(keptWithFault).getByText('Under 300 px')).toBeVisible()
+    expect(keptWithFault.querySelector(':scope > header > small')).toBeNull()
+    expect(
+      within(keptWithFault).queryByText('The current cover has no fault, so it is kept.'),
+    ).not.toBeInTheDocument()
+
+    // Over a populated cover the stage's choice is a suggestion: "Switch
+    // suggested" with its fault's pill alone, and no settings line on its
+    // card (#1363 M2, M3).
+    cleanup()
+    renderRoute('/library?lens=all&preview=case-1&field=cover', {
+      ...createHttp(),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        target: { ...detail.target, mediaKind },
+        fields: [
+          {
+            ...coverField,
+            coverConsideration: {
+              ...recommended,
+              choiceContexts: recommended.choiceContexts.map((context) =>
+                context.alternativeId === recommended.policy.recommended_candidate_reference
+                  ? {
+                      ...context,
+                      recommendation: 'recommended' as const,
+                      recommendationReason: 'Your cover settings choose this cover.',
+                    }
+                  : context,
+              ),
+              stage: {
+                language: null,
+                outcome: 'suggest' as const,
+                reason: 'below_floor' as const,
+              },
+            },
+          },
+        ],
+      })),
+    })
+    const suggested = await screen.findByLabelText('Choose a cover')
+    expect(within(suggested).getByText('Switch suggested')).toBeVisible()
+    expect(within(suggested).queryByText('Recommended cover ready')).not.toBeInTheDocument()
+    expect(within(suggested).getByText('Under 300 px')).toBeVisible()
+    expect(suggested.querySelector(':scope > header > small')).toBeNull()
+    expect(within(suggested).queryByText(/^Suggested because/u)).not.toBeInTheDocument()
+    expect(
+      within(suggested).queryByText('Your cover settings choose this cover.'),
+    ).not.toBeInTheDocument()
+    expect(
+      within(suggested)
+        .getByRole('radio', { name: 'Choose Open Library cover, 800 × 1200 px (2)' })
+        .querySelector('small'),
+    ).toHaveTextContent(/^Suggested$/u)
   })
 
   describe('cover choices (#1290)', () => {
@@ -5705,6 +5788,95 @@ describe('Library route', () => {
         ),
       ).toBeVisible()
       expect(document.querySelector('.library-cover-excluded')).toBeNull()
+    })
+
+    it('names a larger copy once, on its own card (#1363 M9)', async () => {
+      // The EPUB copy of the current picture is shown as its own card, so the
+      // current card does not name the EPUB and nothing reads as merged.
+      renderRoute(
+        '/library?lens=all&preview=case-1&field=cover',
+        coverHttp((consideration) => {
+          const current = consideration.candidates.find((candidate) => candidate.incumbent)
+          const larger = consideration.candidates.find((candidate) => !candidate.incumbent)
+          if (current === undefined || larger === undefined) throw new Error('fixture')
+          return {
+            candidates: consideration.candidates.map((candidate) =>
+              candidate === current
+                ? { ...candidate, sourceKinds: ['abs', 'epub'] as const }
+                : candidate === larger
+                  ? {
+                      ...candidate,
+                      candidateKind: 'larger_copy' as const,
+                      sourceKinds: ['epub'] as const,
+                    }
+                  : candidate,
+            ),
+            omissions: [
+              {
+                reason: 'duplicate_preview',
+                reference: larger.reference,
+                retained_reference: current.reference,
+              },
+            ],
+          }
+        }),
+      )
+      const group = await screen.findByRole('radiogroup', {
+        name: 'Which cover should this work use?',
+      })
+      expect(
+        within(group)
+          .getByRole('radio', { name: 'Choose Current cover' })
+          .querySelector('.cover-sources'),
+      ).toHaveTextContent(/^Audiobookshelf$/u)
+      expect(document.querySelector('.cover-merged')).toBeNull()
+    })
+
+    it('still names a current cover duplicate beside a larger copy', async () => {
+      renderRoute(
+        '/library?lens=all&preview=case-1&field=cover',
+        coverHttp((consideration) => {
+          const current = consideration.candidates.find((candidate) => candidate.incumbent)
+          const larger = consideration.candidates.find((candidate) => !candidate.incumbent)
+          if (current === undefined || larger === undefined) throw new Error('fixture')
+          return {
+            candidates: consideration.candidates.map((candidate) =>
+              candidate === current
+                ? { ...candidate, sourceKinds: ['abs', 'epub', 'hardcover'] as const }
+                : candidate === larger
+                  ? {
+                      ...candidate,
+                      candidateKind: 'larger_copy' as const,
+                      sourceKinds: ['epub'] as const,
+                    }
+                  : candidate,
+            ),
+            omissions: [
+              {
+                reason: 'duplicate_preview',
+                reference: larger.reference,
+                retained_reference: current.reference,
+              },
+              {
+                reason: 'duplicate_preview',
+                reference: 'hardcover-copy',
+                retained_reference: current.reference,
+              },
+            ],
+          }
+        }),
+      )
+      const group = await screen.findByRole('radiogroup', {
+        name: 'Which cover should this work use?',
+      })
+      expect(
+        within(group)
+          .getByRole('radio', { name: 'Choose Current cover' })
+          .querySelector('.cover-sources'),
+      ).toHaveTextContent('Audiobookshelf · EPUB file · Hardcover')
+      expect(
+        screen.getByText('1 duplicate image merged. Each card names every source that offered it.'),
+      ).toBeVisible()
     })
 
     it('never counts an admission truncation as a cover not shown', async () => {

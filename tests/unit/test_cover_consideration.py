@@ -446,8 +446,10 @@ def test_exact_policy_preferences_are_persisted_and_projected(case: _Case) -> No
     assert value["policy_preferences"] == {
         "avoid_promotional_text": True,
         "avoid_tie_in_branding": True,
+        "current_protection": "protected",
+        "prefer_edition": False,
         "prefer_minimal_composition": True,
-        "schema_version": "cover-policy-v1",
+        "schema_version": "cover-policy-v2",
     }
     persisted = json.loads(case.store.current[case_id])
     assert json.loads(persisted["policy_document"]) == value["policy_preferences"]
@@ -602,6 +604,14 @@ def test_currentness_facts_derive_from_complete_producer(case: _Case) -> None:
         "provider_fetching": False,
         "manual_ready": True,
         "replay_reference": case.service.replay_reference,
+        "cover_stage": {
+            "outcome": json.loads(json.loads(document)["policy_report_document"])[
+                "stage"
+            ]["outcome"],
+            "reason": json.loads(json.loads(document)["policy_report_document"])[
+                "stage"
+            ]["reason"],
+        },
     }
     facts = cover_consideration_currentness_document(document)
     observed: list[tuple[str, str, str, str]] = []
@@ -850,7 +860,7 @@ def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
         clock=lambda: case.now + 1,
     )
     assert model_free.replay_reference == (
-        "cover_replay_99c3e3923733224085aadb1adc1b16f04dd7edd3aab5cfce7d7a7731d7d45ed4"
+        "cover_replay_cdc29298562f11b3db8ddfef077093fdddc1a89222aa8a56d3404d19a12455b6"
     )
     assert (
         model_free.ensure(case_id, case.report.to_json(), case.proposal)[
@@ -893,7 +903,7 @@ def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
     assert len(dispatches) == 1
     replayed_qualified = qualified()
     assert replayed_qualified.replay_reference == (
-        "cover_replay_2b6f0626855fd83c294ba0dce4978fd4764eca236632377fcdce1c61c6bcb8b0"
+        "cover_replay_07c50a4cb35334ffb2acd44936fa6af5e1934f787caaba512603ff6ce1370d4c"
     )
     assert (
         replayed_qualified.ensure(
@@ -1008,7 +1018,7 @@ def test_stale_reviewer_binding_is_current_only_and_replays_exactly(
         "profile contract requires process_limit=32"
     )
     different_document = json.loads(case.store.current[case_id])
-    assert different_document["schema_version"] == "cover-consideration-v7"
+    assert different_document["schema_version"] == "cover-consideration-v8"
     assert different_document["reviewer_failure"] is None
     assert "reviewer_unavailable_reason" not in different_document
 
@@ -2037,7 +2047,7 @@ def test_a_verified_work_route_cover_never_gains_automatic_authority(
                 repository,
                 report,
                 ("cover_order",),
-                selected_options={"cover_order": "replace_if_strictly_better"},
+                selected_options={"cover_order": "fixed_source_order"},
             )
             case = ReviewCase.create_from_data(
                 json.loads(repository.get_review_case(case_id))["case"]

@@ -211,7 +211,7 @@ def _automatic_decision_projection(document: str) -> dict[str, object] | None:
         raise ValueError
     if raw.get("schema_version") not in {
         "automatic-decision-v1",
-        "cover-automatic-decision-v3",
+        "cover-automatic-decision-v4",
     }:
         return None
     decision = parse_automatic_authority(document)
@@ -836,6 +836,11 @@ def _classify_field(
     # proposed fill the evaluated policy keeps (tags while they are off)
     # is settled the same way on every medium (#1661).
     single_source = _single_source_choice(proposal)
+    # The measured stage's decision over a current comparison: a suggested
+    # switch is optional work, never attention, and a title hold always asks
+    # (#1363, S9), as `_REVIEW_FIELD_ATTENTION_REASON_SQL` reads it.
+    stage_outcome = _cover_stage_outcome(destination, current_cover_consideration)
+    cover_suggested = stage_outcome in {"suggest", "replace"}
     policy_settled = (
         result["outcome"] == "unresolved_choice"
         and "work_alternative_immaterial" not in reasons
@@ -855,6 +860,7 @@ def _classify_field(
                     snapshot.automatic_attention_destinations,
                     policy_attention_destinations=snapshot.policy_attention_destinations,
                     settled_choice_destinations=snapshot.settled_choice_destinations,
+                    cover_suggested=cover_suggested,
                 )
             )
             or (
@@ -862,7 +868,10 @@ def _classify_field(
                 and cover_is_current
                 and current_cover_consideration is not None
                 and current_cover_consideration["ready"] is True
-                and not _kept_cover(proposal)
+                and (
+                    stage_outcome == "hold"
+                    or (not _kept_cover(proposal) and not cover_suggested)
+                )
             )
         ),
         automatic_outcome=(
@@ -921,6 +930,8 @@ def _classify_field(
                     context.case.media_kind == "audiobook"
                     or policy_settled
                     or single_source
+                    # A suggested switch is the owner's optional choice (S9).
+                    or cover_suggested
                 )
                 and bool(actions)
             )
@@ -940,7 +951,7 @@ def _classify_field(
         # contextual row, which offers no controls (below).
         owner_entry=owner_entry and bool(alternatives),
         immaterial_alternatives="work_alternative_immaterial" in reasons,
-        kept_cover=_kept_cover(proposal),
+        kept_cover=_kept_cover(proposal) and not cover_suggested,
         kept_by_fill_policy=policy_settled and destination != "tags",
         kept_by_tags_off=policy_settled and destination == "tags",
         single_source=single_source,
@@ -3360,6 +3371,19 @@ def _report_facts(report_document: str) -> LibraryReportFacts:
         raise ReviewWebError("unavailable") from error
 
 
+def _cover_stage_outcome(
+    destination: str, consideration: dict[str, object] | None
+) -> str | None:
+    """The measured stage's outcome over a cover's current comparison, if any."""
+    if destination != "cover" or consideration is None:
+        return None
+    policy = consideration.get("policy")
+    if type(policy) is not dict:
+        return None
+    stage = policy.get("stage")
+    return cast("str", stage["outcome"]) if type(stage) is dict else None
+
+
 def _kept_cover(proposal: dict[str, object]) -> bool:
     """A readable current cover is kept without asking (#1310).
 
@@ -3403,6 +3427,7 @@ def _needs_attention(
     *,
     policy_attention_destinations: tuple[str, ...] = (),
     settled_choice_destinations: tuple[str, ...] = (),
+    cover_suggested: bool = False,
 ) -> bool:
     """Whether one proposal is the owner's to answer rather than settled.
 
@@ -3431,6 +3456,7 @@ def _needs_attention(
             and not _kept_cover(proposal)
             and not _single_source_choice(proposal)
             and proposal["destination"] not in settled_choice_destinations
+            and not cover_suggested
         )
         or proposal["manual_required"] is True
         or "no_safe_bibliographic_combination" in reasons

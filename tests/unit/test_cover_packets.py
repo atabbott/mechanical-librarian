@@ -19,6 +19,8 @@ from PIL import Image, ImageCms
 
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
+    CoverContext,
+    CoverContextField,
     CoverDesignation,
     CoverFinalHost,
     CoverProvenance,
@@ -49,6 +51,7 @@ from mechanical_librarian.domain.metadata_report import (
     provider_lane_candidate_reference,
 )
 from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
+from tests.support.audiobook_reports import asserted_asin_report
 from tests.support.cover_producers import _preview, _source
 
 ROOT = Path(__file__).parents[2]
@@ -3363,13 +3366,169 @@ def test_closed_policy_is_content_bound_and_plain_policy_uses_packet_order() -> 
         == report["acceptable_candidate_references"][0]
     )
     assert report["reasons"] == ["deterministic_confirmed_order"]
-    assert report["schema_version"] == "cover-policy-report-v3"
+    assert report["schema_version"] == "cover-policy-report-v4"
     assert report["actual_target_state"] == "known_empty"
     assert report["owner_ready"] is True
     assert report["observation_taxonomy_reference"] == TAXONOMY_REFERENCE
     assert CoverPolicy().reference != CoverPolicy(avoid_promotional_text=True).reference
     with pytest.raises(ValueError):
         CoverPolicy(avoid_promotional_text=1)
+
+
+def test_the_report_stage_fills_an_empty_target_or_reports_why_it_did_not() -> None:
+    # An empty target with confirmed candidates is filled with the stage's choice.
+    filled = _adjudicate()
+    assert filled["reasons"] == ["deterministic_confirmed_order"]
+    assert (filled["stage"]["outcome"], filled["stage"]["reason"]) == ("fill", None)
+    assert filled["stage"]["choice"] == filled["recommended_candidate_reference"]
+    # While a provider is still fetching, the stage stands but recommends nothing.
+    fetching = _adjudicate(provider_fetching=True)
+    assert fetching["reasons"] == ["provider_fetching"]
+    assert fetching["recommended_candidate_reference"] is None
+    assert fetching["stage"]["outcome"] == "fill"
+
+    def _unconfirmed(identity: dict[str, Any]) -> None:
+        for candidate in identity["candidates"]:
+            candidate["outcome"] = "unknown"
+
+    # With no confirmed candidate there is nothing to fill from.
+    empty = _adjudicate(identity_mutation=_unconfirmed)
+    assert empty["reasons"] == ["no_confirmed_candidates"]
+    assert empty["recommended_candidate_reference"] is None
+    assert (empty["stage"]["outcome"], empty["stage"]["choice"]) == ("empty", None)
+
+
+def _language_source(
+    index: int,
+    original: bytes,
+    language: str | None,
+    *,
+    incumbent: bool = False,
+    preview: int | None = None,
+) -> tuple[CoverSource, bytes]:
+    payload = _preview(index if preview is None else preview)
+    kind = CoverSourceKind.ABS if incumbent else CoverSourceKind.HARDCOVER
+    return (
+        CoverSource(
+            cover_source_id(kind, f"source-{index}"),
+            kind,
+            CoverSourceState.RETRIEVED,
+            CoverArtifact.create(original, payload, "image/png", 900, 900),
+            provenance=None
+            if incumbent
+            else CoverProvenance(
+                kind.value,
+                CoverDesignation.EXACT_EDITION,
+                f"work-{index}",
+                f"edition-{index}",
+                context=()
+                if language is None
+                else (CoverContext(CoverContextField.LANGUAGE, language),),
+            ),
+        ),
+        payload,
+    )
+
+
+def _language_stage(library_languages: tuple[str, ...]) -> tuple[dict[str, Any], str]:
+    """Adjudicate a real audiobook report whose current cover and one candidate are French.
+
+    Only audiobook reports carry library languages. The current cover shares
+    its original with a French provider source; one other candidate is French
+    and one has no language label.
+    """
+    built = (
+        _language_source(1, b"original-current", None, incumbent=True),
+        _language_source(2, b"original-current", "fr", preview=1),
+        _language_source(3, b"original-french", "fr"),
+        _language_source(4, b"original-plain", None),
+    )
+    base = asserted_asin_report(provider_duration="58200.000")
+    report = MetadataReport.create(
+        target=base.target,
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        providers=base.providers,
+        audio=base.audio,
+        cover_sources=tuple(
+            sorted((source for source, _ in built), key=lambda value: value.source_id)
+        ),
+        library_languages=library_languages,
+    )
+    by_artifact = {
+        cast("CoverArtifact", source.artifact).artifact_id: payload
+        for source, payload in built
+    }
+    packet = prepare_cover_packet(
+        report.to_json(), lambda artifact, _variant: by_artifact[artifact]
+    )
+    packet_value = json.loads(packet.document)
+    identity = {
+        "candidates": [
+            {
+                "candidate_reference": candidate["reference"],
+                "evidence_references": [],
+                "outcome": "verified_work_match",
+                "preview_reference": _preview_reference(
+                    packet_value["packet_reference"], candidate
+                ),
+                "reasons": ["work_identity_verified"],
+            }
+            for candidate in packet_value["candidates"]
+        ],
+        "classifier_reference": _CLASSIFIER_REFERENCE,
+        "cover_packet_reference": packet_value["packet_reference"],
+        "report_reference": "report_" + "a" * 64,
+        "schema_version": SCHEMA_VERSION,
+        "work_identity_level": WorkIdentityLevel.IDENTIFIER.value,
+        "work_target_reference": "work_target_ref_" + "b" * 64,
+    }
+    with mock.patch(
+        "mechanical_librarian.application.cover_policy.classify_cover_identity",
+        return_value=SimpleNamespace(document=canonical_json(identity)),
+    ):
+        result = adjudicate_cover_policy(
+            report.to_json(),
+            packet.document,
+            tuple(
+                (value.reference, value.digest, value.payload)
+                for value in packet.images
+            ),
+            None,
+            CoverPolicy(),
+            read_preview=lambda artifact, _variant: by_artifact[artifact],
+            work_identity_level=WorkIdentityLevel.IDENTIFIER,
+        )
+    french = cover_source_reference(report.report_id, built[2][0].source_id)
+    return json.loads(result.document)["stage"], french
+
+
+@pytest.mark.parametrize(
+    ("library_languages", "flagged"),
+    (
+        # Outside the library's languages: the French candidate is excluded,
+        # and the current cover, whose original a French source shows, has the
+        # edition-language fault with the language named.
+        (("en",), True),
+        # A compatible library language flags nothing.
+        (("fr",), False),
+        # With no library languages the rule does nothing (#1363 Q4).
+        ((), False),
+    ),
+)
+def test_the_edition_language_rule_reads_the_library_languages(
+    library_languages: tuple[str, ...], flagged: bool
+) -> None:
+    stage, french = _language_stage(library_languages)
+    excluded = {
+        item["reference"]
+        for item in stage["exclusions"]
+        if item["exclusion"] == "edition_language"
+    }
+    assert (french in excluded) is flagged
+    assert ("edition_language" in stage["issues"]) is flagged
+    assert stage["language"] == ("French" if flagged else None)
 
 
 @pytest.mark.parametrize(

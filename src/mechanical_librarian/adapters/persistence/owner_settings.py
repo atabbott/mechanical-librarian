@@ -18,6 +18,9 @@ from mechanical_librarian.adapters.persistence.review_preparation import (
     matching_check_counts,
     request_matching_check,
 )
+from mechanical_librarian.adapters.persistence.review_scans import (
+    request_cover_preparation,
+)
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
     local_operation,
@@ -216,6 +219,13 @@ class OwnerSettingsStore(ConnectionScoped):
             )
             if previous.description_advice != document.description_advice:
                 request_description_preparation(self._connection, accepted_at)
+            if (
+                self._book_matching
+                and previous.cover_preferences != document.cover_preferences
+            ):
+                # Only the application database holds the scans to request,
+                # as for Book matching's re-check below (#1363).
+                request_cover_preparation(self._connection, accepted_at)
             if self._book_matching:
                 # Every save re-runs Book matching's re-check for each
                 # comparison it has not reached, so saving again retries.

@@ -159,7 +159,6 @@ def test_composed_preview_uses_existing_database_without_mutation() -> None:
             "tags:add",
             "tags:replace",
             "cover_order:fixed_source_order",
-            "cover_order:replace_if_strictly_better",
             "title_layout:preserve",
             "title_layout:title_and_subtitle",
             "date_precision:year",
@@ -199,7 +198,8 @@ def test_composed_preview_uses_existing_database_without_mutation() -> None:
         assert {
             key for key, item in entries.items() if item["operation_scope"] == "fill"
         } == {
-            "cover_order:replace_if_strictly_better",
+            # A cover is only filled: the measured rules replace one (#1363).
+            "cover_order:fixed_source_order",
             "subtitle:fill_empty",
             "description_fill:safe_plain_text",
             "isbn_form:preserve_exact",
@@ -210,10 +210,6 @@ def test_composed_preview_uses_existing_database_without_mutation() -> None:
             "genres:fill_empty",
             "tags:fill_empty",
         }
-        assert (
-            entries["cover_order:fixed_source_order"]["operation_scope"]
-            == "fill_or_replace"
-        )
         assert (
             entries["language_rendering:display_name"]["operation_scope"]
             == "fill_or_respell"

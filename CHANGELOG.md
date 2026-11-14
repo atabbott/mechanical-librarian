@@ -248,6 +248,14 @@ brackets are GitHub issues.
   "Contradicts this book" with that reason, instead of "Match not confirmed"
   or "Same book". The Other covers gallery now counts its covers instead of
   calling them all available (#1790).
+- **Clean rebuild required.** Covers follow measured rules: a readable cover
+  with no fault is kept without asking, and a cover with a fault (wrong shape,
+  under 300 px, unreadable, a sharper copy, another language's edition) is
+  suggested in Covers with that fault named. A larger copy of the same picture,
+  such as the one in the book's EPUB, can replace a cover that is under 300 px
+  or much smaller. Policy's new Current covers says when a cover may be replaced; the
+  replace-if-larger cover option is gone. A configuration file must be
+  rewritten as `config-v11` (#1363).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 

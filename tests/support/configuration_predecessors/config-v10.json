@@ -1,0 +1,38 @@
+{
+  "schema_version": "config-v10",
+  "provider_recovery_generation": 1,
+  "connections": [
+    {
+      "name": "primary",
+      "adapter": "audiobookshelf",
+      "endpoint": "https://library.example.invalid",
+      "secret_file": "/run/secrets/audiobookshelf-token"
+    }
+  ],
+  "libraries": [
+    {
+      "name": "ebooks",
+      "connection": "primary",
+      "library_id": "01234567-89ab-4def-8123-456789abcdef",
+      "mount": "books",
+      "provider_connections": ["hardcover-main"]
+    }
+  ],
+  "mounts": [
+    {
+      "name": "books",
+      "container_path": "/media/books",
+      "service_path": "/library/books",
+      "read_only": true
+    }
+  ],
+  "providers": [
+    {
+      "name": "hardcover-main",
+      "adapter": "hardcover",
+      "enabled": false,
+      "cover_enabled": false,
+      "secret_file": null
+    }
+  ]
+}

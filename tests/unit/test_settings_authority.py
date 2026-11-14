@@ -80,7 +80,7 @@ def test_bootstrap_is_strict_private_and_closed(tmp_path: Path) -> None:
 def test_store_projection_combines_only_deploy_bootstrap_and_store_authority() -> None:
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v5",
+            "schema_version": "owner-settings-v6",
             "revision": 1,
             "connections": [
                 {"name": "primary", "endpoint": "https://library.example.invalid"}
@@ -108,6 +108,10 @@ def test_store_projection_combines_only_deploy_bootstrap_and_store_authority() -
                     "languages": ["de", "en"],
                 }
             ],
+            "cover_preferences": {
+                "current_protection": "proposals_only",
+                "prefer_edition": True,
+            },
         }
     )
     settings = SettingsView(
@@ -160,12 +164,21 @@ def test_store_projection_combines_only_deploy_bootstrap_and_store_authority() -
         "de",
         "en",
     ]
+    # Current covers reach the runtime from the store, and a file-managed
+    # deployment shows them back read-only (#1363).
+    assert (
+        configuration.review.cover_current_protection,
+        configuration.review.cover_prefer_edition,
+    ) == ("proposals_only", True)
+    projected = file_settings_projection(configuration)
+    assert projected.authority == "file"
+    assert projected.document.cover_preferences == document.cover_preferences
 
 
 def test_settings_projects_absent_fixed_provider_capabilities() -> None:
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v5",
+            "schema_version": "owner-settings-v6",
             "revision": 1,
             "connections": [{"name": "primary", "endpoint": "https://library.invalid"}],
             "libraries": [
@@ -222,7 +235,7 @@ def _audiobook_document(**overrides: object) -> OwnerSettingsDocument:
     )
     return OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v5",
+            "schema_version": "owner-settings-v6",
             "revision": 1,
             "connections": [{"name": "primary", "endpoint": "https://library.invalid"}],
             "providers": providers,

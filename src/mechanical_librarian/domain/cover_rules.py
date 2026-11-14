@@ -126,6 +126,13 @@ class CoverIssue(Enum):
     SHARPER_COPY = "sharper_copy"
 
 
+EDITION_PREFERENCE = "edition_preference"
+"""The reason recorded for a switch to the edition's cover, which no issue names."""
+
+STAGE_REASONS = frozenset({*(issue.value for issue in CoverIssue), EDITION_PREFERENCE})
+"""Every reason a stage outcome or an automatic cover decision may record."""
+
+
 class CoverExclusion(Enum):
     """Why a candidate left the eligible set.
 
@@ -216,7 +223,7 @@ class CoverRuleCandidate:
     height: int
     packet_ordinal: int
     measures: CoverMeasures | None = None
-    non_english_edition: bool = False
+    edition_outside_library_languages: bool = False
     omnibus_volume: bool = False
     title_differs: bool = False
 
@@ -227,7 +234,7 @@ class CoverRuleCandidate:
             or not _valid_dimensions(self.width, self.height)
             or not non_negative_integer(self.packet_ordinal)
             or (self.measures is not None and type(self.measures) is not CoverMeasures)
-            or not boolean(self.non_english_edition)
+            or not boolean(self.edition_outside_library_languages)
             or not boolean(self.omnibus_volume)
             or not boolean(self.title_differs)
         ):
@@ -256,7 +263,7 @@ class CurrentCover:
     width: int | None = None
     height: int | None = None
     measures: CoverMeasures | None = None
-    non_english_edition: bool = False
+    edition_outside_library_languages: bool = False
 
     def __post_init__(self) -> None:
         if (
@@ -264,7 +271,7 @@ class CurrentCover:
             or (self.identity is not None and not _identity(self.identity))
             or not boolean(self.readable)
             or (self.measures is not None and type(self.measures) is not CoverMeasures)
-            or not boolean(self.non_english_edition)
+            or not boolean(self.edition_outside_library_languages)
         ):
             raise ValueError("current cover is invalid")
         if self.readable:
@@ -274,7 +281,7 @@ class CurrentCover:
             self.width is not None
             or self.height is not None
             or self.measures is not None
-            or self.non_english_edition
+            or self.edition_outside_library_languages
         ):
             raise ValueError("current cover is invalid")
 
@@ -499,7 +506,7 @@ def elect_measured_covers(
     for candidate in candidates:
         if _below_floor(candidate.width, candidate.height):
             excluded[candidate.reference] = CoverExclusion.BELOW_FLOOR
-        elif candidate.non_english_edition:
+        elif candidate.edition_outside_library_languages:
             excluded[candidate.reference] = CoverExclusion.EDITION_LANGUAGE
         elif omnibus and candidate.omnibus_volume:
             excluded[candidate.reference] = CoverExclusion.OMNIBUS_VOLUME
@@ -562,7 +569,7 @@ def elect_measured_covers(
             issues.append(CoverIssue.WRONG_SHAPE)
         if _below_floor(*current_size):
             issues.append(CoverIssue.BELOW_FLOOR)
-        if readable.non_english_edition:
+        if readable.edition_outside_library_languages:
             issues.append(CoverIssue.EDITION_LANGUAGE)
         if sharper is not None:
             issues.append(CoverIssue.SHARPER_COPY)
@@ -636,6 +643,8 @@ __all__ = [
     "SHARPER_COPY_MIN_AREA_RATIO",
     "SQUARE_MAX_ASPECT",
     "SQUARE_MIN_ASPECT",
+    "STAGE_REASONS",
+    "EDITION_PREFERENCE",
     "CoverExclusion",
     "CoverIssue",
     "CoverMeasures",

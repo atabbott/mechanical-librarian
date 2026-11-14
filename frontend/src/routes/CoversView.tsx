@@ -14,7 +14,7 @@ import { useCoverPrepareFailure } from '../coverChoices'
 import { formatClock } from '../dates'
 import { submitDecisionCase } from '../decisionEcho'
 import type { ChoiceProgress, ReviewField } from '../fieldDecision'
-import { mediaKindLabels } from '../labels'
+import { coverFaultCodes, coverFaultLabel, coverReasonLine, mediaKindLabels } from '../labels'
 import {
   invalidateForegroundQueries,
   queryWorkClass,
@@ -23,6 +23,7 @@ import {
 import { ownerRefusalCopy, requestKey } from '../reviewDecisionController'
 import { routeFailureCopy } from '../routeFailure'
 import { detailQuery, libraryRoute, usePreparation, useReviewContext } from '../router'
+import { Dropdown } from '../components/Dropdown'
 import { LibraryViewSwitch } from '../components/LibraryViewSwitch'
 import { StatusPill } from '../components/StatusPill'
 import { LibraryCoverChoices } from './FieldDecisionCover'
@@ -64,6 +65,17 @@ const byline = (work: CoverWorkView) =>
   [work.authors.join(', '), mediaKindLabels[work.media_kind]].filter(Boolean).join(' · ')
 const size = (cover: { width: number; height: number }) =>
   `${String(cover.width)} × ${String(cover.height)} px`
+const audiobook = (work: CoverWorkView) => ['m4b', 'm4a', 'mp3', 'audio'].includes(work.media_kind)
+/** The measured rule's reason a row carries: its switch, its suggestion or its hold. */
+const rowFault = (work: CoverWorkView) =>
+  work.group === 'auto'
+    ? (work.switched?.reason ?? null)
+    : (work.suggestion?.reason ?? work.hold?.reason ?? null)
+function FaultPill({ work }: { work: CoverWorkView }) {
+  const fault = rowFault(work)
+  const label = fault === null ? null : coverFaultLabel(fault, audiobook(work))
+  return label === null ? null : <StatusPill tone="notice">{label}</StatusPill>
+}
 const dayMonth = (seconds: number) =>
   new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short' }).format(
     new Date(seconds * 1000),
@@ -366,6 +378,15 @@ function CoverComparison({
   )
 }
 
+const reasonLine = (work: CoverWorkView) =>
+  work.switched?.reason
+    ? coverReasonLine(work.switched.reason, {
+        audiobook: audiobook(work),
+        before: work.switched.before,
+        after: work.cover,
+        language: work.switched.language,
+      })
+    : null
 function SwitchedRow({
   work,
   index,
@@ -494,6 +515,12 @@ function SwitchedRow({
         </h3>
         <p>{byline(work)}</p>
         <p>{switchedLead(switched.at, new Date())}</p>
+        {switched.reason ? (
+          <>
+            <FaultPill work={work} />
+            {reasonLine(work) ? <p>{reasonLine(work)}</p> : null}
+          </>
+        ) : null}
         {failure?.kind === 'stale' ? (
           <div className="covers-failure" role="alert">
             <p>{staleCopy}</p>
@@ -598,6 +625,7 @@ function QueueItem({
           <strong>{work.title}</strong>
           <small>{byline(work)}</small>
           <CoverStateText work={work} />
+          {done ? null : <FaultPill work={work} />}
         </span>
         <StatusPill
           tone={
@@ -776,6 +804,15 @@ export default function CoversView() {
     (liveCounts?.tab === tab && liveCounts.pageAt === pages.dataUpdatedAt
       ? liveCounts.counts
       : undefined) ?? pages.data?.pages.at(-1)?.counts
+  // Switched rows by the reason they were switched; fills only under All
+  // (#1363 Q14). Component state, not a URL parameter.
+  const [show, setShow] = useState('all')
+  const faults = coverFaultCodes.flatMap((code) => {
+    const first = works.find((work) => work.group === 'auto' && work.switched?.reason === code)
+    const label = first ? coverFaultLabel(code, audiobook(first)) : null
+    return label === null ? [] : [{ value: code, label }]
+  })
+  const shown = faults.some((fault) => fault.value === show) ? show : 'all'
   const selectedId = search.cover
   const listed = works.find((work) => work.review_case_id === selectedId)
   // A linked book past the loaded pages is read on its own.
@@ -987,22 +1024,38 @@ export default function CoversView() {
             )}
           </p>
         ) : tab === 'switched' ? (
-          <ul className="covers-switched">
-            {works.map((work, index) => (
-              <SwitchedRow
-                key={work.review_case_id}
-                work={work}
-                index={index}
-                done={marked[work.review_case_id]}
-                open={selectedId === work.review_case_id}
-                onOpen={() =>
-                  select(selectedId === work.review_case_id ? undefined : work.review_case_id)
-                }
-                onRecorded={(outcome) => advance(work, outcome)}
-                onReplaced={replaced}
-              />
-            ))}
-          </ul>
+          <>
+            {faults.length ? (
+              <div className="covers-show">
+                <span aria-hidden="true">Show</span>
+                <Dropdown
+                  ariaLabel="Show"
+                  compact
+                  value={shown}
+                  options={[{ value: 'all', label: 'All' }, ...faults]}
+                  onChange={setShow}
+                />
+              </div>
+            ) : null}
+            <ul className="covers-switched">
+              {works
+                .filter((work) => shown === 'all' || work.switched?.reason === shown)
+                .map((work, index) => (
+                  <SwitchedRow
+                    key={work.review_case_id}
+                    work={work}
+                    index={index}
+                    done={marked[work.review_case_id]}
+                    open={selectedId === work.review_case_id}
+                    onOpen={() =>
+                      select(selectedId === work.review_case_id ? undefined : work.review_case_id)
+                    }
+                    onRecorded={(outcome) => advance(work, outcome)}
+                    onReplaced={replaced}
+                  />
+                ))}
+            </ul>
+          </>
         ) : tab === 'all' ? (
           <CoverWall
             works={works}

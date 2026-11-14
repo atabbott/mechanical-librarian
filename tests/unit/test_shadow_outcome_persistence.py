@@ -51,6 +51,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
 from mechanical_librarian.adapters.reviewers.contained_reviewer import (
     cover_reviewer_profile_contract_mismatch,
 )
+from mechanical_librarian.application import cover_policy as cover_policy_module
 from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
@@ -193,7 +194,7 @@ from tests.support.audiobook_reports import (
 )
 from tests.support.automatic_decisions import _automatic_decisions
 from tests.support.automatic_no_change import _automatic_no_change_inputs
-from tests.support.cover_producers import _qualified_cover_report
+from tests.support.cover_producers import _qualified_cover_report, held_measured_stage
 from tests.support.proposal_evidence import (
     _claim,
     _exact_edition_cover,
@@ -260,6 +261,17 @@ class _UsableCodexAuth:
 
     def close(self) -> None:
         return None
+
+
+def _measured_record(monkeypatch: pytest.MonkeyPatch) -> None:
+    from mechanical_librarian.domain import cover_qualification_policy
+    from tests.support.audiobook_covers import SYNTHETIC_MEASURED_RECORD
+
+    monkeypatch.setattr(
+        cover_qualification_policy,
+        "MEASURED_REPLACEMENT_QUALIFICATION_SHA256",
+        SYNTHETIC_MEASURED_RECORD,
+    )
 
 
 def _test_reviewer_access(
@@ -821,6 +833,7 @@ def _run_qualified_cover_pipeline(
     supervisor,
     *,
     repository_factory=None,
+    cover_policy_reference: str | None = None,
 ) -> ReviewPreparationPipeline:
     database = root / "reports.sqlite"
 
@@ -889,6 +902,7 @@ def _run_qualified_cover_pipeline(
         before_projection=supervisor._pipeline._before_projection,
         after_advance=supervisor._pipeline._after_advance,
         clock=lambda: 10,
+        cover_policy_reference=cover_policy_reference,
     )
     pipeline.request("primary", "ebooks")
     return pipeline
@@ -1124,11 +1138,10 @@ def _assert_manual_cover_surface(
     assert cover["editable"]
     # A readable current cover is kept without asking: its field fact is no
     # unresolved choice, and its choice stays editable on the work's page.
-    # Without one, the cover asks as before (#1310).
-    assert cover["needs_attention"] is not readable_current
-    assert cover["classification"] == (
-        "owner_choosable" if readable_current else "needs_attention"
-    )
+    # Without one the measured rules suggest a readable candidate, which is
+    # optional work in Covers, not attention (#1310, #1363 S9).
+    assert cover["needs_attention"] is False
+    assert cover["classification"] == "owner_choosable"
     assert (int(not readable_current), 1) == repository._connection.execute(
         "SELECT unresolved_choice,has_owner_decision_actions "
         "FROM review_case_field_facts WHERE review_case_id=? AND destination='cover'",
@@ -1677,7 +1690,7 @@ def test_atomic_cover_preparation_excludes_sibling_drift_and_rolls_back_every_po
                     (report_id,),
                 ).fetchone()[0],
                 "review_case_id": review_case_id,
-                "schema_version": "cover-consideration-v7",
+                "schema_version": "cover-consideration-v8",
                 "supersedes_id": None,
             },
             separators=(",", ":"),
@@ -1773,7 +1786,7 @@ def test_manual_cover_predecessor_drift_rolls_back_and_releases_the_writer_lock(
                         (report_id,),
                     ).fetchone()[0],
                     "review_case_id": review_case_id,
-                    "schema_version": "cover-consideration-v7",
+                    "schema_version": "cover-consideration-v8",
                     "supersedes_id": supersedes_id,
                 },
                 separators=(",", ":"),
@@ -4115,15 +4128,18 @@ def test_composed_projection_without_reviewer_persists_unavailable_before_f22(
 
 @pytest.mark.parametrize("effect_state", ("planned", "claimed", "applying", "applied"))
 def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
-    effect_state: str,
+    effect_state: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # The incumbent is under the floor, so the measured rules replace it; a
+    # synthetic record stands in for the qualification that admits it (#1363).
+    _measured_record(monkeypatch)
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
         database = root / "reports.sqlite"
         repository = open_repository(database)
         report, _ = _qualified_cover_report(
             root,
-            incumbent_size=(300, 450),
+            incumbent_size=(200, 300),
             incumbent_duplicate_size=(2_000, 3_000),
             candidate_size=(1_000, 1_500),
         )
@@ -4187,6 +4203,9 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
         )
         repository.close()
         repository = open_repository(database)
+        # The pipeline wrote under the default Current covers; this process
+        # binds the same live cover policy, as composition does (#1363).
+        repository.bind_current_cover_policy(CoverPolicy().reference)
         library = BrowseReviewLibrary(repository).library(
             lens="all", search=None, limit=50, cursor=None
         )
@@ -4570,15 +4589,17 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
 
 @pytest.mark.parametrize("authority_change", ("policy", "replay", "malformed"))
 def test_new_owner_ready_cover_case_is_attentive_after_automatic_predecessor(
-    authority_change: str,
+    authority_change: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # An undersized incumbent is replaced by the measured rules (#1363).
+    _measured_record(monkeypatch)
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
         database = root / "reports.sqlite"
         profile_reader = None
         profile_contract = None
         repository = open_repository(database)
-        report, _ = _qualified_cover_report(root)
+        report, _ = _qualified_cover_report(root, incumbent_size=(200, 300))
         options = dict(DEFAULT_OPTIONS)
         options["cover_order"] = "fixed_source_order"
         destinations = {
@@ -4636,6 +4657,12 @@ def test_new_owner_ready_cover_case_is_attentive_after_automatic_predecessor(
                 and source.artifact.artifact_id == automatic.artifact_id
             )
             assert len(candidate_sources) == 1
+            # The successor's cover is held, as for a title naming another
+            # book, so it asks the owner: a suggestion would not be attention
+            # (#1363 S9), and this test is about attention's currentness.
+            monkeypatch.setattr(
+                cover_policy_module, "elect_measured_covers", held_measured_stage
+            )
             successor_report = MetadataReport.create(
                 target=report.target,
                 file=FileFacts(1, "c" * 64, "d" * 64),
@@ -4706,7 +4733,7 @@ def test_new_owner_ready_cover_case_is_attentive_after_automatic_predecessor(
             assert cover["cover_consideration"]["ready"] is True
             assert cover["cover_consideration"]["policy"]["status"] == "abstained"
             assert cover["cover_consideration"]["policy"]["reasons"] == [
-                "actual_target_unverified"
+                "title_names_other_work"
             ]
 
             provider_fetching_calls: list[MetadataReport] = []
@@ -4982,9 +5009,14 @@ def test_new_owner_ready_cover_case_is_attentive_after_automatic_predecessor(
                 profile_reader.stop()
 
 
-def test_live_cover_fetching_currentness_drives_attention_without_lock_inversion() -> (
-    None
-):
+def test_live_cover_fetching_currentness_drives_attention_without_lock_inversion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An unread cover with a candidate is only a suggestion (#1363 S9); held,
+    # it asks, which is the attention this test follows.
+    monkeypatch.setattr(
+        cover_policy_module, "elect_measured_covers", held_measured_stage
+    )
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
         repository = open_repository(root / "reports.sqlite", cross_thread=True)
@@ -5176,29 +5208,29 @@ def test_live_cover_fetching_currentness_drives_attention_without_lock_inversion
 
 
 @pytest.mark.parametrize(
-    ("later_candidate_index", "owner_final", "expected_kind", "expected_rows"),
+    ("later_faulty", "owner_final", "expected_kind", "expected_rows"),
     (
-        (3, False, "automatic", 2),
-        # A later candidate must be better on the technical vector to
-        # supersede. Two reports of one item never share a rank key -- its last
-        # component is a reference derived from the report id -- so the
-        # not-better case has to be a genuinely smaller cover rather than an
-        # equal one, whose order would rest on report-id hashing alone.
-        (1, False, "automatic", 1),
-        (3, True, "owner", 2),
+        # A later case supersedes an automatic choice only when the measured
+        # rules replace its cover again; a cover with no fault is kept, and an
+        # owner's choice is final (#1363, Q5).
+        (True, False, "automatic", 2),
+        (False, False, "automatic", 1),
+        (True, True, "owner", 2),
     ),
 )
-def test_later_cover_case_only_supersedes_automatic_with_a_strictly_better_rank(
-    later_candidate_index: int,
+def test_later_cover_case_supersedes_automatic_only_with_a_measured_replacement(
+    later_faulty: bool,
     owner_final: bool,
     expected_kind: str,
     expected_rows: int,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _measured_record(monkeypatch)
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
         database = root / "reports.sqlite"
         repository = open_repository(database)
-        first_report, _ = _qualified_cover_report(root)
+        first_report, _ = _qualified_cover_report(root, incumbent_size=(200, 300))
         options = dict(DEFAULT_OPTIONS)
         options["cover_order"] = "fixed_source_order"
         destinations = {
@@ -5286,7 +5318,10 @@ def test_later_cover_case_only_supersedes_automatic_with_a_strictly_better_rank(
             owner_decision_id = owner.decision_id
 
         later_report, _ = _qualified_cover_report(
-            root, incumbent_index=2, candidate_index=later_candidate_index
+            root,
+            incumbent_index=2,
+            candidate_index=3,
+            incumbent_size=(250, 375) if later_faulty else None,
         )
         later_proposal = evaluate_report(
             later_report, resolved.resolved_id, human_review_destinations(resolved)
@@ -5330,12 +5365,12 @@ def test_later_cover_case_only_supersedes_automatic_with_a_strictly_better_rank(
         if owner_final:
             assert pending == (current["decision_document"],)
             assert current["decision_id"] == owner_decision_id
-        elif later_candidate_index == 3:
+        elif later_faulty:
             assert pending == (current["decision_document"],)
             successor = CoverAutomaticDecision.from_json(current["decision_document"])
             assert successor.review_case_id == later_case_id
             assert successor.supersedes_decision_id == prior.decision_id
-            assert tuple(current["rank_key"]) < prior.rank_key
+            assert successor.reason == "below_floor"
             assert current["supersedes_selection_id"] == prior_selection["selection_id"]
             automatic_history = next(
                 item
@@ -5356,7 +5391,7 @@ def test_later_cover_case_only_supersedes_automatic_with_a_strictly_better_rank(
 
         supervisor.stop()
         repository.close()
-        if later_candidate_index == 3 and not owner_final:
+        if later_faulty and not owner_final:
             reopened = open_repository(database)
             reopened_document = reopened._connection.execute(
                 "SELECT selection.document FROM current_cover_selection_authorities current "

@@ -614,9 +614,12 @@ activate nothing. [Activation](../operations/review-case.md#policy-activation)
 is a CSRF-protected mutation bound to the expected active policy and exact
 draft, and old proposals then fail as stale.
 
-Automation replaces a populated cover only with a confirmed candidate
-against a confirmed incumbent, and any other automatic cover write needs a
-known-empty target. It replaces a populated ebook description only through
+Automation replaces a populated cover only for a fault the measured cover
+rules record, under Current covers, whose settings change stales any switch
+planned before it, and a qualification no release ships yet
+([ADR-0093](decisions/0093-measured-cover-rules-and-current-cover-protection.md)).
+Any other automatic cover write needs a known-empty target. It replaces a populated ebook
+description only through
 description advice with `description_automatic_application` on. Evidence
 never creates series, contributor, title or recording identity on its own;
 conflicts go to the owner, never to a write. The explicit flag is set only by

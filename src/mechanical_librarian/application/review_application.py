@@ -680,6 +680,8 @@ class ReviewApplication:
                             avoid_promotional_text=preferences.avoid_promotional_text,
                             avoid_tie_in_branding=preferences.avoid_tie_in_branding,
                             prefer_minimal_composition=preferences.prefer_minimal_composition,
+                            current_protection=preferences.current_protection,
+                            prefer_edition=preferences.prefer_edition,
                         ),
                         WorkIdentityLevel(validated.matching.work_identity),
                     )

@@ -405,8 +405,7 @@ export const coverSourceLabels = {
 // sentence, never as its code.
 const coverNoteLabels: Readonly<Record<string, string>> = {
   provider_fetching: 'Sources are still being fetched',
-  actual_target_unverified: 'The cover in Audiobookshelf could not be confirmed',
-  confirmed_incumbent_not_improved: 'No confirmed cover improves on the current one',
+  current_cover_kept: 'The current cover has no fault',
   deterministic_confirmed_order: 'Confirmed covers are ranked in a fixed order',
   no_confirmed_candidates: 'No cover is confirmed for this book',
   duplicate_preview: 'Same image as another cover',
@@ -425,8 +424,83 @@ const coverNoteLabels: Readonly<Record<string, string>> = {
   source_source_changed: 'The image changed while it was read',
   source_timeout: 'The source did not answer in time',
 }
-export const coverNoteLabel = (code: string) =>
-  coverNoteLabels[code] ?? 'Another cover rule applies'
+export const coverNoteLabel = (code: string, audiobook = false) =>
+  coverFaultLabel(code, audiobook) ?? coverNoteLabels[code] ?? 'Another cover rule applies'
+
+// A measured cover rule's reason, from the policy report's stage, a switch or
+// a suggestion, in the order Covers' Show filter lists them (#1363).
+export const coverFaultCodes = [
+  'wrong_shape',
+  'sharper_copy',
+  'below_floor',
+  'unreadable',
+  'edition_language',
+  'edition_preference',
+  'title_names_other_work',
+] as const
+export type CoverFaultCode = (typeof coverFaultCodes)[number]
+const coverFaultLabels: Readonly<Record<Exclude<CoverFaultCode, 'wrong_shape'>, string>> = {
+  title_names_other_work: 'Title names another book',
+  unreadable: 'Unreadable image',
+  below_floor: 'Under 300 px',
+  edition_language: 'Edition in another language',
+  sharper_copy: 'Sharper copy available',
+  edition_preference: 'Edition cover',
+}
+const isCoverFault = (code: string): code is CoverFaultCode =>
+  (coverFaultCodes as readonly string[]).includes(code)
+/** The fault label a pill shows; the shape fault names the work's medium. */
+export const coverFaultLabel = (code: string, audiobook: boolean): string | null =>
+  !isCoverFault(code)
+    ? null
+    : code === 'wrong_shape'
+      ? audiobook
+        ? 'Book shape on an audiobook'
+        : 'Square on an ebook'
+      : coverFaultLabels[code]
+interface CoverSize {
+  readonly width: number
+  readonly height: number
+}
+/**
+ * The line that says why a cover was switched or is suggested. `before` is
+ * the cover that was there and `after` the one that replaces it; a reason
+ * that needs a size it does not have, or a fault never switched, has none.
+ */
+export const coverReasonLine = (
+  code: string,
+  {
+    audiobook,
+    before,
+    after,
+    language,
+  }: {
+    audiobook: boolean
+    before: CoverSize | null
+    after: CoverSize | null
+    language: string | null
+  },
+): string | null => {
+  if (code === 'wrong_shape')
+    return audiobook
+      ? 'Square art for an audiobook whose cover was book-shaped.'
+      : 'Book-shaped art for an ebook whose cover was square.'
+  if (code === 'below_floor')
+    return before
+      ? `The cover was ${String(before.width)} × ${String(before.height)} px, under 300 px on its short side.`
+      : null
+  if (code === 'sharper_copy') {
+    if (!before || !after) return null
+    const times = Math.floor(
+      Math.min(after.width, after.height) / Math.min(before.width, before.height),
+    )
+    return times >= 2 ? `Same art, ${String(times)} times larger.` : null
+  }
+  if (code === 'edition_language')
+    return language ? `The cover was from an edition in ${language}.` : null
+  if (code === 'edition_preference') return "A cover from this book's edition."
+  return null
+}
 
 // Server identifiers with no meaning for a reader; never shown as a label.
 export const opaqueSource = /^(?:local|evidence|provider)_[0-9a-f]+$/iu

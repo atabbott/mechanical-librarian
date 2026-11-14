@@ -295,7 +295,7 @@ def test_the_cover_policy_accepts_a_level_match_and_embeds_the_level() -> None:
         == hashlib.sha256(identity.encode("utf-8")).hexdigest()
     )
     assert wide["identity_report_sha256"] != narrow["identity_report_sha256"]
-    assert wide["schema_version"] == "cover-policy-report-v3"
+    assert wide["schema_version"] == "cover-policy-report-v4"
     # A level match never elects: nothing is recommended at either level.
     assert wide["recommended_candidate_reference"] is None
     assert narrow["recommended_candidate_reference"] is None
@@ -492,7 +492,7 @@ def test_the_new_documents_read_back_and_each_predecessor_is_refused() -> None:
     )
     stored = cast("Any", service)._store.current[case_id]
     value = json.loads(stored)
-    assert value["schema_version"] == "cover-consideration-v7"
+    assert value["schema_version"] == "cover-consideration-v8"
     _validated_cover_consideration(stored)
 
     def refused(document: dict[str, Any]) -> None:
@@ -536,7 +536,7 @@ def test_the_new_documents_read_back_and_each_predecessor_is_refused() -> None:
                 references,
             )
     policy = json.loads(value["policy_report_document"])
-    assert policy["schema_version"] == "cover-policy-report-v3"
+    assert policy["schema_version"] == "cover-policy-report-v4"
 
 
 def _shadow_candidate(

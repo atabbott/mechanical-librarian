@@ -1634,8 +1634,13 @@ def test_the_attention_child_matches_the_cold_start_report_on_an_empty_database(
 
 
 def test_the_attention_child_drops_a_cover_only_case_without_covers(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # A held cover asks; a suggested one would not be attention (#1363 S9).
+    from mechanical_librarian.application import cover_policy
+    from tests.support.cover_producers import held_measured_stage
+
+    monkeypatch.setattr(cover_policy, "elect_measured_covers", held_measured_stage)
     database = tmp_path / "application.sqlite3"
     repository = open_repository(database)
     attention_work = _bibliographic_report(

@@ -42,6 +42,8 @@ from tests.support.audiobook_reports import (
 from tests.support.metadata_report_schemas import (
     AUTOMATIC_DECIDED_SQL,
     HUMAN_DECIDED_SQL,
+    MANUAL_READY_COVER_ATTENTION_SQL,
+    MEASURED_COVER_ATTENTION_SQL,
     PRIOR_AUTOMATIC_DECIDED_SQL,
     PRIOR_HUMAN_DECIDED_SQL,
 )
@@ -89,7 +91,10 @@ _KEPT_COVER_SQL = " AND NOT " + _VERIFIED_CURRENT_COVER_SQL
 _RAW_REFRESH_SQL = "THEN " + _COVER_UNRESOLVED_OUTCOME_SQL + " END"
 _FACT_REFRESH_SQL = "THEN result.unresolved_choice END"
 _PRE_1249_ATTENTION_FACT_SOURCE_SQL = (
-    _ATTENTION_FACT_SOURCE_SQL.replace(_NARRATORS_ASK, "", 1)
+    _ATTENTION_FACT_SOURCE_SQL.replace(
+        MEASURED_COVER_ATTENTION_SQL, MANUAL_READY_COVER_ATTENTION_SQL, 1
+    )
+    .replace(_NARRATORS_ASK, "", 1)
     .replace(
         "OR result.manual_bibliographic_attention=1",
         "OR facts.format <> 'epub' OR result.manual_bibliographic_attention=1",
@@ -100,10 +105,15 @@ _PRE_1249_ATTENTION_FACT_SOURCE_SQL = (
     .replace(_KEPT_COVER_SQL, "", 1)
     .replace(_RAW_REFRESH_SQL, _FACT_REFRESH_SQL, 1)
 )
-# The #1249 comparison holds every later rule fixed, so it keeps #1310's.
-_PRE_1249_WITH_KEPT_COVER_SQL = _PRE_1249_ATTENTION_FACT_SOURCE_SQL.replace(
-    "'$.manual_ready')=1)", "'$.manual_ready')=1)" + _KEPT_COVER_SQL, 1
-).replace(_FACT_REFRESH_SQL, _RAW_REFRESH_SQL, 1)
+# The #1249 comparison holds every later rule fixed, so it keeps #1310's and
+# #1363's.
+_PRE_1249_WITH_KEPT_COVER_SQL = (
+    _PRE_1249_ATTENTION_FACT_SOURCE_SQL.replace(
+        "'$.manual_ready')=1)", "'$.manual_ready')=1)" + _KEPT_COVER_SQL, 1
+    )
+    .replace(_FACT_REFRESH_SQL, _RAW_REFRESH_SQL, 1)
+    .replace(MANUAL_READY_COVER_ATTENTION_SQL, MEASURED_COVER_ATTENTION_SQL, 1)
+)
 
 
 def _facts(connection: sqlite3.Connection) -> list[tuple[object, ...]]:
@@ -646,7 +656,7 @@ def _steps(repository: SQLiteMetadataReportRepository) -> Iterator[_Step]:
                     json.dumps(
                         {
                             "decision_document": json.dumps(
-                                {"schema_version": "cover-automatic-decision-v3"}
+                                {"schema_version": "cover-automatic-decision-v4"}
                             )
                         }
                     ),
@@ -1077,8 +1087,9 @@ def test_the_predecessor_oracle_is_mains_fact_source_before_1249() -> None:
     )
     # Exactly two edits: the audiobook clause leaves, and narrators asks
     # beside authors; #1285 later lets a withdrawn field ask again, #1310
-    # keeps a verified current cover out of the cover branch, and #1573 lets
-    # only the active generation's automatic decision settle a field.
+    # keeps a verified current cover out of the cover branch, #1573 lets
+    # only the active generation's automatic decision settle a field, and
+    # #1363 splits the cover branch by the measured stage.
     assert _ATTENTION_FACT_SOURCE_SQL.count(_NARRATORS_ASK) == 1
     assert _PRE_1249_ATTENTION_FACT_SOURCE_SQL.count(_AUTHORS_ASK) == 1
     assert (
@@ -1088,6 +1099,7 @@ def test_the_predecessor_oracle_is_mains_fact_source_before_1249() -> None:
         .replace(PRIOR_AUTOMATIC_DECIDED_SQL, AUTOMATIC_DECIDED_SQL, 1)
         .replace("'$.manual_ready')=1)", "'$.manual_ready')=1)" + _KEPT_COVER_SQL, 1)
         .replace(_FACT_REFRESH_SQL, _RAW_REFRESH_SQL, 1)
+        .replace(MANUAL_READY_COVER_ATTENTION_SQL, MEASURED_COVER_ATTENTION_SQL, 1)
         == _ATTENTION_FACT_SOURCE_SQL
     )
 

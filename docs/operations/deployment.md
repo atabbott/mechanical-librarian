@@ -203,7 +203,7 @@ Activity. Until then the product only reads and proposes. See
 
 If `/data/config.json` exists, it is the complete settings authority and the
 bootstrap and settings store are not read. This is the case even if the file is
-invalid. The file is the `config-v10` document described in the
+invalid. The file is the `config-v11` document described in the
 [configuration reference](../reference/configuration.md#file-mode). Every
 secret, password-hash and TLS file it names must be an owner-only regular file,
 mounted read-only into the container at the path the configuration uses.

@@ -28,6 +28,7 @@ import type {
 import { ChangeCount } from '../components/ChangeCount'
 import { Button } from '../components/Button'
 import { StatusPill } from '../components/StatusPill'
+import { CurrentCoverSettings } from '../components/CurrentCoverSettings'
 import { DescriptionAdviceSettings } from '../components/DescriptionAdviceSettings'
 import { MatchingSettings } from '../components/MatchingSettings'
 import { Disclosure } from '../components/Disclosure'
@@ -442,12 +443,8 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
     // Each value is a sentence with no label of its own, so it reads
     // plainly after "Ebooks:" and "Automatic." (#1760).
     if (!available.length) return 'No automatic effect. Needs you.'
-    if (media === 'ebook' && field.key === 'cover_order')
-      return option === 'replace_if_strictly_better'
-        ? 'Fill empty only. Confirmed covers are kept.'
-        : 'Fill empty, or replace only with a confirmed better cover.'
-    if (media === 'audiobook' && field.key === 'cover_order')
-      return 'Replace a small current cover only with a clearly larger confirmed one.'
+    // A current cover is replaced only as Current covers allows (#1363).
+    if (field.key === 'cover_order') return 'Fills an empty cover.'
     if (field.key === 'language_rendering') return `${operationScopeLabels.fill_or_respell}.`
     const grouped = new Map<TargetDestination, string[]>()
     for (const entry of available) {
@@ -849,6 +846,9 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                     </>
                   )}
                 </section>,
+                field.key === 'cover_order' ? (
+                  <CurrentCoverSettings key="current-covers" http={http} />
+                ) : null,
                 field.key === 'cover_order' ? (
                   <DescriptionAdviceSettings key="description-advice" http={http} />
                 ) : null,

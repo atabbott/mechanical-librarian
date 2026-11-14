@@ -114,6 +114,7 @@ def test_cover_currentness_sql_binding_fails_closed_for_unknown_and_failure(
             "provider_fetching": False,
             "manual_ready": True,
             "replay_reference": replay,
+            "cover_stage": {"outcome": "keep", "reason": None},
         }
     )
 
@@ -804,7 +805,7 @@ def test_cover_state_is_inside_the_current_case_read_snapshot() -> None:
                 "report_id": report.report_id,
                 "report_document": report.to_json(),
                 "review_case_id": case_id,
-                "schema_version": "cover-consideration-v7",
+                "schema_version": "cover-consideration-v8",
                 "supersedes_id": None,
             },
             separators=(",", ":"),
@@ -3709,7 +3710,7 @@ def test_active_labels_filter_current_and_terminal_before_count_and_page(
     repository.fail_review_pipeline_action(action, "unreadable_media", False, 14)
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v5",
+            "schema_version": "owner-settings-v6",
             "revision": 1,
             "connections": [
                 {"name": connection, "endpoint": "https://example.invalid"}

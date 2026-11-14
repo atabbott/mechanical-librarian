@@ -476,7 +476,7 @@ def _cover_ledger(
                 json.dumps(
                     {
                         "decision_document": json.dumps(
-                            {"schema_version": "cover-automatic-decision-v3"}
+                            {"schema_version": "cover-automatic-decision-v4"}
                         )
                     }
                 ),

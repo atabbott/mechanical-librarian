@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
+from typing import cast
 
 from mechanical_librarian.domain.audiobook_decision_qualification import (
     F46_IDENTITIES_BY_DESTINATION,
@@ -18,7 +19,12 @@ from mechanical_librarian.domain.automatic_decision import (
 )
 from mechanical_librarian.domain.cover_qualification_policy import (
     COVER_ELECTION_QUALIFICATION_MANIFEST_SHA256,
+    MEASURED_REPLACEMENT_IDENTITY,
+    measured_replacement_record,
 )
+from mechanical_librarian.domain.cover_rules import STAGE_REASONS
+
+SCHEMA_VERSION = "cover-automatic-decision-v4"
 
 
 def _canonical(value: object) -> str:
@@ -54,6 +60,8 @@ class CoverAutomaticDecision:
     occurred_at: int
     qualification_manifest_sha256: str
     qualification_identity: str | None = None
+    # The measured rule's issue a replacement cures; a fill has none.
+    reason: str | None = None
 
     destination = "cover"
     outcome = "candidate"
@@ -98,11 +106,19 @@ class CoverAutomaticDecision:
         supersedes_decision_id: str | None,
         occurred_at: int,
         qualification_identity: str | None = None,
+        reason: str | None = None,
     ) -> "CoverAutomaticDecision":
+        measured = qualification_identity == MEASURED_REPLACEMENT_IDENTITY
         if qualification_identity is not None and (
-            qualification_identity not in F46_IDENTITIES_BY_DESTINATION["cover"]
+            (
+                not measured
+                and qualification_identity not in F46_IDENTITIES_BY_DESTINATION["cover"]
+            )
             or policy_option != qualification_identity.split(":", 1)[1]
         ):
+            raise AutomaticDecisionError("invalid")
+        record = measured_replacement_record() if measured else None
+        if measured and record is None:
             raise AutomaticDecisionError("invalid")
         core: dict[str, object] = {
             "policy_option": policy_option,
@@ -118,6 +134,7 @@ class CoverAutomaticDecision:
             "proposal_id": proposal_id,
             "proposal_set_id": proposal_set_id,
             "rank_key": list(rank_key),
+            "reason": reason,
             "replay_digest": replay_digest,
             "report_id": report_id,
             "resolved_policy_id": resolved_policy_id,
@@ -151,9 +168,12 @@ class CoverAutomaticDecision:
             qualification_manifest_sha256=(
                 COVER_ELECTION_QUALIFICATION_MANIFEST_SHA256
                 if qualification_identity is None
+                else cast("str", record)
+                if measured
                 else qualification_manifest_sha256(qualification_identity)
             ),
             qualification_identity=qualification_identity,
+            reason=reason,
         )
 
     def __post_init__(self) -> None:
@@ -202,15 +222,24 @@ class CoverAutomaticDecision:
             raise AutomaticDecisionError("invalid")
         if type(self.qualification_manifest_sha256) is not str:
             raise AutomaticDecisionError("invalid")
+        # Only a measured replacement records a reason, and it must (#1363).
+        if (self.reason is None) == (
+            self.qualification_identity == MEASURED_REPLACEMENT_IDENTITY
+        ) or (self.reason is not None and self.reason not in STAGE_REASONS):
+            raise AutomaticDecisionError("invalid")
         if self.qualification_identity is None:
             if (
                 self.qualification_manifest_sha256
                 != COVER_ELECTION_QUALIFICATION_MANIFEST_SHA256
-                or self.policy_option
-                not in {
-                    "fixed_source_order",
-                    "replace_if_strictly_better",
-                }
+                or self.policy_option != "fixed_source_order"
+            ):
+                raise AutomaticDecisionError("invalid")
+        elif self.qualification_identity == MEASURED_REPLACEMENT_IDENTITY:
+            record = measured_replacement_record()
+            if (
+                record is None
+                or self.qualification_manifest_sha256 != record
+                or self.policy_option != self.qualification_identity.split(":", 1)[1]
             ):
                 raise AutomaticDecisionError("invalid")
         else:
@@ -247,6 +276,7 @@ class CoverAutomaticDecision:
             "proposal_id": self.proposal_id,
             "proposal_set_id": self.proposal_set_id,
             "rank_key": list(self.rank_key),
+            "reason": self.reason,
             "replay_digest": self.replay_digest,
             "report_id": self.report_id,
             "resolved_policy_id": self.resolved_policy_id,
@@ -268,7 +298,7 @@ class CoverAutomaticDecision:
                 "policy_category": self.policy_category,
                 "policy_option": self.policy_option,
                 "qualification_manifest_sha256": self.qualification_manifest_sha256,
-                "schema_version": "cover-automatic-decision-v3",
+                "schema_version": SCHEMA_VERSION,
             }
         )
 
@@ -276,7 +306,7 @@ class CoverAutomaticDecision:
     def from_json(cls, document: str) -> "CoverAutomaticDecision":
         try:
             raw = json.loads(document)
-            if raw.get("schema_version") != "cover-automatic-decision-v3":
+            if raw.get("schema_version") != SCHEMA_VERSION:
                 raise AutomaticDecisionError("invalid")
             values = {
                 key: raw[key]
@@ -301,6 +331,6 @@ def parse_automatic_authority(document: str) -> AutomaticAuthority:
         raw = json.loads(document)
     except (TypeError, json.JSONDecodeError) as error:
         raise AutomaticDecisionError("invalid") from error
-    if type(raw) is dict and raw.get("schema_version") == "cover-automatic-decision-v3":
+    if type(raw) is dict and raw.get("schema_version") == SCHEMA_VERSION:
         return CoverAutomaticDecision.from_json(document)
     return AutomaticDecision.from_json(document)

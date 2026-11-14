@@ -62,7 +62,9 @@ _FIELD_OPTIONS: Final = {
     "asin": ("asin", ("preserve_exact",)),
     "isbn": ("isbn_form", ("preserve_exact", "prefer_isbn13")),
     "explicit": ("explicit", ("adult_product",)),
-    "cover": ("cover_order", ("fixed_source_order", "replace_if_strictly_better")),
+    # The measured rules replace a populated cover under their own shadow
+    # identity (ADR-0093), so the ADR-0073 replacement option is retired.
+    "cover": ("cover_order", ("fixed_source_order",)),
 }
 
 
@@ -253,6 +255,10 @@ def _language_effect_equivalent(current: object, desired: object) -> bool:
     return left is not None and left == right
 
 
+# The shipped record also names the ADR-0073 replacement,
+# `cover_order:replace_if_strictly_better:audiobook_cover_replace`. It was
+# retired when the measured cover rules took over (#1363) and the record is
+# left exactly as measured, so it binds the same digest.
 F46_PASSING_AUTOMATIC_OPTIONS: Final[frozenset[str]] = frozenset(
     {
         "asin:preserve_exact:audiobook_asin_fill",
@@ -271,7 +277,6 @@ F46_PASSING_AUTOMATIC_OPTIONS: Final[frozenset[str]] = frozenset(
         "contributor_names:preserve:audiobook_authors_normalize",
         "contributor_names:preserve:audiobook_authors_preserve",
         "contributor_names:preserve:audiobook_authors_replace",
-        "cover_order:replace_if_strictly_better:audiobook_cover_replace",
         "date_precision:full_date:audiobook_publisheddate_fill",
         "description_fill:replace_safe_plain_text:audiobook_description_replace",
         "description_fill:replace_safe_plain_text:audiobook_description_fill",
