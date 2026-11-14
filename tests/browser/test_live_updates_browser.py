@@ -22,6 +22,9 @@ from typing import Any
 from argon2 import PasswordHasher
 from playwright.sync_api import Page, Request, Response, expect, sync_playwright
 
+from mechanical_librarian.application.review_application import (
+    REVIEW_PREPARATION_SCHEMA,
+)
 from tests.browser.test_review_browser import (
     _PASSWORD,
     _POLICY_CLIPPED,
@@ -761,7 +764,7 @@ def test_the_write_surfaces_reflow_rather_than_depend_on_how_wide_their_text_ren
                     "**/api/v1/review-preparation",
                     lambda route: route.fulfill(
                         json={
-                            "schema_version": "review-preparation-v2",
+                            "schema_version": REVIEW_PREPARATION_SCHEMA,
                             "recovery_required": False,
                             "active": True,
                             "actionable": False,

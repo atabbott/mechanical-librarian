@@ -94,8 +94,12 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     audio_set_content_digest,
 )
+from mechanical_librarian.domain.owner_settings import OWNER_SETTINGS_SCHEMA
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.provider_recovery import ProviderRecoveryJob
+from mechanical_librarian.infrastructure.settings_authority import (
+    REVIEW_BOOTSTRAP_SCHEMA,
+)
 from tests.support.audiobook_providers import target_title_claim
 from tests.support.audiobook_reports import (
     audio_local_claims,
@@ -1675,7 +1679,7 @@ class _StoreRuntime:
         )
         document = OwnerSettingsDocument.model_validate(
             {
-                "schema_version": "owner-settings-v6",
+                "schema_version": OWNER_SETTINGS_SCHEMA,
                 "revision": 1,
                 "connections": [
                     {"name": "primary", "endpoint": "https://library.example.invalid"}
@@ -1708,7 +1712,7 @@ class _StoreRuntime:
         )
         self.control._connection.commit()
         self.bootstrap = ReviewBootstrap(
-            schema_version="review-bootstrap-v2",
+            schema_version=REVIEW_BOOTSTRAP_SCHEMA,
             canonical_origin="https://review.example.invalid",
             tls_certificate_file="/synthetic/certificate",
             tls_private_key_file="/synthetic/key",

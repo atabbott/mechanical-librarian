@@ -10,6 +10,7 @@ from mechanical_librarian.domain.audiobook_decision_qualification import (
     F46_PASSING_AUTOMATIC_OPTIONS,
 )
 from mechanical_librarian.domain.cover_qualification import (
+    COVER_ELECTION_QUALIFICATION_SCHEMA,
     QUALIFICATION_CANDIDATE_SHA256,
     CoverQualificationCase,
     qualify_cover_election,
@@ -80,7 +81,7 @@ def test_candidate_digest_is_the_public_manifest_file_bytes() -> None:
         Path(__file__).parents[2]
         / "docs"
         / "development"
-        / "cover-election-qualification-v2.json"
+        / f"{COVER_ELECTION_QUALIFICATION_SCHEMA}.json"
     ).read_bytes()
 
     assert hashlib.sha256(manifest).hexdigest() == QUALIFICATION_CANDIDATE_SHA256

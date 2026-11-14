@@ -14,6 +14,12 @@ from mechanical_librarian.application.configuration import (
     ConfigurationError,
     ReviewWebConfiguration,
 )
+from mechanical_librarian.application.continuous_field_effects import (
+    CONTINUOUS_FIELD_ACTIVITY_SCHEMA,
+)
+from mechanical_librarian.application.cover_consideration import (
+    SCHEMA_VERSION as COVER_CONSIDERATION_SCHEMA,
+)
 from mechanical_librarian.bootstrap.composition import (
     open_field_effect_activity_projection,
     open_field_effect_activity_readers,
@@ -124,7 +130,7 @@ def test_activity_composition_does_not_change_installed_state() -> None:
                 database,
             )
 
-        assert "continuous-field-activity-v3" == activity["schema_version"]
+        assert CONTINUOUS_FIELD_ACTIVITY_SCHEMA == activity["schema_version"]
         assert before_bytes == database.read_bytes()
         assert before_entries == {path.name for path in root.iterdir()}
         assert not (root / "private").exists()
@@ -272,7 +278,7 @@ def test_provider_recovery_uses_one_explicit_owner_reviewer_authority() -> None:
 
 
 def test_show_and_select_delegate_closed_values() -> None:
-    runner = Mock(return_value={"schema_version": "cover-consideration-v8"})
+    runner = Mock(return_value={"schema_version": COVER_CONSIDERATION_SCHEMA})
     output = io.StringIO()
     assert (
         main(
@@ -293,7 +299,7 @@ def test_show_and_select_delegate_closed_values() -> None:
         )
         == 0
     )
-    assert json.loads(output.getvalue())["schema_version"] == "cover-consideration-v8"
+    assert json.loads(output.getvalue())["schema_version"] == COVER_CONSIDERATION_SCHEMA
     runner.assert_called_once_with(
         Path("/config.json"),
         Path("/database.sqlite3"),

@@ -47,6 +47,9 @@ from mechanical_librarian.application.field_effects import (
 )
 from mechanical_librarian.application.review_web import InspectCurrentReviewCase
 from mechanical_librarian.bootstrap import composition
+from mechanical_librarian.domain.cover_automatic_decision import (
+    SCHEMA_VERSION as COVER_AUTOMATIC_DECISION_SCHEMA,
+)
 from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
@@ -229,7 +232,7 @@ def test_real_automatic_cover_admission_controls_guarded_fake_service_effect(
         assert automatic.reason == ("below_floor" if measured else None)
         assert (
             json.loads(automatic.to_json())["schema_version"]
-            == "cover-automatic-decision-v4"
+            == COVER_AUTOMATIC_DECISION_SCHEMA
         )
         assert CoverAutomaticDecision.from_json(automatic.to_json()) == automatic
         other = CoverAutomaticDecision.create(

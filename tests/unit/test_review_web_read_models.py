@@ -23,15 +23,31 @@ from mechanical_librarian.adapters.evidence_extractors.audio_local import (
     interpret,
 )
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
+from mechanical_librarian.application.continuous_field_effects import (
+    CONTINUOUS_FIELD_ACTIVITY_SCHEMA,
+)
+from mechanical_librarian.application.cover_consideration import (
+    SCHEMA_VERSION as COVER_CONSIDERATION_SCHEMA,
+)
 from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationError,
 )
+from mechanical_librarian.application.cover_policy import (
+    POLICY_SCHEMA_VERSION as COVER_POLICY_SCHEMA,
+)
 from mechanical_librarian.application.field_effects import GuardedApplicationError
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.review_application import (
+    REVIEW_PREPARATION_SCHEMA,
+)
 from mechanical_librarian.application.review_pipeline import (
     ReviewPipelineError,
 )
 from mechanical_librarian.application.review_web import (
+    REVIEW_CASE_DETAIL_SCHEMA,
+    REVIEW_CASE_EVIDENCE_SCHEMA,
+    REVIEW_CASE_HISTORY_SCHEMA,
+    REVIEW_REPORT_DETAIL_SCHEMA,
     BrowseReviewLibrary,
     InspectCurrentReviewCase,
     ReviewAttentionSnapshot,
@@ -97,6 +113,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
     default_target_fields,
 )
+from mechanical_librarian.domain.owner_settings import OWNER_SETTINGS_SCHEMA
 from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
 from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.review_browse import ReviewBrowseValueError
@@ -309,7 +326,7 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(
             "current_protection": "protected",
             "prefer_edition": False,
             "prefer_minimal_composition": False,
-            "schema_version": "cover-policy-v2",
+            "schema_version": COVER_POLICY_SCHEMA,
         },
         "policy_reference": "cover_policy_" + "2" * 64,
         "provider_fetching": False,
@@ -319,7 +336,7 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(
         "reviewer_model": None,
         "reviewer_status": "unavailable",
         "reviewer_unavailable_reason": None,
-        "schema_version": "cover-consideration-v8",
+        "schema_version": COVER_CONSIDERATION_SCHEMA,
         "supersedes_id": None,
         "target_fingerprint": case.target_fingerprint,
     }
@@ -562,7 +579,7 @@ def test_a_full_packet_with_a_larger_copy_and_a_put_back_reaches_the_browser(
             "current_protection": "protected",
             "prefer_edition": False,
             "prefer_minimal_composition": False,
-            "schema_version": "cover-policy-v2",
+            "schema_version": COVER_POLICY_SCHEMA,
         },
         "policy_reference": "cover_policy_" + "2" * 64,
         "provider_fetching": False,
@@ -572,7 +589,7 @@ def test_a_full_packet_with_a_larger_copy_and_a_put_back_reaches_the_browser(
         "reviewer_model": None,
         "reviewer_status": "unavailable",
         "reviewer_unavailable_reason": None,
-        "schema_version": "cover-consideration-v8",
+        "schema_version": COVER_CONSIDERATION_SCHEMA,
         "supersedes_id": None,
         "target_fingerprint": case.target_fingerprint,
     }
@@ -762,7 +779,7 @@ def test_activity_is_permanent_and_consent_is_csrf_bound(
     assert script.status_code == 200
     assert web.client.get("/api/v1/activity").json()["prepared"]["total"] == 2
     history = web.client.get("/api/v1/activity").json()
-    assert history["schema_version"] == "continuous-field-activity-v3"
+    assert history["schema_version"] == CONTINUOUS_FIELD_ACTIVITY_SCHEMA
     assert history["backup_ready"] is None and history["example"] is None
     readiness = web.client.get("/api/v1/activity/permission-readiness")
     assert readiness.status_code == 200
@@ -1823,7 +1840,7 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
         )
 
     assert first["next_cursor"] == reopened["next_cursor"]
-    assert first["schema_version"] == "review-case-evidence-v5"
+    assert first["schema_version"] == REVIEW_CASE_EVIDENCE_SCHEMA
     assert first["missing_lineage_count"] == 0
     assert first["source_ledger"] == []
     assert partial["missing_lineage_count"] == 1
@@ -1916,7 +1933,7 @@ def test_automatic_history_values_require_an_exact_decision_identity(
     expected = (
         {"kind": "text", "value": "Existing description."} if mismatch is None else None
     )
-    assert history["schema_version"] == "review-case-history-v3"
+    assert history["schema_version"] == REVIEW_CASE_HISTORY_SCHEMA
     assert history["items"][0]["previous_value"] == expected
     assert history["items"][0]["selected_value"] == expected
     assert history["items"][1]["previous_value"] is None
@@ -2705,7 +2722,7 @@ def test_an_audiobooks_recorded_evidence_is_reachable_from_the_library(
 
     assert detail.status_code == 200, detail.text
     body = detail.json()
-    assert body["schema_version"] == "review-report-detail-v6"
+    assert body["schema_version"] == REVIEW_REPORT_DETAIL_SCHEMA
     assert (body["connection"], body["library"], body["item"]) == (
         "primary",
         "ebooks",
@@ -2775,7 +2792,7 @@ def test_a_recordings_media_health_reaches_the_owner_with_its_bound(
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["schema_version"] == "review-report-detail-v6"
+    assert body["schema_version"] == REVIEW_REPORT_DETAIL_SCHEMA
     assert len(body["media_health"]) == 1
     stated = body["media_health"][0]
     assert stated["kind"] == "runtime_short_of_provider"
@@ -3340,7 +3357,7 @@ def test_chapter_runtime_admission_is_attributed_in_case_and_report(
     basis = response.json()["recording_identity_basis"]
     assert (basis is None) is omitted
     assert _report_detail(report.to_data(), report)["recording_identity_basis"] == basis
-    assert response.json()["schema_version"] == "review-case-detail-v7"
+    assert response.json()["schema_version"] == REVIEW_CASE_DETAIL_SCHEMA
     if basis is not None:
         assert basis == {
             "basis": "chapter_runtime_and_structure",
@@ -3390,13 +3407,13 @@ def test_an_alternative_admission_is_attributed_in_case_and_report(web) -> None:
         "provider": "enrichment",
         "candidate": "enrichment-B0LINKED01",
     }
-    assert body["schema_version"] == "review-case-detail-v7"
+    assert body["schema_version"] == REVIEW_CASE_DETAIL_SCHEMA
     assert body["recording_admission_basis"] == expected
     assert body["recording_identity_basis"] is None
     assert body["audiobook_review_scope"] == "recording"
     detail = _report_detail(report.to_data(), report)
     assert detail["recording_admission_basis"] == expected
-    assert detail["schema_version"] == "review-report-detail-v6"
+    assert detail["schema_version"] == REVIEW_REPORT_DETAIL_SCHEMA
 
     # The scope validators refuse a basis the scope cannot carry, and the two
     # notes together.
@@ -3416,7 +3433,7 @@ def test_an_alternative_admission_is_attributed_in_case_and_report(web) -> None:
     report_body = web.client.get(
         "/api/v1/library/report?connection=primary&library=audio&item=item-1"
     ).json()
-    assert report_body["schema_version"] == "review-report-detail-v6"
+    assert report_body["schema_version"] == REVIEW_REPORT_DETAIL_SCHEMA
     assert report_body["recording_admission_basis"] == expected
     _ReportDetailResponse.model_validate(report_body)
     for changed in (
@@ -4714,7 +4731,7 @@ def test_preparation_read_carries_value_free_provider_throttling(
     web.login()
     response = web.client.get("/api/v1/review-preparation")
     assert response.status_code == 200
-    assert response.json()["schema_version"] == "review-preparation-v2"
+    assert response.json()["schema_version"] == REVIEW_PREPARATION_SCHEMA
     assert response.json()["provider_throttling"] == {
         "generation": 3,
         "retry": "available",
@@ -4758,7 +4775,7 @@ def _retry_settings_document(generation: int):
 
     return OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v6",
+            "schema_version": OWNER_SETTINGS_SCHEMA,
             "revision": 1,
             "connections": [
                 {"name": "primary", "endpoint": "https://library.example.invalid"}

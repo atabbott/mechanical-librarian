@@ -261,7 +261,7 @@ def admit_cover_review_request(
     output_schema: str,
     image_payloads: tuple[tuple[str, str, bytes], ...],
 ) -> _CoverReviewRequest:
-    """Fully validate one exact cover-review-packet-v2 and its image mapping."""
+    """Fully validate one exact current cover-review packet and its image mapping."""
     try:
         base = ContainedReviewRequest(instruction, packet_document, output_schema)
         admitted = bind_cover_packet(packet_document, image_payloads)

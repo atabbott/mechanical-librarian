@@ -9,6 +9,7 @@ from types import ModuleType
 
 import pytest
 
+from mechanical_librarian.application.configuration import CONFIG_SCHEMA
 from mechanical_librarian.infrastructure.configuration import ConfigurationInput
 
 
@@ -29,7 +30,7 @@ def test_generated_container_configuration_admits_the_current_schema() -> None:
 
     admitted = ConfigurationInput.model_validate(configuration)
 
-    assert admitted.schema_version == "config-v11"
+    assert admitted.schema_version == CONFIG_SCHEMA
 
 
 def test_first_run_partial_volume_creation_enters_owned_cleanup(

@@ -63,9 +63,13 @@ from mechanical_librarian.application.cover_consideration import (
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.automatic_decision import AutomaticDecisionError
 from mechanical_librarian.domain.cover_automatic_decision import (
+    SCHEMA_VERSION as COVER_AUTOMATIC_DECISION_SCHEMA,
+)
+from mechanical_librarian.domain.cover_automatic_decision import (
     CoverAutomaticDecision,
 )
 from mechanical_librarian.domain.human_decision import (
+    COVER_SELECTION_AUTHORITY_SCHEMA,
     HumanDecision,
     HumanDecisionError,
     manual_cover_eligible,
@@ -90,10 +94,12 @@ from mechanical_librarian.domain.proposal_set import (
     evaluate_report,
 )
 from mechanical_librarian.domain.review_case import ReviewCase
+from mechanical_librarian.domain.reviewer_access import REVIEWER_ACCESS_SCHEMA
 from mechanical_librarian.domain.shadow_decision import (
     DECISION_POLICY_SHA256,
     DECISION_POLICY_VERSION,
 )
+from mechanical_librarian.domain.shadow_outcome import SHADOW_OUTCOME_SCHEMA
 
 if sys.platform.startswith("linux"):
     import fcntl
@@ -800,11 +806,11 @@ _COVER_SELECTION_AUTHORITIES_SQL = (
     "supersedes_selection_id TEXT REFERENCES cover_selection_authorities(selection_id), "
     "occurred_at INTEGER NOT NULL CHECK(typeof(occurred_at)='integer' AND occurred_at>=0), "
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 131072), "
-    "CHECK(kind<>'owner' OR (CASE WHEN json_valid(document) THEN json_extract(document,'$.schema_version')='cover-selection-authority-v3' ELSE 0 END) IS 1), "
+    f"CHECK(kind<>'owner' OR (CASE WHEN json_valid(document) THEN json_extract(document,'$.schema_version')='{COVER_SELECTION_AUTHORITY_SCHEMA}' ELSE 0 END) IS 1), "
     "CHECK(kind<>'automatic' OR (CASE WHEN json_valid(document) "
     "AND json_type(document,'$.decision_document')='text' "
     "THEN CASE WHEN json_valid(json_extract(document,'$.decision_document')) "
-    "THEN json_extract(json_extract(document,'$.decision_document'),'$.schema_version')='cover-automatic-decision-v4' "
+    f"THEN json_extract(json_extract(document,'$.decision_document'),'$.schema_version')='{COVER_AUTOMATIC_DECISION_SCHEMA}' "
     "ELSE 0 END ELSE 0 END) IS 1), "
     "CHECK(supersedes_selection_id IS NULL OR supersedes_selection_id<>selection_id))"
 )
@@ -1125,7 +1131,7 @@ _SHADOW_DECISION_OUTCOMES_SQL = (
     "resolved_policy_id TEXT NOT NULL CHECK(resolved_policy_id GLOB 'resolved_policy_[0-9a-f]*' AND length(resolved_policy_id)=80), "
     "source_decision_set_id TEXT NOT NULL, evaluated_at INTEGER NOT NULL CHECK(evaluated_at>=0), "
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 1048576 "
-    "AND json_extract(document,'$.schema_version')='shadow-outcome-set-v11' "
+    f"AND json_extract(document,'$.schema_version')='{SHADOW_OUTCOME_SCHEMA}' "
     f"AND json_extract(document,'$.decision_policy_version') IS '{DECISION_POLICY_VERSION}' "
     f"AND json_extract(document,'$.decision_policy_sha256') IS '{DECISION_POLICY_SHA256}'))"
 )
@@ -1199,7 +1205,7 @@ _SHADOW_DECISION_OUTCOME_NO_UPDATE_SQL = "CREATE TRIGGER shadow_decision_outcome
 _SHADOW_DECISION_OUTCOME_NO_DELETE_SQL = "CREATE TRIGGER shadow_decision_outcomes_no_delete BEFORE DELETE ON shadow_decision_outcomes BEGIN SELECT RAISE(ABORT, 'shadow decision outcomes are append-only'); END"
 _OWNER_SETTINGS_SQL = "CREATE TABLE owner_settings (singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton=1),revision INTEGER NOT NULL CHECK(revision>=1),document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 262144))"
 _OWNER_SETTING_SECRETS_SQL = "CREATE TABLE owner_setting_secrets (field_id TEXT PRIMARY KEY NOT NULL CHECK(length(field_id) BETWEEN 1 AND 128),value TEXT NOT NULL CHECK(typeof(value)='text' AND length(CAST(value AS BLOB)) BETWEEN 1 AND 2048))"
-_REVIEWER_ACCESS_SQL = "CREATE TABLE reviewer_access (singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton=1),revision INTEGER NOT NULL CHECK(revision>=1),document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 262144 AND json_extract(document,'$.schema_version')='reviewer-access-v3'))"
+_REVIEWER_ACCESS_SQL = f"CREATE TABLE reviewer_access (singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton=1),revision INTEGER NOT NULL CHECK(revision>=1),document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 262144 AND json_extract(document,'$.schema_version')='{REVIEWER_ACCESS_SCHEMA}'))"
 _REVIEWER_ACCESS_SECRETS_SQL = "CREATE TABLE reviewer_access_secrets (field_id TEXT PRIMARY KEY NOT NULL CHECK(field_id='openrouter.api_key'),value TEXT NOT NULL CHECK(typeof(value)='text' AND length(CAST(value AS BLOB)) BETWEEN 1 AND 2048))"
 _BUILTIN_POLICY = MetadataPolicyProfile.builtin()
 _SETUP_POLICY_DRAFT_ROW = (_BUILTIN_POLICY.policy_id, _BUILTIN_POLICY.canonical_json)
@@ -2306,7 +2312,7 @@ def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> Non
                 or _canonical_json(document) != row[9]
                 or document.get("schema_version")
                 != (
-                    "cover-selection-authority-v3"
+                    COVER_SELECTION_AUTHORITY_SCHEMA
                     if row[4] == "owner"
                     else "cover-selection-authority-v1"
                 )
@@ -2458,7 +2464,7 @@ def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> Non
                     "decision_id": row[5],
                     "kind": row[4],
                     "rank_key": expected_rank,
-                    "schema_version": "cover-selection-authority-v3"
+                    "schema_version": COVER_SELECTION_AUTHORITY_SCHEMA
                     if row[4] == "owner"
                     else "cover-selection-authority-v1",
                     "selection_id": expected_selection_id,

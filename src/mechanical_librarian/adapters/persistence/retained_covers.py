@@ -119,7 +119,7 @@ def release_put_back_retained_cover(
     """Release the original an owner's Put back has just written back.
 
     Runs inside the transaction that verifies the Put back's write. The owner's
-    ``cover-selection-authority-v3`` names the switch it undid, so only that
+    cover-selection authority names the switch it undid, so only that
     switch's copy is released, through the same retryable obligation. A Put
     back that ends any other way keeps the copy (#1363, D5).
     """

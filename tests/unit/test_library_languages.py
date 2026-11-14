@@ -17,6 +17,7 @@ import pytest
 
 from mechanical_librarian.application.batch import batch_fingerprint
 from mechanical_librarian.application.configuration import (
+    CONFIG_SCHEMA,
     ApplicationConfiguration,
     ConfigurationError,
     LibraryConfiguration,
@@ -119,7 +120,7 @@ def test_an_invalid_language_list_is_refused(languages: object) -> None:
 def _document(library: dict[str, object]) -> bytes:
     return json.dumps(
         {
-            "schema_version": "config-v11",
+            "schema_version": CONFIG_SCHEMA,
             "provider_recovery_generation": 1,
             "connections": [
                 {

@@ -38,6 +38,7 @@ from mechanical_librarian.adapters.persistence.field_effect_activity import (
     _ACTIVITY_PAGE_CACHE_MAX_BYTES,
 )
 from mechanical_librarian.adapters.persistence.field_effect_validation import (
+    FIELD_EFFECT_CONSENT_STATE_SCHEMA,
     cover_pre_value,
 )
 from mechanical_librarian.adapters.persistence.metadata_reports import (
@@ -48,6 +49,9 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
+)
+from mechanical_librarian.application.cover_consideration import (
+    SCHEMA_VERSION as COVER_CONSIDERATION_SCHEMA,
 )
 from mechanical_librarian.application.field_effects import (
     GuardedApplicationError,
@@ -311,7 +315,7 @@ def test_activation_carries_each_current_consent_to_the_new_policy(
                 "basis": {"kind": "owner_grant"},
                 "consent": prior.to_data(),
                 "current": False,
-                "schema_version": "field-effect-consent-state-v2",
+                "schema_version": FIELD_EFFECT_CONSENT_STATE_SCHEMA,
                 "updated_at": 5,
             },
         )
@@ -325,7 +329,7 @@ def test_activation_carries_each_current_consent_to_the_new_policy(
                 },
                 "consent": value.to_data(),
                 "current": True,
-                "schema_version": "field-effect-consent-state-v2",
+                "schema_version": FIELD_EFFECT_CONSENT_STATE_SCHEMA,
                 "updated_at": 5,
             },
         )
@@ -2037,7 +2041,7 @@ def test_manual_hold_requires_explicit_return_and_later_human_wins(
             ).fetchone()[0],
             "replay_digest": "8" * 64,
             "review_case_id": case.review_case_id,
-            "schema_version": "cover-consideration-v8",
+            "schema_version": COVER_CONSIDERATION_SCHEMA,
             "supersedes_id": None,
         },
         separators=(",", ":"),
