@@ -17,7 +17,7 @@
     "maximum": 64,
     "pattern": "^[a-z](?:[a-z0-9_]|-){0,63}$"
   },
-  "required_provider_keys": ["hardcover"],
+  "required_provider_keys": ["hardcover", "google_books"],
   "keyless_provider_adapters": ["audible_catalog", "audiosilo", "audnexus", "inventaire", "itunes_search"],
   "cover_switch_provider_adapters": ["audible_catalog", "itunes_search"],
   "provider_labels": {
@@ -37,7 +37,7 @@
     "google_books": "Publisher descriptions, categories and page counts for books.",
     "hardcover": "Community book records with series, edition and contributor detail.",
     "inventaire": "Editions grouped by work, with cover images.",
-    "itunes_search": "Checks an ebook's title and author against iTunes audiobook listings, and adds audiobook covers.",
+    "itunes_search": "Checks an ebook's title and author against iTunes audiobook listings.",
     "open_library": "Book editions, ISBNs, publication dates and cover images."
   },
   "audible_marketplace_order": ["us", "uk", "de", "fr", "au", "in", "ca", "jp", "it", "es"],
