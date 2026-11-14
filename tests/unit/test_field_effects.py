@@ -8245,3 +8245,37 @@ def test_a_cover_read_holding_no_bytes_binds_no_write(
 ) -> None:
     with pytest.raises(FieldEffectError, match="^authority_binding$"):
         cover_pre_value(_current_cover_report(tmp_path, target, current))
+
+
+def test_two_audiobookshelf_reads_bind_no_write(tmp_path) -> None:
+    # The binding names one read; two current reads cannot say which bytes the
+    # write replaces, even when each holds a digest.
+    report, _ = _qualified_cover_report(tmp_path)
+    second = CoverSource(
+        cover_source_id(CoverSourceKind.ABS, "second"),
+        CoverSourceKind.ABS,
+        CoverSourceState.DECODE_FAILED,
+        original_digest=_REFUSED_DIGEST,
+    )
+    doubled = MetadataReport.create(
+        target=report.target,
+        file=report.file,
+        local_claims=report.local_claims,
+        local_reasons=report.local_reasons,
+        providers=report.providers,
+        cover_sources=tuple(
+            sorted(
+                (
+                    *(
+                        source
+                        for source in report.cover_sources
+                        if source.kind is not CoverSourceKind.EPUB
+                    ),
+                    second,
+                ),
+                key=lambda source: source.source_id,
+            )
+        ),
+    )
+    with pytest.raises(FieldEffectError, match="^authority_binding$"):
+        cover_pre_value(doubled)
