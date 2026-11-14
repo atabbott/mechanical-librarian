@@ -359,7 +359,6 @@ automatic changes. The canvas then offers choices only for series, title,
 description, genre, publication date, cover and an empty Narrators field, never
 subtitle. When the book is the first in its series and shares the series' title,
 the canvas keeps the title and offers the series name and position separately.
-
 The date offered is the book's first publication. A narrator choice comes from a
 Hardcover audio edition and has its own sentence in Recording match. Each
 evidence row names that edition by number and running time. A description or
@@ -374,8 +373,8 @@ and History says so.
 When Mechanical Librarian found the matched recording by a title other than the
 audiobook's own, a note says how. It appears at the top of the Evidence page, in
 Recorded evidence and in Library's Recording match section. Named "How this
-recording was matched", it quotes what was searched and has the chapter note's
-Recording source (#1723):
+recording was matched", it quotes what was searched and, like the chapter note,
+has a Recording source (#1723):
 
 - "Mechanical Librarian found the matched recording by searching with “…”,
   read from this folder's name, which differs from this audiobook's title."
@@ -425,8 +424,8 @@ counts follow each decision. Pages hold 50 books, and Show more covers loads the
 next. It starts after the last book shown, so a decision never makes you miss
 one. The URL keeps the tab and the open book. A wall tile reads "No cover" when
 the cover field is empty and "Image unavailable" when the library's cover cannot
-be read. A thumbnail in the list shows only an empty frame. Screen readers and
-the open book give the state.
+be read. A list thumbnail shows either state as an empty frame. Screen readers
+and the open book give the state.
 
 Above 1024 pixels, To decide and Kept open their first undecided book beside the
 list. At 1024 or narrower the list comes first, and Back to books returns to it.
