@@ -55,8 +55,8 @@ never replace a current cover.
 decoder rejects. An unreadable current cover is replaceable by the first
 eligible same-work candidate. A timeout, throttling, cancellation or unknown
 read result is not unreadable, stays unknown, never permits a replacement and
-never asks the owner: the cover is kept until the next scan, and its covers
-stay optional choices.
+never asks the owner on its own account: the cover is kept until the next
+scan, and its covers stay optional choices.
 The stage reads the current cover's Audiobookshelf source as follows:
 
 | Audiobookshelf source or target | Read | Retainable |

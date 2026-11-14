@@ -1109,7 +1109,20 @@ def test_python_and_sql_attention_agree_on_holds_and_kept_covers(
         connection.commit()
 
         mirrors = _attention_mirrors(library)
-        held = _page(library.repository, "all", None)["items"][0]["hold"]
+        listed = _page(library.repository, "all", None)["items"][0]
+        held = listed["hold"]
+        if case == "transient_with_choices":
+            # Not asked, yet its covers stay the owner's optional choice (A1).
+            from mechanical_librarian.application.review_web import (
+                InspectCurrentReviewCase,
+            )
+
+            detail = InspectCurrentReviewCase(library.repository, library.service).run(
+                library.cases["item-1"]
+            )
+            field = next(f for f in detail["fields"] if f["destination"] == "cover")
+            assert field["classification"] == "owner_choosable"
+            assert listed["group"] == "kept"
 
     expected_stage = {
         "contradicted_with_choices": ("hold", "current_contradicted"),
