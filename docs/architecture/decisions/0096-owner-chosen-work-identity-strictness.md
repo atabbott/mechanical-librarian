@@ -336,9 +336,11 @@ amendment when it lands.
   (provider, proposal or admission) is retried there; any other current
   work that is neither queued nor running is bound back to its current case
   and projected again, which prepares the comparison from the stored report
-  and observer output. A case whose report is no longer its item's current
-  report is counted as neither being checked nor given up: only the next
-  scan, which replaces it, can bring it up to date.
+  and observer output. Description advice does not depend on the level, so
+  on such a projection it reuses an earlier attempt and starts none: the
+  check makes no model request. A case whose report is no longer current for
+  its item, or for its item's file, is counted as neither being checked nor
+  given up: only the next scan, which replaces it, can bring it up to date.
 - **Lineage.** A cover row records the rule `work_identity:<level>` for the
   strictest level met, plus the reason `creator_initials_folded` only when
   the dotted-initials fold was needed to meet it, as ADR-0067 and ADR-0068 do

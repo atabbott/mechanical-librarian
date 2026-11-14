@@ -362,7 +362,10 @@ or `us.archive.org`.
 
 Book matching (`review.work_identity`, #1355) changes which retrieved covers
 the owner may choose, never what is fetched: a level reads only records the
-report already retained, and makes no provider, cover or reviewer request. A
+report already retained. Saving it re-checks comparisons from stored data and
+makes no file, Audiobookshelf, provider, cover image or model request: the
+cover observer's earlier output is reused, and description advice reuses an
+earlier attempt and starts none. A
 cover that matches only by a level's title and author predicate keeps
 `match_not_confirmed`, needs the owner's explicit unverified-match
 confirmation, and is never elected automatically until #1418 qualifies it
