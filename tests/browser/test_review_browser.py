@@ -9327,8 +9327,8 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                 expect(library_metadata).to_contain_text(
                     "Local identifier: a-very-long-library-name-from-audiobookshelf"
                 )
-                expect(library_metadata).to_contain_text(
-                    "Audiobookshelf identifier: synthetic-000"
+                expect(library_metadata).not_to_contain_text(
+                    "Audiobookshelf identifier"
                 )
                 expect(
                     page.get_by_text("Turn on a metadata source to use it here.").first
@@ -9774,7 +9774,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                 choose_section("Reviewer")
                 expect(
                     page.get_by_text(
-                        "Reviewer actions take effect as soon as you use them."
+                        "Changes here apply at once and are not part of Save settings."
                     )
                 ).to_be_visible()
                 reviewer_choice = page.get_by_role("combobox", name="Cover model")
@@ -9876,7 +9876,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                 )
                 page.get_by_role("button", name="Save settings").click()
                 recovered_status = page.locator(".settings-stale-recovery").filter(
-                    has_text="Current settings reloaded"
+                    has_text="Saved settings loaded"
                 )
                 expect(recovered_status).to_be_visible()
                 expect(recovered_status).to_be_focused()
@@ -9909,7 +9909,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                 )
                 page.get_by_role("button", name="Save settings").click()
                 stale_alert = page.get_by_text(
-                    "Settings changed elsewhere, but the newer values could not be confirmed."
+                    "Settings changed elsewhere, and the newer values could not be loaded."
                 )
                 expect(stale_alert).to_be_visible()
                 expect(stale_alert).to_be_focused()
@@ -9958,7 +9958,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                 )
                 page.reload()
                 expect(
-                    page.get_by_role("heading", name="Settings are unavailable.")
+                    page.get_by_role("heading", name="Settings could not be loaded")
                 ).to_be_visible()
                 expect(page.get_by_role("button", name="Try again")).to_be_visible()
                 assert unavailable_responses == [(origin + "/api/v1/settings", 503)]
