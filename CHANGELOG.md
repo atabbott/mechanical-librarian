@@ -59,6 +59,19 @@ brackets are GitHub issues.
   old paths gets 404. Stored outcome sets keep `shadow-outcome-set-v11`; no
   rebuild is needed (#1739).
 
+## 0.33.0 — First library (in progress)
+
+- **Clean rebuild required** only for an install whose setup was interrupted.
+  Setup now asks for libraries before sources, so its stored state is
+  `setup-state-v5`, and startup refuses an unfinished `setup-state-v4` setup. A
+  finished install is unaffected (#1516).
+- First-run setup has six steps. Every book library and the sources that suit
+  it start ticked, setup checks each library's folder itself and asks only
+  about folders it cannot find, and Start opens Library signed in. Google Books
+  needs an API key while it is on, in setup and Settings: an install that has
+  Google Books on with no key must add a key or turn Google Books off before
+  Settings can be saved (#1516, #1765).
+
 ## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
 
 - **Clean rebuild required.** A book Hardcover finds now offers its editions'

@@ -74,7 +74,7 @@ refused.
 | `config-v11` | The file-mode configuration document at `/data/config.json` ([schema](config-v11.schema.json)) |
 | `review-bootstrap-v2` | The store-mode bootstrap document at `/run/secrets/review-bootstrap.json` |
 | `owner-settings-v6` | Store-mode owner settings in the application database, including Book matching (`matching.work_identity`) and Current covers |
-| `setup-state-v4` | Incomplete first-run setup, including the setup claim token digest ([ADR-0086](../architecture/decisions/0086-deployment-held-setup-claim-token.md)) |
+| `setup-state-v5` | Incomplete first-run setup, with libraries and their folders recorded before sources, including the setup claim token digest ([ADR-0086](../architecture/decisions/0086-deployment-held-setup-claim-token.md)). An unfinished `setup-state-v4` setup is refused at startup |
 | `reviewer-access-v3` | Optional reviewer access for cover review and description advice |
 
 ### Reports, proposals and policy

@@ -180,13 +180,15 @@ class _ProvidersRequest(BaseModel):
 class _LibraryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     name: StrictStr = Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")
-    display_name: StrictStr | None = Field(default=None, min_length=1, max_length=256)
+    # A library keeps its Audiobookshelf name, so a sent name is refused.
+    display_name: None = None
     library_id: StrictStr = Field(min_length=1, max_length=128)
     # Audiobookshelf's `book` collection already represents its combined
     # ebook/audiobook kind. The setup owner selects a library, never a media
     # interpretation that can contradict the service.
     media_kind: Literal["book", "ebook", "audiobook"] = "book"
-    provider_connections: list[StrictStr] = Field(default_factory=list, max_length=32)
+    # Sources are chosen after libraries, so none can be named here.
+    provider_connections: list[StrictStr] = Field(default_factory=list, max_length=0)
 
 
 class _LibrariesRequest(BaseModel):

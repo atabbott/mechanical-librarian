@@ -2242,7 +2242,7 @@ def _setup_asset_server(
     class State:
         def read(self, _verifier: str) -> SetupStateDocument:
             return SetupStateDocument(
-                schema_version="setup-state-v4",
+                schema_version="setup-state-v5",
                 revision=1,
                 bootstrap_verifier_digest="0" * 64,
                 claim_token_digest=claim_token_digest(_CLAIM_TOKEN),
@@ -6759,7 +6759,7 @@ def test_refused_openrouter_validation_is_shown_beside_its_button_on_a_phone() -
     class State:
         def read(self, _verifier: str) -> SetupStateDocument:
             return SetupStateDocument(
-                schema_version="setup-state-v4",
+                schema_version="setup-state-v5",
                 revision=1,
                 bootstrap_verifier_digest="0" * 64,
                 claim_token_digest=claim_token_digest(_CLAIM_TOKEN),
@@ -6800,9 +6800,9 @@ def test_refused_openrouter_validation_is_shown_beside_its_button_on_a_phone() -
                     "completed_steps": [
                         "claim",
                         "connect",
-                        "providers",
                         "libraries",
                         "mounts",
+                        "providers",
                     ],
                     "revision": 7,
                     "providers": [],
@@ -6827,15 +6827,18 @@ def test_refused_openrouter_validation_is_shown_beside_its_button_on_a_phone() -
             page.route(origin + "/**", partial(_serve_setup_asset, setup_client))
             page.route(origin + "/api/setup/**", setup_api)
             page.goto(origin + "/")
+            # The other models wait behind one toggle; opened, they make the
+            # form long at this width.
+            page.get_by_role("button", name="Choose another model").click()
             page.get_by_role("textbox", name="Model ID").fill("synthetic/vision-1")
-            page.get_by_label("API key (write-only)").fill("synthetic-openrouter-key")
-            save = page.get_by_role("button", name="Validate and use OpenRouter")
+            page.get_by_label("OpenRouter API key").fill("synthetic-openrouter-key")
+            save = page.get_by_role("button", name="Check key and use OpenRouter")
             save.click()
             alert = page.get_by_role("alert")
             expect(alert).to_have_text(
-                "OpenRouter rejected this key. Replace it and validate again."
+                "OpenRouter rejected this key. Replace it and check it again."
             )
-            key_field = page.get_by_label("API key (write-only)")
+            key_field = page.get_by_label("OpenRouter API key")
             expect(key_field).to_be_focused()
             expect(key_field).to_have_value("")
             assert page.evaluate("document.activeElement !== document.body")
@@ -6906,7 +6909,7 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                 class State:
                     def read(self, _verifier: str) -> SetupStateDocument:
                         return SetupStateDocument(
-                            schema_version="setup-state-v4",
+                            schema_version="setup-state-v5",
                             revision=1,
                             bootstrap_verifier_digest="0" * 64,
                             claim_token_digest=claim_token_digest(_CLAIM_TOKEN),
@@ -6935,9 +6938,9 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                                 "completed_steps": [
                                     "claim",
                                     "connect",
-                                    "providers",
                                     "libraries",
                                     "mounts",
+                                    "providers",
                                     "reviewer",
                                 ],
                                 "revision": 7,
@@ -6969,15 +6972,12 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                     or "style-src 'self'"
                     in setup_client.get("/").headers["content-security-policy"]
                 )
-                transition_records.clear()
-                page.get_by_role("button", name="Kick off preparation").click()
-                handoff = page.get_by_role("link", name="Open workspace")
-                expect(handoff).to_have_attribute(
-                    "href", re.compile(r"preparation=preparation_run_[0-9a-f]{64}")
-                )
-                handoff_href = handoff.get_attribute("href")
-                assert handoff_href is not None
-                run_id = parse_qs(urlparse(handoff_href).query)["preparation"][0]
+                # Start reads the run the real server reports, so the
+                # synthetic progress below answers for that same run.
+                run_id = page.request.get(origin + "/api/v1/review-preparation").json()[
+                    "presentation"
+                ]["run_id"]
+                assert re.fullmatch(r"preparation_run_[0-9a-f]{64}", run_id)
                 presentation_state: dict[str, str | None] = {"value": "running"}
                 preparation_requests = {"count": 0}
                 active_name = {"value": "Synthetic active title"}
@@ -7084,29 +7084,6 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                     )
 
                 page.route("**/api/v1/review-preparation", preparation_api)
-                # #1240 item 8: a long unbroken title wraps inside the card at
-                # the 320 px floor, and the running state is said only once.
-                page.set_viewport_size({"width": 320, "height": 844})
-                active_name["value"] = "Synthetic" + "unbroken" * 24
-                expect(page.locator(".setup-active strong")).to_have_text(
-                    active_name["value"]
-                )
-                assert page.evaluate(
-                    "[...document.querySelectorAll('.setup-active li, .step-card')]"
-                    ".every(node => node.scrollWidth <= node.clientWidth + 1)"
-                    " && document.documentElement.scrollWidth <= 320"
-                )
-                assert (
-                    page.locator("#setup-main")
-                    .inner_text()
-                    .count("Preparation continues")
-                    == 1
-                )
-                active_name["value"] = "Synthetic active title"
-                expect(page.locator(".setup-active strong")).to_have_text(
-                    active_name["value"]
-                )
-                page.set_viewport_size({"width": 390, "height": 844})
                 source_names = page.evaluate(
                     "[getComputedStyle(document.querySelector('.masthead')).viewTransitionName,"
                     "getComputedStyle(document.querySelector('#setup-ledger')).viewTransitionName,"
@@ -7128,9 +7105,20 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                         "preparation-detail",
                     ]
                 )
-
-                handoff.click()
+                # No progress page: Start opens Library on the run, signed in
+                # with the owner's existing session.
+                transition_records.clear()
+                page.get_by_role("button", name="Start").click()
                 page.wait_for_url(re.compile(r"/library\?.*preparation="))
+                landed = urlparse(page.url)
+                assert landed.path == "/library"
+                assert parse_qs(landed.query) == {
+                    "lens": ["all"],
+                    "preparation": [run_id],
+                }
+                expect(
+                    page.get_by_role("heading", name="Choose libraries")
+                ).to_have_count(0)
                 heading = page.get_by_role("heading", name="Preparing libraries")
                 expect(heading).to_be_focused()
                 expect(page.locator(".preparation-run-state")).to_have_text(
@@ -7287,83 +7275,27 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                         page.get_by_role("button", name="Back to works")
                     ).to_be_visible()
                     expect(page.locator(".library-work-row").first).to_be_enabled()
-                if not reduced:
-                    presentation_state["value"] = "running"
-                    page.goto(setup_url)
-                    page.get_by_role("button", name="Kick off preparation").click()
-                    handoff = page.get_by_role("link", name="Open workspace")
-                    expect(handoff).to_have_attribute(
-                        "href",
-                        re.compile(r"preparation=preparation_run_[0-9a-f]{64}"),
-                    )
-                    page.eval_on_selector(
-                        "a.workspace-handoff",
-                        "element => { element.addEventListener('click', event => event.preventDefault(), {once:true}); element.click() }",
-                    )
-                    page.evaluate(
-                        "() => { const event = new Event('pageswap'); Object.defineProperty(event, 'viewTransition', {value:{ready:Promise.resolve(),finished:Promise.reject(new Error('synthetic rejected transition'))}}); dispatchEvent(event) }"
-                    )
-                    page.wait_for_function(
-                        "document.querySelector('#setup-handoff-motion').disabled"
-                    )
-                    page.eval_on_selector(
-                        "a.workspace-handoff",
-                        "element => { element.addEventListener('click', event => event.preventDefault(), {once:true}); element.click() }",
-                    )
-                    page.wait_for_timeout(2100)
-                    assert page.url == setup_url
-                    assert page.locator("#setup-handoff-motion").evaluate(
-                        "element => element.disabled"
-                    )
-                    presentation_state["value"] = "completed_clean"
-                    page.get_by_role(
-                        "heading", name="Preparation is complete"
-                    ).wait_for()
-                    requests_after_terminal = preparation_requests["count"]
-                    presentation_state["value"] = None
-                    page.get_by_role(
-                        "heading", name="Preparation is no longer available"
-                    ).wait_for(timeout=7000)
-                    assert preparation_requests["count"] == requests_after_terminal + 1
-                    expect(handoff).to_have_attribute("href", "/library?lens=all")
-                    expect(page.get_by_text("Reconnecting", exact=False)).to_have_count(
-                        0
-                    )
-                    requests_after_null = preparation_requests["count"]
-                    page.wait_for_timeout(1600)
-                    assert preparation_requests["count"] == requests_after_null
-                else:
-                    presentation_state["value"] = None
-                    page.goto(setup_url)
-                    page.get_by_role("button", name="Kick off preparation").click()
-                    handoff = page.get_by_role("link", name="Open workspace")
-                    page.get_by_role(
-                        "heading", name="Preparation is no longer available"
-                    ).wait_for()
-                    expect(handoff).to_have_attribute("href", "/library?lens=all")
-                    expect(page.get_by_text("Reconnecting", exact=False)).to_have_count(
-                        0
-                    )
-                    requests_after_initial_null = preparation_requests["count"]
-                    page.wait_for_timeout(1600)
-                    assert preparation_requests["count"] == requests_after_initial_null
-                    presentation_state["value"] = "dismissed"
-                    page.goto(setup_url)
-                    page.get_by_role("button", name="Kick off preparation").click()
-                    handoff = page.get_by_role("link", name="Open workspace")
-                    page.get_by_role(
-                        "heading", name="Preparation was dismissed"
-                    ).wait_for()
-                    expect(
-                        page.get_by_text("Open the ordinary workspace.")
-                    ).to_be_visible()
-                    expect(handoff).to_have_attribute("href", "/library?lens=all")
-                    requests_after_legacy_dismissal = preparation_requests["count"]
-                    page.wait_for_timeout(1600)
-                    assert (
-                        preparation_requests["count"] == requests_after_legacy_dismissal
-                    )
+                # Without a run to open, Start opens Library on its own.
+                presentation_state["value"] = None
+                page.goto(setup_url)
+                # The normal landing logged nothing; the refusal below is
+                # injected, so its one failed-resource line is expected.
                 assert console_errors == []
+                page.unroute("**/api/v1/review-preparation")
+                page.route(
+                    "**/api/v1/review-preparation",
+                    lambda route: route.fulfill(
+                        status=503, json={"error": "unavailable"}
+                    ),
+                )
+                page.get_by_role("button", name="Start").click()
+                page.wait_for_url(re.compile(r"/library\?lens=all$"))
+                assert parse_qs(urlparse(page.url).query) == {"lens": ["all"]}
+                page.unroute("**/api/v1/review-preparation")
+                assert len(console_errors) <= 1
+                assert all(
+                    "503 (Service Unavailable)" in error for error in console_errors
+                ), console_errors
                 assert page_errors == []
                 setup_client.close()
                 context.close()
@@ -7398,12 +7330,12 @@ def test_first_owner_claim_requires_the_deployment_claim_token() -> None:
                 page.goto(origin)
                 set_root_text(page, "200%")
                 expect(
-                    page.get_by_role("heading", name="Create your owner password")
+                    page.get_by_role("heading", name="Create your password")
                 ).to_be_visible()
                 claim_token = page.get_by_label("Setup claim token", exact=True)
                 page.get_by_label("Owner password", exact=True).fill(_PASSWORD)
                 page.get_by_label("Confirm owner password", exact=True).fill(_PASSWORD)
-                page.get_by_role("button", name="Create owner access").click()
+                page.get_by_role("button", name="Create your password").click()
                 refusal = page.get_by_role("alert")
                 expect(refusal).to_contain_text(
                     "That setup claim token was not accepted"
@@ -7442,14 +7374,14 @@ def test_first_owner_claim_requires_the_deployment_claim_token() -> None:
                     page.get_by_label("Confirm owner password", exact=True).fill(
                         _PASSWORD
                     )
-                    page.get_by_role("button", name="Create owner access").click()
+                    page.get_by_role("button", name="Create your password").click()
                     expect(refusal).to_contain_text(
                         "That setup claim token was not accepted"
                     )
                     assert_refusal_in_reach(height)
                 assert token_file.exists()
                 claim_token.fill(token)
-                page.get_by_role("button", name="Create owner access").click()
+                page.get_by_role("button", name="Create your password").click()
                 expect(
                     page.get_by_role("heading", name="Connect Audiobookshelf")
                 ).to_be_visible()
@@ -7493,41 +7425,53 @@ def test_a_short_owner_password_is_refused_on_its_own_field() -> None:
                 confirmation = page.get_by_label("Confirm owner password", exact=True)
                 claim_token = page.get_by_label("Setup claim token", exact=True)
                 expect(page.locator("#setup-password-rules")).to_contain_text(
-                    "At least 12 characters. Any characters are allowed, including spaces."
+                    "At least 12 characters."
                 )
-                expect(confirmation).to_have_attribute(
-                    "aria-describedby", "setup-password-match"
-                )
+                # The match rule is gone (#1516); Confirm owner password has
+                # no hint of its own until a mismatch is refused on it.
+                assert confirmation.get_attribute("aria-describedby") is None
                 expect(password).to_have_attribute(
                     "aria-describedby", "setup-password-rules"
                 )
                 follows = """selector => document.querySelector(selector)
                   .previousElementSibling
                   .contains(document.querySelector('input[name=password]'))"""
+                follows_confirmation = """selector => document.querySelector(selector)
+                  .previousElementSibling
+                  .contains(document.querySelector('input[name=confirmation]'))"""
                 # The rules follow the password field, not the claim token.
                 assert page.evaluate(follows, "#setup-password-rules")
+                length_rule = page.locator("#setup-password-rules li").first
+                expect(length_rule).to_have_text("At least 12 characters.")
                 claim_token.fill(token)
                 for short in ("a" * 11, "é" * 11, "\U0001f600" * 11):
                     password.fill(short)
                     confirmation.fill(short)
-                    page.get_by_role("button", name="Create owner access").click()
-                    alert = page.get_by_role("alert")
-                    expect(alert).to_have_text("Use at least 12 characters.")
+                    page.get_by_role("button", name="Create your password").click()
+                    # The rule it breaks becomes the refusal, said once: no
+                    # second sentence is added under the field (#1516).
+                    expect(length_rule).to_have_class("rule-refused")
+                    expect(page.get_by_role("alert")).to_have_count(0)
                     expect(password).to_have_attribute("aria-invalid", "true")
                     expect(password).to_have_attribute(
-                        "aria-describedby", "setup-error setup-password-rules"
+                        "aria-describedby", "setup-password-rules"
                     )
                     page.evaluate("() => new Promise(requestAnimationFrame)")
                     expect(password).to_be_focused()
                     assert claim_token.get_attribute("aria-invalid") is None
-                    assert page.evaluate(follows, "#setup-error")
+                    assert page.evaluate(follows, "#setup-password-rules")
+                    assert length_rule.evaluate(
+                        "element => getComputedStyle(element).color"
+                    ) != page.locator("#setup-password-rules li").nth(1).evaluate(
+                        "element => getComputedStyle(element).color"
+                    )
                     assert page.evaluate(
                         "document.documentElement.scrollWidth <= window.innerWidth"
                     )
                 # Over the byte ceiling is refused in place too, in its own words.
                 password.fill("a" * 1_025)
                 confirmation.fill("a" * 1_025)
-                page.get_by_role("button", name="Create owner access").click()
+                page.get_by_role("button", name="Create your password").click()
                 expect(page.get_by_role("alert")).to_have_text(
                     "That password is too long. Use a shorter one."
                 )
@@ -7535,6 +7479,18 @@ def test_a_short_owner_password_is_refused_on_its_own_field() -> None:
                 assert "/api/setup/session" not in requests
                 password.fill(_PASSWORD)
                 expect(page.get_by_role("alert")).to_be_empty()
+                # A mismatch is still refused, on the confirmation.
+                confirmation.fill(_PASSWORD + "x")
+                page.get_by_role("button", name="Create your password").click()
+                expect(page.get_by_role("alert")).to_have_text(
+                    "The two passwords do not match. Retype the confirmation."
+                )
+                expect(confirmation).to_have_attribute("aria-invalid", "true")
+                expect(confirmation).to_have_attribute(
+                    "aria-describedby", "setup-error"
+                )
+                assert page.evaluate(follows_confirmation, "#setup-error")
+                assert "/api/setup/session" not in requests
                 confirmation.fill(_PASSWORD)
 
                 # A refusal from the server itself spends the nonce: the page
@@ -7546,17 +7502,15 @@ def test_a_short_owner_password_is_refused_on_its_own_field() -> None:
 
                 page.route("**/api/setup/session", shorten)
                 claims_before = requests.count("/api/setup/claim")
-                page.get_by_role("button", name="Create owner access").click()
-                expect(page.get_by_role("alert")).to_contain_text(
-                    "Use at least 12 characters"
-                )
+                page.get_by_role("button", name="Create your password").click()
+                expect(length_rule).to_have_class("rule-refused")
+                expect(page.get_by_role("alert")).to_have_count(0)
                 expect(password).to_have_attribute("aria-invalid", "true")
                 assert claim_token.get_attribute("aria-invalid") is None
                 assert requests.count("/api/setup/claim") == claims_before + 1
-                assert page.evaluate(follows, "#setup-error")
                 assert token_file.exists()
                 page.unroute("**/api/setup/session", shorten)
-                page.get_by_role("button", name="Create owner access").click()
+                page.get_by_role("button", name="Create your password").click()
                 expect(
                     page.get_by_role("heading", name="Connect Audiobookshelf")
                 ).to_be_visible()
@@ -7610,6 +7564,26 @@ class _FakeAudiobookshelf(BaseHTTPRequestHandler):
         return
 
 
+def _found_mounts(root: Path) -> tuple[BootstrapMount, ...]:
+    """Read-only mounts for both fake libraries, so setup finds their folders."""
+    (root / "reading").mkdir()
+    (root / "listening").mkdir()
+    return (
+        BootstrapMount(
+            name="reading",
+            container_path=str(root / "reading"),
+            service_path="/srv/reading",
+            read_only=True,
+        ),
+        BootstrapMount(
+            name="listening",
+            container_path=str(root / "listening"),
+            service_path="/srv/listening",
+            read_only=True,
+        ),
+    )
+
+
 @contextmanager
 def _fake_audiobookshelf() -> Iterator[str]:
     server = ThreadingHTTPServer(("127.0.0.1", 0), _FakeAudiobookshelf)
@@ -7629,7 +7603,7 @@ def _claim_real_setup(page: Page, origin: str, token: str) -> None:
     page.get_by_label("Setup claim token", exact=True).fill(token)
     page.get_by_label("Owner password", exact=True).fill(_PASSWORD)
     page.get_by_label("Confirm owner password", exact=True).fill(_PASSWORD)
-    page.get_by_role("button", name="Create owner access").click()
+    page.get_by_role("button", name="Create your password").click()
     expect(page.get_by_role("heading", name="Connect Audiobookshelf")).to_be_visible()
 
 
@@ -7696,7 +7670,8 @@ def test_setup_connection_failures_name_the_address_and_remedy() -> None:
                     (
                         service + "/abs-subpath",
                         _FAKE_AUDIOBOOKSHELF_KEY,
-                        "Enter only the scheme, host and port Audiobookshelf serves on",
+                        "Enter only the address and port, such as "
+                        "http://192.168.1.10:13378",
                         endpoint,
                     ),
                     (
@@ -7708,9 +7683,9 @@ def test_setup_connection_failures_name_the_address_and_remedy() -> None:
                     (
                         "https://audiobookshelf.invalid:13378",
                         _FAKE_AUDIOBOOKSHELF_KEY,
-                        "This deployment could not find "
-                        "https://audiobookshelf.invalid:13378: that name does not "
-                        "resolve here.",
+                        "Mechanical Librarian could not find "
+                        "https://audiobookshelf.invalid:13378. Check the address for "
+                        "a typing error, or use its IP address.",
                         endpoint,
                     ),
                     (
@@ -7762,20 +7737,35 @@ def test_setup_connection_failures_name_the_address_and_remedy() -> None:
 
                 submit.click()
                 expect(
-                    page.get_by_role("heading", name="Choose metadata providers")
+                    page.get_by_role("heading", name="Choose libraries")
                 ).to_be_visible()
                 expect(page.locator(".confirmation")).to_have_text(
                     f"Connected to Audiobookshelf at {service}."
                 )
                 assert _FAKE_AUDIOBOOKSHELF_KEY not in page.content()
+                # Every book library starts ticked, under its own name.
+                for name in ("Reading Shelf", "Listening Room"):
+                    expect(page.get_by_role("checkbox", name=name)).to_be_checked()
+                expect(
+                    page.get_by_role("button", name=re.compile("^Change name"))
+                ).to_have_count(0)
+                page.get_by_role("button", name="Continue").click()
+
+                # Both folders are found from the reported paths, so the folder
+                # step is skipped and said in one line.
+                expect(
+                    page.get_by_role("heading", name="Choose metadata sources")
+                ).to_be_visible()
+                confirmation = page.locator(".confirmation")
+                expect(confirmation).to_have_text(
+                    "Found the files for Reading Shelf and Listening Room."
+                )
+                assert "/srv/" not in confirmation.inner_text()
+                expect(
+                    page.locator("#setup-ledger").get_by_text("Find library folders")
+                ).to_have_count(0)
                 books = page.get_by_role("group", name="Books and ebooks")
                 audiobooks = page.get_by_role("group", name="Audiobooks")
-                expect(books).to_have_accessible_description(
-                    "Suggested for Reading Shelf"
-                )
-                expect(audiobooks).to_have_accessible_description(
-                    "Suggested for Reading Shelf, Listening Room"
-                )
                 assert page.locator("fieldset legend").all_inner_texts() == [
                     "Books and ebooks",
                     "Audiobooks",
@@ -7785,9 +7775,10 @@ def test_setup_connection_failures_name_the_address_and_remedy() -> None:
                 expect(audiobooks.get_by_role("checkbox", name="iTunes")).to_have_count(
                     0
                 )
-                assert page.locator("input[type=checkbox]:checked").count() == 0
+                # A library not marked audiobooks-only ticks every source.
+                expect(page.locator("input[type=checkbox]:checked")).to_have_count(8)
                 open_library = page.locator(".option", has_text="Open Library")
-                expect(open_library).to_contain_text("No account or key.")
+                expect(open_library).to_contain_text("No account needed.")
                 expect(open_library.locator("a")).to_have_count(0)
                 access = page.locator("a.provider-access")
                 expect(access).to_have_count(2)
@@ -7809,54 +7800,97 @@ def test_setup_connection_failures_name_the_address_and_remedy() -> None:
                     ), width
                 set_root_text(page, "")
                 page.set_viewport_size({"width": 375, "height": 812})
-                page.get_by_role("button", name="Skip providers").click()
-
+                # Every default-ticked source can be unticked before Continue.
+                # Untick one at a time: the ticked list shrinks as it goes.
+                ticked = page.locator("input[type=checkbox]:checked")
+                while ticked.count():
+                    ticked.first.uncheck()
                 expect(
-                    page.get_by_role("heading", name="Choose libraries")
-                ).to_be_visible()
-                expect(page.locator(".confirmation")).to_contain_text(
-                    "No providers recorded."
-                )
-                for name in ("Reading Shelf", "Listening Room"):
-                    expect(
-                        page.get_by_role("button", name=f"Change name of {name}")
-                    ).to_have_count(1)
-                    page.get_by_role("checkbox", name=name).check()
-                page.get_by_role("button", name="Change name of Listening Room").click()
-                rename = page.get_by_label("New name for Listening Room", exact=True)
-                expect(rename).to_be_focused()
-                # A name another library carries is refused on that field.
-                rename.fill("reading shelf")
-                page.get_by_role("button", name="Continue").click()
-                expect(page.get_by_role("alert")).to_have_text(
-                    "That name is already used by another library. Choose a "
-                    "different name for this one."
-                )
-                expect(rename).to_be_focused()
-                expect(rename).to_have_attribute("aria-invalid", "true")
-                rename.fill("Listening Room")
-                page.get_by_role("button", name="Continue").click()
-
-                expect(
-                    page.get_by_role("heading", name="Check read-only mounts")
-                ).to_be_visible()
-                expect(page.locator(".confirmation")).to_have_text(
-                    "Libraries recorded: Reading Shelf, Listening Room."
-                )
-                page.get_by_role("button", name="Check mounts").click()
-                expect(
-                    page.get_by_role(
-                        "heading", name="Choose an optional cover reviewer"
+                    page.get_by_role("status").filter(
+                        has_text="most ebooks will wait for your review"
                     )
                 ).to_be_visible()
-                confirmation = page.locator(".confirmation")
-                expect(confirmation).to_contain_text(
-                    "Reading Shelf: found /srv/reading on read-only mount reading"
+                page.get_by_role("button", name="Continue").click()
+                expect(
+                    page.get_by_role("heading", name="Cover reviewer (optional)")
+                ).to_be_visible()
+                assert errors == []
+            browser.close()
+
+
+def test_setup_checks_folders_and_asks_only_for_the_one_not_found() -> None:
+    """#1516: Continue on the libraries step checks each folder from the paths
+    Audiobookshelf reports; only the library whose folder is not mounted is
+    asked about, and Check again finds it once the volume exists."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        (root / "reading").mkdir()
+        listening = root / "listening"
+        mounts = (
+            BootstrapMount(
+                name="reading",
+                container_path=str(root / "reading"),
+                service_path="/srv/reading",
+                read_only=True,
+            ),
+            BootstrapMount(
+                name="listening",
+                container_path=str(listening),
+                service_path="/srv/listening",
+                read_only=True,
+            ),
+        )
+        with (
+            real_setup_server(root, mounts=mounts) as (origin, token_file, _cert),
+            _fake_audiobookshelf() as service,
+            sync_playwright() as playwright,
+        ):
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True, viewport={"width": 390, "height": 844}
+            )
+            with _closing_context(context):
+                page = context.new_page()
+                errors: list[str] = []
+                page.on("pageerror", partial(_record_page_error, errors))
+                _claim_real_setup(page, origin, token_file.read_text().strip())
+                page.get_by_label("Audiobookshelf address", exact=True).fill(service)
+                page.get_by_label("Audiobookshelf API key", exact=True).fill(
+                    _FAKE_AUDIOBOOKSHELF_KEY
                 )
-                expect(confirmation).to_contain_text(
-                    "Listening Room: found /srv/listening on read-only mount listening"
+                page.get_by_role("button", name="Verify and continue").click()
+                page.get_by_role("heading", name="Choose libraries").wait_for()
+                page.get_by_role("button", name="Continue").click()
+
+                expect(
+                    page.get_by_role("heading", name="Find library folders")
+                ).to_be_visible()
+                folder = page.get_by_label("Listening Room folder in Audiobookshelf")
+                expect(folder).to_have_value("/srv/listening")
+                expect(
+                    page.get_by_label("Reading Shelf folder in Audiobookshelf")
+                ).to_have_count(0)
+                line = page.locator(".mount-line")
+                expect(line).to_have_count(1)
+                expect(line).to_contain_text("Listening Room: Not found")
+                expect(
+                    line.get_by_role(
+                        "link", name="Media mounts in the deployment guide"
+                    )
+                ).to_have_attribute("rel", "noreferrer")
+                assert page.evaluate(
+                    "document.documentElement.scrollWidth <= innerWidth"
                 )
-                assert "file" not in confirmation.inner_text()
+
+                # The volume appears; nothing restarts.
+                listening.mkdir()
+                page.get_by_role("button", name="Check again").click()
+                expect(
+                    page.get_by_role("heading", name="Choose metadata sources")
+                ).to_be_visible()
+                expect(page.locator(".confirmation")).to_have_text(
+                    "Found the files for Reading Shelf and Listening Room."
+                )
                 assert errors == []
             browser.close()
 
@@ -7942,8 +7976,13 @@ def test_setup_mark_steps_and_provider_names_hold_in_dark_and_enlarged_text() ->
     list (#1491, #1508); and at 200% text on a wide screen, root or browser
     font, the step list never holds a focused button off screen (#1491)."""
     with tempfile.TemporaryDirectory() as directory:
+        mounts = _found_mounts(Path(directory))
         with (
-            real_setup_server(Path(directory)) as (origin, token_file, _cert),
+            real_setup_server(Path(directory), mounts=mounts) as (
+                origin,
+                token_file,
+                _cert,
+            ),
             _fake_audiobookshelf() as service,
             sync_playwright() as playwright,
         ):
@@ -7959,8 +7998,10 @@ def test_setup_mark_steps_and_provider_names_hold_in_dark_and_enlarged_text() ->
                     _FAKE_AUDIOBOOKSHELF_KEY
                 )
                 page.get_by_role("button", name="Verify and continue").click()
+                page.get_by_role("heading", name="Choose libraries").wait_for()
+                page.get_by_role("button", name="Continue").click()
                 expect(
-                    page.get_by_role("heading", name="Choose metadata providers")
+                    page.get_by_role("heading", name="Choose metadata sources")
                 ).to_be_visible()
                 expect(page.locator(".ledger-row button")).not_to_have_count(0)
                 failures = []
@@ -8069,7 +8110,7 @@ def test_setup_change_in_another_tab_is_named() -> None:
                 )
                 first.get_by_role("button", name="Verify and continue").click()
                 expect(
-                    first.get_by_role("heading", name="Choose metadata providers")
+                    first.get_by_role("heading", name="Choose libraries")
                 ).to_be_visible()
                 assert errors == []
             browser.close()
@@ -8383,6 +8424,9 @@ def test_sign_in_and_setup_paint_the_saved_or_system_theme_first() -> None:
             browser.close()
 
 
+_LONG_LIBRARY = ("A very long library name " + "wrapped " * 12).strip()
+
+
 def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -8420,18 +8464,8 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                             status=403, json={"detail": {"error": "claim_token"}}
                         )
                         return
-                    stage["value"] = "providers"
-                    route.fulfill(json={"csrf_token": "c" * 32, "expires_at": 3_601})
-                    return
-                if path == "/api/setup/providers" and method == "POST":
                     stage["value"] = "libraries"
-                    route.fulfill(
-                        json={
-                            "completed_steps": ["claim", "connect", "providers"],
-                            "next_step": "libraries",
-                            "revision": 4,
-                        }
-                    )
+                    route.fulfill(json={"csrf_token": "c" * 32, "expires_at": 3_601})
                     return
                 if path == "/api/setup/libraries" and method == "GET":
                     route.fulfill(
@@ -8446,9 +8480,7 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                                 },
                                 {
                                     "library_id": "long",
-                                    "name": (
-                                        "A very long library name " + "wrapped " * 12
-                                    ).strip(),
+                                    "name": _LONG_LIBRARY,
                                     "media_kind": "book",
                                     "service_path": "/library/long",
                                     "service_path_state": "available",
@@ -8470,52 +8502,23 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                     )
                     return
                 if path == "/api/setup/libraries" and method == "POST":
+                    # Two folders are not found from the reported paths.
                     stage["value"] = "mounts"
-                    route.fulfill(
-                        json={
-                            "completed_steps": [
-                                "claim",
-                                "connect",
-                                "providers",
-                                "libraries",
-                            ],
-                            "next_step": "mounts",
-                            "revision": 5,
-                        }
-                    )
+                    route.fulfill(json={"revision": 4})
                     return
                 if path == "/api/setup/mounts":
                     compared["count"] += 1
                     if compared["count"] == 1:
-                        # UX-008: the first comparison finds no mapping, so the
+                        # UX-008: the first check still finds nothing, so the
                         # step stays open and must keep what the owner typed.
-                        route.fulfill(
-                            json={
-                                "completed_steps": [
-                                    "claim",
-                                    "connect",
-                                    "providers",
-                                    "libraries",
-                                ],
-                                "next_step": "mounts",
-                                "revision": 5,
-                            }
-                        )
+                        route.fulfill(json={"revision": 4})
                         return
+                    stage["value"] = "providers"
+                    route.fulfill(json={"revision": 5})
+                    return
+                if path == "/api/setup/providers" and method == "POST":
                     stage["value"] = "reviewer"
-                    route.fulfill(
-                        json={
-                            "completed_steps": [
-                                "claim",
-                                "connect",
-                                "providers",
-                                "libraries",
-                                "mounts",
-                            ],
-                            "next_step": "reviewer",
-                            "revision": 6,
-                        }
-                    )
+                    route.fulfill(json={"revision": 6})
                     return
                 if path == "/api/setup/reviewer-access":
                     route.fulfill(
@@ -8542,20 +8545,7 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                         "outcome": "skipped",
                     }
                     stage["value"] = "kick_off"
-                    route.fulfill(
-                        json={
-                            "completed_steps": [
-                                "claim",
-                                "connect",
-                                "providers",
-                                "libraries",
-                                "mounts",
-                                "reviewer",
-                            ],
-                            "next_step": "kick_off",
-                            "revision": 7,
-                        }
-                    )
+                    route.fulfill(json={"revision": 7})
                     return
                 if path == "/api/setup/kick-off":
                     stage["value"] = "active"
@@ -8569,29 +8559,25 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                     return
                 if path == "/api/setup/state":
                     value = stage["value"]
-                    selected = value in {"mounts", "reviewer", "kick_off"}
+                    order = [
+                        "claim",
+                        "connect",
+                        "libraries",
+                        "mounts",
+                        "providers",
+                        "reviewer",
+                    ]
+                    done = order.index(value) if value in order else len(order)
+                    found = value not in {"libraries", "mounts"}
                     route.fulfill(
                         json={
                             "csrf_token": "c" * 32,
-                            "completed_steps": ["claim", "connect"]
-                            if value == "providers"
-                            else ["claim", "connect", "providers"]
-                            if value == "libraries"
-                            else ["claim", "connect", "providers", "libraries"]
-                            if value == "mounts"
-                            else [
-                                "claim",
-                                "connect",
-                                "providers",
-                                "libraries",
-                                "mounts",
-                            ]
-                            + (["reviewer"] if value in {"kick_off", "active"} else []),
+                            "completed_steps": order[:done],
                             "next_step": value,
                             "revision": {
-                                "providers": 3,
-                                "libraries": 4,
-                                "mounts": 5,
+                                "libraries": 3,
+                                "mounts": 4,
+                                "providers": 5,
                                 "reviewer": 6,
                                 "kick_off": 7,
                             }.get(value, 7),
@@ -8601,40 +8587,46 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                             },
                             "providers": [],
                             "libraries": (
-                                [
+                                []
+                                if value == "libraries"
+                                else [
                                     {
                                         "name": "books",
                                         "library_id": "books",
                                         "media_kind": "book",
-                                        "display_name": "My Reading Shelf",
+                                        "display_name": "Books",
                                         "provider_connections": [],
                                     },
                                     {
-                                        "name": "long",
+                                        "name": "a-very-long-library-name",
                                         "library_id": "long",
                                         "media_kind": "book",
-                                        "display_name": (
-                                            "A very long library name "
-                                            + "wrapped " * 12
-                                        ).strip(),
+                                        "display_name": _LONG_LIBRARY,
+                                        "provider_connections": [],
+                                    },
+                                    {
+                                        "name": "books-2",
+                                        "library_id": "books-collision",
+                                        "media_kind": "book",
+                                        "display_name": "Books!",
                                         "provider_connections": [],
                                     },
                                 ]
-                                if selected
-                                else []
                             ),
                             "mounts": (
-                                [
-                                    {"library": "books", "state": "matched"},
-                                    {"library": "long", "state": "matched"},
-                                ]
-                                if value in {"reviewer", "kick_off"}
+                                []
+                                if value == "libraries"
                                 else [
-                                    {"library": "books", "state": "missing"},
-                                    {"library": "long", "state": "missing"},
+                                    {
+                                        "library": "books",
+                                        "state": "matched" if found else "missing",
+                                    },
+                                    {
+                                        "library": "a-very-long-library-name",
+                                        "state": "matched" if found else "ambiguous",
+                                    },
+                                    {"library": "books-2", "state": "matched"},
                                 ]
-                                if value == "mounts" and compared["count"]
-                                else []
                             ),
                         }
                     )
@@ -8699,7 +8691,7 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                 )
                 page.goto(origin)
                 expect(
-                    page.get_by_role("heading", name="Create your owner password")
+                    page.get_by_role("heading", name="Create your password")
                 ).to_be_visible()
                 for color in color_schemes:
                     page.emulate_media(color_scheme=color)
@@ -8708,25 +8700,17 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                         assert page.evaluate(
                             "document.documentElement.scrollWidth <= window.innerWidth"
                         )
+                # Setup opens on the step itself, with no checklist before it.
                 expect(
                     page.get_by_role("heading", name="Before you start")
-                ).to_be_visible()
-                expect(
-                    page.get_by_text(
-                        "Bare Compose without this prepared bootstrap is not supported",
-                        exact=False,
-                    )
-                ).to_be_visible()
+                ).to_have_count(0)
+                expect(page.locator(".prerequisites")).to_have_count(0)
+                expect(page.locator("#setup-ledger li")).to_have_count(6)
                 expect(
                     page.get_by_text("At least 12 characters", exact=False)
                 ).to_be_visible()
-                # This listener terminates TLS itself, so the claim step states
-                # the browser-trusted mode rather than the clear-text one.
-                expect(
-                    page.get_by_text(
-                        "https that your browser already trusts", exact=False
-                    )
-                ).to_be_visible()
+                # This listener terminates TLS itself, so no clear-text notice.
+                expect(page.get_by_text("plain HTTP", exact=False)).to_have_count(0)
                 password = page.get_by_label("Owner password", exact=True)
                 reveal = page.get_by_role("button", name="Show the owner password")
                 expect(reveal).to_have_attribute("aria-pressed", "false")
@@ -8743,13 +8727,13 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                 assert password.get_attribute("type") == "password"
                 # UX-001: the refusal names the field it belongs to and clears.
                 page.evaluate(_LATE_FRAMES_ON_FOCUS, "input[name=password]")
-                page.get_by_role("button", name="Create owner access").click()
+                page.get_by_role("button", name="Create your password").click()
                 alert = page.get_by_role("alert")
                 expect(alert).to_be_visible()
                 confirmation = page.get_by_label("Confirm owner password", exact=True)
                 expect(confirmation).to_have_attribute("aria-invalid", "true")
                 expect(confirmation).to_have_attribute(
-                    "aria-describedby", "setup-error setup-password-match"
+                    "aria-describedby", "setup-error"
                 )
                 expect(confirmation).to_be_focused()
                 assert alert.get_attribute("id") == "setup-error"
@@ -8764,7 +8748,7 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                 # since that refusal, runs only once the password takes focus, as
                 # a slow frame would, and must not take focus back from it.
                 password.fill("")
-                page.get_by_role("button", name="Create owner access").click()
+                page.get_by_role("button", name="Create your password").click()
                 expect(password).to_have_attribute("aria-invalid", "true")
                 assert confirmation.get_attribute("aria-invalid") is None
                 # Error focus settles on the next frame; filling another field
@@ -8777,8 +8761,8 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                 expect(password).to_have_attribute(
                     "aria-describedby", "setup-error setup-password-rules"
                 )
-                expect(confirmation).to_have_attribute(
-                    "aria-describedby", "setup-password-match"
+                expect(confirmation).not_to_have_attribute(
+                    "aria-describedby", re.compile(r".*")
                 )
                 password.fill(_PASSWORD)
                 expect(alert).to_be_empty()
@@ -8788,34 +8772,170 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                 # field, with a fresh nonce and every typed value kept.
                 claim_token = page.get_by_label("Setup claim token", exact=True)
                 expect(
-                    page.get_by_text("from the container log", exact=False)
+                    page.get_by_text("in the container log", exact=False)
+                ).to_be_visible()
+                expect(
+                    page.locator("code.command", has_text="docker compose logs")
                 ).to_be_visible()
                 claim_token.fill("mistyped-token")
-                page.get_by_role("button", name="Create owner access").click()
+                page.get_by_role("button", name="Create your password").click()
                 expect(alert).to_contain_text("That setup claim token was not accepted")
                 expect(claim_token).to_have_attribute("aria-invalid", "true")
                 expect(claim_token).to_be_focused()
                 assert password.input_value() == _PASSWORD
                 assert confirmation.input_value() == _PASSWORD
                 claim_token.fill(f"  {_CLAIM_TOKEN} ")
-                page.get_by_role("button", name="Create owner access").click()
+                page.get_by_role("button", name="Create your password").click()
                 expect(
-                    page.get_by_role("heading", name="Choose metadata providers")
+                    page.get_by_role("heading", name="Choose libraries")
                 ).to_be_visible()
                 assert claims == [
                     (nonces[0], "mistyped-token"),
                     (nonces[1], _CLAIM_TOKEN),
                 ]
-                # Open Library needs only a contact email, so it has no
-                # account link; the two keyed providers keep theirs (#1287).
                 expect(
-                    page.get_by_role("link", name="Get Open Library access")
+                    page.get_by_text(
+                        "Podcast libraries aren\u2019t supported, so they\u2019re not shown."
+                    )
+                ).to_be_visible()
+                # Every book library starts ticked and keeps its own name.
+                for name in ("Books", "Books!", _LONG_LIBRARY):
+                    expect(
+                        page.get_by_role("checkbox", name=name, exact=True)
+                    ).to_be_checked()
+                expect(
+                    page.get_by_role("button", name=re.compile(r"^Change name"))
+                ).to_have_count(0)
+                selected_libraries: list[dict[str, object]] = []
+
+                def record_library_selection(request) -> None:
+                    if (
+                        request.method == "POST"
+                        and urlparse(request.url).path == "/api/setup/libraries"
+                    ):
+                        selected_libraries.extend(request.post_data_json["libraries"])
+
+                page.on("request", record_library_selection)
+                set_root_text(page, "200%")
+                assert page.evaluate(
+                    "document.documentElement.scrollWidth <= window.innerWidth"
+                )
+                set_root_text(page, "")
+                page.get_by_role("button", name="Continue").click()
+                expect(
+                    page.get_by_role("heading", name="Find library folders")
+                ).to_be_visible()
+                selected_by_id = {
+                    item["library_id"]: item for item in selected_libraries
+                }
+                assert selected_by_id["books"]["name"] == "books"
+                assert selected_by_id["books-collision"]["name"] == "books-2"
+                assert all("display_name" not in item for item in selected_libraries)
+                # Only the libraries whose folder was not found are asked about,
+                # each by its Audiobookshelf name.
+                books_path = page.get_by_label("Books folder in Audiobookshelf")
+                expect(books_path).to_be_visible()
+                expect(
+                    page.get_by_label("Books! folder in Audiobookshelf")
+                ).to_have_count(0)
+                expect(
+                    page.get_by_label(
+                        re.compile(
+                            r"^A very long library name.* folder in Audiobookshelf$"
+                        )
+                    )
+                ).to_be_visible()
+                expect(
+                    page.get_by_label(re.compile(r"^a-very-long-library-name"))
+                ).to_have_count(0)
+                expect(
+                    page.locator("#setup-ledger").get_by_text("Find library folders")
+                ).to_be_visible()
+                for color in color_schemes:
+                    page.emulate_media(color_scheme=color)
+                    for width, height in protected_viewports:
+                        page.set_viewport_size({"width": width, "height": height})
+                        expect(
+                            page.get_by_role("button", name="Check again")
+                        ).to_be_visible()
+                        assert page.evaluate(
+                            "document.documentElement.scrollWidth <= window.innerWidth"
+                        )
+                # The stacking breakpoint is stated in rem, so 200% browser
+                # text moves it and the step card keeps a usable width at
+                # every protected viewport instead of collapsing beside the
+                # aside.
+                page.emulate_media(color_scheme="dark")
+                set_root_text(page, "200%")
+                for width, height in protected_viewports:
+                    page.set_viewport_size({"width": width, "height": height})
+                    assert page.evaluate(
+                        "document.documentElement.scrollWidth <= window.innerWidth"
+                    )
+                    card = page.evaluate(
+                        "document.querySelector('.step-card')"
+                        ".getBoundingClientRect().width"
+                    )
+                    assert card >= width * 0.55, (width, card)
+                page.set_viewport_size({"width": 1440, "height": 900})
+                set_root_text(page, "")
+                expect(books_path).to_have_value("/library/books")
+                lines = page.locator(".mount-line")
+                expect(lines).to_have_count(2)
+                expect(lines.first).to_contain_text("Books: Not found")
+                expect(lines.first).to_contain_text(
+                    "Add it to the container as a read-only volume, then check again."
+                )
+                expect(
+                    lines.first.get_by_role(
+                        "link", name="Media mounts in the deployment guide"
+                    )
+                ).to_be_visible()
+                expect(lines.nth(1)).to_contain_text(
+                    "More than one read-only volume matches"
+                )
+                assert "missing" not in page.locator("#setup-main").inner_text()
+                books_path.fill("/owner/typed/books")
+                page.get_by_role("button", name="Check again").click()
+                deadline = time.monotonic() + 10
+                while compared["count"] == 0 and time.monotonic() < deadline:
+                    page.wait_for_timeout(50)
+                assert compared["count"] == 1
+                # The page's CSP refuses eval, so wait with a locator.
+                expect(page.locator("#setup-main")).to_have_attribute(
+                    "aria-busy", "false"
+                )
+                expect(
+                    page.get_by_label("Books folder in Audiobookshelf")
+                ).to_have_value("/owner/typed/books")
+                for width, height in ((1440, 900), (320, 800)):
+                    page.set_viewport_size({"width": width, "height": height})
+                    assert page.evaluate(
+                        "document.documentElement.scrollWidth <= window.innerWidth"
+                    )
+                page.set_viewport_size({"width": 1440, "height": 900})
+                page.get_by_role("button", name="Check again").click()
+                expect(
+                    page.get_by_role("heading", name="Choose metadata sources")
+                ).to_be_visible()
+                expect(page.locator(".confirmation")).to_contain_text(
+                    "Found the files for Books"
+                )
+                expect(
+                    page.locator("#setup-ledger").get_by_text("Find library folders")
+                ).to_have_count(0)
+                # Open Library needs only an email, so it has no account link;
+                # the two keyed sources keep theirs (#1287).
+                expect(
+                    page.locator(".option", has_text="Open Library").locator("a")
                 ).to_have_count(0)
                 expect(
                     page.locator(".option", has_text="Open Library")
-                ).to_contain_text("Needs only a contact email")
+                ).to_contain_text("Needs your email address. No account needed.")
+                # Each source that suits these libraries starts ticked.
+                expect(page.locator("input[type=checkbox]:checked")).to_have_count(8)
                 for provider in ("Hardcover", "Google Books"):
-                    access = page.get_by_role("link", name=f"Get {provider} access")
+                    access = page.get_by_role("link", name=f"Get a {provider} key")
                     expect(access).to_be_visible()
                     expect(access).to_have_class(re.compile(r"\bprovider-access\b"))
                     assert (
@@ -8843,7 +8963,7 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                 for provider in ("Audible", "Audnexus", "AudioSilo", "iTunes"):
                     expect(page.get_by_role("checkbox", name=provider)).to_be_visible()
                     assert (
-                        page.get_by_role("link", name=f"Get {provider} access").count()
+                        page.get_by_role("link", name=f"Get a {provider} key").count()
                         == 0
                     )
                 assert page.evaluate(
@@ -8857,18 +8977,11 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                     for width, height in protected_viewports:
                         page.set_viewport_size({"width": width, "height": height})
                         expect(
-                            page.get_by_role("link", name="Get Hardcover access")
+                            page.get_by_role("link", name="Get a Hardcover key")
                         ).to_be_visible()
                         assert page.evaluate(
                             "document.documentElement.scrollWidth <= window.innerWidth"
                         )
-                expect(
-                    page.get_by_text(
-                        "Book editions, ISBNs, publication dates and cover images.",
-                        exact=False,
-                    )
-                ).to_be_visible()
-                page.get_by_role("checkbox", name="Hardcover").check()
                 expect(
                     page.get_by_label("Hardcover API key", exact=True)
                 ).to_be_visible()
@@ -8890,161 +9003,40 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                 set_root_text(page, "")
                 page.set_viewport_size({"width": 1440, "height": 900})
                 expect(
-                    page.get_by_text(
-                        "Cover evidence from Audible stays off until you turn it on "
-                        "in Settings.",
-                        exact=False,
-                    )
-                ).to_be_visible()
+                    page.get_by_text("stays off until you turn it on", exact=False)
+                ).to_have_count(0)
                 assert page.get_by_label("API key", exact=True).count() == 0
-                page.get_by_role("button", name="Skip providers").click()
-                expect(
-                    page.get_by_text("1 unsupported podcast library excluded.")
-                ).to_be_visible()
-                page.get_by_role("checkbox", name="Books", exact=True).check()
-                page.get_by_role("checkbox", name="Books!").check()
-                page.get_by_role(
-                    "checkbox", name="A very long library name", exact=False
-                ).check()
-                expect(
-                    page.get_by_label("New name for Books", exact=True)
-                ).to_be_hidden()
-                page.get_by_role(
-                    "button", name="Change name of Books", exact=True
-                ).click()
-                display_name = page.get_by_label("New name for Books", exact=True)
-                expect(display_name).to_be_visible()
-                expect(display_name).to_have_value("Books")
-                display_name.fill("My Reading Shelf")
-                selected_libraries: list[dict[str, object]] = []
-
-                def record_library_selection(request) -> None:
-                    if (
-                        request.method == "POST"
-                        and urlparse(request.url).path == "/api/setup/libraries"
-                    ):
-                        selected_libraries.extend(request.post_data_json["libraries"])
-
-                page.on("request", record_library_selection)
-                set_root_text(page, "200%")
-                assert page.evaluate(
-                    "document.documentElement.scrollWidth <= window.innerWidth"
-                )
-                set_root_text(page, "")
+                # Untick one at a time: the ticked list shrinks as it goes.
+                ticked = page.locator("input[type=checkbox]:checked")
+                while ticked.count():
+                    ticked.first.uncheck()
                 page.get_by_role("button", name="Continue").click()
                 expect(
-                    page.get_by_role("heading", name="Check read-only mounts")
+                    page.get_by_role("heading", name="Cover reviewer (optional)")
                 ).to_be_visible()
-                selected_by_id = {
-                    item["library_id"]: item for item in selected_libraries
-                }
-                assert selected_by_id["books"]["name"] == "books"
-                assert selected_by_id["books"]["display_name"] == "My Reading Shelf"
-                assert selected_by_id["books-collision"]["name"] == "books-2"
-                assert selected_by_id["books-collision"]["display_name"] == "Books!"
-                # The mounts step and the kickoff summary must name a renamed
-                # library the same way: its recorded local display name.
-                expect(
-                    page.get_by_label("My Reading Shelf service path")
-                ).to_be_visible()
-                assert page.get_by_label("Books service path").count() == 0
-                expect(
-                    page.get_by_label(
-                        re.compile(r"^A very long library name.* service path$")
-                    )
-                ).to_be_visible()
-                expect(
-                    page.get_by_label(re.compile(r"^a-very-long-library-name"))
-                ).to_have_count(0)
-                for color in color_schemes:
-                    page.emulate_media(color_scheme=color)
-                    for width, height in protected_viewports:
-                        page.set_viewport_size({"width": width, "height": height})
-                        expect(
-                            page.get_by_role("button", name="Check mounts")
-                        ).to_be_visible()
-                        assert page.evaluate(
-                            "document.documentElement.scrollWidth <= window.innerWidth"
-                        )
-                page.emulate_media(color_scheme="dark")
-                page.set_viewport_size({"width": 320, "height": 800})
-                set_root_text(page, "200%")
-                assert page.evaluate(
-                    "document.documentElement.scrollWidth <= window.innerWidth"
+                # The recommended model is chosen; the others wait.
+                expect(page.get_by_text("GPT-6 Luna: ", exact=False)).to_contain_text(
+                    "per 1,000 works"
                 )
-                # The stacking breakpoint is stated in rem, so 200% browser
-                # text moves it and the step card keeps a usable width at
-                # every protected viewport instead of collapsing beside the
-                # aside.
-                set_root_text(page, "200%")
-                for width, height in protected_viewports:
-                    page.set_viewport_size({"width": width, "height": height})
-                    assert page.evaluate(
-                        "document.documentElement.scrollWidth <= window.innerWidth"
-                    )
-                    card = page.evaluate(
-                        "document.querySelector('.step-card')"
-                        ".getBoundingClientRect().width"
-                    )
-                    assert card >= width * 0.55, (width, card)
-                page.set_viewport_size({"width": 1440, "height": 900})
-                set_root_text(page, "")
-                for field in page.get_by_label("service path", exact=False).all():
-                    expect(field).not_to_have_value("")
-                expect(
-                    page.get_by_text("the path inside that service", exact=False)
-                ).to_be_visible()
-                books_path = page.get_by_label("My Reading Shelf service path")
-                books_path.fill("/owner/typed/books")
-                page.get_by_role("button", name="Check mounts").click()
-                retest = page.get_by_role("button", name="Retest mounts")
-                expect(retest).to_be_visible()
-                expect(
-                    page.get_by_label("My Reading Shelf service path")
-                ).to_have_value("/owner/typed/books")
-                results = page.get_by_role("status").first
-                expect(results).to_contain_text("My Reading Shelf: No mapping")
-                expect(results).to_contain_text(
-                    "Correct the Audiobookshelf service path and compare again"
+                page.get_by_role("button", name="Choose another model").click()
+                page.get_by_role("button", name="Use GPT-6 Luna (Paid)").click()
+                expect(page.get_by_label("Model ID", exact=True)).to_have_value(
+                    "openai/gpt-6-luna"
                 )
-                assert "missing" not in results.inner_text()
-                assert (
-                    results.locator("p.mount-line-attention").count()
-                    == results.locator("p").count()
-                )
-                for width, height in ((1440, 900), (320, 800)):
-                    page.set_viewport_size({"width": width, "height": height})
-                    assert page.evaluate(
-                        "document.documentElement.scrollWidth <= window.innerWidth"
-                    )
-                retest.click()
-                for label, model in (("GPT-6 Luna", "openai/gpt-6-luna"),):
-                    page.get_by_role("button", name=f"Use {label} ({model})").click()
-                    expect(page.get_by_label("Model ID", exact=True)).to_have_value(
-                        model
-                    )
-                    expect(page.get_by_label("Model ID", exact=True)).to_be_focused()
+                expect(page.get_by_label("Model ID", exact=True)).to_be_focused()
                 # Data use and limits are reference detail, read on demand (#1287).
                 caveat = page.get_by_text(
                     "Cover requests go only to OpenRouter providers", exact=False
                 )
                 expect(caveat).to_be_hidden()
-                page.get_by_text("OpenRouter limits, data use and key sharing").click()
-                expect(
-                    page.get_by_text(
-                        "Cover requests go only to OpenRouter providers", exact=False
-                    )
-                ).to_be_visible()
-                page.get_by_role("button", name="Continue without a reviewer").click()
-                expect(
-                    page.get_by_role("heading", name="Kick off preparation")
-                ).to_be_visible()
+                page.get_by_text("Prices and data use", exact=True).click()
+                expect(caveat).to_be_visible()
+                page.get_by_role("button", name="Skip for now").click()
+                expect(page.get_by_role("heading", name="Start")).to_be_visible()
                 summary = page.locator(".summary")
                 expect(summary).to_be_visible()
                 expect(summary).to_contain_text("https://library.invalid")
-                expect(summary).to_contain_text(
-                    "My Reading Shelf \u2014 read-only mount matched"
-                )
+                expect(summary).to_contain_text("Books: files found")
                 expect(summary).to_contain_text("No reviewer")
                 summary_text = summary.inner_text()
                 assert "None" in summary_text
@@ -9056,12 +9048,14 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                 )
                 for action in (
                     "Change Connect Audiobookshelf",
-                    "Change Choose metadata providers",
                     "Change Choose libraries",
-                    "Change Check read-only mounts",
-                    "Change Choose reviewer",
+                    "Change Choose metadata sources",
+                    "Change Cover reviewer (optional)",
                 ):
                     expect(page.get_by_role("button", name=action)).to_be_visible()
+                expect(
+                    page.get_by_role("button", name="Change Find library folders")
+                ).to_have_count(0)
                 # The summary value keeps a floor at 200% text, and the Change
                 # control moves onto its own row instead of starving it.
                 set_root_text(page, "200%")
@@ -9082,11 +9076,16 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                 set_root_text(page, "")
                 for action in (
                     "Change the Audiobookshelf address",
-                    "Change the metadata providers",
                     "Change the selected libraries",
+                    "Change the metadata sources",
                     "Change the cover reviewer",
                 ):
                     expect(page.get_by_role("button", name=action)).to_be_visible()
+                expect(
+                    page.get_by_text(
+                        "Writes stay off until you turn them on in Activity."
+                    )
+                ).to_be_visible()
                 for color in color_schemes:
                     page.emulate_media(color_scheme=color)
                     for width, height in protected_viewports:
@@ -9095,45 +9094,13 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                             "document.documentElement.scrollWidth <= window.innerWidth"
                         )
                 page.set_viewport_size({"width": 1440, "height": 900})
-                page.get_by_role("button", name="Kick off preparation").click()
-                expect(page.locator(".summary")).to_have_count(0)
-                expect(
-                    page.get_by_role("heading", name="Now preparing")
-                ).to_be_visible()
-                # Nothing to prepare for once preparation has started.
-                expect(
-                    page.get_by_role("heading", name="Before you start")
-                ).not_to_be_visible()
-                expect(page.get_by_text("Private setup book 0")).to_be_visible()
-                expect(page.get_by_text("2 more are being prepared.")).to_be_visible()
-                expect(
-                    page.get_by_role("heading", name="How many books made it this far?")
-                ).to_be_visible()
-                expect(page.get_by_text("1.2 books/min")).to_be_visible()
-                expect(page.get_by_text("Recently ready · Prepared")).to_be_visible()
-                for width, height in ((1440, 900), (390, 844)):
-                    page.set_viewport_size({"width": width, "height": height})
-                    assert page.evaluate(
-                        "document.documentElement.scrollWidth <= window.innerWidth"
-                    )
-                handoff = page.get_by_role("link", name="Open workspace")
-                expect(handoff).to_be_visible()
-                expect(handoff).to_have_class(re.compile(r"\bprimary\b"))
-                assert "transform" in handoff.evaluate(
-                    "element => getComputedStyle(element).transitionProperty"
-                )
-                page.emulate_media(reduced_motion="reduce")
-                assert (
-                    handoff.evaluate(
-                        "element => getComputedStyle(element).transitionDuration"
-                    )
-                    == "0s"
-                )
-                expect(
-                    page.get_by_text(
-                        "Writes stay off until you turn them on in Activity."
-                    )
-                ).to_be_visible()
+                # Start opens Library on the run, with no progress page between.
+                page.get_by_role("button", name="Start").click()
+                page.wait_for_url(re.compile(r"/library\?.*preparation="))
+                assert parse_qs(urlparse(page.url).query) == {
+                    "lens": ["all"],
+                    "preparation": ["preparation_run_" + "a" * 64],
+                }
                 assert not errors
             browser.close()
 
@@ -12874,15 +12841,15 @@ def test_packaged_description_cost_in_settings_and_cover_only_setup(width: int) 
                     else:
                         route.fulfill(
                             json={
-                                "schema_version": "setup-state-v4",
+                                "schema_version": "setup-state-v5",
                                 "revision": 6,
                                 "csrf_token": "synthetic-csrf",
                                 "completed_steps": [
                                     "claim",
                                     "connect",
-                                    "providers",
                                     "libraries",
                                     "mounts",
+                                    "providers",
                                 ],
                                 "connection": {
                                     "endpoint": "https://example.invalid",
@@ -12901,16 +12868,13 @@ def test_packaged_description_cost_in_settings_and_cover_only_setup(width: int) 
                     _setup_asset_server(certificate, key, port) as origin,
                 ):
                     page.goto(origin)
+                    # The recommended model's cover cost, counted in works.
                     expect(
-                        page.get_by_text(
-                            "About $0.6364 per 1,000 cover review requests (estimate)."
-                        )
+                        page.get_by_text("about $0.6364 per 1,000 works.", exact=False)
                     ).to_be_visible()
                     expect(
-                        page.get_by_text(
-                            "Optional description advice is configured separately in Settings → Reviewer after setup."
-                        )
-                    ).to_be_visible()
+                        page.get_by_text("Optional description advice", exact=False)
+                    ).to_have_count(0)
                     expect(page.get_by_text("$0.1713", exact=False)).to_have_count(0)
                     assert page.evaluate(
                         "document.documentElement.scrollWidth <= innerWidth"
