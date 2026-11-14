@@ -511,6 +511,8 @@ attention reads. `cover-automatic-decision-v4` records the closed reason a
 replacement was made for and drops the `replace_if_strictly_better` option,
 which the metadata policy profile no longer offers. `owner-settings-v6` stores
 Current covers and `config-v11` admits `cover_current_protection` and
-`cover_prefer_edition`; a `config-v10` file must be rewritten by hand. Every
-earlier application database is rejected before mutation and needs a clean
-rebuild; no adoption is supplied.
+`cover_prefer_edition`; a `config-v10` file must be rewritten by hand.
+`cover-consideration-v8` admits a `larger_copy` candidate, a larger original of
+the current cover's own picture that the stage took. Every earlier application
+database is rejected before mutation and needs a clean rebuild; no adoption is
+supplied.

@@ -53,6 +53,7 @@ from mechanical_librarian.application.cover_policy import (
     _load_object,
     _observation_document_rows,
     adjudicate_cover_policy,
+    larger_copy_source,
     read_cover_policy_report,
 )
 from mechanical_librarian.application.cover_policy import (
@@ -94,7 +95,7 @@ from mechanical_librarian.domain.proposal_set import (
 )
 from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 
-SCHEMA_VERSION = "cover-consideration-v7"
+SCHEMA_VERSION = "cover-consideration-v8"
 _IDENTITY_ELIGIBLE = frozenset({"verified_manifestation_match", "verified_work_match"})
 CoverConsiderationCurrentness = Literal["current", "refresh_required", "inactive"]
 _CONSIDERATION_FIELDS = frozenset(
@@ -275,6 +276,95 @@ def _retained_candidate(
         "selectable": True,
         "source_kinds": [CoverSourceKind.RETAINED.value],
         "state": "available",
+        "transport_sha256": artifact.preview_digest,
+        "width": artifact.width,
+    }
+
+
+def _larger_copy_references(
+    report: MetadataReport, packet_candidates: list[dict[str, object]]
+) -> tuple[str, ...]:
+    source = larger_copy_source(report, packet_candidates)
+    return (
+        ()
+        if source is None
+        else (cover_source_reference(report.report_id, source.source_id),)
+    )
+
+
+def _larger_copy_candidate(
+    report: MetadataReport,
+    packet_candidates: list[dict[str, object]],
+    identity_rows: Mapping[str, dict[str, object]],
+    policy: Mapping[str, object],
+    unadmitted: bool,
+) -> dict[str, object] | None:
+    """The larger copy of the current cover, when the stage chose it.
+
+    The packet reviews one image per picture, so a larger original of the
+    current cover's own picture is never a packet candidate. The policy
+    offers it to the stage only to cure an undersized or soft current cover,
+    and lists it as acceptable only when the stage chose it; it is then a
+    card of its own. It carries the current cover's confirmed identity, since
+    it shows the same picture (#1363, Codex P2).
+    """
+    source = larger_copy_source(report, packet_candidates)
+    if source is None:
+        return None
+    reference = cover_source_reference(report.report_id, source.source_id)
+    stage = cast("Mapping[str, object]", policy["stage"])
+    acceptable = cast("list[str]", policy["acceptable_candidate_references"])
+    if stage["choice"] != reference or reference not in acceptable:
+        return None
+    incumbent = next(c for c in packet_candidates if c["incumbent"] is True)
+    identity_row = identity_rows[cast("str", incumbent["reference"])]
+    if identity_row["outcome"] not in _IDENTITY_ELIGIBLE:
+        raise CoverConsiderationError("incumbent_binding")
+    artifact = cast("CoverArtifact", source.artifact)
+    selectable = not unadmitted and policy.get("owner_ready") is True
+    rank_key = CoverElectionCandidate(
+        reference=reference,
+        identity=str(identity_row["outcome"]),
+        identity_citations=tuple(
+            cast("list[str]", identity_row["evidence_references"])
+        ),
+        source_citations=(reference,),
+        incumbent=False,
+        width=artifact.width,
+        height=artifact.height,
+        packet_ordinal=len(packet_candidates),
+    ).rank_key
+    return {
+        "artifact_id": artifact.artifact_id,
+        "candidate_kind": "larger_copy",
+        "height": artifact.height,
+        "identity": identity_row,
+        "deterministic_citations": list(
+            dict.fromkeys(
+                [*cast("list[str]", identity_row["evidence_references"]), reference]
+            )
+        ),
+        "deterministic_rank": acceptable.index(reference) + 1,
+        "deterministic_rank_key": list(rank_key),
+        "incumbent": False,
+        "match_state": {
+            "verified_manifestation_match": "same_edition",
+            "verified_work_match": "same_book",
+        }[str(identity_row["outcome"])],
+        "observation": None,
+        "ordinal": len(packet_candidates),
+        "original_sha256": artifact.original_digest,
+        "preview_sha256": artifact.preview_digest,
+        "reference": reference,
+        "selectable": selectable,
+        "source_kinds": [source.kind.value],
+        "state": (
+            "excluded"
+            if not selectable
+            else "recommended"
+            if reference == policy["recommended_candidate_reference"]
+            else "acceptable"
+        ),
         "transport_sha256": artifact.preview_digest,
         "width": artifact.width,
     }
@@ -501,7 +591,12 @@ def _validated_candidates(
                 identity_document=identity_document,
                 observation_document=observation_document,
                 observation_taxonomy_reference=observation_taxonomy_reference,
-                candidate_references=references,
+                # A larger copy of the current cover is the one stage
+                # candidate outside the packet (#1363, Codex P2).
+                candidate_references=(
+                    *references,
+                    *_larger_copy_references(report, packet_candidates),
+                ),
             )
             expected_candidates = CoverConsiderationService._candidates(
                 report,
@@ -1927,7 +2022,10 @@ class CoverConsiderationService:
                     "width": artifact.width,
                 }
             )
-        return result
+        larger = _larger_copy_candidate(
+            report, packet["candidates"], identity_rows, policy, unadmitted
+        )
+        return result if larger is None else [*result, larger]
 
     @staticmethod
     def _omissions(
@@ -2287,6 +2385,14 @@ def _cover_choice_contexts(
     bindings = {
         item["reference"]: item["source_bindings"] for item in packet["candidates"]
     }
+    # A larger copy is the one source it names (#1363, Codex P2).
+    bindings.update(
+        {
+            item["reference"]: [{"reference": item["reference"]}]
+            for item in candidates
+            if item.get("candidate_kind") == "larger_copy"
+        }
+    )
     sources = {
         cover_source_reference(report.report_id, source.source_id): source
         for source in report.cover_sources

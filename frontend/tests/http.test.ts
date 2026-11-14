@@ -6002,6 +6002,47 @@ describe('the retained original as a cover candidate (#1363)', () => {
   })
 })
 
+describe('a larger copy of the current cover as a candidate (#1363)', () => {
+  const read = (candidate: unknown) =>
+    mapCoverConsideration(
+      coverConsideration({
+        candidates: [candidate],
+        ready: true,
+        choice_contexts: [
+          choiceContext(),
+          choiceContext({ alternative_id: 'candidate-1', selection: 'proposed' }),
+        ],
+        policy: coverPolicyReport(),
+      }) as Parameters<typeof mapCoverConsideration>[0],
+    )
+
+  it('keeps its kind beside its confirmed identity and rank', () => {
+    const [mapped] = read(coverCandidate({ candidate_kind: 'larger_copy' })).candidates
+    expect(mapped).toMatchObject({
+      candidateKind: 'larger_copy',
+      matchState: 'same_book',
+      deterministicRank: 1,
+      selectable: true,
+    })
+  })
+
+  it('refuses one with no confirmed match', () => {
+    expect(() =>
+      read(
+        coverCandidate({
+          candidate_kind: 'larger_copy',
+          identity: coverIdentity({ outcome: 'unknown' }),
+          match_state: 'match_not_confirmed',
+          selectable: false,
+          deterministic_rank: null,
+          deterministic_rank_key: null,
+          state: 'excluded',
+        }),
+      ),
+    ).toThrow(expect.objectContaining({ code: 'contradictory_cover_identity' }))
+  })
+})
+
 describe('a cover that contradicts the book (#1790)', () => {
   const unconfirmed = (
     identity: Record<string, unknown>,

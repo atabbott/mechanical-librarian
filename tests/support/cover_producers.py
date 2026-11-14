@@ -21,6 +21,7 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverSourceState,
     cover_source_id,
 )
+from mechanical_librarian.domain.cover_rules import CoverMeasures
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -155,10 +156,13 @@ def _qualified_cover_report(
     candidate_designation: CoverDesignation = CoverDesignation.EXACT_EDITION,
     typed_timeout: bool = False,
     readable_current: bool = True,
+    shared_measures: CoverMeasures | None = None,
 ) -> tuple[MetadataReport, object]:
     """`readable_current=False` leaves the current cover unread, so it asks.
 
-    A readable current cover is kept without asking (#1310).
+    A readable current cover is kept without asking (#1310). `shared_measures`
+    gives every image the same same-art measures, so the candidate shows the
+    current cover's picture too.
     """
     incumbent_payload = _preview(incumbent_index)
     candidate_payload = _preview(candidate_index)
@@ -175,6 +179,7 @@ def _qualified_cover_report(
         incumbent_payload,
         "image/png",
         *incumbent_dimensions,
+        measures=shared_measures,
     )
     incumbent_duplicate_artifact = (
         CoverArtifact.create(
@@ -182,6 +187,7 @@ def _qualified_cover_report(
             incumbent_payload,
             "image/png",
             *incumbent_duplicate_size,
+            measures=shared_measures,
         )
         if incumbent_duplicate_size is not None
         else incumbent_artifact
@@ -191,6 +197,7 @@ def _qualified_cover_report(
         candidate_payload,
         "image/png",
         *candidate_dimensions,
+        measures=shared_measures,
     )
     incumbent = replace(
         _source(1, incumbent_payload, incumbent=True),

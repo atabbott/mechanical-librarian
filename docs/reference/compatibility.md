@@ -101,7 +101,7 @@ refused.
 | --- | --- |
 | `human-decision-v3` | An owner decision, including `owner_entered` and `withdraw` outcomes |
 | `human-decision-event-v1`, `human-decision-ack-v1` | The decision event and its acknowledgement |
-| `cover-consideration-v7` | A cover consideration, bound to its report by identity and digest and to the Book matching level it was made under; each candidate names its kind, so the original an automatic switch replaced can be put back; it stores the would-admit note, which nothing shows |
+| `cover-consideration-v8` | A cover consideration, bound to its report by identity and digest and to the Book matching level it was made under; each candidate names its kind, so the original an automatic switch replaced can be put back and a larger copy of the current cover's own picture can replace it; it stores the would-admit note, which nothing shows |
 | `cover-identity-report-v2` | Cover identity classification under one Book matching level, with the title-and-author outcome and level reasons |
 | `cover-policy-v2` | The cover policy, including when a current cover may be replaced and whether an edition's cover is preferred |
 | `cover-policy-report-v4` | Cover policy evaluation, embedding the cover identity report; owner readiness and automatic recommendation are independent, and the measured cover rules' outcome and reason are recorded |

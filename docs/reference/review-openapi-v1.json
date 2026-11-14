@@ -4141,6 +4141,7 @@
           "candidate_kind": {
             "enum": [
               "candidate",
+              "larger_copy",
               "retained"
             ],
             "title": "Candidate Kind",
@@ -4505,7 +4506,7 @@
             "title": "Reviewer Unavailable Reason"
           },
           "schema_version": {
-            "const": "cover-consideration-v7",
+            "const": "cover-consideration-v8",
             "title": "Schema Version",
             "type": "string"
           },

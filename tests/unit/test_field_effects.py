@@ -2027,7 +2027,7 @@ def test_manual_hold_requires_explicit_return_and_later_human_wins(
             ).fetchone()[0],
             "replay_digest": "8" * 64,
             "review_case_id": case.review_case_id,
-            "schema_version": "cover-consideration-v7",
+            "schema_version": "cover-consideration-v8",
             "supersedes_id": None,
         },
         separators=(",", ":"),

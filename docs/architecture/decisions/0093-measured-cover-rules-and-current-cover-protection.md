@@ -104,6 +104,16 @@ review first.
 No size difference between different arts ever replaces a readable current
 cover that has no detectable issue.
 
+The cover packet keeps one image per preview, so a larger original whose
+preview is the current cover's own is bound to the current cover rather than
+reviewed. The stage still sees it: the largest such original, when its short
+edge is longer than the current cover's and no reviewed copy of the same art is
+at least as large, is offered as one more candidate with the current cover's
+confirmed identity. It is kept only when the stage takes it for an undersized
+cover or as a sharper copy; otherwise the stage is decided without it. The
+consideration then lists it as a `larger_copy` candidate. The packet and its
+one-candidate-per-preview rule are unchanged.
+
 ### Current-cover protection
 
 One owner setting, `review.cover_current_protection`, closed to exactly three

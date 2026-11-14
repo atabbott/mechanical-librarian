@@ -492,7 +492,7 @@ def test_the_new_documents_read_back_and_each_predecessor_is_refused() -> None:
     )
     stored = cast("Any", service)._store.current[case_id]
     value = json.loads(stored)
-    assert value["schema_version"] == "cover-consideration-v7"
+    assert value["schema_version"] == "cover-consideration-v8"
     _validated_cover_consideration(stored)
 
     def refused(document: dict[str, Any]) -> None:

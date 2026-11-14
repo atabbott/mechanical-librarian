@@ -1091,7 +1091,7 @@ def _case(case_id: str) -> dict[str, object]:
                     ),
                     "reviewer_status": reviewer_status,
                     "reviewer_unavailable_reason": None,
-                    "schema_version": "cover-consideration-v7",
+                    "schema_version": "cover-consideration-v8",
                     "supersedes_id": (
                         "cover-consideration-historical"
                         if reviewer_status == "failed"

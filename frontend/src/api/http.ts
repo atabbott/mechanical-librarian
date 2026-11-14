@@ -738,8 +738,11 @@ export interface CoverObservationView {
 }
 export interface CoverCandidateView {
   artifactId: string
-  /** `retained` is the original an automatic switch replaced: Put back (#1363). */
-  candidateKind: 'candidate' | 'retained'
+  /**
+   * `retained` is the original an automatic switch replaced: Put back (#1363).
+   * `larger_copy` is a larger original of the current cover's own picture.
+   */
+  candidateKind: 'candidate' | 'larger_copy' | 'retained'
   /** Why a proposed cover cannot be chosen: a source says it belongs to a different book or edition, or names a different author or contributor (#1790). */
   contradiction?: 'book' | 'edition' | 'creator'
   deterministicCitations: readonly string[]
@@ -3100,9 +3103,12 @@ export const mapCoverConsideration = (value: CoverConsiderationDto): CoverConsid
     const matchReason = candidate.match_reason
     if (matchReason !== null && (incumbent || identity.outcome === 'conflict'))
       throw new ApiError(502, 'contradictory_cover_match_reason')
+    // A larger copy is never the current cover and always confirmed (#1363).
+    if (candidate.candidate_kind === 'larger_copy' && (incumbent || !confirmed))
+      throw new ApiError(502, 'contradictory_cover_identity')
     return {
       artifactId: candidate.artifact_id,
-      candidateKind: 'candidate',
+      candidateKind: candidate.candidate_kind,
       ...(contradiction === undefined ? {} : { contradiction }),
       deterministicCitations: candidate.deterministic_citations,
       deterministicRank,

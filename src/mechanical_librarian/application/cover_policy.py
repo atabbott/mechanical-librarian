@@ -28,6 +28,7 @@ from mechanical_librarian.domain.cover_rules import (
     CurrentCover,
     MeasuredCoverElection,
     elect_measured_covers,
+    same_art,
 )
 from mechanical_librarian.domain.deterministic_cover_election import (
     CoverActualTargetState,
@@ -302,20 +303,43 @@ def adjudicate_cover_policy(
         actual_target_state=actual_target_state,
     )
     acceptable = tuple(item.candidate.reference for item in election.ranked)
+    owner_ready = election.ready
     rule_candidates, medium, current, current_language = _measured_inputs(
         report, candidates, election_candidates
     )
-    stage = elect_measured_covers(
-        rule_candidates,
-        medium=medium,
-        current=current,
-        protection=policy.protection,
-        prefer_edition=policy.prefer_edition,
-        title_conflict=_title_conflict(report),
-        # EPUB opening evidence of omnibus membership never reaches the
-        # report, so the omnibus rule has no input yet (#1363 Q6).
-        omnibus=False,
-    )
+
+    def stage_over(
+        offered: tuple[CoverRuleCandidate, ...],
+    ) -> MeasuredCoverElection:
+        return elect_measured_covers(
+            offered,
+            medium=medium,
+            current=current,
+            protection=policy.protection,
+            prefer_edition=policy.prefer_edition,
+            title_conflict=_title_conflict(report),
+            # EPUB opening evidence of omnibus membership never reaches the
+            # report, so the omnibus rule has no input yet (#1363 Q6).
+            omnibus=False,
+        )
+
+    larger = _larger_copy(report, candidates, rule_candidates, current)
+    stage = None
+    if larger is not None:
+        # A larger original of the current cover's own picture is a stage
+        # candidate outside the reviewed packet, kept only when it cures an
+        # undersized or soft current cover (#1363, Codex P2).
+        stage = stage_over((*rule_candidates, larger))
+        if stage.choice == larger.reference and stage.reason in {
+            CoverIssue.BELOW_FLOOR,
+            CoverIssue.SHARPER_COPY,
+        }:
+            acceptable = (*acceptable, larger.reference)
+            owner_ready = not provider_fetching
+        else:
+            stage = None
+    if stage is None:
+        stage = stage_over(rule_candidates)
     fetching = bool(acceptable) and provider_fetching
     return _report(
         packet["packet_reference"],
@@ -328,7 +352,7 @@ def adjudicate_cover_policy(
         stage.choice
         if not fetching and stage.outcome.value in _CHOOSING_OUTCOMES
         else None,
-        election.ready,
+        owner_ready,
         actual_target_state.value,
         (_stage_report_reason(stage, fetching),),
         _stage_document(stage, current_language),
@@ -556,6 +580,99 @@ def _measured_inputs(
         current = CurrentCover(reference=_UNREAD_CURRENT, identity=None, readable=False)
     medium = "audiobook" if report.file.format in AUDIO_FILE_FORMATS else "ebook"
     return tuple(rule_candidates), medium, current, current_language
+
+
+def larger_copy_source(
+    report: MetadataReport, candidates: list[dict[str, object]]
+) -> CoverSource | None:
+    """The largest other original of the current cover's own preview, if larger.
+
+    The packet keeps one candidate per preview, so a provider or EPUB copy
+    showing the current cover's picture at a larger size is bound to the
+    current cover's candidate rather than reviewed on its own. It is offered
+    only when its short edge is longer than the current cover's.
+    """
+    sources = {
+        cover_source_reference(report.report_id, source.source_id): source
+        for source in report.cover_sources
+        if source.state is CoverSourceState.RETRIEVED and source.artifact is not None
+    }
+    incumbent = next((c for c in candidates if c["incumbent"] is True), None)
+    if incumbent is None:
+        return None
+    bound = [
+        sources[cast("str", binding["reference"])]
+        for binding in cast("list[dict[str, object]]", incumbent["source_bindings"])
+    ]
+    current = next(s for s in bound if s.kind is CoverSourceKind.ABS)
+    current_artifact = cast("CoverArtifact", current.artifact)
+    others = [
+        source
+        for source in bound
+        if source.kind not in {CoverSourceKind.ABS, CoverSourceKind.RETAINED}
+        and cast("CoverArtifact", source.artifact).original_digest
+        != current_artifact.original_digest
+    ]
+    if not others:
+        return None
+
+    def short_edge(source: CoverSource) -> int:
+        artifact = cast("CoverArtifact", source.artifact)
+        return min(artifact.width, artifact.height)
+
+    largest = max(
+        others,
+        key=lambda source: (
+            short_edge(source),
+            cast("CoverArtifact", source.artifact).width
+            * cast("CoverArtifact", source.artifact).height,
+            cast("CoverArtifact", source.artifact).artifact_id,
+        ),
+    )
+    if short_edge(largest) <= short_edge(current):
+        return None
+    return largest
+
+
+def _larger_copy(
+    report: MetadataReport,
+    candidates: list[dict[str, object]],
+    rule_candidates: tuple[CoverRuleCandidate, ...],
+    current: CurrentCover | None,
+) -> CoverRuleCandidate | None:
+    """The larger copy as a stage candidate, when one is worth offering.
+
+    It needs a confirmed current cover, whose identity it shares, and no
+    reviewed candidate of the same picture already at least as large.
+    """
+    source = larger_copy_source(report, candidates)
+    if source is None or current is None or current.identity is None:
+        return None
+    artifact = cast("CoverArtifact", source.artifact)
+    size = (artifact.width, artifact.height)
+    current_size = current.size
+    if current_size is not None and current.measures is not None:
+        for candidate in rule_candidates:
+            if (
+                candidate.measures is not None
+                and candidate.width * candidate.height >= size[0] * size[1]
+                and same_art(
+                    current.measures,
+                    current_size,
+                    candidate.measures,
+                    (candidate.width, candidate.height),
+                )
+            ):
+                return None
+    return CoverRuleCandidate(
+        reference=cover_source_reference(report.report_id, source.source_id),
+        identity=current.identity,
+        width=artifact.width,
+        height=artifact.height,
+        packet_ordinal=len(candidates),
+        measures=artifact.measures,
+        edition_outside_library_languages=current.edition_outside_library_languages,
+    )
 
 
 def _edition_language(report: MetadataReport, sources: list[CoverSource]) -> str | None:
@@ -1102,4 +1219,5 @@ __all__ = [
     "POLICY_SCHEMA_VERSION",
     "SCHEMA_VERSION",
     "adjudicate_cover_policy",
+    "larger_copy_source",
 ]

@@ -59,6 +59,11 @@ from mechanical_librarian.bootstrap import composition
 from mechanical_librarian.domain import cover_qualification_policy
 from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
 from mechanical_librarian.domain.cover_evidence import CoverDesignation
+from mechanical_librarian.domain.cover_rules import (
+    COLOUR_BINS,
+    LAYOUT_VALUES,
+    CoverMeasures,
+)
 from mechanical_librarian.domain.field_effect import FieldEffectOperation
 from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_policy import (
@@ -108,17 +113,29 @@ def _stage(document: str) -> dict[str, Any]:
 
 
 @contextmanager
-def _prepared(root: Path) -> Iterator[_Prepared]:
-    """Prepare one ebook whose 200x300 current cover is under the floor."""
+def _prepared(
+    root: Path,
+    *,
+    duplicate_size: tuple[int, int] | None = None,
+    candidate_size: tuple[int, int] = (3000, 4500),
+    shared_measures: CoverMeasures | None = None,
+) -> Iterator[_Prepared]:
+    """Prepare one ebook whose 200x300 current cover is under the floor.
+
+    ``duplicate_size`` adds an EPUB copy of the current cover's own picture
+    from another original at that size.
+    """
     os.chmod(root, 0o700)
     database = root / "reports.sqlite"
     repository = open_repository(database)
     report, _ = _qualified_cover_report(
         root,
         incumbent_size=(200, 300),
-        candidate_size=(3000, 4500),
+        incumbent_duplicate_size=duplicate_size,
+        candidate_size=candidate_size,
         candidate_designation=CoverDesignation.EXACT_EDITION,
         typed_timeout=True,
+        shared_measures=shared_measures,
     )
     options = dict(DEFAULT_OPTIONS)
     options["cover_order"] = "fixed_source_order"
@@ -764,3 +781,140 @@ def test_a_stage_outcome_and_a_store_full_suggestion_leak_nothing(
     for image in images:
         assert image[:16].hex() not in surfaces
         assert image[:16].decode("latin-1") not in surfaces
+
+
+def _larger_copy_case(
+    tmp_path: Path,
+    duplicate_size: tuple[int, int],
+    *,
+    candidate_size: tuple[int, int] = (250, 375),
+    shared_measures: CoverMeasures | None = None,
+) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]], str]:
+    """The stage, the candidates and the selections over a 200x300 current cover.
+
+    Beside it the EPUB shows the same picture from another original at
+    ``duplicate_size``; the one reviewed alternative is under the floor too,
+    so only a larger copy can cure the current cover.
+    """
+    with _prepared(
+        tmp_path,
+        duplicate_size=duplicate_size,
+        candidate_size=candidate_size,
+        shared_measures=shared_measures,
+    ) as prepared:
+        document = prepared.repository.current_cover_consideration_document(
+            prepared.review_case_id
+        )
+        assert document is not None
+        duplicate = next(
+            source
+            for source in prepared.report.cover_sources
+            if source.kind.value == "epub"
+        )
+        assert duplicate.artifact is not None
+        return (
+            _stage(document),
+            json.loads(document)["candidates"],
+            _selections(prepared.repository),
+            duplicate.artifact.artifact_id,
+        )
+
+
+def test_a_larger_copy_of_the_current_picture_replaces_an_undersized_cover(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Codex P2: the packet keeps one image per picture, so the 1200x1800 EPUB
+    # copy of the 200x300 current cover was bound to it and never a candidate.
+    monkeypatch.setattr(
+        cover_qualification_policy,
+        "MEASURED_REPLACEMENT_QUALIFICATION_SHA256",
+        SYNTHETIC_MEASURED_RECORD,
+    )
+    stage, candidates, selections, artifact_id = _larger_copy_case(
+        tmp_path, (1200, 1800)
+    )
+    larger = [row for row in candidates if row["candidate_kind"] == "larger_copy"]
+    assert [
+        (row["artifact_id"], row["width"], row["height"], row["state"])
+        for row in larger
+    ] == [(artifact_id, 1200, 1800, "recommended")]
+    assert larger[0]["selectable"] is True
+    assert larger[0]["ordinal"] == len(candidates) - 1
+    assert (stage["outcome"], stage["reason"], stage["choice"]) == (
+        "replace",
+        "below_floor",
+        larger[0]["reference"],
+    )
+    assert [row["kind"] for row in selections] == ["automatic"]
+    decision = CoverAutomaticDecision.from_json(selections[0]["decision_document"])
+    assert decision.artifact_id == artifact_id
+
+
+def test_without_the_larger_copy_the_undersized_cover_is_kept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Negative control: with no larger copy offered, the same case keeps the
+    # undersized cover, as before the fix.
+    from mechanical_librarian.application import cover_consideration, cover_policy
+
+    monkeypatch.setattr(cover_policy, "larger_copy_source", lambda *_args: None)
+    monkeypatch.setattr(cover_consideration, "larger_copy_source", lambda *_args: None)
+    stage, candidates, selections, _artifact = _larger_copy_case(tmp_path, (1200, 1800))
+    assert (stage["outcome"], stage["reason"], stage["choice"]) == (
+        "keep",
+        "below_floor",
+        None,
+    )
+    assert all(row["candidate_kind"] != "larger_copy" for row in candidates)
+    assert selections == []
+
+
+@pytest.mark.parametrize("duplicate_size", ((200, 300), (150, 225)))
+def test_a_copy_no_larger_than_the_current_cover_is_not_offered(
+    tmp_path: Path, duplicate_size: tuple[int, int]
+) -> None:
+    stage, candidates, selections, _artifact = _larger_copy_case(
+        tmp_path, duplicate_size
+    )
+    assert (stage["outcome"], stage["choice"]) == ("keep", None)
+    assert all(row["candidate_kind"] != "larger_copy" for row in candidates)
+    assert selections == []
+
+
+@pytest.mark.parametrize(
+    ("candidate_size", "larger_offered"),
+    (((1200, 1800), False), ((1500, 2250), False), ((1000, 1500), True)),
+)
+def test_no_larger_copy_beside_a_reviewed_copy_at_least_as_large(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    candidate_size: tuple[int, int],
+    larger_offered: bool,
+) -> None:
+    # Every image has the same measures, so the reviewed candidate is another
+    # copy of the current cover's picture. At least as large as the EPUB copy,
+    # it is the sharper copy itself and no larger copy is added; smaller, the
+    # larger copy is still offered and is the sharper one.
+    monkeypatch.setattr(
+        cover_qualification_policy,
+        "MEASURED_REPLACEMENT_QUALIFICATION_SHA256",
+        SYNTHETIC_MEASURED_RECORD,
+    )
+    stage, candidates, _selections, artifact_id = _larger_copy_case(
+        tmp_path,
+        (1200, 1800),
+        candidate_size=candidate_size,
+        shared_measures=CoverMeasures(
+            "0" * 16, "0" * 16, (1,) * COLOUR_BINS, (0,) * LAYOUT_VALUES
+        ),
+    )
+    larger = [row for row in candidates if row["candidate_kind"] == "larger_copy"]
+    chosen = next(row for row in candidates if row["reference"] == stage["choice"])
+    assert (stage["outcome"], stage["reason"]) == ("replace", "below_floor")
+    assert stage["issues"] == ["below_floor", "sharper_copy"]
+    assert (chosen["width"], chosen["height"]) == (
+        (1200, 1800) if larger_offered else candidate_size
+    )
+    assert [row["artifact_id"] for row in larger] == (
+        [artifact_id] if larger_offered else []
+    )

@@ -477,7 +477,9 @@ class _CoverCandidate(_ClosedModel):
     artifact_id: str
     # A retained candidate is the original an automatic switch replaced: the
     # owner's way back, with no identity, rank or reviewer evidence (#1363).
-    candidate_kind: Literal["candidate", "retained"]
+    # A larger copy is a larger original of the current cover's own picture,
+    # which the packet does not review on its own (#1363, Codex P2).
+    candidate_kind: Literal["candidate", "larger_copy", "retained"]
     deterministic_citations: list[str]
     deterministic_rank: int | None = Field(ge=0)
     deterministic_rank_key: list[int | str] | None = Field(min_length=7, max_length=7)
@@ -620,7 +622,7 @@ class _CoverConsiderationResponse(_ClosedModel):
     reviewer_failure_code: OpenRouterPublicFailure | None = None
     reviewer_status: Literal["completed", "failed", "unavailable"]
     reviewer_unavailable_reason: CoverUnavailableReason | None
-    schema_version: Literal["cover-consideration-v7"]
+    schema_version: Literal["cover-consideration-v8"]
     supersedes_id: str | None
     target_fingerprint: str
 

@@ -860,7 +860,7 @@ def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
         clock=lambda: case.now + 1,
     )
     assert model_free.replay_reference == (
-        "cover_replay_b28681245f31652adb6aba55ba5ed883dc560b3b03e820509842b954728dd91d"
+        "cover_replay_cdc29298562f11b3db8ddfef077093fdddc1a89222aa8a56d3404d19a12455b6"
     )
     assert (
         model_free.ensure(case_id, case.report.to_json(), case.proposal)[
@@ -903,7 +903,7 @@ def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
     assert len(dispatches) == 1
     replayed_qualified = qualified()
     assert replayed_qualified.replay_reference == (
-        "cover_replay_77faba36201bf26cf8c0cee9a0afd0a309d3132eef9ec3c20c67e8c82ef7f1cd"
+        "cover_replay_07c50a4cb35334ffb2acd44936fa6af5e1934f787caaba512603ff6ce1370d4c"
     )
     assert (
         replayed_qualified.ensure(
@@ -1018,7 +1018,7 @@ def test_stale_reviewer_binding_is_current_only_and_replays_exactly(
         "profile contract requires process_limit=32"
     )
     different_document = json.loads(case.store.current[case_id])
-    assert different_document["schema_version"] == "cover-consideration-v7"
+    assert different_document["schema_version"] == "cover-consideration-v8"
     assert different_document["reviewer_failure"] is None
     assert "reviewer_unavailable_reason" not in different_document
 

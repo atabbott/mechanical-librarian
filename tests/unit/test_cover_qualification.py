@@ -224,13 +224,43 @@ def test_a_synthetic_measured_record_admits_the_switch(tmp_path):
 
 
 def test_measured_record_never_admits_a_kept_cover(tmp_path):
+    # The 700x700 copy of the same picture is under 1.5 times the current
+    # cover's area, so it is no sharper copy and the cover is kept.
+    with audiobook_cover_environment(
+        tmp_path / "case",
+        [(600, 600), (700, 700)],
+        measured_record=SYNTHETIC_MEASURED_RECORD,
+    ) as state:
+        assert state.decisions == []
+        assert _stage(state)["outcome"] == "keep"
+        assert all(
+            row["candidate_kind"] != "larger_copy"
+            for row in state.consideration["candidates"]
+        )
+
+
+def test_a_larger_copy_of_the_same_picture_is_a_sharper_copy(tmp_path):
+    # The packet binds the decoded 1200x1200 copy to the 600x600 current
+    # cover, since their previews match; the stage still sees it (#1363).
     with audiobook_cover_environment(
         tmp_path / "case",
         [(600, 600), (1200, 1200)],
         measured_record=SYNTHETIC_MEASURED_RECORD,
     ) as state:
-        assert state.decisions == []
-        assert _stage(state)["outcome"] == "keep"
+        stage = _stage(state)
+        assert (stage["outcome"], stage["reason"]) == ("replace", "sharper_copy")
+        row = next(
+            x
+            for x in state.consideration["candidates"]
+            if x["reference"] == stage["choice"]
+        )
+        assert (row["candidate_kind"], row["width"], row["height"]) == (
+            "larger_copy",
+            1200,
+            1200,
+        )
+        assert [d.reason for d in state.decisions] == ["sharper_copy"]
+        assert state.decisions[0].candidate_reference == stage["choice"]
 
 
 def test_measured_identity_is_absent_from_every_shipped_manifest():
