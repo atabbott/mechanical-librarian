@@ -252,6 +252,59 @@ describe('Covers view (#1633)', () => {
     expect(router.state.location.search.cover).toBe('case-1')
   })
 
+  it('says why a cover that contradicts the book cannot be chosen (#1790)', async () => {
+    const user = userEvent.setup()
+    const http = coversHttp({ decide })
+    http.getCaseDetail.mockImplementation(async (id) => {
+      const value = coverDetail(id, titles[id] ?? id)
+      return {
+        ...value,
+        fields: value.fields.map((field) =>
+          field.coverConsideration
+            ? {
+                ...field,
+                coverConsideration: {
+                  ...field.coverConsideration,
+                  candidates: [
+                    ...field.coverConsideration.candidates,
+                    {
+                      ...candidate('5', false),
+                      contradiction: 'edition' as const,
+                      deterministicRank: null,
+                      deterministicRankKey: null,
+                      identity: {
+                        outcome: 'conflict',
+                        reasons: ['manifestation_publication_incompatible'],
+                      },
+                      manualEligible: false,
+                      matchState: 'match_not_confirmed' as const,
+                      ordinal: 2,
+                      selectable: false,
+                      sourceKinds: ['hardcover' as const],
+                      state: 'excluded' as const,
+                    },
+                  ],
+                },
+              }
+            : field,
+        ),
+      }
+    })
+    renderRoute('/library?lens=all&view=covers&tab=decide&cover=case-1', http)
+    const group = await screen.findByRole('radiogroup', {
+      name: 'Which cover should this book use?',
+    })
+    const card = within(group).getByRole('radio', { name: /Hardcover cover/u })
+    expect(card.querySelector('strong')).toHaveTextContent(/^Contradicts this book$/u)
+    expect(card.querySelector('.choice-recommendation')).toHaveTextContent(
+      /^A source says it belongs to a different edition, so you cannot choose it\.$/u,
+    )
+    expect(card).not.toHaveTextContent('Match not confirmed')
+    expect(card).toBeDisabled()
+    await user.click(card)
+    expect(http.recordDecision).not.toHaveBeenCalled()
+  })
+
   it('records one tap as the choice, opens the next book and counts again', async () => {
     const user = userEvent.setup()
     const http = coversHttp({ decide })
