@@ -294,6 +294,17 @@ the library box appears only when a change for the field is recorded. A notice
 never restates the reason already shown, and a decision carries no reminder
 that writes are protected. A disclosure never chooses a value.
 
+With Book matching set wider, a field that needs you may also offer values
+from source records with the book's title and author. In such a value's
+evidence, each of those sources reads "same title and author" beside its name.
+While a work is checked against a new Book matching setting, a line above its
+fields says "Checking this work against the new Book matching setting.", its
+choices are unavailable, and the case refreshes when the check ends. A choice
+sent as Book matching changed the field's offer is not recorded, and the field
+says "Not recorded: Book matching changed what this field offers. Choose
+again." History says when a field asked again because Book matching changed
+what it offers.
+
 When a field set to Automatic gets no automatic choice, the canvas says why
 until the cause goes. An unknown reason reads as unknown. A hold from an
 earlier case says an earlier decision keeps Automatic off for the field. Until

@@ -162,6 +162,14 @@ edition, and another format of the same owned item. An embedded value is not
 automatically true, and a catalogue value does not automatically apply to this
 edition.
 
+Book matching in Policy, set wider than "Confirmed matches only", also counts a
+source record with the book's title and author as the same work for the title,
+subtitle, authors, description, genres, tags, series and cover. Its values are
+offered only in fields Automatic does not decide, and they never take part in
+an automatic choice until the owner-run qualification in #1418 passes. Edition
+details always need a confirmed match
+([ADR-0096](../architecture/decisions/0096-owner-chosen-work-identity-strictness.md)).
+
 Agreement counts only between independent sources. Several metadata sources
 repeating one upstream record are one source, and so are package metadata and
 front matter from one file. Equal values become one choice after normalising.

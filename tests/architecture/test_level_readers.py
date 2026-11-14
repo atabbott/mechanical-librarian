@@ -50,6 +50,10 @@ _READERS: dict[str, str] = {
     # A retry successor keeps each carried lane's own records (AC6).
     "application/provider_retry_successor.py::"
     "GenerateProviderRetrySuccessor._merged.result": "producer",
+    # The offline ledger replay counts them per level through the seam and
+    # prints aggregates only; it is not installed (amendment 13).
+    "scripts/admission_rule_levels.py::_count_records": "offline_ledger",
+    "scripts/admission_rule_levels.py::replay_report": "offline_ledger",
 }
 
 

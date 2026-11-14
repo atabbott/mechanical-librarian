@@ -522,6 +522,7 @@ def _field(
                     }
                 ],
                 "limitations": notices or [],
+                "match_basis": None,
                 "rationale": "",
                 "recommendation": "no_recommendation",
                 "recommendation_reason": "",
@@ -539,6 +540,7 @@ def _field(
                         }
                     ],
                     "limitations": notices or [],
+                    "match_basis": None,
                     "rationale": "Open Library",
                     "recommendation": "no_recommendation",
                     "recommendation_reason": "",
@@ -551,6 +553,7 @@ def _field(
         if preservation_only is not None
         else False,
         "proposal_id": f"proposal-{destination}",
+        "offer_digest": "d" * 64,
         "target_fingerprint": "f" * 64,
         "human_decision": human_decision,
         "automatic_decision": automatic_decision,
@@ -582,6 +585,7 @@ def _case(case_id: str) -> dict[str, object]:
             "writes_consented": False,
             "review_case_id": case_id,
             "current": False,
+            "checking": False,
             "comparison_notices": [],
             "target": {
                 "connection": "primary",
@@ -1098,6 +1102,7 @@ def _case(case_id: str) -> dict[str, object]:
         "audiobook_review_scope": None,
         "media_health": [],
         "writes_consented": False,
+        "checking": False,
         "review_case_id": case_id,
         "current": True,
         "comparison_notices": [],

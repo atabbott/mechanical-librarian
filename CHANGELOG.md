@@ -248,6 +248,11 @@ brackets are GitHub issues.
   "Contradicts this book" with that reason, instead of "Match not confirmed"
   or "Same book". The Other covers gallery now counts its covers instead of
   calling them all available (#1790).
+- **Clean rebuild required.** With Book matching set wider than "Confirmed
+  matches only", a field that needs you also offers values, such as a
+  description or series, from source records with the book's title and author.
+  None is chosen automatically. Each report now keeps the records a title and
+  author search found but did not match, so they can be offered (#1355, #1780).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 

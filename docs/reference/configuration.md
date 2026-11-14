@@ -592,13 +592,22 @@ confirmed match.
 | `title_and_creator` | Same title and any author | Its title agrees and it shares at least one author |
 
 At either wider value a cover from such a record is labelled "Same title and
-author". The owner may choose it in one tap; nothing is chosen automatically
-until #1418. An author whose dotted initials are written differently ("R.F."
-for "R. F.") is not a contradiction at a wider value. The default changes
-nothing.
+author". A title, subtitle, authors, description, genres, tags or series field
+that needs you also offers values from such records, including records a title
+and author search found but did not match, with the source line "same title
+and author". A field decided automatically keeps its live offer. The owner may
+choose in one tap; nothing is chosen automatically until #1418. An author
+whose dotted initials are written differently ("R.F." for "R. F.") is not a
+contradiction at a wider value. The default changes nothing.
 
 In store mode the value lives in `owner-settings-v5.matching.work_identity`,
 and Policy → Curation saves it on its own, apart from the policy draft. A
-save writes no Activity row; it re-checks each current cover comparison made
-under another value, and a pending cover effect chosen under the old value
-closes stale. In file mode `review.work_identity` is read only in the browser.
+save writes no Activity row. It re-checks every current work under the new
+value: its cover comparison and what each field offers. Until a work is
+checked, its review says it is being checked, new choices on it are refused,
+and a change you chose shows "Waiting for check" in Activity. A choice whose
+field now offers something else no longer counts: the field asks again, and
+its pending change, like a pending cover change chosen under the old value,
+closes stale. Policy names works whose check gave up; saving again retries.
+In file mode `review.work_identity` is read only in the browser, the check
+runs when the service starts, and a restart retries.

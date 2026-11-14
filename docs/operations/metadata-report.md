@@ -546,6 +546,14 @@ A case is written with its level set, notes, offer and the level it was
 reconciled at, in one transaction. Level storage is read by no automatic
 decision, consent, planning or write path.
 
+A saved level change re-derives every current case from its stored report,
+with no request. Until a case is reconciled at the saved level,
+owner choices on it are refused and its owner work-scope effects wait. A
+choice whose field offer changed gets a valueless `matching_changed` decision,
+so the field asks again. A case whose check fails stays unreconciled and is
+counted on Policy; saving again, or in file mode a restart, retries it
+([configuration](../reference/configuration.md#book-matching)).
+
 ## After the report
 
 An ebook, or an audiobook whose report admitted a recording, goes on to a

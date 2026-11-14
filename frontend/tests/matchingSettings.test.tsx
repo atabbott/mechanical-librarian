@@ -162,18 +162,25 @@ describe('Book matching', () => {
     expect(within(scope).getByRole('button', { name: 'Save book matching' })).toBeDisabled()
   })
 
-  it('shows the check lines in file mode too (#1355, amendment 5)', async () => {
+  it.each([
+    [
+      1,
+      '1 work could not be checked against the new setting. Its changes wait until it is. Restart the Mechanical Librarian service to retry.',
+    ],
+    [
+      2,
+      '2 works could not be checked against the new setting. Their changes wait until they are. Restart the Mechanical Librarian service to retry.',
+    ],
+  ])('shows %i stuck work(s) in file mode, retried by a restart (#1355)', async (failed, line) => {
     const http = createHttp()
     http.getSettings = vi.fn(async () =>
-      withMatching(view('file'), 'title_and_creator', check(4, 0, 2)),
+      withMatching(view('file'), 'title_and_creator', check(4, 0, failed)),
     )
     renderRoute('/policy?section=curation', http)
     const scope = await region()
-    expect(
-      await within(scope).findByText(
-        '2 works could not be checked against the new setting. Their changes wait until they are. Save the setting again to retry.',
-      ),
-    ).toBeVisible()
+    expect(await within(scope).findByText(line)).toBeVisible()
+    expect(within(scope).queryByText(/Save the setting again/u)).toBeNull()
+    expect(within(scope).getByRole('button', { name: 'Save book matching' })).toBeDisabled()
     expect(
       within(scope).getByText(
         'Values from these records are offered when a field needs you, and their covers say “Same title and author”. None is chosen automatically.',
