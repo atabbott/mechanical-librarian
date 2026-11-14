@@ -21,7 +21,7 @@ import json
 import sqlite3
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
@@ -97,6 +97,9 @@ class _Library:
     admissions: list[tuple[str, str | None]]
     evaluations: list[str]
     now: list[int]
+    # Every call that would read the file, Audiobookshelf or a provider in
+    # production, by stage, once the harness has prepared its work.
+    external: list[str] = field(default_factory=list)
 
     def drain(self) -> None:
         for _ in range(32):
@@ -266,9 +269,14 @@ def _prepared(
     evaluations: list[str] = []
     admissions: list[tuple[str, str | None]] = []
 
+    external: list[str] = []
+    prepared = [False]
+
     def extract(
         repository: ReviewPipelineRepository, _: PipelineAction, __: bool
     ) -> tuple[str, bool]:
+        if prepared[0]:
+            external.append("extraction")
         cast(SQLiteMetadataReportRepository, repository).publish(report, lambda: True)
         return report.report_id, False
 
@@ -317,9 +325,10 @@ def _prepared(
         ),
         clock=lambda: now[0],
     )
-    value = _Library(root, pipeline, report, admissions, evaluations, now)
+    value = _Library(root, pipeline, report, admissions, evaluations, now, external)
     try:
         value.drain()
+        prepared[0] = True
         if automatic:
             assert root.shadow_posture() == "automatic"
             # Replaced providers carry no authors candidate to decide.

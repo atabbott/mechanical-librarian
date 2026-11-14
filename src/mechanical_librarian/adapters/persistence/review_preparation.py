@@ -153,6 +153,9 @@ _MATCHING_UNCHECKED_SQL = (
     + _MATCHING_CONSIDERATION_SQL
     + "JOIN review_preparation_work w ON w.connection_name=c.connection_name "
     "AND w.library_name=c.library_name AND w.item_id=c.item_id "
+    "JOIN current_metadata_report_lineages l ON l.connection_name=c.connection_name "
+    "AND l.library_name=c.library_name AND l.item_id=c.item_id "
+    "AND l.report_id=c.report_id "
     "WHERE c.review_case_id IS NOT NULL AND " + _MATCHING_LEVEL_SQL + "<>? "
 )
 
@@ -165,43 +168,56 @@ def request_matching_check(
 ) -> None:
     """Check current cover comparisons against Book matching (#1355).
 
-    Every current case whose comparison was made under another level is
-    checked through its item's one preparation work. A work that completed
-    the case, or whose projection gave up, is projected again (#1573), so
-    no case is retired and each projection prepares the cover comparison
-    again, reusing the stored observer output. A work that gave up at an
-    earlier stage, as a failed rescan does, is retried at that stage, and
-    its projection then prepares the comparison. Any other work that is not
-    queued or running, such as one whose row names another case or whose
-    stage went stale, is prepared again from extraction, so no current case
-    is left with nothing to retry. A work already queued or running is left
-    to finish. Every save runs this, so saving again retries whatever gave
-    up.
+    Every current case whose comparison was made under another level, and
+    whose report is still its item's current report, is checked through its
+    item's one preparation work, from stored data only: no stage that reads
+    the file, Audiobookshelf or a provider runs again. A work that completed
+    the case, or whose projection gave up, is projected again (#1573), so no
+    case is retired and the projection prepares the cover comparison again,
+    reusing the stored observer output. A work that gave up at a stored-data
+    stage (provider, proposal or admission) is retried there. Any other work
+    that is neither queued nor running, such as one that names another case,
+    went stale, or failed extraction, is bound to the current case and
+    projected again, as `_schedule_current_shadow_work` does. A work already
+    queued or running is left to finish. Every save runs this, so saving
+    again retries whatever gave up.
     """
     rows = connection.execute(
         "SELECT DISTINCT w.work_id,w.scan_id,w.stage,w.state,"
         "w.review_case_id=c.review_case_id AND w.proposal_set_id=c.proposal_set_id "
-        "AND w.report_id=c.report_id "
+        "AND w.report_id=c.report_id,c.review_case_id,c.proposal_set_id,c.report_id "
         + _MATCHING_UNCHECKED_SQL
         + "AND w.state IN ('complete','failed','stale') ORDER BY w.work_id",
         (work_identity_level,),
     ).fetchall()
     projections: list[tuple[str, str]] = []
-    for work_id, scan_id, stage, state, same_case in rows:
+    for work_id, scan_id, stage, state, same_case, case_id, proposal, report in rows:
         if same_case and (
             (stage, state) == ("complete", "complete")
             or (stage == "projection" and state in {"failed", "stale"})
         ):
             projections.append((work_id, scan_id))
-        elif state == "failed" and stage not in {"complete", "projection"}:
+        elif state == "failed" and stage in _STORED_DATA_STAGES:
             _retry_failed_stage(connection, work_id, scan_id, updated_at)
         else:
-            _prepare_again(connection, work_id, scan_id, updated_at)
+            connection.execute(
+                "UPDATE review_preparation_work SET stage='projection',state='queued',"
+                "report_id=?,proposal_set_id=?,review_case_id=?,"
+                "recovery_source_report_id=NULL,outcome=NULL,updated_at=? "
+                "WHERE work_id=?",
+                (report, proposal, case_id, updated_at, work_id),
+            )
+            projections.append((work_id, scan_id))
     requeue_projection_work(
         connection, projections, updated_at, PreparationTrigger.MATCHING_CHANGED
     )
     if rows and not projections:
         refresh_preparation_presentation(connection, updated_at)
+
+
+# The stages that read only stored data: retrying one makes no file,
+# Audiobookshelf or provider request.
+_STORED_DATA_STAGES = frozenset({"provider", "proposal", "admission"})
 
 
 def _retry_failed_stage(
@@ -211,25 +227,6 @@ def _retry_failed_stage(
         "UPDATE review_preparation_work SET state='queued',attempt=0,"
         "recovery_attempt=0,retry_not_before=0,failure_code=NULL,failure_root=NULL,"
         "updated_at=? WHERE work_id=?",
-        (updated_at, work_id),
-    )
-    connection.execute(
-        "UPDATE review_preparation_scans SET state='processing',updated_at=? "
-        "WHERE scan_id=? AND state IN ('completed','completed_with_failures')",
-        (updated_at, scan_id),
-    )
-
-
-def _prepare_again(
-    connection: sqlite3.Connection, work_id: str, scan_id: str, updated_at: int
-) -> None:
-    """Prepare a work again from extraction, as a fresh scan would."""
-    connection.execute(
-        "UPDATE review_preparation_work SET stage='extraction',state='queued',"
-        "attempt=0,recovery_attempt=0,retry_not_before=0,report_id=NULL,"
-        "recovery_source_report_id=NULL,proposal_set_id=NULL,review_case_id=NULL,"
-        "failure_code=NULL,failure_root=NULL,outcome=NULL,updated_at=? "
-        "WHERE work_id=?",
         (updated_at, work_id),
     )
     connection.execute(
@@ -249,7 +246,9 @@ def matching_check_counts(
     being checked while its item's work is queued, delayed or running, and
     otherwise could not be checked; saving the setting again retries it. A
     case whose item has no preparation work, because it left the library and
-    awaits retirement at the next scan, is not counted as either.
+    awaits retirement at the next scan, or whose report is no longer its
+    item's current report, because the next scan replaces it, is not counted
+    as either: only that scan, not a save, can bring it up to date.
     """
     current = connection.execute(
         "SELECT count(*) FROM current_review_case_lineages "

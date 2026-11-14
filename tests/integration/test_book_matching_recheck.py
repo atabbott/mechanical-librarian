@@ -302,6 +302,7 @@ def test_a_work_that_failed_before_projection_is_retried_by_saving_again(
     assert _work(library) == ("provider", "queued")
     library.now[0] = 41
     library.drain()
+    assert library.external == []
     assert matching_check_counts(connection, "title_and_creator") == (1, 0, 0)
     assert _current_level(library) == "title_and_creator"
 
@@ -309,33 +310,68 @@ def test_a_work_that_failed_before_projection_is_retried_by_saving_again(
 @pytest.mark.parametrize(
     "work",
     (
-        # A completed work whose row names another case than the current one.
+        # A completed work whose row names no case, beside a current one.
         "stage='complete',state='complete',outcome='no_case',review_case_id=NULL",
         # A rescan whose proposal went stale under it.
         "stage='proposal',state='stale',failure_code='stale',outcome=NULL,"
         "review_case_id=NULL,proposal_set_id=NULL",
+        # A rescan whose extraction failed.
+        "stage='extraction',state='failed',failure_code='failed',outcome=NULL,"
+        "review_case_id=NULL,proposal_set_id=NULL,report_id=NULL",
     ),
-    ids=("names_another_case", "stale_before_projection"),
+    ids=("names_another_case", "stale_before_projection", "extraction_failed"),
 )
-def test_a_work_neither_projection_nor_stage_retry_can_reach_is_prepared_again(
+def test_reconciliation_makes_no_external_request(
     library: _Library, level: _Level, work: str
 ) -> None:
     """A current case whose item's work cannot simply be projected again or
-    retried at its stage is prepared again from extraction, so the Policy
-    line's remedy is never a dead end (experience review)."""
+    retried at a stored-data stage is bound back to its work and projected
+    again. Nothing reads the file, Audiobookshelf or a provider (the harness
+    records any extraction; discovery raises), the case keeps its id, and
+    saving again stays a true remedy (re-review 1)."""
     connection = library.root._connection
+    case_id = library.case_id()
     connection.execute(
         "UPDATE review_preparation_work SET " + work + " WHERE item_id='item-1'"
     )
     level.value = WorkIdentityLevel.TITLE_AND_CREATOR
     _save(library, "title_and_creator", at=40)
     assert matching_check_counts(connection, "title_and_creator") == (1, 1, 0)
-    assert _work(library) == ("extraction", "queued")
+    assert _work(library) == ("projection", "queued")
     library.now[0] = 41
     library.drain()
+    assert library.external == []
+    assert library.case_id() == case_id
     assert matching_check_counts(connection, "title_and_creator") == (1, 0, 0)
     assert _current_level(library) == "title_and_creator"
     assert _work(library) == ("complete", "complete")
+
+
+def test_a_case_whose_report_is_no_longer_current_waits_for_the_next_scan(
+    library: _Library,
+) -> None:
+    """A case whose item's current report is newer awaits the next scan's
+    replacement: a save neither counts it nor touches its work."""
+    connection = library.root._connection
+    connection.execute(
+        "UPDATE review_preparation_work SET stage='extraction',state='failed',"
+        "failure_code='failed',outcome=NULL,review_case_id=NULL,"
+        "proposal_set_id=NULL,report_id=NULL WHERE item_id='item-1'"
+    )
+    # Stand in for a newer report: the lineage no longer names the case's.
+    for (trigger,) in connection.execute(
+        "SELECT name FROM sqlite_master WHERE type='trigger' "
+        "AND tbl_name='current_metadata_report_lineages'"
+    ).fetchall():
+        connection.execute(f'DROP TRIGGER "{trigger}"')
+    connection.execute("PRAGMA foreign_keys=OFF")
+    connection.execute(
+        "UPDATE current_metadata_report_lineages SET report_id='report_' || "
+        "printf('%064d', 0) WHERE item_id='item-1'"
+    )
+    _save(library, "title_and_creator", at=40)
+    assert matching_check_counts(connection, "title_and_creator") == (1, 0, 0)
+    assert _work(library) == ("extraction", "failed")
 
 
 # --- 9. The unverified-match gates -------------------------------------------
