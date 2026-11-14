@@ -36,8 +36,6 @@ from pathlib import Path
 from typing import Final, cast
 from unittest.mock import patch
 
-from mechanical_librarian.application.configuration import CONFIG_SCHEMA
-
 AUDIOBOOKSHELF_FIELD_EFFECT_SCHEMA: Final = "audiobookshelf-field-effect-v3"
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -86,6 +84,7 @@ from mechanical_librarian.adapters.persistence.review_sessions import (
     SQLiteReviewSessionRepository,
 )
 from mechanical_librarian.adapters.private_recovery import PrivateCoverRecoveryStore
+from mechanical_librarian.application.configuration import CONFIG_SCHEMA
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
