@@ -8,6 +8,7 @@ and a work whose check gave up is taken again by the next save.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Iterator
 from contextlib import AbstractContextManager
@@ -16,12 +17,12 @@ from typing import Any, cast
 
 import pytest
 
+from mechanical_librarian.adapters.persistence.metadata_reports import (
+    SQLiteMetadataReportRepository,
+)
 from mechanical_librarian.adapters.persistence.review_preparation import (
     matching_check_counts,
     request_matching_check,
-)
-from mechanical_librarian.adapters.persistence.metadata_reports import (
-    SQLiteMetadataReportRepository,
 )
 from mechanical_librarian.adapters.persistence.schema import (
     _validate_cover_selection_authorities,
@@ -34,12 +35,25 @@ from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_application import (
     prepare_cover_consideration,
 )
+from mechanical_librarian.domain.cover_evidence import CoverArtifact
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 from tests.integration.test_leaving_automatic_posture import _Library, _prepared
 from tests.unit.test_cover_packets import _preview, _source
 
 _PAYLOAD = _preview(2)
+_LISTED_PAYLOAD = _preview(7)
+_PREVIEWS = {
+    hashlib.sha256(payload).hexdigest(): payload
+    for payload in (_PAYLOAD, _LISTED_PAYLOAD)
+}
+_LISTED_ARTIFACT = CoverArtifact.create(
+    b"listed-7", _LISTED_PAYLOAD, "image/png", 400, 600
+)
+
+
+def _read_preview(artifact_id: str, _variant: str) -> bytes:
+    return _LISTED_PAYLOAD if artifact_id == _LISTED_ARTIFACT.artifact_id else _PAYLOAD
 
 
 class _Level:
@@ -55,8 +69,8 @@ def _service(
 ) -> CoverConsiderationService:
     service = CoverConsiderationService(
         repository,
-        read_preview=lambda *_: _PAYLOAD,
-        read_preview_digest=lambda _: _PAYLOAD,
+        read_preview=_read_preview,
+        read_preview_digest=lambda digest: _PREVIEWS.get(digest, _PAYLOAD),
         require_artifact=lambda _artifact: None,
         clock=lambda: now,
         work_identity_level=level,
@@ -235,7 +249,10 @@ def test_a_comparison_without_previews_is_counted_and_retried(
         level.now = library.now
         connection = library.root._connection
         consideration = json.loads(
-            cast(str, library.root.current_cover_consideration_document(_case(library)[0]))
+            cast(
+                str,
+                library.root.current_cover_consideration_document(_case(library)[0]),
+            )
         )
         assert consideration["identity_document"] is None
         assert _current_level(library) == "identifier"
@@ -280,10 +297,15 @@ def test_a_work_that_failed_before_projection_is_retried_by_saving_again(
 
 
 def _listed_case(
-    tmp_path: Path, *, automatic: bool = False
+    tmp_path: Path,
+    *,
+    automatic: bool = False,
+    cover_order: str | None = None,
+    verified: bool = False,
 ) -> AbstractContextManager[_Library]:
+    """One work whose only cover is a listed-edition record of the same title
+    and author; with `verified` the file's embedded cover joins it."""
     from mechanical_librarian.domain.cover_evidence import (
-        CoverArtifact,
         CoverContext,
         CoverContextField,
         CoverDesignation,
@@ -323,7 +345,7 @@ def _listed_case(
         cover_source_id(CoverSourceKind.HARDCOVER, "hardcover:listed:7"),
         CoverSourceKind.HARDCOVER,
         CoverSourceState.RETRIEVED,
-        CoverArtifact.create(b"listed-7", _PAYLOAD, "image/png", 400, 600),
+        _LISTED_ARTIFACT,
         provenance=CoverProvenance(
             "hardcover",
             CoverDesignation.LISTED_EDITION,
@@ -333,7 +355,11 @@ def _listed_case(
         ),
     )
     return _prepared(
-        tmp_path, automatic=automatic, covers=(listed,), providers=(book,)
+        tmp_path,
+        automatic=automatic,
+        covers=(listed, _source(2, _PAYLOAD, embedded=True)) if verified else (listed,),
+        providers=(book,),
+        cover_order=cover_order,
     )
 
 
@@ -413,14 +439,52 @@ def test_a_title_and_author_pick_needs_the_unverified_match_flag(
 # --- 10. Guard: no automatic cover from a level match ------------------------
 
 
+_COVER_ORDERS = ("fixed_source_order", "replace_if_strictly_better")
+
+
+def _automatic_covers(library: _Library) -> list[tuple[str, str]]:
+    return library.root._connection.execute(
+        "SELECT kind,json_extract(document,'$.candidate_artifact_id') "
+        "FROM cover_selection_authorities"
+    ).fetchall()
+
+
+@pytest.mark.parametrize("cover_order", _COVER_ORDERS)
+def test_the_automatic_cover_path_is_live_for_a_verified_cover(
+    tmp_path: Path, cover_order: str
+) -> None:
+    """Positive control for the guard below: in the same harness, with covers
+    automatic, the file's own embedded cover is selected automatically at a
+    title-and-author level while the listed record beside it is not."""
+    with _listed_case(
+        tmp_path, automatic=True, cover_order=cover_order, verified=True
+    ) as library:
+        case_id, _ = _case(library)
+        _compare(library, WorkIdentityLevel.TITLE_AND_CREATOR)
+        consideration = json.loads(
+            cast(str, library.root.current_cover_consideration_document(case_id))
+        )
+        outcomes = {
+            row["artifact_id"]: row["identity"]["outcome"]
+            for row in consideration["candidates"]
+        }
+        embedded = _source(2, _PAYLOAD, embedded=True).artifact
+        assert embedded is not None
+        assert outcomes.pop(embedded.artifact_id) == "verified_manifestation_match"
+        assert list(outcomes.values()) == ["title_creator_work_match"]
+        assert _automatic_covers(library) == [("automatic", embedded.artifact_id)]
+
+
+@pytest.mark.parametrize("cover_order", _COVER_ORDERS)
 @pytest.mark.parametrize("level", list(WorkIdentityLevel), ids=lambda v: v.value)
 def test_a_level_match_never_becomes_an_automatic_cover(
-    tmp_path: Path, level: WorkIdentityLevel
+    tmp_path: Path, level: WorkIdentityLevel, cover_order: str
 ) -> None:
-    """Under qualified Automatic, at every level, a cover that only a level's
-    predicate matches is never recommended, accepted or selected (ADR-0093's
-    switches and fills, ADR-0095's automatic mode)."""
-    with _listed_case(tmp_path, automatic=True) as library:
+    """Under qualified Automatic with covers automatic, under each automatic
+    cover order and at every level, a cover that only a level's predicate
+    matches is never recommended, accepted or selected (ADR-0093's switches
+    and fills). The positive control above shows the path is live."""
+    with _listed_case(tmp_path, automatic=True, cover_order=cover_order) as library:
         case_id, _ = _case(library)
         _compare(library, level)
         root = library.root
@@ -446,4 +510,3 @@ def test_a_level_match_never_becomes_an_automatic_cover(
         assert connection.execute(
             "SELECT count(*) FROM automatic_decisions WHERE destination='cover'"
         ).fetchone() == (0,)
-

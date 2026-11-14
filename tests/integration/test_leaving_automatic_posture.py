@@ -189,6 +189,7 @@ def _prepared(
     covers: tuple[CoverSource, ...] = (),
     providers: tuple[ProviderObservation, ...] | None = None,
     before_projection: Callable[[ReviewPipelineRepository, Any], None] | None = None,
+    cover_order: str | None = None,
 ) -> Iterator[_Library]:
     """One work prepared under a qualified Automatic contributor-names policy.
 
@@ -196,7 +197,8 @@ def _prepared(
     prepared there and nothing is decided automatically. `covers` become the
     report's cover sources and `providers`, when given, its providers.
     `before_projection`, when given, runs before each projection as the cover
-    stage does in production.
+    stage does in production. `cover_order`, when given, makes covers
+    automatic under that cover-order option.
     """
     database = tmp_path / "application.sqlite3"
     report = author_report(tmp_path / "media", "supported")
@@ -217,6 +219,9 @@ def _prepared(
     }
     options["contributor_names"] = "canonical"
     destinations["contributor_names"] = "automatic"
+    if cover_order is not None:
+        options["cover_order"] = cover_order
+        destinations["cover_order"] = "automatic"
     profile = MetadataPolicyProfile.create("Leave automatic", options, destinations)
     resolved = resolve_policy(profile, "ebooks")
     root.enter_shadow_preview(1, ())
@@ -307,7 +312,9 @@ def _prepared(
         propose=propose,
         admit=admit,
         project=project,
-        **({} if before_projection is None else {"before_projection": before_projection}),
+        before_projection=(
+            (lambda *_args: None) if before_projection is None else before_projection
+        ),
         clock=lambda: now[0],
     )
     value = _Library(root, pipeline, report, admissions, evaluations, now)
