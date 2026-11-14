@@ -328,9 +328,14 @@ amendment when it lands.
   `matching_changed`), and the settings view counts the works checked,
   being checked and given up; saving again retries those that gave up. A
   pending cover effect chosen under another level closes stale with
-  `matching_changed`.
-- **Lineage.** The rule names the level and the comparison (`closed` or
-  `initials_fold`), as ADR-0067 and ADR-0068 do for theirs.
+  `matching_changed`. Each comparison records its level as the top-level
+  `work_identity_level`, so one with no classified preview is counted and
+  re-checked too, and a work whose preparation gave up before projection is
+  retried at its own stage.
+- **Lineage.** A cover row records the rule `work_identity:<level>` for the
+  strictest level met, plus the reason `creator_initials_folded` only when
+  the dotted-initials fold was needed to meet it, as ADR-0067 and ADR-0068 do
+  for theirs. A record met without the fold carries no comparison reason.
 - **No authority rotation.** Live decisions are unchanged at every level, so
   no qualified authority rotates (ADR-0087). The cover classifier reference
   rotates, and the identity, policy and consideration documents move to
