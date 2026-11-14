@@ -12911,6 +12911,26 @@ def test_lane_one_carries_the_background_wake_with_the_supervisor_clock() -> Non
     assert lane_zero == []
 
 
+def test_lane_one_announces_a_library_notice_after_a_wake_that_changed_a_build() -> (
+    None
+):
+    """#1372: a scheduled or finished taste build tells an open Covers →
+    Taste profile to read again; a wake that changed nothing says nothing."""
+    results = iter([False, True, None])
+    announced: list[tuple[str, str | None]] = []
+
+    class _Pipeline(_ScheduledPipeline):
+        def attach_updates(self, announce: object) -> None:
+            return None
+
+    supervisor = ReviewPreparationSupervisor(
+        _Pipeline(), clock=lambda: 41, background_wake=lambda _now: next(results)
+    )
+    supervisor.attach_updates(lambda topic, subject: announced.append((topic, subject)))
+    assert _lane_run(supervisor, 1, 3) == 3
+    assert announced == [("library", None)]
+
+
 def test_lane_one_contains_a_background_failure_and_continues() -> None:
     wakes: list[int] = []
 

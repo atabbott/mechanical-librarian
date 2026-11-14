@@ -7,6 +7,7 @@ and the model is called with no transaction open (#1372 S9, Q7).
 
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Callable
 from typing import Protocol
@@ -36,7 +37,7 @@ _SCHEDULE_SECONDS = 60
 
 
 class CoverTasteRepository(Protocol):
-    def schedule(self, now: int, configured: bool, daily_limit: int) -> None: ...
+    def schedule(self, now: int, configured: bool, daily_limit: int) -> bool: ...
 
     def request_retry(
         self, build_id: str, now: int, daily_limit: int
@@ -78,6 +79,38 @@ class CoverTasteRetryError(RuntimeError):
     """A retry names a build that is not the latest failed one."""
 
 
+class CoverTasteRepositoryOwner(Protocol):
+    def cover_taste_store(self) -> CoverTasteRepository: ...
+
+    def close(self) -> None: ...
+
+
+class CoverTasteRepositoryLease:
+    """The background lane's repository: opened on its first wake and closed
+    once, after the lane has drained, so no runtime generation leaks one."""
+
+    def __init__(self, factory: Callable[[], CoverTasteRepositoryOwner]) -> None:
+        self._factory = factory
+        self._lock = threading.Lock()
+        self._owner: CoverTasteRepositoryOwner | None = None
+        self._closed = False
+
+    def store(self) -> CoverTasteRepository:
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("the taste repository is closed")
+            if self._owner is None:
+                self._owner = self._factory()
+            return self._owner.cover_taste_store()
+
+    def close(self) -> None:
+        with self._lock:
+            self._closed = True
+            owner, self._owner = self._owner, None
+        if owner is not None:
+            owner.close()
+
+
 class CoverTasteBuildService:
     def __init__(
         self,
@@ -113,17 +146,23 @@ class CoverTasteBuildService:
         ):
             raise CoverTasteRetryError("taste build is not retryable")
 
-    def wake(self, now: int) -> None:
-        """Schedule and run due builds; only the preparation runner calls it."""
+    def wake(self, now: int) -> bool:
+        """Schedule and run due builds; only the preparation runner calls it.
+
+        Returns whether a build was scheduled or ran, so the runner can tell an
+        open Covers → Taste profile to read again. A view that shows a build
+        in flight polls until it ends, so a build that raises needs no notice.
+        """
         repository = self._repository()
         if not self._recovered:
             # Builds run only inside `wake`, so a build still running before
             # this process's first wake was left by an earlier process.
             repository.interrupt_recovered(now)
             self._recovered = True
+        scheduled = False
         if self._scheduled_at is None or now - self._scheduled_at >= _SCHEDULE_SECONDS:
             self._scheduled_at = now
-            repository.schedule(
+            scheduled = repository.schedule(
                 now,
                 self._access.current_taste_build_model() is not None,
                 self._daily_limit,
@@ -131,6 +170,7 @@ class CoverTasteBuildService:
         build_id = repository.pending()
         if build_id is not None:
             self._run(repository, build_id)
+        return scheduled or build_id is not None
 
     def _run(self, repository: CoverTasteRepository, build_id: str) -> None:
         try:

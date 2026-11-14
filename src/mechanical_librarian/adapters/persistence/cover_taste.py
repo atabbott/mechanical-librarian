@@ -153,16 +153,21 @@ class SQLiteCoverTasteRepository(ConnectionScoped):
         return build_id
 
     @local_operation
-    def schedule(self, now: int, configured: bool, daily_limit: int) -> None:
-        """Request a cadence build when one is due (#1372 S9)."""
+    def schedule(self, now: int, configured: bool, daily_limit: int) -> bool:
+        """Request a cadence build when one is due (#1372 S9); say if one was."""
         if not configured:
-            return
+            return False
         transaction = self._transaction("taste_schedule")
         try:
             transaction.begin()
             last = self._connection.execute(
-                "SELECT state,selection_watermark FROM cover_taste_builds "
-                "ORDER BY rowid DESC LIMIT 1"
+                "SELECT state FROM cover_taste_builds ORDER BY rowid DESC LIMIT 1"
+            ).fetchone()
+            # A build that failed only because no model was chosen sent nothing,
+            # so new choices count from the last build that was not one.
+            counted = self._connection.execute(
+                "SELECT selection_watermark FROM cover_taste_builds "
+                "WHERE failure IS NOT 'unconfigured' ORDER BY rowid DESC LIMIT 1"
             ).fetchone()
             scheduled = self._connection.execute(
                 "SELECT count(*) FROM cover_taste_builds WHERE trigger='cadence' AND day=?",
@@ -172,23 +177,25 @@ class SQLiteCoverTasteRepository(ConnectionScoped):
                 scheduled >= TASTE_SCHEDULED_BUILDS_PER_DAY
             ):
                 transaction.commit()
-                return
+                return False
             total = self._connection.execute(
                 f"SELECT count(*) {_ELIGIBLE}", (TASTE_MIN_ARTS,)
             ).fetchone()[0]
             new = (
                 total
-                if last is None
+                if counted is None
                 else self._connection.execute(
                     f"SELECT count(*) {_ELIGIBLE} AND selection.rowid>?",
-                    (TASTE_MIN_ARTS, last[1]),
+                    (TASTE_MIN_ARTS, counted[0]),
                 ).fetchone()[0]
             )
-            if total >= TASTE_FIRST_BUILD_DECISIONS and (
-                last is None or new >= TASTE_REBUILD_DECISIONS
-            ):
+            due = total >= TASTE_FIRST_BUILD_DECISIONS and (
+                counted is None or new >= TASTE_REBUILD_DECISIONS
+            )
+            if due:
                 self._insert(now, "cadence", None, daily_limit)
             transaction.commit()
+            return due
         except BaseException:
             transaction.rollback()
             raise

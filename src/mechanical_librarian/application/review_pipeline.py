@@ -1473,7 +1473,8 @@ class ReviewPreparationSupervisor:
         recovery_drain: Callable[[], None] | None = None,
         recovery_resume: Callable[[], None] | None = None,
         on_stop: Callable[[], None] | None = None,
-        background_wake: Callable[[int], None] | None = None,
+        background_wake: Callable[[int], object] | None = None,
+        background_close: Callable[[], None] | None = None,
     ) -> None:
         if polling_interval_seconds is not None and (
             type(polling_interval_seconds) is not int
@@ -1493,6 +1494,10 @@ class ReviewPreparationSupervisor:
         self._recovery_drain = recovery_drain
         self._recovery_resume = recovery_resume
         self._background_wake = background_wake
+        self._background_close = background_close
+        self._announce: Callable[[str, str | None], object] = lambda _topic, _subject: (
+            None
+        )
         self._schedule_lock = threading.Lock()
         self._next_schedule_at: int | None = None
         self._schedule_paused = False
@@ -1522,6 +1527,7 @@ class ReviewPreparationSupervisor:
 
     def attach_updates(self, announce: Callable[[str, str | None], object]) -> None:
         """Bind the invalidation channel the pipeline announces stages on."""
+        self._announce = announce
         self._pipeline.attach_updates(announce)
 
     def start(self) -> None:
@@ -1666,7 +1672,13 @@ class ReviewPreparationSupervisor:
                 self._on_stop()
                 self._on_stop = None
         finally:
-            self._close_observation()
+            try:
+                # Both lanes have drained, so lane 1's resources are unused.
+                if self._background_close is not None:
+                    self._background_close()
+                    self._background_close = None
+            finally:
+                self._close_observation()
 
     def _close_observation(self) -> None:
         """Relinquish this supervisor's observation ownership at most once."""
@@ -1846,7 +1858,11 @@ class ReviewPreparationSupervisor:
                         # its own state; a failure here is contained like
                         # recovery's above and retried at the next wake.
                         try:
-                            self._background_wake(self._clock())
+                            # A wake that scheduled or ran a build changed what
+                            # Covers → Taste profile shows, and Covers reads
+                            # again on a library notice (#1372).
+                            if self._background_wake(self._clock()) is True:
+                                self._announce("library", None)
                         except Exception:  # noqa: BLE001 - see above
                             pass
                     while (

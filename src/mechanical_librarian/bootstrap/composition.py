@@ -59,9 +59,6 @@ from mechanical_librarian.adapters.persistence.batch_manifest import (
 )
 from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
-from mechanical_librarian.adapters.persistence.cover_taste import (
-    SQLiteCoverTasteRepository,
-)
 from mechanical_librarian.adapters.persistence.field_effect_activity import (
     activity_projector_event,
 )
@@ -165,7 +162,11 @@ from mechanical_librarian.application.cover_consideration import (
 )
 from mechanical_librarian.application.cover_policy import cover_policy_of
 from mechanical_librarian.application.cover_retention import CoverRetention
-from mechanical_librarian.application.cover_taste_build import CoverTasteBuildService
+from mechanical_librarian.application.cover_taste_build import (
+    CoverTasteBuildService,
+    CoverTasteRepository,
+    CoverTasteRepositoryLease,
+)
 from mechanical_librarian.application.decision_preview import preview_shadow_decision
 from mechanical_librarian.application.description_advice import (
     admit_staged_description,
@@ -1689,6 +1690,7 @@ def create_review_pipeline(
     # This composition root reads the review configuration unconditionally, so
     # an absent one is already a configuration failure before this point.
     review_configuration = cast("ReviewWebConfiguration", configuration.review)
+    taste_lease = CoverTasteRepositoryLease(observation_repository_factory)
     return ReviewPreparationSupervisor(
         pipeline,
         polling_interval_seconds=review_configuration.library_polling_interval_seconds,
@@ -1698,13 +1700,13 @@ def create_review_pipeline(
         recovery_drain=recovery_cancel.set,
         recovery_resume=recovery_cancel.clear,
         on_stop=provider_recovery.close,
-        # The lane that calls it opens its own repository on first use.
         background_wake=_compose_cover_taste(
-            lru_cache(maxsize=1)(lambda: repository_factory().cover_taste_store()),
+            taste_lease.store,
             artifact_store_path,
             review_configuration,
             reviewer_access,
         ).wake,
+        background_close=taste_lease.close,
     )
 
 
@@ -3194,7 +3196,7 @@ def _compose_reviewer_access(
 
 
 def _compose_cover_taste(
-    repository: Callable[[], SQLiteCoverTasteRepository],
+    repository: Callable[[], CoverTasteRepository],
     artifact_store_path: Path,
     review: ReviewWebConfiguration,
     reviewer_access: ReviewerAccessOperations,

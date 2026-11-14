@@ -74,8 +74,10 @@ CEILING = {
     # 3277 since #1372 wired the taste profile build service into the
     # preparation runner's background lane and both review applications, and
     # passed its daily limit to reviewer access: construction and keywords,
-    # with its artifact store opened on first read.
-    "composition.py": 3277,
+    # with its artifact store opened on first read. 3280 since its lane's
+    # repository is leased and closed when the supervisor stops (one import
+    # and two keyword lines).
+    "composition.py": 3280,
     "contained_reviewer.py": 124,
     **ENTRY_POINTS,
 }
@@ -110,8 +112,9 @@ RESIDUAL: dict[str, int | None] = {
     _C + "_metadata_provider": 98,
     # Binds adapter-typed callbacks (SQLite repositories, Audiobookshelf reader)
     # into ReviewPipelineStages; the stage logic moved to application in stage 4.
-    # 202 since #1372 passed the taste build's wake as the background lane.
-    _C + "create_review_pipeline": 202,
+    # 202 since #1372 passed the taste build's wake as the background lane;
+    # 203 since it leases that lane's repository and closes it on stop.
+    _C + "create_review_pipeline": 203,
     # Wires recovery to the built pipeline; catches an adapter error type.
     _C + "_provider_recovery_wiring": 95,
     # CLI entries: each opens its own stores and adapters for one command and

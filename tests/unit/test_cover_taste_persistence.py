@@ -319,6 +319,38 @@ def test_rebuild_waits_for_ten_new_decisions(repository) -> None:
     assert store.pending() is not None
 
 
+def test_an_unconfigured_failure_does_not_consume_the_cadence_watermark(
+    repository,
+) -> None:
+    """A build that failed only because no model was chosen sent nothing, so once
+    a model is chosen again new choices still count from the last real build."""
+    seed = _Seed(repository)
+    store = _store(repository)
+    seed.many(25)
+    store.schedule(NOW, True, LIMIT)
+    first = store.pending()
+    assert first is not None
+    store.fail(first, NOW, "unconfigured")
+    store.schedule(NOW, True, LIMIT)
+    second = store.pending()
+    assert second is not None and second != first
+    assert store.claim(second, NOW, "m/x", LIMIT) is None
+    store.succeed(second, NOW, PROFILE, RECORD)
+    seed.many(10, start=25)
+    store.schedule(NOW, True, LIMIT)
+    third = store.pending()
+    assert third is not None
+    store.fail(third, NOW, "unconfigured")
+    store.schedule(NOW, True, LIMIT)
+    assert store.pending() is not None
+    assert _state(repository) == [
+        ("cadence", "failed", "unconfigured"),
+        ("cadence", "succeeded", None),
+        ("cadence", "failed", "unconfigured"),
+        ("cadence", "requested", None),
+    ]
+
+
 def test_ceiling_counts_before_dispatch_including_failures(repository) -> None:
     seed = _Seed(repository)
     store = _store(repository)
@@ -460,6 +492,19 @@ _VALID = TasteBuildReply(
     },
     True,
 )
+
+
+def test_a_wake_says_whether_it_scheduled_or_ran_a_build(repository) -> None:
+    """#1372 K1: the runner announces only a wake that changed the build."""
+    seed = _Seed(repository)
+    seed.many(24)
+    service = _service(repository, _Client(_VALID))
+    assert service.wake(NOW) is False
+    seed.decision("item-24")
+    assert _service(repository, _Client(_VALID)).wake(NOW) is True
+    assert _state(repository) == [("cadence", "succeeded", None)]
+    assert _service(repository, _Client(_VALID)).wake(NOW) is False
+    assert _store(repository).schedule(NOW, False, LIMIT) is False
 
 
 def test_invalid_output_keeps_version_n_in_use(repository) -> None:
