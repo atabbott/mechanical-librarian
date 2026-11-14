@@ -232,9 +232,11 @@ class CoverEvidenceObserver:
         ``binding`` is the work's live retained binding (digest, plan and
         decision), read by report assembly from its own repository. The bytes
         go through the same constrained decoder as every other cover, so the
-        artifact carries current measures and oriented dimensions. A copy that
-        is gone, altered, refused or past the deadline is simply not offered:
-        the source exists only as a retrieved image (#1363, D1).
+        artifact carries current measures and oriented dimensions. An original
+        the decoder refuses is still offered, by the digest the store has just
+        verified and with no artifact or preview, so the owner can put it back
+        byte for byte (#1362). A copy that is gone, altered, timed out or past
+        the deadline is simply not offered (#1363, D1).
         """
         if (
             binding is None
@@ -246,7 +248,20 @@ class CoverEvidenceObserver:
         try:
             original = RetainedCoverStore(self._retained_root).read(digest)
             decoded = decode_cover(original, deadline=deadline.aggregate_deadline)
-        except (ValueError, CoverDecodeRejected, CoverDecodeTimeout):
+        except CoverDecodeRejected as error:
+            if error.state not in DECODER_REJECTED_STATES:
+                return ()
+            # Nothing is staged: the original stays in the retained store
+            # alone, and it has no preview to show.
+            return (
+                CoverSource(
+                    cover_source_id(CoverSourceKind.RETAINED, plan_id),
+                    CoverSourceKind.RETAINED,
+                    error.state,
+                    original_digest=digest,
+                ),
+            )
+        except (ValueError, CoverDecodeTimeout):
             return ()
         # Only its preview is staged: the original stays in the retained store
         # alone, which the guarded write reads it from (D4), so a release

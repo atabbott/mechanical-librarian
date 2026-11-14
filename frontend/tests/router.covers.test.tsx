@@ -917,6 +917,62 @@ describe('Put back (#1363)', () => {
     await waitFor(() => expect(within(row).getByRole('button', { name: 'Change' })).toHaveFocus())
   })
 
+  it('puts back an original that does not decode, shown as Image unavailable', async () => {
+    // The decoder refused the original, so it has no preview anywhere (#1362).
+    const user = userEvent.setup()
+    const http = coversHttp({
+      switched: page('switched', [
+        work('case-1', 'auto', {
+          switched: {
+            at: Math.floor(Date.now() / 1000) - 60,
+            before: null,
+            filled: false,
+            put_back: null,
+            put_back_offered: true,
+            language: null,
+            reason: null,
+          },
+        }),
+      ]),
+    })
+    http.getCaseDetail.mockImplementation(async (id) => {
+      const value = withRetained(coverDetail(id, titles[id] ?? id))
+      return {
+        ...value,
+        fields: value.fields.map((field) =>
+          field.coverConsideration
+            ? {
+                ...field,
+                coverConsideration: {
+                  ...field.coverConsideration,
+                  candidates: field.coverConsideration.candidates.map((item) =>
+                    item.candidateKind === 'retained'
+                      ? { ...item, height: null, previewSha256: null, width: null }
+                      : item,
+                  ),
+                },
+              }
+            : field,
+        ),
+      }
+    })
+    renderRoute('/library?lens=all&view=covers&tab=switched', http)
+    const [row] = await screen.findAllByRole('listitem')
+    if (!row) throw new Error('a switched row is required')
+    expect(within(row).getByRole('img', { name: 'Previous cover' })).toHaveTextContent(
+      'Image unavailable',
+    )
+    expect(within(row).queryByText('No cover')).toBeNull()
+    await user.click(within(row).getByRole('button', { name: 'Put back' }))
+    await waitFor(() => expect(http.recordDecision).toHaveBeenCalledOnce())
+    expect(http.recordDecision.mock.calls[0]?.[1]).toMatchObject({
+      outcome: 'accept',
+      selectedValue: { kind: 'cover', value: `cover_${'4'.repeat(64)}` },
+      coverConfirmation: { expected_selection_id: null, confirm_unverified_match: true },
+    })
+    expect(await screen.findByText('Put back First Book.')).toBeVisible()
+  })
+
   it('refuses as stale when the original is no longer offered, recording nothing', async () => {
     const user = userEvent.setup()
     const http = coversHttp({ switched: switchedRow() })

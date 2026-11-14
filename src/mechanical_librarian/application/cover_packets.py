@@ -148,7 +148,8 @@ def prepare_cover_packet(
 
     candidates_by_digest: dict[str, _Candidate] = {}
     # Every source not retrieved is named, as before #1642, so a pending
-    # work cover says why the gallery is incomplete.
+    # work cover says why the gallery is incomplete. A retained original the
+    # decoder refused is the owner's way back, never reviewer input (#1362).
     omissions: list[dict[str, object]] = [
         {
             "reason": "source_" + source.state.value,
@@ -156,6 +157,7 @@ def prepare_cover_packet(
         }
         for source in report.cover_sources
         if source.state is not CoverSourceState.RETRIEVED
+        and source.kind is not CoverSourceKind.RETAINED
     ]
     artifact_payloads: dict[tuple[str, str], bytes] = {}
     for source in sorted(retrieved, key=lambda value: value.source_id):

@@ -619,7 +619,8 @@ class _CoverCandidate(_ClosedModel):
     deterministic_citations: list[str]
     deterministic_rank: int | None = Field(ge=0)
     deterministic_rank_key: list[int | str] | None = Field(min_length=7, max_length=7)
-    height: _Count
+    # A retained original the decoder refused has no size or preview (#1362).
+    height: _Count | None
     identity: _CoverIdentity | None
     incumbent: bool
     match_state: Literal["same_edition", "same_book", "match_not_confirmed"]
@@ -631,7 +632,7 @@ class _CoverCandidate(_ClosedModel):
     observation: _CoverObservation | None
     original_sha256: str
     ordinal: _Count
-    preview_sha256: str
+    preview_sha256: str | None
     reference: str
     selectable: bool
     manual_eligible: bool
@@ -648,8 +649,22 @@ class _CoverCandidate(_ClosedModel):
         ]
     ]
     state: Literal["acceptable", "available", "excluded", "recommended"]
-    transport_sha256: str
-    width: _Count
+    transport_sha256: str | None
+    width: _Count | None
+
+    @model_validator(mode="after")
+    def preview_only_missing_from_retained(self) -> _CoverCandidate:
+        missing = {
+            self.height is None,
+            self.preview_sha256 is None,
+            self.transport_sha256 is None,
+            self.width is None,
+        }
+        if missing == {True, False} or (
+            True in missing and self.candidate_kind != "retained"
+        ):
+            raise ValueError("cover candidate preview is incomplete")
+        return self
 
 
 class _CoverOmission(_ClosedModel):

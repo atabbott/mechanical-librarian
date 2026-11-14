@@ -12,6 +12,10 @@ from pathlib import Path
 
 import pytest
 
+from mechanical_librarian.adapters.cover_artifacts import (
+    CoverDecodeRejected,
+    decode_cover,
+)
 from mechanical_librarian.adapters.field_effect_authority import (
     PersistedFieldEffectAuthority,
 )
@@ -839,3 +843,30 @@ def test_the_writer_reads_an_original_from_either_store(tmp_path: Path) -> None:
     assert reader.read_original_digest(OLD_DIGEST) == OLD
     with pytest.raises(MetadataReportError, match="artifact is unavailable"):
         reader.read_original_digest("b" * 64)
+
+
+def test_an_original_the_decoder_refuses_is_kept_byte_for_byte(
+    effects: _EffectEnvironment,
+) -> None:
+    """Retention never decodes: it keeps exactly the bytes the write replaces,
+    whether or not they decode (#1362, A5)."""
+    undecodable = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+    with pytest.raises(CoverDecodeRejected):
+        decode_cover(undecodable)
+    digest = hashlib.sha256(undecodable).hexdigest()
+    effects.recovery = PrivateCoverRecoveryStore(
+        Path(effects.temporary.name) / "undecodable-recovery", lambda _: undecodable
+    )
+    store = RetainedCoverStore(_root(effects))
+    service = _service(effects, store)
+    planned = _automatic_plan(effects, service, pre="cover_" + digest)
+
+    assert service.apply(planned.plan.plan_id).state == "verified"
+
+    assert (_root(effects) / f"{digest}.retained").read_bytes() == undecodable
+    assert store.read(digest) == undecodable
+    assert effects.repository.retained_cover_original("primary", "books", "book-1") == (
+        digest,
+        planned.plan.plan_id,
+        planned.plan.authority.decision_id,
+    )

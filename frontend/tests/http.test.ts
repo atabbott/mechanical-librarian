@@ -6010,6 +6010,42 @@ describe('the retained original as a cover candidate (#1363)', () => {
   ])('refuses an original with %s', async (_name, overrides) => {
     await expect(read(retained(overrides))).rejects.toThrow(ApiError)
   })
+
+  // An original the decoder refused has no size or preview at all (#1362).
+  const previewless = { height: null, width: null, preview_sha256: null, transport_sha256: null }
+
+  it('maps an original the decoder refused with no size or preview', async () => {
+    const [mapped] = (await read(retained(previewless))).candidates
+    expect(mapped).toMatchObject({
+      candidateKind: 'retained',
+      height: null,
+      previewSha256: null,
+      width: null,
+      selectable: true,
+    })
+  })
+
+  it.each(Object.keys(previewless))('refuses an original missing only its %s', async (key) => {
+    await expect(read(retained({ [key]: null }))).rejects.toThrow(
+      expect.objectContaining({ code: 'contradictory_retained_cover' }),
+    )
+  })
+
+  it.each(['candidate', 'larger_copy'])('refuses a %s with no preview', async (kind) => {
+    expect(() =>
+      mapCoverConsideration(
+        coverConsideration({
+          candidates: [coverCandidate({ candidate_kind: kind, ...previewless })],
+          ready: true,
+          choice_contexts: [
+            choiceContext(),
+            choiceContext({ alternative_id: 'candidate-1', selection: 'proposed' }),
+          ],
+          policy: coverPolicyReport(),
+        }) as Parameters<typeof mapCoverConsideration>[0],
+      ),
+    ).toThrow(expect.objectContaining({ code: 'missing_cover_preview' }))
+  })
 })
 
 describe('a larger copy of the current cover as a candidate (#1363)', () => {

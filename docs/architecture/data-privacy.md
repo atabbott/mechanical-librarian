@@ -117,6 +117,12 @@ only the original's preview in the artifact store, so its bytes stay in the
 retained directory alone and a release leaves no copy of them. A Put back that
 verifies releases the copy in the same transaction.
 
+An original the decoder refuses is kept and put back byte for byte all the
+same, because retention never decodes it (#1362). It has no preview: report
+assembly offers it by the digest the retained store has just verified and
+stages nothing, the book page and Covers show "Image unavailable" in its
+place, and Put back uploads the exact retained bytes.
+
 ## What leaves the host
 
 The product sends no telemetry. It contacts only:
