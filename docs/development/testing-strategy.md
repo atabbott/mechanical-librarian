@@ -299,8 +299,10 @@ These rules apply to every new test, beside the code economy rules in
   constant in the module that owns it, and Python tests and scripts import it.
   `tests/architecture/test_document_versions.py` pins each literal once and
   fails on any other copy, so a version bump edits the constant and its pin
-  line. Older or next versions in refusal tests and frozen fixtures stay
-  literal.
+  line, then regenerates the compatibility page with
+  `scripts/compatibility_versions.py --write`. A stored document's version
+  never reaches the browser, so browser fixtures don't spell one. Older or
+  next versions in refusal tests and frozen fixtures stay literal.
 
 ## Fixtures, hostile input and privacy
 

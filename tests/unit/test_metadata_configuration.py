@@ -604,10 +604,7 @@ def test_multiple_referenced_cover_providers_share_the_bounded_gallery() -> None
 
 def test_generated_schema_is_current() -> None:
     expected = (
-        Path(__file__).parents[2]
-        / "docs"
-        / "reference"
-        / f"{CONFIG_SCHEMA}.schema.json"
+        Path(__file__).parents[2] / "docs" / "reference" / "config.schema.json"
     ).read_text(encoding="utf-8")
     assert configuration_schema_json() == expected
 

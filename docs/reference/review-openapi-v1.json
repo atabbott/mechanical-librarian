@@ -190,12 +190,6 @@
             "pattern": "^resolved_policy_[0-9a-f]{64}$",
             "title": "Resolved Policy Id",
             "type": "string"
-          },
-          "schema_version": {
-            "const": "authored-description-decision-v1",
-            "default": "authored-description-decision-v1",
-            "title": "Schema Version",
-            "type": "string"
           }
         },
         "required": [
@@ -495,12 +489,6 @@
           "schema_digest": {
             "pattern": "^[0-9a-f]{64}$",
             "title": "Schema Digest",
-            "type": "string"
-          },
-          "schema_version": {
-            "const": "description-advice-candidate-v1",
-            "default": "description-advice-candidate-v1",
-            "title": "Schema Version",
             "type": "string"
           }
         },
@@ -1198,11 +1186,6 @@
             "title": "Revision",
             "type": "integer"
           },
-          "schema_version": {
-            "const": "owner-settings-v6",
-            "title": "Schema Version",
-            "type": "string"
-          },
           "server": {
             "$ref": "#/components/schemas/ServerSettings",
             "default": {
@@ -1214,7 +1197,6 @@
           }
         },
         "required": [
-          "schema_version",
           "revision",
           "connections",
           "libraries"
@@ -1334,7 +1316,7 @@
             "$ref": "#/components/schemas/ReviewerEngineStatus"
           },
           "cost_evidence": {
-            "$ref": "#/components/schemas/ReviewerCostEvidence"
+            "$ref": "#/components/schemas/ReviewerCostView"
           },
           "cover_metadata": {
             "anyOf": [
@@ -1449,8 +1431,8 @@
             "type": "integer"
           },
           "schema_version": {
-            "const": "reviewer-access-view-v2",
-            "default": "reviewer-access-view-v2",
+            "const": "reviewer-access-view-v3",
+            "default": "reviewer-access-view-v3",
             "title": "Schema Version",
             "type": "string"
           }
@@ -1551,8 +1533,9 @@
         "title": "ReviewerCostEstimate",
         "type": "object"
       },
-      "ReviewerCostEvidence": {
+      "ReviewerCostView": {
         "additionalProperties": false,
+        "description": "The measured cost rows the page shows.\n\nThe packaged evidence document's version stays with the document, so a\nmove of it changes nothing the browser reads (#1847).",
         "properties": {
           "models": {
             "items": {
@@ -1561,18 +1544,12 @@
             "maxItems": 100,
             "title": "Models",
             "type": "array"
-          },
-          "schema_version": {
-            "const": "reviewer-cost-evidence-v2",
-            "title": "Schema Version",
-            "type": "string"
           }
         },
         "required": [
-          "schema_version",
           "models"
         ],
-        "title": "ReviewerCostEvidence",
+        "title": "ReviewerCostView",
         "type": "object"
       },
       "ReviewerEngineStatus": {
@@ -3730,7 +3707,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "review-case-detail-v7",
+            "const": "review-case-detail-v8",
             "title": "Schema Version",
             "type": "string"
           },
@@ -4533,11 +4510,6 @@
             ],
             "title": "Reviewer Unavailable Reason"
           },
-          "schema_version": {
-            "const": "cover-consideration-v9",
-            "title": "Schema Version",
-            "type": "string"
-          },
           "supersedes_id": {
             "anyOf": [
               {
@@ -4571,7 +4543,6 @@
           "reviewer_access_revision",
           "reviewer_status",
           "reviewer_unavailable_reason",
-          "schema_version",
           "supersedes_id",
           "target_fingerprint"
         ],
@@ -4920,11 +4891,6 @@
           "prefer_minimal_composition": {
             "title": "Prefer Minimal Composition",
             "type": "boolean"
-          },
-          "schema_version": {
-            "const": "cover-policy-v2",
-            "title": "Schema Version",
-            "type": "string"
           }
         },
         "required": [
@@ -4932,8 +4898,7 @@
           "avoid_tie_in_branding",
           "current_protection",
           "prefer_edition",
-          "prefer_minimal_composition",
-          "schema_version"
+          "prefer_minimal_composition"
         ],
         "title": "_CoverPolicyPreferences",
         "type": "object"
@@ -5013,11 +4978,6 @@
             ],
             "title": "Recommended Candidate Reference"
           },
-          "schema_version": {
-            "const": "cover-policy-report-v4",
-            "title": "Schema Version",
-            "type": "string"
-          },
           "stage": {
             "$ref": "#/components/schemas/_CoverStage"
           },
@@ -5042,7 +5002,6 @@
           "policy_reference",
           "reasons",
           "recommended_candidate_reference",
-          "schema_version",
           "stage",
           "status"
         ],
@@ -6761,11 +6720,6 @@
           "review_case_id": {
             "title": "Review Case Id",
             "type": "string"
-          },
-          "schema_version": {
-            "const": "cover-consideration-event-v1",
-            "title": "Schema Version",
-            "type": "string"
           }
         },
         "required": [
@@ -6775,8 +6729,7 @@
           "decision_id",
           "kind",
           "occurred_at",
-          "review_case_id",
-          "schema_version"
+          "review_case_id"
         ],
         "title": "_HistoryCoverItem",
         "type": "object"
@@ -7128,7 +7081,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "review-case-history-v3",
+            "const": "review-case-history-v4",
             "title": "Schema Version",
             "type": "string"
           }
@@ -8311,12 +8264,6 @@
           "policy_id": {
             "title": "Policy Id",
             "type": "string"
-          },
-          "schema_version": {
-            "const": "metadata-policy-profile-v3",
-            "default": "metadata-policy-profile-v3",
-            "title": "Schema Version",
-            "type": "string"
           }
         },
         "required": [
@@ -8565,18 +8512,12 @@
             "maxProperties": 16,
             "title": "Options",
             "type": "object"
-          },
-          "schema_version": {
-            "const": "metadata-policy-profile-v3",
-            "title": "Schema Version",
-            "type": "string"
           }
         },
         "required": [
           "destinations",
           "name",
-          "options",
-          "schema_version"
+          "options"
         ],
         "title": "_PolicyProfile",
         "type": "object"
@@ -8673,8 +8614,8 @@
             "type": "array"
           },
           "schema_version": {
-            "const": "metadata-policy-notebook-v1",
-            "default": "metadata-policy-notebook-v1",
+            "const": "metadata-policy-notebook-v2",
+            "default": "metadata-policy-notebook-v2",
             "title": "Schema Version",
             "type": "string"
           }
@@ -9826,11 +9767,6 @@
             "title": "Review Case Id",
             "type": "string"
           },
-          "schema_version": {
-            "const": "shadow-outcome-set-v11",
-            "title": "Schema Version",
-            "type": "string"
-          },
           "source_decision_set_id": {
             "title": "Source Decision Set Id",
             "type": "string"
@@ -9855,7 +9791,6 @@
           "report_id",
           "resolved_policy_id",
           "review_case_id",
-          "schema_version",
           "source_decision_set_id",
           "target_fingerprint"
         ],
@@ -9922,7 +9857,7 @@
             "type": "null"
           },
           "schema_version": {
-            "const": "preview-outcome-sample-v1",
+            "const": "preview-outcome-sample-v2",
             "title": "Schema Version",
             "type": "string"
           }

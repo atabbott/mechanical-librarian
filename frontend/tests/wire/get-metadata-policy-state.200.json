@@ -1053,8 +1053,7 @@
         "subtitle": "fill_empty",
         "tags": "off",
         "title_layout": "title_and_subtitle"
-      },
-      "schema_version": "metadata-policy-profile-v3"
+      }
     },
     "rich_qualification": [
       {
@@ -1330,7 +1329,7 @@
         "option": "adult_product"
       }
     ],
-    "schema_version": "metadata-policy-notebook-v1"
+    "schema_version": "metadata-policy-notebook-v2"
   },
   "method": "GET",
   "path": "/api/v1/metadata-policy/state",

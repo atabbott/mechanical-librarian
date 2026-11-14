@@ -51,7 +51,7 @@ from dataclasses import replace
 from functools import lru_cache
 from pathlib import Path
 from threading import Event, Lock, RLock
-from typing import Any, Literal, TypeVar, cast
+from typing import Any, Final, Literal, TypeVar, cast
 
 from mechanical_librarian.adapters.persistence.activity_documents import (
     ActivityDocuments,
@@ -119,6 +119,7 @@ from mechanical_librarian.domain.description_advice import (
     DescriptionAdviceCandidate,
 )
 from mechanical_librarian.domain.field_effect import (
+    FIELD_EFFECT_EVENT_SCHEMA,
     FIELD_EFFECT_FAILURES,
     SUPPORTED_DESTINATIONS,
     EffectAuthority,
@@ -136,6 +137,7 @@ from mechanical_librarian.domain.field_effect import (
     canonical_json as canonical_effect_json,
 )
 from mechanical_librarian.domain.human_decision import (
+    HUMAN_DECISION_EVENT_SCHEMA,
     OWNER_SUBSET_DESTINATION,
     OWNER_TEXT_DESTINATIONS,
     VALUE_OUTCOMES,
@@ -176,6 +178,7 @@ from mechanical_librarian.domain.shadow_outcome import (
     ShadowOutcomeSet,
 )
 
+FIELD_EFFECT_CONSENT_ENVELOPE_SCHEMA: Final = "field-effect-consent-envelope-v1"
 _ACTIVITY_PAGE_BUSY_TIMEOUT_MILLISECONDS = 150
 _ACTIVITY_PAGE_BUSY_RETRY_SECONDS = 0.75
 # A read whose own refresh leaves candidates pending finishes them in bounded
@@ -1234,7 +1237,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "destinations": sorted(SUPPORTED_DESTINATIONS),
                 "library": library,
                 "resolved_policy_id": resolved_policy_id,
-                "schema_version": "field-effect-consent-envelope-v1",
+                "schema_version": FIELD_EFFECT_CONSENT_ENVELOPE_SCHEMA,
             }
         )
         return hashlib.sha256(document.encode("utf-8")).hexdigest()
@@ -2432,7 +2435,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         != (
                             "field-effect-title-subtitle-event-v1"
                             if paired_event
-                            else "field-effect-event-v1"
+                            else FIELD_EFFECT_EVENT_SCHEMA
                         )
                         or raw.get("event_id") != event_id
                         or raw.get("plan_id") != source_parent_id
@@ -2566,7 +2569,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     }
                     if (
                         set(raw) != event_keys
-                        or raw.get("schema_version") != "human-decision-event-v1"
+                        or raw.get("schema_version") != HUMAN_DECISION_EVENT_SCHEMA
                         or raw.get("kind") != "human_decision_recorded"
                         or raw.get("event_id") != event_id
                         or raw.get("decision_id") != decision.decision_id
@@ -2585,9 +2588,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         or event_id
                         != "human_decision_event_"
                         + hashlib.sha256(
-                            ("human-decision-event-v1:" + decision.decision_id).encode(
-                                "utf-8"
-                            )
+                            (
+                                HUMAN_DECISION_EVENT_SCHEMA + ":" + decision.decision_id
+                            ).encode("utf-8")
                         ).hexdigest()
                     ):
                         raise FieldEffectError("persistence")

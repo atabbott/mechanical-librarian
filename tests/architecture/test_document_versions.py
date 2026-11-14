@@ -4,15 +4,18 @@ A document version (for example `owner-settings-v6`) is defined by one constant
 in the module that owns the document; product code, scripts and tests import
 it. `PINS` spells each literal a second time, here only, so a changed constant
 fails a test instead of passing silently. Bumping a version edits the owning
-constant and its line in `PINS`, plus the prose that names it
-(`docs/reference/compatibility.md` and the docs it links).
+constant and its line in `PINS`, then regenerates the compatibility page
+(`uv run python scripts/compatibility_versions.py --write`). Stored documents'
+versions never reach the browser (#1847), so the OpenAPI document and the
+browser fixtures move only when an API response version does.
 
 The guard keeps it that way: no other Python string literal under `src/`,
 `scripts/` or `tests/` may spell a pinned label. Docstrings and comments are
 prose and are not scanned. Older or next versions (refusal tests, predecessor
 fixtures) are not current and are not pinned. Data fixtures (JSON, SQL) and the
 browser's wire fixtures are not Python and keep their literals: the wire
-fixtures are compared with the real server, so a bump shows there too.
+fixtures are compared with the real server, so a response version move shows
+there too.
 
 `PINS` covers every document whose current version is v2 or later. A v1
 document joins when it first changes version.
@@ -72,12 +75,12 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.application.reviewer_access",
         "REVIEWER_ACCESS_VIEW_SCHEMA",
-        "reviewer-access-view-v2",
+        "reviewer-access-view-v3",
     ),
     (
         "mechanical_librarian.application.review_web",
         "REVIEW_CASE_DETAIL_SCHEMA",
-        "review-case-detail-v7",
+        "review-case-detail-v8",
     ),
     (
         "mechanical_librarian.application.review_web",
@@ -87,7 +90,17 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.application.review_web",
         "REVIEW_CASE_HISTORY_SCHEMA",
-        "review-case-history-v3",
+        "review-case-history-v4",
+    ),
+    (
+        "mechanical_librarian.application.metadata_policy",
+        "PREVIEW_OUTCOME_SAMPLE_SCHEMA",
+        "preview-outcome-sample-v2",
+    ),
+    (
+        "mechanical_librarian.interfaces.web.app",
+        "METADATA_POLICY_NOTEBOOK_SCHEMA",
+        "metadata-policy-notebook-v2",
     ),
     (
         "mechanical_librarian.application.review_web",

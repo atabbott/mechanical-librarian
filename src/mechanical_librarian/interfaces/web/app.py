@@ -14,7 +14,18 @@ from contextlib import asynccontextmanager, suppress
 from contextvars import ContextVar
 from ipaddress import IPv6Address, IPv6Network, ip_address
 from pathlib import Path
-from typing import Annotated, Literal, Self, TypeAlias, TypedDict, TypeVar, cast
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    Final,
+    Literal,
+    Self,
+    TypeAlias,
+    TypedDict,
+    TypeVar,
+    cast,
+)
 from urllib.parse import quote, urlsplit
 
 from argon2 import PasswordHasher
@@ -49,6 +60,7 @@ from pydantic import (
     StrictInt,
     StrictStr,
     TypeAdapter,
+    create_model,
     model_validator,
 )
 from starlette.concurrency import run_in_threadpool
@@ -61,13 +73,6 @@ from mechanical_librarian.application.contained_reviewer_contract import (
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousFieldActivitySchemaVersion,
 )
-from mechanical_librarian.application.cover_consideration import (
-    CoverConsiderationSchemaVersion,
-)
-from mechanical_librarian.application.cover_policy import (
-    CoverPolicyReportSchemaVersion,
-    CoverPolicySchemaVersion,
-)
 from mechanical_librarian.application.field_effects import GuardedApplicationError
 from mechanical_librarian.application.live_updates import (
     LiveUpdateCapacityError,
@@ -76,6 +81,7 @@ from mechanical_librarian.application.live_updates import (
 from mechanical_librarian.application.metadata_policy import (
     MetadataPolicyApplicationError,
     PolicyTransition,
+    PreviewOutcomeSampleSchemaVersion,
 )
 from mechanical_librarian.application.operations import OperationsError
 from mechanical_librarian.application.review_application import (
@@ -86,6 +92,7 @@ from mechanical_librarian.application.review_application import (
 )
 from mechanical_librarian.application.review_web import (
     AutomaticWithheldCondition,
+    ReviewAttentionSchemaVersion,
     ReviewCaseDetailSchemaVersion,
     ReviewCaseEvidenceSchemaVersion,
     ReviewCaseHistorySchemaVersion,
@@ -117,14 +124,10 @@ from mechanical_librarian.domain.field_effect import (
     FieldEffectError,
     valid_activity_transition_id,
 )
-from mechanical_librarian.domain.metadata_policy import (
-    POLICY_SCHEMA_VERSION as METADATA_POLICY_PROFILE_SCHEMA,
-)
-from mechanical_librarian.domain.metadata_policy import (
-    MetadataPolicyError,
-    MetadataPolicyProfileSchema,
-)
+from mechanical_librarian.domain.human_decision import HumanDecisionEventSchemaVersion
+from mechanical_librarian.domain.metadata_policy import MetadataPolicyError
 from mechanical_librarian.domain.owner_settings import (
+    OWNER_SETTINGS_SCHEMA,
     OwnerSettingsDocument,
     ProviderAdapter,
     SecretWrite,
@@ -138,7 +141,6 @@ from mechanical_librarian.domain.reviewer_access import (
     DescriptionModelMetadata,
     OpenRouterModelId,
 )
-from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSchemaVersion
 from mechanical_librarian.interfaces.web import live_stream, review_frontend
 from mechanical_librarian.interfaces.web.react_assets import (
     ReactAssetBundle,
@@ -260,8 +262,105 @@ class _LoginRequest(BaseModel):
     password: StrictStr = Field(min_length=1, max_length=1024)
 
 
+REVIEW_SESSION_SCHEMA: Final = "review-session-v1"
+MetadataPolicyNotebookSchemaVersion = Literal["metadata-policy-notebook-v2"]
+METADATA_POLICY_NOTEBOOK_SCHEMA: Final[MetadataPolicyNotebookSchemaVersion] = (
+    "metadata-policy-notebook-v2"
+)
+
+
 class _ClosedModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
+
+
+class _StoredDocumentCopy(_ClosedModel):
+    """The browser's copy of a stored document, without its storage version.
+
+    A stored document's `schema_version` guards the store, not the page: the
+    bundle identity header already ties every page to this build. Projections
+    hand a stored document as it was read, so its version is dropped here, and
+    a storage version move changes neither this API nor the browser's fixtures
+    (#1847). Response models only: a request is never silently trimmed.
+    """
+
+    @model_validator(mode="before")
+    @classmethod
+    def _without_storage_version(cls, value: object) -> object:
+        if isinstance(value, dict) and "schema_version" in value:
+            return {key: item for key, item in value.items() if key != "schema_version"}
+        return value
+
+
+_Model = TypeVar("_Model", bound=BaseModel)
+
+
+def _browser_copy(
+    model: type[BaseModel], base: type[_Model], **overrides: Any
+) -> type[_Model]:
+    """`model`'s fields under `base`, without `schema_version`, under its name.
+
+    Derived rather than restated, so the browser's copy cannot drift from the
+    domain model; the name keeps the OpenAPI component the browser decodes.
+    """
+    fields: dict[str, Any] = {
+        name: (field.annotation, field)
+        for name, field in model.model_fields.items()
+        if name != "schema_version"
+    }
+    fields.update(overrides)
+    return create_model(model.__name__, __base__=base, __module__=__name__, **fields)
+
+
+def _stored_settings(body: BaseModel) -> OwnerSettingsDocument:
+    """The owner settings document a browser body stands for."""
+
+    return OwnerSettingsDocument.model_validate(
+        {**body.model_dump(), "schema_version": OWNER_SETTINGS_SCHEMA}
+    )
+
+
+class _OwnerSettingsBody(_ClosedModel):
+    """Owner settings as the browser reads and writes them.
+
+    The storage version is the server's to add; the domain document's own
+    checks run here, so a bad body is refused as the request it is.
+    """
+
+    @model_validator(mode="after")
+    def _valid_document(self) -> Self:
+        try:
+            _stored_settings(self)
+        except ValueError as error:
+            # Pydantic's own error, re-raised as a value error this model owns.
+            raise ValueError("invalid owner settings") from error
+        return self
+
+
+if TYPE_CHECKING:
+    # The checker reads each copy as its domain model, which has every field
+    # the copy has.
+    _OwnerSettingsDocumentCopy = OwnerSettingsDocument
+    _SettingsViewCopy = SettingsView
+    _DescriptionCandidateCopy = DescriptionAdviceCandidate
+    _DescriptionDecisionCopy = AuthoredDescriptionDecision
+else:
+    _OwnerSettingsDocumentCopy = _browser_copy(
+        OwnerSettingsDocument, _OwnerSettingsBody
+    )
+    _SettingsViewCopy = _browser_copy(
+        SettingsView, _ClosedModel, document=(_OwnerSettingsDocumentCopy, ...)
+    )
+    _DescriptionCandidateCopy = _browser_copy(
+        DescriptionAdviceCandidate, _StoredDocumentCopy
+    )
+    _DescriptionDecisionCopy = _browser_copy(
+        AuthoredDescriptionDecision, _StoredDocumentCopy
+    )
+
+
+def _settings_response(view: object) -> dict[str, object]:
+    """A Settings view for the browser: the document without its version."""
+    return cast(SettingsView, view).model_dump(exclude={"document": {"schema_version"}})
 
 
 # Closed vocabularies the response models below state, so the generated
@@ -321,7 +420,7 @@ _RECORDING_REFERENCE = (
 
 class _SettingsWriteRequest(_ClosedModel):
     expected_revision: StrictInt = Field(ge=1)
-    document: OwnerSettingsDocument
+    document: _OwnerSettingsDocumentCopy
     secrets: list[SecretWrite] = Field(max_length=32)
 
 
@@ -568,13 +667,12 @@ class _CoverIncumbent(_ClosedModel):
     state: Literal["absent", "available", "unavailable"]
 
 
-class _CoverPolicyPreferences(_ClosedModel):
+class _CoverPolicyPreferences(_StoredDocumentCopy):
     avoid_promotional_text: bool
     avoid_tie_in_branding: bool
     current_protection: Literal["protected", "unprotected", "proposals_only"]
     prefer_edition: bool
     prefer_minimal_composition: bool
-    schema_version: CoverPolicySchemaVersion
 
 
 _CoverStageReason = Literal[
@@ -621,7 +719,7 @@ class _CoverStage(_ClosedModel):
     reason: _CoverStageReason | None
 
 
-class _CoverPolicyReport(_ClosedModel):
+class _CoverPolicyReport(_StoredDocumentCopy):
     acceptable_candidate_references: Annotated[
         list[str],
         Field(json_schema_extra={"uniqueItems": True}),
@@ -637,12 +735,11 @@ class _CoverPolicyReport(_ClosedModel):
     policy_reference: str
     reasons: list[Annotated[str, Field(max_length=128)]] = Field(max_length=32)
     recommended_candidate_reference: str | None
-    schema_version: CoverPolicyReportSchemaVersion
     stage: _CoverStage
     status: Literal["recommended", "abstained"]
 
 
-class _CoverConsiderationResponse(_ClosedModel):
+class _CoverConsiderationResponse(_StoredDocumentCopy):
     # Twelve reviewed previews, at most one larger copy of the current
     # picture and at most one retained original.
     candidates: list[_CoverCandidate] = Field(max_length=14)
@@ -662,13 +759,12 @@ class _CoverConsiderationResponse(_ClosedModel):
     reviewer_failure_code: OpenRouterPublicFailure | None = None
     reviewer_status: Literal["completed", "failed", "unavailable"]
     reviewer_unavailable_reason: CoverUnavailableReason | None
-    schema_version: CoverConsiderationSchemaVersion
     supersedes_id: str | None
     target_fingerprint: str
 
 
 class _SelectedDescriptionAdvice(_ClosedModel):
-    candidate: DescriptionAdviceCandidate
+    candidate: _DescriptionCandidateCopy
     binding: DescriptionAdviceBinding
     current: bool
 
@@ -680,9 +776,9 @@ class _DescriptionAdviceResponse(_ClosedModel):
     model: str = Field(max_length=256)
     attempt_id: str = Field(pattern=r"^description_attempt_[0-9a-f]{32}$")
     current: bool
-    candidate: DescriptionAdviceCandidate | None
+    candidate: _DescriptionCandidateCopy | None
     binding: DescriptionAdviceBinding
-    selection: AuthoredDescriptionDecision | None
+    selection: _DescriptionDecisionCopy | None
     selected_advice: _SelectedDescriptionAdvice | None
     application_outcome: Literal["verified", "no_change_required"] | None
 
@@ -1014,7 +1110,7 @@ class _HistoryDecisionItem(_ClosedModel):
     outcome: Literal["accept", "keep_current", "reject", "owner_entered", "withdraw"]
     previous_value: _ProposedValue | None
     review_case_id: str
-    schema_version: Literal["human-decision-event-v1"]
+    schema_version: HumanDecisionEventSchemaVersion
     selected_value: _ProposedValue | None
 
 
@@ -1053,7 +1149,7 @@ class _HistoryAutomaticItem(_ClosedModel):
     selected_value: _ProposedValue | None
 
 
-class _HistoryCoverItem(_ClosedModel):
+class _HistoryCoverItem(_StoredDocumentCopy):
     consideration_id: str
     consideration: _CoverConsiderationResponse
     decision: _DecisionProjection | _CoverAutomaticDecisionProjection | None
@@ -1069,7 +1165,6 @@ class _HistoryCoverItem(_ClosedModel):
     ]
     occurred_at: _Instant
     review_case_id: str
-    schema_version: Literal["cover-consideration-event-v1"]
 
 
 class _HistoryDescriptionItem(_ClosedModel):
@@ -1098,8 +1193,8 @@ class _HistoryDescriptionItem(_ClosedModel):
     ]
     engine: Literal["codex", "openrouter"]
     model: str = Field(max_length=256)
-    candidate: DescriptionAdviceCandidate | None
-    decision: AuthoredDescriptionDecision | None
+    candidate: _DescriptionCandidateCopy | None
+    decision: _DescriptionDecisionCopy | None
 
 
 class _HistoryResponse(_ClosedModel):
@@ -1579,7 +1674,7 @@ class _AttentionResponse(_ClosedModel):
     items: list[_AttentionItem]
     next_cursor: str | None
     query: str | None
-    schema_version: Literal["review-attention-v1"]
+    schema_version: ReviewAttentionSchemaVersion
     total: _Count
 
 
@@ -2003,14 +2098,12 @@ class _PolicyDraftRequest(_ClosedModel):
 
 class _PolicyDraftResponse(_ClosedModel):
     policy_id: str
-    schema_version: MetadataPolicyProfileSchema = METADATA_POLICY_PROFILE_SCHEMA
 
 
-class _PolicyProfile(_ClosedModel):
+class _PolicyProfile(_StoredDocumentCopy):
     destinations: dict[StrictStr, StrictStr] = Field(max_length=16)
     name: StrictStr = Field(min_length=1, max_length=80)
     options: dict[StrictStr, StrictStr] = Field(max_length=16)
-    schema_version: MetadataPolicyProfileSchema
 
 
 class _RichQualificationBase(_ClosedModel):
@@ -2302,8 +2395,8 @@ class _PolicyProfileResponse(_ClosedModel):
     policy_id: str
     profile: _PolicyProfile
     rich_qualification: list[_RichQualification]
-    schema_version: Literal["metadata-policy-notebook-v1"] = (
-        "metadata-policy-notebook-v1"
+    schema_version: MetadataPolicyNotebookSchemaVersion = (
+        METADATA_POLICY_NOTEBOOK_SCHEMA
     )
 
 
@@ -2505,7 +2598,7 @@ class _PreviewFieldOutcomeResponse(_ClosedModel):
     rule_id: str
 
 
-class _PreviewOutcomeSetResponse(_ClosedModel):
+class _PreviewOutcomeSetResponse(_StoredDocumentCopy):
     authority: Literal["none"]
     catalogue_sha256: str
     decision_policy_sha256: str
@@ -2520,7 +2613,6 @@ class _PreviewOutcomeSetResponse(_ClosedModel):
     report_id: str
     resolved_policy_id: str
     review_case_id: str
-    schema_version: ShadowOutcomeSchemaVersion
     source_decision_set_id: str
     target_fingerprint: str
 
@@ -2529,7 +2621,7 @@ class _PreviewSampleResponse(_ClosedModel):
     authority: Literal["none"]
     items: list[_PreviewOutcomeSetResponse]
     next_cursor: None
-    schema_version: Literal["preview-outcome-sample-v1"]
+    schema_version: PreviewOutcomeSampleSchemaVersion
 
 
 class _PolicyTransitionFields(TypedDict):
@@ -3000,23 +3092,23 @@ def _register_settings_routes(
 
     @app.get(
         "/api/v1/settings",
-        response_model=SettingsView,
+        response_model=_SettingsViewCopy,
         responses={status: {"model": _ErrorResponse} for status in (401, 503)},
     )
     def settings(
         ml_session: str = Depends(authenticated_session_cookie),
-    ) -> SettingsView:
+    ) -> dict[str, object]:
         _require_session(application, ml_session)
         if not application.settings_available:
             raise HTTPException(503, detail={"code": "settings_unavailable"})
         try:
-            return cast(SettingsView, application.owner_settings())
+            return _settings_response(application.owner_settings())
         except ReviewApplicationError:
             raise HTTPException(503, detail={"code": "settings_unavailable"}) from None
 
     @app.patch(
         "/api/v1/settings",
-        response_model=SettingsView,
+        response_model=_SettingsViewCopy,
         responses={
             status: {"model": _ErrorResponse}
             for status in (401, 403, 409, 413, 422, 503)
@@ -3026,21 +3118,23 @@ def _register_settings_routes(
         request: _SettingsWriteRequest,
         ml_session: str = Depends(authenticated_session_cookie),
         x_csrf_token: str = Header(),
-    ) -> SettingsView:
+    ) -> dict[str, object]:
         _require_session(application, ml_session, x_csrf_token)
         if not application.settings_available:
             raise HTTPException(503, detail={"code": "settings_unavailable"})
         try:
             value = application.write_owner_settings(
-                request.document, request.expected_revision, tuple(request.secrets)
+                _stored_settings(request.document),
+                request.expected_revision,
+                tuple(request.secrets),
             )
         except ReviewApplicationError as error:
             raise _settings_write_error(error) from None
-        return cast(SettingsView, value)
+        return _settings_response(value)
 
     @app.post(
         "/api/v1/provider-recovery/retry",
-        response_model=SettingsView,
+        response_model=_SettingsViewCopy,
         responses={
             status: {"model": _ErrorResponse}
             for status in (401, 403, 409, 413, 422, 503)
@@ -3050,7 +3144,7 @@ def _register_settings_routes(
         request: _ProviderRecoveryRetryRequest,
         ml_session: str = Depends(authenticated_session_cookie),
         x_csrf_token: str = Header(),
-    ) -> SettingsView:
+    ) -> dict[str, object]:
         _require_session(application, ml_session, x_csrf_token)
         if not application.settings_available:
             raise HTTPException(503, detail={"code": "settings_unavailable"})
@@ -3058,7 +3152,7 @@ def _register_settings_routes(
             value = application.retry_provider_recovery(request.expected_generation)
         except ReviewApplicationError as error:
             raise _settings_write_error(error) from None
-        return cast(SettingsView, value)
+        return _settings_response(value)
 
 
 def _settings_write_error(error: ReviewApplicationError) -> HTTPException:
@@ -3468,7 +3562,7 @@ def _register_session_and_operations_routes(
             actor="owner",
             csrf_token=tokens.csrf_token,
             expires_at=tokens.expires_at,
-            schema_version="review-session-v1",
+            schema_version=REVIEW_SESSION_SCHEMA,
         )
 
     @app.post(

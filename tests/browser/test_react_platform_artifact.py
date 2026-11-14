@@ -15,7 +15,6 @@ from playwright.sync_api import Page, Route, expect, sync_playwright
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from mechanical_librarian.application.reviewer_access import REVIEWER_ACCESS_VIEW_SCHEMA
-from mechanical_librarian.domain.reviewer_cost import REVIEWER_COST_EVIDENCE_SCHEMA
 from mechanical_librarian.interfaces.web.react_assets import (
     ReactAssetBundle,
     load_react_asset_bundle,
@@ -186,7 +185,6 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                             "description_metadata": None,
                             "cover_metadata": None,
                             "cost_evidence": {
-                                "schema_version": REVIEWER_COST_EVIDENCE_SCHEMA,
                                 "models": [],
                             },
                             "description": None,
