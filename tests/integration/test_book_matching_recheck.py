@@ -17,6 +17,9 @@ from typing import Any, cast
 
 import pytest
 
+from mechanical_librarian.adapters.field_effect_runtime import (
+    PersistedEffectDependencies,
+)
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
 )
@@ -256,6 +259,16 @@ def test_a_comparison_without_previews_is_counted_and_retried(
         )
         assert consideration["identity_document"] is None
         assert _current_level(library) == "identifier"
+        # A cover effect chosen from it also closes as matching_changed once
+        # another level is live.
+        (digest,) = connection.execute(
+            "SELECT document_digest FROM cover_considerations WHERE consideration_id=?",
+            (consideration["consideration_id"],),
+        ).fetchone()
+        dependencies = PersistedEffectDependencies(library.root)
+        assert dependencies.matching_changed((digest,)) is False
+        _service(library.root, WorkIdentityLevel.TITLE_AND_CREATOR, 39)
+        assert dependencies.matching_changed((digest,)) is True
         _save(library, "title_and_creator", at=40)
         assert _work(library) == ("projection", "queued")
         connection.execute(
@@ -510,3 +523,142 @@ def test_a_level_match_never_becomes_an_automatic_cover(
         assert connection.execute(
             "SELECT count(*) FROM automatic_decisions WHERE destination='cover'"
         ).fetchone() == (0,)
+
+
+# --- 11. A cover effect bound to another level closes as matching_changed ---
+
+
+def _guarded(library: _Library, dependencies: object) -> Any:
+    """The guarded write over the real store, with the store's own
+    dependency check and doubles for the library and its other seams."""
+    from mechanical_librarian.adapters.field_effect_fakes import (
+        FakeAuthorityCurrentness,
+        FakeBackupReadiness,
+        FakeCapabilityObserver,
+        FakeConsentCurrentness,
+        FakeForwardReevaluation,
+        FakePreclaimHook,
+        FakeTargetService,
+        PrivateCoverRecoveryStore,
+    )
+    from mechanical_librarian.application.field_effects import (
+        GuardedFieldApplication,
+    )
+    from tests.support.field_effects import CAPABILITY, Clock
+
+    root = library.root
+    target = FakeTargetService()
+    authority = FakeAuthorityCurrentness()
+    consent = FakeConsentCurrentness(root.field_effect_consent_envelope_identity)
+    recovery = PrivateCoverRecoveryStore(
+        Path(
+            cast(str, root._connection.execute("PRAGMA database_list").fetchone()[2])
+        ).parent.joinpath("recovery"),
+        lambda _: b"old-cover",
+    )
+    service = GuardedFieldApplication(
+        root,
+        target,
+        FakeBackupReadiness(),
+        FakeCapabilityObserver(CAPABILITY),
+        authority,
+        cast(Any, dependencies),
+        consent,
+        recovery,
+        FakeForwardReevaluation(),
+        Clock(),
+        FakePreclaimHook(),
+        FakePreclaimHook(),
+        FakePreclaimHook(),
+    )
+    return service, target, authority, consent
+
+
+@pytest.mark.parametrize(
+    ("chosen", "saved"),
+    (
+        (WorkIdentityLevel.IDENTIFIER, WorkIdentityLevel.TITLE_AND_CREATOR),
+        (WorkIdentityLevel.TITLE_AND_CREATOR_EXACT, WorkIdentityLevel.IDENTIFIER),
+    ),
+    ids=("away_from_identifier", "back_to_identifier"),
+)
+def test_a_cover_effect_bound_to_another_level_closes_as_matching_changed(
+    library: _Library, chosen: WorkIdentityLevel, saved: WorkIdentityLevel
+) -> None:
+    """Contract test 11 over the real store: the cover effect depends on the
+    comparison it was chosen from, prepared under `chosen`; once the live
+    authority names `saved`, applying it closes as `matching_changed`, and
+    Activity says "Closed because Book matching changed"."""
+    from mechanical_librarian.domain.activity_records import (
+        ActivityResult,
+        activity_result_label,
+    )
+    from tests.support.field_effects import CAPABILITY, decision, envelope
+
+    _compare(library, chosen)
+    root = library.root
+    (digest,) = root._connection.execute(
+        "SELECT c.document_digest FROM current_cover_considerations current "
+        "JOIN cover_considerations c ON c.consideration_id=current.consideration_id"
+    ).fetchone()
+    assert _current_level(library) == chosen.value
+    dependencies = PersistedEffectDependencies(root)
+    service, target, authority, consent = _guarded(library, dependencies)
+
+    def plan(suffix: str) -> Any:
+        selected = envelope("cover", "cover_" + suffix * 64)
+        source = decision("cover", selected, suffix)
+        authority.bind(
+            source,
+            connection="primary",
+            library="ebooks",
+            work_id="item-1",
+            target_version="version-1",
+        )
+        consent.allow(connection="primary", library="ebooks", destination="cover")
+        operation = service.plan(
+            source,
+            connection="primary",
+            library="ebooks",
+            work_id="item-1",
+            destination="cover",
+            pre_value=None,
+            desired_value=selected,
+            target_fingerprint="d" * 64,
+            target_version="version-1",
+            dependency_digests=(digest,),
+            capability_digest=CAPABILITY,
+        )
+        assert operation is not None
+        target.seed(operation.plan)
+        return operation
+
+    # Under the level it was chosen at, Book matching has not changed. This
+    # harness's comparison awaits its cover review, so an effect applied now
+    # closes, but as an unnamed dependency, not as matching_changed.
+    assert dependencies.matching_changed((digest,)) is False
+    baseline = service.apply(plan("0").plan.plan_id)
+    assert (baseline.state, baseline.failure) == ("stale", "dependency")
+    first = plan("1")
+    # Saving another level rebinds the live authority to it.
+    _service(root, saved, library.now[0])
+    assert dependencies.matching_changed((digest,)) is True
+    closed = service.apply(first.plan.plan_id)
+    assert closed.state == "stale"
+    assert closed.failure == "matching_changed"
+    # The Activity ledger records the closure, and reads it to the owner as
+    # "Closed because Book matching changed".
+    latest = cast(
+        list[dict[str, object]], root.field_effect_activity_data(50)["events"]
+    )[0]
+    assert (latest["destination"], latest["state"], latest["failure"]) == (
+        "cover",
+        "stale",
+        "matching_changed",
+    )
+    label = activity_result_label(cast(str, latest["state"]), latest["failure"])
+    assert label is ActivityResult.MATCHING_CHANGED
+    assert str(label) == "Closed because Book matching changed"
+    # Saving the chosen level again restores the dependency: nothing changed.
+    _service(root, chosen, library.now[0])
+    assert dependencies.matching_changed((digest,)) is False

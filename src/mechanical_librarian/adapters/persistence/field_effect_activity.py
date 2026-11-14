@@ -1704,8 +1704,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         try:
             for digest in digests:
                 row = self._connection.execute(
-                    "SELECT json_extract(json_extract(document,'$.identity_document'),"
-                    "'$.work_identity_level') FROM cover_considerations "
+                    "SELECT json_extract(document,'$.work_identity_level') "
+                    "FROM cover_considerations "
                     "WHERE document_digest=? LIMIT 1",
                     (digest,),
                 ).fetchone()
