@@ -19,6 +19,7 @@ from mechanical_librarian.domain.field_effect import (
     project_decision_value,
 )
 from mechanical_librarian.domain.review_case import (
+    LEVEL_COMBINATION_DESTINATIONS,
     ReviewCase,
     ReviewCaseValueError,
     proposal_media_kind,
@@ -55,6 +56,67 @@ RECORDED_ONLY_REASON = (
     "recorded, not applied — decided before audiobook writes were available"
 )
 HumanDecisionAction = Literal["accept", "keep_current"]
+
+
+OFFER_DIGEST_SCHEMA = "offered-alternatives-v1"
+
+
+def offer_digest(
+    offer: tuple[Mapping[str, object], ...] | list[Mapping[str, object]],
+    destination: str,
+) -> str:
+    """The SHA-256 of one field's current offer as the case shows it (#1355).
+
+    ``offer`` is a case's ``current_offer``. Each offered alternative counts by
+    its value, its field's proposal id and its lineage rule, so a level
+    alternative's digest names ``work_identity:<level>`` and a live one names
+    no rule. The title, subtitle and series group has one digest over all its
+    members. A field offering nothing still has a digest: the empty offer's.
+    """
+    members = (
+        LEVEL_COMBINATION_DESTINATIONS
+        if destination in LEVEL_COMBINATION_DESTINATIONS
+        else (destination,)
+    )
+    by_destination = {proposal.get("destination"): proposal for proposal in offer}
+    if any(member not in by_destination for member in members):
+        raise HumanDecisionError("invalid")
+    data: list[dict[str, object]] = []
+    for member in members:
+        proposal = by_destination[member]
+        result = proposal.get("result")
+        lineage = proposal.get("lineage", {})
+        if (
+            type(result) is not dict
+            or type(result.get("alternatives")) is not list
+            or type(proposal.get("proposal_id")) is not str
+            or type(lineage) is not dict
+        ):
+            raise HumanDecisionError("invalid")
+        data.append(
+            {
+                "alternatives": sorted(
+                    (
+                        {
+                            "rule": cast(
+                                "dict[str, object]",
+                                lineage.get(alternative["alternative_id"], {}),
+                            ).get("rule"),
+                            "value": alternative["value"],
+                        }
+                        for alternative in cast(
+                            "list[dict[str, object]]", result["alternatives"]
+                        )
+                    ),
+                    key=_canonical,
+                ),
+                "destination": member,
+                "proposal_id": proposal["proposal_id"],
+            }
+        )
+    return hashlib.sha256(
+        _canonical({"members": data, "schema": OFFER_DIGEST_SCHEMA}).encode("utf-8")
+    ).hexdigest()
 
 
 def manual_cover_eligible(candidate: Mapping[str, object]) -> bool:

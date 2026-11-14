@@ -47,6 +47,9 @@ from typing import cast
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
 from mechanical_librarian.adapters.persistence.catalogue import CatalogueReadAdmission
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
+from mechanical_librarian.adapters.persistence.level_reconciliation import (
+    reconcile_case_level_in_transaction,
+)
 from mechanical_librarian.adapters.persistence.proposal_sets import (
     _validate_proposal_row,
 )
@@ -115,6 +118,7 @@ from mechanical_librarian.domain.review_case import (
     is_actionable,
 )
 from mechanical_librarian.domain.review_field_classification import ReviewFieldCause
+from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 
 # What each filtering Library lens selects from the candidate relation. A
 # work no provider matched has no case and so no attention, and it is neither
@@ -187,6 +191,9 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
         ],
         current_cover_authority: Callable[[], tuple[str | None, str | None]],
         record_browse_unavailable_exception: Callable[[sqlite3.Error], None],
+        current_work_identity_level: Callable[[], WorkIdentityLevel] = (
+            lambda: WorkIdentityLevel.IDENTIFIER
+        ),
     ) -> None:
         super().__init__(connection, binding)
         # Both belong to the metadata-policy aggregate and are read, never
@@ -195,6 +202,9 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
         self._policy_destinations_for = policy_destinations_for
         self._current_cover_authority = current_cover_authority
         self._record_browse_unavailable_exception = record_browse_unavailable_exception
+        # The configured Book matching level a case is born reconciled at
+        # (#1355, S10); read inside each admission transaction.
+        self._current_work_identity_level = current_work_identity_level
         self.catalogue: CatalogueReadAdmission | None = None
 
     @local_operation
@@ -420,6 +430,14 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                     "effect_floor=excluded.effect_floor",
                     (case.review_case_id, case.review_case_id),
                 )
+            reconcile_case_level_in_transaction(
+                self._connection,
+                case,
+                proposal_set,
+                report,
+                current_policy,
+                self._current_work_identity_level(),
+            )
             outcome = "superseded" if prior_case_id is not None else "admitted"
             # The owner's hold follows the work, not the case (ADR-0085): the
             # latest hold per destination across the item's cases carries

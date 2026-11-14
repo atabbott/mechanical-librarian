@@ -220,7 +220,7 @@ def test_actual_embedded_predecessor_refused_without_mutation(
         schema._create_schema(connection)
     # The producer predates #1199's report browse facts, #1202's
     # history indexes, #1204's indexes, #1211's case indexes, #1232's
-    # attention facts and #1363's retained covers.
+    # attention facts, #1363's retained covers and #1355's level storage.
     connection.executescript(
         "".join(
             f"DROP {kind.upper()} {name};"
@@ -243,6 +243,10 @@ def test_actual_embedded_predecessor_refused_without_mutation(
         "DROP INDEX current_review_case_lineages_case;"
         "DROP INDEX current_review_packages_case;"
         "DROP TABLE review_case_episodes;"
+        "DROP TABLE review_case_level_offers;"
+        "DROP TABLE level_decision_notes;"
+        "DROP TABLE level_proposal_sets;"
+        "DROP TABLE review_case_level_reconciliation;"
         "DROP TABLE retained_cover_listings;"
         "DROP TABLE retained_cover_removals;"
         "DROP TABLE retained_cover_bindings;"

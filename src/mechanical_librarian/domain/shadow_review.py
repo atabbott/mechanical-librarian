@@ -34,10 +34,12 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import (
     BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA,
+    LevelEvidence,
     ProposalOutcome,
     ProposalSet,
     canonical_target_fields,
     evaluate_report,
+    level_evidence,
 )
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.reviewer_decision_summary import (
@@ -48,6 +50,7 @@ from mechanical_librarian.domain.reviewer_decision_summary import (
     validate_candidate_decision_summary,
     validate_proposal_decision_summary,
 )
+from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 
 PACKET_SCHEMA = "shadow-review-packet-v9"
 MAX_PACKET_BYTES = 1_048_576
@@ -445,12 +448,21 @@ class ShadowReviewPacket:
         report: MetadataReport,
         *,
         include_policy_ignored: bool = False,
+        work_identity_level: WorkIdentityLevel = WorkIdentityLevel.IDENTIFIER,
     ) -> Self:
+        """Project one case's packet; a wider level projects its level set.
+
+        The live packet never indexes a retained refused WORK answer, so its
+        citations stay exactly as they were before answers were retained. A
+        level packet indexes the refused answers its level admits as the
+        observation's candidates (#1355, R2).
+        """
         if (
             type(case) is not ReviewCase
             or type(proposal_set) is not ProposalSet
             or type(report) is not MetadataReport
             or type(include_policy_ignored) is not bool
+            or type(work_identity_level) is not WorkIdentityLevel
             or (case.proposal_set_id, case.report_id)
             != (proposal_set.proposal_set_id, report.report_id)
             or case.proposal_document != proposal_set.to_json()
@@ -560,13 +572,14 @@ class ShadowReviewPacket:
                     ),
                 }
             )
-        evidence = _evidence_index(report.to_data())
+        level = level_evidence(report, work_identity_level)
+        evidence = _evidence_index(_packet_report_data(report, level))
         references.update(
             reference
             for reference, fact in evidence.items()
             if _contains_provider_date(fact)
         )
-        references.update(_date_link_local_references(report))
+        references.update(_date_link_local_references(report, level))
         if not references.issubset(evidence):
             raise ShadowReviewValueError("shadow-review evidence binding is invalid")
         citations: tuple[dict[str, object], ...] = tuple(
@@ -687,14 +700,19 @@ class ShadowReviewPacket:
         source_report: MetadataReport | None,
         source_proposal: ProposalSet | None = None,
         policy_destinations: dict[str, str] | None = None,
+        *,
+        work_identity_level: WorkIdentityLevel = WorkIdentityLevel.IDENTIFIER,
     ) -> None:
-        """Require the exact packet projection of one authoritative report."""
+        """Require the exact packet projection of one authoritative report.
+
+        A wider level checks a level packet against the level derivation.
+        """
         if type(source_report) is not MetadataReport:
             raise ShadowReviewValueError(
                 "shadow-review authoritative source is unavailable"
             )
         proposal_set = (
-            evaluate_report(source_report)
+            evaluate_report(source_report, work_identity_level=work_identity_level)
             if source_proposal is None
             else source_proposal
         )
@@ -705,24 +723,66 @@ class ShadowReviewPacket:
                 source_report,
                 source_proposal.resolved_policy_id,
                 policy_destinations,
+                work_identity_level=work_identity_level,
             ).to_json()
         ):
             raise ShadowReviewValueError(
                 "shadow-review authoritative source is unavailable"
             )
         case = ReviewCase.create(proposal_set, source_report)
-        expected = type(self).create(case, proposal_set, source_report)
+        expected = type(self).create(
+            case,
+            proposal_set,
+            source_report,
+            work_identity_level=work_identity_level,
+        )
         if self != expected:
             raise ShadowReviewValueError(
                 "shadow-review source binding is invalid: authoritative projection"
             )
 
 
-def _date_link_local_references(report: MetadataReport) -> set[str]:
+def _packet_report_data(
+    report: MetadataReport, level: LevelEvidence | None
+) -> dict[str, object]:
+    """The report data a packet indexes (#1355, R2).
+
+    Retained refused WORK answers are never indexed on the live path, so no
+    provider date of theirs joins a live packet's citations. A level packet
+    reads the refused answers its level admits as their observation's
+    candidates, and no other refused answer.
+    """
+    data = report.to_data()
+    providers = cast("list[dict[str, object]]", data["providers"])
+    for index, provider in enumerate(providers):
+        admitted = (
+            frozenset()
+            if level is None
+            else frozenset(candidate.identity for candidate in level.refused[index])
+        )
+        provider["candidates"] = [
+            *cast("list[object]", provider["candidates"]),
+            *(
+                candidate
+                for candidate in cast(
+                    "list[dict[str, object]]", provider["identity_refused_candidates"]
+                )
+                if candidate["identity"] in admitted
+            ),
+        ]
+        provider["identity_refused_candidates"] = []
+    return data
+
+
+def _date_link_local_references(
+    report: MetadataReport, level: LevelEvidence | None = None
+) -> set[str]:
     """Close reviewer citations over every retained local date-link operand."""
     references: set[str] = set()
     for provider in report.providers:
-        for candidate in provider.candidates:
+        for candidate in (
+            provider.candidates if level is None else level.candidates(provider)
+        ):
             for value in (*candidate.claims, *candidate.evidence):
                 if (
                     type(value) is ProviderClaim

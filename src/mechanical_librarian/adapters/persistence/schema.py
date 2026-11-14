@@ -1177,6 +1177,57 @@ _COVER_NO_DELETE_SQL = (
     "CREATE TRIGGER metadata_report_cover_references_no_delete BEFORE DELETE ON metadata_report_cover_references "
     "BEGIN SELECT RAISE(ABORT, 'metadata report cover references are append-only'); END"
 )
+# S10's level storage (#1355): the level set beside its live set, the
+# would-admit notes its decision set leaves for live manual decisions, a case's
+# level offer and the level its offers were last reconciled at. None of them
+# is read by automatic decisions, consent, planning or the executors.
+_WIDER_LEVELS_SQL = "('title_and_creator_exact','title_and_creator')"
+_LEVEL_PROPOSAL_SETS_SQL = (
+    "CREATE TABLE level_proposal_sets ("
+    "level_proposal_set_id TEXT PRIMARY KEY NOT NULL CHECK(level_proposal_set_id GLOB 'level_proposal_set_[0-9a-f]*' AND length(level_proposal_set_id)=83), "
+    "proposal_set_id TEXT NOT NULL REFERENCES proposal_sets(proposal_set_id), "
+    "report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
+    f"work_identity_level TEXT NOT NULL CHECK(work_identity_level IN {_WIDER_LEVELS_SQL}), "
+    "policy_version TEXT NOT NULL CHECK(policy_version='" + POLICY_VERSION + "'), "
+    "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 2097152))"
+)
+_LEVEL_DECISION_NOTES_SQL = (
+    "CREATE TABLE level_decision_notes ("
+    "decision_set_id TEXT NOT NULL CHECK(decision_set_id GLOB 'shadow_decision_set_[0-9a-f]*' AND length(decision_set_id)=84), "
+    "level_proposal_set_id TEXT NOT NULL REFERENCES level_proposal_sets(level_proposal_set_id), "
+    "field TEXT NOT NULL CHECK(field IN ('title','subtitle','authors','description','genres','tags','series')), "
+    f"work_identity_level TEXT NOT NULL CHECK(work_identity_level IN {_WIDER_LEVELS_SQL}), "
+    "rule TEXT NOT NULL CHECK(rule='work_identity:'||work_identity_level), "
+    "alternative_reference TEXT NOT NULL CHECK(alternative_reference GLOB 'alternative_[0-9a-f]*' AND length(alternative_reference)=76), "
+    f"decision_policy_version TEXT NOT NULL CHECK(decision_policy_version='{DECISION_POLICY_VERSION}'), "
+    f"decision_policy_sha256 TEXT NOT NULL CHECK(decision_policy_sha256='{DECISION_POLICY_SHA256}'), "
+    "proposal_policy_version TEXT NOT NULL CHECK(proposal_policy_version='"
+    + POLICY_VERSION
+    + "'), "
+    "UNIQUE(decision_set_id,level_proposal_set_id,field))"
+)
+_REVIEW_CASE_LEVEL_OFFERS_SQL = (
+    "CREATE TABLE review_case_level_offers ("
+    "review_case_id TEXT NOT NULL REFERENCES review_cases(review_case_id), "
+    f"work_identity_level TEXT NOT NULL CHECK(work_identity_level IN {_WIDER_LEVELS_SQL}), "
+    "level_proposal_set_id TEXT NOT NULL REFERENCES level_proposal_sets(level_proposal_set_id), "
+    "reconciled_level TEXT NOT NULL CHECK(reconciled_level=work_identity_level), "
+    "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 2097152 "
+    "AND json_extract(document,'$.schema_version')='review-case-level-offer-v1'), "
+    "UNIQUE(review_case_id,work_identity_level))"
+)
+_REVIEW_CASE_LEVEL_RECONCILIATION_SQL = (
+    "CREATE TABLE review_case_level_reconciliation ("
+    "review_case_id TEXT PRIMARY KEY NOT NULL REFERENCES review_cases(review_case_id), "
+    "reconciled_level TEXT NOT NULL CHECK(reconciled_level IN ('identifier','title_and_creator_exact','title_and_creator'))) "
+    "WITHOUT ROWID"
+)
+_LEVEL_PROPOSAL_SET_NO_UPDATE_SQL = "CREATE TRIGGER level_proposal_sets_no_update BEFORE UPDATE ON level_proposal_sets BEGIN SELECT RAISE(ABORT, 'level proposal sets are append-only'); END"
+_LEVEL_PROPOSAL_SET_NO_DELETE_SQL = "CREATE TRIGGER level_proposal_sets_no_delete BEFORE DELETE ON level_proposal_sets BEGIN SELECT RAISE(ABORT, 'level proposal sets are append-only'); END"
+_LEVEL_DECISION_NOTE_NO_UPDATE_SQL = "CREATE TRIGGER level_decision_notes_no_update BEFORE UPDATE ON level_decision_notes BEGIN SELECT RAISE(ABORT, 'level decision notes are append-only'); END"
+_LEVEL_DECISION_NOTE_NO_DELETE_SQL = "CREATE TRIGGER level_decision_notes_no_delete BEFORE DELETE ON level_decision_notes BEGIN SELECT RAISE(ABORT, 'level decision notes are append-only'); END"
+_REVIEW_CASE_LEVEL_OFFER_NO_UPDATE_SQL = "CREATE TRIGGER review_case_level_offers_no_update BEFORE UPDATE ON review_case_level_offers BEGIN SELECT RAISE(ABORT, 'review case level offers are append-only'); END"
+_REVIEW_CASE_LEVEL_OFFER_NO_DELETE_SQL = "CREATE TRIGGER review_case_level_offers_no_delete BEFORE DELETE ON review_case_level_offers BEGIN SELECT RAISE(ABORT, 'review case level offers are append-only'); END"
 _PROPOSAL_NO_UPDATE_SQL = (
     "CREATE TRIGGER proposal_sets_no_update BEFORE UPDATE ON proposal_sets "
     "BEGIN SELECT RAISE(ABORT, 'proposal sets are append-only'); END"
@@ -1611,6 +1662,10 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_SHADOW_OUTCOME_FIELD_FACTS_SQL)
     connection.execute(_SHADOW_OUTCOME_FIELD_FACTS_CASE_INDEX_SQL)
     connection.execute(_SHADOW_OUTCOME_FIELD_FACTS_INSERT_SQL)
+    connection.execute(_LEVEL_PROPOSAL_SETS_SQL)
+    connection.execute(_LEVEL_DECISION_NOTES_SQL)
+    connection.execute(_REVIEW_CASE_LEVEL_OFFERS_SQL)
+    connection.execute(_REVIEW_CASE_LEVEL_RECONCILIATION_SQL)
     connection.execute(_NO_UPDATE_SQL)
     connection.execute(_COVER_NO_UPDATE_SQL)
     connection.execute(_COVER_NO_DELETE_SQL)
@@ -1646,6 +1701,12 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_FIELD_EFFECT_NO_CHANGE_NO_DELETE_SQL)
     connection.execute(_SHADOW_DECISION_OUTCOME_NO_UPDATE_SQL)
     connection.execute(_SHADOW_DECISION_OUTCOME_NO_DELETE_SQL)
+    connection.execute(_LEVEL_PROPOSAL_SET_NO_UPDATE_SQL)
+    connection.execute(_LEVEL_PROPOSAL_SET_NO_DELETE_SQL)
+    connection.execute(_LEVEL_DECISION_NOTE_NO_UPDATE_SQL)
+    connection.execute(_LEVEL_DECISION_NOTE_NO_DELETE_SQL)
+    connection.execute(_REVIEW_CASE_LEVEL_OFFER_NO_UPDATE_SQL)
+    connection.execute(_REVIEW_CASE_LEVEL_OFFER_NO_DELETE_SQL)
     connection.execute(_NO_DELETE_SQL)
     _create_attention_facts(connection)
     connection.commit()
@@ -1948,6 +2009,47 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
                 "table",
                 "shadow_outcome_field_facts",
                 _SHADOW_OUTCOME_FIELD_FACTS_SQL,
+            ),
+            ("table", "level_proposal_sets", _LEVEL_PROPOSAL_SETS_SQL),
+            ("index", "sqlite_autoindex_level_proposal_sets_1", None),
+            ("table", "level_decision_notes", _LEVEL_DECISION_NOTES_SQL),
+            ("index", "sqlite_autoindex_level_decision_notes_1", None),
+            ("table", "review_case_level_offers", _REVIEW_CASE_LEVEL_OFFERS_SQL),
+            ("index", "sqlite_autoindex_review_case_level_offers_1", None),
+            (
+                "table",
+                "review_case_level_reconciliation",
+                _REVIEW_CASE_LEVEL_RECONCILIATION_SQL,
+            ),
+            (
+                "trigger",
+                "level_proposal_sets_no_update",
+                _LEVEL_PROPOSAL_SET_NO_UPDATE_SQL,
+            ),
+            (
+                "trigger",
+                "level_proposal_sets_no_delete",
+                _LEVEL_PROPOSAL_SET_NO_DELETE_SQL,
+            ),
+            (
+                "trigger",
+                "level_decision_notes_no_update",
+                _LEVEL_DECISION_NOTE_NO_UPDATE_SQL,
+            ),
+            (
+                "trigger",
+                "level_decision_notes_no_delete",
+                _LEVEL_DECISION_NOTE_NO_DELETE_SQL,
+            ),
+            (
+                "trigger",
+                "review_case_level_offers_no_update",
+                _REVIEW_CASE_LEVEL_OFFER_NO_UPDATE_SQL,
+            ),
+            (
+                "trigger",
+                "review_case_level_offers_no_delete",
+                _REVIEW_CASE_LEVEL_OFFER_NO_DELETE_SQL,
             ),
             (
                 "trigger",

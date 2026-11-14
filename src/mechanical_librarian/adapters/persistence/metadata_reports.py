@@ -421,6 +421,11 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             record_browse_unavailable_exception=(
                 lambda error: self._record_browse_unavailable_exception(error)
             ),
+            # The level the cover authority was last bound with is the
+            # configured one (#1355): admission reads it per transaction.
+            current_work_identity_level=(
+                lambda: WorkIdentityLevel(self._current_work_identity_level)
+            ),
         )
         # The two cover references are rebound by `bind_current_cover_policy`
         # and `bind_current_cover_replay` long after this point, so the

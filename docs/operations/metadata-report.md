@@ -338,8 +338,8 @@ The records add at most 524,288 bytes to a report and never take it past its
 record first, and only then the byte-order-mark readings an audio section
 keeps. A set the closed title-and-author comparison would admit is kept only
 as a count. No live reader uses them: the provider stays `no_match`, and
-identifier evidence and proposals ignore them. Only the level seam reads them,
-and a provider whose set lost any record admits none of it. They live and are
+identifier evidence and proposals ignore them. Only the level seam and the
+[level derivation](#book-matching-levels-for-other-fields) read them, and a provider whose set lost any record admits none of it. They live and are
 removed with their report, superseded reports included, and never reach a
 support bundle or a diagnostic. Readback refuses a record set admission would
 admit and any count the lanes do not account for.
@@ -521,6 +521,30 @@ they agree on one local image or else one closed code (for example
 image, and no cover comparison, packet or decision reads it. It is null on
 every other EPUB report and on audiobooks; the boundary is in
 [security](../architecture/security.md#parsers-and-hostile-input).
+
+## Book matching levels for other fields
+
+At a wider Book matching level a review case keeps its live proposals, its
+live decision set and every automatic decision exactly as at `identifier`.
+Beside them, from the same stored report and with no request, a level set is
+derived in which the level's admissions count as describing the work for the
+title, subtitle, authors, description, genres, tags, series and cover.
+Narrators, dates, publisher, identifiers, language and the explicit flag
+never read the level.
+
+Where the live decision for a field is left to the owner, and the level would
+offer other alternatives, review shows the level's alternatives under the
+live proposal, each naming the rule that admitted it
+(`work_identity:<level>`). Title, subtitle and series are offered together or
+not at all. A field decided automatically keeps its live proposal. Where the
+level would have decided a field the live set leaves to the owner, a
+would-admit note records the rule and the alternative beside the live
+decision set, with the decision engine and proposal policy that wrote it; a
+note from another engine is refused on readback.
+
+A case is written with its level set, notes, offer and the level it was
+reconciled at, in one transaction. Level storage is read by no automatic
+decision, consent, planning or write path.
 
 ## After the report
 

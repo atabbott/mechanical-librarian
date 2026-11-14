@@ -104,9 +104,9 @@ Tables fall into six kinds. The kind decides the table's write rule.
 
 | Kind | Write rule | Tables |
 | --- | --- | --- |
-| Canonical immutable documents | Insert only; triggers refuse `UPDATE` and `DELETE` | `metadata_reports`, `metadata_report_cover_references`, `proposal_sets`, `review_cases`, `metadata_policy_drafts`, `description_advice_candidates` |
-| Append-only audit and decisions | Insert only; triggers refuse `UPDATE` and `DELETE` | `review_case_transitions`, `human_decisions`, `human_decision_events`, `automatic_decisions`, `shadow_decision_outcomes`, `cover_considerations`, `cover_consideration_events`, `cover_selection_authorities`, `description_decisions`, `field_effect_events`, `field_effect_no_changes` |
-| Current pointers | Updated in the transaction that publishes or admits their target | `current_metadata_reports`, `current_metadata_report_lineages`, `current_review_case_lineages`, `current_review_packages`, `current_cover_considerations`, `current_cover_selection_authorities`, `current_description_advice`, `current_description_decisions`, `review_case_episodes` |
+| Canonical immutable documents | Insert only; triggers refuse `UPDATE` and `DELETE` | `metadata_reports`, `metadata_report_cover_references`, `proposal_sets`, `level_proposal_sets`, `review_cases`, `review_case_level_offers`, `metadata_policy_drafts`, `description_advice_candidates` |
+| Append-only audit and decisions | Insert only; triggers refuse `UPDATE` and `DELETE` | `review_case_transitions`, `human_decisions`, `human_decision_events`, `automatic_decisions`, `shadow_decision_outcomes`, `level_decision_notes`, `cover_considerations`, `cover_consideration_events`, `cover_selection_authorities`, `description_decisions`, `field_effect_events`, `field_effect_no_changes` |
+| Current pointers | Updated in the transaction that publishes or admits their target | `current_metadata_reports`, `current_metadata_report_lineages`, `current_review_case_lineages`, `current_review_packages`, `current_cover_considerations`, `current_cover_selection_authorities`, `current_description_advice`, `current_description_decisions`, `review_case_episodes`, `review_case_level_reconciliation` |
 | Derived facts | Written only by triggers, in the same statement or transaction as their source | `review_case_field_facts`, `shadow_outcome_field_facts`, `metadata_report_browse_facts`, `metadata_report_browse_authors`, `proposal_set_browse_facts`, `review_attention_facts` |
 | Operational and recovery state | Mutable state machines with their own restart rules | `review_preparation_scans`, `review_preparation_work`, `review_preparation_absences`, `review_preparation_connection_conditions`, `review_preparation_presentation`, `description_preparation_pending`, `description_advice_attempts`, `provider_recovery_outbox`, `metadata_policy_transitions`, `metadata_policy_transition_items`, `metadata_policy_resolutions`, `field_effects`, `field_effect_actions`, `field_effect_cleanups` |
 | Controls, settings and credentials | Singletons or scoped rows changed only by their own command | `metadata_policy_state`, `review_preparation_control`, `automatic_safety_state`, `field_effect_control`, `field_effect_suspensions`, `field_effect_authorities`, `field_effect_consents`, `field_effect_manual_holds`, `browse_fact_identity`, `owner_settings`, `owner_setting_secrets`, `reviewer_access`, `reviewer_access_secrets` |
@@ -130,6 +130,15 @@ What the main aggregates mean, where the table names alone do not say:
   Attention, including report-only outcomes that have no case. A case admitted
   again after its work left it gets a `review_case_episodes` row: the owner
   decisions and writes before it are history to that case.
+- **Book matching levels.** At a wider level than `identifier`, a
+  `level_proposal_sets` row is the level set derived beside its live
+  `proposal_sets` row, and `level_decision_notes` holds the would-admit notes
+  its decision set leaves for live manual decisions. A
+  `review_case_level_offers` row names the manual fields of one case the level
+  substitutes, and `review_case_level_reconciliation` the level the case was
+  last reconciled at; no row reads as `identifier`. All four are written with
+  the case and read by no automatic decision, consent, planning or executor
+  path ([metadata report](../operations/metadata-report.md#book-matching-levels-for-other-fields)).
 - **Decisions.** `human_decisions` holds owner decisions (accept, keep
   current, reject, an owner-entered value, or withdrawal) with their
   idempotency key and target fingerprint. `automatic_decisions` holds one
