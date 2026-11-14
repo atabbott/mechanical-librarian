@@ -1337,6 +1337,43 @@ describe('Application shell', () => {
     },
   )
 
+  it('moves focus to the route target when the connection notice goes while its Settings link has focus', async () => {
+    const paused: PreparationView = {
+      ...idlePreparation,
+      schema_version: 'review-preparation-v2',
+      recovery_required: false,
+      active: true,
+      actionable: false,
+      paused: false,
+      libraries: [],
+      connections: [
+        {
+          connection: 'primary',
+          code: 'tls' as const,
+          state: 'paused' as const,
+          affected: 2,
+          updated_at: 1,
+        },
+      ],
+    }
+    const cleared: PreparationView = { ...paused, active: false, connections: [] }
+    let current = paused
+    const http: ReviewHttp = { ...createHttp(), getPreparation: vi.fn(async () => current) }
+    const { queryClient } = renderRoute('/library?lens=all', http)
+    const notice = await screen.findByRole('region', { name: 'Library connection' })
+    const link = within(notice).getByRole('link', { name: 'Settings → Audiobookshelf' })
+    link.focus()
+    expect(link).toHaveFocus()
+    current = cleared
+    await queryClient.invalidateQueries({ queryKey: ['review-preparation'] })
+
+    await waitFor(() =>
+      expect(screen.queryByRole('region', { name: 'Library connection' })).toBeNull(),
+    )
+    // Without the notice's own focus tracking, focus fell to <body> here.
+    expect(document.querySelector('[data-route-focus]')).toHaveFocus()
+  })
+
   it('moves focus to the persistent main landmark when polling removes preparation activity', async () => {
     const user = userEvent.setup()
     // Idle libraries keep the trigger (#1282); only a deployment with no
