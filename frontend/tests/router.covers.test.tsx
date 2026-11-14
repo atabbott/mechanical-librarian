@@ -1265,7 +1265,7 @@ describe('Covers → Taste profile (#1372)', () => {
     expect(within(line).getByRole('link', { name: 'To decide' })).toBeVisible()
   })
 
-  it('says a build is running', async () => {
+  it('makes a first build the heading while it is written', async () => {
     renderRoute(
       tasteRoute,
       tasteHttp(
@@ -1280,11 +1280,97 @@ describe('Covers → Taste profile (#1372)', () => {
         }),
       ),
     )
-    expect(await screen.findByText('Writing your taste profile')).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'Writing your taste profile' })).toBeVisible()
+    expect(screen.queryByRole('heading', { name: 'No taste profile yet' })).toBeNull()
+  })
+
+  it('puts a first failure and Try again under the empty heading', async () => {
+    renderRoute(
+      tasteRoute,
+      tasteHttp(
+        tasteView({
+          chosen: 25,
+          build: {
+            build_id: `taste_build_${'d'.repeat(32)}`,
+            state: 'failed',
+            failure: 'unavailable',
+            retry_after: null,
+          },
+        }),
+      ),
+    )
+    const heading = await screen.findByRole('heading', { name: 'No taste profile yet' })
+    const region = heading.closest('section')
+    if (!region) throw new Error('the empty region is required')
+    const line = within(region).getByText('The taste profile could not be written.')
+    const retry = within(region).getByRole('button', { name: 'Try again' })
+    // Heading, then the line, then Try again, in reading order.
+    expect(heading.compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(line.compareDocumentPosition(retry) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('says an update failed, not that no profile exists, beside a profile', async () => {
+    renderRoute(
+      tasteRoute,
+      tasteHttp({
+        ...ready,
+        build: {
+          build_id: `taste_build_${'e'.repeat(32)}`,
+          state: 'failed',
+          failure: 'unavailable',
+          retry_after: null,
+        },
+      }),
+    )
+    expect(await screen.findByText('The taste profile could not be updated.')).toBeVisible()
+    expect(screen.queryByText('The taste profile could not be written.')).toBeNull()
+    expect(screen.getByRole('heading', { name: 'What you’re drawn to' })).toBeVisible()
+  })
+
+  it.each(['ceiling', 'unknown_charge'] as const)(
+    'hides Try again until the reset time after %s',
+    async (failure) => {
+      renderRoute(
+        tasteRoute,
+        tasteHttp(
+          tasteView({
+            chosen: 25,
+            build: {
+              build_id: `taste_build_${'f'.repeat(32)}`,
+              state: 'failed',
+              failure,
+              retry_after: Math.floor(Date.now() / 1000) + 3_600,
+            },
+          }),
+        ),
+      )
+      expect(await screen.findByRole('heading', { name: 'No taste profile yet' })).toBeVisible()
+      expect(screen.getByRole('alert')).toHaveTextContent(/\S+\.$/u)
+      expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+    },
+  )
+
+  it('shows the Settings line, not an old failure, once no model is chosen', async () => {
+    renderRoute(
+      tasteRoute,
+      tasteHttp({
+        ...ready,
+        configured: false,
+        build: {
+          build_id: `taste_build_${'9'.repeat(32)}`,
+          state: 'failed',
+          failure: 'unavailable',
+          retry_after: null,
+        },
+      }),
+    )
+    expect(await screen.findByText(/Choose a taste profile model in/u)).toBeVisible()
+    expect(screen.queryByText('The taste profile could not be updated.')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
   })
 
   it.each([
-    ['unavailable', null, 'OpenRouter did not answer, so the taste profile was not written.'],
+    ['unavailable', null, 'The taste profile could not be written.'],
     [
       'invalid_output',
       null,

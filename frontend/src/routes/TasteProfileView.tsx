@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import { useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { refusalCopy, uncertainWriteOutcome } from '../api/http'
 import type { TasteBuildFailure, TasteProfileView as TasteProfile } from '../api/http'
@@ -26,7 +26,7 @@ const buildingPollMilliseconds = 5_000
 const lostCopy = 'No answer came back. Check whether the taste profile is being written.'
 
 const failureCopy = (
-  failure: TasteBuildFailure,
+  failure: Exclude<TasteBuildFailure, 'unconfigured'>,
   view: TasteProfile,
   retryAfter: number | null,
 ): string => {
@@ -34,7 +34,10 @@ const failureCopy = (
   const at = formatClock(retryAfter ?? 0)
   switch (failure) {
     case 'unavailable':
-      return 'OpenRouter did not answer, so the taste profile was not written.'
+      // Beside a profile in use, the line is about the new version only.
+      return view.profile === null
+        ? 'The taste profile could not be written.'
+        : 'The taste profile could not be updated.'
     case 'invalid_output':
       return 'The model returned a profile that was too long or incomplete, so it was not kept.'
     case 'ceiling':
@@ -43,8 +46,6 @@ const failureCopy = (
       return `OpenRouter did not confirm what the last request cost, so taste profiles wait until ${at}.`
     case 'interrupted':
       return 'Writing the taste profile stopped when Mechanical Librarian restarted.'
-    case 'unconfigured':
-      return 'Choose a taste profile model in Settings.'
   }
 }
 
@@ -60,10 +61,45 @@ function NotConfigured() {
   )
 }
 
+// A ceiling or an unconfirmed charge names when to try again; until then a
+// retry would only be refused, so Try again waits for that time.
+function useWaitsUntil(retryAfter: number | null): boolean {
+  const [now, setNow] = useState(() => Date.now())
+  const waiting = retryAfter !== null && now < retryAfter * 1000
+  useEffect(() => {
+    if (!waiting) return
+    const timer = window.setTimeout(
+      () => {
+        setNow(Date.now())
+      },
+      Math.min(retryAfter * 1000 - Date.now() + 1000, 2 ** 31 - 1),
+    )
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [waiting, retryAfter, now])
+  return waiting
+}
+
+function EmptyLine({ view }: { view: TasteProfile }) {
+  return (
+    <p>
+      Mechanical Librarian writes it once you have chosen 25 covers in{' '}
+      <Link to="/library" search={{ lens: 'all', view: 'covers', tab: 'decide' }}>
+        To decide
+      </Link>
+      . You have chosen {String(view.chosen)}.
+    </p>
+  )
+}
+
+// The build's state, said once: with no profile yet it is the region's
+// content under its heading, and while a first profile is written that line
+// is the heading itself (#1372, prototype).
 function BuildState({ view }: { view: TasteProfile }) {
   const { http } = useReviewContext()
   const cache = useQueryClient()
-  const region = useRef<HTMLDivElement>(null)
+  const region = useRef<HTMLElement>(null)
   const build = view.build
   const retry = useMutation({
     mutationFn: (buildId: string) => http.retryTasteBuild(buildId),
@@ -76,38 +112,76 @@ function BuildState({ view }: { view: TasteProfile }) {
       )
     },
   })
-  if (build === null) return null
+  const waiting = useWaitsUntil(build?.failure ? build.retry_after : null)
+  const first = view.profile === null
+  const heading = first ? <h2 id="taste-empty">No taste profile yet</h2> : null
+  if (!view.configured || build?.failure === 'unconfigured')
+    return first ? (
+      <section className="taste-empty" aria-labelledby="taste-empty">
+        {heading}
+        <NotConfigured />
+      </section>
+    ) : (
+      <div className="taste-build">
+        <NotConfigured />
+      </div>
+    )
+  if (build === null)
+    return first ? (
+      <section className="taste-empty" aria-labelledby="taste-empty">
+        {heading}
+        <EmptyLine view={view} />
+      </section>
+    ) : null
   if (build.failure === null)
     return (
-      <div ref={region} tabIndex={-1} className="taste-build">
-        <p role="status">Writing your taste profile</p>
-      </div>
+      <section
+        ref={region}
+        tabIndex={-1}
+        className={first ? 'taste-build taste-building' : 'taste-build'}
+        role="status"
+      >
+        {first ? (
+          <>
+            <span className="taste-spinner" aria-hidden="true" />
+            <h2>Writing your taste profile</h2>
+          </>
+        ) : (
+          <p>Writing your taste profile</p>
+        )}
+      </section>
     )
   const error = retry.error
   return (
-    <div ref={region} tabIndex={-1} className="taste-build" role="alert">
-      {build.failure === 'unconfigured' ? (
-        <NotConfigured />
-      ) : (
+    <section
+      ref={region}
+      tabIndex={-1}
+      className={first ? 'taste-build taste-empty' : 'taste-build'}
+      aria-labelledby={first ? 'taste-empty' : undefined}
+    >
+      {heading}
+      <div className="taste-failure" role="alert">
         <p>{failureCopy(build.failure, view, build.retry_after)}</p>
-      )}
-      <button
-        type="button"
-        aria-disabled={retry.isPending || undefined}
-        onClick={() => {
-          if (!retry.isPending) retry.mutate(build.build_id)
-        }}
-      >
-        Try again
-      </button>
-      {error ? (
-        <p>
-          {uncertainWriteOutcome(error)
-            ? lostCopy
-            : refusalCopy(error, 'The taste profile was not requested. Reload and try again.')}
-        </p>
-      ) : null}
-    </div>
+        {waiting ? null : (
+          <button
+            type="button"
+            aria-disabled={retry.isPending || undefined}
+            onClick={() => {
+              if (!retry.isPending) retry.mutate(build.build_id)
+            }}
+          >
+            Try again
+          </button>
+        )}
+        {error ? (
+          <p>
+            {uncertainWriteOutcome(error)
+              ? lostCopy
+              : refusalCopy(error, 'The taste profile was not requested. Reload and try again.')}
+          </p>
+        ) : null}
+      </div>
+    </section>
   )
 }
 
@@ -194,24 +268,7 @@ export default function TasteProfileView() {
   return (
     <div className="taste-profile">
       <BuildState view={view} />
-      {view.profile === null ? (
-        <section className="taste-empty" aria-labelledby="taste-empty">
-          <h2 id="taste-empty">No taste profile yet</h2>
-          {view.build !== null ? null : !view.configured ? (
-            <NotConfigured />
-          ) : (
-            <p>
-              Mechanical Librarian writes it once you have chosen 25 covers in{' '}
-              <Link to="/library" search={{ lens: 'all', view: 'covers', tab: 'decide' }}>
-                To decide
-              </Link>
-              . You have chosen {String(view.chosen)}.
-            </p>
-          )}
-        </section>
-      ) : (
-        <Profile view={view} />
-      )}
+      <Profile view={view} />
     </div>
   )
 }

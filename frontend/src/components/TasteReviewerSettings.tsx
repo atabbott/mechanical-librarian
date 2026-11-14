@@ -24,7 +24,7 @@ const useTasteModel = (http: ReviewHttp, view: ReviewerAccessView) => {
   const [model, setModel] = useState(view.taste_mapping?.model ?? '')
   const [key, setKey] = useState('')
   const [metadata, setMetadata] = useState<CoverModelMetadata | null>(null)
-  const [latest, setLatest] = useState<'test' | 'selection' | null>(null)
+  const [latest, setLatest] = useState<'test' | 'selection' | 'without' | null>(null)
   const test = useMutation({
     mutationFn: () =>
       http.testTasteModel({ expected_revision: view.revision, api_key: key, model }),
@@ -53,11 +53,25 @@ const useTasteModel = (http: ReviewHttp, view: ReviewerAccessView) => {
         await invalidateForegroundQueries(cache, { queryKey: ['reviewer-access'] })
     },
   })
-  const error = latest === null ? null : { test, selection }[latest].error
+  // Continue without a taste profile clears only this task (#1372 S11).
+  const without = useMutation({
+    mutationFn: () => http.selectReviewer(null, view.revision, undefined, 'cover_taste_build'),
+    retry: false,
+    onMutate: () => setLatest('without'),
+    onSuccess: (saved) => {
+      setMetadata(null)
+      cache.setQueryData(['reviewer-access'], saved)
+    },
+    onError: async (error) => {
+      if (uncertainWriteOutcome(error))
+        await invalidateForegroundQueries(cache, { queryKey: ['reviewer-access'] })
+    },
+  })
+  const error = latest === null ? null : { test, selection, without }[latest].error
   const failure =
     error === null
       ? null
-      : latest === 'selection' && uncertainWriteOutcome(error)
+      : latest !== 'test' && uncertainWriteOutcome(error)
         ? 'No answer came back. Check whether the taste profile model was saved before trying again.'
         : credentialRefused(error)
           ? failureCopy.credential_unavailable
@@ -65,15 +79,26 @@ const useTasteModel = (http: ReviewHttp, view: ReviewerAccessView) => {
               error,
               'Taste profile setup did not complete. Check the model and key, then try again.',
             )
-  const failureUnder = (at: 'test' | 'selection') =>
+  const failureUnder = (at: 'test' | 'selection' | 'without') =>
     failure !== null && latest === at ? <p role="alert">{failure}</p> : null
-  return { model, setModel, key, setKey, metadata, setMetadata, test, selection, failureUnder }
+  return {
+    model,
+    setModel,
+    key,
+    setKey,
+    metadata,
+    setMetadata,
+    test,
+    selection,
+    without,
+    failureUnder,
+  }
 }
 
 function TasteModelSection({ http, view }: { http: ReviewHttp; view: ReviewerAccessView }) {
   const taste = useTasteModel(http, view)
-  const { model, key, metadata, test, selection, failureUnder } = taste
-  const busy = test.isPending || selection.isPending
+  const { model, key, metadata, test, selection, without, failureUnder } = taste
+  const busy = test.isPending || selection.isPending || without.isPending
   const disclosure =
     metadata?.model === model
       ? metadata
@@ -97,6 +122,17 @@ function TasteModelSection({ http, view }: { http: ReviewHttp; view: ReviewerAcc
               ? `Selected: ${view.taste_mapping.model} on OpenRouter.`
               : 'No taste profile model selected.'}
           </p>
+          {/* Mirrors Continue without description advice: aria-disabled while
+              it runs, so a pending press keeps focus (#1584, #1663). */}
+          <button
+            aria-disabled={busy || view.taste_mapping === null || undefined}
+            onClick={() => {
+              if (!busy && view.taste_mapping !== null) without.mutate()
+            }}
+          >
+            Continue without a taste profile
+          </button>
+          {failureUnder('without')}
           <ModelPicker
             id="taste-openrouter-model"
             label="Taste profile model"

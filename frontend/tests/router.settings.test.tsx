@@ -3948,6 +3948,47 @@ describe('taste profile model (#1372)', () => {
     ).toBeVisible()
   })
 
+  it('continues without a taste profile, clearing only that task (S11)', async () => {
+    const http = createHttp()
+    const selected: ReviewerAccessView = {
+      ...initial,
+      taste_mapping: { engine: 'openrouter' as const, model: metadata.model },
+      taste_metadata: metadata,
+    }
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => selected)
+    http.selectReviewer = vi.fn(async () => ({ ...initial, revision: 4 }))
+    renderRoute('/settings?group=reviewer', http)
+    const user = userEvent.setup()
+    const taste = await section()
+    expect(
+      within(taste).getByText('Selected: anthropic/claude-sonnet-5.5 on OpenRouter.'),
+    ).toBeVisible()
+    await user.click(
+      within(taste).getByRole('button', { name: 'Continue without a taste profile' }),
+    )
+    await waitFor(() =>
+      expect(http.selectReviewer).toHaveBeenCalledWith(null, 3, undefined, 'cover_taste_build'),
+    )
+    expect(await within(taste).findByText('No taste profile model selected.')).toBeVisible()
+    expect(
+      within(taste).getByRole('button', { name: 'Continue without a taste profile' }),
+    ).toHaveAttribute('aria-disabled', 'true')
+  })
+
+  it('names the taste profile among the users of the shared key', async () => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => initial)
+    renderRoute('/settings?group=reviewer', http)
+    await section()
+    expect(
+      screen.getByText(
+        'Leave blank to use the saved key. Cover review and the taste profile use the same key, and replacing it keeps every model choice.',
+      ),
+    ).toBeVisible()
+  })
+
   it.each([
     [
       new ApiError(409, 'access_changed'),
