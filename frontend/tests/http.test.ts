@@ -1657,7 +1657,7 @@ describe('ReviewApiClient', () => {
             ...cover,
             consideration: {
               ...cover.consideration,
-              candidates: Array.from({ length: 14 }, () => coverCandidate()),
+              candidates: Array.from({ length: 15 }, () => coverCandidate()),
             },
           },
         ],
@@ -6051,6 +6051,72 @@ describe('a larger copy of the current cover as a candidate (#1363)', () => {
         }),
       ),
     ).toThrow(expect.objectContaining({ code: 'contradictory_cover_identity' }))
+  })
+})
+
+describe('a full comparison with a larger copy and a Put back (#1363, Codex R1)', () => {
+  // Twelve reviewed previews, the larger copy and the retained original.
+  const consideration = (cards: number) => {
+    const card = (ordinal: number) => {
+      const reference = `candidate-${String(ordinal)}`
+      const kind =
+        ordinal === cards - 1 ? 'retained' : ordinal === cards - 2 ? 'larger_copy' : 'candidate'
+      return kind === 'retained'
+        ? coverCandidate({
+            artifact_id: `artifact-${String(ordinal)}`,
+            candidate_kind: 'retained',
+            deterministic_rank: null,
+            deterministic_rank_key: null,
+            identity: null,
+            match_state: 'match_not_confirmed',
+            ordinal,
+            reference,
+            source_kinds: ['retained'],
+            state: 'available',
+          })
+        : coverCandidate({
+            artifact_id: `artifact-${String(ordinal)}`,
+            candidate_kind: kind,
+            deterministic_rank: null,
+            deterministic_rank_key: [1, 0, -10000, -100, -100, ordinal, reference],
+            identity: coverIdentity({ candidate_reference: reference }),
+            incumbent: ordinal === 0,
+            manual_eligible: ordinal !== 0,
+            ordinal,
+            reference,
+            selectable: ordinal !== 0,
+            state: ordinal === 0 ? 'excluded' : 'available',
+          })
+    }
+    return coverConsideration({
+      candidates: Array.from({ length: cards }, (_, ordinal) => card(ordinal)),
+      choice_contexts: [
+        choiceContext(),
+        ...Array.from({ length: cards - 1 }, (_, index) =>
+          choiceContext({
+            alternative_id: `candidate-${String(index + 1)}`,
+            selection: 'proposed',
+          }),
+        ),
+      ],
+      incumbent: { reference: 'candidate-0', state: 'available' },
+      policy: coverPolicyReport({ acceptable_candidate_references: [] }),
+      ready: true,
+    })
+  }
+
+  it('reads all fourteen cards', async () => {
+    const read = await retryCover(consideration(14))
+    expect(read.candidates.map((candidate) => candidate.candidateKind)).toEqual([
+      ...Array<string>(12).fill('candidate'),
+      'larger_copy',
+      'retained',
+    ])
+  })
+
+  it('refuses a fifteenth card', async () => {
+    const refusal: unknown = await retryCover(consideration(15)).catch((error: unknown) => error)
+    expect(refusal).toMatchObject({ at: '/candidates' })
   })
 })
 

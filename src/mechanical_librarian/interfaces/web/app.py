@@ -604,8 +604,9 @@ class _CoverPolicyReport(_ClosedModel):
 
 
 class _CoverConsiderationResponse(_ClosedModel):
-    # Twelve reviewed previews and at most one retained original.
-    candidates: list[_CoverCandidate] = Field(max_length=13)
+    # Twelve reviewed previews, at most one larger copy of the current
+    # picture and at most one retained original.
+    candidates: list[_CoverCandidate] = Field(max_length=14)
     choice_contexts: list["_ChoiceContext"]
     consideration_id: str
     current: bool

@@ -4364,7 +4364,7 @@
             "items": {
               "$ref": "#/components/schemas/_CoverCandidate"
             },
-            "maxItems": 13,
+            "maxItems": 14,
             "title": "Candidates",
             "type": "array"
           },
