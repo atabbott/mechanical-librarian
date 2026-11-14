@@ -510,6 +510,22 @@ def test_settings_store_transport_redacts_secret_and_derives_effects(
         assert refused.status_code == 422
         assert refused.json()["error"]["code"] == "invalid"
         assert OwnerSettingsStore(connection).read().document.revision == 1
+    # The browser's body has no storage version, so the document's own
+    # cross-field checks run on the request body itself and refuse it before
+    # anything is stored (#1847).
+    base = document.model_dump(exclude={"schema_version"}) | {"revision": 2}
+    for broken in (
+        base | {"connections": [*base["connections"], *base["connections"]]},
+        base | {"libraries": [base["libraries"][0] | {"connection": "absent"}]},
+    ):
+        refused = web.client.patch(
+            "/api/v1/settings",
+            json={"expected_revision": 1, "document": broken, "secrets": []},
+            headers={**web.origin, "x-csrf-token": session["csrf_token"]},
+        )
+        assert refused.status_code == 422
+        assert refused.json()["error"]["code"] == "invalid"
+        assert OwnerSettingsStore(connection).read().document.revision == 1
     response = web.client.patch(
         "/api/v1/settings",
         json={
