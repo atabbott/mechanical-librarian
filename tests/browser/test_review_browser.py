@@ -7425,21 +7425,30 @@ def test_a_short_owner_password_is_refused_on_its_own_field() -> None:
                   .contains(document.querySelector('input[name=confirmation]'))"""
                 # The rules follow the password field, not the claim token.
                 assert page.evaluate(follows, "#setup-password-rules")
+                length_rule = page.locator("#setup-password-rules li").first
+                expect(length_rule).to_have_text("At least 12 characters.")
                 claim_token.fill(token)
                 for short in ("a" * 11, "é" * 11, "\U0001f600" * 11):
                     password.fill(short)
                     confirmation.fill(short)
                     page.get_by_role("button", name="Create your password").click()
-                    alert = page.get_by_role("alert")
-                    expect(alert).to_have_text("Use at least 12 characters.")
+                    # The rule it breaks becomes the refusal, said once: no
+                    # second sentence is added under the field (#1516).
+                    expect(length_rule).to_have_class("rule-refused")
+                    expect(page.get_by_role("alert")).to_have_count(0)
                     expect(password).to_have_attribute("aria-invalid", "true")
                     expect(password).to_have_attribute(
-                        "aria-describedby", "setup-error setup-password-rules"
+                        "aria-describedby", "setup-password-rules"
                     )
                     page.evaluate("() => new Promise(requestAnimationFrame)")
                     expect(password).to_be_focused()
                     assert claim_token.get_attribute("aria-invalid") is None
-                    assert page.evaluate(follows, "#setup-error")
+                    assert page.evaluate(follows, "#setup-password-rules")
+                    assert length_rule.evaluate(
+                        "element => getComputedStyle(element).color"
+                    ) != page.locator("#setup-password-rules li").nth(1).evaluate(
+                        "element => getComputedStyle(element).color"
+                    )
                     assert page.evaluate(
                         "document.documentElement.scrollWidth <= window.innerWidth"
                     )
@@ -7478,13 +7487,11 @@ def test_a_short_owner_password_is_refused_on_its_own_field() -> None:
                 page.route("**/api/setup/session", shorten)
                 claims_before = requests.count("/api/setup/claim")
                 page.get_by_role("button", name="Create your password").click()
-                expect(page.get_by_role("alert")).to_contain_text(
-                    "Use at least 12 characters"
-                )
+                expect(length_rule).to_have_class("rule-refused")
+                expect(page.get_by_role("alert")).to_have_count(0)
                 expect(password).to_have_attribute("aria-invalid", "true")
                 assert claim_token.get_attribute("aria-invalid") is None
                 assert requests.count("/api/setup/claim") == claims_before + 1
-                assert page.evaluate(follows, "#setup-error")
                 assert token_file.exists()
                 page.unroute("**/api/setup/session", shorten)
                 page.get_by_role("button", name="Create your password").click()

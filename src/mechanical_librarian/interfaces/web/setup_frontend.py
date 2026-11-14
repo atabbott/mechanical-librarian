@@ -70,8 +70,19 @@ SETUP_CSS += (
     ".provider-cards{display:grid;gap:.6rem;grid-template-columns:repeat(auto-fill,minmax(min(100%,17rem),1fr))}"
     ".provider-cards .option{gap:.35rem;padding:.6rem .8rem;align-content:start}"
     ".provider-cards .muted{margin:0}"
-    ".reviewer-detail summary{min-height:44px;display:flex;align-items:center;cursor:pointer;"
+    # The summary stays a list item so it keeps its disclosure triangle.
+    ".reviewer-detail summary{display:list-item;min-height:44px;padding:.65rem 0;cursor:pointer;"
     "color:var(--teal);font-weight:750}"
+    # Reviewer cards space their lines as the source cards do, and their
+    # buttons are sized to their words like the rest of setup.
+    ".reviewer-option{gap:.6rem;align-content:start}"
+    ".reviewer-option h3,.reviewer-option p,.reviewer-detail p{margin:0}"
+    ".reviewer-option button{justify-self:start;max-width:100%;overflow-wrap:break-word}"
+    ".reviewer-detail{display:grid;gap:.4rem}"
+    ".reviewer-models:not([hidden]){display:grid;gap:.7rem}"
+    ".reviewer-models ul{display:grid;gap:.7rem;margin:0;padding:0;list-style:none}"
+    "button:disabled,button[aria-disabled=true]{opacity:.55;cursor:not-allowed}"
+    ".rules .rule-refused{color:var(--red);font-weight:700}"
     ".reviewer-detail p{color:var(--quiet);font-size:.8rem}"
     ".reveal-row,.summary-row>*,.rules>*{min-width:0}"
     ".field-label{font-size:.75rem;font-weight:800}"
@@ -104,7 +115,8 @@ SETUP_CSS += (
     # their line (#1491).
     ".setup-shell{container:setup-shell/inline-size}"
     "@container setup-shell (max-width:12rem){.step-card{padding:.5rem}"
-    ".provider-cards .option{padding-inline:.5rem}}"
+    ".provider-cards .option,.reviewer-option{padding-inline:.5rem}"
+    ".reviewer-option button{padding-inline:.5rem}}"
     # A step list too narrow to hold its longest word beside a Change button, as
     # enlarged text makes it beside the step or on a phone, drops the button
     # under the step's name (#1491, #1508).
@@ -382,10 +394,19 @@ const drawLedger=()=>{
     row.className='ledger-row';
     const complete=state?.completed_steps?.includes(id);
     row.setAttribute('aria-current',state?.next_step===id?'step':'false');
+    const current=state?.next_step===id;
+    // The mark is decoration; the row says its state in words.
     const mark=document.createElement('span');
-    mark.textContent=complete?'✓':state?.next_step===id?'→':'·';
+    mark.setAttribute('aria-hidden','true');
+    mark.textContent=complete?'✓':current?'→':'·';
     const text=document.createElement('span');
     text.textContent=label;
+    if(complete||current){
+      const said=document.createElement('span');
+      said.className='sr-only';
+      said.textContent=complete?' Done':' Current step';
+      text.append(said)
+    }
     row.append(mark,text);
     if(complete&&id!=='claim'){
       const change=document.createElement('button');
@@ -470,10 +491,29 @@ const renderClaim=async()=>{
   }
   const password=input('password','password');
   password.autocomplete=claim.claimed?'current-password':'new-password';
+  let lengthRule=null;
+  // A short password is refused on the rule it breaks, said once.
+  const refuseLength=()=>{
+    form.querySelector('.error')?.remove();
+    for(const other of form.querySelectorAll('[aria-invalid]'))if(other!==password){
+      other.removeAttribute('aria-invalid');
+      describe(other,false)
+    }
+    lengthRule.classList.add('rule-refused');
+    password.setAttribute('aria-invalid','true');
+    password.addEventListener('input',()=>{
+      lengthRule.classList.remove('rule-refused');
+      password.removeAttribute('aria-invalid')
+    },{once:true});
+    password.focus();
+    lengthRule.scrollIntoView?.({block:'nearest'});
+    announce(lengthRule.textContent)
+  };
   form.append(secretField('Owner password',password,'the owner password'));
   if(!claim.claimed){
     const list=rules([`At least ${settingsVocabulary.owner_password.minimum_characters} characters.`,'There’s no password reset, so keep it somewhere safe.']);
     list.id='setup-password-rules';
+    lengthRule=list.children[0];
     password.dataset.hint=list.id;
     describe(password,false);
     form.append(list)
@@ -487,11 +527,16 @@ const renderClaim=async()=>{
   form.append(button(claim.claimed?'Sign in':'Create your password',true));
   form.addEventListener('submit',async event=>{
     event.preventDefault();
+    lengthRule?.classList.remove('rule-refused');
     if(confirmation){
       const length=[...password.value].length;
       const long=new TextEncoder().encode(password.value).length>settingsVocabulary.owner_password.maximum_bytes;
-      if(length<settingsVocabulary.owner_password.minimum_characters||long){
-        error(form,length===0?'invalid_password_empty':long?'invalid_password_long':'invalid_password',password);
+      if(length>0&&length<settingsVocabulary.owner_password.minimum_characters){
+        refuseLength();
+        return
+      }
+      if(length===0||long){
+        error(form,length===0?'invalid_password_empty':'invalid_password_long',password);
         return
       }
       if(password.value!==confirmation.value){
@@ -522,7 +567,8 @@ const renderClaim=async()=>{
           claim.revision=fresh.revision;
           state.revision=fresh.revision
         }catch{}
-        error(form,e.message,e.message==='claim_token'?claimToken:password);
+        if(e.message==='invalid_password')refuseLength();
+        else error(form,e.message,e.message==='claim_token'?claimToken:password);
         return
       }
       if(confirmation&&(e.status===401||e.status===429)){
@@ -604,6 +650,13 @@ const foundFiles=()=>{
   const rank=library=>{const at=libraryOrder.indexOf(library.library_id);return at<0?libraryOrder.length:at};
   const ordered=[...state.libraries].sort((left,right)=>rank(left)-rank(right));
   return[`Found the files for ${listed(ordered.map(library=>library.display_name||humanName(library.name)))}.`]
+};
+// A check that still finds a folder missing says which, once.
+const checkedFolders=()=>{
+  if(state.next_step!=='mounts')return foundFiles();
+  const results=new Map(state.mounts.map(item=>[item.library,item.state]));
+  const missing=state.libraries.filter(library=>results.get(library.name)!=='matched');
+  return missing.length?[`Still not found: ${listed(missing.map(library=>library.display_name||humanName(library.name)))}.`]:[]
 };
 const renderLibraries=async()=>{
   const section=card('Choose libraries');
@@ -728,7 +781,7 @@ const renderMounts=async()=>{
       service_paths[library.name]=control.value.trim()||null
     }
     mountDraft=draft;
-    mutate('/api/setup/mounts',{expected_revision:state.revision,service_paths},form,{submitted:check,confirm:foundFiles})
+    mutate('/api/setup/mounts',{expected_revision:state.revision,service_paths},form,{submitted:check,confirm:checkedFolders})
   });
   section.append(form)
 };
@@ -819,11 +872,14 @@ const renderProviders=async()=>{
   const actions=document.createElement('div');
   actions.className='actions';
   const next=button('Continue',true);
+  // Held until the library read has ticked the suited sources.
+  let suggested=false;
+  next.setAttribute('aria-disabled','true');
   actions.append(next);
   form.append(coverage,actions);
   form.addEventListener('submit',event=>{
     event.preventDefault();
-    if(mutating)return;
+    if(mutating||!suggested)return;
     const invalidProvider=rows.find(row=>row.enabled.checked&&((row.email&&emailInvalid(row.email))||(row.key&&((settingsProviderKeyRequired(row.adapter)&&!settingsSecretValid(row.key.value))||(row.key.value&&!settingsSecretValid(row.key.value))))));
     if(invalidProvider){
       const control=invalidProvider.email&&emailInvalid(invalidProvider.email)?invalidProvider.email:invalidProvider.key;
@@ -849,7 +905,9 @@ const renderProviders=async()=>{
       row.enabled.checked=suited.has(row.adapter);
       row.disclose()
     }
-    warn()
+    warn();
+    suggested=true;
+    next.removeAttribute('aria-disabled')
   }
 };
 const reviewerLabels={'openai/gpt-6-luna':'GPT-6 Luna','xiaomi/mimo-v2.6-flash':'MiMo 2.6 Flash','qwen/qwen3.8-flash':'Qwen 3.8 Flash','mistralai/ministral-3b-2512':'Ministral 3B','openai/gpt-5.6-luna':'GPT-5.6 Luna','mistralai/mistral-small-2603':'Mistral Small 4'};
@@ -924,29 +982,9 @@ const followCodexSignIn=async(codex,form,failed,focus)=>{
     await render()
   }catch(e){if(form.isConnected)failed(e,null,cancel)}
 };
-// A blocked host can still cancel a sign-in a previous run left open.
-const blockedCancel=(codex,failed)=>{
-  const cancel=button('Cancel sign-in');
-  cancel.type='button';
-  const feedback=document.createElement('p');
-  feedback.setAttribute('role','status');
-  cancel.addEventListener('click',async()=>{
-    if(cancel.getAttribute('aria-disabled')==='true')return;
-    cancel.setAttribute('aria-disabled','true');
-    try{
-      const result=await api('/api/setup/reviewer/codex/device/cancel',{method:'POST',body:'{}',mutation:true});
-      feedback.textContent=result.state==='cancelled'?'The sign-in was cancelled.':['ready','usable'].includes(result.state)?'No sign-in was in progress.':'The sign-in was not cancelled. Try again.';
-      codex.querySelector('.error')?.remove()
-    }catch(e){
-      feedback.textContent='';
-      failed(e,null,cancel)
-    }finally{cancel.removeAttribute('aria-disabled')}
-  });
-  codex.append(cancel,feedback)
-};
 const renderCodexOption=(form,access,failed)=>{
   const codex=document.createElement('div');
-  codex.className='option';
+  codex.className='option reviewer-option';
   const heading=document.createElement('h3');
   heading.textContent='Codex';
   codex.append(heading);
@@ -1008,10 +1046,10 @@ const renderCodexOption=(form,access,failed)=>{
       });
       codex.append(use)
     }
-  }else{
+  }else if(!blocked){
+    // A blocked host shows only its remedy: no sign-in can start there.
     const signIn=button('Sign in with ChatGPT');
     signIn.type='button';
-    signIn.disabled=blocked;
     signIn.addEventListener('click',async()=>{
       if(signIn.disabled||signIn.getAttribute('aria-disabled')==='true')return;
       signIn.setAttribute('aria-disabled','true');
@@ -1028,7 +1066,7 @@ const renderCodexOption=(form,access,failed)=>{
     });
     codex.append(signIn);
     // An existing sign-in is checked once per visit, without a press.
-    if(!blocked&&firstDrawing){
+    if(firstDrawing){
       line.textContent='Checking your ChatGPT sign-in…';
       signIn.disabled=true;
       void (async()=>{
@@ -1049,12 +1087,11 @@ const renderCodexOption=(form,access,failed)=>{
       })()
     }
   }
-  if(blocked)blockedCancel(codex,failed);
   form.append(codex)
 };
 const renderOpenRouterOption=(form,access,failed)=>{
   const router=document.createElement('div');
-  router.className='option';
+  router.className='option reviewer-option';
   const heading=document.createElement('h3');
   heading.textContent='OpenRouter';
   router.append(heading);
@@ -1083,6 +1120,7 @@ const renderOpenRouterOption=(form,access,failed)=>{
   showCost();
   const others=document.createElement('div');
   others.id='setup-reviewer-models';
+  others.className='reviewer-models';
   others.hidden=true;
   const toggle=button('Choose another model');
   toggle.type='button';
@@ -1137,7 +1175,13 @@ const renderOpenRouterOption=(form,access,failed)=>{
       key.value='';
       save.removeAttribute('aria-disabled');
       save.textContent='Check key and use OpenRouter';
-      failed(e,['model_unavailable','model_text_only'].includes(refusal(e))?model:key,save)
+      const aboutModel=['model_unavailable','model_text_only'].includes(refusal(e));
+      // The refused model is shown, so its field can take focus.
+      if(aboutModel){
+        toggle.setAttribute('aria-expanded','true');
+        others.hidden=false
+      }
+      failed(e,aboutModel?model:key,save)
     }
   });
   // Rates and data use are reference detail, read on demand.
@@ -1228,7 +1272,8 @@ const land=async()=>{
   let run=null;
   while(run===null&&Date.now()<deadline){
     try{
-      const response=await fetch('/api/v1/review-preparation',{credentials:'same-origin'});
+      // A read that hangs is given up at the deadline, so Library still opens.
+      const response=await fetch('/api/v1/review-preparation',{credentials:'same-origin',signal:AbortSignal.timeout(Math.max(1,deadline-Date.now()))});
       if(!response.ok)break;
       const value=(await response.json())?.presentation?.run_id;
       if(typeof value==='string'&&/^preparation_run_[0-9a-f]{64}$/.test(value))run=value

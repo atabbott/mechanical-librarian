@@ -455,7 +455,16 @@ describe('shipped first-run setup script', () => {
       fireEvent.input(confirmation, { target: { value: short } })
       fireEvent.submit(form)
       await waitFor(() => expect(password).toHaveAttribute('aria-invalid', 'true'))
-      expect(screen.getByRole('alert')).toHaveTextContent(settingsVocabulary.errors.owner_password)
+      // The rule it breaks becomes the refusal, said once (#1516).
+      expect(screen.queryByRole('alert')).toBeNull()
+      expect(stated).toHaveClass('rule-refused')
+      expect(password).toHaveAttribute('aria-describedby', 'setup-password-rules')
+      await waitFor(() =>
+        expect(document.querySelector('#setup-status')).toHaveTextContent(
+          'At least 12 characters.',
+        ),
+      )
+      expect(within(form).getAllByText(/12 characters/u)).toHaveLength(1)
       expect(password).toHaveFocus()
       expect(sessions).toBe(0)
       // Let the refusal's focus settle before the next refusal, as a person
@@ -574,12 +583,11 @@ describe('shipped first-run setup script', () => {
     fireEvent.submit(form)
 
     // The refused claim spent its nonce, so a fresh one is read before the
-    // refusal is shown on the password, not on the claim token.
-    const alert = await screen.findByRole('alert')
+    // refusal is shown on the password's own rule, not on the claim token.
     await waitFor(() => expect(password).toHaveAttribute('aria-invalid', 'true'))
-    expect(alert).toHaveTextContent(settingsVocabulary.errors.owner_password)
-    expect(alert.previousElementSibling).toContainElement(password)
-    expect(password).toHaveAttribute('aria-describedby', `${alert.id} setup-password-rules`)
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getByText('At least 12 characters.')).toHaveClass('rule-refused')
+    expect(password).toHaveAttribute('aria-describedby', 'setup-password-rules')
     expect(claimToken).not.toHaveAttribute('aria-invalid')
     expect(password).toHaveFocus()
     expect(claimReads).toBe(2)
@@ -1887,13 +1895,18 @@ describe('shipped first-run setup script', () => {
     const held = new Promise<Response>((resolve) => {
       release = resolve
     })
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (request: RequestInfo | URL) => {
+    const fetch = vi.fn<(request: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+      async (request) => {
         if (requestUrl(request).startsWith('/api/setup/libraries?')) return held
         return response(setupState('providers'))
-      }),
+      },
     )
+    vi.stubGlobal('fetch', fetch)
+    const recorded = () =>
+      fetch.mock.calls.filter(
+        ([request, init]) =>
+          requestUrl(request) === '/api/setup/providers' && init?.method === 'POST',
+      ).length
     runSetup()
 
     const heading = await screen.findByRole('heading', { name: 'Choose metadata sources' })
@@ -1901,7 +1914,14 @@ describe('shipped first-run setup script', () => {
     expect(screen.getByText('Loading your libraries…')).toBeVisible()
     for (const label of ['Inventaire', 'Open Library', 'Audible', 'iTunes'])
       expect(screen.getByRole('checkbox', { name: label })).toBeEnabled()
-    expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled()
+    // Continue is held until the read has ticked the suited sources, so a
+    // fast press cannot record none.
+    const next = screen.getByRole('button', { name: 'Continue' })
+    expect(next).toBeEnabled()
+    expect(next).toHaveAttribute('aria-disabled', 'true')
+    fireEvent.click(next)
+    await new Promise(requestAnimationFrame)
+    expect(recorded()).toBe(0)
     expect(screen.queryByRole('button', { name: 'Skip providers' })).toBeNull()
     // A source the owner ticks before the read returns is theirs to keep.
     const audible = screen.getByRole('checkbox', { name: 'Audible' })
@@ -1927,6 +1947,9 @@ describe('shipped first-run setup script', () => {
         (box) => box.name,
       ),
     ).toEqual(['audible-enabled'])
+    expect(next).not.toHaveAttribute('aria-disabled')
+    fireEvent.click(next)
+    await waitFor(() => expect(recorded()).toBe(1))
   })
 
   const allSources = [
@@ -2057,6 +2080,44 @@ describe('shipped first-run setup script', () => {
       'href',
       'https://console.cloud.google.com/apis/credentials',
     )
+  })
+
+  it('says which folder is still not found after a check that finds nothing', async () => {
+    const missing = setupState('mounts', {
+      completed_steps: ['claim', 'connect', 'libraries'],
+      libraries: [
+        {
+          connection: 'primary',
+          display_name: 'Listening Room',
+          library_id: 'audio-id',
+          media_kind: 'book',
+          name: 'audio',
+          provider_connections: [],
+        },
+      ],
+      mounts: [{ library: 'audio', state: 'missing' }],
+      revision: 5,
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+        const url = requestUrl(request)
+        if (url.startsWith('/api/setup/libraries?')) return response({ libraries: [] })
+        if (url === '/api/setup/mounts' && init?.method === 'POST') return response({})
+        return response(missing)
+      }),
+    )
+    runSetup()
+    fireEvent.click(await screen.findByRole('button', { name: 'Check again' }))
+    await waitFor(() =>
+      expect(document.querySelector('#setup-status')?.textContent).toBe(
+        'Still not found: Listening Room.',
+      ),
+    )
+    expect(document.querySelector('.confirmation')).toHaveTextContent(
+      'Still not found: Listening Room.',
+    )
+    expect(screen.getByRole('heading', { name: 'Find library folders' })).toBeVisible()
   })
 
   it('confirms the mounts it found on the next step in one line', async () => {
@@ -2428,6 +2489,48 @@ describe('shipped first-run setup script', () => {
     expect(offset).toBe(10_000)
   })
 
+  it('gives up a hung read at the deadline and lands in the library', async () => {
+    const limits: number[] = []
+    const timer = new AbortController()
+    vi.spyOn(AbortSignal, 'timeout').mockImplementation((delay: number) => {
+      limits.push(delay)
+      return timer.signal
+    })
+    let reads = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+        const url = requestUrl(request)
+        if (url === '/api/setup/kick-off' && init?.method === 'POST')
+          return response({ message: 'Restarting into the normal workspace.' }, 202)
+        if (url === '/api/v1/review-preparation') {
+          reads += 1
+          // The read never answers; only its time limit ends it.
+          return new Promise<Response>((_, reject) => {
+            init?.signal?.addEventListener('abort', () => {
+              reject(new DOMException('timed out', 'TimeoutError'))
+            })
+          })
+        }
+        return response(startState())
+      }),
+    )
+    const place = stubLocation()
+    runSetup(place)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Start' }))
+    await waitFor(() => expect(reads).toBe(1))
+    // The read is limited to the time left before the 10-second deadline.
+    expect(limits).toHaveLength(1)
+    expect(limits[0]).toBeGreaterThan(0)
+    expect(limits[0]).toBeLessThanOrEqual(10_000)
+    expect(place.replace).not.toHaveBeenCalled()
+    timer.abort()
+    await waitFor(() => expect(place.replace).toHaveBeenCalled())
+    expect(landedAt(place)).toBe('/library?lens=all')
+    expect(reads).toBe(1)
+  })
+
   it('lands in the library after a 401', async () => {
     let reads = 0
     vi.stubGlobal(
@@ -2482,24 +2585,28 @@ const signInReady = async () => {
 }
 
 it('keeps alternatives usable when the contained profile is absent', async () => {
-  vi.stubGlobal(
-    'fetch',
-    vi.fn(async (request: RequestInfo | URL) =>
-      response(
-        requestUrl(request) === '/api/setup/reviewer-access'
-          ? reviewerAccess('not_provisioned', 'profile_not_provisioned')
-          : setupState('reviewer'),
-      ),
+  const fetch = vi.fn(async (request: RequestInfo | URL) =>
+    response(
+      requestUrl(request) === '/api/setup/reviewer-access'
+        ? reviewerAccess('not_provisioned', 'profile_not_provisioned')
+        : setupState('reviewer'),
     ),
   )
+  vi.stubGlobal('fetch', fetch)
   runSetup()
   expect(
     await screen.findByText(
       'The Codex profile is missing. Restore the image’s profile or correct the profile path, then restart the service.',
     ),
   ).toBeVisible()
-  expect(screen.getByRole('button', { name: 'Sign in with ChatGPT' })).toBeDisabled()
+  // Only the remedy: no sign-in can start on this host, and none is in
+  // progress to cancel (#1516).
+  expect(screen.queryByRole('button', { name: 'Sign in with ChatGPT' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Cancel sign-in' })).toBeNull()
   expect(screen.queryByRole('button', { name: 'Check existing sign-in' })).toBeNull()
+  expect(
+    fetch.mock.calls.some(([request]) => /\/codex\/(device|recheck)$/u.test(requestUrl(request))),
+  ).toBe(false)
   expect(screen.getByRole('button', { name: 'Skip for now' })).toBeEnabled()
   expect(screen.getByRole('button', { name: 'Check key and use OpenRouter' })).toBeEnabled()
   expect(screen.getByText('Uses your ChatGPT plan.')).toBeVisible()
@@ -2963,51 +3070,6 @@ it('clears a failed Start once the next Start succeeds (#1618)', async () => {
   expect(screen.queryByRole('alert')).toBeNull()
 })
 
-it.each([
-  ['fails, then succeeds', ['fail', 'succeed'], false],
-  ['succeeds, then fails', ['succeed', 'fail'], true],
-] as const)(
-  'never shows a blocked cancel status beside a contradicting alert when it %s (#1618)',
-  async (_, outcomes, alert) => {
-    let cancels = 0
-    const fetch = vi.fn(async (request: RequestInfo | URL) => {
-      const url = requestUrl(request)
-      if (url.endsWith('/device/cancel')) {
-        cancels += 1
-        return outcomes[cancels - 1] === 'fail'
-          ? response({ error: 'unavailable' }, 503)
-          : response({ state: 'cancelled' })
-      }
-      if (url.endsWith('/reviewer-access'))
-        return response(reviewerAccess('not_provisioned', 'profile_not_provisioned'))
-      if (url.endsWith('/device')) throw new Error('blocked recovery must not probe authentication')
-      return response(setupState('reviewer'))
-    })
-    vi.stubGlobal('fetch', fetch)
-    runSetup()
-    const cancel = await screen.findByRole('button', { name: 'Cancel sign-in' })
-    const feedback = cancel.nextElementSibling
-    expect(feedback).toHaveAttribute('role', 'status')
-    await reviewerStepSettled()
-    cancel.focus()
-    fireEvent.click(cancel)
-    await waitFor(() => expect(cancels).toBe(1))
-    await waitFor(() => expect(cancel).not.toHaveAttribute('aria-disabled'))
-    fireEvent.click(cancel)
-    await waitFor(() => expect(cancels).toBe(2))
-    await waitFor(() => expect(cancel).not.toHaveAttribute('aria-disabled'))
-
-    if (alert) {
-      expect(await screen.findByRole('alert')).toHaveTextContent('That step was not saved.')
-      expect(feedback?.textContent).toBe('')
-    } else {
-      expect(await screen.findByText('The sign-in was cancelled.')).toBeVisible()
-      expect(screen.queryByRole('alert')).toBeNull()
-    }
-    expect(cancel).toHaveFocus()
-  },
-)
-
 it('restores a reviewer step whose form token rotated at the top of the fresh form (#1618)', async () => {
   let reads = 0
   vi.stubGlobal(
@@ -3263,90 +3325,21 @@ it('leaves blocked Codex controls disabled after a failed Continue without a rev
   runSetup()
   const skip = await screen.findByRole('button', { name: 'Skip for now' })
   await reviewerStepSettled()
-  const start = screen.getByRole('button', { name: 'Sign in with ChatGPT' })
-  expect(start).toBeDisabled()
+  const codex = screen.getByRole('heading', { name: 'Codex' }).closest('.option')
+  if (!codex) throw new Error('Codex option missing')
+  // A blocked host offers no sign-in controls at all.
+  expect(within(codex as HTMLElement).queryAllByRole('button')).toHaveLength(0)
   skip.focus()
   fireEvent.click(skip)
 
   const alert = await screen.findByRole('alert')
   await waitFor(() => expect(alert).toHaveTextContent('That step was not saved.'))
   expect(skip).toBeEnabled()
-  // Only what the press disabled is enabled again: the blocked host's
-  // sign-in controls stay as they were.
-  expect(start).toBeDisabled()
+  // Only what the press disabled is enabled again; the blocked host still
+  // offers no sign-in.
+  expect(within(codex as HTMLElement).queryAllByRole('button')).toHaveLength(0)
   expect(screen.getByRole('button', { name: 'Check key and use OpenRouter' })).toBeEnabled()
 })
-
-it.each([
-  ['cancelled', 'The sign-in was cancelled.'],
-  ['ready', 'No sign-in was in progress.'],
-  ['failed', 'The sign-in was not cancelled. Try again.'],
-])('keeps cancellation reachable after blocked reload: %s', async (state, message) => {
-  const fetch = vi.fn(async (request: RequestInfo | URL) => {
-    const url = requestUrl(request)
-    if (url.endsWith('/device/cancel')) return response({ state })
-    if (url.endsWith('/reviewer-access'))
-      return response(reviewerAccess('not_provisioned', 'profile_not_provisioned'))
-    if (url.endsWith('/device')) throw new Error('blocked recovery must not probe authentication')
-    return response(setupState('reviewer'))
-  })
-  vi.stubGlobal('fetch', fetch)
-  runSetup()
-  fireEvent.click(await screen.findByRole('button', { name: 'Cancel sign-in' }))
-  expect(await screen.findByText(new RegExp(message.replaceAll('.', '\\.')))).toBeVisible()
-  expect(screen.getByRole('button', { name: 'Sign in with ChatGPT' })).toBeDisabled()
-  expect(screen.getByText('Not signed in')).toBeVisible()
-  expect(fetch.mock.calls.some(([request]) => requestUrl(request).endsWith('/recheck'))).toBe(false)
-})
-
-it.each([
-  ['succeeds', () => response({ state: 'cancelled' }), false, 'The sign-in was cancelled.'],
-  ['fails', () => response({ error: 'unavailable' }, 503), true, 'That step was not saved.'],
-])(
-  'keeps focus on the blocked cancel while it runs and after it %s',
-  async (_, settle, alert, message) => {
-    let release: ((value: Response) => void) | undefined
-    const fetch = vi.fn(async (request: RequestInfo | URL) => {
-      const url = requestUrl(request)
-      if (url.endsWith('/device/cancel'))
-        return new Promise<Response>((resolve) => {
-          release = resolve
-        })
-      if (url.endsWith('/reviewer-access'))
-        return response(reviewerAccess('not_provisioned', 'profile_not_provisioned'))
-      if (url.endsWith('/device')) throw new Error('blocked recovery must not probe authentication')
-      return response(setupState('reviewer'))
-    })
-    vi.stubGlobal('fetch', fetch)
-    runSetup()
-    const cancel = await screen.findByRole('button', { name: 'Cancel sign-in' })
-    const feedback = cancel.nextElementSibling
-    const cancels = () =>
-      fetch.mock.calls.filter(([request]) => requestUrl(request).endsWith('/device/cancel')).length
-    await reviewerStepSettled()
-    cancel.focus()
-    fireEvent.click(cancel)
-    // jsdom has no focus fixup, so focus alone cannot fail here; a browser drops
-    // focus to the page when the focused button becomes natively disabled.
-    expect(cancel).not.toBeDisabled()
-    expect(cancel).toHaveAttribute('aria-disabled', 'true')
-    expect(cancel).toHaveFocus()
-    fireEvent.click(cancel)
-    expect(cancels()).toBe(1)
-    release?.(settle())
-    if (alert) {
-      const node = await screen.findByRole('alert')
-      expect(node).toHaveTextContent(message)
-      // The alert sits between the pressed button and its status line (#1618).
-      expect(node.previousElementSibling).toBe(cancel)
-      expect(node.nextElementSibling).toBe(feedback)
-      expect(feedback).toHaveAttribute('role', 'status')
-    } else expect(await screen.findByText(message)).toBeVisible()
-    expect(cancel).not.toHaveAttribute('aria-disabled')
-    expect(cancel).toHaveFocus()
-    expect(document.activeElement).not.toBe(document.body)
-  },
-)
 
 // jsdom has no focus fixup, so focus alone cannot fail in these tests; a browser
 // drops focus to the page when the focused button becomes natively disabled. The
@@ -3663,6 +3656,36 @@ it.each([
   },
 )
 
+it('opens Choose another model to show a refused model from the closed state', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (request: RequestInfo | URL) => {
+      const url = requestUrl(request)
+      if (url === '/api/setup/reviewer-access')
+        return response(reviewerAccess('not_provisioned', 'profile_not_provisioned'))
+      if (url === '/api/setup/reviewer/openrouter')
+        return response({ detail: { error: 'model_text_only' } }, 422)
+      return response(setupState('reviewer'))
+    }),
+  )
+  runSetup()
+  const toggle = await screen.findByRole('button', { name: 'Choose another model' })
+  await reviewerStepSettled()
+  expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  fireEvent.input(screen.getByLabelText('OpenRouter API key'), {
+    target: { value: 'synthetic-key' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Check key and use OpenRouter' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    'That model cannot inspect covers. Choose a model with image input.',
+  )
+  expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  const model = screen.getByRole('textbox', { name: 'Model ID' })
+  expect(model).toBeVisible()
+  expect(model).toHaveAttribute('aria-invalid', 'true')
+  expect(model).toHaveFocus()
+})
+
 const setupLedger = () => {
   const ledger = document.querySelector<HTMLElement>('#setup-ledger')
   if (!ledger) throw new Error('setup ledger missing')
@@ -3670,7 +3693,7 @@ const setupLedger = () => {
 }
 const ledgerLabels = () =>
   [...document.querySelectorAll('#setup-ledger li')].map(
-    (row) => row.querySelectorAll('span')[1]?.textContent,
+    (row) => row.querySelectorAll('span')[1]?.firstChild?.textContent,
   )
 
 it('orders the steps with libraries before sources and hides the folder step until a folder is not found', async () => {
@@ -3725,6 +3748,22 @@ it('orders the steps with libraries before sources and hides the folder step unt
   await screen.findByRole('heading', { name: 'Choose metadata sources' })
   expect(ledgerLabels()).not.toContain('Find library folders')
   expect(screen.queryByRole('button', { name: 'Change Find library folders' })).toBeNull()
+})
+
+it('says each step’s state in words and hides its mark from assistive tech', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => response(setupState('libraries', { completed_steps: ['claim', 'connect'] }))),
+  )
+  runSetup()
+  await screen.findByRole('heading', { name: 'Choose libraries' })
+  const rows = [...setupLedger().querySelectorAll('li')]
+  for (const row of rows) expect(row.querySelector('span')).toHaveAttribute('aria-hidden', 'true')
+  const said = rows.map((row) => row.querySelector('.sr-only')?.textContent ?? null)
+  expect(said).toEqual([' Done', ' Done', ' Current step', null, null, null])
+  expect(rows[0]).toHaveTextContent('Create your password Done')
+  expect(rows[2]).toHaveTextContent('Choose libraries Current step')
+  expect(rows[3]).toHaveTextContent(/^·Choose metadata sources$/u)
 })
 
 it.each([

@@ -1452,7 +1452,9 @@ def test_setup_library_step_uses_audiobookshelf_book_kind_without_owner_choice()
     assert "codexTerminal=device;await render()" in SETUP_JS
     assert "Check existing sign-in" not in SETUP_JS
     assert "button('Sign in with ChatGPT')" in SETUP_JS
-    assert "signIn.disabled=blocked" in SETUP_JS
+    # A blocked host shows only its remedy: no sign-in, and nothing to cancel.
+    assert "}else if(!blocked){" in SETUP_JS
+    assert "blockedCancel" not in SETUP_JS
     assert "/api/setup/reviewer/codex/recheck" in SETUP_JS
     assert "reviewer_access_stale:'Reviewer settings changed elsewhere." in SETUP_JS
     assert "invalid_key:'OpenRouter rejected this key." in SETUP_JS
@@ -1479,9 +1481,12 @@ def test_first_run_states_its_rules_transport_and_recoveries_without_raw_codes()
     assert "new TextEncoder().encode(password.value).length" in SETUP_JS
     # One sentence per refusal: empty, mismatched and out-of-range are distinct.
     assert (
-        "error(form,length===0?'invalid_password_empty':long?'invalid_password_long'"
-        ":'invalid_password',password)" in SETUP_JS
+        "error(form,length===0?'invalid_password_empty':'invalid_password_long',password)"
+        in SETUP_JS
     )
+    # A short password is refused on the rule it breaks, said once.
+    assert "lengthRule.classList.add('rule-refused')" in SETUP_JS
+    assert "if(e.message==='invalid_password')refuseLength();" in SETUP_JS
     assert (
         "invalid_password_long:settingsVocabulary.errors.owner_password_long"
         in SETUP_JS
@@ -1501,7 +1506,7 @@ def test_first_run_states_its_rules_transport_and_recoveries_without_raw_codes()
         "'There’s no password reset, so keep it somewhere safe.']);" in SETUP_JS
     )
     assert (
-        "list.id='setup-password-rules';"
+        "list.id='setup-password-rules';lengthRule=list.children[0];"
         "password.dataset.hint=list.id;describe(password,false);form.append(list)}"
         in SETUP_JS
     )
