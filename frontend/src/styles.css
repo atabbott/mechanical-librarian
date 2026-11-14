@@ -1326,14 +1326,22 @@ html[data-reduced-motion='always-reduced'] :is(.route-state, .settings-state, .d
 .preparation-outcomes dd strong { overflow-wrap:anywhere; }
 /* A number and its first word move to the next line together when they fit there, and break at their space only when wider than a line (#1366). */
 .count-pair { display:inline-block; }
-.preparation-completions li { display:flex; justify-content:space-between; gap:1rem; padding:.55rem 0; border-bottom:1px solid var(--line); }
-.preparation-completions li span { overflow-wrap:anywhere; }
-.preparation-completions li a { display:inline-flex; min-height:2.75rem; align-items:center; }
-.preparation-completions li strong { color:var(--soft); font-size:.75rem; white-space:nowrap; }
+/* One line per completion at default text size, so the rows are equal: a long title ends in an ellipsis, and the outcome label never wraps. The container query below covers enlarged text (#1516). */
+.preparation-completions { min-width:0; container-type:inline-size; }
+.preparation-completions li { display:flex; min-width:0; align-items:center; gap:1rem; border-bottom:1px solid var(--line); }
+.preparation-completions li a { display:flex; flex:1 1 auto; min-width:0; min-height:2.75rem; align-items:center; }
+.preparation-completions li a span { min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.preparation-completions li small { flex:none; color:var(--soft); font-size:.75rem; white-space:nowrap; }
+.preparation-completions li small.outcome-failed { color:var(--danger); }
+/* Where enlarged text leaves the list narrow for its words, the label moves under its title and the title takes two lines, so it stays readable and every row is still the same height (#1516). */
+@container (max-width:18em) {
+  .preparation-completions li { flex-direction:column; align-items:stretch; gap:0; padding-bottom:.45rem; }
+  .preparation-completions li a span { display:-webkit-box; min-height:2.6em; line-height:1.3; white-space:normal; -webkit-box-orient:vertical; -webkit-line-clamp:2; line-clamp:2; }
+}
 @keyframes preparation-confirmed { from { clip-path:inset(0 100% 0 0); } to { clip-path:inset(0); } }
 @media (prefers-reduced-motion:reduce) { .preparation-run-state { animation:none; }.library-works,.preparation-summary,.preparation-detail,.masthead { view-transition-name:none; }::view-transition-group(*),::view-transition-image-pair(*),::view-transition-old(*),::view-transition-new(*) { animation-duration:0s!important;animation-delay:0s!important; } }
 html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:none; }
-@media (max-width:760px) { .preparation-detail > header { display:grid; }.preparation-detail > header > strong { white-space:normal; }.preparation-active-books { grid-auto-flow:column; grid-auto-columns:minmax(78%,1fr); overflow-x:auto; scroll-snap-type:x mandatory; }.preparation-active-books li { scroll-snap-align:start; }.preparation-section-heading { align-items:start; }.preparation-completions li { display:grid; gap:.2rem; } }
+@media (max-width:760px) { .preparation-detail > header { display:grid; }.preparation-detail > header > strong { white-space:normal; }.preparation-active-books { grid-auto-flow:column; grid-auto-columns:minmax(78%,1fr); overflow-x:auto; scroll-snap-type:x mandatory; }.preparation-active-books li { scroll-snap-align:start; }.preparation-section-heading { align-items:start; } }
 @media (min-width:1200px) {
   .selected-work-header { grid-template-columns:auto minmax(0,1fr) auto auto; padding-bottom:17px; }
 }

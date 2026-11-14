@@ -150,9 +150,11 @@ to browse", "recorded, nothing to decide", "not matched", "could not finish"
 and "in progress". Ready to browse and in progress always show. The others hide
 at zero, and an unknown count reads `…`. Counts describe the run's books as
 they stand now. Each stage bar counts books that first reached it in this run.
-A book that could not finish stops at its last stage. Recent completions record
-each book's first finish. A rate appears only while the run is running. Each
-book links into Library by the name shown.
+A book that could not finish stops at its last stage. Bars glide to each new
+count unless reduced motion is set. The status line's wipe plays only when the
+run's state changes. Recent completions record each book's first finish, one
+row each: the title, linked into Library, then "Prepared" or "Couldn't
+finish". A rate in works a minute appears only while the run is running.
 
 The masthead's background-work control shows each library's scan state and
 counts, and marks a library outside the current run. At idle it reads
