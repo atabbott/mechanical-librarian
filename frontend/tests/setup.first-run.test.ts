@@ -1146,7 +1146,7 @@ describe('shipped first-run setup script', () => {
     )
     const result = document.querySelector('.mount-line')
     if (!result) throw new Error('folder result missing')
-    expect(result).toHaveTextContent('Reading Shelf: Not found')
+    expect(result).toHaveTextContent('Reading Shelf: Still not found')
     expect(result.textContent).not.toContain('missing')
 
     // Reopening an earlier step abandons the draft: the folder step shows the
@@ -1296,7 +1296,9 @@ describe('shipped first-run setup script', () => {
     expect(screen.getByLabelText('Reading Shelf folder in Audiobookshelf')).toHaveValue(
       '/owner/typed/books',
     )
-    expect(document.querySelector('.mount-line')).toHaveTextContent('Reading Shelf: Not found')
+    expect(document.querySelector('.mount-line')).toHaveTextContent(
+      'Reading Shelf: Still not found',
+    )
   })
 
   it('summarizes the configured scope with one reopen seam in step order', async () => {
@@ -2114,9 +2116,9 @@ describe('shipped first-run setup script', () => {
         'Still not found: Listening Room.',
       ),
     )
-    expect(document.querySelector('.confirmation')).toHaveTextContent(
-      'Still not found: Listening Room.',
-    )
+    // Said once: on the library's own line, not in a confirmation above it.
+    expect(document.querySelector('.confirmation')).toBeNull()
+    expect(document.querySelector('.mount-state')).toHaveTextContent('Still not found')
     expect(screen.getByRole('heading', { name: 'Find library folders' })).toBeVisible()
   })
 

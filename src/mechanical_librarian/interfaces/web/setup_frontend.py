@@ -84,6 +84,7 @@ SETUP_CSS += (
     "button:disabled,button[aria-disabled=true]{opacity:.55;cursor:not-allowed}"
     ".rules .rule-refused{color:var(--red);font-weight:700}"
     ".reviewer-detail p{color:var(--quiet);font-size:.8rem}"
+    ".reviewer-detail p+p{margin-top:.5rem}"
     ".reveal-row,.summary-row>*,.rules>*{min-width:0}"
     ".field-label{font-size:.75rem;font-weight:800}"
     ".reveal-row{display:flex;flex-wrap:wrap;align-items:stretch;gap:.5rem}"
@@ -149,6 +150,9 @@ let fieldSequence=0;
 let mutating=false;
 let refusalGuard=null;
 let confirmation=null;
+// Said to screen readers when a step records nothing to show, such as a
+// folder check that still finds a folder missing.
+let spoken=null;
 const api=async(path,options={})=>{
   const headers={'content-type':'application/json',...(options.mutation?{'x-csrf-token':csrf}:{})};
   const response=await fetch(path,{credentials:'same-origin',...options,headers:{...headers,...options.headers}});
@@ -340,7 +344,8 @@ const mutate=async(path,payload,form,{control,submitted,address,confirm}={})=>{
     confirmation=confirm||null;
     await load();
     const recorded=[...main.querySelectorAll('.confirmation p')].map(line=>line.textContent.trim()).filter(Boolean);
-    announce(recorded.length?recorded.join(' '):'Setup progress recorded')
+    announce(recorded.length?recorded.join(' '):spoken||'Setup progress recorded');
+    spoken=null
   }catch(e){
     confirmation=null;
     // A form token rotated by another tab is the same event as a stale step.
@@ -651,12 +656,18 @@ const foundFiles=()=>{
   const ordered=[...state.libraries].sort((left,right)=>rank(left)-rank(right));
   return[`Found the files for ${listed(ordered.map(library=>library.display_name||humanName(library.name)))}.`]
 };
-// A check that still finds a folder missing says which, once.
+// A check that still finds a folder missing marks it on its own line and
+// says which to screen readers; nothing is added to the card.
+let rechecked=false;
 const checkedFolders=()=>{
   if(state.next_step!=='mounts')return foundFiles();
   const results=new Map(state.mounts.map(item=>[item.library,item.state]));
   const missing=state.libraries.filter(library=>results.get(library.name)!=='matched');
-  return missing.length?[`Still not found: ${listed(missing.map(library=>library.display_name||humanName(library.name)))}.`]:[]
+  if(missing.length){
+    rechecked=true;
+    spoken=`Still not found: ${listed(missing.map(library=>library.display_name||humanName(library.name)))}.`
+  }
+  return[]
 };
 const renderLibraries=async()=>{
   const section=card('Choose libraries');
@@ -733,6 +744,8 @@ const renderMounts=async()=>{
   // Only the libraries whose folder was not found are asked about.
   const results=new Map(state.mounts.map(item=>[item.library,item.state]));
   const asked=state.libraries.filter(library=>results.get(library.name)!=='matched');
+  const again=rechecked;
+  rechecked=false;
   for(const library of asked){
     const result=results.get(library.name);
     if(result){
@@ -741,7 +754,7 @@ const renderMounts=async()=>{
       const lead=document.createElement('span');
       const label=document.createElement('span');
       label.className='mount-state';
-      label.textContent=mountState[result]||'Not found';
+      label.textContent=again?'Still not found':mountState[result]||'Not found';
       lead.append(document.createTextNode(`${shown(library)}: `),label);
       line.append(lead);
       const detail=document.createElement('span');
