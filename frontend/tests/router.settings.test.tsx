@@ -144,6 +144,21 @@ describe('owner settings route', () => {
     expect(screen.queryByRole('button', { name: 'Add Open Library' })).not.toBeInTheDocument()
   })
 
+  it('offers to add a source only when the settings are not file-managed', async () => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => ({ ...view(), document: { ...document, providers: [] } }))
+    renderRoute('/settings?group=providers', http)
+    expect(await screen.findByText('No metadata sources yet. Add one below.')).toBeVisible()
+    cleanup()
+    http.getSettings = vi.fn(async () => ({
+      ...view('file'),
+      document: { ...document, providers: [] },
+    }))
+    renderRoute('/settings?group=providers', http)
+    expect(await screen.findByText('No metadata sources.')).toBeVisible()
+    expect(screen.queryByText(/Add one below/u)).toBeNull()
+  })
+
   it('adds the keyless audiobook providers with no credential and saves them', async () => {
     const user = userEvent.setup()
     const http = createHttp()

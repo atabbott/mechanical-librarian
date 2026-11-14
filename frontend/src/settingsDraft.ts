@@ -157,7 +157,7 @@ export const numberFields: readonly NumberField[] = [
   {
     fieldId: 'limits.provider_response_bytes',
     label: 'Source response limit',
-    description: 'Up to 0.25 MB',
+    description: 'Up to 0.25 MB (256 KB)',
     minimum: 1024,
     maximum: 262_144,
     unit: 'MB',

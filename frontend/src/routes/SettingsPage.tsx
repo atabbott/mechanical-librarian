@@ -92,7 +92,7 @@ const Secret = ({
         <strong>{presence.indicator ?? 'Configured'}</strong>
         {confirmingClear ? (
           <div role="alert" className="settings-clear-confirmation">
-            <span>The key is removed when you save.</span>
+            <span>The key is cleared when you save.</span>
             <button
               type="button"
               onClick={() => {
@@ -365,7 +365,7 @@ export default function SettingsPage() {
           ref={reconciliationTarget}
         >
           {reconciliation === 'checking' ? (
-            <p>No answer came back. Loading the saved settings to check what was saved.</p>
+            <p>No answer came back. Loading the saved settings.</p>
           ) : reconciliation === 'failed' ? (
             <>
               <p>
@@ -612,7 +612,7 @@ const SettingsEditor = ({
         : status === 'stale'
           ? 'Settings changed elsewhere. Loading the newer values and keeping your changes.'
           : status === 'unconfirmed'
-            ? 'Settings changed elsewhere, and the newer values could not be loaded. Save again to retry.'
+            ? 'Settings changed elsewhere, and the newer values could not be loaded. Save again.'
             : status === 'rebased' && settled
               ? 'Settings changed elsewhere, and your edits now show the newer saved values. Nothing is left to save.'
               : status === 'rebased'
@@ -692,7 +692,7 @@ const SettingsEditor = ({
       {locked ? (
         <section className="settings-file-banner" role="status">
           <strong>Managed by /data/config.json</strong>
-          <p>To change a value, edit the file and restart the service.</p>
+          <p>To change a locked value, edit the file and restart the service.</p>
         </section>
       ) : null}
       {settled ? (
@@ -746,7 +746,7 @@ const SettingsEditor = ({
                     <FieldRow
                       {...recordRow(`connection.${connection.name}.endpoint`)}
                       title="Audiobookshelf endpoint"
-                      description="https://audiobookshelf.example:13378"
+                      description="https://host:13378"
                     >
                       {locked ? (
                         <span>{connection.endpoint}</span>
@@ -798,7 +798,9 @@ const SettingsEditor = ({
               <>
                 {draft.providers.length === 0 ? (
                   <div className="settings-empty">
-                    <p>No metadata sources yet. Add one below.</p>
+                    <p>
+                      {locked ? 'No metadata sources.' : 'No metadata sources yet. Add one below.'}
+                    </p>
                   </div>
                 ) : null}
                 {draft.providers.map((provider, index) => {
