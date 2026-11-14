@@ -1414,9 +1414,12 @@ def test_setup_library_step_uses_audiobookshelf_book_kind_without_owner_choice()
     assert "media_kind:'book'" in SETUP_JS
     # Every book library starts ticked and keeps its Audiobookshelf name.
     assert "selected.checked=true" in SETUP_JS
-    assert "display_name" not in SETUP_JS.split("const renderLibraries=", 1)[1].split(
-        "const renderMounts=", 1
-    )[0]
+    assert (
+        "display_name"
+        not in SETUP_JS.split("const renderLibraries=", 1)[1].split(
+            "const renderMounts=", 1
+        )[0]
+    )
     assert "New name for" not in SETUP_JS
     assert "Change name" not in SETUP_JS
     assert "row.dataset.name=stableName" in SETUP_JS

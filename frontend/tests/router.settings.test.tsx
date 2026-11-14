@@ -785,7 +785,12 @@ describe('owner settings route', () => {
         ...document,
         providers: [
           ...document.providers,
-          { adapter: 'google_books', cover_enabled: false, enabled: true, name: 'google' },
+          {
+            adapter: 'google_books' as const,
+            cover_enabled: false as const,
+            enabled: true,
+            name: 'google',
+          },
         ],
       },
     }))

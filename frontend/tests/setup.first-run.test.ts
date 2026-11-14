@@ -49,9 +49,7 @@ const setupState = (nextStep: string, overrides: Record<string, unknown> = {}) =
 // The sources step ticks the sources that suit the libraries once its read
 // returns; a test about one chosen source starts from none ticked.
 const untickSources = async () => {
-  await waitFor(() =>
-    expect(screen.queryByText('Loading your libraries…')).not.toBeInTheDocument(),
-  )
+  await waitFor(() => expect(screen.queryByText('Loading your libraries…')).not.toBeInTheDocument())
   for (const box of screen.getAllByRole('checkbox'))
     if (box instanceof HTMLInputElement && box.checked) fireEvent.click(box)
 }
@@ -68,17 +66,33 @@ const jsonBody = (body: BodyInit | null | undefined): unknown => {
 
 // jsdom cannot navigate, and its `location.replace` cannot be spied on, so a
 // test that follows Start runs the shipped script against a stub location.
-type LocationStub = { protocol: string; href: string; origin: string; replace: (url: string) => void }
-const runSetup = (place?: LocationStub) => {
-  if (place) new Function('location', script)(place)
-  else window.eval(script)
+interface LocationStub {
+  protocol: string
+  href: string
+  origin: string
+  replace: (url: string) => void
 }
-const stubLocation = (protocol = 'http:'): LocationStub & { replace: ReturnType<typeof vi.fn> } => ({
-  protocol,
-  href: `${protocol}//setup.invalid/`,
-  origin: `${protocol}//setup.invalid`,
-  replace: vi.fn(),
-})
+const runSetup = (place?: LocationStub) => {
+  if (!place) {
+    window.eval(script)
+    return
+  }
+  // The same as `new Function('location', script)(place)`: the shipped script
+  // reads `location` from this parameter instead of the window's.
+  const run = window.eval(`(function (location) {\n${script}\n})`) as (
+    location: LocationStub,
+  ) => void
+  run(place)
+}
+const stubLocation = (protocol = 'http:') => {
+  const replace = vi.fn<(url: string) => void>()
+  return {
+    protocol,
+    href: `${protocol}//setup.invalid/`,
+    origin: `${protocol}//setup.invalid`,
+    replace,
+  }
+}
 
 const resetSetupDocument = () => {
   document.head.innerHTML = `<style>${css}</style>`
@@ -213,7 +227,9 @@ describe('shipped first-run setup script', () => {
     expect(screen.getByRole('button', { name: 'Show the setup claim token' })).toBeVisible()
     // The hint names the log and the command that prints it, and is said
     // with the field.
-    const where = screen.getByText(/It’s in the container log\. Restarting the container replaces it\./u)
+    const where = screen.getByText(
+      /It’s in the container log\. Restarting the container replaces it\./u,
+    )
     expect(where).toBeVisible()
     expect(within(where).getByText('docker compose logs mechanical-librarian').tagName).toBe('CODE')
     expect(token).toHaveAttribute('aria-describedby', where.id)
@@ -388,9 +404,7 @@ describe('shipped first-run setup script', () => {
     if (!rulesList) throw new Error('password rules missing')
     expect(rulesList.id).toBe('setup-password-rules')
     expect(screen.queryByText('Both fields must match exactly.')).not.toBeInTheDocument()
-    expect(screen.getByLabelText('Confirm owner password')).not.toHaveAttribute(
-      'aria-describedby',
-    )
+    expect(screen.getByLabelText('Confirm owner password')).not.toHaveAttribute('aria-describedby')
     expect(rulesList.previousElementSibling).toContainElement(
       screen.getByLabelText('Owner password'),
     )
@@ -578,7 +592,12 @@ describe('shipped first-run setup script', () => {
   it.each([
     [422, 'invalid_endpoint', 'Enter only the address and port', 'endpoint'],
     [502, 'unauthorized', 'Create a key that can read your libraries', 'key'],
-    [502, 'name_resolution', 'could not find https://books.invalid:8443. Check the address', 'endpoint'],
+    [
+      502,
+      'name_resolution',
+      'could not find https://books.invalid:8443. Check the address',
+      'endpoint',
+    ],
     [502, 'refused', 'refused the connection', 'endpoint'],
     [502, 'tls', 'Use an address with a trusted certificate', 'endpoint'],
     [502, 'timeout', 'did not answer in time.', 'endpoint'],
@@ -645,7 +664,10 @@ describe('shipped first-run setup script', () => {
         expect(alert.previousElementSibling).toBe(invalid.closest('.field'))
         expect(invalid).toHaveAttribute('aria-invalid', 'true')
         // The refusal leads, and the field's own hint is still said with it.
-        expect(invalid).toHaveAttribute('aria-describedby', `${alert.id} ${invalid.dataset.hint}`)
+        expect(invalid).toHaveAttribute(
+          'aria-describedby',
+          `${alert.id} ${invalid.dataset.hint ?? ''}`,
+        )
         expect(invalid).toHaveFocus()
         expect(released).not.toHaveAttribute('aria-invalid')
       }
@@ -781,7 +803,7 @@ describe('shipped first-run setup script', () => {
       const alert = await screen.findByRole('alert')
       await waitFor(() => expect(alert).toHaveTextContent(settingsVocabulary.errors.secret))
       expect(key).toHaveAttribute('aria-invalid', 'true')
-      expect(key).toHaveAttribute('aria-describedby', `${alert.id} ${key.dataset.hint}`)
+      expect(key).toHaveAttribute('aria-describedby', `${alert.id} ${key.dataset.hint ?? ''}`)
       expect(key).toHaveFocus()
       expect(endpoint).not.toHaveAttribute('aria-invalid')
       expect(attempts).toEqual([])
@@ -1091,7 +1113,8 @@ describe('shipped first-run setup script', () => {
       }
       return response(
         setupState(step, {
-          completed_steps: step === 'mounts' ? ['claim', 'connect', 'libraries'] : ['claim', 'connect'],
+          completed_steps:
+            step === 'mounts' ? ['claim', 'connect', 'libraries'] : ['claim', 'connect'],
           libraries: step === 'mounts' ? [library] : [],
           mounts,
           revision,
@@ -1185,7 +1208,9 @@ describe('shipped first-run setup script', () => {
 
     const alert = await screen.findByRole('alert')
     await waitFor(() =>
-      expect(alert).toHaveTextContent('Those folders could not be checked. Reload the page, then check again.'),
+      expect(alert).toHaveTextContent(
+        'Those folders could not be checked. Reload the page, then check again.',
+      ),
     )
     expect(screen.getAllByRole('alert')).toHaveLength(1)
     expect(alert.previousElementSibling).toBe(check)
@@ -1260,7 +1285,9 @@ describe('shipped first-run setup script', () => {
     const status = document.querySelector('#setup-status')
     await waitFor(() => expect(status).toHaveTextContent('changed in another tab'))
     expect(screen.getByRole('heading', { name: 'Find library folders' })).toBeVisible()
-    expect(screen.getByLabelText('Reading Shelf folder in Audiobookshelf')).toHaveValue('/owner/typed/books')
+    expect(screen.getByLabelText('Reading Shelf folder in Audiobookshelf')).toHaveValue(
+      '/owner/typed/books',
+    )
     expect(document.querySelector('.mount-line')).toHaveTextContent('Reading Shelf: Not found')
   })
 
@@ -1466,9 +1493,7 @@ describe('shipped first-run setup script', () => {
       expect(fresh).not.toBe(submit)
       expect(alert.closest('form')?.firstElementChild).toBe(alert)
       expect(fresh).not.toHaveAttribute('aria-disabled')
-      await waitFor(() =>
-        expect(screen.getByRole('heading', { name: 'Start' })).toHaveFocus(),
-      )
+      await waitFor(() => expect(screen.getByRole('heading', { name: 'Start' })).toHaveFocus())
     },
   )
 
@@ -1674,9 +1699,9 @@ describe('shipped first-run setup script', () => {
 
     const heading = await screen.findByRole('heading', { name: 'Choose libraries' })
     await waitFor(() => expect(heading).toHaveFocus())
-    expect(screen.getAllByRole('checkbox').map((node) => node.closest('label')?.textContent)).toEqual(
-      ['Books ', 'Audio'],
-    )
+    expect(
+      screen.getAllByRole('checkbox').map((node) => node.closest('label')?.textContent),
+    ).toEqual(['Books ', 'Audio'])
     expect(screen.queryByRole('button', { name: /^Change name/u })).toBeNull()
     expect(screen.queryByRole('textbox')).toBeNull()
     expect(document.querySelector('input[name^="display-"]')).toBeNull()
@@ -1727,9 +1752,24 @@ describe('shipped first-run setup script', () => {
             completed_steps: ['claim', 'connect', 'libraries'],
             libraries: [
               { library_id: 'books-id', media_kind: 'book', name: 'books', display_name: 'Books' },
-              { library_id: 'history-id', media_kind: 'book', name: 'history', display_name: 'History' },
-              { library_id: 'essays-id', media_kind: 'book', name: 'essays', display_name: 'Essays' },
-              { library_id: 'archive-id', media_kind: 'book', name: 'archive', display_name: 'Archive' },
+              {
+                library_id: 'history-id',
+                media_kind: 'book',
+                name: 'history',
+                display_name: 'History',
+              },
+              {
+                library_id: 'essays-id',
+                media_kind: 'book',
+                name: 'essays',
+                display_name: 'Essays',
+              },
+              {
+                library_id: 'archive-id',
+                media_kind: 'book',
+                name: 'archive',
+                display_name: 'Archive',
+              },
             ],
             mounts: [
               { library: 'books', state: 'matched' },
@@ -1761,7 +1801,9 @@ describe('shipped first-run setup script', () => {
       'Audiobookshelf reported no folder for this library. Enter its folder, then check again.',
     ])
     // Only the folder that is not mounted links the deployment guide.
-    const guide = within(lines[0] as HTMLElement).getByRole('link', {
+    const [notMounted] = lines
+    if (!notMounted) throw new Error('folder line missing')
+    const guide = within(notMounted).getByRole('link', {
       name: 'Media mounts in the deployment guide',
     })
     expect(guide).toHaveAttribute(
@@ -1781,7 +1823,12 @@ describe('shipped first-run setup script', () => {
         return response({
           libraries: [
             { library_id: 'books-id', media_kind: 'book', name: 'Books', service_path: '/books' },
-            { library_id: 'audio-id', media_kind: 'book', name: 'Listening', service_path: '/srv/listening' },
+            {
+              library_id: 'audio-id',
+              media_kind: 'book',
+              name: 'Listening',
+              service_path: '/srv/listening',
+            },
           ],
         })
       if (url === '/api/setup/mounts' && init?.method === 'POST') return response({})
@@ -1790,7 +1837,12 @@ describe('shipped first-run setup script', () => {
           completed_steps: ['claim', 'connect', 'libraries'],
           libraries: [
             { library_id: 'books-id', media_kind: 'book', name: 'books', display_name: 'Books' },
-            { library_id: 'audio-id', media_kind: 'book', name: 'audio', display_name: 'Listening' },
+            {
+              library_id: 'audio-id',
+              media_kind: 'book',
+              name: 'audio',
+              display_name: 'Listening',
+            },
           ],
           mounts: [
             { library: 'books', state: 'matched' },
@@ -1802,7 +1854,9 @@ describe('shipped first-run setup script', () => {
     vi.stubGlobal('fetch', fetch)
     runSetup()
 
-    const folder = await screen.findByRole('textbox', { name: 'Listening folder in Audiobookshelf' })
+    const folder = await screen.findByRole('textbox', {
+      name: 'Listening folder in Audiobookshelf',
+    })
     expect(folder).toHaveValue('/srv/listening')
     expect(folder).toHaveAttribute('placeholder', '/audiobooks')
     expect(screen.queryByRole('textbox', { name: 'Books folder in Audiobookshelf' })).toBeNull()
@@ -1813,7 +1867,8 @@ describe('shipped first-run setup script', () => {
     await waitFor(() =>
       expect(
         fetch.mock.calls.some(
-          ([request, init]) => requestUrl(request) === '/api/setup/mounts' && init?.method === 'POST',
+          ([request, init]) =>
+            requestUrl(request) === '/api/setup/mounts' && init?.method === 'POST',
         ),
       ).toBe(true),
     )
@@ -1944,7 +1999,9 @@ describe('shipped first-run setup script', () => {
         'Audiobooks',
       ])
       // No audiobook is sent to iTunes, so it sits with the book sources (#1458).
-      expect(within(groups[1] as HTMLElement).queryByRole('checkbox', { name: 'iTunes' })).toBeNull()
+      expect(
+        within(groups[1] as HTMLElement).queryByRole('checkbox', { name: 'iTunes' }),
+      ).toBeNull()
       expect(
         [...document.querySelectorAll<HTMLInputElement>('input[type=checkbox]:checked')].map(
           (box) => box.name,
@@ -2265,10 +2322,14 @@ describe('shipped first-run setup script', () => {
       'href',
       'https://openrouter.ai/settings/keys',
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Use dots-studio/dots-3-note-preview:free (Free)' }))
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Use dots-studio/dots-3-note-preview:free (Free)' }),
+    )
     expect(model).toHaveValue('dots-studio/dots-3-note-preview:free')
     expect(model).toHaveFocus()
-    expect(screen.getByText('dots-studio/dots-3-note-preview:free: cost not measured.')).toBeVisible()
+    expect(
+      screen.getByText('dots-studio/dots-3-note-preview:free: cost not measured.'),
+    ).toBeVisible()
     fireEvent.click(screen.getByRole('button', { name: 'Use GPT-6 Luna (Paid)' }))
     expect(model).toHaveValue('openai/gpt-6-luna')
     fireEvent.input(model, { target: { value: 'manual/vision-model' } })
@@ -2290,9 +2351,9 @@ describe('shipped first-run setup script', () => {
     expect(place.replace).toHaveBeenCalledTimes(1)
     const target = new URL(String(place.replace.mock.calls[0]?.[0]), 'https://setup.invalid')
     expect(target.pathname).toBe('/library')
-    expect([...target.searchParams.keys()].every((key) => ['lens', 'preparation'].includes(key))).toBe(
-      true,
-    )
+    expect(
+      [...target.searchParams.keys()].every((key) => ['lens', 'preparation'].includes(key)),
+    ).toBe(true)
     return `${target.pathname}${target.search}`
   }
 
@@ -2479,9 +2540,7 @@ it('resumes an issued device flow after reload, cancels it, and offers a restart
 // the frame can land after the press and take focus from the control.
 const reviewerStepSettled = () =>
   waitFor(() =>
-    expect(
-      screen.getByRole('heading', { name: 'Cover reviewer (optional)' }),
-    ).toHaveFocus(),
+    expect(screen.getByRole('heading', { name: 'Cover reviewer (optional)' })).toHaveFocus(),
   )
 
 it('moves focus to Cancel sign-in after a pressed start (#1607)', async () => {
@@ -2684,9 +2743,7 @@ it.each(['usable access at load', 'a usable automatic check over failed access']
     ).toHaveLength(shape === 'usable access at load' ? 0 : 1)
     expect(screen.queryByRole('button', { name: 'Use Codex' })).toBeNull()
     await waitFor(() =>
-      expect(
-        screen.getByRole('heading', { name: 'Cover reviewer (optional)' }),
-      ).toHaveFocus(),
+      expect(screen.getByRole('heading', { name: 'Cover reviewer (optional)' })).toHaveFocus(),
     )
   },
 )
@@ -2793,7 +2850,9 @@ it('checks an existing Codex sign-in once without a press', async () => {
   await waitFor(() => expect(release).toBeDefined())
   release?.()
   expect(await screen.findByText('Signed in', { selector: '.option p' })).toBeVisible()
-  await waitFor(() => expect(document.querySelector('#setup-status')).toHaveTextContent('Signed in'))
+  await waitFor(() =>
+    expect(document.querySelector('#setup-status')).toHaveTextContent('Signed in'),
+  )
   expect(screen.getByRole('button', { name: 'Use Codex' })).toBeEnabled()
   expect(screen.queryByRole('button', { name: 'Sign in with ChatGPT' })).toBeNull()
   expect(screen.queryByRole('button', { name: 'Check existing sign-in' })).toBeNull()
@@ -3086,13 +3145,7 @@ it.each([
 
 it.each([
   ['Skip for now', 503, 'unavailable', 'That step was not saved.', false],
-  [
-    'Continue',
-    409,
-    'reviewer_unconfigured',
-    'The chosen reviewer is not ready any more',
-    true,
-  ],
+  ['Continue', 409, 'reviewer_unconfigured', 'The chosen reviewer is not ready any more', true],
 ] as const)(
   'places a failed %s under that button (#1664)',
   async (name, status, code, copy, mapped) => {
@@ -3245,12 +3298,7 @@ it.each([
 
 it.each([
   ['succeeds', () => response({ state: 'cancelled' }), false, 'The sign-in was cancelled.'],
-  [
-    'fails',
-    () => response({ error: 'unavailable' }, 503),
-    true,
-    'That step was not saved.',
-  ],
+  ['fails', () => response({ error: 'unavailable' }, 503), true, 'That step was not saved.'],
 ])(
   'keeps focus on the blocked cancel while it runs and after it %s',
   async (_, settle, alert, message) => {
@@ -3408,15 +3456,7 @@ it.each([
     'invalid_providers',
     null,
   ],
-  [
-    'Continue',
-    'libraries',
-    'Choose libraries',
-    '/api/setup/libraries',
-    502,
-    'unavailable',
-    null,
-  ],
+  ['Continue', 'libraries', 'Choose libraries', '/api/setup/libraries', 502, 'unavailable', null],
   [
     'Check again',
     'mounts',
@@ -3444,15 +3484,7 @@ it.each([
     'reviewer_unconfigured',
     'Sign in with ChatGPT',
   ],
-  [
-    'Start',
-    'kick_off',
-    'Start',
-    '/api/setup/kick-off',
-    503,
-    'activation_failed',
-    null,
-  ],
+  ['Start', 'kick_off', 'Start', '/api/setup/kick-off', 503, 'activation_failed', null],
 ] as const)(
   'keeps %s focused while the %s step is recorded (#1678)',
   async (name, step, heading, path, status, code, siblingName) => {
@@ -3469,9 +3501,7 @@ it.each([
         return response({
           ...reviewerAccess('ready'),
           mapping:
-            name === 'Continue'
-              ? { engine: 'openrouter', model: 'openai/gpt-6-luna' }
-              : null,
+            name === 'Continue' ? { engine: 'openrouter', model: 'openai/gpt-6-luna' } : null,
         })
       return response(
         step === 'mounts'
@@ -3627,6 +3657,11 @@ it.each([
   },
 )
 
+const setupLedger = () => {
+  const ledger = document.querySelector<HTMLElement>('#setup-ledger')
+  if (!ledger) throw new Error('setup ledger missing')
+  return ledger
+}
 const ledgerLabels = () =>
   [...document.querySelectorAll('#setup-ledger li')].map(
     (row) => row.querySelectorAll('span')[1]?.textContent,
@@ -3651,7 +3686,9 @@ it('orders the steps with libraries before sources and hides the folder step unt
 
   current = setupState('mounts', {
     completed_steps: ['claim', 'connect', 'libraries'],
-    libraries: [{ library_id: 'books-id', media_kind: 'book', name: 'books', display_name: 'Books' }],
+    libraries: [
+      { library_id: 'books-id', media_kind: 'book', name: 'books', display_name: 'Books' },
+    ],
     mounts: [{ library: 'books', state: 'missing' }],
   })
   resetSetupDocument()
@@ -3666,15 +3703,15 @@ it('orders the steps with libraries before sources and hides the folder step unt
     'Cover reviewer (optional)',
     'Start',
   ])
-  const folders = within(document.querySelector('#setup-ledger') as HTMLElement)
-    .getByText('Find library folders')
-    .closest('li')
+  const folders = within(setupLedger()).getByText('Find library folders').closest('li')
   expect(folders).toHaveAttribute('aria-current', 'step')
 
   // Once every folder is found, the step leaves the list again.
   current = setupState('providers', {
     completed_steps: ['claim', 'connect', 'libraries', 'mounts'],
-    libraries: [{ library_id: 'books-id', media_kind: 'book', name: 'books', display_name: 'Books' }],
+    libraries: [
+      { library_id: 'books-id', media_kind: 'book', name: 'books', display_name: 'Books' },
+    ],
     mounts: [{ library: 'books', state: 'matched' }],
   })
   resetSetupDocument()
@@ -3701,7 +3738,9 @@ it.each([
     vi.stubGlobal(
       'fetch',
       vi.fn(async () =>
-        response(setupState('connect', { completed_steps: ['claim'], connection: null, revision: 2 })),
+        response(
+          setupState('connect', { completed_steps: ['claim'], connection: null, revision: 2 }),
+        ),
       ),
     )
     runSetup()
@@ -3737,7 +3776,12 @@ it('resumes at the folder step with only the not-found libraries', async () => {
           completed_steps: ['claim', 'connect', 'libraries'],
           libraries: [
             { library_id: 'books-id', media_kind: 'book', name: 'books', display_name: 'Books' },
-            { library_id: 'audio-id', media_kind: 'book', name: 'audio', display_name: 'Listening' },
+            {
+              library_id: 'audio-id',
+              media_kind: 'book',
+              name: 'audio',
+              display_name: 'Listening',
+            },
           ],
           mounts: [
             { library: 'books', state: 'matched' },
@@ -3768,7 +3812,9 @@ it('resumes at the reviewer step after sources', async () => {
       return response(
         setupState('reviewer', {
           completed_steps: ['claim', 'connect', 'libraries', 'mounts', 'providers'],
-          libraries: [{ library_id: 'books-id', media_kind: 'book', name: 'books', display_name: 'Books' }],
+          libraries: [
+            { library_id: 'books-id', media_kind: 'book', name: 'books', display_name: 'Books' },
+          ],
           mounts: [{ library: 'books', state: 'matched' }],
           revision: 6,
         }),
@@ -3779,7 +3825,7 @@ it('resumes at the reviewer step after sources', async () => {
 
   await signInReady()
   await reviewerStepSettled()
-  const ledger = document.querySelector('#setup-ledger') as HTMLElement
+  const ledger = setupLedger()
   expect(within(ledger).getByText('Cover reviewer (optional)').closest('li')).toHaveAttribute(
     'aria-current',
     'step',
