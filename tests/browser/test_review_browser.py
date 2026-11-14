@@ -4753,8 +4753,8 @@ def test_reviewer_access_failure_sits_under_its_focused_button() -> None:
                     },
                 )
                 alert = page.get_by_text(
-                    "The change could not be fully confirmed. It may have been saved; "
-                    "reviewer access was reloaded. Check it before trying again."
+                    "No answer came back. Check whether the reviewer change was saved "
+                    "before trying again."
                 )
                 expect(alert).to_be_visible()
                 expect(alert).to_have_attribute("role", "alert")
@@ -9026,13 +9026,13 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                     expect(page.get_by_label("Model ID", exact=True)).to_be_focused()
                 # Data use and limits are reference detail, read on demand (#1287).
                 caveat = page.get_by_text(
-                    "Cover requests deny provider data collection", exact=False
+                    "Cover requests go only to OpenRouter providers", exact=False
                 )
                 expect(caveat).to_be_hidden()
                 page.get_by_text("OpenRouter limits, data use and key sharing").click()
                 expect(
                     page.get_by_text(
-                        "Cover requests deny provider data collection", exact=False
+                        "Cover requests go only to OpenRouter providers", exact=False
                     )
                 ).to_be_visible()
                 page.get_by_role("button", name="Continue without a reviewer").click()
@@ -9813,8 +9813,8 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                 ).to_be_visible()
                 expect(
                     page.get_by_text(
-                        "Less than 1 GB of memory headroom is available. "
-                        "Free memory or raise the container limit."
+                        "Less than 1 GB of memory is free. "
+                        "Free some memory or raise the container limit."
                     )
                 ).to_be_visible()
                 choose_section("Access and diagnostics")
@@ -10696,17 +10696,13 @@ def test_description_unavailable_inputs_and_explicit_metadata_recovery(state):
                     ).to_be_enabled()
                 page.goto(f"{origin}/settings?group=reviewer")
                 adviser = page.get_by_role(
-                    "region", name="Optional description adviser", exact=True
+                    "region", name="Description adviser", exact=True
                 )
                 if state == "no_alternatives":
-                    expect(adviser).to_contain_text("contained Codex")
+                    expect(adviser).to_contain_text("Selected: Codex (")
                 else:
-                    expect(adviser).to_contain_text(
-                        "Advisory availability: model unavailable."
-                    )
-                    expect(adviser).to_contain_text(
-                        "Price and text capability metadata must be available"
-                    )
+                    expect(adviser).to_contain_text("Status: model unavailable.")
+                    expect(adviser).to_contain_text("Test this model to see its prices")
                     with page.expect_response(
                         lambda response: urlparse(response.url).path.endswith(
                             "/api/v1/reviewer-access/openrouter/refresh"
@@ -10717,7 +10713,7 @@ def test_description_unavailable_inputs_and_explicit_metadata_recovery(state):
                         ).click()
                     assert refreshed.value.status == 200
                     expect(adviser).to_contain_text(
-                        "Selected: synthetic/description-b. Advisory availability: ready to use."
+                        "Selected: synthetic/description-b on OpenRouter. Status: ready to use."
                     )
                     prices = adviser.locator("dt").filter(
                         has_text=re.compile(r"^Prices in USD$")
@@ -12852,11 +12848,9 @@ def test_packaged_description_cost_in_settings_and_cover_only_setup(width: int) 
                 ):
                     _login(page, origin)
                     page.goto(f"{origin}/settings?group=reviewer")
-                    adviser = page.get_by_role(
-                        "region", name="Optional description adviser"
-                    )
+                    adviser = page.get_by_role("region", name="Description adviser")
                     expect(adviser).to_contain_text("Description advice: about $0.17.")
-                    cover = page.get_by_role("region", name="Optional cover reviewer")
+                    cover = page.get_by_role("region", name="Cover reviewer")
                     expect(cover).to_contain_text(
                         "Cover review: about $0.64, including about 2.7 cover images per book."
                     )
