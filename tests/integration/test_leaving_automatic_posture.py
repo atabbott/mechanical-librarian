@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -188,12 +188,15 @@ def _prepared(
     automatic: bool,
     covers: tuple[CoverSource, ...] = (),
     providers: tuple[ProviderObservation, ...] | None = None,
+    before_projection: Callable[[ReviewPipelineRepository, Any], None] | None = None,
 ) -> Iterator[_Library]:
     """One work prepared under a qualified Automatic contributor-names policy.
 
     With `automatic` false the owner stays in Preview, so the work is first
     prepared there and nothing is decided automatically. `covers` become the
     report's cover sources and `providers`, when given, its providers.
+    `before_projection`, when given, runs before each projection as the cover
+    stage does in production.
     """
     database = tmp_path / "application.sqlite3"
     report = author_report(tmp_path / "media", "supported")
@@ -304,6 +307,7 @@ def _prepared(
         propose=propose,
         admit=admit,
         project=project,
+        **({} if before_projection is None else {"before_projection": before_projection}),
         clock=lambda: now[0],
     )
     value = _Library(root, pipeline, report, admissions, evaluations, now)

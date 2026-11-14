@@ -140,7 +140,7 @@ def test_the_matching_check_on_an_empty_library_requeues_nothing(
     before = _row_counts(connection)
     connection.execute("BEGIN")
     request_matching_check(
-        connection, "title_and_creator", level_changed=True, updated_at=100
+        connection, "title_and_creator", updated_at=100
     )
     connection.execute("COMMIT")
     assert _row_counts(connection) == before

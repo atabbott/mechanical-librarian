@@ -119,10 +119,7 @@ _MATCHING_CONSIDERATION_SQL = (
     "JOIN cover_considerations consideration "
     "ON consideration.consideration_id=current.consideration_id "
 )
-_MATCHING_LEVEL_SQL = (
-    "json_extract(json_extract(consideration.document,'$.identity_document'),"
-    "'$.work_identity_level')"
-)
+_MATCHING_LEVEL_SQL = "json_extract(consideration.document,'$.work_identity_level')"
 
 
 def requeue_projection_work(
@@ -151,39 +148,72 @@ def requeue_projection_work(
         refresh_preparation_presentation(connection, updated_at)
 
 
+_MATCHING_UNCHECKED_SQL = (
+    "FROM current_review_case_lineages c "
+    + _MATCHING_CONSIDERATION_SQL
+    + "JOIN review_preparation_work w ON w.connection_name=c.connection_name "
+    "AND w.library_name=c.library_name AND w.item_id=c.item_id "
+    "WHERE c.review_case_id IS NOT NULL AND "
+    + _MATCHING_LEVEL_SQL
+    + "<>? "
+)
+
+
 def request_matching_check(
     connection: sqlite3.Connection,
     work_identity_level: str,
     *,
-    level_changed: bool,
     updated_at: int,
 ) -> None:
     """Check current cover comparisons against Book matching (#1355).
 
-    The re-check is #1573's re-projection of complete current case works, so
-    no case is retired and no case id changes: each re-projection prepares the
-    cover comparison again, reusing the stored observer output. A work is
-    taken when its current consideration was classified under another level;
-    when the level changed, also when its consideration has no classification
-    (no previews), whose replay reference names the level too. Works whose
-    check gave up are taken again, so saving the setting again retries them.
+    Every current case whose comparison was made under another level is
+    checked through its item's one preparation work. A work that completed
+    the case, or whose projection gave up, is projected again (#1573), so
+    no case is retired and each projection prepares the cover comparison
+    again, reusing the stored observer output. A work that gave up at an
+    earlier stage, as a failed rescan does, is retried at that stage, and
+    its projection then prepares the comparison. A work already queued or
+    running is left to finish. Every save runs this, so saving again
+    retries whatever gave up.
     """
     rows = connection.execute(
-        _COMPLETE_CURRENT_CASE_WORK_SQL
-        + _MATCHING_CONSIDERATION_SQL
-        + "WHERE ((w.state='complete' AND w.stage='complete' AND w.outcome='case') "
-        "OR (w.stage='projection' AND w.state IN ('failed','stale'))) AND ("
-        + _MATCHING_LEVEL_SQL
-        + "<>? OR (? AND "
-        + _MATCHING_LEVEL_SQL
-        + " IS NULL)) ORDER BY w.work_id",
-        (work_identity_level, int(level_changed)),
+        "SELECT DISTINCT w.work_id,w.scan_id,w.stage,w.state,"
+        "w.review_case_id=c.review_case_id AND w.proposal_set_id=c.proposal_set_id "
+        "AND w.report_id=c.report_id "
+        + _MATCHING_UNCHECKED_SQL
+        + "AND w.state IN ('complete','failed','stale') ORDER BY w.work_id",
+        (work_identity_level,),
     ).fetchall()
+    projections: list[tuple[str, str]] = []
+    for work_id, scan_id, stage, state, same_case in rows:
+        if same_case and (
+            (stage, state) == ("complete", "complete")
+            or (stage == "projection" and state in {"failed", "stale"})
+        ):
+            projections.append((work_id, scan_id))
+        elif state == "failed" and stage != "complete":
+            _retry_failed_stage(connection, work_id, scan_id, updated_at)
     requeue_projection_work(
-        connection,
-        [(work_id, scan_id) for work_id, scan_id in rows],
-        updated_at,
-        PreparationTrigger.MATCHING_CHANGED,
+        connection, projections, updated_at, PreparationTrigger.MATCHING_CHANGED
+    )
+    if rows and not projections:
+        refresh_preparation_presentation(connection, updated_at)
+
+
+def _retry_failed_stage(
+    connection: sqlite3.Connection, work_id: str, scan_id: str, updated_at: int
+) -> None:
+    connection.execute(
+        "UPDATE review_preparation_work SET state='queued',attempt=0,"
+        "recovery_attempt=0,retry_not_before=0,failure_code=NULL,failure_root=NULL,"
+        "updated_at=? WHERE work_id=?",
+        (updated_at, work_id),
+    )
+    connection.execute(
+        "UPDATE review_preparation_scans SET state='processing',updated_at=? "
+        "WHERE scan_id=? AND state IN ('completed','completed_with_failures')",
+        (updated_at, scan_id),
     )
 
 
@@ -192,25 +222,20 @@ def matching_check_counts(
 ) -> tuple[int, int, int]:
     """Current works, works being checked, and works whose check gave up.
 
-    A current case is checked once its current cover consideration was
-    classified under the configured Book matching level (#1355). One that is
-    not is being checked while its work is queued or running, and otherwise
-    could not be checked: its re-projection failed and gave up, or it was not
-    taken, and saving the setting again takes it.
+    A current case is checked once its current cover consideration was made
+    under the configured Book matching level (#1355). One that is not is
+    being checked while its item's work is queued, delayed or running, and
+    otherwise could not be checked; saving the setting again retries it. A
+    case whose item has no preparation work, because it left the library and
+    awaits retirement at the next scan, is not counted as either.
     """
     current = connection.execute(
         "SELECT count(*) FROM current_review_case_lineages "
         "WHERE review_case_id IS NOT NULL"
     ).fetchone()[0]
     unchecked, checking = connection.execute(
-        "SELECT count(*),coalesce(sum(EXISTS (SELECT 1 FROM review_preparation_work w "
-        "WHERE w.connection_name=c.connection_name AND w.library_name=c.library_name "
-        "AND w.item_id=c.item_id AND w.state IN ('queued','delayed','running'))),0) "
-        "FROM current_review_case_lineages c "
-        + _MATCHING_CONSIDERATION_SQL
-        + "WHERE c.review_case_id IS NOT NULL AND "
-        + _MATCHING_LEVEL_SQL
-        + "<>?",
+        "SELECT count(*),coalesce(sum(w.state IN ('queued','delayed','running')),0) "
+        + _MATCHING_UNCHECKED_SQL,
         (work_identity_level,),
     ).fetchone()
     return int(current), int(checking), int(unchecked) - int(checking)

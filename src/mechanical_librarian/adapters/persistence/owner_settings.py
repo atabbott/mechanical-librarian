@@ -222,7 +222,6 @@ class OwnerSettingsStore(ConnectionScoped):
                 request_matching_check(
                     self._connection,
                     document.matching.work_identity,
-                    level_changed=previous.matching != document.matching,
                     updated_at=accepted_at,
                 )
             committed = _settings_view(document, values, self._matching_check(document))
