@@ -38,7 +38,10 @@ from mechanical_librarian.adapters.persistence.schema import (
 )
 from mechanical_librarian.application.field_effects import GuardedApplicationError
 from mechanical_librarian.application.metadata_report import MetadataReportError
-from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+from mechanical_librarian.application.review_web import (
+    BrowseReviewLibrary,
+    InspectCurrentReviewCase,
+)
 from mechanical_librarian.domain.field_effect import FieldEffectOperation
 from mechanical_librarian.domain.human_decision import (
     HumanDecision,
@@ -735,6 +738,22 @@ def test_a_refused_choice_requests_its_case_check_again(
     given_up = InspectCurrentReviewCase(library.root).run(case_id)
     assert (given_up["checking"], given_up["check_given_up"]) == (True, True)
     assert matching_check_given_up(connection, _WIDE.value, case_id)
+
+    # Its works-list row says the same, not a generic failure (P10).
+    def row_preparation() -> object:
+        (row,) = (
+            item
+            for item in BrowseReviewLibrary(library.root).library(
+                lens="all", search=None, limit=50, cursor=None
+            )["items"]
+            if item["review_case_id"] == case_id
+        )
+        return row["preparation"]
+
+    failed_row = row_preparation()
+    assert isinstance(failed_row, dict)
+    assert failed_row["status"] == "projection"
+    assert failed_row["check_given_up"] is True
     case = library.case()
     destination = next(
         str(value["destination"]) for value in case.proposals if decision_actions(value)
@@ -750,6 +769,7 @@ def test_a_refused_choice_requests_its_case_check_again(
     # Queued again, it waits: the case no longer says it gave up.
     queued = InspectCurrentReviewCase(library.root).run(case_id)
     assert (queued["checking"], queued["check_given_up"]) == (True, False)
+    assert row_preparation() is None
     assert not matching_check_given_up(connection, _WIDE.value, case_id)
 
 

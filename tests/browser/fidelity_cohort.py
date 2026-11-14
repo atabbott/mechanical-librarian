@@ -131,6 +131,7 @@ TERMINAL_LIBRARY_WORK = _work(
     dispositions=[],
     preparation={
         "attempt": 1,
+        "check_given_up": False,
         "diagnostic_reference": "prep-0123456789abcdef",
         # A provider-credential terminal says nothing about the media.
         "media_health": [],

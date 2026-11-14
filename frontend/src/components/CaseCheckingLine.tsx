@@ -1,7 +1,7 @@
 import { Link } from '@tanstack/react-router'
 
 import type { ReviewHttp } from '../api/http'
-import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
+import { useBookMatchingRetry } from '../bookMatchingRetry'
 
 // A work whose fields wait for their check against a changed Book matching
 // setting: its choices are disabled, and the case reads again by itself when
@@ -30,23 +30,17 @@ export function CaseCheckingLine({
 }
 
 function CaseCheckGivenUpLine({ http }: { http: ReviewHttp }) {
-  // The same read as Policy's Book matching section; until it answers, or if
-  // it cannot, the line asks for the save the store mode offers.
-  const settings = useQuery({
-    queryKey: ['settings'],
-    queryFn: (queryContext) => http.getSettings(queryContext.signal, queryWorkClass(queryContext)),
-    retry: false,
-  })
+  // Said once the settings read has answered, so file mode never shows the
+  // store mode's way to retry first.
+  const retry = useBookMatchingRetry(http)
+  if (!retry.answered) return null
   return (
     <p className="case-checking-line" role="status">
       This work could not be checked against the new{' '}
       <Link to="/policy" search={{ section: 'curation' }} hash="book-matching">
         Book matching
       </Link>{' '}
-      setting.{' '}
-      {settings.data?.authority === 'file'
-        ? 'Restart the Mechanical Librarian service to retry.'
-        : 'Save Book matching again to retry.'}
+      setting.{retry.retry ? ` ${retry.retry}` : ''}
     </p>
   )
 }

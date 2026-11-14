@@ -94,6 +94,89 @@ describe('a work whose Book matching check gave up', () => {
   })
 })
 
+describe('the works row of a work whose Book matching check gave up', () => {
+  const givenUpLibrary = {
+    ...library,
+    counts: { ...library.counts, failed: 1 },
+    works: library.works.map((work) => ({
+      ...work,
+      attentionCount: 0,
+      attention: 'preparation_failed' as const,
+      preparation: {
+        attempt: 1,
+        checkGivenUp: true,
+        diagnosticReference: 'prep-0123456789abcdef',
+        mediaHealth: [],
+        provider: 'provider',
+        reason: 'The review could not be put together.',
+        recovery: 'Scan this library again to retry it.',
+        recoveryAttempt: 0,
+        stage: 'projection' as const,
+        status: 'projection' as const,
+      },
+    })),
+  }
+  const row = async () => {
+    const button = await screen.findByRole('button', { name: /^A Book\./u })
+    return button
+  }
+  it.each([
+    ['store', 'Save Book matching again to retry.'],
+    ['file', 'Restart the Mechanical Librarian service to retry.'],
+  ] as const)('says what the case line says in %s mode', async (authority, retry) => {
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getLibrary: vi.fn(async () => givenUpLibrary),
+      getSettings: vi.fn(async () => view(authority)),
+    }
+    renderRoute('/library?lens=all', http)
+    const work = await row()
+    await waitFor(() =>
+      expect(work).toHaveTextContent(
+        `Could not be checked against the new Book matching setting. ${retry} Reference: prep-0123456789abcdef`,
+      ),
+    )
+    expect(within(work).getByText('Not checked')).toBeVisible()
+    expect(work).not.toHaveTextContent('Could not finish')
+    expect(work).not.toHaveTextContent('The review could not be put together.')
+    expect(work).not.toHaveTextContent('Scan this library again')
+  })
+})
+
+describe('the given-up case line waits for the settings read', () => {
+  it('shows no way to retry until the read answers, then the file mode one', async () => {
+    let answer: (value: ReturnType<typeof view>) => void = () => undefined
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        checking: true,
+        checkGivenUp: true,
+      })),
+      getLibrary: vi.fn(async () => library),
+      getSettings: vi.fn(
+        () =>
+          new Promise<ReturnType<typeof view>>((resolve) => {
+            answer = resolve
+          }),
+      ),
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+    await waitFor(() => expect(proposed()).toBeDisabled())
+    await waitFor(() => expect(http.getSettings).toHaveBeenCalled())
+    expect(screen.queryByText(/Save Book matching again/u)).toBeNull()
+    expect(screen.queryByRole('link', { name: 'Book matching' })).toBeNull()
+    await act(async () => {
+      answer(view('file'))
+    })
+    const link = await screen.findByRole('link', { name: 'Book matching' })
+    expect(link.closest('p')).toHaveTextContent(
+      'This work could not be checked against the new Book matching setting. Restart the Mechanical Librarian service to retry.',
+    )
+    expect(screen.queryByText(/Save Book matching again/u)).toBeNull()
+  })
+})
+
 describe('owner controls while the work waits for its check', () => {
   const genres = {
     ...title,

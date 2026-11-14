@@ -9030,6 +9030,10 @@
             "title": "Attempt",
             "type": "integer"
           },
+          "check_given_up": {
+            "title": "Check Given Up",
+            "type": "boolean"
+          },
           "diagnostic_reference": {
             "title": "Diagnostic Reference",
             "type": "string"
@@ -9097,6 +9101,7 @@
         },
         "required": [
           "attempt",
+          "check_given_up",
           "diagnostic_reference",
           "media_health",
           "provider",

@@ -52,7 +52,6 @@ import { StatusPill } from '../components/StatusPill'
 import {
   actionable,
   choiceAvailable,
-  offerChangedNotice,
   requestKey,
   useReviewDecisionController,
 } from '../reviewDecisionController'
@@ -1531,13 +1530,10 @@ export default function LibraryPage({
   const selectedAdvice = selected?.destination === 'description' ? shownAdvice(selected) : null
   const selectedChoiceMode =
     selectedActionable || selectedRevisitable || selectedOptional || Boolean(selectedAdvice)
-  // A choice field's status line; a choice refused because Book matching
-  // changed the offer is said right under the choice cards (#1355).
-  const choiceStatus =
-    selected && selectedChoiceMode && !ownerStatusShown
-      ? controller.statusFor(selected.destination) || controller.messageFor(selected.destination)
-      : ''
-  const offerChangedShown = choiceStatus === offerChangedNotice
+  const choiceStatus = controller.choiceStatusFor(
+    selected?.destination,
+    selectedChoiceMode && !ownerStatusShown,
+  )
   const selectedCoverPreparation =
     selected?.destination === 'cover' &&
     selected.coverConsideration?.current !== true &&
@@ -2234,7 +2230,7 @@ export default function LibraryPage({
                       toggle={() => toggleChoiceEvidence(`${selected.destination}:context`)}
                     />
                   )}
-                  {offerChangedShown ? <p role="status">{offerChangedNotice}</p> : null}
+                  {choiceStatus.offerChanged ? <p role="status">{choiceStatus.text}</p> : null}
                   {selected.ownerControl && !controller.reloadRequired ? (
                     <OwnerControls
                       key={ownerKey}
@@ -2286,7 +2282,7 @@ export default function LibraryPage({
                       Try the same decision again
                     </button>
                   ) : null}
-                  {choiceStatus && !offerChangedShown ? (
+                  {choiceStatus.text && !choiceStatus.offerChanged ? (
                     <p
                       role={
                         controller.decision.isError || controller.reloadRequired
@@ -2294,7 +2290,7 @@ export default function LibraryPage({
                           : 'status'
                       }
                     >
-                      {choiceStatus}
+                      {choiceStatus.text}
                     </p>
                   ) : null}
                   {controller.reloadRequired ? (

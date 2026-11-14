@@ -1197,6 +1197,9 @@ class _MediaHealthObservation(_ClosedModel):
 
 class _PreparationFailure(_ClosedModel):
     attempt: _Count
+    # The failure is a Book matching check that gave up: the row says how to
+    # retry it, as the case's own line does (#1355).
+    check_given_up: bool
     diagnostic_reference: str
     media_health: list[_MediaHealthObservation] = Field(max_length=512)
     provider: str

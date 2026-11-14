@@ -676,6 +676,13 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                     else _canonical_json(
                         {
                             "attempt": terminal[2],
+                            "check_given_up": case_id is not None
+                            and case_level_unreconciled(self._connection, case_id)
+                            and matching_check_given_up(
+                                self._connection,
+                                target_level(self._connection).value,
+                                case_id,
+                            ),
                             "connection": target["connection"],
                             "failure_root": terminal[6],
                             "item": target["item"],

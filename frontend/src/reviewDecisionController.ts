@@ -470,13 +470,25 @@ export const useReviewDecisionController = ({
     announce(reviewCaseId, command.destination, `Recording ${outcomeWords(command.outcome)}…`)
     void decision.mutateAsync(command).catch(() => undefined)
   }
+  const statusFor = (destination: string) => {
+    const local =
+      status.caseId === reviewCaseId && status.destination === destination ? status.text : null
+    const durable = durableStatus.data?.destination === destination ? durableStatus.data.text : null
+    return local ?? durable ?? ''
+  }
+  const messageFor = (destination: string) =>
+    reconciliation.data?.destination === destination ? reconciliation.data.message : undefined
   return {
-    statusFor: (destination: string) => {
-      const local =
-        status.caseId === reviewCaseId && status.destination === destination ? status.text : null
-      const durable =
-        durableStatus.data?.destination === destination ? durableStatus.data.text : null
-      return local ?? durable ?? ''
+    statusFor,
+    // A choice field's status line, where the field shows one, and whether it
+    // says a choice was refused because Book matching changed the offer: that
+    // line is said right under the choice cards (#1355).
+    choiceStatusFor: (destination: string | undefined, shown: boolean) => {
+      const text =
+        destination !== undefined && shown
+          ? statusFor(destination) || (messageFor(destination) ?? '')
+          : ''
+      return { text, offerChanged: text === offerChangedNotice }
     },
     pending: failed?.command ?? outstanding[0]?.command ?? entries[0]?.command ?? null,
     phase: chosen,
@@ -488,8 +500,7 @@ export const useReviewDecisionController = ({
     reloadRequired: reconciliation.data !== null,
     // Every decision control of the case is disabled while it is checked.
     checking,
-    messageFor: (destination: string) =>
-      reconciliation.data?.destination === destination ? reconciliation.data.message : undefined,
+    messageFor,
     decision,
     settle,
     // A notice for this case, or for the case the owner is being moved to.

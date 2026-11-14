@@ -3244,6 +3244,7 @@ describe('ReviewApiClient', () => {
           detail_kind: 'case',
           preparation: {
             attempt: 1,
+            check_given_up: false,
             diagnostic_reference: 'diagnostic-1',
             media_health: [],
             provider: 'none',

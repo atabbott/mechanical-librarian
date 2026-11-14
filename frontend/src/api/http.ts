@@ -504,6 +504,8 @@ export interface MediaHealthObservationView {
 }
 export interface PreparationFailureView {
   attempt: number
+  // The failure is the work's Book matching check, which gave up (#1355).
+  checkGivenUp: boolean
   diagnosticReference: string
   mediaHealth: readonly MediaHealthObservationView[]
   provider: string
@@ -2652,6 +2654,7 @@ export const mapLibrary = (value: LibraryDto): LibraryView => ({
           ? null
           : {
               attempt: preparation.attempt,
+              checkGivenUp: preparation.check_given_up,
               diagnosticReference: preparation.diagnostic_reference,
               mediaHealth: mapMediaHealth(preparation.media_health),
               provider: preparation.provider,

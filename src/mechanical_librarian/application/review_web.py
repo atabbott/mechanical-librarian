@@ -3875,6 +3875,11 @@ def _library_item(
                     raise ValueError
                 reason, recovery = guidance
                 reason += _refusing_track_sentence(status, root)
+                # Set by the store on a case's row whose Book matching check
+                # gave up, by the rule Policy counts it with (#1355).
+                check_given_up = terminal.get("check_given_up", False)
+                if type(check_given_up) is not bool:
+                    raise ValueError
                 media_health = _terminal_media_health(status, root)
                 work_id, item, library = (
                     terminal["work_id"],
@@ -3916,6 +3921,7 @@ def _library_item(
                     "work_id": work_id,
                     "preparation": {
                         "attempt": terminal["attempt"],
+                        "check_given_up": check_given_up,
                         "diagnostic_reference": preparation_failure_reference(
                             work_id,
                             lane,
