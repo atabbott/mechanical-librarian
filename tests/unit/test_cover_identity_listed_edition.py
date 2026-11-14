@@ -1,9 +1,11 @@
-"""A Hardcover listed-edition cover binds by work identity and stays unknown.
+"""A Hardcover listed-edition cover binds by work identity alone.
 
 #1380 (S15) and ADR-0096: a cover read from an accepted book's edition list
 binds to that book's work identity alone, and its only eligible outcome is
-ADR-0096's title-and-creator work match, which #1355's activation reads from
-the shadow reasons recorded here.
+ADR-0096's title-and-creator work match. #1355 (S8) records it through the same
+level seam and reasons as every other unverified record: at `identifier` the
+outcome stays `unknown`, and at a configured level as wide as the one met it is
+`title_creator_work_match`.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from mechanical_librarian.application.cover_identity import (
     classify_cover_identity,
 )
 from mechanical_librarian.application.cover_packets import prepare_cover_packet
+from mechanical_librarian.domain import proposal_set
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
     CoverContext,
@@ -56,7 +59,10 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
     provider_lane_candidate_reference,
 )
-from mechanical_librarian.domain.work_identity_levels import level_admission
+from mechanical_librarian.domain.work_identity_levels import (
+    WorkIdentityLevel,
+    level_admission,
+)
 from tests.support.cover_producers import _preview
 
 _BOOK = "hardcover-work-0000000007"
@@ -112,6 +118,7 @@ def _claim(
         scope=scope,
         state=state,
         links=links,
+        role=None,
     )
 
 
@@ -187,12 +194,34 @@ def _identifier(relation: IdentifierRelation, identity: str = _BOOK) -> object:
     )
 
 
+_IDENTIFIER = WorkIdentityLevel.IDENTIFIER
+_MET_EXACT = ["work_identity_level_met", "work_identity:title_and_creator_exact"]
+_MET_WIDE = ["work_identity_level_met", "work_identity:title_and_creator"]
+
+
+def _classify(
+    report: MetadataReport,
+    sources: tuple[CoverSource, ...],
+    level: WorkIdentityLevel = _IDENTIFIER,
+) -> tuple[str, list[str], list[str]]:
+    return _classify_sources(report, sources, level)
+
+
 def test_a_listed_edition_binds_by_the_book_alone_at_the_exact_level() -> None:
-    assert _classify_sources(_report(_candidate()), (_listed_source(),)) == (
+    assert _classify(_report(_candidate()), (_listed_source(),)) == (
         "unknown",
-        ["listed_edition_level_shadow", "work_identity:title_and_creator_exact"],
+        _MET_EXACT,
         [],
     )
+    for level in (
+        WorkIdentityLevel.TITLE_AND_CREATOR_EXACT,
+        WorkIdentityLevel.TITLE_AND_CREATOR,
+    ):
+        assert _classify(_report(_candidate()), (_listed_source(),), level) == (
+            "title_creator_work_match",
+            _MET_EXACT,
+            [],
+        )
 
 
 def test_a_listed_edition_records_the_wider_level_it_meets() -> None:
@@ -200,20 +229,24 @@ def test_a_listed_edition_records_the_wider_level_it_meets() -> None:
         _candidate("Synthetic Title: A Novel", ("Ada Author",)),
         target=_target(authors=("Ada Author", "Bea Author")),
     )
-    assert _classify_sources(report, (_listed_source(),)) == (
-        "unknown",
-        ["listed_edition_level_shadow", "work_identity:title_and_creator"],
-        [],
-    )
+    assert _classify(report, (_listed_source(),)) == ("unknown", _MET_WIDE, [])
+    # The exact level does not reach a record met only at the widest level.
+    assert _classify(
+        report, (_listed_source(),), WorkIdentityLevel.TITLE_AND_CREATOR_EXACT
+    ) == ("unknown", _MET_WIDE, [])
+    assert _classify(
+        report, (_listed_source(),), WorkIdentityLevel.TITLE_AND_CREATOR
+    ) == ("title_creator_work_match", _MET_WIDE, [])
 
 
 def test_a_listed_edition_by_a_different_creator_is_refused() -> None:
     report = _report(_candidate(creators=("Different Author",)))
-    assert _classify_sources(report, (_listed_source(),)) == (
-        "unknown",
-        ["listed_edition_level_refused"],
-        [],
-    )
+    for level in WorkIdentityLevel:
+        assert _classify(report, (_listed_source(),), level) == (
+            "unknown",
+            ["work_identity_level_refused"],
+            [],
+        )
 
 
 @pytest.mark.parametrize(
@@ -229,24 +262,26 @@ def test_a_listed_edition_of_an_omnibus_against_a_volume_is_refused(
 ) -> None:
     report = _report(_candidate(record_title), target=_target(target_title))
     with mock.patch.object(
-        cover_identity, "level_admission", wraps=level_admission
+        proposal_set, "level_admission", wraps=level_admission
     ) as call:
-        assert _classify_sources(report, (_listed_source(),)) == (
-            "unknown",
-            ["listed_edition_level_refused"],
-            [],
-        )
+        assert _classify(
+            report, (_listed_source(),), WorkIdentityLevel.TITLE_AND_CREATOR
+        ) == ("unknown", ["work_identity_level_refused"], [])
     assert call.call_args.kwargs["omnibus_against_volume"] is True
 
 
 def test_a_contradicted_listed_edition_cannot_be_chosen() -> None:
     disagreement = SimpleNamespace(outcome=Comparison.DISAGREEMENT)
     report = _report(_candidate(creator_links=(disagreement,)))
-    assert _classify_sources(report, (_listed_source(),)) == (
-        "unknown",
-        ["retained_creator_or_contributor_disagreement"],
-        [],
-    )
+    for level in WorkIdentityLevel:
+        assert _classify(report, (_listed_source(),), level) == (
+            "unknown",
+            [
+                "retained_creator_or_contributor_disagreement",
+                "work_identity_level_refused",
+            ],
+            [],
+        )
 
 
 def test_a_listed_edition_keeps_the_existing_conflicts() -> None:
@@ -258,7 +293,7 @@ def test_a_listed_edition_keeps_the_existing_conflicts() -> None:
             ),
         )
     )
-    assert _classify_sources(_report(contradicted), (_listed_source(),)) == (
+    assert _classify(_report(contradicted), (_listed_source(),)) == (
         "conflict",
         ["edition_work_contradiction"],
         [],
@@ -267,7 +302,9 @@ def test_a_listed_edition_keeps_the_existing_conflicts() -> None:
         _candidate(),
         identifier_evidence=(_identifier(IdentifierRelation.UNRELATED),),
     )
-    assert _classify_sources(unrelated, (_listed_source(),)) == (
+    assert _classify(
+        unrelated, (_listed_source(),), WorkIdentityLevel.TITLE_AND_CREATOR
+    ) == (
         "conflict",
         ["unrelated_identifier"],
         ["identifier-unrelated"],
@@ -295,11 +332,8 @@ def test_a_listed_edition_is_never_verified_or_plausible() -> None:
         ),
         lanes=(lane,),
     )
-    outcome, reasons, _evidence = _classify_sources(report, (_listed_source(),))
-    assert (outcome, reasons) == (
-        "unknown",
-        ["listed_edition_level_shadow", "work_identity:title_and_creator_exact"],
-    )
+    outcome, reasons, _evidence = _classify(report, (_listed_source(),))
+    assert (outcome, reasons) == ("unknown", _MET_EXACT)
 
 
 def test_the_strictest_level_of_one_books_candidates_is_recorded() -> None:
@@ -307,19 +341,14 @@ def test_the_strictest_level_of_one_books_candidates_is_recorded() -> None:
         _candidate("Synthetic Title: A Novel", identity=_ISBN_EDITION),
         _candidate(),
     )
-    assert _classify_sources(report, (_listed_source(),))[1] == [
-        "listed_edition_level_shadow",
-        "work_identity:title_and_creator_exact",
-    ]
+    assert _classify(report, (_listed_source(),))[1] == _MET_EXACT
 
 
 def test_a_target_with_no_author_refuses_a_listed_edition() -> None:
     report = _report(_candidate(), target=_target(authors=None))
-    assert _classify_sources(report, (_listed_source(),)) == (
-        "unknown",
-        ["listed_edition_level_refused"],
-        [],
-    )
+    assert _classify(
+        report, (_listed_source(),), WorkIdentityLevel.TITLE_AND_CREATOR
+    ) == ("unknown", ["work_identity_level_refused"], [])
 
 
 def test_only_the_stored_target_authors_and_valid_work_claims_reach_the_call() -> None:
@@ -333,10 +362,10 @@ def test_only_the_stored_target_authors_and_valid_work_claims_reach_the_call() -
     )
     report = _report(record, target=_target(authors=("Author, Ada",)))
     with mock.patch.object(
-        cover_identity, "level_admission", wraps=level_admission
+        proposal_set, "level_admission", wraps=level_admission
     ) as call:
-        assert _classify_sources(report, (_listed_source(),))[1] == [
-            "listed_edition_level_refused"
+        assert _classify(report, (_listed_source(),))[1] == [
+            "work_identity_level_refused"
         ]
     assert call.call_args.args[1:] == (
         "Synthetic Title",
@@ -347,6 +376,7 @@ def test_only_the_stored_target_authors_and_valid_work_claims_reach_the_call() -
     assert call.call_args.kwargs == {
         "omnibus_against_volume": False,
         "contradicted": False,
+        "fold_initials": True,
     }
 
 
@@ -355,14 +385,16 @@ def test_a_mixed_candidate_keeps_its_other_sources_outcome() -> None:
         _candidate(),
         identifier_evidence=(_identifier(IdentifierRelation.ACCEPTED),),
     )
-    assert _classify_sources(verified, (_default_source(), _listed_source()))[:2] == (
+    assert _classify(verified, (_default_source(), _listed_source()))[:2] == (
         "verified_work_match",
         ["accepted_or_associated_work_identifier"],
     )
     unbound_default = _report(_candidate(title="Other Title"))
-    assert _classify_sources(
-        unbound_default, (_default_source(), _listed_source())
-    ) == ("unknown", ["retained_title_evidence_insufficient"], [])
+    assert _classify(unbound_default, (_default_source(), _listed_source())) == (
+        "unknown",
+        ["retained_title_evidence_insufficient", "work_identity_level_refused"],
+        [],
+    )
 
 
 def test_a_mixed_candidate_takes_a_listed_editions_conflict() -> None:
@@ -374,7 +406,7 @@ def test_a_mixed_candidate_takes_a_listed_editions_conflict() -> None:
             _identifier(IdentifierRelation.UNRELATED, _ISBN_EDITION),
         ),
     )
-    assert _classify_sources(report, (_default_source(), _listed_source()))[:2] == (
+    assert _classify(report, (_default_source(), _listed_source()))[:2] == (
         "conflict",
         ["unrelated_identifier"],
     )
@@ -382,7 +414,7 @@ def test_a_mixed_candidate_takes_a_listed_editions_conflict() -> None:
 
 def test_the_classifier_reference_names_the_listed_edition_rule() -> None:
     assert (
-        "listed-edition-work-identity-binding:unknown-with-level-shadow"
+        "listed-edition-work-identity-binding:level-outcome"
         in cover_identity._CLASSIFIER_RULES
     )
     assert CLASSIFIER_REFERENCE == cover_identity._CLASSIFIER_REFERENCE
@@ -481,11 +513,10 @@ def test_a_listed_edition_report_binds_its_packet_and_identity_documents() -> No
             packet.document,
             images,
             read_preview=lambda *_: payload,
+            work_identity_level=WorkIdentityLevel.IDENTIFIER,
         ).document
     )
     (row,) = identity["candidates"]
     assert row["outcome"] == "unknown"
-    assert row["reasons"] == [
-        "listed_edition_level_shadow",
-        "work_identity:title_and_creator_exact",
-    ]
+    assert row["reasons"] == sorted(_MET_EXACT)
+    assert identity["work_identity_level"] == "identifier"

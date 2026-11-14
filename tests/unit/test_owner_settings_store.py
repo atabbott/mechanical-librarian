@@ -35,13 +35,14 @@ from mechanical_librarian.domain.reviewer_access import (
     OpenRouterTaskSelection,
     ReviewerAccessDocument,
 )
+from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 from tests.support.review_cases import record_terminal_work
 
 
 def _document(revision: int = 1) -> OwnerSettingsDocument:
     return OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v4",
+            "schema_version": "owner-settings-v5",
             "revision": revision,
             "connections": [
                 {"name": "primary", "endpoint": "https://library.example.invalid"}
@@ -85,13 +86,13 @@ def test_owner_settings_predecessors_are_rejected_and_clean_v4_restarts(
     path = tmp_path / "owner-settings.sqlite3"
     connection = sqlite3.connect(path)
     store = _store(connection)
-    assert store.read().document.schema_version == "owner-settings-v4"
+    assert store.read().document.schema_version == "owner-settings-v5"
     connection.close()
 
     reopened = sqlite3.connect(path)
     try:
         assert OwnerSettingsStore(reopened).read().document.schema_version == (
-            "owner-settings-v4"
+            "owner-settings-v5"
         )
     finally:
         reopened.close()
@@ -431,9 +432,10 @@ _PRE_LANGUAGES_STORED_DOCUMENT = (
     '"description_advice":{"automatic_application":false,"remove_marketing":true,"remove_praise":true,"remove_sales_boasts":true},'
     '"libraries":[{"connection":"primary","library_id":"library-1","media_kind":"ebook","mount":"books","name":"ebooks","policy_override":null,"provider_connections":["books","open"]}],'
     '"limits":{"audio_source_bytes":8589934592,"provider_response_bytes":65536,"source_archive_bytes":268435456,"target_response_bytes":1048576,"timeout_seconds":30},'
+    '"matching":{"work_identity":"identifier"},'
     '"pending_restart":[],"provider_recovery_generation":1,'
     '"providers":[{"adapter":"google_books","cover_enabled":false,"enabled":true,"name":"books"},{"adapter":"open_library","contact_email":"owner@example.invalid","cover_enabled":false,"enabled":true,"name":"open"}],'
-    '"reduced_motion":"follow_system","revision":1,"schema_version":"owner-settings-v4",'
+    '"reduced_motion":"follow_system","revision":1,"schema_version":"owner-settings-v5",'
     '"server":{"diagnostic_timings_enabled":false,"graceful_shutdown_seconds":30,"library_polling_interval_seconds":900,"session_lifetime_seconds":2592000}}'
 )
 
@@ -590,7 +592,7 @@ def test_store_and_live_cover_authority_advance_or_roll_back_together() -> None:
     bound: dict[str, str] = {}
     fail_binding = True
 
-    def bind(policy_reference: str, replay_reference: str) -> None:
+    def bind(policy_reference: str, replay_reference: str, _level: str) -> None:
         if fail_binding and policy_reference == changed.reference:
             raise RuntimeError("synthetic binding fault")
         bound.update(policy=policy_reference, replay=replay_reference)
@@ -607,7 +609,12 @@ def test_store_and_live_cover_authority_advance_or_roll_back_together() -> None:
     previous_replay = service.replay_reference
 
     with pytest.raises(RuntimeError, match="binding fault"):
-        store.write(_cover_document(2), 1, (), service.policy_update(changed))
+        store.write(
+            _cover_document(2),
+            1,
+            (),
+            service.policy_update(changed, WorkIdentityLevel.IDENTIFIER),
+        )
 
     assert store.read().document.revision == 1
     assert store.read().document.cover_preferences == _document().cover_preferences
@@ -618,7 +625,12 @@ def test_store_and_live_cover_authority_advance_or_roll_back_together() -> None:
     fail_binding = False
     connection.fail_commit = True
     with pytest.raises(OwnerSettingsError, match="unavailable"):
-        store.write(_cover_document(2), 1, (), service.policy_update(changed))
+        store.write(
+            _cover_document(2),
+            1,
+            (),
+            service.policy_update(changed, WorkIdentityLevel.IDENTIFIER),
+        )
 
     assert store.read().document.revision == 1
     assert service._policy.reference == previous.reference
@@ -626,7 +638,12 @@ def test_store_and_live_cover_authority_advance_or_roll_back_together() -> None:
     assert bound == {"policy": previous.reference, "replay": previous_replay}
 
     connection.fail_commit = False
-    committed = store.write(_cover_document(2), 1, (), service.policy_update(changed))
+    committed = store.write(
+        _cover_document(2),
+        1,
+        (),
+        service.policy_update(changed, WorkIdentityLevel.IDENTIFIER),
+    )
 
     assert committed.document == store.read().document
     assert committed.document.revision == 2
@@ -1458,7 +1475,7 @@ def test_policy_publication_stays_old_until_admitted_settings_commit_finishes(
     )
     service.update_policy(previous)
     before = service.current_authority()
-    context = service.policy_update(changed)
+    context = service.policy_update(changed, WorkIdentityLevel.IDENTIFIER)
     assert service.current_authority() == before
     connection.armed = True
     try:
@@ -1486,7 +1503,7 @@ def test_policy_publication_stays_old_until_admitted_settings_commit_finishes(
                 assert pending.result(5).document.revision == 2
             assert queued.result(5).document.revision == (1 if fail_commit else 2)
         assert service._policy is (previous if fail_commit else changed)
-        assert service.current_authority() == bound[-1]
+        assert service.current_authority() == bound[-1][:2]
         assert not admission.held
     finally:
         release.set()
@@ -1504,9 +1521,11 @@ def test_stale_prepared_policy_context_cannot_restore_a_later_publication() -> N
         read_preview_digest=lambda _: b"",
         clock=lambda: 0,
     )
-    abandoned = service.policy_update(CoverPolicy(True, False, False))
+    abandoned = service.policy_update(
+        CoverPolicy(True, False, False), WorkIdentityLevel.IDENTIFIER
+    )
     later = CoverPolicy(False, True, False)
-    with service.policy_update(later):
+    with service.policy_update(later, WorkIdentityLevel.IDENTIFIER):
         pass
     authority = service.current_authority()
     with pytest.raises(CoverConsiderationError, match="stale"), abandoned:

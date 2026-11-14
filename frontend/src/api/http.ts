@@ -747,8 +747,12 @@ export interface CoverCandidateView {
   identity: Readonly<Record<string, unknown>> | null
   incumbent: boolean
   matchState: 'same_edition' | 'same_book' | 'match_not_confirmed'
-  /** A proposed cover from the matched book; the recording stays unconfirmed (#1642). */
-  matchReason?: 'matched_book'
+  /**
+   * A proposed cover from the matched book; the recording stays unconfirmed
+   * (#1642). `title_and_author`: from a record Book matching counts as the same
+   * book by title and author; the match stays unconfirmed (#1355).
+   */
+  matchReason?: 'matched_book' | 'title_and_author'
   observation: CoverObservationView | null
   originalSha256: string
   ordinal: number

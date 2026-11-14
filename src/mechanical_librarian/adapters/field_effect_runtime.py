@@ -30,6 +30,8 @@ class _DependencyRepository(Protocol):
 
     def field_effect_dependencies_current(self, digests: tuple[str, ...]) -> bool: ...
 
+    def field_effect_matching_changed(self, digests: tuple[str, ...]) -> bool: ...
+
 
 class _BackupRepository(Protocol):
     """Persistence seam the durable backup readiness adapter reads."""
@@ -58,6 +60,9 @@ class PersistedEffectDependencies:
 
     def current(self, digests: tuple[str, ...]) -> bool:
         return self._repository.field_effect_dependencies_current(digests)
+
+    def matching_changed(self, digests: tuple[str, ...]) -> bool:
+        return self._repository.field_effect_matching_changed(digests)
 
 
 class DurableBackupReadiness:

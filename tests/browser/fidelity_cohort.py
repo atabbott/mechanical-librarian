@@ -1055,7 +1055,7 @@ def _case(case_id: str) -> dict[str, object]:
                         "policy_reference": "cover-policy-synthetic",
                         "reasons": ["policy_satisfied"],
                         "recommended_candidate_reference": "cover-ref-choice",
-                        "schema_version": "cover-policy-report-v2",
+                        "schema_version": "cover-policy-report-v3",
                         "status": "recommended",
                     },
                     "policy_preferences": {
@@ -1077,7 +1077,7 @@ def _case(case_id: str) -> dict[str, object]:
                     ),
                     "reviewer_status": reviewer_status,
                     "reviewer_unavailable_reason": None,
-                    "schema_version": "cover-consideration-v6",
+                    "schema_version": "cover-consideration-v7",
                     "supersedes_id": (
                         "cover-consideration-historical"
                         if reviewer_status == "failed"
@@ -1785,7 +1785,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
     if path == "/api/v1/settings":
         document = OwnerSettingsDocument.model_validate(
             {
-                "schema_version": "owner-settings-v4",
+                "schema_version": "owner-settings-v5",
                 "revision": 1,
                 "connections": [
                     {"name": "primary", "endpoint": "https://library.invalid"}

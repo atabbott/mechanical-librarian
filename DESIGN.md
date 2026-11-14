@@ -460,8 +460,8 @@ Decided, Automatic, Optional, No change), never by a glyph.
 ### Cover Choice
 
 Cover candidates join the same radio model and record in one tap: a card that
-says "Match not confirmed" is itself the explicit choice, with no confirming
-dialog. Each card states its pixel size and every source that offered the image
+says "Match not confirmed" or "Same title and author" is itself the explicit
+choice, with no confirming dialog. Each card states its pixel size and every source that offered the image
 on their own lines, then its rationale; one image offered by several sources is
 one card naming them all, and the merged count is said apart from unavailable
 candidates. Off-screen cover images load lazily.

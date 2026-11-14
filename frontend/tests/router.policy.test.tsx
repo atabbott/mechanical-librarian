@@ -2065,7 +2065,8 @@ it('saves description preferences independently next to Cover guidance and keeps
     'true',
   )
   expect(screen.getByRole('region', { name: 'Cover' }).nextElementSibling).toBe(region)
-  expect(region.nextElementSibling).toHaveAccessibleName('ASIN')
+  expect(region.nextElementSibling).toHaveAccessibleName('Book matching')
+  expect(region.nextElementSibling?.nextElementSibling).toHaveAccessibleName('ASIN')
   await userEvent.setup().click(choice('Remove marketing material', 'Off'))
   expect(within(region).getByText('Changed')).toBeVisible()
   expect(within(region).getByRole('status')).toHaveTextContent(

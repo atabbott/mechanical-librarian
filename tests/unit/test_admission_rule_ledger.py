@@ -267,6 +267,7 @@ class Fixture:
         identity: str | None,
         *,
         designation: str | None = None,
+        reasons: tuple[str, ...] | None = None,
     ) -> str:
         """Add a cover candidate; return its report cover source id.
 
@@ -303,6 +304,7 @@ class Fixture:
                 "candidate_reference": reference,
                 "outcome": outcome,
                 "evidence_references": [self.text()],
+                **({} if reasons is None else {"reasons": list(reasons)}),
             }
         )
         self.consideration["identity_document"] = json.dumps(identity_document)
@@ -1335,6 +1337,64 @@ def test_a_listed_edition_cover_reaches_every_record_of_its_book(
     assert code == 0
     classifier = _snapshot(_rows(stdout)["C1"], "snap-a")
     assert (classifier["true_positive"], classifier["false_positive"]) == (2, 0)
+
+
+def _level_match_snapshot(
+    tmp_path: Path, outcome: str, reasons: tuple[str, ...]
+) -> tuple[int, str, str]:
+    text = Sentinels()
+    fixture = Fixture(text, "v26-like")
+    provider = fixture.provider()
+    work = text()
+    accepted, _ = fixture.record(provider, work, lane="work")
+    fixture.record(provider, work, lane="work")
+    fixture.bind(provider, accepted, work, "accepted")
+    fixture.cover_candidate(outcome, provider, work, None, reasons=reasons)
+    fixture.result(
+        "cover",
+        "unresolved_choice",
+        ["cover_gallery_incomplete", "owner_cover_choice_required"],
+    )
+    database = _database(tmp_path / "level.sqlite3", "v26-like", [fixture])
+    return _run(_arguments([("snap-a", database, EBOOK_REVISION)], tmp_path))
+
+
+def test_a_level_match_cover_is_read_as_an_unelected_candidate(
+    tmp_path: Path,
+) -> None:
+    """A store at a wider Book matching level (#1355, S16) reads like unknown."""
+    code, stdout, _ = _level_match_snapshot(
+        tmp_path,
+        "title_creator_work_match",
+        (
+            "creator_initials_folded",
+            "work_identity:title_and_creator",
+            "work_identity_level_met",
+        ),
+    )
+    assert code == 0
+    rows = _rows(stdout)
+    classifier = _snapshot(rows["C1"], "snap-a")
+    assert (classifier["true_positive"], classifier["false_positive"]) == (2, 0)
+    work_search = _snapshot(rows["C2"], "snap-a")
+    assert (work_search["fields"], work_search["true_positive"]) == (1, 2)
+
+
+@pytest.mark.parametrize(
+    ("outcome", "reasons"),
+    (
+        ("title_creator_match", ()),
+        ("unknown", ("work_identity:everything",)),
+        ("unknown", ("work_identity_level_unknown",)),
+    ),
+    ids=("outcome", "level_rule", "level_reason"),
+)
+def test_a_cover_outcome_or_level_reason_the_ledger_does_not_know_refuses(
+    tmp_path: Path, outcome: str, reasons: tuple[str, ...]
+) -> None:
+    code, stdout, stderr = _level_match_snapshot(tmp_path, outcome, reasons)
+    assert (code, stdout) == (2, "")
+    assert stderr == "admission-rule-ledger: snapshot schema unrecognised\n"
 
 
 # --- 7. Ranking ------------------------------------------------------------

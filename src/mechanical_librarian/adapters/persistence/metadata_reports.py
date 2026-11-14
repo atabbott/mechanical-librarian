@@ -198,6 +198,7 @@ from mechanical_librarian.domain.shadow_review import (
     ShadowReviewPacket,
     ShadowReviewValueError,
 )
+from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 
 if sys.platform.startswith("linux"):
     import fcntl
@@ -320,7 +321,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             ),
         )
         self._owner_settings = OwnerSettingsStore(
-            connection, self._setup_serialization_lock
+            connection, self._setup_serialization_lock, book_matching=True
         )
         self._reviewer_access = ReviewerAccessStore(
             connection, self._setup_serialization_lock
@@ -339,6 +340,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         self._review_scans = SQLiteReviewScanRepository(connection)
         self._retained_covers = SQLiteRetainedCoverRepository(connection, binding)
         self._current_cover_authority: tuple[str | None, str | None] = (None, None)
+        self._current_work_identity_level = "identifier"
         self._capture_cover_read: Callable[[], CoverReadObservation] | None = None
         self._cover_read_observation: CoverReadObservation | None = None
         self._field_effects = SQLiteFieldEffectRepository(
@@ -642,14 +644,25 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         self._current_cover_authority = (self._current_cover_authority[0], reference)
 
     def bind_current_cover_authority(
-        self, policy_reference: str, replay_reference: str
+        self,
+        policy_reference: str,
+        replay_reference: str,
+        work_identity_level: str = "identifier",
     ) -> None:
-        """Validate then replace both live cover authority references together."""
+        """Validate then replace both live cover authority references together.
+
+        The Book matching level the replay reference was built under travels
+        with it, so a cover effect bound to another level closes as
+        ``matching_changed`` rather than as an unnamed dependency (#1355).
+        """
         if re.fullmatch(r"cover_policy_[0-9a-f]{64}", policy_reference) is None:
             raise ValueError("cover policy reference is invalid")
         if re.fullmatch(r"cover_replay_[0-9a-f]{64}", replay_reference) is None:
             raise ValueError("cover replay reference is invalid")
+        if work_identity_level not in {level.value for level in WorkIdentityLevel}:
+            raise ValueError("work identity level is invalid")
         self._current_cover_authority = (policy_reference, replay_reference)
+        self._current_work_identity_level = work_identity_level
 
     def _cover_read_authority(self) -> tuple[str | None, str | None]:
         return (
@@ -1031,6 +1044,11 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
 
     def field_effect_dependencies_current(self, digests: tuple[str, ...]) -> bool:
         return self._field_effect_activity.field_effect_dependencies_current(digests)
+
+    def field_effect_matching_changed(self, digests: tuple[str, ...]) -> bool:
+        return self._field_effect_activity.field_effect_matching_changed(
+            digests, self._current_work_identity_level
+        )
 
     def field_effect_restore_refused(self, plan: FieldEffectPlan) -> bool:
         return self._field_effect_activity.field_effect_restore_refused(plan)

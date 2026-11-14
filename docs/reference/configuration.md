@@ -3,7 +3,7 @@
 Settings come from one of two places, never both:
 
 - **File mode.** When `/data/config.json` exists, it is the complete authority.
-  It is one strict UTF-8 JSON document with schema version `config-v9`,
+  It is one strict UTF-8 JSON document with schema version `config-v10`,
   described below.
 - **Store mode.** When that file is absent, settings live in
   `/data/application.sqlite3` and the owner edits them on the Settings page.
@@ -67,7 +67,7 @@ The document:
 - rejects unknown fields, duplicate keys and the JSON constants `NaN` and
   `Infinity`;
 - is described by the generated
-  [`config-v9.schema.json`](config-v9.schema.json).
+  [`config-v10.schema.json`](config-v10.schema.json).
 
 Regenerate the schema after changing the model:
 
@@ -96,7 +96,7 @@ section:
 
 ```json
 {
-  "schema_version": "config-v9",
+  "schema_version": "config-v10",
   "provider_recovery_generation": 1,
   "connections": [
     {
@@ -168,7 +168,7 @@ section:
 
 | Field | Required | Rule |
 | --- | --- | --- |
-| `schema_version` | Yes | Exactly `config-v9` |
+| `schema_version` | Yes | Exactly `config-v10` |
 | `provider_recovery_generation` | Yes | Integer, at least 1 |
 | `connections` | Yes | 1–32 Audiobookshelf connections |
 | `libraries` | Yes | 1–128 libraries |
@@ -439,6 +439,7 @@ environment.
 | `description_remove_sales_boasts` | Boolean | `true` |
 | `description_remove_praise` | Boolean | `true` |
 | `description_automatic_application` | Boolean | `false` |
+| `work_identity` | `identifier`, `title_and_creator_exact` or `title_and_creator` | `identifier` |
 
 No password, private-key contents, raw session token or CSRF token is stored
 in configuration or the application database.
@@ -554,7 +555,7 @@ pending cover effects until the owner chooses again.
 `description_remove_marketing`, `description_remove_sales_boasts` and
 `description_remove_praise` remove marketing material, sales figures and
 bestseller boasts, and pull quotes and author praise. In store mode these and
-`automatic_application` live in `owner-settings-v4.description_advice` without
+`automatic_application` live in `owner-settings-v5.description_advice` without
 the `description_` prefix, and Policy → Curation saves them separately from the
 policy draft.
 
@@ -576,3 +577,28 @@ owner can still choose a result below it.
 - Free replacement text is not accepted. Keep current reverses a choice.
 - A request made while preparation is paused starts when preparation
   resumes. Work accepted before the pause completes normally.
+
+### Book matching
+
+`work_identity` sets which source records count as the same book when you
+review ([ADR-0096](../architecture/decisions/0096-owner-chosen-work-identity-strictness.md)).
+Edition details, such as ISBN, publisher and narrators, always need a
+confirmed match.
+
+| Value | Policy label | A record counts when |
+| --- | --- | --- |
+| `identifier` | Confirmed matches only | An identifier or a retained recording admission confirms it, as before |
+| `title_and_creator_exact` | Same title and every author | Its title and its whole author set agree with the book's |
+| `title_and_creator` | Same title and any author | Its title agrees and it shares at least one author |
+
+At either wider value a cover from such a record is labelled "Same title and
+author". The owner may choose it in one tap; nothing is chosen automatically
+until #1418. An author whose dotted initials are written differently ("R.F."
+for "R. F.") is not a contradiction at a wider value. The default changes
+nothing.
+
+In store mode the value lives in `owner-settings-v5.matching.work_identity`,
+and Policy → Curation saves it on its own, apart from the policy draft. A
+save writes no Activity row; it re-checks each current cover comparison made
+under another value, and a pending cover effect chosen under the old value
+closes stale. In file mode `review.work_identity` is read only in the browser.

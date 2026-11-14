@@ -38,40 +38,62 @@ from mechanical_librarian.domain.metadata_report import (
     AUDIO_FILE_FORMATS,
     ClaimKind,
     ClaimScope,
-    Comparison,
-    FieldState,
     IdentifierEvidence,
     IdentifierRelation,
-    LocalClaim,
     MetadataReport,
     ProviderCandidate,
     ProviderEvidenceKind,
+    ProviderObservation,
     ProviderQueryKind,
-    TargetDestination,
-    TargetFacts,
-    TargetFieldState,
-    creator_comparison_key,
     manifestation_publication_compatible,
 )
 from mechanical_librarian.domain.proposal_set import (
+    LevelAdmissionRecord,
+    candidate_title_and_creator_evidence,
+    level_contradiction,
+    provider_candidate_bound_identifiers,
+    provider_candidate_level_admission,
     provider_candidate_represents_target_recording,
 )
 from mechanical_librarian.domain.work_identity_levels import (
+    LevelAdmission,
     WorkIdentityLevel,
-    level_admission,
-    omnibus_against_volume,
 )
 
-SCHEMA_VERSION = "cover-identity-report-v1"
+SCHEMA_VERSION = "cover-identity-report-v2"
 _OUTCOMES = frozenset(
     {
         "verified_manifestation_match",
         "verified_work_match",
+        "title_creator_work_match",
         "plausible_match",
         "unknown",
         "conflict",
     }
 )
+# How wide each ADR-0096 level is: a configured level admits a recorded rule
+# at its own width or narrower (#1355, S8).
+_LEVEL_WIDTH = {
+    WorkIdentityLevel.IDENTIFIER: 0,
+    WorkIdentityLevel.TITLE_AND_CREATOR_EXACT: 1,
+    WorkIdentityLevel.TITLE_AND_CREATOR: 2,
+}
+_LEVEL_REASONS = frozenset(
+    {
+        "work_identity_level_met",
+        "work_identity_level_refused",
+        "work_identity_level_ambiguous",
+        "creator_initials_folded",
+    }
+    | {
+        f"work_identity:{level.value}"
+        for level in WorkIdentityLevel
+        if level is not WorkIdentityLevel.IDENTIFIER
+    }
+)
+# One bound provider record as ``_classify_sources`` matched it: the source,
+# its observation, the record, ISBN-lane support and recording support.
+_Match = tuple[CoverSource, ProviderObservation, ProviderCandidate, bool, bool]
 _CLASSIFIER_RULES = (
     "packet-candidate-reference-and-provenance:exact-report-bound",
     "packet-source-normalization:exact-transport-bound",
@@ -87,7 +109,9 @@ _CLASSIFIER_RULES = (
     "legacy-discovery-without-lane-candidate-mappings:aggregate-fallback",
     "audiobook-cross-authority-cover-perceptual-hash:work-scope-corroboration",
     "source-bound-retained-recording-admission:verified-work",
-    "listed-edition-work-identity-binding:unknown-with-level-shadow",
+    "listed-edition-work-identity-binding:level-outcome",
+    "provider-identity-without-identifier-level-predicate:title-creator-work-match",
+    "provider-identity-without-identifier-level-refused-or-ambiguous:unchanged",
 )
 CLASSIFIER_REFERENCE = (
     "cover_identity_classifier_"
@@ -99,19 +123,6 @@ CLASSIFIER_REFERENCE = (
 )
 # Retained for the frozen 0.15.0 contract tests and persisted policy reader.
 _CLASSIFIER_REFERENCE = CLASSIFIER_REFERENCE
-
-_CREATOR_OR_CONTRIBUTOR_CLAIMS = frozenset(
-    {
-        ClaimKind.CREATOR,
-        ClaimKind.CONTRIBUTOR,
-    }
-)
-_CREATOR_OR_CONTRIBUTOR_EVIDENCE = frozenset(
-    {
-        ProviderEvidenceKind.AUTHOR_IDENTITY,
-        ProviderEvidenceKind.CONTRIBUTOR_IDENTITY,
-    }
-)
 
 
 def _opaque_evidence_reference(report_id: str, reference: str) -> str:
@@ -168,6 +179,7 @@ def classify_cover_identity(
     image_payloads: tuple[tuple[str, str, bytes], ...],
     *,
     read_preview: Callable[[str, str], bytes],
+    work_identity_level: WorkIdentityLevel,
 ) -> CoverIdentityReport:
     """Classify every exact packet candidate from already retained evidence.
 
@@ -175,9 +187,14 @@ def classify_cover_identity(
     accepted (manifestation) or accepted/associated (work) identifier evidence.
     An exact report-bound EPUB cover verifies its source manifestation. Any
     retained edition/work contradiction wins deterministically for provider
-    evidence. The document contains opaque references and fixed reason codes
+    evidence. A provider-bound candidate no identifier verifies also records
+    ADR-0096's level facts, and at a configured level at or wider than the one
+    it meets it is a ``title_creator_work_match`` (#1355). The document records
+    the configured level and contains opaque references and fixed reason codes
     only.
     """
+    if type(work_identity_level) is not WorkIdentityLevel:
+        raise ValueError("identity work identity level is invalid")
     report = MetadataReport.from_json(report_document)
     bind_cover_packet(packet_document, image_payloads)
     packet = json.loads(packet_document)
@@ -190,7 +207,9 @@ def classify_cover_identity(
         if type(candidate) is not dict:
             raise ValueError("identity packet candidate is invalid")
         sources = _report_bound_candidate_sources(report, candidate, read_preview)
-        outcome, reasons, evidence = _classify_sources(report, sources)
+        outcome, reasons, evidence = _classify_sources(
+            report, sources, work_identity_level
+        )
         if outcome not in _OUTCOMES:
             raise ValueError("identity outcome is invalid")
         corroboration_hashes[cast("str", candidate["reference"])] = (
@@ -223,6 +242,7 @@ def classify_cover_identity(
         "cover_packet_reference": packet["packet_reference"],
         "report_reference": report.report_id,
         "schema_version": SCHEMA_VERSION,
+        "work_identity_level": work_identity_level.value,
         "work_target_reference": _work_target_reference(report),
     }
     return CoverIdentityReport(canonical_packet_json(body))
@@ -395,7 +415,9 @@ def _report_bound_candidate_sources(
 
 
 def _classify_sources(
-    report: MetadataReport, sources: tuple[CoverSource, ...]
+    report: MetadataReport,
+    sources: tuple[CoverSource, ...],
+    level: WorkIdentityLevel,
 ) -> tuple[str, list[str], list[str]]:
     if any(source.kind is CoverSourceKind.EPUB for source in sources):
         return "verified_manifestation_match", ["source_bound_epub_cover"], []
@@ -404,7 +426,7 @@ def _classify_sources(
     )
     if not provider_sources:
         return "unknown", ["no_provider_identity"], []
-    matches = []
+    matches: list[_Match] = []
     for source in provider_sources:
         provenance = source.provenance
         assert provenance is not None
@@ -426,7 +448,7 @@ def _classify_sources(
                 matches.append(
                     (
                         source,
-                        observation.provider,
+                        observation,
                         candidate,
                         _is_isbn_discovery_candidate(observation, candidate),
                         provider_candidate_represents_target_recording(
@@ -437,7 +459,7 @@ def _classify_sources(
     if not matches:
         return "unknown", ["unbound_provider_identity"], []
     if all(_listed(match[0]) for match in matches):
-        return _classify_listed_edition(report, matches)
+        return _classify_listed_edition(report, matches, level)
     evidence: list[str] = []
     title_agreement = False
     creator_or_contributor_agreement = False
@@ -447,12 +469,14 @@ def _classify_sources(
     recording = False
     for (
         source,
-        provider,
+        observation,
         candidate,
         isbn_discovery_supported,
         recording_supported,
     ) in matches:
-        bound = _bound_identifiers(report, provider, candidate)
+        bound = provider_candidate_bound_identifiers(
+            report, observation.provider, candidate
+        )
         conflict = _retained_conflict(candidate, bound)
         if conflict is not None:
             return conflict
@@ -473,7 +497,7 @@ def _classify_sources(
                 candidate_title_agreement,
                 candidate_creator_or_contributor_agreement,
                 candidate_creator_or_contributor_disagreement,
-            ) = _plausible_match_evidence(
+            ) = candidate_title_and_creator_evidence(
                 candidate,
                 getattr(report, "local_claims", ()),
             )
@@ -537,17 +561,91 @@ def _classify_sources(
             ["accepted_or_associated_work_identifier"],
             evidence,
         )
+    unverified = tuple(match for match in matches if not _listed(match[0]))
     if creator_or_contributor_disagreement and not creator_or_contributor_agreement:
-        return "unknown", ["retained_creator_or_contributor_disagreement"], []
+        return _level_outcome(
+            report,
+            unverified,
+            ("unknown", ["retained_creator_or_contributor_disagreement"], []),
+            level,
+        )
     if not title_agreement:
-        return "unknown", ["retained_title_evidence_insufficient"], []
+        return _level_outcome(
+            report,
+            unverified,
+            ("unknown", ["retained_title_evidence_insufficient"], []),
+            level,
+        )
+    return _level_outcome(
+        report,
+        unverified,
+        (
+            "plausible_match",
+            [
+                "provider_identity_without_explicit_identifier",
+                "retained_title_agreement",
+            ],
+            [],
+        ),
+        level,
+    )
+
+
+def _level_outcome(
+    report: MetadataReport,
+    matches: tuple[_Match, ...],
+    identifier: tuple[str, list[str], list[str]],
+    level: WorkIdentityLevel,
+) -> tuple[str, list[str], list[str]]:
+    """Add ADR-0096's level facts to an unverified candidate (#1355, S8).
+
+    Every bound record runs the level seam at the widest level, so the reasons
+    say what any configured level would admit. Any contradiction wins, then an
+    ambiguous set, else the strictest level any record meets. When the
+    configured level is at or wider than that one, the outcome is
+    ``title_creator_work_match`` and a creator disagreement the initials fold
+    resolves is no longer a reason; otherwise the identifier outcome and its
+    reasons stand, beside the level facts.
+    """
+    outcome, reasons, evidence = identifier
+    records: list[LevelAdmissionRecord] = []
+    for _source, observation, candidate, _isbn, _recording in matches:
+        if level_contradiction(report, observation, candidate):
+            return outcome, [*reasons, "work_identity_level_refused"], evidence
+        record = provider_candidate_level_admission(
+            report, observation, candidate, WorkIdentityLevel.TITLE_AND_CREATOR
+        )
+        assert record is not None
+        records.append(record)
+    if any(record.refusal == "ambiguous" for record in records):
+        return outcome, [*reasons, "work_identity_level_ambiguous"], evidence
+    admitted = [record for record in records if record.admission is not None]
+    if not admitted:
+        return outcome, [*reasons, "work_identity_level_refused"], evidence
+    met = min(
+        (cast("LevelAdmission", record.admission).level for record in admitted),
+        key=_LEVEL_WIDTH.__getitem__,
+    )
+    level_reasons = ["work_identity_level_met", f"work_identity:{met.value}"]
+    if all(
+        record.creator_comparison == "initials_fold"
+        for record in admitted
+        if cast("LevelAdmission", record.admission).level is met
+    ):
+        level_reasons.append("creator_initials_folded")
+    if _LEVEL_WIDTH[level] < _LEVEL_WIDTH[met]:
+        return outcome, [*reasons, *level_reasons], evidence
     return (
-        "plausible_match",
+        "title_creator_work_match",
         [
-            "provider_identity_without_explicit_identifier",
-            "retained_title_agreement",
+            *(
+                reason
+                for reason in reasons
+                if reason != "retained_creator_or_contributor_disagreement"
+            ),
+            *level_reasons,
         ],
-        [],
+        evidence,
     )
 
 
@@ -558,20 +656,8 @@ def _listed(source: CoverSource) -> bool:
     )
 
 
-def _bound_identifiers(
-    report: MetadataReport, provider: str, candidate: ProviderCandidate
-) -> list[IdentifierEvidence]:
-    return [
-        item
-        for item in report.identifier_evidence
-        if item.provider == provider
-        and item.candidate_identity == candidate.identity
-        and item.work_identity == candidate.work_identity
-    ]
-
-
 def _retained_conflict(
-    candidate: ProviderCandidate, bound: list[IdentifierEvidence]
+    candidate: ProviderCandidate, bound: tuple[IdentifierEvidence, ...]
 ) -> tuple[str, list[str], list[str]] | None:
     """The retained contradiction that makes a bound candidate a conflict."""
     if any(
@@ -591,98 +677,41 @@ def _retained_conflict(
 
 def _classify_listed_edition(
     report: MetadataReport,
-    matches: list[tuple[CoverSource, str, ProviderCandidate, bool, bool]],
+    matches: list[_Match],
+    level: WorkIdentityLevel,
 ) -> tuple[str, list[str], list[str]]:
     """Classify a candidate whose only bound sources are listed editions.
 
-    The outcome is always `unknown` until #1355's activation reads it: the
-    reasons record the strictest ADR-0096 level that `title_and_creator`, the
-    widest, admits, so any configured level can be compared with it later. The
-    target's stored authors are compared, never a query spelling, so a creator
-    form only the query used never reaches the predicate. Any conflict, then
-    any creator contradiction, wins over a level.
+    A listed edition binds by its book's work identity alone (#1380), so no
+    identifier verifies it: any conflict wins, then a creator contradiction is
+    its identifier reason, and the level seam records the rest exactly as for
+    any other unverified record (#1355, S8).
     """
-    target_title = report.target.current_title
-    target_creators = _target_authors(report.target)
     local_claims = getattr(report, "local_claims", ())
     contradicted = False
-    levels: set[WorkIdentityLevel] = set()
-    for _source, provider, candidate, _isbn, _recording in matches:
+    for _source, observation, candidate, _isbn, _recording in matches:
         conflict = _retained_conflict(
-            candidate, _bound_identifiers(report, provider, candidate)
+            candidate,
+            provider_candidate_bound_identifiers(
+                report, observation.provider, candidate
+            ),
         )
         if conflict is not None:
             return conflict
-        _title, agreement, disagreement = _plausible_match_evidence(
+        _title, agreement, disagreement = candidate_title_and_creator_evidence(
             candidate, local_claims
         )
-        candidate_contradicted = disagreement and not agreement
-        contradicted = contradicted or candidate_contradicted
-        record_title = _record_title(candidate)
-        admission = level_admission(
-            WorkIdentityLevel.TITLE_AND_CREATOR,
-            target_title,
-            target_creators,
-            record_title,
-            _record_creators(candidate),
-            omnibus_against_volume=(
-                _omnibus(record_title, target_title)
-                or _omnibus(target_title, record_title)
-            ),
-            contradicted=candidate_contradicted,
-        )
-        if admission is not None:
-            levels.add(admission.level)
-    if contradicted:
-        return "unknown", ["retained_creator_or_contributor_disagreement"], []
-    if not levels:
-        return "unknown", ["listed_edition_level_refused"], []
-    level = (
-        WorkIdentityLevel.TITLE_AND_CREATOR_EXACT
-        if WorkIdentityLevel.TITLE_AND_CREATOR_EXACT in levels
-        else WorkIdentityLevel.TITLE_AND_CREATOR
+        contradicted = contradicted or (disagreement and not agreement)
+    return _level_outcome(
+        report,
+        tuple(matches),
+        (
+            "unknown",
+            ["retained_creator_or_contributor_disagreement"] if contradicted else [],
+            [],
+        ),
+        level,
     )
-    return (
-        "unknown",
-        ["listed_edition_level_shadow", f"work_identity:{level.value}"],
-        [],
-    )
-
-
-def _target_authors(target: TargetFacts) -> tuple[str, ...]:
-    """The target's AUTHORS value as stored, in order; empty when not a value."""
-    for field in target.fields:
-        if field.destination is TargetDestination.AUTHORS:
-            if field.state is TargetFieldState.VALUE and type(field.value) is tuple:
-                return tuple(value for value in field.value if type(value) is str)
-            return ()
-    return ()
-
-
-def _work_claim_values(candidate: ProviderCandidate, kind: ClaimKind) -> list[str]:
-    return [
-        claim.value
-        for claim in sorted(candidate.claims, key=lambda claim: claim.raw_order)
-        if claim.kind is kind
-        and claim.scope is ClaimScope.WORK
-        and claim.state is FieldState.VALID
-        and type(claim.value) is str
-    ]
-
-
-def _record_title(candidate: ProviderCandidate) -> str | None:
-    titles = _work_claim_values(candidate, ClaimKind.TITLE)
-    return titles[0] if len(titles) == 1 else None
-
-
-def _record_creators(candidate: ProviderCandidate) -> tuple[str, ...]:
-    return tuple(dict.fromkeys(_work_claim_values(candidate, ClaimKind.CREATOR)))
-
-
-def _omnibus(collection_title: str | None, volume_title: str | None) -> bool:
-    if collection_title is None or volume_title is None:
-        return False
-    return omnibus_against_volume(collection_title, volume_title)
 
 
 def _is_isbn_discovery_candidate(
@@ -710,63 +739,6 @@ def _is_isbn_discovery_candidate(
         and lane_candidate.work_identity == candidate.work_identity
         for lane in lanes
         for lane_candidate in lane.candidates
-    )
-
-
-def _plausible_match_evidence(
-    candidate: ProviderCandidate,
-    local_claims: tuple[LocalClaim, ...] | tuple[object, ...],
-) -> tuple[bool, bool, bool]:
-    title_agreement = False
-    creator_or_contributor_agreement = False
-    creator_or_contributor_disagreement = False
-    for claim in candidate.claims:
-        outcomes = {link.outcome for link in claim.links}
-        if claim.kind is ClaimKind.TITLE:
-            title_agreement = title_agreement or Comparison.AGREEMENT in outcomes
-        if claim.kind in _CREATOR_OR_CONTRIBUTOR_CLAIMS:
-            creator_or_contributor_agreement = (
-                creator_or_contributor_agreement or Comparison.AGREEMENT in outcomes
-            )
-            creator_or_contributor_disagreement = (
-                creator_or_contributor_disagreement
-                or Comparison.DISAGREEMENT in outcomes
-            )
-    for item in candidate.evidence:
-        if item.kind not in _CREATOR_OR_CONTRIBUTOR_EVIDENCE:
-            continue
-        outcomes = {link.outcome for link in item.links}
-        creator_or_contributor_agreement = (
-            creator_or_contributor_agreement or Comparison.AGREEMENT in outcomes
-        )
-        creator_or_contributor_disagreement = (
-            creator_or_contributor_disagreement or Comparison.DISAGREEMENT in outcomes
-        )
-    # Both comprehensions filter on the attribute they then read, so the
-    # retained claims carry a value and the local claims are ``LocalClaim``.
-    retained_creator_or_contributor_values = {
-        creator_comparison_key(cast("str", claim.value))
-        for claim in candidate.claims
-        if (
-            getattr(claim, "kind", None) in _CREATOR_OR_CONTRIBUTOR_CLAIMS
-            and getattr(claim, "value", None) is not None
-        )
-    }
-    local_creator_or_contributor_values = {
-        creator_comparison_key(cast("LocalClaim", claim).observed)
-        for claim in local_claims
-        if (
-            getattr(claim, "kind", None) in _CREATOR_OR_CONTRIBUTOR_CLAIMS
-            and getattr(claim, "canonical", None) is not None
-        )
-    }
-    creator_or_contributor_agreement = creator_or_contributor_agreement or bool(
-        retained_creator_or_contributor_values & local_creator_or_contributor_values
-    )
-    return (
-        title_agreement,
-        creator_or_contributor_agreement,
-        creator_or_contributor_disagreement,
     )
 
 

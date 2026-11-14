@@ -181,7 +181,7 @@ export const coverPolicyReport = (overrides: Overrides = {}) => ({
   policy_reference: 'cover-policy-synthetic',
   reasons: [],
   recommended_candidate_reference: null,
-  schema_version: 'cover-policy-report-v2',
+  schema_version: 'cover-policy-report-v3',
   status: 'abstained',
   ...overrides,
 })
@@ -211,7 +211,7 @@ export const coverConsideration = (overrides: Overrides = {}) => ({
   reviewer_model: null,
   reviewer_status: 'unavailable',
   reviewer_unavailable_reason: null,
-  schema_version: 'cover-consideration-v6',
+  schema_version: 'cover-consideration-v7',
   supersedes_id: null,
   target_fingerprint: 'fingerprint-1',
   ...overrides,

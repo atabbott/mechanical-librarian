@@ -444,6 +444,7 @@ class _CoverIdentity(_ClosedModel):
     outcome: Literal[
         "verified_manifestation_match",
         "verified_work_match",
+        "title_creator_work_match",
         "plausible_match",
         "unknown",
         "conflict",
@@ -485,8 +486,10 @@ class _CoverCandidate(_ClosedModel):
     incumbent: bool
     match_state: Literal["same_edition", "same_book", "match_not_confirmed"]
     # A proposed cover from the exactly matched book of an audiobook with no
-    # admitted recording; display only, its identity stays as stated (#1642).
-    match_reason: Literal["matched_book"] | None
+    # admitted recording, or one whose source record has the book's title and
+    # author at the chosen Book matching level; display only, its identity and
+    # match state stay as stated (#1642, #1355).
+    match_reason: Literal["matched_book", "title_and_author"] | None
     observation: _CoverObservation | None
     original_sha256: str
     ordinal: _Count
@@ -547,7 +550,7 @@ class _CoverPolicyReport(_ClosedModel):
     policy_reference: str
     reasons: list[Annotated[str, Field(max_length=128)]] = Field(max_length=32)
     recommended_candidate_reference: str | None
-    schema_version: Literal["cover-policy-report-v2"]
+    schema_version: Literal["cover-policy-report-v3"]
     status: Literal["recommended", "abstained"]
 
 
@@ -570,7 +573,7 @@ class _CoverConsiderationResponse(_ClosedModel):
     reviewer_failure_code: OpenRouterPublicFailure | None = None
     reviewer_status: Literal["completed", "failed", "unavailable"]
     reviewer_unavailable_reason: CoverUnavailableReason | None
-    schema_version: Literal["cover-consideration-v6"]
+    schema_version: Literal["cover-consideration-v7"]
     supersedes_id: str | None
     target_fingerprint: str
 
@@ -1203,6 +1206,7 @@ class _CoverPutBack(_ClosedModel):
             "cover_recovery",
             "cover_retention",
             "dependency",
+            "matching_changed",
             "not_applied",
             "not_sent",
             "owner_abandoned",
@@ -1754,6 +1758,7 @@ class _PreparationTriggerRecord(_ClosedModel):
         "library_added",
         "title_recovery",
         "automatic_confirmed",
+        "matching_changed",
     ]
     accepted_count: int = Field(ge=1)
     first_accepted_at: int = Field(ge=0)
@@ -1801,7 +1806,7 @@ class _PreparationPresentation(_ClosedModel):
         "completed_with_failures",
         "dismissed",
     ]
-    triggers: list[_PreparationTriggerRecord] = Field(min_length=1, max_length=5)
+    triggers: list[_PreparationTriggerRecord] = Field(min_length=1, max_length=6)
     passage: _PreparationPassage
     active_books: list[_PreparationActiveBook] = Field(max_length=5)
     active_overflow: int = Field(ge=0)

@@ -1037,7 +1037,7 @@ def test_settings_publication_and_rollback_preserve_browse_final_recheck(
     try:
         document = OwnerSettingsDocument.model_validate(
             {
-                "schema_version": "owner-settings-v4",
+                "schema_version": "owner-settings-v5",
                 "revision": 1,
                 "connections": [
                     {"name": "primary", "endpoint": "https://library.example.invalid"}

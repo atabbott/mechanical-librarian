@@ -1,7 +1,7 @@
 import type { SettingsView, SettingsWrite } from '../src/api/http'
 
 export const document: SettingsView['document'] = {
-  schema_version: 'owner-settings-v4',
+  schema_version: 'owner-settings-v5',
   revision: 3,
   description_advice: {
     remove_marketing: true,
@@ -54,11 +54,13 @@ export const document: SettingsView['document'] = {
     avoid_tie_in_branding: false,
     prefer_minimal_composition: false,
   },
+  matching: { work_identity: 'identifier' },
 }
 
 export const view = (authority: 'file' | 'store' = 'store'): SettingsView => ({
   authority,
   document,
+  matching_check: null,
   fields: [
     {
       apply_effect: 'applied_live',

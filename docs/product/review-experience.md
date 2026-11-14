@@ -405,9 +405,11 @@ or no result when the visual review ran); other notes and sources sit in
 disclosures. None of
 this confirms a match, changes order or earns automatic authority.
 
-The owner may choose any intact retained alternative, even of lower quality or
-with "Match not confirmed". One tap chooses; there is no dialog.
-Contradictory identity stays excluded. A choice against an outdated comparison
+The owner may choose any intact retained alternative, even of lower quality,
+with "Match not confirmed" or, with Book matching set wider, "Same title and
+author". One tap chooses; there is no dialog. Contradictory identity stays
+excluded; at a wider Book matching level, an author whose initials are written
+differently does not count as a contradiction. A choice against an outdated comparison
 shows the current one. A cover choice can be revised until its write begins.
 
 ### Covers view

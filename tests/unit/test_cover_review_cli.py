@@ -272,7 +272,7 @@ def test_provider_recovery_uses_one_explicit_owner_reviewer_authority() -> None:
 
 
 def test_show_and_select_delegate_closed_values() -> None:
-    runner = Mock(return_value={"schema_version": "cover-consideration-v6"})
+    runner = Mock(return_value={"schema_version": "cover-consideration-v7"})
     output = io.StringIO()
     assert (
         main(
@@ -293,7 +293,7 @@ def test_show_and_select_delegate_closed_values() -> None:
         )
         == 0
     )
-    assert json.loads(output.getvalue())["schema_version"] == "cover-consideration-v6"
+    assert json.loads(output.getvalue())["schema_version"] == "cover-consideration-v7"
     runner.assert_called_once_with(
         Path("/config.json"),
         Path("/database.sqlite3"),

@@ -91,8 +91,9 @@ from mechanical_librarian.domain.proposal_set import (
     work_route_cover_offered,
     work_route_cover_sources,
 )
+from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 
-SCHEMA_VERSION = "cover-consideration-v6"
+SCHEMA_VERSION = "cover-consideration-v7"
 _IDENTITY_ELIGIBLE = frozenset({"verified_manifestation_match", "verified_work_match"})
 CoverConsiderationCurrentness = Literal["current", "refresh_required", "inactive"]
 _CONSIDERATION_FIELDS = frozenset(
@@ -124,8 +125,10 @@ _CONSIDERATION_FIELDS = frozenset(
         "schema_version",
         "supersedes_id",
         "target_fingerprint",
+        "would_admit",
     }
 )
+_LEVEL_MATCH = "title_creator_work_match"
 
 
 def cover_consideration_replay_digest(
@@ -277,7 +280,7 @@ def _validated_cover_consideration(
     document: str,
     parse_report: Callable[[str], MetadataReport] | None = None,
 ) -> tuple[dict[str, object], MetadataReport]:
-    """Read one canonical v6 consideration and its bound report."""
+    """Read one canonical v7 consideration and its bound report."""
     value = _load_object(document, "cover consideration")
     consideration_id = value.get("consideration_id")
     created_at = value.get("created_at")
@@ -505,6 +508,13 @@ def _validated_candidates(
             or value["omissions"] != expected_omissions
             or value["incumbent"] != expected_incumbent
             or value["incumbent_digest"] != expected_incumbent_digest
+            or value["would_admit"]
+            != _would_admit(
+                report,
+                expected_candidates,
+                policy_report_document,
+                provider_fetching=cast("bool", value["provider_fetching"]),
+            )
         ):
             raise ValueError
     except (
@@ -515,6 +525,85 @@ def _validated_candidates(
         ValueError,
     ) as error:
         raise ValueError("cover consideration evidence is invalid") from error
+
+
+def _would_admit(
+    report: MetadataReport,
+    candidates: list[dict[str, object]],
+    policy_report_document: str | None,
+    *,
+    provider_fetching: bool,
+) -> dict[str, object] | None:
+    """ADR-0092's would-admit note for one cover field (#1355, S9).
+
+    The live election never sees a level match. This shadow election ranks
+    level matches as a third tier after ``verified_work_match``, with the live
+    election's own key and readiness rules, and names its recommendation when
+    that is a level match the live election did not recommend. It grants
+    nothing, and no API view or Activity row carries it (A1).
+    """
+    if policy_report_document is None or (
+        report.audio is not None and not admitted_audiobook_identity(report)
+    ):
+        return None
+    policy = json.loads(policy_report_document)
+    tiers = {
+        "verified_manifestation_match": 0,
+        "verified_work_match": 1,
+        _LEVEL_MATCH: 2,
+    }
+    Key = tuple[int, int, int, int, int, int, str]
+    keyed: list[tuple[Key, dict[str, object]]] = []
+    incumbent_key: Key | None = None
+    for candidate in candidates:
+        identity = candidate.get("identity")
+        if candidate.get("candidate_kind") != "candidate" or type(identity) is not dict:
+            continue
+        outcome = identity.get("outcome")
+        if outcome not in tiers:
+            continue
+        reference = cast("str", candidate["reference"])
+        # The live key's own order after its identity tier, so the shadow tier
+        # differs from the live election in nothing but the tier it adds.
+        live_key = CoverElectionCandidate(
+            reference=reference,
+            identity="verified_work_match",
+            identity_citations=(),
+            source_citations=(reference,),
+            incumbent=bool(candidate["incumbent"]),
+            width=cast("int", candidate["width"]),
+            height=cast("int", candidate["height"]),
+            packet_ordinal=cast("int", candidate["ordinal"]),
+        ).rank_key
+        key: Key = (tiers[cast("str", outcome)], *live_key[1:])
+        if candidate["incumbent"] is True:
+            incumbent_key = key
+        else:
+            keyed.append((key, candidate))
+    if not keyed or provider_fetching:
+        return None
+    best_key, best = min(keyed, key=lambda item: item[0])
+    actual = policy.get("actual_target_state")
+    if not (
+        actual == "known_empty"
+        or (
+            actual == "confirmed"
+            and incumbent_key is not None
+            and best_key < incumbent_key
+        )
+    ):
+        return None
+    identity = cast("dict[str, object]", best["identity"])
+    if identity["outcome"] != _LEVEL_MATCH or best["reference"] == policy.get(
+        "recommended_candidate_reference"
+    ):
+        return None
+    rule = next(
+        reason
+        for reason in cast("list[str]", identity["reasons"])
+        if reason.startswith("work_identity:")
+    )
+    return {"candidate_reference": best["reference"], "rule": rule}
 
 
 # One statement per retained cover source. The provider rows read the one
@@ -839,6 +928,9 @@ class _ObservationRequest:
     reviewer_engine: str | None = None
     reviewer_model: str | None = None
     reviewer_profile: bytes | None = None
+    # Stored observer output reused because only the Book matching level
+    # changed (#1355): ``observe`` returns it without a reviewer request.
+    reused: _ReviewerEvidence | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -881,14 +973,18 @@ class CoverConsiderationService:
         ) = None,
         reviewer_revision_current: Callable[[int], bool] | None = None,
         reviewer_unavailable_reason: str | None = None,
-        bind_policy: Callable[[str, str], None] | None = None,
+        bind_policy: Callable[[str, str, str], None] | None = None,
         provider_fetching: Callable[[MetadataReport], bool] | None = None,
         retained_original: (
             Callable[[str, str, str], tuple[str, str, str] | None] | None
         ) = None,
         require_retained: Callable[[str], None] | None = None,
+        work_identity_level: WorkIdentityLevel = WorkIdentityLevel.IDENTIFIER,
     ) -> None:
+        if type(work_identity_level) is not WorkIdentityLevel:
+            raise ValueError("work identity level is invalid")
         self._store = store
+        self._level = work_identity_level
         self._require_artifact = require_artifact
         self._read_preview = read_preview
         self._read_preview_digest = read_preview_digest
@@ -906,7 +1002,7 @@ class CoverConsiderationService:
         if not is_cover_profile_contract_reason(reviewer_unavailable_reason):
             raise ValueError("invalid reviewer unavailable reason")
         self._reviewer_unavailable_reason = reviewer_unavailable_reason
-        self._bind_policy = bind_policy or (lambda _policy, _replay: None)
+        self._bind_policy = bind_policy or (lambda _policy, _replay, _level: None)
         self._provider_fetching = provider_fetching or (lambda _report: False)
         self._retained_original = retained_original or (lambda *_target: None)
         self._require_retained = require_retained or _no_retained_store
@@ -918,58 +1014,86 @@ class CoverConsiderationService:
         identity = (
             None if self._reviewer_identity is None else self._reviewer_identity()
         )
-        self._bind_policy(policy.reference, self._replay_reference(identity, policy))
+        self._bind_policy(
+            policy.reference,
+            self._replay_reference(identity, policy, self._level),
+            self._level.value,
+        )
         self._policy = policy
 
-    def policy_update(self, policy: CoverPolicy) -> AbstractContextManager[None]:
-        """Prepare externally, then publish only after the admitted store commit."""
-        if type(policy) is not CoverPolicy:
+    def policy_update(
+        self, policy: CoverPolicy, work_identity_level: WorkIdentityLevel
+    ) -> AbstractContextManager[None]:
+        """Prepare externally, then publish only after the admitted store commit.
+
+        The Book matching level is a member of the replay reference (#1355), so
+        a changed level makes every consideration built under the old one
+        ``refresh_required`` and every cover effect bound to it stale.
+        """
+        if (
+            type(policy) is not CoverPolicy
+            or type(work_identity_level) is not WorkIdentityLevel
+        ):
             raise CoverConsiderationError("policy")
         previous = self._policy
+        previous_level = self._level
         identity = (
             None if self._reviewer_identity is None else self._reviewer_identity()
         )
-        previous_replay = self._replay_reference(identity, previous)
-        candidate_replay = self._replay_reference(identity, policy)
+        previous_replay = self._replay_reference(identity, previous, previous_level)
+        candidate_replay = self._replay_reference(identity, policy, work_identity_level)
         if self._policy is not previous:
             raise CoverConsiderationError("stale")
 
         @contextmanager
         def publish() -> Iterator[None]:
-            if self._policy is not previous:
+            if self._policy is not previous or self._level is not previous_level:
                 raise CoverConsiderationError("stale")
-            self._bind_policy(policy.reference, candidate_replay)
+            self._bind_policy(
+                policy.reference, candidate_replay, work_identity_level.value
+            )
             try:
                 yield
             except BaseException:
-                self._bind_policy(previous.reference, previous_replay)
+                self._bind_policy(
+                    previous.reference, previous_replay, previous_level.value
+                )
                 raise
             else:
                 self._policy = policy
+                self._level = work_identity_level
 
         return publish()
 
     def refresh_authority(self) -> None:
         """Bind a fresh reviewer snapshot before entering a decision transaction."""
-        self._bind_policy(*self.current_authority())
+        self._bind_policy(*self.current_authority(), self._level.value)
 
     def current_authority(self) -> tuple[str, str]:
         """Capture one published policy with its externally observed reviewer identity."""
         policy = self._policy
+        level = self._level
         identity = (
             None if self._reviewer_identity is None else self._reviewer_identity()
         )
-        result = policy.reference, self._replay_reference(identity, policy)
-        if self._policy is not policy:
+        result = policy.reference, self._replay_reference(identity, policy, level)
+        if self._policy is not policy or self._level is not level:
             raise CoverConsiderationError("stale")
         return result
+
+    @property
+    def work_identity_level(self) -> WorkIdentityLevel:
+        return self._level
 
     @property
     def replay_reference(self) -> str:
         return self.current_authority()[1]
 
     def _replay_reference(
-        self, dynamic_identity: tuple[int, str, str, bytes] | None, policy: CoverPolicy
+        self,
+        dynamic_identity: tuple[int, str, str, bytes] | None,
+        policy: CoverPolicy,
+        level: WorkIdentityLevel,
     ) -> str:
         value: dict[str, object] = {
             "policy": policy.document,
@@ -995,6 +1119,7 @@ class CoverConsiderationService:
                 else hashlib.sha256(self._reviewer_profile).hexdigest()
             ),
             "schema_version": SCHEMA_VERSION,
+            "work_identity_level": level.value,
         }
         if dynamic_identity is not None:
             value["reviewer_access_revision"] = dynamic_identity[0]
@@ -1078,6 +1203,21 @@ class CoverConsiderationService:
                 provider_fetching=self._provider_fetching(report),
             )
             return _ObservationRequest(replay_digest, None, ())
+        reused = self._reused_evidence(
+            review_case_id,
+            packet.document,
+            report,
+            None if self._reviewer_identity is None else self._reviewer_identity(),
+        )
+        if reused is not None:
+            return _ObservationRequest(
+                reused.replay_digest,
+                packet.document.encode(),
+                (),
+                reviewer_access_revision=reused.reviewer_access_revision,
+                replay_reference=reused.replay_reference,
+                reused=reused,
+            )
         binding: ReviewerDispatch | None = None
         failure: dict[str, object] | None = None
         try:
@@ -1104,7 +1244,9 @@ class CoverConsiderationService:
                     binding.profile,
                 )
             )
-        replay_reference = self._replay_reference(dynamic_identity, self._policy)
+        replay_reference = self._replay_reference(
+            dynamic_identity, self._policy, self._level
+        )
         replay_digest = self._replay_digest(
             review_case_id,
             report.report_id,
@@ -1129,6 +1271,8 @@ class CoverConsiderationService:
 
     def observe(self, request: _ObservationRequest) -> _ReviewerEvidence:
         """Run optional external advice over an immutable captured request."""
+        if request.reused is not None:
+            return request.reused
         if request.packet_payload is None:
             return _ReviewerEvidence(request.replay_digest, None, "unavailable", None)
         if request.reviewer_failure is not None:
@@ -1149,6 +1293,62 @@ class CoverConsiderationService:
             request.image_payloads,
             binding=request.dispatch,
             replay_reference=request.replay_reference,
+        )
+
+    def _reused_evidence(
+        self,
+        review_case_id: str,
+        packet_document: str,
+        report: MetadataReport,
+        dynamic_identity: tuple[int, str, str, bytes] | None,
+    ) -> _ReviewerEvidence | None:
+        """The case's stored observer output, when only the level changed (#1355).
+
+        The latest consideration is reused when it was built from the same
+        packet bytes and its replay reference is exactly the live one with its
+        own Book matching level in place of the configured one: the same
+        observer contract, profile, reviewer identity and policy. Only identity
+        and policy adjudication then run again, and no reviewer request is
+        made, whatever the stored reviewer status was.
+        """
+        previous = self._store.latest_cover_consideration_document(review_case_id)
+        if previous is None:
+            return None
+        try:
+            value, _report = _validated_cover_consideration(previous)
+            identity_document = value["identity_document"]
+            if type(identity_document) is not str:
+                return None
+            saved_level = WorkIdentityLevel(
+                json.loads(identity_document)["work_identity_level"]
+            )
+        except (KeyError, TypeError, ValueError):
+            return None
+        if (
+            saved_level is self._level
+            or value["packet_document"] != packet_document
+            or value["replay_reference"]
+            != self._replay_reference(dynamic_identity, self._policy, saved_level)
+        ):
+            return None
+        replay_reference = self._replay_reference(
+            dynamic_identity, self._policy, self._level
+        )
+        return _ReviewerEvidence(
+            self._replay_digest(
+                review_case_id,
+                report.report_id,
+                provider_fetching=self._provider_fetching(report),
+                replay_reference=replay_reference,
+            ),
+            cast("str | None", value["observation_document"]),
+            cast("str", value["reviewer_status"]),
+            cast("dict[str, object] | None", value["reviewer_failure"]),
+            cast("str | None", value["reviewer_engine"]),
+            cast("str | None", value["reviewer_model"]),
+            self._reviewer_profile if dynamic_identity is None else dynamic_identity[3],
+            cast("int | None", value["reviewer_access_revision"]),
+            replay_reference,
         )
 
     def _observe_packet(
@@ -1212,7 +1412,7 @@ class CoverConsiderationService:
                     (
                         replay_reference
                         if identity is None
-                        else self._replay_reference(identity, self._policy)
+                        else self._replay_reference(identity, self._policy, self._level)
                     ),
                 )
         if profile is None or reviewer is None:
@@ -1409,11 +1609,19 @@ class CoverConsiderationService:
                 packet.document,
                 image_payloads,
                 read_preview=self._read_preview,
+                work_identity_level=self._level,
             ).document
             if report.file.format in AUDIO_FILE_FORMATS:
                 evidence = _ReviewerEvidence(replay_digest, None, "unavailable", None)
             elif evidence is None:
-                evidence = self._observe_packet(replay_digest, packet)
+                evidence = self._reused_evidence(
+                    review_case_id,
+                    packet.document,
+                    report,
+                    None
+                    if self._reviewer_identity is None
+                    else self._reviewer_identity(),
+                ) or self._observe_packet(replay_digest, packet)
             observation_document = evidence.observation_document
             reviewer_status = evidence.reviewer_status
             reviewer_failure = evidence.reviewer_failure
@@ -1426,6 +1634,7 @@ class CoverConsiderationService:
                 profile_payload=evidence.reviewer_profile,
                 read_preview=self._read_preview,
                 provider_fetching=provider_fetching,
+                work_identity_level=self._level,
             ).document
             candidates = self._candidates(
                 report,
@@ -1489,6 +1698,12 @@ class CoverConsiderationService:
             "schema_version": SCHEMA_VERSION,
             "supersedes_id": supersedes_id,
             "target_fingerprint": report.target.fingerprint,
+            "would_admit": _would_admit(
+                report,
+                candidates,
+                policy_report_document,
+                provider_fetching=provider_fetching,
+            ),
         }
         identity = dict(body)
         identity.pop("created_at")
@@ -1683,10 +1898,19 @@ class CoverConsiderationService:
             # page needs neither.
             candidate.pop("plan_id", None)
             candidate.pop("decision_id", None)
+            identity_row = candidate.get("identity")
             candidate.update(
                 manual_eligible=manual_cover_eligible(candidate),
+                # Display only: the match state stays `match_not_confirmed`, so
+                # every unverified-match gate reads it as today (#1355, A2).
                 match_reason=(
-                    "matched_book" if candidate["reference"] in matched_book else None
+                    "matched_book"
+                    if candidate["reference"] in matched_book
+                    else "title_and_author"
+                    if candidate["incumbent"] is False
+                    and type(identity_row) is dict
+                    and identity_row.get("outcome") == _LEVEL_MATCH
+                    else None
                 ),
             )
             candidates.append(candidate)

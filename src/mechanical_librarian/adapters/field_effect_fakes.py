@@ -275,9 +275,13 @@ class FakeConsentCurrentness:
 
 class FakeDependencyCurrentness:
     current_value = True
+    matching_changed_value = False
 
     def current(self, digests: tuple[str, ...]) -> bool:
         return self.current_value
+
+    def matching_changed(self, digests: tuple[str, ...]) -> bool:
+        return self.matching_changed_value
 
 
 class FakePreclaimHook:

@@ -340,16 +340,22 @@ function LibraryCoverChoicesContent({
   const excludedReason = (candidate: (typeof candidates)[number]) =>
     candidate.matchReason === 'matched_book'
       ? 'From the matched book, not a confirmed recording.'
-      : // The card's title already says Match not confirmed, so no line repeats it (#1765).
-        candidate.matchState === 'match_not_confirmed'
-        ? null
-        : candidate.observation === null
-          ? 'The reviewer did not check this cover.'
-          : policyStatus !== null && !acceptableReferences.includes(candidate.reference)
-            ? policyReasons.length
-              ? policyReasons.map(coverNoteLabel).join(', ')
-              : 'Your cover settings do not accept this cover.'
-            : coverStateLabels[candidate.state]
+      : candidate.matchReason === 'title_and_author'
+        ? // The title names the basis, so only folded initials add a line (#1355).
+          Array.isArray(candidate.identity?.reasons) &&
+          candidate.identity.reasons.includes('creator_initials_folded')
+          ? "An author's initials are written differently in this source."
+          : null
+        : // The card's title already says Match not confirmed, so no line repeats it (#1765).
+          candidate.matchState === 'match_not_confirmed'
+          ? null
+          : candidate.observation === null
+            ? 'The reviewer did not check this cover.'
+            : policyStatus !== null && !acceptableReferences.includes(candidate.reference)
+              ? policyReasons.length
+                ? policyReasons.map(coverNoteLabel).join(', ')
+                : 'Your cover settings do not accept this cover.'
+              : coverStateLabels[candidate.state]
   const cardState = (candidate: (typeof candidates)[number]) => {
     const outcome = candidate.incumbent ? ('keep_current' as const) : ('accept' as const)
     const value: DecisionCommand['selectedValue'] = candidate.incumbent
@@ -468,7 +474,9 @@ function LibraryCoverChoicesContent({
                   ? 'Same edition'
                   : candidate.matchState === 'same_book' || candidate.matchReason === 'matched_book'
                     ? 'Same book'
-                    : 'Match not confirmed'}
+                    : candidate.matchReason === 'title_and_author'
+                      ? 'Same title and author'
+                      : 'Match not confirmed'}
               {/* The identity stays unverified: only the wording names its basis (#1642). */}
               {candidate.matchReason === 'matched_book' ? ' · recording not confirmed' : ''}
             </strong>

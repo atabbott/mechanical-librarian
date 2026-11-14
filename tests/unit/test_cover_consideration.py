@@ -51,6 +51,7 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import work_route_cover_sources
 from mechanical_librarian.domain.reviewer_access import ReviewerEngine
+from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 from tests.support.audiobook_reports import asserted_asin_report
 from tests.support.hardcover_work_route import (
     WORK,
@@ -462,11 +463,11 @@ def test_live_policy_update_changes_the_next_evaluation_and_rolls_back_on_bindin
         read_preview=lambda artifact, _variant: case.payload_by_artifact[artifact],
         read_preview_digest=lambda digest: case.payload_by_preview[digest],
         clock=lambda: case.now,
-        bind_policy=lambda policy, replay: bindings.append((policy, replay)),
+        bind_policy=lambda policy, replay, _level: bindings.append((policy, replay)),
     )
     changed = CoverPolicy(True, True, True)
 
-    with service.policy_update(changed):
+    with service.policy_update(changed, WorkIdentityLevel.IDENTIFIER):
         pass
     value = service.ensure(
         "review_case_" + "9" * 64, case.report.to_json(), case.proposal
@@ -476,7 +477,7 @@ def test_live_policy_update_changes_the_next_evaluation_and_rolls_back_on_bindin
     assert bindings == [(changed.reference, service.replay_reference)]
 
     previous_replay = service.replay_reference
-    service._bind_policy = lambda _policy, _replay: (_ for _ in ()).throw(
+    service._bind_policy = lambda _policy, _replay, _level: (_ for _ in ()).throw(
         RuntimeError("synthetic binding fault")
     )
     with pytest.raises(RuntimeError, match="binding fault"):
@@ -849,7 +850,7 @@ def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
         clock=lambda: case.now + 1,
     )
     assert model_free.replay_reference == (
-        "cover_replay_7e01dc0df44fb20c807b63543128f0ca598a9c42b4a96d733ac438abac4c3eeb"
+        "cover_replay_32e59a58caa84bf4bfa93c4d855f4e12f5fa0de6f010cda82316edd408484451"
     )
     assert (
         model_free.ensure(case_id, case.report.to_json(), case.proposal)[
@@ -892,7 +893,7 @@ def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
     assert len(dispatches) == 1
     replayed_qualified = qualified()
     assert replayed_qualified.replay_reference == (
-        "cover_replay_97e8f9dcef35140f8d252313b1b071cdee3c070fa67d1c87c46af9b28984dba0"
+        "cover_replay_4f5689c41a6d05c452ef153b146ec1278976db256813841b2f7c17a26c7fbb6f"
     )
     assert (
         replayed_qualified.ensure(
@@ -1007,7 +1008,7 @@ def test_stale_reviewer_binding_is_current_only_and_replays_exactly(
         "profile contract requires process_limit=32"
     )
     different_document = json.loads(case.store.current[case_id])
-    assert different_document["schema_version"] == "cover-consideration-v6"
+    assert different_document["schema_version"] == "cover-consideration-v7"
     assert different_document["reviewer_failure"] is None
     assert "reviewer_unavailable_reason" not in different_document
 
@@ -2026,7 +2027,7 @@ def test_a_verified_work_route_cover_never_gains_automatic_authority(
         with patch.object(
             cover_identity,
             "_classify_sources",
-            lambda _report, sources: (
+            lambda _report, sources, _level: (
                 verified
                 if any(source.kind is CoverSourceKind.HARDCOVER for source in sources)
                 else ("unknown", ["no_provider_identity"], [])

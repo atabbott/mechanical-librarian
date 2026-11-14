@@ -219,6 +219,9 @@ _OWNER_ACTION_FAILURES = (
     "third_value",
     "readback",
     "restore_unavailable",
+    # A cover chosen under another Book matching level: its field asks the
+    # owner again (#1355).
+    "matching_changed",
 )
 _OWNER_ACTION_COUNT_SQL = (
     "SELECT count(*) FROM field_effects effect JOIN field_effect_authorities authority "
@@ -1687,6 +1690,34 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             )
         except sqlite3.Error:
             return False
+
+    def field_effect_matching_changed(
+        self, digests: tuple[str, ...], work_identity_level: str
+    ) -> bool:
+        """Whether a cover effect's consideration has another Book matching level.
+
+        A cover effect binds the expanded consideration it was chosen from.
+        When that consideration's identity was classified under a level other
+        than the configured one, the effect is stale because Book matching
+        changed, and Activity says so (#1355).
+        """
+        try:
+            for digest in digests:
+                row = self._connection.execute(
+                    "SELECT json_extract(json_extract(document,'$.identity_document'),"
+                    "'$.work_identity_level') FROM cover_considerations "
+                    "WHERE document_digest=? LIMIT 1",
+                    (digest,),
+                ).fetchone()
+                if (
+                    row is not None
+                    and type(row[0]) is str
+                    and row[0] != work_identity_level
+                ):
+                    return True
+        except sqlite3.Error:
+            return False
+        return False
 
     def _fresh_database_quick_check(self) -> tuple[object, ...] | None:
         database = self._connection.execute("PRAGMA database_list").fetchone()

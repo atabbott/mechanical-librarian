@@ -1477,9 +1477,13 @@ describe('Library route', () => {
 
     // Turning on Automatic prepares the current works again (#1573); that is
     // its own cause, never title recovery.
-    for (const [count, line] of [
-      [1, 'Started when Automatic was turned on'],
-      [2, 'Automatic turned on 2 times'],
+    // Saving Book matching re-checks current works the same way, as its own
+    // cause (#1355).
+    for (const [trigger, count, line] of [
+      ['automatic_confirmed', 1, 'Started when Automatic was turned on'],
+      ['automatic_confirmed', 2, 'Automatic turned on 2 times'],
+      ['matching_changed', 1, 'Started when Book matching was saved'],
+      ['matching_changed', 2, 'Book matching saved 2 times'],
     ] as const) {
       act(() => {
         queryClient.setQueryData(['review-preparation'], {
@@ -1490,7 +1494,7 @@ describe('Library route', () => {
             state: 'running',
             triggers: [
               {
-                trigger: 'automatic_confirmed' as const,
+                trigger,
                 accepted_count: count,
                 first_accepted_at: 200,
                 last_accepted_at: 200 + count,
@@ -5802,6 +5806,48 @@ describe('Library route', () => {
         }),
       )
     })
+
+    it.each([
+      [[], null],
+      [['creator_initials_folded'], "An author's initials are written differently in this source."],
+    ] as const)(
+      'names a cover matched by title and author, chosen only by the owner (#1355) %#',
+      async (reasons, line) => {
+        const user = userEvent.setup()
+        const matched = `cover_transport_ref_${'5'.repeat(64)}`
+        const http = coverHttp((consideration) => ({
+          candidates: consideration.candidates.map((candidate) =>
+            candidate.reference === matched
+              ? {
+                  ...candidate,
+                  matchReason: 'title_and_author' as const,
+                  identity: { ...candidate.identity, reasons: [...reasons] },
+                }
+              : candidate,
+          ),
+        }))
+        renderRoute('/library?lens=all&preview=case-1&field=cover', http)
+        const group = await screen.findByRole('radiogroup', {
+          name: 'Which cover should this work use?',
+        })
+        const card = within(group).getByRole('radio', {
+          name: 'Choose Open Library cover, 800 × 1200 px (4)',
+        })
+        expect(card).toHaveTextContent('Same title and author')
+        expect(card).not.toHaveTextContent('Match not confirmed')
+        expect(card).not.toHaveTextContent('Same book')
+        if (line === null) expect(card.querySelector('.choice-recommendation')).toBeNull()
+        else expect(card.querySelector('.choice-recommendation')).toHaveTextContent(line)
+        // Nothing is recommended for it; the owner's tap confirms the match.
+        await user.click(card)
+        expect(http.recordDecision.mock.calls[0]?.[1]).toEqual(
+          expect.objectContaining({
+            outcome: 'accept',
+            coverConfirmation: { expected_selection_id: null, confirm_unverified_match: true },
+          }),
+        )
+      },
+    )
   })
 
   it.each([

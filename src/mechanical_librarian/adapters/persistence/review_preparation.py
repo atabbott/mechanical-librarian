@@ -110,6 +110,111 @@ _COMPLETE_CURRENT_CASE_WORK_SQL = (
 _COMPLETE_CASE_WORK_WHERE_SQL = (
     "WHERE w.state='complete' AND w.stage='complete' AND w.outcome='case' "
 )
+# A current case's cover comparison waits for Book matching while its current
+# consideration was classified under another level (#1355). Its work is
+# re-projected, which prepares the comparison again from stored evidence.
+_MATCHING_CONSIDERATION_SQL = (
+    "JOIN current_cover_considerations current "
+    "ON current.review_case_id=c.review_case_id "
+    "JOIN cover_considerations consideration "
+    "ON consideration.consideration_id=current.consideration_id "
+)
+_MATCHING_LEVEL_SQL = (
+    "json_extract(json_extract(consideration.document,'$.identity_document'),"
+    "'$.work_identity_level')"
+)
+
+
+def requeue_projection_work(
+    connection: sqlite3.Connection,
+    rows: list[tuple[str, str]],
+    updated_at: int,
+    trigger: PreparationTrigger,
+) -> None:
+    """Project the named current case works again, in the caller's transaction."""
+    for work_id, scan_id in rows:
+        connection.execute(
+            "UPDATE review_preparation_work SET stage='projection',state='queued',"
+            "attempt=0,recovery_attempt=0,retry_not_before=0,failure_code=NULL,"
+            "failure_root=NULL,outcome=NULL,updated_at=? WHERE work_id=?",
+            (updated_at, work_id),
+        )
+        connection.execute(
+            "UPDATE review_preparation_scans SET state='processing',updated_at=? "
+            "WHERE scan_id=? AND state IN ('completed','completed_with_failures')",
+            (updated_at, scan_id),
+        )
+    if rows:
+        reopen_preparation_projection(
+            connection, tuple(row[0] for row in rows), updated_at, trigger
+        )
+        refresh_preparation_presentation(connection, updated_at)
+
+
+def request_matching_check(
+    connection: sqlite3.Connection,
+    work_identity_level: str,
+    *,
+    level_changed: bool,
+    updated_at: int,
+) -> None:
+    """Check current cover comparisons against Book matching (#1355).
+
+    The re-check is #1573's re-projection of complete current case works, so
+    no case is retired and no case id changes: each re-projection prepares the
+    cover comparison again, reusing the stored observer output. A work is
+    taken when its current consideration was classified under another level;
+    when the level changed, also when its consideration has no classification
+    (no previews), whose replay reference names the level too. Works whose
+    check gave up are taken again, so saving the setting again retries them.
+    """
+    rows = connection.execute(
+        _COMPLETE_CURRENT_CASE_WORK_SQL
+        + _MATCHING_CONSIDERATION_SQL
+        + "WHERE ((w.state='complete' AND w.stage='complete' AND w.outcome='case') "
+        "OR (w.stage='projection' AND w.state IN ('failed','stale'))) AND ("
+        + _MATCHING_LEVEL_SQL
+        + "<>? OR (? AND "
+        + _MATCHING_LEVEL_SQL
+        + " IS NULL)) ORDER BY w.work_id",
+        (work_identity_level, int(level_changed)),
+    ).fetchall()
+    requeue_projection_work(
+        connection,
+        [(work_id, scan_id) for work_id, scan_id in rows],
+        updated_at,
+        PreparationTrigger.MATCHING_CHANGED,
+    )
+
+
+def matching_check_counts(
+    connection: sqlite3.Connection, work_identity_level: str
+) -> tuple[int, int, int]:
+    """Current works, works being checked, and works whose check gave up.
+
+    A current case is checked once its current cover consideration was
+    classified under the configured Book matching level (#1355). One that is
+    not is being checked while its work is queued or running, and otherwise
+    could not be checked: its re-projection failed and gave up, or it was not
+    taken, and saving the setting again takes it.
+    """
+    current = connection.execute(
+        "SELECT count(*) FROM current_review_case_lineages "
+        "WHERE review_case_id IS NOT NULL"
+    ).fetchone()[0]
+    unchecked, checking = connection.execute(
+        "SELECT count(*),coalesce(sum(EXISTS (SELECT 1 FROM review_preparation_work w "
+        "WHERE w.connection_name=c.connection_name AND w.library_name=c.library_name "
+        "AND w.item_id=c.item_id AND w.state IN ('queued','delayed','running'))),0) "
+        "FROM current_review_case_lineages c "
+        + _MATCHING_CONSIDERATION_SQL
+        + "WHERE c.review_case_id IS NOT NULL AND "
+        + _MATCHING_LEVEL_SQL
+        + "<>?",
+        (work_identity_level,),
+    ).fetchone()
+    return int(current), int(checking), int(unchecked) - int(checking)
+
 
 # The exact vocabulary `review_preparation_work.failure_code` accepts. It
 # duplicates the CHECK in `schema.py`, which cannot be generated from this set
@@ -1915,23 +2020,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         updated_at: int,
         trigger: PreparationTrigger,
     ) -> None:
-        for work_id, scan_id in rows:
-            self._connection.execute(
-                "UPDATE review_preparation_work SET stage='projection',state='queued',"
-                "attempt=0,recovery_attempt=0,retry_not_before=0,failure_code=NULL,"
-                "failure_root=NULL,outcome=NULL,updated_at=? WHERE work_id=?",
-                (updated_at, work_id),
-            )
-            self._connection.execute(
-                "UPDATE review_preparation_scans SET state='processing',updated_at=? "
-                "WHERE scan_id=? AND state IN ('completed','completed_with_failures')",
-                (updated_at, scan_id),
-            )
-        if rows:
-            reopen_preparation_projection(
-                self._connection, tuple(row[0] for row in rows), updated_at, trigger
-            )
-            refresh_preparation_presentation(self._connection, updated_at)
+        requeue_projection_work(self._connection, rows, updated_at, trigger)
 
     def _restart_metadata_policy_work(
         self,

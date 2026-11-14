@@ -263,6 +263,8 @@ class ConsentCurrentness(Protocol):
 class DependencyCurrentness(Protocol):
     def current(self, digests: tuple[str, ...]) -> bool: ...
 
+    def matching_changed(self, digests: tuple[str, ...]) -> bool: ...
+
 
 class CoverRecovery(Protocol):
     def capture(self, plan: FieldEffectPlan) -> None: ...
@@ -1051,7 +1053,15 @@ class GuardedFieldApplication:
             if not self._consent.current(member.consent):
                 return self._stale(operation, "consent")
             if not self._dependencies.current(member.dependency_digests):
-                return self._stale(operation, "dependency")
+                # A cover chosen under another Book matching level says so
+                # (#1355); every other moved dependency stays unnamed.
+                return self._stale(
+                    operation,
+                    "matching_changed"
+                    if member.destination == "cover"
+                    and self._dependencies.matching_changed(member.dependency_digests)
+                    else "dependency",
+                )
         try:
             observed = self._target.read(plan)
         except Exception as error:

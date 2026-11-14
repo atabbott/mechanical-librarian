@@ -48,6 +48,7 @@ from mechanical_librarian.domain.metadata_report import (
     default_target_fields,
     provider_lane_candidate_reference,
 )
+from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 from tests.support.cover_producers import _preview, _source
 
 ROOT = Path(__file__).parents[2]
@@ -68,6 +69,9 @@ from mechanical_librarian.adapters.reviewers import (  # noqa: E402
     contained_reviewer as reviewer_adapter,
 )
 from mechanical_librarian.application import (  # noqa: E402
+    cover_identity,
+)
+from mechanical_librarian.application import (  # noqa: E402
     cover_packets as packet_builder,
 )
 from mechanical_librarian.application.contained_reviewer_contract import (  # noqa: E402
@@ -78,7 +82,6 @@ from mechanical_librarian.application.contained_reviewer_contract import (  # no
 from mechanical_librarian.application.cover_identity import (  # noqa: E402
     _CLASSIFIER_REFERENCE,
     SCHEMA_VERSION,
-    _classify_sources,
     _preview_reference,
     classify_cover_identity,
 )
@@ -184,6 +187,7 @@ def _classify_identity(
         packet_document,
         images,
         read_preview=read_preview,
+        work_identity_level=WorkIdentityLevel.IDENTIFIER,
     )
 
 
@@ -506,6 +510,7 @@ def test_normalized_transport_rejects_binding_and_source_substitution() -> None:
             packet.document,
             images,
             read_preview=lambda *_: second_payload,
+            work_identity_level=WorkIdentityLevel.IDENTIFIER,
         )
 
 
@@ -2318,6 +2323,7 @@ def test_identity_reauthenticates_every_source_to_the_normalized_transport() -> 
             packet.document,
             images,
             read_preview=lambda artifact, _variant: payload_by_artifact[artifact],
+            work_identity_level=WorkIdentityLevel.IDENTIFIER,
         ).document
     )
     assert len(result["candidates"]) == 1
@@ -2406,6 +2412,7 @@ def test_identity_reauthenticates_every_source_to_the_normalized_transport() -> 
             _rebind_packet(separate_document),
             forged_images,
             read_preview=(lambda artifact, _variant: different_by_artifact[artifact]),
+            work_identity_level=WorkIdentityLevel.IDENTIFIER,
         )
 
 
@@ -2633,6 +2640,25 @@ def test_typed_lane_mapping_requires_the_matched_candidate_in_an_isbn_lane(
         _classify_identity(report, packet, images, lambda *_: payload).document
     )
     assert value["candidates"][0]["outcome"] == expected
+
+
+def _classify_sources(
+    report: object, sources: tuple[CoverSource, ...]
+) -> tuple[str, list[str], list[str]]:
+    """The identifier classification alone, as these cases pin it.
+
+    The duck-typed reports here carry only what the identifier rules read; the
+    level facts #1355 appends (`_level_outcome`) are pinned in
+    `test_cover_identity_levels.py` and the listed-edition tests.
+    """
+    with mock.patch.object(
+        cover_identity,
+        "_level_outcome",
+        side_effect=lambda _report, _matches, identifier, _level: identifier,
+    ):
+        return cover_identity._classify_sources(
+            cast(MetadataReport, report), sources, WorkIdentityLevel.IDENTIFIER
+        )
 
 
 def test_source_bound_epub_cover_is_verified_manifestation() -> None:
@@ -3162,6 +3188,7 @@ def test_report_binds_exact_packet_candidates_and_emits_only_opaque_references()
             foreign_packet.document,
             foreign_images,
             read_preview=lambda *_: shared_payload,
+            work_identity_level=WorkIdentityLevel.IDENTIFIER,
         )
 
 
@@ -3247,6 +3274,7 @@ def _policy_documents(count: int = 3):
         "cover_packet_reference": packet_value["packet_reference"],
         "report_reference": "report_" + "a" * 64,
         "schema_version": SCHEMA_VERSION,
+        "work_identity_level": "identifier",
         "work_target_reference": "work_target_ref_" + "b" * 64,
     }
     references = tuple(candidate["reference"] for candidate in candidates)
@@ -3321,6 +3349,7 @@ def _adjudicate(
             policy,
             profile_payload=(profile_payload if observation_available else None),
             read_preview=read_preview,
+            work_identity_level=WorkIdentityLevel.IDENTIFIER,
             provider_fetching=provider_fetching,
         )
     return json.loads(result.document)
@@ -3334,7 +3363,7 @@ def test_closed_policy_is_content_bound_and_plain_policy_uses_packet_order() -> 
         == report["acceptable_candidate_references"][0]
     )
     assert report["reasons"] == ["deterministic_confirmed_order"]
-    assert report["schema_version"] == "cover-policy-report-v2"
+    assert report["schema_version"] == "cover-policy-report-v3"
     assert report["actual_target_state"] == "known_empty"
     assert report["owner_ready"] is True
     assert report["observation_taxonomy_reference"] == TAXONOMY_REFERENCE
@@ -3705,6 +3734,7 @@ def test_identity_is_recomputed_from_exact_report_evidence() -> None:
             CoverPolicy(),
             profile_payload=b'{"profile":"synthetic"}',
             read_preview=read_preview,
+            work_identity_level=WorkIdentityLevel.IDENTIFIER,
         ).document
     )
     assert report["status"] == "abstained"
@@ -3778,6 +3808,7 @@ def test_unknown_invented_duplicate_or_mismatched_inputs_fail_closed(mutation) -
                 CoverPolicy(),
                 profile_payload=b'{"profile":"synthetic"}',
                 read_preview=read_preview,
+                work_identity_level=WorkIdentityLevel.IDENTIFIER,
             )
 
 
@@ -3857,7 +3888,11 @@ def _audiobook_identity_reasons(
     )
     document = json.loads(
         classify_cover_identity(
-            report.to_json(), packet.document, images, read_preview=read_preview
+            report.to_json(),
+            packet.document,
+            images,
+            read_preview=read_preview,
+            work_identity_level=WorkIdentityLevel.IDENTIFIER,
         ).document
     )
     return {

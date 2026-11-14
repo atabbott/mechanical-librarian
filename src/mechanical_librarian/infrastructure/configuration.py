@@ -38,6 +38,7 @@ from mechanical_librarian.domain.validation import (
     OWNER_SESSION_LIFETIME_MAXIMUM,
     OWNER_SESSION_LIFETIME_MINIMUM,
 )
+from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 
 _MAX_CONFIG_BYTES = 262_144
 Name = Annotated[StrictStr, Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")]
@@ -361,6 +362,11 @@ class ReviewInput(_Closed):
     description_remove_sales_boasts: StrictBool = True
     description_remove_praise: StrictBool = True
     description_automatic_application: StrictBool = False
+    # Book matching (#1355, ADR-0096): the closed `review.work_identity`
+    # levels. No other source sets it.
+    work_identity: Literal[
+        "identifier", "title_and_creator_exact", "title_and_creator"
+    ] = "identifier"
 
     @model_validator(mode="after")
     def validate_transport(self) -> ReviewInput:
@@ -368,13 +374,14 @@ class ReviewInput(_Closed):
             **{
                 **self.model_dump(),
                 "trusted_proxy_ips": tuple(sorted(self.trusted_proxy_ips)),
+                "work_identity": WorkIdentityLevel(self.work_identity),
             }
         )
         return self
 
 
 class ConfigurationInput(_Closed):
-    schema_version: Literal["config-v9"]
+    schema_version: Literal["config-v10"]
     provider_recovery_generation: Annotated[StrictInt, Field(ge=1)]
     connections: Annotated[list[ConnectionInput], Field(min_length=1, max_length=32)]
     libraries: Annotated[list[LibraryInput], Field(min_length=1, max_length=128)]
@@ -461,6 +468,7 @@ def load_configuration_document(payload: bytes) -> ApplicationConfiguration:
                 description_remove_sales_boasts=value.review.description_remove_sales_boasts,
                 description_remove_praise=value.review.description_remove_praise,
                 description_automatic_application=value.review.description_automatic_application,
+                work_identity=WorkIdentityLevel(value.review.work_identity),
             ),
         )
     except ConfigurationError:

@@ -101,7 +101,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         except json.JSONDecodeError:
             return
         if (
-            policy_report.get("schema_version") != "cover-policy-report-v2"
+            policy_report.get("schema_version") != "cover-policy-report-v3"
             or policy_report.get("owner_ready") is not True
             or policy_report.get("actual_target_state")
             not in {"known_empty", "confirmed"}
@@ -566,7 +566,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             value = json.loads(document)
             if (
                 type(value) is not dict
-                or value.get("schema_version") != "cover-consideration-v6"
+                or value.get("schema_version") != "cover-consideration-v7"
                 or value.get("review_case_id") != review_case_id
                 or value.get("report_id") != report_id
                 or value.get("replay_digest") != replay_digest

@@ -486,3 +486,17 @@ alternative, `cover-consideration-v6` names each candidate's kind, and
 `cover-selection-authority-v3` records the switch a Put back undoes, so a
 verified Put back releases its copy. Every earlier application database is
 rejected before mutation and needs a clean rebuild; no adoption is supplied.
+
+Issue #1355's activation A takes the clean-rebuild branch. `config-v10` adds
+`review.work_identity`, and `owner-settings-v5` adds its store-managed
+equivalent, `matching.work_identity`; a v9 file and a v4 settings document are
+refused. `cover-identity-report-v2` records the level a cover was classified
+under and adds the `title_creator_work_match` outcome and the level reasons,
+`cover-policy-report-v3` embeds that document, and `cover-consideration-v7`
+binds the level into its replay reference and stores the cover's would-admit
+note. The review preparation trigger set gains `matching_changed`, a schema
+`CHECK` change. The metadata report, proposal policy, shadow decision policy
+and decision-set versions do not move: the report records no level and live
+decisions are unchanged at every level. Every earlier application database is
+rejected before mutation and needs a clean rebuild; no adoption is supplied.
+

@@ -275,8 +275,16 @@ class CoverPreferenceSettings(_Closed):
     prefer_minimal_composition: StrictBool = False
 
 
+class MatchingSettings(_Closed):
+    """Book matching (#1355, ADR-0096): the closed `review.work_identity` level."""
+
+    work_identity: Literal[
+        "identifier", "title_and_creator_exact", "title_and_creator"
+    ] = "identifier"
+
+
 class OwnerSettingsDocument(_Closed):
-    schema_version: Literal["owner-settings-v4"]
+    schema_version: Literal["owner-settings-v5"]
     revision: Annotated[StrictInt, Field(ge=1)]
     connections: Annotated[list[TargetSettings], Field(min_length=1, max_length=32)]
     providers: Annotated[list[ProviderSettings], Field(max_length=32)] = []
@@ -286,6 +294,7 @@ class OwnerSettingsDocument(_Closed):
     server: ServerSettings = ServerSettings()
     cover_preferences: CoverPreferenceSettings = CoverPreferenceSettings()
     description_advice: DescriptionAdviceSettings = DescriptionAdviceSettings()
+    matching: MatchingSettings = MatchingSettings()
     reduced_motion: Literal["follow_system", "always_reduced"] = "follow_system"
     pending_restart: Annotated[list[StrictStr], Field(max_length=32)] = []
 
@@ -438,6 +447,19 @@ def provider_capabilities(
     )
 
 
+class MatchingCheck(_Closed):
+    """How far current cover comparisons follow Book matching (#1355).
+
+    `current_works` counts current cases; `checking` those whose comparison is
+    queued for the re-check; `failed` those whose re-check gave up or was not
+    taken, which saving the setting again retries.
+    """
+
+    current_works: Annotated[StrictInt, Field(ge=0)]
+    checking: Annotated[StrictInt, Field(ge=0)]
+    failed: Annotated[StrictInt, Field(ge=0)]
+
+
 class SettingsView(_Closed):
     document: OwnerSettingsDocument
     fields: tuple[SettingField, ...]
@@ -445,6 +467,7 @@ class SettingsView(_Closed):
     provider_capabilities: tuple[ProviderCapability, ...] = ()
     authority: Literal["file", "store"]
     managed_path: StrictStr | None = None
+    matching_check: MatchingCheck | None = None
 
 
 def store_field_metadata(document: OwnerSettingsDocument) -> tuple[SettingField, ...]:
@@ -477,6 +500,7 @@ def store_field_metadata(document: OwnerSettingsDocument) -> tuple[SettingField,
                 "cover_preferences.avoid_promotional_text",
                 "cover_preferences.avoid_tie_in_branding",
                 "cover_preferences.prefer_minimal_composition",
+                "matching.work_identity",
             }
         )
     ]
@@ -518,6 +542,8 @@ __all__ = [
     "HardcoverProviderSettings",
     "ItunesSearchProviderSettings",
     "LibrarySettings",
+    "MatchingCheck",
+    "MatchingSettings",
     "OpenLibraryProviderSettings",
     "OwnerSettingsDocument",
     "OwnerSettingsError",

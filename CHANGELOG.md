@@ -222,6 +222,11 @@ brackets are GitHub issues.
   or not an image, reads **Image unavailable** instead of **No cover** in
   Covers and on the book page, and a rotated cover reports the size it is
   shown at (#1363).
+- **Clean rebuild required.** Policy has a Book matching setting. Set wider
+  than "Confirmed matches only", a cover from a source record with the book's
+  title and author is labelled "Same title and author", and one whose author's
+  initials are written differently, such as "R.F." for "R. F.", can be chosen.
+  None is chosen automatically. The default changes nothing (#1355).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
