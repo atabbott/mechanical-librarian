@@ -7365,6 +7365,128 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
             browser.close()
 
 
+# Chromium skips a cross-document view transition when it cannot draw it in
+# time, most often under CPU load, and then rejects the transition's `ready`
+# with "Transition was skipped". Each side of the setup-to-Library handoff
+# skips it here on purpose; neither may leave that rejection unhandled.
+_SKIP_HANDOFF_TRANSITION = (
+    "addEventListener('{event}',event=>{{"
+    "if(!event.viewTransition)return;"
+    "console.debug('__ML_HANDOFF_SKIPPED__{event}');"
+    "event.viewTransition.skipTransition()}})"
+)
+
+
+def _record_handoff_skip(records: list[str], message: Any) -> None:
+    if message.text.startswith("__ML_HANDOFF_SKIPPED__"):
+        records.append(message.text)
+
+
+@pytest.mark.parametrize(
+    "event", ["pageswap", "pagereveal"], ids=["pageswap", "pagereveal"]
+)
+def test_a_skipped_setup_handoff_transition_raises_no_page_error(event: str) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        os.chmod(hash_path, 0o600)
+        certificate, key = _certificate(root)
+        with (
+            sync_playwright() as playwright,
+            closing(ReservedPort()) as reserved_port,
+            _server(
+                database=root / "review.sqlite3",
+                hash_path=hash_path,
+                certificate=certificate,
+                key=key,
+                port=reserved_port,
+                preparation=True,
+            ) as (origin, _case_id),
+        ):
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True, viewport={"width": 390, "height": 844}
+            )
+            # Registered before the pages' own scripts, so the skip lands
+            # before their handlers run.
+            context.add_init_script(_SKIP_HANDOFF_TRANSITION.format(event=event))
+            with _closing_context(context):
+                page = context.new_page()
+                page_errors: list[str] = []
+                skipped: list[str] = []
+                page.on("pageerror", partial(_record_page_error, page_errors))
+                page.on("console", partial(_record_handoff_skip, skipped))
+                page.route("**/favicon.ico", lambda route: route.fulfill(status=204))
+                _login(page, origin)
+
+                class State:
+                    def read(self, _verifier: str) -> SetupStateDocument:
+                        return SetupStateDocument(
+                            schema_version=SETUP_STATE_SCHEMA,
+                            revision=1,
+                            bootstrap_verifier_digest="0" * 64,
+                            claim_token_digest=claim_token_digest(_CLAIM_TOKEN),
+                        )
+
+                setup_client = TestClient(
+                    create_setup_app(cast(Any, object()), cast(Any, State()), ""),
+                    base_url="https://testserver",
+                )
+                setup_asset = partial(_serve_setup_asset, setup_client)
+                setup_url = origin + "/setup-handoff"
+                page.route(setup_url, setup_asset)
+                for asset in ("theme.js", "setup.css", "setup-handoff.css", "setup.js"):
+                    page.route(origin + "/assets/" + asset, setup_asset)
+
+                def setup_api(route) -> None:
+                    path = urlparse(route.request.url).path
+                    if path == "/api/setup/state":
+                        route.fulfill(
+                            json={
+                                "csrf_token": "synthetic-csrf",
+                                "next_step": "kick_off",
+                                "completed_steps": [
+                                    "claim",
+                                    "connect",
+                                    "libraries",
+                                    "mounts",
+                                    "providers",
+                                    "reviewer",
+                                ],
+                                "revision": 7,
+                                "providers": [],
+                                "libraries": [],
+                                "mounts": [],
+                            }
+                        )
+                    elif path == "/api/setup/reviewer-access":
+                        route.fulfill(json={"revision": 7, "mapping": None})
+                    elif path == "/api/setup/kick-off":
+                        route.fulfill(json={"message": "Started."})
+                    else:
+                        route.fulfill(status=404, json={"error": "not_found"})
+
+                page.route("**/api/setup/**", setup_api)
+                page.goto(setup_url)
+                page.get_by_role("button", name="Start").click()
+                page.wait_for_url(re.compile(r"/library\?.*preparation="))
+                expect(
+                    page.get_by_role("heading", name="Preparing libraries")
+                ).to_be_visible()
+                # The motion sheet is switched off once the skipped transition
+                # finishes, as it is after one that runs.
+                expect(page.locator("#preparation-handoff-motion")).to_have_js_property(
+                    "disabled", True
+                )
+                page.wait_for_timeout(100)
+                assert skipped == ["__ML_HANDOFF_SKIPPED__" + event]
+                assert page_errors == []
+                setup_client.close()
+            browser.close()
+
+
 def test_first_owner_claim_requires_the_deployment_claim_token() -> None:
     """ADR-0086 through the shipped page, on the real setup generation.
 

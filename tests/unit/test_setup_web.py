@@ -1706,6 +1706,8 @@ def test_setup_enables_cross_document_motion_only_for_the_workspace_handoff() ->
     assert "motion.disabled=false" in SETUP_JS
     assert "addEventListener('pageswap'" in SETUP_JS
     assert "handoff.viewTransition.finished.then(disable,disable)" in SETUP_JS
+    # A skipped transition rejects `ready`; it is handled, not a page error.
+    assert "handoff.viewTransition.ready.catch(()=>{})" in SETUP_JS
     assert "addEventListener('pageshow',disable,{once:true})" in SETUP_JS
     assert "fallback=setTimeout(disable,2000)" in SETUP_JS
     assert ".finally(" not in SETUP_JS
