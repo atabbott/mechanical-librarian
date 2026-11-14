@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, replace
 
 import pytest
 
@@ -17,6 +18,11 @@ from mechanical_librarian.application.provider_evidence import (
 )
 from mechanical_librarian.domain.metadata_report import (
     _PROVIDER_DIAGNOSTIC_STAGES,
+    ClaimKind,
+    ClaimScope,
+    FieldState,
+    ProviderCandidate,
+    ProviderClaim,
     ProviderLaneObservation,
     ProviderObservation,
     ProviderQueryKind,
@@ -798,3 +804,34 @@ def test_an_unbounded_duration_names_no_milliseconds_and_keeps_the_event(
         deadline_kind="provider_share",
     )
     assert (None, 86_400_000) == (event["elapsed_ms"], event["deadline_ms"])
+
+
+def test_retained_refused_answers_leave_failure_diagnostics_unchanged() -> None:
+    """Diagnostics carry counts only (#1355): a kept refused answer adds none."""
+    plain = _no_match_observation(0, 3)
+    candidate = ProviderCandidate(
+        "audible-product-B0SYNE7P1K",
+        "unresolved",
+        (
+            ProviderClaim.create(
+                provider="audible",
+                candidate="audible-product-B0SYNE7P1K",
+                kind=ClaimKind.TITLE,
+                value="Private Synthetic Title",
+                state=FieldState.VALID,
+                scope=ClaimScope.WORK,
+                applicability="not_applicable",
+            ),
+        ),
+    )
+    retained = replace(
+        plain,
+        lanes=(replace(plain.lanes[0], identity_refused_new=(candidate.identity,)),),
+        identity_refused_candidates=(candidate,),
+    )
+    observed = provider_result_diagnostics(retained, ProviderOperationalEvidence())
+
+    assert observed == provider_result_diagnostics(plain, ProviderOperationalEvidence())
+    encoded = json.dumps([value.to_data() for value in observed])
+    assert candidate.identity not in encoded
+    assert "Private Synthetic Title" not in encoded

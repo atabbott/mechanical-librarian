@@ -102,6 +102,8 @@ export const detail: CaseDetailView = {
   audiobookReviewScope: null,
   id: 'case-1',
   current: true,
+  checking: false,
+  checkGivenUp: false,
   target: {
     connection: 'local',
     library: 'Books',
@@ -135,6 +137,7 @@ export const detail: CaseDetailView = {
       choiceContexts: [],
       proposalId: 'proposal-1',
       targetFingerprint: 'fingerprint-1',
+      offerDigest: 'offer-digest',
       humanDecision: null,
       automaticDecision: null,
       automaticWithheldReason: null,

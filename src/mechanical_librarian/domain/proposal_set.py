@@ -10,7 +10,7 @@ import unicodedata
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Callable, Literal, Mapping, Self, cast
+from typing import TYPE_CHECKING, Any, Callable, Final, Literal, Mapping, Self, cast
 
 from mechanical_librarian.domain.audio_inspection import AudioInspectionField
 from mechanical_librarian.domain.audiobook_corroboration import (
@@ -90,6 +90,7 @@ from mechanical_librarian.domain.metadata_report import (
     complete_creator_identity_bindings,
     creator_comparison_key,
     creator_sequence_methods,
+    derive_identifier_evidence,
     discovery_lane_identity,
     echoed_target_values,
     field_evidence_providers,
@@ -1208,8 +1209,14 @@ class AudiobookReviewScope(StrEnum):
 
 
 def _supported_work_source(
-    report: MetadataReport, provider: ProviderObservation, candidate: ProviderCandidate
+    report: MetadataReport,
+    provider: ProviderObservation,
+    candidate: ProviderCandidate,
+    level: LevelEvidence | None = None,
 ) -> bool:
+    # A level admission is the level's exact work source (#1355, S10).
+    if level is not None and level.admits(provider, candidate):
+        return True
     context = target_work_identity_context(report.target)
     return (
         context is not None
@@ -1237,7 +1244,9 @@ def audiobook_review_scope(report: MetadataReport) -> AudiobookReviewScope | Non
 
 
 def _work_route_offers(
-    report: MetadataReport, targets: dict[TargetDestination, TargetField]
+    report: MetadataReport,
+    targets: dict[TargetDestination, TargetField],
+    level: LevelEvidence | None = None,
 ) -> frozenset[TargetDestination]:
     """The fields witnessed book evidence answers while the recording is unresolved.
 
@@ -1259,11 +1268,11 @@ def _work_route_offers(
             TargetDestination.GENRES,
             TargetDestination.SERIES,
         )
-        if _observations(report, destination)
+        if _observations(report, destination, level)
     }
     if any(
         _work_title_cleanup(targets[TargetDestination.TITLE], observed.value)
-        for observed in _observations(report, TargetDestination.TITLE)
+        for observed in _observations(report, TargetDestination.TITLE, level)
     ):
         offers.add(TargetDestination.TITLE)
     if _date_observations(report):
@@ -1530,10 +1539,19 @@ def evaluate_report(
     report: MetadataReport,
     resolved_policy_id: str | None = None,
     policy_destinations: Mapping[str, str] | None = None,
+    *,
+    work_identity_level: WorkIdentityLevel = WorkIdentityLevel.IDENTIFIER,
 ) -> ProposalSet:
-    """Evaluate one exact report without I/O, configuration, or provider calls."""
+    """Evaluate one exact report without I/O, configuration, or provider calls.
+
+    At ``identifier`` this is the live derivation, whatever level is
+    configured. A wider ``work_identity_level`` derives the level set (#1355,
+    S10): the level's admissions count as representing the work for S7's
+    destinations only, and nothing else differs.
+    """
     if type(report) is not MetadataReport:
         raise ProposalValueError("proposal report is invalid")
+    level = level_evidence(report, work_identity_level)
     ignored = _ignored_policy_targets(policy_destinations)
     targets = canonical_target_fields(report.target.fields)
     results: dict[TargetDestination, ProposalResult] = {}
@@ -1547,7 +1565,7 @@ def evaluate_report(
             TargetDestination.COVER,
         }:
             continue
-        observations = _observations(report, destination)
+        observations = _observations(report, destination, level)
         if work_only and destination is TargetDestination.TITLE:
             # Book evidence offers only a cleanup; any other title it states
             # is no alternative to the current one (#1253).
@@ -1565,6 +1583,7 @@ def evaluate_report(
             observations,
             report,
             _dependencies(destination),
+            level,
         )
         if destination is TargetDestination.SERIES:
             result = _resolve_series_subset(
@@ -1615,7 +1634,7 @@ def evaluate_report(
         unoffered = (
             frozenset()
             if destination is TargetDestination.TITLE
-            else _unoffered_references(report, destination)
+            else _unoffered_references(report, destination, level)
         )
         if unoffered:
             result = _withhold_unoffered(result, unoffered, targets[destination])
@@ -1640,7 +1659,7 @@ def evaluate_report(
         # (#1253, #1642); every other field stays masked. Description and
         # genres stay open on every work route, so a current value with no
         # evidence keeps its owner controls (#1253).
-        offers = _work_route_offers(report, targets) | {
+        offers = _work_route_offers(report, targets, level) | {
             TargetDestination.DESCRIPTION,
             TargetDestination.GENRES,
         }
@@ -1679,7 +1698,9 @@ def evaluate_report(
         result = results[destination]
         if result.alternatives and result.reasons != (EVIDENCE_LED_TITLE_REASON,):
             results[destination] = _bibliographic_unresolved(result)
-    combinations = _withhold_unoffered_title(report, targets, results, combinations)
+    combinations = _withhold_unoffered_title(
+        report, targets, results, combinations, level
+    )
     for destination in (TargetDestination.DESCRIPTION, TargetDestination.GENRES):
         results[destination] = _populated_value_meets_floor(
             results[destination], targets[destination]
@@ -1902,7 +1923,9 @@ def _bound_immaterial_work_alternatives(
 
 
 def _unoffered_references(
-    report: MetadataReport, destination: TargetDestination
+    report: MetadataReport,
+    destination: TargetDestination,
+    level: LevelEvidence | None = None,
 ) -> frozenset[str]:
     """Return claims whose values are never offered for this destination (#1497).
 
@@ -1922,7 +1945,7 @@ def _unoffered_references(
         return frozenset(
             claim.reference
             for provider in report.providers
-            for candidate in provider.candidates
+            for candidate in _level_candidates(provider, destination, level)
             for claim in candidate.claims
             if claim.kind is kind
             and claim.state is FieldState.VALID
@@ -1946,7 +1969,7 @@ def _unoffered_references(
     for provider in report.providers:
         if provider.authority != HARDCOVER_AUTHORITY:
             continue
-        for candidate in provider.candidates:
+        for candidate in _level_candidates(provider, destination, level):
             # One candidate's authors are one list: it is left out when it
             # names as many authors as the book, at least one is a rotated
             # book author name and every other is a book author name as it
@@ -1991,6 +2014,7 @@ def _withhold_unoffered_title(
     targets: Mapping[TargetDestination, TargetField],
     results: dict[TargetDestination, ProposalResult],
     combinations: tuple[BibliographicCombination, ...],
+    level: LevelEvidence | None = None,
 ) -> tuple[BibliographicCombination, ...]:
     """Withhold unoffered titles once the combinations stand (#1497).
 
@@ -1999,7 +2023,7 @@ def _withhold_unoffered_title(
     withheld title goes, and a subtitle or series change that only such a
     combination allowed asks the owner instead. Nothing is ever admitted.
     """
-    unoffered = _unoffered_references(report, TargetDestination.TITLE)
+    unoffered = _unoffered_references(report, TargetDestination.TITLE, level)
     if not unoffered:
         return combinations
     before = results[TargetDestination.TITLE]
@@ -2163,6 +2187,7 @@ def _withhold_unoffered(
 def _observations(
     report: MetadataReport,
     destination: TargetDestination,
+    level: LevelEvidence | None = None,
 ) -> tuple[_Observed, ...]:
     if destination is TargetDestination.EXPLICIT:
         return tuple(
@@ -2195,9 +2220,9 @@ def _observations(
         TargetDestination.GENRES,
         TargetDestination.TAGS,
     }:
-        return _list_observations(report, destination)
+        return _list_observations(report, destination, level)
     if destination is TargetDestination.SERIES:
-        return _series_observations(report)
+        return _series_observations(report, level)
     mapping = {
         TargetDestination.TITLE: (ClaimKind.TITLE, ClaimScope.WORK),
         TargetDestination.PUBLISHER: (ClaimKind.PUBLISHER, ClaimScope.EDITION),
@@ -2254,9 +2279,12 @@ def _observations(
     withheld = carried_asin_precedence(report) if edition_asins else frozenset()
     current_asin = target_current_asin(report) if edition_asins else None
     carried_asin = verified_carried_asin(report) if edition_asins else None
+    level = level if destination in LEVEL_READ_DESTINATIONS else None
     for provider in field_evidence_providers(report):
-        for candidate in provider.candidates:
-            if work_only and not _supported_work_source(report, provider, candidate):
+        for candidate in _level_candidates(provider, destination, level):
+            if work_only and not _supported_work_source(
+                report, provider, candidate, level
+            ):
                 continue
             if (provider.provider, candidate.identity) in withheld:
                 continue
@@ -3519,7 +3547,9 @@ def _unconfirmed_edition_narrators(report: MetadataReport) -> tuple[_Observed, .
 
 
 def _list_observations(
-    report: MetadataReport, destination: TargetDestination
+    report: MetadataReport,
+    destination: TargetDestination,
+    level: LevelEvidence | None = None,
 ) -> tuple[_Observed, ...]:
     if destination is TargetDestination.AUTHORS:
         kind, role, scope = ClaimKind.CREATOR, "author", ClaimScope.WORK
@@ -3619,8 +3649,9 @@ def _list_observations(
             )
     if work_only and destination is TargetDestination.NARRATORS:
         return _unconfirmed_edition_narrators(report)
+    level = level if destination in LEVEL_READ_DESTINATIONS else None
     for provider in field_evidence_providers(report):
-        candidates = provider.candidates
+        candidates = _level_candidates(provider, destination, level)
         if destination is TargetDestination.NARRATORS and report.audio is not None:
             ordinary_ids = {candidate.identity for candidate in candidates}
             candidates = (
@@ -3632,7 +3663,9 @@ def _list_observations(
                 ),
             )
         for candidate in candidates:
-            if work_only and not _supported_work_source(report, provider, candidate):
+            if work_only and not _supported_work_source(
+                report, provider, candidate, level
+            ):
                 continue
             if (
                 destination is TargetDestination.NARRATORS
@@ -4283,7 +4316,7 @@ def provider_candidate_represents_target_work(
 
 
 CreatorComparison = Literal["closed", "initials_fold"]
-LevelRefusal = Literal["refused", "ambiguous"]
+LevelRefusal = Literal["refused", "ambiguous", "truncated"]
 _CREATOR_OR_CONTRIBUTOR_CLAIMS = frozenset({ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR})
 _CREATOR_OR_CONTRIBUTOR_EVIDENCE = frozenset(
     {ProviderEvidenceKind.AUTHOR_IDENTITY, ProviderEvidenceKind.CONTRIBUTOR_IDENTITY}
@@ -4296,7 +4329,10 @@ class LevelAdmissionRecord:
 
     Exactly one of ``admission`` and ``refusal`` is set. ``ambiguous`` is the
     set rule's refusal: candidates of more than one provider work identity met
-    the level in one set (S6). ``creator_comparison`` is lineage only: it says
+    the level in one set (S6). ``truncated`` refuses every retained refused
+    answer of an observation whose set lost records to its bound or the
+    report's byte budget, since the survivors cannot be shown to be one work
+    (S6 rule 3). ``creator_comparison`` is lineage only: it says
     whether the admission needed the dotted-initials fold (S13).
     """
 
@@ -4311,7 +4347,7 @@ class LevelAdmissionRecord:
                 self.admission is not None
                 and type(self.admission) is not LevelAdmission
             )
-            or self.refusal not in {None, "refused", "ambiguous"}
+            or self.refusal not in {None, "refused", "ambiguous", "truncated"}
             or self.creator_comparison not in {"closed", "initials_fold"}
             or (self.admission is None and self.creator_comparison != "closed")
         ):
@@ -4409,6 +4445,45 @@ def _level_work_claims(candidate: ProviderCandidate, kind: ClaimKind) -> list[st
     ]
 
 
+def _level_bound_identifiers(
+    report: MetadataReport,
+    provider: ProviderObservation,
+    candidate: ProviderCandidate,
+) -> tuple[IdentifierEvidence, ...]:
+    """The identifier evidence bound to a record on the level path (S6).
+
+    A live candidate's is the report's own. A retained refused answer has
+    none there, since the report classifies only live candidates (#1355), so
+    the same classification runs here as if that one record were the
+    provider's answer; an observation keeping refused answers has no live
+    candidate. It is never written into the report.
+    """
+    if candidate not in provider.identity_refused_candidates:
+        return provider_candidate_bound_identifiers(
+            report, provider.provider, candidate
+        )
+    beside = ProviderObservation(
+        provider.provider,
+        ProviderStatus.CANDIDATES,
+        (),
+        (candidate,),
+        ProviderQueryKind.WORK,
+        provider.authority,
+    )
+    return tuple(
+        item
+        for item in derive_identifier_evidence(
+            report.local_claims,
+            tuple(beside if value is provider else value for value in report.providers),
+            report.target,
+            report.audio,
+        )
+        if item.provider == provider.provider
+        and item.candidate_identity == candidate.identity
+        and item.work_identity == candidate.work_identity
+    )
+
+
 def level_contradiction(
     report: MetadataReport,
     provider: ProviderObservation,
@@ -4434,7 +4509,7 @@ def level_contradiction(
         is WorkIdentityContradiction.EXPLICIT
     ):
         return True
-    bound = provider_candidate_bound_identifiers(report, provider.provider, candidate)
+    bound = _level_bound_identifiers(report, provider, candidate)
     if any(item.relation is IdentifierRelation.UNRELATED for item in bound) or any(
         item.kind is ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION
         for item in candidate.evidence
@@ -4473,7 +4548,13 @@ def _level_work_key(candidate: ProviderCandidate) -> str:
 def _level_candidate_sets(
     provider: ProviderObservation, candidate: ProviderCandidate
 ) -> tuple[tuple[ProviderCandidate, ...], ...]:
-    """Every retained lane set holding the candidate, else the provider's set."""
+    """Every retained lane set holding the candidate, else the provider's set.
+
+    A retained refused answer's set is the observation's refused set
+    (#1355): the union its lanes refused, which no lane admitted.
+    """
+    if candidate in provider.identity_refused_candidates:
+        return (provider.identity_refused_candidates,)
     retained = {value.identity: value for value in provider.candidates}
     sets = tuple(
         tuple(
@@ -4546,12 +4627,19 @@ def provider_candidate_level_admission(
     record is its single valid work title and its valid work author creators.
     S6's set rule runs over every retained set holding the candidate: a work
     identity with a vetoed sibling is refused, and when candidates of more
-    than one work identity meet the level in one set, none is admitted.
+    than one work identity meet the level in one set, none is admitted. A
+    retained refused answer's set is its observation's refused set, and an
+    observation whose set was truncated admits none of it.
     """
     if type(level) is not WorkIdentityLevel:
         raise ReportValueError("work identity level is invalid")
     if level is WorkIdentityLevel.IDENTIFIER:
         return None
+    if (
+        provider.identity_refused_truncated
+        and candidate in provider.identity_refused_candidates
+    ):
+        return LevelAdmissionRecord(None, "truncated")
     key = _level_work_key(candidate)
     for members in _level_candidate_sets(provider, candidate):
         vetoed = {
@@ -4583,6 +4671,159 @@ def provider_candidate_level_admission(
     return LevelAdmissionRecord(
         admission, None, "closed" if closed is not None else "initials_fold"
     )
+
+
+# The destinations a wider Book matching level reads (ADR-0096, S7). Every
+# other destination is manifestation scope or advice and stays at
+# ``identifier`` at every configured level.
+LEVEL_READ_DESTINATIONS: Final = frozenset(
+    {
+        TargetDestination.TITLE,
+        TargetDestination.SUBTITLE,
+        TargetDestination.AUTHORS,
+        TargetDestination.DESCRIPTION,
+        TargetDestination.GENRES,
+        TargetDestination.TAGS,
+        TargetDestination.SERIES,
+        TargetDestination.COVER,
+    }
+)
+
+
+@dataclass(frozen=True, slots=True)
+class LevelEvidence:
+    """What one wider Book matching level adds to a report's work evidence.
+
+    S10's level derivation reads this and nothing else (#1355). ``refused``
+    holds, per report observation in order, the retained refused WORK answers
+    S5 admits after S6's set rule. ``admitted`` holds, per observation, the
+    identities of live candidates S5 admits that the live rule does not
+    represent; a candidate the live rule represents already counts, so it is
+    never listed. ``comparisons`` maps each listed candidate's claim
+    references to its creator comparison, for lineage (S13).
+    """
+
+    report: MetadataReport
+    level: WorkIdentityLevel
+    refused: tuple[tuple[ProviderCandidate, ...], ...]
+    admitted: tuple[frozenset[str], ...]
+    comparisons: Mapping[str, CreatorComparison]
+
+    def _index(self, provider: ProviderObservation) -> int | None:
+        return next(
+            (
+                index
+                for index, value in enumerate(self.report.providers)
+                if value is provider
+            ),
+            None,
+        )
+
+    def candidates(
+        self, provider: ProviderObservation
+    ) -> tuple[ProviderCandidate, ...]:
+        """The observation's live candidates, then its level-admitted refused ones."""
+        index = self._index(provider)
+        if index is None:
+            return provider.candidates
+        return (*provider.candidates, *self.refused[index])
+
+    def admits(
+        self, provider: ProviderObservation, candidate: ProviderCandidate
+    ) -> bool:
+        """Whether only the level admits this candidate as the target work."""
+        index = self._index(provider)
+        return index is not None and (
+            candidate.identity in self.admitted[index]
+            and candidate in provider.candidates
+            or candidate in self.refused[index]
+        )
+
+    def represents(
+        self, provider: ProviderObservation, candidate: ProviderCandidate
+    ) -> bool:
+        """The live represents rule, widened by this level's admissions."""
+        return self.admits(provider, candidate) or (
+            candidate in provider.candidates
+            and provider_candidate_represents_target_work(
+                self.report, provider, candidate
+            )
+        )
+
+    def contradiction(
+        self,
+        candidate: ProviderCandidate,
+        target_title: str,
+        target_authors: tuple[str, ...],
+    ) -> WorkIdentityContradiction:
+        """The level path's contradiction classifier: initials fold (S10)."""
+        return provider_candidate_work_identity_contradiction(
+            candidate, target_title, target_authors, fold_initials=True
+        )
+
+    def references(self) -> frozenset[str]:
+        """Every claim reference of a candidate only this level admits."""
+        return frozenset(self.comparisons)
+
+
+def level_evidence(
+    report: MetadataReport, level: WorkIdentityLevel
+) -> LevelEvidence | None:
+    """The level's admissions over one report, ``None`` at ``identifier`` (S10).
+
+    Each candidate is decided by ``provider_candidate_level_admission``, so S6's
+    set rule and every refusal apply exactly as for covers. Only observations
+    that supply field evidence are read.
+    """
+    if type(report) is not MetadataReport or type(level) is not WorkIdentityLevel:
+        raise ProposalValueError("level evidence input is invalid")
+    if level is WorkIdentityLevel.IDENTIFIER:
+        return None
+    refused: list[tuple[ProviderCandidate, ...]] = []
+    admitted: list[frozenset[str]] = []
+    comparisons: dict[str, CreatorComparison] = {}
+    for provider in report.providers:
+        if not provider_supplies_field_evidence(report, provider):
+            refused.append(())
+            admitted.append(frozenset())
+            continue
+        live: set[str] = set()
+        for candidate in provider.candidates:
+            if provider_candidate_represents_target_work(report, provider, candidate):
+                continue
+            record = provider_candidate_level_admission(
+                report, provider, candidate, level
+            )
+            if record is not None and record.admission is not None:
+                live.add(candidate.identity)
+                comparisons.update(
+                    (claim.reference, record.creator_comparison)
+                    for claim in candidate.claims
+                )
+        kept: list[ProviderCandidate] = []
+        for candidate in provider.identity_refused_candidates:
+            record = provider_candidate_level_admission(
+                report, provider, candidate, level
+            )
+            if record is not None and record.admission is not None:
+                kept.append(candidate)
+                comparisons.update(
+                    (claim.reference, record.creator_comparison)
+                    for claim in candidate.claims
+                )
+        refused.append(tuple(kept))
+        admitted.append(frozenset(live))
+    return LevelEvidence(report, level, tuple(refused), tuple(admitted), comparisons)
+
+
+def _level_candidates(
+    provider: ProviderObservation,
+    destination: TargetDestination,
+    level: LevelEvidence | None,
+) -> tuple[ProviderCandidate, ...]:
+    if level is None or destination not in LEVEL_READ_DESTINATIONS:
+        return provider.candidates
+    return level.candidates(provider)
 
 
 def provider_candidate_represents_target_recording(
@@ -4833,7 +5074,9 @@ def _resolve_series_subset(
     )
 
 
-def _series_observations(report: MetadataReport) -> tuple[_Observed, ...]:
+def _series_observations(
+    report: MetadataReport, level: LevelEvidence | None = None
+) -> tuple[_Observed, ...]:
     # A recording without admitted identity reads only witnessed book sources,
     # as `_observations` and `_list_observations` do (#1253).
     work_only = report.audio is not None and not admitted_audiobook_identity(report)
@@ -4871,8 +5114,10 @@ def _series_observations(report: MetadataReport) -> tuple[_Observed, ...]:
                 )
             )
     for provider in field_evidence_providers(report):
-        for candidate in provider.candidates:
-            if work_only and not _supported_work_source(report, provider, candidate):
+        for candidate in _level_candidates(provider, TargetDestination.SERIES, level):
+            if work_only and not _supported_work_source(
+                report, provider, candidate, level
+            ):
                 continue
             source_claims = tuple(
                 claim
@@ -5481,6 +5726,7 @@ def _evaluate(
     observations: tuple[_Observed, ...],
     report: MetadataReport,
     dependencies: tuple[TargetDestination, ...] = (),
+    level: LevelEvidence | None = None,
 ) -> ProposalResult:
     if (
         destination is TargetDestination.LANGUAGE
@@ -5488,7 +5734,7 @@ def _evaluate(
         and language_is_unknown(target.value)
     ):
         target = TargetField(destination, TargetFieldState.MISSING)
-    alternatives = _alternatives(destination, target, observations, report)
+    alternatives = _alternatives(destination, target, observations, report, level)
     if (
         destination is TargetDestination.LANGUAGE
         and target.state is TargetFieldState.VALUE
@@ -5745,6 +5991,7 @@ def _alternatives(
     target: TargetField,
     observations: tuple[_Observed, ...],
     report: MetadataReport,
+    level: LevelEvidence | None = None,
 ) -> tuple[ProposalAlternative, ...]:
     grouped: dict[
         tuple[
@@ -5780,7 +6027,9 @@ def _alternatives(
         values = grouped[key]
         proposal_values = tuple(value.value for value in values)
         if destination is TargetDestination.DESCRIPTION:
-            ordinary_provider_values = _ordinary_description_values(report, values)
+            ordinary_provider_values = _ordinary_description_values(
+                report, values, level
+            )
             if ordinary_provider_values:
                 proposal_values = ordinary_provider_values
         if destination is TargetDestination.ISBN:
@@ -6619,6 +6868,7 @@ def _eligible_provider_description(
 def _ordinary_description_values(
     report: MetadataReport,
     observations: list[_Observed],
+    level: LevelEvidence | None = None,
 ) -> tuple[ProposalValue, ...]:
     references = {
         reference for observed in observations for reference in observed.references
@@ -6626,12 +6876,18 @@ def _ordinary_description_values(
     return tuple(
         _value(TargetDestination.DESCRIPTION, claim.value)
         for provider in field_evidence_providers(report)
-        for candidate in provider.candidates
+        for candidate in _level_candidates(
+            provider, TargetDestination.DESCRIPTION, level
+        )
         for claim in candidate.claims
         if claim.reference in references
         and claim.value is not None
         and ordinary_provider_description_source_is_safe(claim, candidate)
-        and provider_candidate_represents_target_work(report, provider, candidate)
+        and (
+            provider_candidate_represents_target_work(report, provider, candidate)
+            if level is None
+            else level.represents(provider, candidate)
+        )
     )
 
 
@@ -7327,6 +7583,14 @@ def _result_from_data(raw: object) -> ProposalResult:
     )
 
 
+def proposal_alternative_from_data(raw: object) -> ProposalAlternative:
+    """Read one stored alternative, as a level offer row holds it (#1355)."""
+    try:
+        return _alternative_from_data(raw)
+    except (KeyError, TypeError, ValueError) as error:
+        raise ProposalValueError("proposal alternative is invalid") from error
+
+
 def _alternative_from_data(raw: object) -> ProposalAlternative:
     value = _object(
         raw,
@@ -7417,11 +7681,15 @@ def _projection(value: object, maximum: int) -> str:
 
 __all__ = [
     "BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA",
+    "LEVEL_READ_DESTINATIONS",
+    "LevelEvidence",
     "LevelAdmissionRecord",
     "candidate_title_and_creator_evidence",
     "level_contradiction",
     "provider_candidate_bound_identifiers",
     "provider_candidate_level_admission",
+    "level_evidence",
+    "proposal_alternative_from_data",
     "DECORATION_EQUIVALENCE_DECORATED_CONSENSUS_REASON",
     "DECORATION_EQUIVALENCE_PROVIDER_DISSENT_REASON",
     "DECORATION_EQUIVALENT_TITLE_REASONS",

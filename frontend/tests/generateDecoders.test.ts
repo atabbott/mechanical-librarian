@@ -124,7 +124,7 @@ describe('the real review API document', () => {
     expect(emitted.some((key) => key.startsWith('POST /api/v1/operations/support/export'))).toBe(
       false,
     )
-    expect(Object.keys(generated).filter((name) => name.startsWith('d_'))).toHaveLength(185)
+    expect(Object.keys(generated).filter((name) => name.startsWith('d_'))).toHaveLength(187)
   })
 
   it('fills a fresh default per decode and leaves an absent display name absent (NC12)', () => {

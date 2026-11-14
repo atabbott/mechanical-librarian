@@ -456,6 +456,9 @@ class HardcoverMetadataProvider:
                         observation.dispatch_lineage,
                         observation.transformation_lineage,
                         audio_editions=audio_editions,
+                        identity_refused_candidates=(
+                            observation.identity_refused_candidates
+                        ),
                     )
                 )
                 merged = merge_provider_cover_descriptors(

@@ -19,6 +19,15 @@ const limitationText = (limitation: string) => {
   if (label !== undefined) return `${label}.`
   return /^[a-z0-9_]+$/u.test(limitation) ? 'Another comparison condition applies.' : limitation
 }
+// A source record offered for the book's title and author, not a confirmed
+// match, says so beside its name (#1355). The library's own value never does.
+const sourceBasis = (
+  context: ChoiceContextView,
+  role: ChoiceContextView['evidence'][number]['role'],
+) =>
+  context.matchBasis === 'title_and_author' && role !== 'local_presence'
+    ? ' · same title and author'
+    : ''
 export function ChoiceEvidencePanel({
   context,
   evidenceId,
@@ -28,11 +37,16 @@ export function ChoiceEvidencePanel({
   evidenceId: string
   label: string
 }) {
-  const corroboratingSources = new Set(
-    context?.evidence
-      .filter((row) => row.role === 'external_corroboration')
-      .map((row) => row.source),
-  ).size
+  // A record offered for the book's title and author offers its value; it
+  // confirms nothing, so it counts toward no "sources confirm" line (#1355).
+  const offered = context?.matchBasis === 'title_and_author'
+  const corroboratingSources = offered
+    ? 0
+    : new Set(
+        context?.evidence
+          .filter((row) => row.role === 'external_corroboration')
+          .map((row) => row.source),
+      ).size
   return (
     <section className="choice-evidence" id={evidenceId} aria-label={`${label} evidence`}>
       {corroboratingSources ? (
@@ -45,8 +59,15 @@ export function ChoiceEvidencePanel({
         <ul>
           {context.evidence.map((row, index) => (
             <li key={`${row.source}:${row.observation}:${String(index)}`}>
-              <strong>{row.source}</strong>
-              <span>{evidenceRoleLabel(row.role)}</span>
+              <strong>
+                {row.source}
+                {sourceBasis(context, row.role)}
+              </strong>
+              <span>
+                {offered && row.role === 'external_corroboration'
+                  ? 'Offers this value'
+                  : evidenceRoleLabel(row.role)}
+              </span>
               <p>{observationText(row)}</p>
             </li>
           ))}
@@ -244,9 +265,12 @@ export function MetadataChoice({
   const evidenceLabel =
     evidenceName ??
     (longDescription ? `Evidence for ${label} description` : `Evidence for ${label}: ${value}`)
+  // The card's source line says a title-and-author value as Evidence does.
   const rationale = adviceSource
     ? `${adviceSource.engine} · ${adviceSource.model}`
-    : context?.rationale
+    : context?.rationale && !current && context.matchBasis === 'title_and_author'
+      ? `${context.rationale} · same title and author`
+      : context?.rationale
   const recommendation = recording
     ? 'Recording…'
     : advice

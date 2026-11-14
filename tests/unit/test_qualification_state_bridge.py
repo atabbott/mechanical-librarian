@@ -134,10 +134,13 @@ def _v26_document(
                 lane.pop("exhausted_dispatch")
                 lane.pop("recording_lookup_hints")
                 lane.pop("dispatch")
+                lane.pop("identity_refused_new")
     for provider in providers:
         provider.pop("recording_lookup_candidates")
         provider.pop("refused_products")
         provider.pop("audio_editions")
+        provider.pop("identity_refused_candidates")
+        provider.pop("identity_refused_truncated")
     data["providers"] = providers
     if artifact_bearing_cover:
         artifact = CoverArtifact.create(

@@ -19,14 +19,29 @@ from mechanical_librarian.adapters.providers.hardcover_metadata import (
     HardcoverMetadataProvider,
 )
 from mechanical_librarian.application.metadata_report import (
+    TargetSnapshot,
+    metadata_discovery_plan,
     qualify_provider_observation,
 )
 from mechanical_librarian.domain.epub_inspection import DateEvent
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
+    ClaimScope,
+    FileFacts,
+    LocalClaim,
+    MetadataReport,
     ProviderCandidate,
     ProviderStatus,
+    TargetDestination,
+    TargetFacts,
+    TargetField,
+    TargetFieldState,
+    default_target_fields,
 )
+from mechanical_librarian.domain.proposal_set import (
+    provider_candidate_level_admission,
+)
+from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 from mechanical_librarian.infrastructure.security.credentials import (
     hardcover_client_token,
 )
@@ -563,3 +578,53 @@ def test_the_token_goes_only_to_the_graphql_post() -> None:
 
     assert ("POST", HARDCOVER_URL, "Bearer synthetic-token") == seen[0]
     assert ("GET", "https://assets.hardcover.app/book/10.jpg", None) == seen[-1]
+
+
+def test_a_respelled_initials_book_is_retained_for_the_level_path() -> None:
+    """Test 24 (#1355): one request, a refused book kept, a fold admission."""
+    fields = tuple(
+        TargetField(
+            TargetDestination.AUTHORS, TargetFieldState.VALUE, ("R. F. Example",)
+        )
+        if field.destination is TargetDestination.AUTHORS
+        else field
+        for field in default_target_fields("Current title")
+    )
+    title = LocalClaim.create(
+        kind=ClaimKind.TITLE,
+        observed="Current title",
+        canonical="Current title",
+        excerpt="Current title",
+        applicability="not_applicable",
+        basis="target_metadata",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        scope=ClaimScope.WORK,
+    )
+    plan = metadata_discovery_plan(
+        TargetSnapshot("ebook", "Current title", (), fields=fields), (title,)
+    )
+    provider, sent = _provider(_answer([_book(10, author="R.F. Example")]))
+    observation = replace(provider.observe(plan).observation, authority="hardcover")
+    report = MetadataReport.create(
+        target=TargetFacts("primary", "ebooks", "item-1", fields),
+        file=FileFacts(0, "a" * 64, "b" * 64),
+        local_claims=plan.local_claims,
+        local_reasons=("no_opening_claims",),
+        providers=(observation,),
+    )
+    (stored,) = MetadataReport.from_json(report.to_json()).providers
+    (book,) = stored.identity_refused_candidates
+    verdict = provider_candidate_level_admission(
+        report, stored, book, WorkIdentityLevel.TITLE_AND_CREATOR_EXACT
+    )
+
+    # The same one search the base sent: the book is read from the answer.
+    assert 1 == len(sent)
+    assert (ProviderStatus.NO_MATCH, (), "hardcover-work-0000000010") == (
+        stored.status,
+        stored.candidates,
+        book.identity,
+    )
+    assert verdict is not None and verdict.admission is not None
+    assert "initials_fold" == verdict.creator_comparison

@@ -49,6 +49,10 @@ from mechanical_librarian.adapters.persistence.field_effect_activity import (
 from mechanical_librarian.adapters.persistence.field_effects import (
     SQLiteFieldEffectRepository,
 )
+from mechanical_librarian.adapters.persistence.level_reconciliation import (
+    case_level_unreconciled,
+    reconcile_case_level_in_transaction,
+)
 from mechanical_librarian.adapters.persistence.metadata_policy import (
     SQLiteMetadataPolicyRepository,
 )
@@ -77,6 +81,8 @@ from mechanical_librarian.adapters.persistence.review_cases import (
 )
 from mechanical_librarian.adapters.persistence.review_preparation import (
     SQLiteReviewPreparationRepository,
+    matching_check_counts,
+    request_matching_check,
 )
 from mechanical_librarian.adapters.persistence.review_projections import (
     SQLiteReviewProjectionRepository,
@@ -176,6 +182,7 @@ from mechanical_librarian.domain.metadata_policy import (
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
 )
+from mechanical_librarian.domain.owner_settings import MatchingCheck
 from mechanical_librarian.domain.preparation_presentation import (
     PreparationPresentation,
     PreparationTrigger,
@@ -420,6 +427,15 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             current_cover_authority=(lambda: self._cover_read_authority()),
             record_browse_unavailable_exception=(
                 lambda error: self._record_browse_unavailable_exception(error)
+            ),
+            # A choice Book matching asks again closes its pending effect as
+            # `matching_changed` (#1355, amendment 17).
+            revoke_matching_changed=(
+                lambda decision_id, at: (
+                    self._revoke_field_effect_authority_in_transaction(
+                        decision_id, at, required=False, failure="matching_changed"
+                    )
+                )
             ),
         )
         # The two cover references are rebound by `bind_current_cover_policy`
@@ -1237,11 +1253,13 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         changed_at: int,
         *,
         required: bool,
+        failure: str | None = None,
     ) -> int:
         return self._field_effects._revoke_field_effect_authority_in_transaction(
             decision_id,
             changed_at,
             required=required,
+            failure=failure,
         )
 
     def revoke_field_effect_consent(self, consent_id: str, changed_at: int) -> int:
@@ -1838,6 +1856,22 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         *,
         include_policy_ignored: bool = False,
     ) -> tuple[ReviewCase, ShadowReviewPacket, MetadataReport, ProposalSet]:
+        case, report, proposal = self._persisted_case_sources(review_case_id)
+        return (
+            case,
+            ShadowReviewPacket.create(
+                case,
+                proposal,
+                report,
+                include_policy_ignored=include_policy_ignored,
+            ),
+            report,
+            proposal,
+        )
+
+    def _persisted_case_sources(
+        self, review_case_id: str
+    ) -> tuple[ReviewCase, MetadataReport, ProposalSet]:
         case_row = self._connection.execute(
             "SELECT document FROM review_cases WHERE review_case_id=?",
             (review_case_id,),
@@ -1860,17 +1894,114 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             raise MetadataReportError("shadow outcome source is unavailable")
         proposal = ProposalSet.from_json(_validate_proposal_row(proposal_row))
         report = MetadataReport.from_json(_validate_report_row(report_row))
-        return (
-            case,
-            ShadowReviewPacket.create(
+        return case, report, proposal
+
+    @local_operation
+    def reconcile_case_level(self, review_case_id: str, reconciled_at: int) -> str:
+        """Reconcile one current case to the configured Book matching level.
+
+        The projection's first step (#1355, S10), from stored data only: the
+        case's level storage is written and each field whose offer changed is
+        asked again, in one transaction that moves the case's marker. A case no
+        longer current, or already reconciled, writes nothing. A failure
+        leaves the case gated, so its owner writes keep waiting.
+        """
+        if (
+            type(review_case_id) is not str
+            or re.fullmatch(r"review_case_[0-9a-f]{64}", review_case_id) is None
+            or type(reconciled_at) is not int
+            or reconciled_at < 0
+        ):
+            raise MetadataReportError("level reconciliation request is invalid")
+        transaction = self._transaction("reconcile_case_level")
+        try:
+            transaction.begin()
+            if (
+                self._connection.execute(
+                    "SELECT 1 FROM current_review_case_lineages WHERE review_case_id=?",
+                    (review_case_id,),
+                ).fetchone()
+                is None
+            ):
+                transaction.commit()
+                return "stale"
+            if not case_level_unreconciled(self._connection, review_case_id):
+                transaction.commit()
+                return "reconciled"
+            case, report, proposal = self._persisted_case_sources(review_case_id)
+            library = case.target["library"]
+            if type(library) is not str:
+                raise MetadataReportError("level reconciliation source is invalid")
+            reconcile_case_level_in_transaction(
+                self._connection,
                 case,
                 proposal,
                 report,
-                include_policy_ignored=include_policy_ignored,
-            ),
-            report,
-            proposal,
-        )
+                self.current_resolved_metadata_policy(library),
+                lambda decision_id, at: (
+                    self._revoke_field_effect_authority_in_transaction(
+                        decision_id, at, required=False, failure="matching_changed"
+                    )
+                ),
+                reconciled_at,
+            )
+            if self._binding is not None:
+                self._binding.require_current()
+            transaction.commit()
+            return "reconciled"
+        except MetadataReportError:
+            transaction.rollback()
+            raise
+        except (sqlite3.Error, FieldEffectError, ReviewCaseValueError) as error:
+            transaction.rollback()
+            raise MetadataReportError("level reconciliation failed") from error
+
+    @local_operation
+    def align_book_matching(self, work_identity_level: str, aligned_at: int) -> None:
+        """Make the configured Book matching level the one every case follows.
+
+        Startup calls this in both modes (#1355, amendment 5): the level is
+        written where the gates read it and every case reconciled or compared
+        at another level is checked again, so a level changed while the
+        server was stopped is reconciled before any owner write.
+        """
+        if work_identity_level not in {level.value for level in WorkIdentityLevel} or (
+            type(aligned_at) is not int or aligned_at < 0
+        ):
+            raise MetadataReportError("book matching alignment request is invalid")
+        transaction = self._transaction("align_book_matching")
+        try:
+            transaction.begin()
+            request_matching_check(
+                self._connection, work_identity_level, updated_at=aligned_at
+            )
+            transaction.commit()
+        except sqlite3.Error as error:
+            transaction.rollback()
+            raise MetadataReportError("book matching alignment failed") from error
+
+    def require_reconciled_case(self, review_case_id: str, refused_at: int) -> None:
+        self._decisions.require_reconciled_case(review_case_id, refused_at)
+
+    def matching_check(self, work_identity_level: str) -> MatchingCheck:
+        """How far current works follow ``work_identity_level`` (Policy's counts).
+
+        File mode reads it here; a store reads it with its settings (#1355).
+        """
+        try:
+            current, checking, failed = matching_check_counts(
+                self._connection, work_identity_level
+            )
+        except sqlite3.Error as error:
+            raise MetadataReportError("matching check is unavailable") from error
+        return MatchingCheck(current_works=current, checking=checking, failed=failed)
+
+    def review_case_checking(self, review_case_id: str) -> bool:
+        """Whether the case waits for its Book matching check (the API's ``checking``)."""
+        try:
+            return case_level_unreconciled(self._connection, review_case_id)
+        except sqlite3.Error as error:
+            raise MetadataReportError("review case is unavailable") from error
 
     def _persisted_shadow_packet_source(
         self,
@@ -2343,6 +2474,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
 
     def find_human_decision(self, idempotency_digest: str) -> str | None:
         return self._decisions.find_human_decision(idempotency_digest)
+
+    def review_case_level_offer(self, review_case_id: str) -> str | None:
+        return self._decisions.review_case_level_offer(review_case_id)
 
     def record_human_decision(
         self,

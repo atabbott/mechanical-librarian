@@ -413,7 +413,11 @@ class ReviewPipelineStages:
         action: PipelineAction | str,
     ) -> str:
         try:
+            # The case is reconciled to Book matching's configured level first,
+            # from stored data only, whatever the posture (#1355, S10); a
+            # failure fails the projection, so the case stays gated.
             if type(action) is str:
+                pipeline_repository.reconcile_case_level(action, self._clock())
                 outcome = pipeline_repository.persist_shadow_outcome(
                     action, self._clock()
                 )
@@ -424,6 +428,9 @@ class ReviewPipelineStages:
             staged = cast("PipelineAction", action)
             if staged.review_case_id is None:
                 raise ReviewPipelineError("state")
+            pipeline_repository.reconcile_case_level(
+                staged.review_case_id, self._clock()
+            )
             outcome = pipeline_repository.persist_shadow_outcome(
                 staged.review_case_id, self._clock(), staged_action=staged
             )

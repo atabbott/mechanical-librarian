@@ -20,6 +20,7 @@ from mechanical_librarian.domain.proposal_set import (
     ProposalOutcome,
     ProposalSet,
     ProposalValueError,
+    proposal_alternative_from_data,
 )
 
 REVIEW_CASE_SCHEMA = "review-case-v2"
@@ -37,6 +38,18 @@ _TRANSITION_KIND = frozenset(
     {"admitted", "superseded", "no_case", "retired", "tombstoned"}
 )
 MAX_REVIEW_CASE_BYTES = 2_097_152
+# A case's level offer (#1355, S10): which manual fields a wider Book matching
+# level substitutes, and with which level alternatives. It is stored beside
+# the case, never in it, so case ids and documents do not move.
+LEVEL_OFFER_SCHEMA = "review-case-level-offer-v1"
+MAX_LEVEL_OFFER_BYTES = 2_097_152
+WIDER_WORK_IDENTITY_LEVELS = frozenset({"title_and_creator_exact", "title_and_creator"})
+LEVEL_COMBINATION_DESTINATIONS = (
+    TargetDestination.TITLE.value,
+    TargetDestination.SUBTITLE.value,
+    TargetDestination.SERIES.value,
+)
+_LEVEL_PROPOSAL_SET_ID = re.compile(r"^level_proposal_set_[0-9a-f]{64}$")
 
 
 class ReviewCaseValueError(ValueError):
@@ -680,6 +693,209 @@ class ReviewCase:
         )
 
 
+def level_offer_document(
+    case: ReviewCase,
+    level: str,
+    level_proposal_set_id: str,
+    fields: tuple[tuple[str, list[dict[str, object]], list[dict[str, object]]], ...],
+) -> str:
+    """One case's level offer document, validated as ``current_offer`` reads it.
+
+    Each field is its destination, its offered level alternatives and their
+    lineage, in target order.
+    """
+    proposals = {
+        cast("str", value["destination"]): cast("str", value["proposal_id"])
+        for value in case.proposals
+    }
+    document = _canonical(
+        {
+            "fields": [
+                {
+                    "alternatives": alternatives,
+                    "destination": destination,
+                    "lineage": lineage,
+                    "proposal_id": proposals.get(destination),
+                }
+                for destination, alternatives, lineage in fields
+            ],
+            "level_proposal_set_id": level_proposal_set_id,
+            "review_case_id": case.review_case_id,
+            "schema_version": LEVEL_OFFER_SCHEMA,
+            "work_identity_level": level,
+        }
+    )
+    _level_offer_fields(case.review_case_id, case.proposals, document)
+    return document
+
+
+def _level_offer_fields(
+    review_case_id: str,
+    case_proposals: tuple[dict[str, object], ...],
+    document: str,
+) -> tuple[str, dict[str, dict[str, object]]]:
+    """Validate one stored level offer against its exact case."""
+    if type(document) is not str or len(document.encode("utf-8")) > (
+        MAX_LEVEL_OFFER_BYTES
+    ):
+        raise ReviewCaseValueError("review case level offer is invalid")
+    try:
+        raw = json.loads(document, object_pairs_hook=_unique_object)
+    except (json.JSONDecodeError, ReviewCaseValueError) as error:
+        raise ReviewCaseValueError("review case level offer is invalid") from error
+    destinations = [value.value for value in TargetDestination]
+    proposals = {
+        cast("str", value["destination"]): cast("str", value["proposal_id"])
+        for value in case_proposals
+    }
+    if (
+        type(raw) is not dict
+        or set(raw)
+        != {
+            "fields",
+            "level_proposal_set_id",
+            "review_case_id",
+            "schema_version",
+            "work_identity_level",
+        }
+        or raw["schema_version"] != LEVEL_OFFER_SCHEMA
+        or raw["review_case_id"] != review_case_id
+        or raw["work_identity_level"] not in WIDER_WORK_IDENTITY_LEVELS
+        or type(raw["level_proposal_set_id"]) is not str
+        or _LEVEL_PROPOSAL_SET_ID.fullmatch(raw["level_proposal_set_id"]) is None
+        or type(raw["fields"]) is not list
+        or not raw["fields"]
+        or document != _canonical(raw)
+    ):
+        raise ReviewCaseValueError("review case level offer is invalid")
+    level = cast("str", raw["work_identity_level"])
+    fields: dict[str, dict[str, object]] = {}
+    for value in cast("list[object]", raw["fields"]):
+        if (
+            type(value) is not dict
+            or set(value) != {"alternatives", "destination", "lineage", "proposal_id"}
+            or value["destination"] not in proposals
+            or value["destination"] in fields
+            or value["proposal_id"] != proposals[value["destination"]]
+            or type(value["alternatives"]) is not list
+            or type(value["lineage"]) is not list
+        ):
+            raise ReviewCaseValueError("review case level offer is invalid")
+        try:
+            identities = [
+                proposal_alternative_from_data(alternative).alternative_id
+                for alternative in value["alternatives"]
+            ]
+        except ProposalValueError as error:
+            raise ReviewCaseValueError("review case level offer is invalid") from error
+        lineage = [
+            entry["alternative_id"]
+            for entry in value["lineage"]
+            if type(entry) is dict
+            and set(entry) == {"alternative_id", "creator_comparison", "rule"}
+            and type(entry["alternative_id"]) is str
+            and entry["rule"] == f"work_identity:{level}"
+            and entry["creator_comparison"] in {"closed", "initials_fold"}
+        ]
+        if (
+            len(set(identities)) != len(identities)
+            or len(lineage) != len(value["lineage"])
+            or lineage != sorted(set(lineage))
+            or not set(lineage).issubset(identities)
+        ):
+            raise ReviewCaseValueError("review case level offer is invalid")
+        fields[cast("str", value["destination"])] = value
+    combination = {
+        destination
+        for destination in LEVEL_COMBINATION_DESTINATIONS
+        if destination in fields
+    }
+    if list(fields) != [value for value in destinations if value in fields] or (
+        combination and len(combination) != len(LEVEL_COMBINATION_DESTINATIONS)
+    ):
+        raise ReviewCaseValueError("review case level offer is invalid")
+    return level, fields
+
+
+def current_offer(
+    case: ReviewCase, offer_document: str | None
+) -> tuple[dict[str, object], ...]:
+    """Each field's current offer: the one substitution seam (#1355, S10).
+
+    A field's offer is its live proposal unless the case's level offer at the
+    configured level substitutes it, when the offered alternatives are that
+    row's level alternatives, each with its lineage. A substituted field keeps
+    its live proposal id, outcome and reasons: the decision stays manual, and
+    one with an eligible alternative is the owner's to settle
+    (``manual_required``, amendment 24). The caller passes the row at the
+    configured level, or ``None``.
+    """
+    if type(case) is not ReviewCase:
+        raise ReviewCaseValueError("review case is invalid")
+    return compose_offer(case.review_case_id, case.proposals, offer_document)
+
+
+def level_offer_destinations(offer_document: str | None) -> frozenset[str]:
+    """The destinations a case's stored level offer substitutes.
+
+    Read beside ``compose_offer`` over the same document, which validates it.
+    """
+    if offer_document is None:
+        return frozenset()
+    raw = json.loads(offer_document)
+    return frozenset(cast("str", value["destination"]) for value in raw["fields"])
+
+
+def compose_offer(
+    review_case_id: str,
+    proposals: tuple[dict[str, object], ...],
+    offer_document: str | None,
+) -> tuple[dict[str, object], ...]:
+    """``current_offer`` over a case's id and projected proposals.
+
+    Browse projects a case's proposals without building the case, so it
+    composes the same offer from them.
+    """
+    if offer_document is None:
+        return proposals
+    level, fields = _level_offer_fields(review_case_id, proposals, offer_document)
+    offered: list[dict[str, object]] = []
+    for proposal in proposals:
+        field = fields.get(cast("str", proposal["destination"]))
+        if field is None:
+            offered.append(proposal)
+            continue
+        alternatives = cast("list[dict[str, object]]", field["alternatives"])
+        result = dict(cast("dict[str, object]", proposal["result"]))
+        result["alternatives"] = alternatives
+        if result["selected_alternative_id"] not in {
+            alternative["alternative_id"] for alternative in alternatives
+        }:
+            result["selected_alternative_id"] = None
+        offered.append(
+            {
+                **proposal,
+                "lineage": {
+                    cast("str", entry["alternative_id"]): {
+                        "creator_comparison": entry["creator_comparison"],
+                        "rule": entry["rule"],
+                    }
+                    for entry in cast("list[dict[str, object]]", field["lineage"])
+                },
+                # The level offers a value to choose: keep-current and accept
+                # over it, while the live outcome and reasons stay as they are.
+                "manual_required": proposal["manual_required"] is True
+                or any(
+                    alternative["assessment"] != "preserves_target"
+                    for alternative in alternatives
+                ),
+                "result": result,
+                "work_identity_level": level,
+            }
+        )
+    return tuple(offered)
+
+
 def is_actionable(proposal_set: ProposalSet) -> bool:
     return any(
         value.outcome
@@ -712,7 +928,14 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
 
 
 __all__ = [
+    "LEVEL_COMBINATION_DESTINATIONS",
+    "LEVEL_OFFER_SCHEMA",
+    "MAX_LEVEL_OFFER_BYTES",
     "MAX_REVIEW_CASE_BYTES",
+    "WIDER_WORK_IDENTITY_LEVELS",
+    "compose_offer",
+    "current_offer",
+    "level_offer_document",
     "REVIEW_ADMISSION_SCHEMA",
     "REVIEW_CASE_SCHEMA",
     "ReviewAdmissionFailure",

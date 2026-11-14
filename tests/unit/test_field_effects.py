@@ -830,7 +830,12 @@ def test_activity_page_cache_keeps_only_an_exact_current_reader_projection(
             for entry in reader._field_effect_activity._activity_page_cache.values()
         )
         assert second == first
-        assert statements == ["PRAGMA data_version"]
+        # Notes read current state on every page and are never cached (#1711):
+        # the planned owner write is a candidate for Book matching's
+        # waiting-for-check note (#1355), so its one notes read follows.
+        assert statements[0] == "PRAGMA data_version"
+        assert len(statements) == 2
+        assert statements[1].startswith("SELECT candidate.event_id FROM (SELECT value")
         assert identity.call_count == 1
 
         # A caller receives a copy: its owner-readable shaping cannot corrupt

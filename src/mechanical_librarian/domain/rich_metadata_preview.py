@@ -66,6 +66,7 @@ from mechanical_librarian.domain.proposal_set import (
     RECORDING_ASSOCIATED_ISBN_REASON,
     VERIFIED_MANIFESTATION_ISBN_REASON,
     BibliographicSelectionKind,
+    LevelEvidence,
     ProposalAlternative,
     ProposalAssessment,
     ProposalOutcome,
@@ -73,6 +74,7 @@ from mechanical_librarian.domain.proposal_set import (
     ProposalSet,
     ProposalValueKind,
     case_series_names,
+    level_evidence,
     ordinary_provider_description_source_is_safe,
     provider_candidate_represents_target_series_work,
     provider_candidate_represents_target_work,
@@ -83,6 +85,7 @@ from mechanical_librarian.domain.proposal_set import (
 from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_PASSING_AUTOMATIC_OPTIONS,
 )
+from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 
 _DESTINATIONS: Final = {
     "subtitle": TargetDestination.SUBTITLE,
@@ -127,13 +130,21 @@ class _AutomaticWorkEvidence:
     language_withheld: bool = False
 
 
-def _retained_claims(report: MetadataReport) -> dict[str, _RetainedClaim]:
-    """Index only evidence retained by this exact report; opaque IDs never infer."""
+def _retained_claims(
+    report: MetadataReport, level: LevelEvidence | None = None
+) -> dict[str, _RetainedClaim]:
+    """Index only evidence retained by this exact report; opaque IDs never infer.
+
+    The level derivation also indexes the retained refused answers its level
+    admits (#1355, S10), so their claims back the level set's alternatives.
+    """
     values: dict[str, _RetainedClaim] = {}
     for claim in report.local_claims:
         _remember_claim(values, claim.reference, _RetainedClaim(claim, None, None))
     for provider in field_evidence_providers(report):
-        for candidate in provider.candidates:
+        for candidate in (
+            provider.candidates if level is None else level.candidates(provider)
+        ):
             for claim in candidate.claims:
                 _remember_claim(values, claim.reference, _RetainedClaim(claim, provider, candidate))
     return values
@@ -149,8 +160,19 @@ def _automatic_work_evidence(
     report: MetadataReport,
     result: ProposalResult,
     retained_claims: dict[str, _RetainedClaim],
+    level: LevelEvidence | None = None,
 ) -> _AutomaticWorkEvidence:
-    """Keep automatic field evidence backed by the exact target work."""
+    """Keep automatic field evidence backed by the exact target work.
+
+    In the level derivation a level admission counts as the target work
+    (#1355, S10); the live derivation passes no level.
+    """
+
+    def represents(provider: ProviderObservation, candidate: ProviderCandidate) -> bool:
+        if level is None:
+            return provider_candidate_represents_target_work(report, provider, candidate)
+        return level.represents(provider, candidate)
+
     alternatives: list[ProposalAlternative] = []
     references: dict[str, tuple[str, ...]] = {}
     for alternative in result.alternatives:
@@ -160,9 +182,7 @@ def _automatic_work_evidence(
             if (retained := retained_claims.get(reference)) is not None
             and type(retained.provider) is ProviderObservation
             and type(retained.candidate) is ProviderCandidate
-            and provider_candidate_represents_target_work(
-                report, retained.provider, retained.candidate
-            )
+            and represents(retained.provider, retained.candidate)
         )
         if admitted:
             alternatives.append(alternative)
@@ -174,8 +194,10 @@ def _automatic_work_evidence(
         tuple(
             candidate
             for provider in field_evidence_providers(report)
-            for candidate in provider.candidates
-            if provider_candidate_represents_target_work(report, provider, candidate)
+            for candidate in (
+                provider.candidates if level is None else level.candidates(provider)
+            )
+            if represents(provider, candidate)
         ),
     )
     if result.destination is TargetDestination.DESCRIPTION:
@@ -187,8 +209,13 @@ def _automatic_genre_evidence(
     report: MetadataReport,
     result: ProposalResult,
     retained_claims: dict[str, _RetainedClaim],
+    level: LevelEvidence | None = None,
 ) -> _AutomaticWorkEvidence:
-    """Remove only genre evidence that explicitly contradicts the target work."""
+    """Remove only genre evidence that explicitly contradicts the target work.
+
+    The level derivation classifies through its level's initials fold
+    (#1355, S10); the live derivation keeps the classifier's default.
+    """
     context = target_work_identity_context(report.target)
     alternatives: list[ProposalAlternative] = []
     references: dict[str, tuple[str, ...]] = {}
@@ -200,8 +227,12 @@ def _automatic_genre_evidence(
             or type(retained.provider) is not ProviderObservation
             or type(retained.candidate) is not ProviderCandidate
             or context is None
-            or provider_candidate_work_identity_contradiction(
-                retained.candidate, *context
+            or (
+                provider_candidate_work_identity_contradiction(
+                    retained.candidate, *context
+                )
+                if level is None
+                else level.contradiction(retained.candidate, *context)
             )
             is not WorkIdentityContradiction.EXPLICIT
         )
@@ -363,8 +394,18 @@ class RichMetadataPreview:
         return {"fields": [field.to_data() for field in self.fields], "proposal_set_id": self.proposal_set_id, "report_id": self.report_id, "resolved_policy_id": self.resolved_policy_id}
 
 
-def compile_rich_metadata_preview(policy: ResolvedMetadataPolicy, report: MetadataReport, proposal: ProposalSet) -> RichMetadataPreview:
-    """Compile a no-effect preview from one exact, already-admitted pair."""
+def compile_rich_metadata_preview(
+    policy: ResolvedMetadataPolicy,
+    report: MetadataReport,
+    proposal: ProposalSet,
+    *,
+    work_identity_level: WorkIdentityLevel = WorkIdentityLevel.IDENTIFIER,
+) -> RichMetadataPreview:
+    """Compile a no-effect preview from one exact, already-admitted pair.
+
+    A wider ``work_identity_level`` projects a level set (#1355, S10): its
+    level admissions back their alternatives. The live projection passes none.
+    """
     if (
         type(policy) is not ResolvedMetadataPolicy
         or type(report) is not MetadataReport
@@ -379,9 +420,10 @@ def compile_rich_metadata_preview(policy: ResolvedMetadataPolicy, report: Metada
     results = {result.destination: result for result in proposal.results}
     options = dict(policy.options)
     destinations = dict(policy.destinations)
-    retained_claims = _retained_claims(report)
+    level = level_evidence(report, work_identity_level)
+    retained_claims = _retained_claims(report, level)
     previews = tuple(
-        _project(
+        _project_at(
             field,
             options[field],
             destinations[field],
@@ -390,6 +432,7 @@ def compile_rich_metadata_preview(policy: ResolvedMetadataPolicy, report: Metada
             proposal,
             report,
             retained_claims,
+            level,
         )
         for field, destination in _DESTINATIONS.items()
     )
@@ -397,14 +440,18 @@ def compile_rich_metadata_preview(policy: ResolvedMetadataPolicy, report: Metada
 
 
 def select_automatic_taxonomy_candidate(
-    report: MetadataReport, result: ProposalResult, field: str, option: str,
+    report: MetadataReport,
+    result: ProposalResult,
+    field: str,
+    option: str,
+    level: LevelEvidence | None = None,
 ) -> tuple[ProposalAlternative | None, _AutomaticWorkEvidence]:
     """Select qualified taxonomy evidence without changing a preserved target."""
-    retained = _retained_claims(report)
+    retained = _retained_claims(report, level)
     evidence = (
-        _automatic_genre_evidence(report, result, retained)
+        _automatic_genre_evidence(report, result, retained, level)
         if field == "genres"
-        else _automatic_work_evidence(report, result, retained)
+        else _automatic_work_evidence(report, result, retained, level)
     )
     candidate = (
         audiobook_tag_union_candidate(report, result, option)
@@ -436,6 +483,23 @@ def _project(
     proposal: ProposalSet,
     report: MetadataReport,
     retained_claims: dict[str, _RetainedClaim],
+) -> RichFieldPreview:
+    """One field's live projection; replay tools pin this signature."""
+    return _project_at(
+        field, option, destination, target, result, proposal, report, retained_claims, None
+    )
+
+
+def _project_at(
+    field: str,
+    option: str,
+    destination: str,
+    target: TargetField,
+    result: ProposalResult,
+    proposal: ProposalSet,
+    report: MetadataReport,
+    retained_claims: dict[str, _RetainedClaim],
+    level: LevelEvidence | None,
 ) -> RichFieldPreview:
     if report.audio is not None and not admitted_audiobook_identity(report) and destination == "automatic":
         destination = "ask"
@@ -540,9 +604,13 @@ def _project(
     taxonomy_candidate = None
     if destination == "automatic":
         if field in {"genres", "tags"}:
-            taxonomy_candidate, automatic_work = select_automatic_taxonomy_candidate(report, result, field, option)
+            taxonomy_candidate, automatic_work = select_automatic_taxonomy_candidate(
+                report, result, field, option, level
+            )
         elif field == "description_fill":
-            automatic_work = _automatic_work_evidence(report, result, retained_claims)
+            automatic_work = _automatic_work_evidence(
+                report, result, retained_claims, level
+            )
     if (
         automatic_work is not None
         and result.alternatives

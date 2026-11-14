@@ -76,6 +76,9 @@ from mechanical_librarian.adapters.persistence.field_effect_validation import (
     _validate_automatic_decision_authority,
     cover_pre_value,
 )
+from mechanical_librarian.adapters.persistence.level_reconciliation import (
+    stored_level_offer_documents,
+)
 from mechanical_librarian.adapters.persistence.review_sql import (
     _active_generation_automatic_sql,
     _episode_decision_sql,
@@ -85,6 +88,7 @@ from mechanical_librarian.adapters.persistence.schema import (
     _FIELD_EFFECT_COMPANION_DECISION_SQL,
     _FIELD_EFFECT_NOT_DEFERRED_SQL,
     _FIELD_EFFECT_WAITING_STATES_SQL,
+    _UNRECONCILED_OWNER_EFFECT_SQL,
     _validate_report_row,
     _validated_report_row,
 )
@@ -599,7 +603,12 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         if type(decision) is AuthoredDescriptionDecision:
             value = self._description_authority_value(decision)
         elif type(decision) is HumanDecision:
-            decision.validate_for(case)
+            # A choice of a level alternative stands in the stored offer its
+            # digest binds; the check validates, it never decides (#1355).
+            decision.validate_for(
+                case,
+                stored_level_offer_documents(self._connection, case.review_case_id),
+            )
             value = decision.selected_value
         else:
             automatic = cast(AutomaticDecision | CoverAutomaticDecision, decision)
@@ -3210,11 +3219,15 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         """Note the page's rows that current state makes read differently (#1711).
 
         An owner choice under its case's decision floor no longer counts, so
-        the field is asking again; a planned automatic write is held while
-        the posture is not Automatic. Neither changes the row's result.
+        the field is asking again; an owner choice Book matching asked again
+        no longer counts either; a planned automatic write is held while the
+        posture is not Automatic; a planned owner write waits while its case
+        waits for its Book matching check (#1355). None changes the row's
+        result.
         """
         decisions: list[str] = []
         planned: list[str] = []
+        owner_planned: list[str] = []
         for value in events:
             event = (
                 value.to_data()
@@ -3232,16 +3245,42 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 and event.get("state") == "planned"
             ):
                 planned.append(event_id)
+            elif event.get("state") == "planned" and event_id.startswith(
+                ("effect_event_", "effect_plan_")
+            ):
+                owner_planned.append(event_id)
         try:
-            return self._activity_page_notes_once(decisions, planned)
+            return self._activity_page_notes_once(decisions, planned, owner_planned)
         except sqlite3.Error as error:
             raise FieldEffectError("persistence") from error
 
     def _activity_page_notes_once(
-        self, decisions: list[str], planned: list[str]
+        self,
+        decisions: list[str],
+        planned: list[str],
+        owner_planned: tuple[str, ...] | list[str] = (),
     ) -> dict[str, str]:
         notes: dict[str, str] = {}
         if decisions:
+            # The choice right before a valueless `matching_changed` row is
+            # the one Book matching asked again (#1355, amendment 3). The
+            # floor's note, below, wins over it.
+            rows = self._connection.execute(
+                "SELECT event.event_id FROM human_decision_events event "
+                "JOIN human_decisions decision ON decision.decision_id=event.decision_id "
+                "JOIN current_review_packages current "
+                "ON current.review_case_id=decision.review_case_id "
+                "WHERE event.event_id IN ("
+                + ",".join("?" for _ in decisions)
+                + ") AND (SELECT json_extract(later.document,'$.cause') "
+                "FROM human_decisions later "
+                "WHERE later.review_case_id=decision.review_case_id "
+                "AND later.destination=decision.destination "
+                "AND later.ordinal>decision.ordinal "
+                "ORDER BY later.ordinal LIMIT 1)='matching_changed'",
+                decisions,
+            ).fetchall()
+            notes.update((row[0], "asked_again_matching") for row in rows)
             rows = self._connection.execute(
                 "SELECT event.event_id FROM human_decision_events event "
                 "JOIN human_decisions decision ON decision.decision_id=event.decision_id "
@@ -3261,6 +3300,20 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             ).fetchone()
             if posture is not None and posture[0] != "automatic":
                 notes.update((event_id, "held_back") for event_id in planned)
+        if owner_planned:
+            # A row names its plan or one of the plan's events; the note holds
+            # while the plan is ready and its case waits for the check.
+            rows = self._connection.execute(
+                "SELECT candidate.event_id FROM (SELECT value AS event_id "
+                "FROM json_each(?)) candidate JOIN field_effects effect "
+                "ON effect.plan_id=COALESCE((SELECT recorded.plan_id "
+                "FROM field_effect_events recorded "
+                "WHERE recorded.event_id=candidate.event_id),candidate.event_id) "
+                "WHERE effect.state IN ('planned','retryable') "
+                "AND json_valid(effect.document) AND " + _UNRECONCILED_OWNER_EFFECT_SQL,
+                (json.dumps(list(owner_planned)),),
+            ).fetchall()
+            notes.update((row[0], "waiting_for_check") for row in rows)
         return notes
 
     def initialize_activity_facts(self) -> None:
@@ -4332,6 +4385,15 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             ).fetchone()
             if row is None or row[1] != expected_state:
                 raise FieldEffectError("claim_conflict")
+            # An owner write on a case still waiting for its Book matching
+            # check waits, unclaimed, even when the check began after the
+            # pre-claim guards ran (#1355, S10).
+            if self._connection.execute(
+                "SELECT 1 FROM field_effects effect WHERE plan_id=? "
+                "AND json_valid(effect.document) AND " + _UNRECONCILED_OWNER_EFFECT_SQL,
+                (plan_id,),
+            ).fetchone():
+                raise FieldEffectError("deferred")
             persisted = FieldEffectOperation.from_json(row[0])
             for member in (persisted.plan, persisted.plan.subtitle_plan()):
                 if member is None:

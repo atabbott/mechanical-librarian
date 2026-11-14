@@ -360,6 +360,9 @@ class ITunesSearchMetadataProvider:
                         dispatch_lineage=observation.dispatch_lineage,
                         transformation_lineage=observation.transformation_lineage,
                         exhausted_dispatch=qualified.exhausted_dispatch,
+                        identity_refused_candidates=(
+                            qualified.identity_refused_candidates
+                        ),
                     )
                 )
                 merged = merge_provider_cover_descriptors(

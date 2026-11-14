@@ -2660,6 +2660,7 @@ describe('Library route', () => {
       detailKind: null,
       preparation: {
         attempt: 1,
+        checkGivenUp: false,
         diagnosticReference: 'prep-0123456789abcdef',
         mediaHealth: [],
         provider: 'hardcover-main',
@@ -3124,6 +3125,7 @@ describe('Library route', () => {
       detailKind: 'report' as const,
       preparation: {
         attempt: 1,
+        checkGivenUp: false,
         diagnosticReference: 'prep-masked-0123456789',
         mediaHealth: [],
         provider: 'hardcover-main',
@@ -3326,6 +3328,7 @@ describe('Library route', () => {
       detailKind: 'report' as const,
       preparation: {
         attempt: 1,
+        checkGivenUp: false,
         diagnosticReference: 'prep-unreadable-0123456789',
         mediaHealth: [
           {
@@ -3375,6 +3378,7 @@ describe('Library route', () => {
       ...firstWork,
       preparation: {
         attempt: 1,
+        checkGivenUp: false,
         diagnosticReference: 'prep-safe-0123456789abcdef',
         mediaHealth: [],
         provider: 'hardcover-main',
@@ -13398,6 +13402,7 @@ describe('Provider evidence rail', () => {
       preparationOutcomes: [],
       preparation: {
         attempt: 3,
+        checkGivenUp: false,
         diagnosticReference: 'prep-transient',
         mediaHealth: [],
         provider: null,

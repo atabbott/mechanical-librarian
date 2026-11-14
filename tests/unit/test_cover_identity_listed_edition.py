@@ -176,6 +176,8 @@ def _report(
                     candidates=candidates,
                     query_kind=ProviderQueryKind.DISCOVERY,
                     lanes=lanes,
+                    identity_refused_candidates=(),
+                    identity_refused_truncated=0,
                 ),
             ),
             identifier_evidence=identifier_evidence,

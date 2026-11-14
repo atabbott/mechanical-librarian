@@ -306,6 +306,10 @@ the library box appears only when a change for the field is recorded. A notice
 never restates the reason already shown, and a decision carries no reminder
 that writes are protected. A disclosure never chooses a value.
 
+At a wider [Book matching](../reference/configuration.md#book-matching) value,
+a field that needs you may offer "same title and author" values; History says
+when it asked again.
+
 When a field set to Automatic gets no automatic choice, the canvas says why
 until the cause goes. An unknown reason reads as unknown. A hold from an
 earlier case says an earlier decision keeps Automatic off for the field. Until
@@ -418,13 +422,12 @@ Visual check details. Nothing the visual review finds confirms a match, changes
 the order or lets Automatic choose a cover.
 
 You can choose any other cover whose image loads, even a lower-quality one or
-one marked "Match not confirmed" or, with Book matching set wider, "Same title
-and author", with no extra step. A cover that contradicts the book stays in the
+one marked "Match not confirmed" or "Same title and author", with no extra
+step. A cover that contradicts the book stays in the
 row, but you cannot choose it. It reads "Contradicts this book" and says whether
 a source says it belongs to a different book or edition, or names a different
-author or contributor. With Book matching set wider, an author whose initials
-are written differently does not count as a contradiction. A choice against an
-outdated comparison shows the current one.
+author or contributor. A choice against an outdated comparison shows the
+current one.
 
 ### Covers view
 

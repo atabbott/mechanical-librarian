@@ -167,6 +167,15 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
         ) : null}
       </article>
     )
+  // Book matching changed what the field offers, so the earlier choice no
+  // longer counts; the owner withdrew nothing (#1355).
+  if (item.category === 'matching_changed')
+    return (
+      <article className="diagnostic-entry">
+        <h3>{destinationLabel(item.destination)}</h3>
+        <p>Asked again because Book matching changed what this field offers.</p>
+      </article>
+    )
   // The heading says what happened; a sentence under it would only repeat it
   // (#1765).
   if (item.category === 'transition')

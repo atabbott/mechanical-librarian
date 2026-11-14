@@ -65,6 +65,15 @@ export const ownerRefusalCopy = (
     decision_written: writtenRefusal,
   }[error.code]
 }
+// A choice refused because Book matching changed (#1355): the field's offer
+// changed since the page showed it, so it asks again in place; or the work
+// waits for its check, which its case line says, so the field adds nothing.
+export const offerChangedNotice =
+  'Not recorded: Book matching changed what this field offers. Choose again.'
+export const offerChangedCopy = (error: unknown): string | undefined => {
+  if (!(error instanceof ApiError) || error.code !== 'offer_changed') return undefined
+  return error.reason === 'digest_mismatch' ? offerChangedNotice : ''
+}
 const decisionStatusKey = (id: string) => ['decision-status', id] as const
 export type DecisionFailure = 'permanent' | 'retryable' | 'stale' | 'uncertain'
 export const classifyDecisionFailure = (error: unknown): DecisionFailure => {
@@ -117,6 +126,7 @@ const sameCommand = (left: DecisionCommand, right: DecisionCommand) =>
 export const useReviewDecisionController = ({
   reviewCaseId,
   fields,
+  checking = false,
   active,
   onAdvance,
   onComplete,
@@ -125,6 +135,8 @@ export const useReviewDecisionController = ({
 }: {
   reviewCaseId: string
   fields: CaseDetailView['fields']
+  // The case waits for its Book matching check; no choice is sent meanwhile.
+  checking?: boolean
   active: (destination: string) => boolean
   onAdvance: (field: string) => Promise<void> | void
   onComplete?: (fields: CaseDetailView['fields']) => Promise<void> | void
@@ -350,6 +362,15 @@ export const useReviewDecisionController = ({
         announce(reviewCaseId, command.destination, '')
         return
       }
+      const offerChanged = offerChangedCopy(error)
+      if (offerChanged !== undefined) {
+        // The case above is already the refreshed one: the field shows what it
+        // offers now, or the case shows it is being checked. Nothing to retry.
+        forget(command)
+        announce(reviewCaseId, command.destination, offerChanged)
+        if (!active(command.destination)) await onAdvance(command.destination)
+        return
+      }
       if (error instanceof ApiError && error.code === 'already_decided') {
         forget(command)
         await onAdvance(command.destination)
@@ -422,7 +443,7 @@ export const useReviewDecisionController = ({
     void decision.mutateAsync(failed.command).catch(() => undefined)
   }
   const submit = (command: DecisionCommand) => {
-    if (reconciliation.data !== null) return
+    if (reconciliation.data !== null || checking) return
     const settled = settledFor(reviewCaseId)
     // Two presses of the same choice, or a second choice for a field whose
     // first is still in flight, are the same decision. Neither becomes a
@@ -449,13 +470,25 @@ export const useReviewDecisionController = ({
     announce(reviewCaseId, command.destination, `Recording ${outcomeWords(command.outcome)}…`)
     void decision.mutateAsync(command).catch(() => undefined)
   }
+  const statusFor = (destination: string) => {
+    const local =
+      status.caseId === reviewCaseId && status.destination === destination ? status.text : null
+    const durable = durableStatus.data?.destination === destination ? durableStatus.data.text : null
+    return local ?? durable ?? ''
+  }
+  const messageFor = (destination: string) =>
+    reconciliation.data?.destination === destination ? reconciliation.data.message : undefined
   return {
-    statusFor: (destination: string) => {
-      const local =
-        status.caseId === reviewCaseId && status.destination === destination ? status.text : null
-      const durable =
-        durableStatus.data?.destination === destination ? durableStatus.data.text : null
-      return local ?? durable ?? ''
+    statusFor,
+    // A choice field's status line, where the field shows one, and whether it
+    // says a choice was refused because Book matching changed the offer: that
+    // line is said right under the choice cards (#1355).
+    choiceStatusFor: (destination: string | undefined, shown: boolean) => {
+      const text =
+        destination !== undefined && shown
+          ? statusFor(destination) || (messageFor(destination) ?? '')
+          : ''
+      return { text, offerChanged: text === offerChangedNotice }
     },
     pending: failed?.command ?? outstanding[0]?.command ?? entries[0]?.command ?? null,
     phase: chosen,
@@ -465,8 +498,9 @@ export const useReviewDecisionController = ({
     canRetry: failed !== null && reconciliation.data === null,
     retry,
     reloadRequired: reconciliation.data !== null,
-    messageFor: (destination: string) =>
-      reconciliation.data?.destination === destination ? reconciliation.data.message : undefined,
+    // Every decision control of the case is disabled while it is checked.
+    checking,
+    messageFor,
     decision,
     settle,
     // A notice for this case, or for the case the owner is being moved to.

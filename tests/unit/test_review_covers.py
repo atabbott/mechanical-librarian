@@ -693,6 +693,7 @@ def test_keeping_a_switched_cover_releases_its_original_and_leaves_switched(
                     "proposal_id": field["proposal_id"],
                     "selected_value": None,
                     "target_fingerprint": field["target_fingerprint"],
+                    "offered_alternatives_digest": field["offer_digest"],
                     "consideration_id": field["cover_consideration"][
                         "consideration_id"
                     ],
@@ -891,6 +892,7 @@ def test_put_back_records_the_original_only_while_its_copy_is_listed(
                         "value": original["artifact_id"],
                     },
                     "target_fingerprint": field["target_fingerprint"],
+                    "offered_alternatives_digest": field["offer_digest"],
                     "consideration_id": consideration["consideration_id"],
                     "cover_confirmation": {
                         "expected_selection_id": field["current_cover_selection_id"],
@@ -979,6 +981,7 @@ def test_an_original_that_does_not_decode_shows_no_preview_and_can_be_put_back(
                         "value": original["artifact_id"],
                     },
                     "target_fingerprint": field["target_fingerprint"],
+                    "offered_alternatives_digest": field["offer_digest"],
                     "consideration_id": consideration["consideration_id"],
                     "cover_confirmation": {
                         "expected_selection_id": field["current_cover_selection_id"],

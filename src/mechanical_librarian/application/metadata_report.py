@@ -104,6 +104,7 @@ from mechanical_librarian.domain.metadata_report import (
     MAX_AUDIO_EDITIONS,
     MAX_AUDIO_TRACKS,
     MAX_CANDIDATES,
+    MAX_IDENTITY_REFUSED_PER_LANE,
     MAX_PROVIDER_DISCOVERY_QUERIES,
     MAX_RECORDING_LOOKUP_HINTS,
     PROVIDER_RECOVERY_ELIGIBLE_STATUSES,
@@ -689,8 +690,37 @@ class ProviderLaneResult:
     # `admission_bases` is then that lane's own values verbatim, a WORK
     # lane's included, rather than read again off the merged products.
     admission_bases_recorded: bool = False
+    # A WORK lane's refused answers (#1355): every product set admission
+    # refused on the rungs it walked, de-duplicated by identity in rung order.
+    identity_refused_candidates: tuple[ProviderCandidate, ...] = ()
+    # Set only by a retry successor carrying a lane's persisted record over:
+    # the refused identities that lane added whose records its observation
+    # no longer holds, so they stay counted as truncated.
+    identity_refused_dropped: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        refused = tuple(value.identity for value in self.identity_refused_candidates)
+        if (
+            type(self.identity_refused_candidates) is not tuple
+            or any(
+                type(value) is not ProviderCandidate
+                for value in self.identity_refused_candidates
+            )
+            or type(self.identity_refused_dropped) is not tuple
+            or any(type(value) is not str for value in self.identity_refused_dropped)
+            or len({*refused, *self.identity_refused_dropped})
+            != len(refused) + len(self.identity_refused_dropped)
+            or len(refused) + len(self.identity_refused_dropped)
+            > MAX_IDENTITY_REFUSED_PER_LANE
+            or (
+                (refused or self.identity_refused_dropped)
+                and (
+                    self.lane.kind is not ProviderQueryKind.WORK
+                    or self.status is not ProviderStatus.NO_MATCH
+                )
+            )
+        ):
+            raise MetadataReportError("provider lane result is invalid")
         if (
             type(self.admission_bases_recorded) is not bool
             or type(self.admission_bases) is not tuple
@@ -1618,30 +1648,27 @@ def _lane_admission_bases(
     }
 
 
-def provider_observation(
-    provider: str,
+# The failure an aggregate with no candidate states, most informative first.
+_AGGREGATE_STATUS_PRIORITIES = (
+    ProviderStatus.QUERY_LIMIT_EXCEEDED,
+    ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
+    ProviderStatus.MALFORMED,
+    ProviderStatus.OVERSIZED,
+    ProviderStatus.AUTHENTICATION,
+    ProviderStatus.AUTHORIZATION,
+    ProviderStatus.RATE_LIMITED,
+    ProviderStatus.INCOMPLETE,
+    ProviderStatus.UNAVAILABLE,
+    ProviderStatus.NO_MATCH,
+)
+
+
+def _merged_lane_candidates(
     results: tuple[ProviderLaneResult, ...],
-    *,
-    authority: str | None = None,
-    diagnostics: tuple[FailureDiagnostic, ...] = (),
-    request_accounting: ProviderRequestAccounting = ProviderRequestAccounting(),
-) -> ProviderObservation:
-    access_times = {
-        result.accessed_at for result in results if result.accessed_at is not None
-    }
-    if len(access_times) > 1:
-        raise MetadataReportError("provider lane access times disagree")
-    if authority != "audible_catalog" and any(
-        result.recording_lookup_hints for result in results
-    ):
-        raise MetadataReportError("provider lane result is invalid")
-    accessed_at = next(iter(access_times), None)
+) -> tuple[dict[str, ProviderCandidate], bool]:
+    """Merge the lanes' candidates by identity, and say whether two conflict."""
     candidates_by_identity: dict[str, ProviderCandidate] = {}
     conflict = False
-    aggregate_failure: ProviderStatus | None = None
-    overflow_results = tuple(
-        result for result in results if result.edition_enrichment_overflow is not None
-    )
     for result in results:
         for candidate in result.candidates:
             previous = candidates_by_identity.get(candidate.identity)
@@ -1670,6 +1697,33 @@ def provider_observation(
                 and candidate_evidence.issubset(previous_evidence)
             ):
                 conflict = True
+    return candidates_by_identity, conflict
+
+
+def provider_observation(
+    provider: str,
+    results: tuple[ProviderLaneResult, ...],
+    *,
+    authority: str | None = None,
+    diagnostics: tuple[FailureDiagnostic, ...] = (),
+    request_accounting: ProviderRequestAccounting = ProviderRequestAccounting(),
+) -> ProviderObservation:
+    access_times = {
+        result.accessed_at for result in results if result.accessed_at is not None
+    }
+    if len(access_times) > 1:
+        raise MetadataReportError("provider lane access times disagree")
+    if authority != "audible_catalog" and any(
+        result.recording_lookup_hints for result in results
+    ):
+        raise MetadataReportError("provider lane result is invalid")
+    accessed_at = next(iter(access_times), None)
+    refused, truncated, refused_new = _aggregate_identity_refused(results)
+    candidates_by_identity, conflict = _merged_lane_candidates(results)
+    aggregate_failure: ProviderStatus | None = None
+    overflow_results = tuple(
+        result for result in results if result.edition_enrichment_overflow is not None
+    )
     if conflict or len(candidates_by_identity) > MAX_CANDIDATES:
         aggregate_failure = (
             ProviderStatus.MALFORMED
@@ -1766,6 +1820,7 @@ def provider_observation(
                     if hint.asin not in retained_asins
                 ),
                 result.dispatch,
+                refused_new.get(result.lane.identity, ()),
             )
         )
 
@@ -1776,29 +1831,15 @@ def provider_observation(
         aggregate_status = aggregate_failure
     elif candidates:
         aggregate_status = ProviderStatus.CANDIDATES
-    elif results:
-        priorities = (
-            ProviderStatus.QUERY_LIMIT_EXCEEDED,
-            ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
-            ProviderStatus.MALFORMED,
-            ProviderStatus.OVERSIZED,
-            ProviderStatus.AUTHENTICATION,
-            ProviderStatus.AUTHORIZATION,
-            ProviderStatus.RATE_LIMITED,
-            ProviderStatus.INCOMPLETE,
-            ProviderStatus.UNAVAILABLE,
-            ProviderStatus.NO_MATCH,
-        )
+    else:
         aggregate_status = next(
             (
                 status
-                for status in priorities
+                for status in _AGGREGATE_STATUS_PRIORITIES
                 if any(result.status is status for result in results)
             ),
             ProviderStatus.INSUFFICIENT_INPUT,
         )
-    else:
-        aggregate_status = ProviderStatus.INSUFFICIENT_INPUT
     overflow = (
         overflow_results[0].edition_enrichment_overflow
         if len(overflow_results) == 1
@@ -1852,6 +1893,8 @@ def provider_observation(
         ),
         refused_products=_aggregate_refused_products(results, candidates),
         audio_editions=_aggregate_audio_editions(results, candidates),
+        identity_refused_candidates=refused,
+        identity_refused_truncated=truncated,
     )
 
 
@@ -1951,6 +1994,43 @@ def _aggregate_audio_editions(
         if edition is not None
     )
     return () if len(kept) > MAX_AUDIO_EDITIONS else kept
+
+
+def _aggregate_identity_refused(
+    results: tuple[ProviderLaneResult, ...],
+) -> tuple[tuple[ProviderCandidate, ...], int, dict[str, tuple[str, ...]]]:
+    """The refused WORK answers an observation keeps, and each lane's share.
+
+    The union over the lanes in lane order, de-duplicated by identity, keeps
+    its first `MAX_CANDIDATES` records and counts the rest as truncated. Each
+    lane names the identities it added that no earlier lane had. Any lane
+    that admitted anything means the observation keeps none (#1355).
+    """
+    if any(result.status is ProviderStatus.CANDIDATES for result in results):
+        return (), 0, {}
+    seen: set[str] = set()
+    kept: list[ProviderCandidate] = []
+    truncated = 0
+    added: dict[str, tuple[str, ...]] = {}
+    for result in results:
+        new: list[str] = []
+        for candidate in result.identity_refused_candidates:
+            if candidate.identity in seen:
+                continue
+            seen.add(candidate.identity)
+            new.append(candidate.identity)
+            if len(kept) < MAX_CANDIDATES:
+                kept.append(candidate)
+            else:
+                truncated += 1
+        for identity in result.identity_refused_dropped:
+            if identity not in seen:
+                seen.add(identity)
+                new.append(identity)
+                truncated += 1
+        if new:
+            added[result.lane.identity] = tuple(sorted(new))
+    return tuple(sorted(kept, key=lambda value: value.identity)), truncated, added
 
 
 def _aggregate_refused_products(
@@ -2980,6 +3060,32 @@ def _identifier_lane_observation(
     )
 
 
+def _refused_work_answer(
+    observation: ProviderObservation,
+    recording_lookup_candidates: tuple[ProviderCandidate, ...] = (),
+) -> ProviderObservation:
+    """The `NO_MATCH` a refused WORK answer qualifies to.
+
+    Live consumers read it as no match with no candidates. The answer's
+    products are kept whole in `identity_refused_candidates` for ADR-0096's
+    level path alone (#1355); no request is added, since they are the answer
+    already received.
+    """
+    return ProviderObservation(
+        observation.provider,
+        ProviderStatus.NO_MATCH,
+        (),
+        (),
+        ProviderQueryKind.WORK,
+        observation.authority,
+        accessed_at=observation.accessed_at,
+        diagnostics=observation.diagnostics,
+        request_accounting=observation.request_accounting,
+        recording_lookup_candidates=recording_lookup_candidates,
+        identity_refused_candidates=observation.candidates,
+    )
+
+
 def qualify_provider_observation(
     observation: ProviderObservation,
     lookup: MetadataLookup,
@@ -3068,17 +3174,9 @@ def qualify_provider_observation(
         echoed_languages=lookup.echoed_languages,
     )
     if not set_admission.admitted:
-        return ProviderObservation(
-            observation.provider,
-            ProviderStatus.NO_MATCH,
-            (),
-            (),
-            ProviderQueryKind.WORK,
-            observation.authority,
-            accessed_at=observation.accessed_at,
-            diagnostics=observation.diagnostics,
-            request_accounting=observation.request_accounting,
-            recording_lookup_candidates=tuple(
+        return _refused_work_answer(
+            observation,
+            tuple(
                 candidate
                 for candidate in observation.candidates
                 if provider_candidate_exact_work_identity_admission(
@@ -3140,17 +3238,7 @@ def qualify_provider_observation(
         # An alternative lane keeps only a band-corroborated recording with
         # its marketplace evidence; an admitted set without one is a refused
         # rung, and the ladder walks on (#1255).
-        return ProviderObservation(
-            observation.provider,
-            ProviderStatus.NO_MATCH,
-            (),
-            (),
-            ProviderQueryKind.WORK,
-            observation.authority,
-            accessed_at=observation.accessed_at,
-            diagnostics=observation.diagnostics,
-            request_accounting=observation.request_accounting,
-        )
+        return _refused_work_answer(observation)
     filtered = tuple(
         _shaped_with_runtime_comparison(
             candidate,
@@ -3212,6 +3300,32 @@ class QualifiedLaneObservation:
     # Set only on an ASIN lane (#1723): how it kept each recording, as
     # sorted (product identity, admission basis) pairs.
     admission_bases: tuple[tuple[str, str], ...] = ()
+    # Set only by a ladder walk (#1355): the products every refused rung
+    # returned, de-duplicated by identity in rung order. Unset, the lane's
+    # refused answers are its one qualified answer's.
+    ladder_identity_refused: tuple[ProviderCandidate, ...] | None = None
+
+    @property
+    def identity_refused_candidates(self) -> tuple[ProviderCandidate, ...]:
+        """The lane's refused answers, for its `ProviderLaneResult`."""
+        if self.ladder_identity_refused is None:
+            return self.observation.identity_refused_candidates
+        return self.ladder_identity_refused
+
+
+def _rung_union(
+    refused: tuple[ProviderCandidate, ...], observation: ProviderObservation
+) -> tuple[ProviderCandidate, ...]:
+    """Add one rung's refused answers to the ladder's, in rung order."""
+    seen = {value.identity for value in refused}
+    return (
+        *refused,
+        *(
+            value
+            for value in observation.identity_refused_candidates
+            if value.identity not in seen
+        ),
+    )
 
 
 def observe_work_ladder(
@@ -3272,6 +3386,9 @@ def observe_work_ladder(
     hints: tuple[ProviderCandidate, ...] = ()
     tight: list[RecordingLookupHint] = []
     refused_pages: list[tuple[int, ProviderObservation]] = []
+    # Every refused rung's answers (#1355). An admitted rung or a terminal
+    # failure drops them with the lane's other refusals.
+    identity_refused: tuple[ProviderCandidate, ...] = ()
     observation: ProviderObservation | None = None
     for query in work_query_ladder(
         lookup.title or "",
@@ -3284,11 +3401,14 @@ def observe_work_ladder(
             narrow is not None
             and physical.status is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
         ):
+            narrowed = qualify_provider_observation(narrow(query), lookup)
             return QualifiedLaneObservation(
-                qualify_provider_observation(narrow(query), lookup),
+                narrowed,
                 rungs=len(exhausted) + 1,
+                ladder_identity_refused=_rung_union(identity_refused, narrowed),
             )
         observation = qualify_provider_observation(physical, lookup)
+        identity_refused = _rung_union(identity_refused, observation)
         if (
             lookup.audio is not None
             and lookup.title_basis is None
@@ -3335,6 +3455,7 @@ def observe_work_ladder(
                 tuple(exhausted),
                 work_ladder_diagnostics(empty_rungs, len(physical.candidates)),
                 rungs=len(exhausted),
+                ladder_identity_refused=identity_refused,
             )
         else:
             return QualifiedLaneObservation(observation, rungs=len(exhausted) + 1)
@@ -3347,6 +3468,7 @@ def observe_work_ladder(
             tuple(exhausted),
             work_ladder_diagnostics(empty_rungs, 0),
             rungs=len(exhausted),
+            ladder_identity_refused=identity_refused,
         )
     observation = replace(observation, recording_lookup_candidates=hints)
     sent = len(exhausted)
@@ -3393,6 +3515,7 @@ def observe_work_ladder(
         corroborated
         if corroborate and lookup.corroborated_rule and refused_pages
         else None,
+        ladder_identity_refused=identity_refused,
     )
 
 
