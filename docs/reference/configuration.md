@@ -563,7 +563,10 @@ suggests instead. `cover_prefer_edition` prefers a cover from the book's own
 edition over a cover of the work. In store mode both live in
 `owner-settings-v5.cover_preferences`, and Policy → Curation saves them with
 their own button; in file mode they are read-only there. Changing either stales
-any planned automatic cover change before it writes.
+any planned automatic cover change before it writes, and a store-mode save
+requests a scan that compares each prepared cover again under the new policy.
+No release yet has the qualification to replace a cover automatically, so
+today `protected` and `unprotected` suggest the replacements they would make.
 
 An automatic replacement keeps the replaced original so it can be put back.
 The store holds at most 2,000 originals and 2 GiB; while it is full, a

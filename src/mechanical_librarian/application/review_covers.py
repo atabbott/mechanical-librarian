@@ -107,6 +107,8 @@ class CoverRow:
     switch_language: str | None = None
     # Why the measured rules suggest switching this cover, for a suggestion.
     suggestion_reason: str | None = None
+    # Why the measured rules hold this cover's switch, for a hold.
+    hold_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,6 +202,7 @@ def _cover_item(row: CoverRow) -> dict[str, object]:
         "group": row.group,
         "media_kind": report.file.format,
         "review_case_id": row.review_case_id,
+        "hold": None if row.hold_reason is None else {"reason": row.hold_reason},
         "suggestion": None
         if row.suggestion_reason is None
         else {"reason": row.suggestion_reason},

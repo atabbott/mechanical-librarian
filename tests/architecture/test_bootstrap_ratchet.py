@@ -127,7 +127,7 @@ RESIDUAL: dict[str, int | None] = {
     # Opens the cover artifact store and binds the SQLite repository's cover
     # hooks to CoverConsiderationService; both are adapter calls. 84 since
     # #1363 passed the Current covers settings as two keyword arguments.
-    _C + "_compose_cover_considerations": 84,
+    _C + "_compose_cover_considerations": 78,
     # Fail-closed session store for run_cover_review, its only user; the
     # optional move to application was not taken (A-U4).
     _C + "_OfflineSessionStore": 40,

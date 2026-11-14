@@ -160,7 +160,7 @@ from mechanical_librarian.application.continuous_field_effects import (
 from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
 )
-from mechanical_librarian.application.cover_policy import CoverPolicy
+from mechanical_librarian.application.cover_policy import cover_policy_of
 from mechanical_librarian.application.cover_retention import CoverRetention
 from mechanical_librarian.application.decision_preview import preview_shadow_decision
 from mechanical_librarian.application.description_advice import (
@@ -3187,13 +3187,7 @@ def _compose_cover_considerations(
             artifacts = CoverArtifactStore(artifact_store_path, create=False)
         return artifacts
 
-    policy = CoverPolicy(
-        avoid_promotional_text=review.cover_avoid_promotional_text,
-        avoid_tie_in_branding=review.cover_avoid_tie_in_branding,
-        prefer_minimal_composition=review.cover_prefer_minimal_composition,
-        current_protection=review.cover_current_protection,
-        prefer_edition=review.cover_prefer_edition,
-    )
+    policy = cover_policy_of(review)
 
     def bind_policy(policy_reference: str, replay_reference: str) -> None:
         repository.bind_current_cover_authority(policy_reference, replay_reference)

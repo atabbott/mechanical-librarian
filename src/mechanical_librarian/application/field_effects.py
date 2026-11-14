@@ -972,6 +972,43 @@ class GuardedFieldApplication:
             self._recover_cleanup(result)
         return result
 
+    def _may_have_landed(self, operation: FieldEffectOperation) -> bool:
+        """Whether a retry's earlier request may have reached the target.
+
+        Only history can say a request may have been sent, so a plan that
+        never reached `applying` is not taken for one (#1402).
+        """
+        return (operation.state, operation.failure) == (
+            "retryable",
+            "target_failure",
+        ) and any(
+            json.loads(event)["kind"] == "applying"
+            for event in self._repository.field_effect_event_documents(
+                operation.plan.plan_id
+            )
+        )
+
+    def _stale_unless_landed(
+        self, operation: FieldEffectOperation, failure: str
+    ) -> FieldEffectOperation:
+        """Refuse a plan, unless its earlier request landed.
+
+        A cover setting changed after a write that may have landed moves the
+        cover policy, so the retry's authority is no longer current. If the
+        target already shows the desired value the write happened: it is
+        recorded as verified, keeping the switch and the original kept for
+        Put back, instead of staling and releasing them (#1363, #1402). A
+        target that cannot be read refuses as before.
+        """
+        if self._may_have_landed(operation):
+            try:
+                observed = self._target.read(operation.plan)
+            except TargetServiceUnavailable:
+                return self._stale(operation, failure)
+            if observed.matches(operation.plan, desired=True, check_version=True):
+                return self._complete(operation, "retryable")
+        return self._stale(operation, failure)
+
     def _preclaim(
         self,
         operation: FieldEffectOperation,
@@ -1047,7 +1084,7 @@ class GuardedFieldApplication:
             if capability.digest != member.capability_digest:
                 return self._stale(operation, "capability")
             if not self._authority.current(member.authority):
-                return self._stale(operation, "authority")
+                return self._stale_unless_landed(operation, "authority")
             if not self._consent.current(member.consent):
                 return self._stale(operation, "consent")
             if not self._dependencies.current(member.dependency_digests):
@@ -1077,16 +1114,9 @@ class GuardedFieldApplication:
             # what this read shows instead of a change it did not make. Only
             # history can say a request may have been sent, so a plan that
             # never reached `applying` is not taken for one (#1402).
-            if (
-                (operation.state, operation.failure) == ("retryable", "target_failure")
-                and observed.matches(plan, desired=True, check_version=True)
-                and any(
-                    json.loads(event)["kind"] == "applying"
-                    for event in self._repository.field_effect_event_documents(
-                        plan.plan_id
-                    )
-                )
-            ):
+            if observed.matches(
+                plan, desired=True, check_version=True
+            ) and self._may_have_landed(operation):
                 return self._complete(operation, "retryable")
             return self._stale(operation, "target_changed")
         if operation.attempt >= 3:

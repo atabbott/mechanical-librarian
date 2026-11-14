@@ -1379,17 +1379,17 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             )
             comparison = page.get_by_role("region", name="Choose a cover")
             comparison.get_by_text(label, exact=True).wait_for()
-            comparison.get_by_text("Recommended cover ready", exact=True).wait_for()
-            # The recommended card carries its reason, so a fill's header has
-            # no caption (#1765); a suggestion over a populated cover says why
-            # it is suggested (#1363).
-            caption = comparison.locator(":scope > header > small")
-            if case_id == "case-3":
-                expect(caption).to_have_count(0)
-            else:
-                expect(caption).to_have_text(
-                    re.compile(r"^Suggested because the cover was \d+ × \d+ px, ")
-                )
+            # A fill is recommended; a suggestion over a populated cover is
+            # "Switch suggested" (#1363). Neither header has a caption: the
+            # recommended card carries its reason (#1765) and a suggestion's
+            # fault pill is its only reason.
+            comparison.get_by_text(
+                "Recommended cover ready"
+                if case_id == "case-3"
+                else "Switch suggested",
+                exact=True,
+            ).wait_for()
+            expect(comparison.locator(":scope > header > small")).to_have_count(0)
             for choice in comparison.locator("[role=radio]").all():
                 expect(choice).to_be_enabled()
                 expect(choice).to_have_attribute("aria-checked", "false")

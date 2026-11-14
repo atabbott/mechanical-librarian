@@ -951,7 +951,7 @@ def _classify_field(
         # contextual row, which offers no controls (below).
         owner_entry=owner_entry and bool(alternatives),
         immaterial_alternatives="work_alternative_immaterial" in reasons,
-        kept_cover=_kept_cover(proposal),
+        kept_cover=_kept_cover(proposal) and not cover_suggested,
         kept_by_fill_policy=policy_settled and destination != "tags",
         kept_by_tags_off=policy_settled and destination == "tags",
         single_source=single_source,

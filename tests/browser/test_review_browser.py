@@ -13918,6 +13918,10 @@ def test_works_no_provider_matched_have_their_own_lens_and_reasons(
                 browser.close()
 
 
+# A kept cover's classification lead, which a suggestion never shows (M1).
+_KEPT_COVER_LEAD = "Your current cover is kept, so no review is needed."
+
+
 @pytest.mark.parametrize(
     ("journey", "incumbent"),
     (
@@ -13990,13 +13994,16 @@ def test_measured_cover_rules_keep_or_suggest_through_covers(
                     expect(comparison.locator(".status-pill")).to_have_text(
                         "Under 300 px"
                     )
+                    # A suggestion's fault pill is its only reason, under
+                    # "Switch suggested", with no settings line on its card.
                     expect(
-                        comparison.get_by_text(
-                            "Suggested because the cover was 200 × 300 px, under "
-                            "300 px on its short side.",
-                            exact=True,
-                        )
+                        comparison.get_by_text("Switch suggested", exact=True)
                     ).to_be_visible()
+                    expect(comparison).not_to_contain_text("Suggested because")
+                    expect(comparison).not_to_contain_text(
+                        "Your cover settings choose this cover."
+                    )
+                    expect(page.get_by_text(_KEPT_COVER_LEAD)).to_have_count(0)
                 # Neither is Library's attention: a kept cover has no fault and
                 # a suggestion is optional (S9).
                 page.goto(f"{origin}/library?lens=needs_attention")
@@ -14013,6 +14020,40 @@ def test_measured_cover_rules_keep_or_suggest_through_covers(
                     expect(
                         page.get_by_text("Switch suggested", exact=True).first
                     ).to_be_visible()
+                    # The To decide row reflows at 320 px with 200% text:
+                    # nothing scrolls sideways and no pill covers the title.
+                    page.set_viewport_size({"width": 320, "height": 900})
+                    page.goto(f"{origin}/library?lens=all&view=covers&tab=decide")
+                    item = page.locator(".covers-queue-item").first
+                    expect(item).to_be_visible()
+                    set_root_text(page, "200%")
+                    layout = cast(
+                        "dict[str, float]",
+                        item.evaluate(
+                            """item => {
+                              const box = node => node.getBoundingClientRect()
+                              const title = box(item.querySelector('strong'))
+                              const pills = [...item.querySelectorAll('.status-pill')].map(box)
+                              const page = document.scrollingElement
+                              return {
+                                overflow: page.scrollWidth - page.clientWidth,
+                                pills: pills.length,
+                                right: Math.max(...pills.map(pill => pill.right)),
+                                viewport: window.innerWidth,
+                                overlap: pills.filter(pill =>
+                                  pill.left < title.right && pill.right > title.left &&
+                                  pill.top < title.bottom && pill.bottom > title.top).length,
+                              }
+                            }"""
+                        ),
+                    )
+                    assert layout["overflow"] <= 0, layout
+                    assert layout["pills"] == 2, layout
+                    assert layout["right"] <= layout["viewport"], layout
+                    assert layout["overlap"] == 0, layout
+                    set_root_text(page, "")
+                    page.set_viewport_size({"width": 1280, "height": 900})
+                    page.goto(f"{origin}/library?lens=all&view=covers&tab={tab}")
                 group = page.get_by_role(
                     "radiogroup", name="Which cover should this book use?"
                 )
@@ -14090,8 +14131,8 @@ def test_current_covers_saves_never_with_its_own_button() -> None:
                 protection.get_by_role("button", name="Never").click()
                 expect(
                     section.get_by_text(
-                        "Nothing is replaced automatically. A cover with a fault "
-                        "is suggested.",
+                        "Covers are never replaced automatically. A cover with a "
+                        "fault gets a suggested replacement.",
                         exact=True,
                     )
                 ).to_be_visible()

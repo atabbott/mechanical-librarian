@@ -434,13 +434,17 @@ labelled in a language the library does not hold. A title that names a
 different book from most covers holds the cover until the title is settled.
 Size alone never replaces a readable cover that has no fault.
 
-Policy → Curation → Current covers says what happens to a cover with a fault:
+Policy → Curation → Current covers says what happens to a current cover today,
+while no release can replace one automatically (below):
 
 | Replace a current cover | What happens |
 | --- | --- |
-| Only with a fault (default) | A cover with a fault is replaced automatically. Other covers are suggested. |
-| When another is preferred | A preferred cover also replaces the current one, including a cover you set in Audiobookshelf. |
-| Never | Nothing is replaced automatically. A cover with a fault is suggested. |
+| Only with a fault (default) | A cover with a fault gets a suggested replacement. Other covers are kept. |
+| When another is preferred | A cover gets a suggested replacement when another is preferred, including a cover you set in Audiobookshelf. |
+| Never | Covers are never replaced automatically. A cover with a fault gets a suggested replacement. |
+
+Saving Current covers compares each prepared cover again on the next scan,
+which the save requests, so the suggestions follow the new setting.
 
 Prefer the edition's cover, off by default, suggests a cover from the book's
 own edition over a cover of the book in general; only When another is

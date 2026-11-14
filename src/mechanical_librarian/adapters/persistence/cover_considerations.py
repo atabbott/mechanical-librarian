@@ -189,8 +189,9 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         planned switch before it writes. When the work is prepared again under
         the new policy, the selection is revoked as a superseded one is, so no
         screen shows the switch as chosen; the new comparison decides again.
-        A switch whose write started or verified stays, because it happened
-        (#1363).
+        A switch whose write started stays, because it may have happened: one
+        claimed, applying, reconciling or verified, or a retry whose request
+        may have reached Audiobookshelf (#1363, #1402).
         """
         # A comparison prepared under no cover policy decides nothing again.
         if type(policy_reference) is not str:
@@ -209,7 +210,12 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             "WHERE lineage.review_case_id=? AND selection.kind='automatic' "
             "AND NOT EXISTS (SELECT 1 FROM field_effects effect "
             "WHERE effect.decision_id=selection.decision_id "
-            "AND effect.state IN ('claimed','applying','reconciling','verified'))",
+            "AND (effect.state IN ('claimed','applying','reconciling','verified') "
+            # A retry whose request may have reached Audiobookshelf is a write
+            # that started (#1402).
+            "OR (effect.state='retryable' AND EXISTS (SELECT 1 "
+            "FROM field_effect_events event WHERE event.plan_id=effect.plan_id "
+            "AND event.kind='applying'))))",
             (review_case_id,),
         ).fetchone()
         if row is None or row[1] == policy_reference:

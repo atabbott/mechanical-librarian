@@ -716,6 +716,8 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         fingerprint: str,
         entries: tuple[CatalogueEntry, ...],
         completed_at: int,
+        *,
+        cover_policy_reference: str | None = None,
     ) -> None:
         if action.stage != "discovery":
             raise MetadataReportError("review preparation state is invalid")
@@ -799,7 +801,13 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 sorted(eligible, key=lambda value: value.item_id)
             ):
                 self._reconcile_discovered_work(
-                    action, generation, fingerprint, ordinal, entry, completed_at
+                    action,
+                    generation,
+                    fingerprint,
+                    ordinal,
+                    entry,
+                    completed_at,
+                    cover_policy_reference,
                 )
             for work_id, item_id in self._connection.execute(
                 "SELECT work_id,item_id FROM review_preparation_work WHERE scan_id=?",
@@ -854,12 +862,15 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         ordinal: int,
         entry: CatalogueEntry,
         completed_at: int,
+        cover_policy_reference: str | None = None,
     ) -> None:
         """Carry one eligible item's work forward, or queue it afresh.
 
         A work whose file, source and producer are unchanged keeps the stage
         its report and lineage still support; anything else starts again at
-        extraction. Runs inside `complete_review_discovery`'s transaction.
+        extraction. A complete case whose cover was compared under another
+        cover policy goes back to projection, which compares it again (#1363).
+        Runs inside `complete_review_discovery`'s transaction.
         """
         assert entry.file_identity is not None
         work_id = preparation_work_id(action.connection, action.library, entry.item_id)
@@ -954,7 +965,20 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                     ).fetchone()
                     is not None
                 )
-                if pointer_matches and pending_description:
+                stale_cover = (
+                    cover_policy_reference is not None
+                    and review_case_id is not None
+                    and self._connection.execute(
+                        "SELECT 1 FROM current_cover_considerations pointer "
+                        "JOIN cover_considerations consideration "
+                        "ON consideration.consideration_id=pointer.consideration_id "
+                        "WHERE pointer.review_case_id=? AND json_extract("
+                        "consideration.document,'$.policy_reference') IS NOT ?",
+                        (review_case_id, cover_policy_reference),
+                    ).fetchone()
+                    is not None
+                )
+                if pointer_matches and (pending_description or stale_cover):
                     stage = "projection"
                     state = "queued"
                     outcome = None

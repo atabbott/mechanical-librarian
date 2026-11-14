@@ -140,6 +140,7 @@ const work = (
   group,
   media_kind: 'epub',
   review_case_id: id,
+  hold: null,
   suggestion: null,
   switched: null,
   title: titles[id] ?? id,
@@ -1050,5 +1051,13 @@ describe('Measured cover rules (#1363)', () => {
     renderRoute('/library?lens=all&view=covers&tab=decide', coversHttp({ decide: decidePage }))
     expect(await screen.findByText('Unreadable image')).toBeVisible()
     expect(screen.queryByRole('combobox', { name: 'Show' })).toBeNull()
+  })
+
+  it("shows a held switch's reason on its To decide row (#1363 M7)", async () => {
+    const decidePage = page('decide', [
+      work('case-1', 'choice', { hold: { reason: 'title_names_other_work' } }),
+    ])
+    renderRoute('/library?lens=all&view=covers&tab=decide', coversHttp({ decide: decidePage }))
+    expect(await screen.findByText('Title names another book')).toBeVisible()
   })
 })

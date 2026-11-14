@@ -7,7 +7,7 @@ import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
@@ -46,6 +46,9 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
 )
 from mechanical_librarian.domain.proposal_set import ProposalOutcome, evaluate_report
+
+if TYPE_CHECKING:
+    from .configuration import ReviewWebConfiguration
 
 from .cover_identity import (
     CLASSIFIER_REFERENCE,
@@ -158,6 +161,17 @@ class CoverPolicy:
         return (
             "cover_policy_" + hashlib.sha256(self.document.encode("utf-8")).hexdigest()
         )
+
+
+def cover_policy_of(review: ReviewWebConfiguration) -> CoverPolicy:
+    """Read the owner's Current covers settings as the policy they choose."""
+    return CoverPolicy(
+        avoid_promotional_text=review.cover_avoid_promotional_text,
+        avoid_tie_in_branding=review.cover_avoid_tie_in_branding,
+        prefer_minimal_composition=review.cover_prefer_minimal_composition,
+        current_protection=review.cover_current_protection,
+        prefer_edition=review.cover_prefer_edition,
+    )
 
 
 @dataclass(frozen=True, slots=True)

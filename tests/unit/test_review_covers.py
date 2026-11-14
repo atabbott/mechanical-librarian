@@ -292,11 +292,54 @@ def test_an_unreadable_current_cover_with_a_candidate_is_suggested(
     assert decide["counts"]["decide"] == 1
     assert [item["group"] for item in decide["items"]] == ["proposal"]
     assert decide["items"][0]["suggestion"] == {"reason": "unreadable"}
+    assert decide["items"][0]["hold"] is None
     # The library holds a cover it could not read, which is not "No cover".
     (item,) = decide["items"]
     assert item["cover"] is None
     assert item["unreadable_cover"] is True
     assert kept["items"] == []
+
+
+def test_a_suggestion_the_owner_cannot_choose_is_not_to_decide(tmp_path: Path) -> None:
+    """With no decision to record, a suggestion is listed only under All (M4)."""
+    with _library(tmp_path, readable_current=False) as library:
+        library.repository._connection.execute(
+            "UPDATE review_case_field_facts SET has_owner_decision_actions=0 "
+            "WHERE destination='cover'"
+        )
+        library.repository._connection.commit()
+        decide = _page(library.repository, "decide", None)
+        everything = _page(library.repository, "all", None)
+
+    assert decide["items"] == []
+    assert everything["counts"] == {"decide": 0, "kept": 0, "switched": 0, "all": 1}
+    (item,) = everything["items"]
+    assert (item["group"], item["choosable"], item["suggestion"]) == (
+        "none",
+        False,
+        None,
+    )
+
+
+def test_a_held_switch_carries_its_reason(tmp_path: Path) -> None:
+    """A hold's reason reaches its row's pill, never as a suggestion (M7)."""
+    with _library(tmp_path, readable_current=False) as library:
+        # A synthetic hold over the stored stage the page reads.
+        library.repository._connection.execute(
+            "DROP TRIGGER cover_considerations_no_update"
+        )
+        library.repository._connection.execute(
+            "UPDATE cover_considerations SET currentness_document=json_set("
+            "currentness_document,'$.cover_stage.outcome','hold',"
+            "'$.cover_stage.reason','title_names_other_work')"
+        )
+        library.repository._connection.commit()
+        everything = _page(library.repository, "all", None)
+
+    (item,) = everything["items"]
+    assert item["hold"] == {"reason": "title_names_other_work"}
+    assert item["suggestion"] is None
+    assert item["group"] != "proposal"
 
 
 def test_switched_lists_listed_switches_newest_first_and_never_a_released_one(

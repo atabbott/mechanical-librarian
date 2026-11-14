@@ -10,7 +10,6 @@ import type { CoverPrepareFailure, RecordCoverPrepareFailure } from '../coverCho
 import {
   coverFaultLabel,
   coverNoteLabel,
-  coverReasonLine,
   coverReviewerLabel,
   coverSourceLabels,
   reviewerFailureCopy,
@@ -341,24 +340,12 @@ function LibraryCoverChoicesContent({
         .slice(0, 2)
     : []
   // The measured rules' stage (#1363): over a populated cover its choice is a
-  // suggestion, said with the fault that prompted it; a fill is recommended.
+  // suggestion, shown with the fault that prompted it; a fill is recommended.
   const stage = consideration.stage ?? null
   const audiobook = audioFileFormat(mediaKind) || mediaKind === 'audio'
   const suggesting =
     recommendedReference !== null && (stage?.outcome === 'suggest' || stage?.outcome === 'replace')
   const stageReason = stage?.reason ?? null
-  const suggestedCandidate = suggesting
-    ? candidates.find((candidate) => candidate.reference === recommendedReference)
-    : undefined
-  const suggestionLine =
-    suggesting && stageReason !== null
-      ? coverReasonLine(stageReason, {
-          audiobook,
-          before: incumbent ?? null,
-          after: suggestedCandidate ?? null,
-          language: stage.language,
-        })
-      : null
   const faultLabel =
     stageReason !== null && stage?.outcome !== 'fill'
       ? coverFaultLabel(stageReason, audiobook)
@@ -515,7 +502,7 @@ function LibraryCoverChoicesContent({
               excludedReason(candidate) === null ? null : (
                 <span className="choice-recommendation">{excludedReason(candidate)}</span>
               )
-            ) : recommended && context?.recommendationReason ? (
+            ) : recommended && !suggesting && context?.recommendationReason ? (
               <span className="choice-recommendation">{context.recommendationReason}</span>
             ) : null}
             {selected && progress?.phase === 'recording' ? <b>Recording…</b> : null}
@@ -575,7 +562,9 @@ function LibraryCoverChoicesContent({
       <header>
         <strong>
           {recommendedReference !== null
-            ? 'Recommended cover ready'
+            ? suggesting
+              ? 'Switch suggested'
+              : 'Recommended cover ready'
             : consideration.ready
               ? 'Cover choices ready'
               : consideration.providerFetching
@@ -584,15 +573,14 @@ function LibraryCoverChoicesContent({
         </strong>
         {faultLabel !== null ? <StatusPill tone="notice">{faultLabel}</StatusPill> : null}
         {/* The recommended card carries its own reason, so its header has no
-            caption (#1765), unless it is a suggestion, which says why. */}
-        {suggesting ? (
-          suggestionLine !== null ? (
-            <small>
-              {/* The reason line is a sentence; here it continues one. */}
-              Suggested because {suggestionLine.charAt(0).toLowerCase() + suggestionLine.slice(1)}
-            </small>
-          ) : null
-        ) : recommendedReference !== null ? null : (
+            caption (#1765); a suggestion's fault pill is its only reason. A
+            kept cover with a fault shows the pill alone, since "no fault" would
+            contradict it (#1363). */}
+        {recommendedReference !== null ||
+        (consideration.ready &&
+          !consideration.providerFetching &&
+          stage?.outcome === 'keep' &&
+          stageReason !== null) ? null : (
           <small>
             {consideration.providerFetching
               ? 'Covers found so far are shown. You can choose when the search finishes.'

@@ -22,11 +22,14 @@ const protections: readonly Segment<Protection>[] = [
   { value: 'unprotected', label: 'When another is preferred' },
   { value: 'proposals_only', label: 'Never' },
 ]
+// What each setting does today: no release has the qualification to replace
+// a cover automatically, so every replacement is a suggestion (ADR-0093).
 const protectionLines = {
-  protected: 'A cover with a fault is replaced automatically. Other covers are suggested.',
+  protected: 'A cover with a fault gets a suggested replacement. Other covers are kept.',
   unprotected:
-    'A preferred cover replaces the current one, including a cover you set in Audiobookshelf.',
-  proposals_only: 'Nothing is replaced automatically. A cover with a fault is suggested.',
+    'A cover gets a suggested replacement when another is preferred, including a cover you set in Audiobookshelf.',
+  proposals_only:
+    'Covers are never replaced automatically. A cover with a fault gets a suggested replacement.',
 } satisfies Record<Protection, string>
 const headingId = 'current-covers-heading'
 // A section's three states, in the shapes the other settings sections use:
@@ -140,6 +143,19 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
       focusAfterRetry(() => reloadButton.current)
     },
   })
+  // Another section's save moved the settings revision. With nothing unsaved
+  // here, the newer settings are taken as they are; only unsaved edits are
+  // stale, and say so (#1363).
+  if (
+    view.document.revision > base.revision &&
+    !changed &&
+    !unconfirmed &&
+    !mutation.isPending &&
+    !reload.isPending
+  ) {
+    setBase(view.document)
+    setDraft(draftOf(view.document.cover_preferences))
+  }
   const saveHeld = mutation.isPending || reload.isPending || !changed || staleLead !== null
   const editing = locked || mutation.isPending || reload.isPending || stale
   const edit = (next: Draft) => {

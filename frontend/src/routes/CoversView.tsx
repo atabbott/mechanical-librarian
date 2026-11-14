@@ -66,9 +66,11 @@ const byline = (work: CoverWorkView) =>
 const size = (cover: { width: number; height: number }) =>
   `${String(cover.width)} × ${String(cover.height)} px`
 const audiobook = (work: CoverWorkView) => ['m4b', 'm4a', 'mp3', 'audio'].includes(work.media_kind)
-/** The measured rule's reason a row carries: its switch, or its suggestion. */
+/** The measured rule's reason a row carries: its switch, its suggestion or its hold. */
 const rowFault = (work: CoverWorkView) =>
-  work.group === 'auto' ? (work.switched?.reason ?? null) : (work.suggestion?.reason ?? null)
+  work.group === 'auto'
+    ? (work.switched?.reason ?? null)
+    : (work.suggestion?.reason ?? work.hold?.reason ?? null)
 function FaultPill({ work }: { work: CoverWorkView }) {
   const fault = rowFault(work)
   const label = fault === null ? null : coverFaultLabel(fault, audiobook(work))

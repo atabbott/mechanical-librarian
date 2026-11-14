@@ -5583,8 +5583,44 @@ describe('Library route', () => {
       expect(within(ownerReadyComparison).queryByText(/· Recommended/u)).not.toBeInTheDocument()
     }
 
-    // Over a populated cover the stage's choice is a suggestion, said with its
-    // fault and the reason line (#1363).
+    // A kept cover with a fault shows the fault's pill and no caption: "no
+    // fault" would contradict the pill (#1363).
+    cleanup()
+    renderRoute('/library?lens=all&preview=case-1&field=cover', {
+      ...createHttp(),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        target: { ...detail.target, mediaKind },
+        fields: [
+          {
+            ...coverField,
+            coverConsideration: {
+              ...consideration,
+              providerFetching: false,
+              ready: true,
+              policy: {
+                ...consideration.policy,
+                recommended_candidate_reference: null,
+                status: 'abstained' as const,
+                reasons: ['below_floor'],
+              },
+              stage: { language: null, outcome: 'keep' as const, reason: 'below_floor' as const },
+            },
+          },
+        ],
+      })),
+    })
+    const keptWithFault = await screen.findByLabelText('Choose a cover')
+    expect(within(keptWithFault).getByText('Cover choices ready')).toBeVisible()
+    expect(within(keptWithFault).getByText('Under 300 px')).toBeVisible()
+    expect(keptWithFault.querySelector(':scope > header > small')).toBeNull()
+    expect(
+      within(keptWithFault).queryByText('The current cover has no fault, so it is kept.'),
+    ).not.toBeInTheDocument()
+
+    // Over a populated cover the stage's choice is a suggestion: "Switch
+    // suggested" with its fault's pill alone, and no settings line on its
+    // card (#1363 M2, M3).
     cleanup()
     renderRoute('/library?lens=all&preview=case-1&field=cover', {
       ...createHttp(),
@@ -5596,6 +5632,15 @@ describe('Library route', () => {
             ...coverField,
             coverConsideration: {
               ...recommended,
+              choiceContexts: recommended.choiceContexts.map((context) =>
+                context.alternativeId === recommended.policy.recommended_candidate_reference
+                  ? {
+                      ...context,
+                      recommendation: 'recommended' as const,
+                      recommendationReason: 'Your cover settings choose this cover.',
+                    }
+                  : context,
+              ),
               stage: {
                 language: null,
                 outcome: 'suggest' as const,
@@ -5607,10 +5652,14 @@ describe('Library route', () => {
       })),
     })
     const suggested = await screen.findByLabelText('Choose a cover')
+    expect(within(suggested).getByText('Switch suggested')).toBeVisible()
+    expect(within(suggested).queryByText('Recommended cover ready')).not.toBeInTheDocument()
     expect(within(suggested).getByText('Under 300 px')).toBeVisible()
-    expect(suggested.querySelector(':scope > header > small')).toHaveTextContent(
-      /^Suggested because the cover was \d+ × \d+ px, under 300 px on its short side\.$/u,
-    )
+    expect(suggested.querySelector(':scope > header > small')).toBeNull()
+    expect(within(suggested).queryByText(/^Suggested because/u)).not.toBeInTheDocument()
+    expect(
+      within(suggested).queryByText('Your cover settings choose this cover.'),
+    ).not.toBeInTheDocument()
     expect(
       within(suggested)
         .getByRole('radio', { name: 'Choose Open Library cover, 800 × 1200 px (2)' })

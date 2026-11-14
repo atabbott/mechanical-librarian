@@ -5104,6 +5104,29 @@
         "title": "_CoverQualification",
         "type": "object"
       },
+      "_CoverRuleReason": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "enum": [
+              "title_names_other_work",
+              "unreadable",
+              "wrong_shape",
+              "below_floor",
+              "edition_language",
+              "sharper_copy",
+              "edition_preference"
+            ],
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "_CoverRuleReason",
+        "type": "object"
+      },
       "_CoverStage": {
         "additionalProperties": false,
         "properties": {
@@ -5261,29 +5284,6 @@
         "title": "_CoverStageGroup",
         "type": "object"
       },
-      "_CoverSuggestion": {
-        "additionalProperties": false,
-        "properties": {
-          "reason": {
-            "enum": [
-              "title_names_other_work",
-              "unreadable",
-              "wrong_shape",
-              "below_floor",
-              "edition_language",
-              "sharper_copy",
-              "edition_preference"
-            ],
-            "title": "Reason",
-            "type": "string"
-          }
-        },
-        "required": [
-          "reason"
-        ],
-        "title": "_CoverSuggestion",
-        "type": "object"
-      },
       "_CoverSwitch": {
         "additionalProperties": false,
         "properties": {
@@ -5400,6 +5400,16 @@
             "title": "Group",
             "type": "string"
           },
+          "hold": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_CoverRuleReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "media_kind": {
             "enum": [
               "epub",
@@ -5419,7 +5429,7 @@
           "suggestion": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/_CoverSuggestion"
+                "$ref": "#/components/schemas/_CoverRuleReason"
               },
               {
                 "type": "null"
@@ -5450,6 +5460,7 @@
           "choosable",
           "cover",
           "group",
+          "hold",
           "media_kind",
           "review_case_id",
           "suggestion",

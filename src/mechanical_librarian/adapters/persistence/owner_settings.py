@@ -14,6 +14,9 @@ from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.preparation_presentation import (
     reconcile_preparation_library_additions,
 )
+from mechanical_librarian.adapters.persistence.review_scans import (
+    request_cover_preparation,
+)
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
     local_operation,
@@ -200,6 +203,8 @@ class OwnerSettingsStore(ConnectionScoped):
             )
             if previous.description_advice != document.description_advice:
                 request_description_preparation(self._connection, accepted_at)
+            if previous.cover_preferences != document.cover_preferences:
+                request_cover_preparation(self._connection, accepted_at)
             committed = _settings_view(document, values)
             transaction.commit()
         except OwnerSettingsError:

@@ -14,7 +14,7 @@ import json
 import os
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -37,15 +37,18 @@ from mechanical_librarian.adapters.field_effect_fakes import (
 from mechanical_librarian.adapters.field_effect_runtime import PersistedEffectConsent
 from mechanical_librarian.adapters.operational_evidence import SupportBundle
 from mechanical_librarian.adapters.persistence import retained_covers
+from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
     open_repository,
 )
+from mechanical_librarian.adapters.retained_covers import RetainedCoverStore
 from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
 )
 from mechanical_librarian.application.cover_policy import CoverPolicy
+from mechanical_librarian.application.cover_retention import CoverRetention
 from mechanical_librarian.application.field_effects import GuardedFieldApplication
 from mechanical_librarian.application.operations import support_preparation_incidents
 from mechanical_librarian.application.owner_settings import OwnerSettingsOperations
@@ -67,7 +70,7 @@ from mechanical_librarian.domain.metadata_policy import (
 )
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
-from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from tests.support.audiobook_covers import SYNTHETIC_MEASURED_RECORD
 from tests.support.field_effects import CAPABILITY, Clock
@@ -85,6 +88,7 @@ class _Prepared:
     repository: SQLiteMetadataReportRepository
     report: MetadataReport
     review_case_id: str
+    proposal: ProposalSet
 
 
 def _selections(repository: SQLiteMetadataReportRepository) -> list[dict[str, Any]]:
@@ -166,7 +170,7 @@ def _prepared(root: Path) -> Iterator[_Prepared]:
         case_id = repository._connection.execute(
             "SELECT review_case_id FROM review_preparation_work WHERE item_id='item-1'"
         ).fetchone()[0]
-        yield _Prepared(root, repository, report, case_id)
+        yield _Prepared(root, repository, report, case_id, proposal)
     finally:
         supervisor.stop()
         repository.close()
@@ -215,6 +219,16 @@ def _planned(
         snapshot.connection, (snapshot.library,), (snapshot.destination,), 10
     )
     target = FakeTargetService()
+    # The recovery copy is the current cover's own original, which the switch
+    # keeps for Put back as composition does.
+    originals = CoverArtifactStore(prepared.root / "artifacts")
+    recovery = PrivateCoverRecoveryStore(
+        prepared.root / "recovery",
+        lambda plan: originals.read_original_digest(
+            str(plan.pre_value).removeprefix("cover_")
+        ),
+    )
+    clock = Clock()
     application = GuardedFieldApplication(
         prepared.repository,
         target,
@@ -223,14 +237,18 @@ def _planned(
         authority,
         FakeDependencyCurrentness(),
         PersistedEffectConsent(prepared.repository),
-        PrivateCoverRecoveryStore(
-            prepared.root / "recovery", lambda _plan: b"incumbent-original"
-        ),
+        recovery,
         FakeForwardReevaluation(),
-        Clock(),
+        clock,
         FakePreclaimHook(),
         FakePreclaimHook(),
         FakePreclaimHook(),
+        cover_retention=CoverRetention(
+            RetainedCoverStore(prepared.root / "retained-covers"),
+            prepared.repository,
+            recovery.read,
+            clock,
+        ),
     )
     operation = application.plan(
         automatic,
@@ -270,6 +288,41 @@ def _settings(revision: int, protection: str) -> OwnerSettingsDocument:
     )
 
 
+def _owner_settings_application(
+    repository: SQLiteMetadataReportRepository, service: CoverConsiderationService
+) -> Any:
+    """Store protected Current covers settings and serve their owner writes."""
+    initial = _settings(1, "protected")
+    repository._connection.execute(
+        "INSERT INTO owner_settings VALUES(1,?,?)",
+        (initial.revision, _canonical_json(initial.model_dump())),
+    )
+    repository._connection.executemany(
+        "INSERT INTO owner_setting_secrets VALUES(?,?)",
+        (
+            ("connection.primary.key", "target-secret-1234"),
+            ("owner.password.verifier", "$argon2id$synthetic"),
+        ),
+    )
+    repository._connection.commit()
+    return compose_review_application(
+        state_owner=cast("Any", repository),
+        session_store=cast("Any", repository),
+        case_store=repository,
+        decision_store=repository,
+        library_store=repository,
+        policy_store=repository,
+        verify_password=lambda _: True,
+        session_digest=lambda token: hashlib.sha256(token.encode()).hexdigest(),
+        client_digest=lambda value: hashlib.sha256(value.encode()).hexdigest(),
+        clock=lambda: 20,
+        session_lifetime_seconds=600,
+        graceful_shutdown_seconds=30,
+        settings=OwnerSettingsOperations(repository.owner_settings_store()),
+        cover_considerations=service,
+    )
+
+
 def test_a_current_covers_change_stales_an_admitted_switch_before_it_writes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -290,38 +343,10 @@ def test_a_current_covers_change_stales_an_admitted_switch_before_it_writes(
             "outcome": "replace",
             "reason": "below_floor",
         }
-        initial = _settings(1, "protected")
-        repository._connection.execute(
-            "INSERT INTO owner_settings VALUES(1,?,?)",
-            (initial.revision, _canonical_json(initial.model_dump())),
-        )
-        repository._connection.executemany(
-            "INSERT INTO owner_setting_secrets VALUES(?,?)",
-            (
-                ("connection.primary.key", "target-secret-1234"),
-                ("owner.password.verifier", "$argon2id$synthetic"),
-            ),
-        )
-        repository._connection.commit()
         service = _service(prepared)
         authority = PersistedFieldEffectAuthority(repository)
         assert authority.current(operation.plan.authority)
-        review = compose_review_application(
-            state_owner=cast("Any", repository),
-            session_store=cast("Any", repository),
-            case_store=repository,
-            decision_store=repository,
-            library_store=repository,
-            policy_store=repository,
-            verify_password=lambda _: True,
-            session_digest=lambda token: hashlib.sha256(token.encode()).hexdigest(),
-            client_digest=lambda value: hashlib.sha256(value.encode()).hexdigest(),
-            clock=lambda: 20,
-            session_lifetime_seconds=600,
-            graceful_shutdown_seconds=30,
-            settings=OwnerSettingsOperations(repository.owner_settings_store()),
-            cover_considerations=service,
-        )
+        review = _owner_settings_application(repository, service)
 
         review.write_owner_settings(_settings(2, "proposals_only"), 1, ())
 
@@ -365,11 +390,133 @@ def test_a_current_covers_change_stales_an_admitted_switch_before_it_writes(
         )
 
 
-def test_a_written_switch_keeps_its_selection_after_a_current_covers_change(
+def test_a_current_covers_save_prepares_each_cover_again(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The control for the revocation above: a switch that was written happened,
-    # so preparing the work again under a changed setting keeps its selection.
+    """The save asks for a scan, and the scan compares the cover again (#1363)."""
+    monkeypatch.setattr(
+        cover_qualification_policy,
+        "MEASURED_REPLACEMENT_QUALIFICATION_SHA256",
+        SYNTHETIC_MEASURED_RECORD,
+    )
+    scan_sql = (
+        "SELECT state,requested_at FROM review_preparation_scans "
+        "WHERE connection_name='primary' AND library_name='ebooks'"
+    )
+    with _prepared(tmp_path) as prepared:
+        repository = prepared.repository
+        before = repository.current_cover_consideration_document(
+            prepared.review_case_id
+        )
+        assert before is not None
+        assert (_stage(before)["outcome"], _stage(before)["reason"]) == (
+            "replace",
+            "below_floor",
+        )
+        assert repository._connection.execute(scan_sql).fetchall() == [
+            ("completed", 10)
+        ]
+        review = _owner_settings_application(repository, _service(prepared))
+
+        review.write_owner_settings(_settings(2, "proposals_only"), 1, ())
+
+        # The save itself queued a scan of the library with a prepared cover.
+        assert repository._connection.execute(scan_sql).fetchall() == [("queued", 20)]
+        # Preparation as composition builds it under the saved settings.
+        configured = _pipeline_configuration()
+        assert configured.review is not None
+        configuration = replace(
+            configured,
+            review=replace(
+                configured.review, cover_current_protection="proposals_only"
+            ),
+        )
+        recovery = composition.SQLiteProviderRecoveryStore.open(
+            tmp_path / "provider-recovery-2.sqlite"
+        )
+        supervisor = composition.create_review_pipeline(
+            configuration,
+            tmp_path / "reports.sqlite",
+            tmp_path / "catalogue.sqlite",
+            tmp_path / "artifacts",
+            _test_reviewer_access(repository),
+            database_authority=repository.authority,
+            provider_recovery=recovery,
+        )
+        reference = CoverPolicy(current_protection="proposals_only").reference
+        try:
+            assert supervisor._pipeline._cover_policy_reference == reference
+            with patch.object(composition, "run_cover_packet_reviewer"):
+                pipeline = _run_qualified_cover_pipeline(
+                    repository,
+                    tmp_path,
+                    prepared.report,
+                    prepared.proposal,
+                    supervisor,
+                    cover_policy_reference=reference,
+                )
+                for _ in range(64):
+                    if not pipeline.run_next(1):
+                        break
+                else:
+                    pytest.fail("cover pipeline did not reach a terminal state")
+        finally:
+            supervisor.stop()
+            recovery.close()
+        after = repository.current_cover_consideration_document(prepared.review_case_id)
+        assert after is not None
+        assert json.loads(after)["policy_reference"] == reference
+        assert (_stage(after)["outcome"], _stage(after)["reason"]) == (
+            "suggest",
+            "below_floor",
+        )
+        # The same catalogue facts, so the work was not read again.
+        assert repository._connection.execute(
+            "SELECT stage,state,review_case_id FROM review_preparation_work"
+        ).fetchall() == [("complete", "complete", prepared.review_case_id)]
+
+
+def _started(
+    state: str,
+    application: GuardedFieldApplication,
+    operation: FieldEffectOperation,
+    target: FakeTargetService,
+    repository: SQLiteMetadataReportRepository,
+) -> None:
+    """Leave the switch's write in ``state``."""
+    plan_id = operation.plan.plan_id
+    target.seed(operation.plan)
+    if state == "verified":
+        assert application.apply(plan_id).state == "verified"
+    elif state == "may_have_landed":
+        # The request reached Audiobookshelf and changed the cover, but no
+        # answer came back (#1402).
+        def lost_answer(_plan: object) -> None:
+            raise RuntimeError("synthetic lost answer")
+
+        target.after_apply = lost_answer
+        retried = application.apply(plan_id)
+        assert (retried.state, retried.failure) == ("retryable", "target_failure")
+        assert target.read(operation.plan).value == operation.plan.desired_value
+    else:
+        repository.claim_field_effect(plan_id, "planned", "c" * 64, 11)
+        if state == "reconciling":
+            repository.transition_field_effect(plan_id, "claimed", "applying", 12)
+            repository.schedule_field_effect_reconciliation(plan_id, "applying", 13)
+    assert repository.get_field_effect(plan_id).state == (
+        "retryable" if state == "may_have_landed" else state
+    )
+
+
+@pytest.mark.parametrize(
+    "state", ("claimed", "reconciling", "may_have_landed", "verified")
+)
+def test_a_started_write_keeps_its_selection_after_a_current_covers_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state: str
+) -> None:
+    # The control for the revocation above: a switch whose write started may
+    # have happened, so preparing the work again under a changed setting keeps
+    # its selection.
     monkeypatch.setattr(
         cover_qualification_policy,
         "MEASURED_REPLACEMENT_QUALIFICATION_SHA256",
@@ -378,8 +525,7 @@ def test_a_written_switch_keeps_its_selection_after_a_current_covers_change(
     with _prepared(tmp_path) as prepared:
         application, operation, target = _planned(prepared)
         service = _service(prepared)
-        target.seed(operation.plan)
-        assert application.apply(operation.plan.plan_id).state == "verified"
+        _started(state, application, operation, target, prepared.repository)
         (written,) = _selections(prepared.repository)
         service.update_policy(CoverPolicy(current_protection="proposals_only"))
         after = _reprepare(service, prepared)
@@ -389,21 +535,72 @@ def test_a_written_switch_keeps_its_selection_after_a_current_covers_change(
         assert _selections(prepared.repository) == [written]
 
 
+def test_a_write_that_landed_is_verified_not_staled_by_a_current_covers_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The live policy moved after a write that may have landed. Its retry
+    # reads Audiobookshelf before refusing for authority: the cover changed,
+    # so the switch is recorded as verified and its original stays kept for
+    # Put back, instead of being staled and released (#1363, #1402).
+    monkeypatch.setattr(
+        cover_qualification_policy,
+        "MEASURED_REPLACEMENT_QUALIFICATION_SHA256",
+        SYNTHETIC_MEASURED_RECORD,
+    )
+    with _prepared(tmp_path) as prepared:
+        repository = prepared.repository
+        application, operation, target = _planned(prepared)
+        service = _service(prepared)
+        _started("may_have_landed", application, operation, target, repository)
+        service.update_policy(CoverPolicy(current_protection="proposals_only"))
+        authority = PersistedFieldEffectAuthority(repository)
+        assert not authority.current(operation.plan.authority)
+        assert application.apply(operation.plan.plan_id).state == "verified"
+        assert repository._connection.execute(
+            "SELECT count(*) FROM retained_cover_removals WHERE plan_id=?",
+            (operation.plan.plan_id,),
+        ).fetchone() == (0,)
+        assert repository._connection.execute(
+            "SELECT count(*) FROM retained_cover_listings WHERE plan_id=?",
+            (operation.plan.plan_id,),
+        ).fetchone() == (1,)
+        # A retry that did not land is still refused for authority.
+        assert len(_selections(repository)) == 1
+
+
 @pytest.mark.parametrize(
-    ("entries", "admitted"),
-    # At the bound the original could not be kept, so the switch is only a
-    # suggestion; one below it is admitted (#1363 Q7).
-    ((0, False), (1, True)),
+    ("bound", "room", "admitted"),
+    # At either bound the original could not be kept, so the switch is only a
+    # suggestion; with room for one more original it is admitted (#1363 Q7).
+    # The store is empty: an entries bound of 0 is full and 1 has room, and a
+    # byte bound one byte short of the largest original is full.
+    (
+        ("entries", 0, False),
+        ("entries", 1, True),
+        ("bytes", -1, False),
+        ("bytes", 0, True),
+    ),
 )
 def test_the_retained_store_bound_decides_whether_a_switch_is_admitted(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, entries: int, admitted: bool
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    bound: str,
+    room: int,
+    admitted: bool,
 ) -> None:
     monkeypatch.setattr(
         cover_qualification_policy,
         "MEASURED_REPLACEMENT_QUALIFICATION_SHA256",
         SYNTHETIC_MEASURED_RECORD,
     )
-    monkeypatch.setattr(retained_covers, "MAXIMUM_RETAINED_ENTRIES", entries)
+    if bound == "entries":
+        monkeypatch.setattr(retained_covers, "MAXIMUM_RETAINED_ENTRIES", room)
+    else:
+        monkeypatch.setattr(
+            retained_covers,
+            "MAXIMUM_RETAINED_BYTES",
+            retained_covers.MAXIMUM_ORIGINAL_BYTES + room,
+        )
     with _prepared(tmp_path) as prepared:
         repository = prepared.repository
         document = repository.current_cover_consideration_document(

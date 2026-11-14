@@ -1289,7 +1289,7 @@ class _CoverSwitch(_ClosedModel):
     reason: _CoverStageReason | None
 
 
-class _CoverSuggestion(_ClosedModel):
+class _CoverRuleReason(_ClosedModel):
     reason: _CoverStageReason
 
 
@@ -1298,10 +1298,12 @@ class _CoverWork(_ClosedModel):
     choosable: bool
     cover: _CoverPreview | None
     group: Literal["proposal", "choice", "kept", "auto", "none"]
+    # Why the measured rules hold this cover's switch (#1363).
+    hold: _CoverRuleReason | None
     media_kind: _MediaKind
     review_case_id: str
     # Why the measured rules suggest switching this cover (#1363).
-    suggestion: _CoverSuggestion | None
+    suggestion: _CoverRuleReason | None
     switched: _CoverSwitch | None
     title: str
     # The library holds a cover that could not be read, as against no cover.
