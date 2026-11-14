@@ -302,10 +302,12 @@ def _prepared(
 
     def project(repository: ReviewPipelineRepository, action: Any) -> str:
         concrete = cast(SQLiteMetadataReportRepository, repository)
-        # As ReviewPipelineStages.project does.
+        # As ReviewPipelineStages.project does: Book matching first (#1355).
         if type(action) is str:
+            concrete.reconcile_case_level(action, now[0])
             outcome = concrete.persist_shadow_outcome(action, now[0])
         else:
+            concrete.reconcile_case_level(action.review_case_id, now[0])
             outcome = concrete.persist_shadow_outcome(
                 action.review_case_id, now[0], staged_action=action
             )

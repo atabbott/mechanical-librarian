@@ -540,6 +540,8 @@ class ReviewPipelineRepository(Protocol):
 
     def rollback_review_pipeline_output(self) -> None: ...
 
+    def reconcile_case_level(self, review_case_id: str, reconciled_at: int) -> str: ...
+
     def persist_shadow_outcome(
         self,
         review_case_id: str,

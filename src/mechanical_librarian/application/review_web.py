@@ -296,6 +296,9 @@ class CurrentReviewCaseSnapshot:
     # The case's level offer at the level it was last reconciled at, or None
     # when its fields offer their live proposals (#1355, S10).
     level_offer_document: str | None = None
+    # Whether the case waits for its Book matching check: its reconciled
+    # level is not the configured one (#1355, S10).
+    checking: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -559,6 +562,8 @@ class HumanDecisionStore(CurrentReviewCaseStore, Protocol):
 
     def find_human_decision(self, idempotency_digest: str) -> str | None: ...
     def review_case_level_offer(self, review_case_id: str) -> str | None: ...
+    def require_reconciled_case(self, review_case_id: str, refused_at: int) -> None: ...
+    def review_case_checking(self, review_case_id: str) -> bool: ...
     def previous_field_values(
         self, connection: str, library: str, work_id: str
     ) -> tuple[tuple[str, object], ...]: ...
@@ -1122,6 +1127,10 @@ class InspectCurrentReviewCase:
             {
                 "comparison_notices": _provider_comparison_notices(report),
                 "current": True,
+                # The case waits for its Book matching check: choices are
+                # refused and owner writes wait until it is reconciled at the
+                # configured level (#1355, S10).
+                "checking": snapshot.checking,
                 "fields": fields,
                 # An admitted audiobook opens its case, not its report, so the
                 # media-health section has to reach the owner here too -- and
@@ -1809,6 +1818,17 @@ class RecordHumanDecision:
             ):
                 raise ReviewWebError("stale")
             case = ReviewCase.create_from_data(raw["case"])
+            # A case waiting for its Book matching check refuses every
+            # decision, cover included, and asks for that check again (#1355,
+            # amendments 4 and 15); the store checks again inside the write.
+            # The clock is this layer's own, so its fault is not the store's.
+            refused_at = self._clock()
+            try:
+                self._repository.require_reconciled_case(review_case_id, refused_at)
+            except HumanDecisionError:
+                raise
+            except Exception as error:
+                raise ReviewWebError("persistence") from error
             try:
                 ready_at = self._repository.review_case_ready_at(review_case_id)
             except Exception:

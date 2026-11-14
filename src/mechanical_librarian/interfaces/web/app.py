@@ -827,6 +827,9 @@ class _CaseDetailResponse(_ClosedModel):
     audiobook_review_scope: Literal["work", "recording"] | None
     comparison_notices: list[str]
     current: bool
+    # The case waits for its Book matching check: choices are refused and
+    # owner writes wait until it is reconciled (#1355, S10).
+    checking: bool
     fields: list[_ReviewField]
     # The same section the recorded-evidence view carries, under the same
     # bound: a work with a review case is the one an owner opens first, and a
@@ -1577,9 +1580,14 @@ class _ActivityEvent(_ClosedModel):
     )
     library: str = Field(max_length=512)
     # What current state adds to a row without changing its result: an owner
-    # choice that no longer counts, so the field asks again, or a planned
-    # automatic write held while Automatic is off (#1711).
-    note: Literal["asked_again", "held_back"] | None = None
+    # choice that no longer counts, so the field asks again (after the work
+    # came back, or after Book matching changed its offer), a planned
+    # automatic write held while Automatic is off (#1711), or a planned owner
+    # write waiting for its work's Book matching check (#1355).
+    note: (
+        Literal["asked_again", "asked_again_matching", "held_back", "waiting_for_check"]
+        | None
+    ) = None
     occurred_at: int | None = Field(default=None, ge=0)
     origin: str = Field(max_length=512)
     state: str = Field(max_length=512)

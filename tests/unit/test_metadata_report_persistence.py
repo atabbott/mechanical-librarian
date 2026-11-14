@@ -941,6 +941,7 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
                 "DROP TABLE level_decision_notes;"
                 "DROP TABLE level_proposal_sets;"
                 "DROP TABLE review_case_level_reconciliation;"
+                "ALTER TABLE review_preparation_control DROP COLUMN work_identity_level;"
             )
             rows = repository._connection.execute(
                 "SELECT type,name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"
@@ -2726,6 +2727,7 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
                     "DROP TABLE level_decision_notes;"
                     "DROP TABLE level_proposal_sets;"
                     "DROP TABLE review_case_level_reconciliation;"
+                    "ALTER TABLE review_preparation_control DROP COLUMN work_identity_level;"
                 )
             else:
                 # The v20 producer predates #1358's case episodes, #1310's
@@ -2740,6 +2742,7 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
                     "DROP TABLE level_decision_notes;"
                     "DROP TABLE level_proposal_sets;"
                     "DROP TABLE review_case_level_reconciliation;"
+                    "ALTER TABLE review_preparation_control DROP COLUMN work_identity_level;"
                     "DROP INDEX metadata_policy_resolutions_resolved;"
                     "CREATE INDEX metadata_policy_resolutions_resolved "
                     "ON metadata_policy_resolutions(library_name,resolved_policy_id,generation);"

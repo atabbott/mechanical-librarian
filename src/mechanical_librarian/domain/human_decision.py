@@ -27,6 +27,7 @@ from mechanical_librarian.domain.review_case import (
     review_proposals,
 )
 from mechanical_librarian.domain.validation import owner_text_value
+from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 
 _IDEMPOTENCY_KEY = re.compile(r"^[A-Za-z0-9._:-]{16,128}$")
 # ``reject`` is readable history only; the last two are F59's owner commands
@@ -68,6 +69,7 @@ OFFER_CHANGED_REASONS = frozenset({"unreconciled_case", "digest_mismatch"})
 # A cover choice binds its consideration, not this digest (AC16).
 _UNBOUND_OFFER_DESTINATIONS = frozenset({"cover"})
 _DIGEST = re.compile(r"[0-9a-f]{64}")
+_WORK_IDENTITY_LEVELS = frozenset(level.value for level in WorkIdentityLevel)
 
 
 OFFER_DIGEST_SCHEMA = "offered-alternatives-v1"
@@ -886,6 +888,63 @@ class HumanDecision:
             case.review_case_id,
             case.target_fingerprint,
             (offered,),
+            applications=admitted_applications(case.media_kind),
+        )
+        return value
+
+    @classmethod
+    def matching_changed(
+        cls,
+        case: ReviewCase,
+        superseded: HumanDecision,
+        level: str,
+        offer: tuple[dict[str, object], ...],
+        occurred_at: int,
+    ) -> Self:
+        """The valueless row that asks a field again (#1355, amendment 3).
+
+        Book matching's reconciliation appends it when the field's offer at
+        ``level`` is no longer the one ``superseded`` was chosen in. It
+        carries no value and binds the new offer's digest; one row exists per
+        superseded choice and level, so a replayed reconciliation forms the
+        same idempotency digest.
+        """
+        if (
+            type(superseded) is not cls
+            or superseded.review_case_id != case.review_case_id
+            or superseded.cause is not None
+            or superseded.destination in _UNBOUND_OFFER_DESTINATIONS
+            or level not in _WORK_IDENTITY_LEVELS
+            or type(occurred_at) is not int
+            or occurred_at < 0
+        ):
+            raise HumanDecisionError("invalid")
+        proposal = next(
+            (
+                value
+                for value in case.proposals
+                if value["destination"] == superseded.destination
+            ),
+            None,
+        )
+        if proposal is None:
+            raise HumanDecisionError("stale")
+        value = cls._formed(
+            case.review_case_id,
+            cast("str", proposal["proposal_id"]),
+            case.target_fingerprint,
+            superseded.destination,
+            "withdraw",
+            None,
+            _sha256(f"matching-changed-v1:{superseded.decision_id}:{level}"),
+            occurred_at,
+            offer_digest(offer, superseded.destination),
+            "matching_changed",
+        )
+        value._validate_for(
+            case.review_case_id,
+            case.target_fingerprint,
+            (offer,),
             applications=admitted_applications(case.media_kind),
         )
         return value

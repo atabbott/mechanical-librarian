@@ -46,6 +46,10 @@ from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.field_effect_validation import (
     _validate_field_effect_state,
 )
+from mechanical_librarian.adapters.persistence.level_sql import (
+    _reconciled_level_sql,
+    _unreconciled_case_sql,
+)
 from mechanical_librarian.adapters.persistence.owner_settings import (
     _validate_owner_settings_content,
 )
@@ -454,20 +458,62 @@ def _policy_settles_choice_sql(proposal_set: str) -> str:
 # One alternative only one source states, with nothing to corroborate it: the
 # choice stays the owner's but is not queued, because residual uncertainty
 # alone does not justify asking (#1310). The case page reads the same shape.
-_SINGLE_SOURCE_CHOICE_SQL = (
-    "(json_extract(result.value,'$.outcome')='unresolved_choice' "
-    "AND json_array_length(json_extract(result.value,'$.reasons'))=1 "
-    "AND json_extract(result.value,'$.reasons[0]')="
-    "'insufficient_independent_corroboration' "
-    "AND (SELECT count(*) FROM json_each(result.value,'$.alternatives') single_source "
-    "WHERE json_extract(single_source.value,'$.assessment')<>'preserves_target')=1 "
-    "AND NOT EXISTS (SELECT 1 FROM json_each(result.value,'$.alternatives') single_source "
-    "WHERE json_extract(single_source.value,'$.assessment')<>'preserves_target' "
-    "AND json_array_length(json_extract(single_source.value,'$.correlations'))>=2))"
-)
+def _single_source_choice_sql(alternatives: str) -> str:
+    return (
+        "(json_extract(result.value,'$.outcome')='unresolved_choice' "
+        "AND json_array_length(json_extract(result.value,'$.reasons'))=1 "
+        "AND json_extract(result.value,'$.reasons[0]')="
+        "'insufficient_independent_corroboration' "
+        f"AND (SELECT count(*) FROM json_each({alternatives}) single_source "
+        "WHERE json_extract(single_source.value,'$.assessment')<>'preserves_target')=1 "
+        f"AND NOT EXISTS (SELECT 1 FROM json_each({alternatives}) single_source "
+        "WHERE json_extract(single_source.value,'$.assessment')<>'preserves_target' "
+        "AND json_array_length(json_extract(single_source.value,'$.correlations'))>=2))"
+    )
 
 
-def _review_case_field_fact_values_sql(case_document: str) -> str:
+_LIVE_ALTERNATIVES_SQL = "result.value,'$.alternatives'"
+_SINGLE_SOURCE_CHOICE_SQL = _single_source_choice_sql(_LIVE_ALTERNATIVES_SQL)
+
+
+def _offered_alternatives_sql(review_case_id: str) -> str:
+    """A field's offered alternatives: its case's current level offer's, or live.
+
+    The works list and attention count a field as the owner's by what the
+    case page offers (#1355, amendment 14), so a field that gains level
+    alternatives where live had none asks the owner. The offer is the one at
+    the level the case was last reconciled at, marker first, as
+    ``current_level_offer`` reads it; no offer there means the live
+    proposal's alternatives.
+    """
+    return (
+        "COALESCE((SELECT json_extract(offered_field.value,'$.alternatives') "
+        "FROM review_case_level_offers offered_offer,"
+        "json_each(offered_offer.document,'$.fields') offered_field "
+        f"WHERE offered_offer.review_case_id={review_case_id} "
+        "AND offered_offer.work_identity_level="
+        + _reconciled_level_sql(review_case_id)
+        + " AND json_extract(offered_field.value,'$.destination')="
+        "json_extract(result.value,'$.destination')),"
+        "json_extract(result.value,'$.alternatives'))"
+    )
+
+
+def _review_case_field_fact_values_sql(
+    case_document: str, *, offered: bool = False
+) -> str:
+    """One case result's field facts; ``offered`` reads its current offer.
+
+    The insert trigger runs before any level offer of the case exists, so it
+    reads the live alternatives; every later derivation reads the offer.
+    """
+    alternatives = (
+        _offered_alternatives_sql(
+            case_document.removesuffix(".document") + ".review_case_id"
+        )
+        if offered
+        else _LIVE_ALTERNATIVES_SQL
+    )
     return (
         "json_extract(result.value,'$.destination'),"
         "CASE WHEN json_extract(result.value,'$.outcome')='unresolved_choice' "
@@ -475,7 +521,7 @@ def _review_case_field_fact_values_sql(case_document: str) -> str:
         "WHERE reason.value='work_alternative_immaterial' OR ("
         "json_extract(result.value,'$.destination')='cover' "
         "AND reason.value='current_cover_verified')) AND NOT "
-        + _SINGLE_SOURCE_CHOICE_SQL
+        + _single_source_choice_sql(alternatives)
         + " AND NOT "
         + _policy_settles_choice_sql(
             case_document.removesuffix(".document") + ".proposal_set_id"
@@ -498,7 +544,7 @@ def _review_case_field_fact_values_sql(case_document: str) -> str:
         "WHERE json_extract(sibling.value,'$.destination') IN ('title','subtitle','series') "
         "AND json_array_length(json_extract(sibling.value,'$.reasons'))=1 "
         "AND json_extract(sibling.value,'$.reasons[0]')='no_safe_bibliographic_combination'))) "
-        "AND EXISTS (SELECT 1 FROM json_each(result.value,'$.alternatives') alternative "
+        f"AND EXISTS (SELECT 1 FROM json_each({alternatives}) alternative "
         "WHERE json_extract(alternative.value,'$.assessment')<>'preserves_target') "
         "THEN 1 ELSE 0 END"
     )
@@ -532,12 +578,35 @@ def refresh_policy_settled_field_facts(
         "INSERT INTO review_case_field_facts(review_case_id,destination,"
         "unresolved_choice,manual_bibliographic_attention,has_owner_decision_actions) "
         "SELECT rc.review_case_id,"
-        + _review_case_field_fact_values_sql("rc.document")
+        + _review_case_field_fact_values_sql("rc.document", offered=True)
         + " FROM review_cases rc JOIN proposal_set_browse_facts policy "
         "ON policy.proposal_set_id=rc.proposal_set_id,"
         "json_each(rc.document,'$.results') result "
         "WHERE policy.resolved_policy_id=?",
         (resolved_policy_id,),
+    )
+
+
+def refresh_offered_field_facts(
+    connection: sqlite3.Connection, review_case_id: str
+) -> None:
+    """Re-derive one case's field facts from its current offer (#1355).
+
+    Call this inside the transaction that reconciles the case to another
+    Book matching level; the facts' own triggers refresh attention.
+    """
+    connection.execute(
+        "DELETE FROM review_case_field_facts WHERE review_case_id=?",
+        (review_case_id,),
+    )
+    connection.execute(
+        "INSERT INTO review_case_field_facts(review_case_id,destination,"
+        "unresolved_choice,manual_bibliographic_attention,has_owner_decision_actions) "
+        "SELECT rc.review_case_id,"
+        + _review_case_field_fact_values_sql("rc.document", offered=True)
+        + " FROM review_cases rc,json_each(rc.document,'$.results') result "
+        "WHERE rc.review_case_id=?",
+        (review_case_id,),
     )
 
 
@@ -622,7 +691,11 @@ _REVIEW_CONTROL_SQL = (
     "claim_sequence INTEGER NOT NULL CHECK(claim_sequence>=0), "
     "first_boot_acknowledged INTEGER NOT NULL CHECK(first_boot_acknowledged IN (0,1)), "
     "last_library TEXT CHECK(last_library IS NULL OR (typeof(last_library)='text' AND length(CAST(last_library AS BLOB)) BETWEEN 1 AND 64 AND last_library NOT GLOB '*[^a-z0-9_-]*' AND substr(last_library,1,1) GLOB '[a-z]')), circuit_failures INTEGER NOT NULL CHECK(circuit_failures BETWEEN 0 AND 3), "
-    "circuit_open_until INTEGER NOT NULL CHECK(circuit_open_until>=0), updated_at INTEGER NOT NULL CHECK(updated_at>=0))"
+    "circuit_open_until INTEGER NOT NULL CHECK(circuit_open_until>=0), updated_at INTEGER NOT NULL CHECK(updated_at>=0), "
+    # The Book matching level every case is reconciled to (#1355, S10): the
+    # gates read it, so a case reconciled at another level waits for its check.
+    "work_identity_level TEXT NOT NULL DEFAULT 'identifier' CHECK(work_identity_level IN "
+    "('identifier','title_and_creator_exact','title_and_creator')))"
 )
 _REVIEW_PREPARATION_PRESENTATION_WORK_SHAPE_SQL = "(row_kind='work' AND row_id='work:'||work_id AND scan_id IS NOT NULL AND connection_name IS NULL AND library_name IS NULL AND cycle_id IS NOT NULL AND pending_cycle_id IS NULL AND cycle_state IS NULL AND work_id IS NOT NULL AND ordinal IS NOT NULL AND trigger_ordinal IS NULL AND enrollment_ordinal IS NOT NULL AND display_name IS NOT NULL AND work_stage IS NOT NULL AND current_work_state IS NOT NULL AND ((work_outcome IS NULL AND completion_sequence IS NULL) OR (work_outcome IS NOT NULL AND completion_sequence IS NOT NULL)) AND ((recovery_high_water_stage IS NULL AND recovery_high_water_outcome IS NULL) OR recovery_high_water_stage IS NOT NULL) AND completion_count IS NULL AND trigger IS NULL AND accepted_count IS NULL AND accepted_at IS NULL AND settings_revision IS NULL AND first_accepted_at IS NULL AND last_accepted_at IS NULL AND state IS NULL AND started_at IS NULL AND completed_at IS NULL AND total IS NULL AND active_count IS NULL AND read IS NULL AND searches_finished IS NULL AND compared IS NULL AND checked IS NULL AND ready IS NULL AND failed IS NULL)"
 _REVIEW_PREPARATION_PRESENTATION_SQL = (
@@ -980,6 +1053,20 @@ _FIELD_EFFECT_TARGET_BUSY_SQL = (
     "AND busy.destination=effect.destination AND busy.plan_id<>effect.plan_id "
     "AND busy.state IN ('claimed','applying','reconciling'))"
 )
+
+
+# An owner's field choice on a case still reconciled at another Book matching
+# level waits for the check, which may ask the field again (#1355, S10). Cover
+# and automatic or consent-pending effects never wait on it.
+_UNRECONCILED_OWNER_EFFECT_SQL = (
+    "(json_extract(effect.document,'$.plan.authority.origin')='human' "
+    "AND effect.destination IN "
+    "('title','subtitle','authors','description','genres','tags','series') AND "
+    + _unreconciled_case_sql(
+        "json_extract(effect.document,'$.plan.authority.review_case_id')"
+    )
+    + ")"
+)
 _FIELD_EFFECT_DEFERRED_SQL = (
     "(CASE WHEN json_valid(effect.document) THEN COALESCE(("
     "(json_extract(effect.document,'$.plan.authority.origin')='automatic_policy' "
@@ -998,7 +1085,9 @@ _FIELD_EFFECT_DEFERRED_SQL = (
     + _same_policy_retirement_sql(
         "awaiting.connection_name", "awaiting.library_name", "awaiting.item_id"
     )
-    + "))),0) ELSE 0 END OR "
+    + ")) OR "
+    + _UNRECONCILED_OWNER_EFFECT_SQL
+    + "),0) ELSE 0 END OR "
     + _FIELD_EFFECT_TARGET_BUSY_SQL
     + ")"
 )
@@ -2634,7 +2723,7 @@ def _validate_review_field_facts(connection: sqlite3.Connection) -> None:
         )
     review_expected = (
         "SELECT rc.review_case_id,"
-        + _review_case_field_fact_values_sql("rc.document")
+        + _review_case_field_fact_values_sql("rc.document", offered=True)
         + " "
         "FROM review_cases rc,json_each(rc.document,'$.results') result"
     )

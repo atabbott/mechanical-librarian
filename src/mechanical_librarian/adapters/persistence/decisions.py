@@ -33,8 +33,13 @@ from collections.abc import Callable
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.level_reconciliation import (
+    case_level_unreconciled,
     current_level_offer,
     stored_level_offer_documents,
+    target_level,
+)
+from mechanical_librarian.adapters.persistence.review_preparation import (
+    request_matching_check,
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
     _SHADOW_OUTCOME_HISTORY_SQL,
@@ -123,6 +128,10 @@ def _automatic_decision_documents(
         return tuple(documents)
     except (sqlite3.Error, AutomaticDecisionError, TypeError) as error:
         raise MetadataReportError("automatic decision is unavailable") from error
+
+
+class _UnreconciledCase(Exception):
+    """A decision met a case that waits for its Book matching check."""
 
 
 class SQLiteDecisionRepository(ConnectionScoped):
@@ -537,6 +546,8 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 raise HumanDecisionError("stale")
             case = ReviewCase.create_from_data(case_envelope["case"])
             target = case.target
+            if case_level_unreconciled(self._connection, case.review_case_id):
+                raise _UnreconciledCase
             offer = self._require_current_offer(case)
             decision.validate_new_for(
                 case,
@@ -669,6 +680,12 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 self._binding.require_current()
             transaction.commit()
             return decision.to_json()
+        except _UnreconciledCase:
+            # Refused before any write; the case's check is asked for again
+            # in its own transaction, so the rollback cannot undo it.
+            transaction.rollback()
+            self._require_reconciled_case(decision.review_case_id, decision.occurred_at)
+            raise HumanDecisionError("offer_changed", "unreconciled_case") from None
         except HumanDecisionError:
             transaction.rollback()
             raise
@@ -683,6 +700,40 @@ class SQLiteDecisionRepository(ConnectionScoped):
         ) as error:
             transaction.rollback()
             raise MetadataReportError("human decision persistence failed") from error
+
+    @local_operation
+    def require_reconciled_case(self, review_case_id: str, refused_at: int) -> None:
+        """Refuse a decision on a case that waits for its Book matching check.
+
+        Every decision command, cover included, is refused while the case's
+        reconciled level is not the configured one (#1355, amendments 4 and
+        15). The refusal asks for that case's check again (queued when it is
+        neither queued nor running, ahead of nothing), committed before the
+        refusal is raised.
+        """
+        self._require_reconciled_case(review_case_id, refused_at)
+
+    def _require_reconciled_case(self, review_case_id: str, refused_at: int) -> None:
+        transaction = self._transaction("require_reconciled_case")
+        try:
+            transaction.begin()
+            unreconciled = case_level_unreconciled(self._connection, review_case_id)
+            if unreconciled:
+                request_matching_check(
+                    self._connection,
+                    target_level(self._connection).value,
+                    updated_at=refused_at,
+                    review_case_id=review_case_id,
+                )
+            transaction.commit()
+        except MetadataReportError:
+            transaction.rollback()
+            raise
+        except sqlite3.Error as error:
+            transaction.rollback()
+            raise MetadataReportError("human decision persistence failed") from error
+        if unreconciled:
+            raise HumanDecisionError("offer_changed", "unreconciled_case")
 
     def _replacement_authorities(
         self, decision: HumanDecision, case: ReviewCase

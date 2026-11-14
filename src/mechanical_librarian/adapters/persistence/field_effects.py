@@ -1656,7 +1656,17 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
         changed_at: int,
         *,
         required: bool,
+        failure: str | None = None,
     ) -> int:
+        """Withdraw a decision's authority and close the effects waiting on it.
+
+        A ready effect supersedes, unless ``failure`` names why it no longer
+        stands: ``matching_changed`` closes it as ``stale`` with that failure,
+        so Activity says Book matching changed (#1355, amendment 17). A plan a
+        lost connection released supersedes either way.
+        """
+        if failure not in {None, "matching_changed"}:
+            raise FieldEffectError("invalid_transition")
         row = self._connection.execute(
             "SELECT document,current FROM field_effect_authorities WHERE decision_id=?",
             (decision_id,),
@@ -1686,13 +1696,16 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             (decision_id, decision_id),
         ).fetchall()
         for document, state in rows:
+            closed, closed_failure = (
+                ("stale", failure)
+                if failure is not None and state != "stale"
+                else ("superseded", "authority_superseded")
+            )
             operation = FieldEffectOperation.from_json(document).transition(
-                "superseded", at=changed_at, failure="authority_superseded"
+                closed, at=changed_at, failure=closed_failure
             )
             self._update_field_effect(operation, state)
-            self._record_field_effect_event(
-                operation, "superseded", operation.updated_at
-            )
+            self._record_field_effect_event(operation, closed, operation.updated_at)
             self._schedule_field_effect_cleanup(operation, changed_at)
         return len(rows)
 

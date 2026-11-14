@@ -2243,7 +2243,9 @@
               {
                 "enum": [
                   "asked_again",
-                  "held_back"
+                  "asked_again_matching",
+                  "held_back",
+                  "waiting_for_check"
                 ],
                 "type": "string"
               },
@@ -3663,6 +3665,10 @@
             ],
             "title": "Audiobook Review Scope"
           },
+          "checking": {
+            "title": "Checking",
+            "type": "boolean"
+          },
           "comparison_notices": {
             "items": {
               "type": "string"
@@ -3732,6 +3738,7 @@
           "audiobook_review_scope",
           "comparison_notices",
           "current",
+          "checking",
           "fields",
           "media_health",
           "review_case_id",

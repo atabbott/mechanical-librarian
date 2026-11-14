@@ -1,25 +1,52 @@
-"""Write a case's Book matching level storage with the case (#1355, S10).
+"""Reconcile a case to the configured Book matching level (#1355, S10).
 
 A case is born reconciled: in the transaction that writes it, at a wider
 configured level, its level set, the would-admit notes its level decision set
 leaves for live manual decisions, its level offer (when the level substitutes
 a manual field) and its reconciled-level marker are written from stored data
-alone, with no external request. At ``identifier`` nothing is written, and no
-marker reads as ``identifier``.
+alone, with no external request. At ``identifier`` nothing is written, no
+marker reads as ``identifier``, and a stored wider marker becomes
+``identifier``.
+
+The configured level is ``review_preparation_control.work_identity_level``,
+which every gate compares a case's marker with (``level_sql``). When the level
+changes, the projection reconciles each case again (``reconcile_case_level``):
+a field whose offer changed under its standing owner choice is asked again
+with one valueless ``matching_changed`` row and that choice's pending write
+closes, in the transaction that moves the marker. Nothing else is decided.
 
 ``stored_level_offers``, ``stored_level_offer_documents`` and
 ``current_level_offer`` are the one reader of stored level offers (amendment
 2): retained-decision validation, the decision command and the review API's
 composition. The level storage is read by no automatic decision, consent,
-planning or field-effect write path.
+planning or field-effect write path; only the gate reads the markers.
 """
 
 from __future__ import annotations
 
 import json
 import sqlite3
+import time
+from collections.abc import Callable
+from typing import cast
 
+from mechanical_librarian.adapters.persistence.level_sql import (
+    _TARGET_LEVEL_SQL,
+    _reconciled_level_sql,
+    _unreconciled_case_sql,
+)
+from mechanical_librarian.adapters.persistence.review_sql import (
+    _episode_decision_sql,
+)
+from mechanical_librarian.adapters.persistence.schema import (
+    refresh_offered_field_facts,
+)
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.domain.human_decision import (
+    HumanDecision,
+    HumanDecisionError,
+    offer_digest,
+)
 from mechanical_librarian.domain.level_proposal_set import (
     LevelDecisionNote,
     LevelProposalSetError,
@@ -41,6 +68,8 @@ from mechanical_librarian.domain.review_case import (
 )
 from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 
+# A cover choice binds its consideration, not an offer digest (AC16).
+_UNBOUND_DESTINATIONS = frozenset({"cover"})
 _NOTE_COLUMNS = (
     "decision_set_id,level_proposal_set_id,field,work_identity_level,rule,"
     "alternative_reference,decision_policy_version,decision_policy_sha256,"
@@ -54,19 +83,59 @@ def reconcile_case_level_in_transaction(
     proposal: ProposalSet,
     report: MetadataReport,
     current_policy: ResolvedMetadataPolicy | None,
-    level: WorkIdentityLevel,
+    revoke: Callable[[str, int], object],
+    at: int | None = None,
 ) -> None:
-    """Write one case's level storage at ``level`` inside the caller's transaction.
+    """Reconcile one case to the configured level inside the caller's transaction.
 
-    The caller holds the write transaction that writes or re-admits the case.
-    Everything written is content-addressed or keyed by case and level, so a
-    replay at the same level writes nothing new, and a stored row that differs
-    from what derivation gives now refuses the whole transaction.
+    The configured level is ``review_preparation_control.work_identity_level``,
+    the one every gate compares with. At a wider level the case's level set,
+    notes and offer are written; at ``identifier`` nothing is, and a stored
+    wider marker becomes ``identifier``. Everything written is content-addressed
+    or keyed by case and level, so a replay writes nothing new, and a stored
+    row that differs from what derivation gives now refuses the whole
+    transaction. When the case was reconciled at another level, each field
+    whose offer changed is asked again (``_ask_changed_fields``), in this same
+    transaction that moves the marker. ``revoke`` closes a superseded choice's
+    pending effect as ``matching_changed``; ``at`` defaults to now.
     """
-    if not connection.in_transaction or type(level) is not WorkIdentityLevel:
+    if not connection.in_transaction:
         raise MetadataReportError("level reconciliation request is invalid")
-    if level is WorkIdentityLevel.IDENTIFIER:
+    level = target_level(connection)
+    previous = reconciled_level(connection, case.review_case_id)
+    occurred_at = int(time.time()) if at is None else at
+    if level is WorkIdentityLevel.IDENTIFIER and previous is level:
         return
+    offer = (
+        None
+        if level is WorkIdentityLevel.IDENTIFIER
+        else _store_level(connection, case, proposal, report, current_policy, level)
+    )
+    if previous is not level:
+        _ask_changed_fields(
+            connection,
+            case,
+            compose_offer(case.review_case_id, case.proposals, offer),
+            level,
+            revoke,
+            occurred_at,
+        )
+    _write_marker(connection, case.review_case_id, level)
+    if previous is not level:
+        # The works list and attention count a field by what it offers now
+        # (amendment 14).
+        refresh_offered_field_facts(connection, case.review_case_id)
+
+
+def _store_level(
+    connection: sqlite3.Connection,
+    case: ReviewCase,
+    proposal: ProposalSet,
+    report: MetadataReport,
+    current_policy: ResolvedMetadataPolicy | None,
+    level: WorkIdentityLevel,
+) -> str | None:
+    """Write the level set, notes and offer at ``level``; return the offer."""
     policy, generation = _decision_policy(connection, report, current_policy)
     try:
         derivation = derive_level(
@@ -128,12 +197,136 @@ def reconcile_case_level_in_transaction(
             )
         elif stored_offers[level.value] != derivation.offer:
             raise MetadataReportError("review case level offer conflicts")
+    return derivation.offer
+
+
+def _write_marker(
+    connection: sqlite3.Connection, review_case_id: str, level: WorkIdentityLevel
+) -> None:
     connection.execute(
         "INSERT INTO review_case_level_reconciliation(review_case_id,"
         "reconciled_level) VALUES(?,?) ON CONFLICT(review_case_id) DO UPDATE "
         "SET reconciled_level=excluded.reconciled_level",
-        (case.review_case_id, level.value),
+        (review_case_id, level.value),
     )
+
+
+# A standing owner choice: what the field's latest decision of the case's
+# episode settles it with. A withdrawal, the valueless row included, stands for
+# nothing, so a field already asked again is not asked twice.
+_STANDING_OUTCOMES = frozenset({"accept", "keep_current", "owner_entered"})
+
+
+def _ask_changed_fields(
+    connection: sqlite3.Connection,
+    case: ReviewCase,
+    offer: tuple[dict[str, object], ...],
+    level: WorkIdentityLevel,
+    revoke: Callable[[str, int], object],
+    occurred_at: int,
+) -> None:
+    """Ask again each field whose offer is no longer its standing choice's.
+
+    Stored data only (S4): the latest owner decision of the case's episode per
+    field is compared with the field's offer at ``level`` by digest. Where they
+    differ, the valueless ``matching_changed`` row is appended (no event, so no
+    Activity row) and the superseded choice's pending effect closes as
+    ``matching_changed``. Automatic decisions, consents and the manual hold
+    are untouched, so a field asked again stays the owner's to decide.
+    """
+    destinations = {
+        cast("str", proposal["destination"])
+        for proposal in offer
+        if proposal["destination"] not in _UNBOUND_DESTINATIONS
+    }
+    for destination in sorted(destinations):
+        row = connection.execute(
+            "SELECT document FROM human_decisions WHERE review_case_id=? "
+            "AND destination=? AND "
+            + _episode_decision_sql("human_decisions")
+            + " ORDER BY ordinal DESC LIMIT 1",
+            (case.review_case_id, destination),
+        ).fetchone()
+        if row is None:
+            continue
+        try:
+            standing = HumanDecision.from_json(row[0])
+            if (
+                standing.outcome not in _STANDING_OUTCOMES
+                or standing.offered_alternatives_digest
+                == offer_digest(offer, destination)
+            ):
+                continue
+            cause = HumanDecision.matching_changed(
+                case, standing, level.value, offer, occurred_at
+            )
+        except HumanDecisionError as error:
+            raise MetadataReportError("level reconciliation failed") from error
+        connection.execute(
+            "INSERT INTO human_decisions("
+            "decision_id,review_case_id,proposal_id,target_fingerprint,"
+            "destination,actor,outcome,selected_value_document,"
+            "idempotency_digest,request_digest,occurred_at,document) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING",
+            (
+                cause.decision_id,
+                cause.review_case_id,
+                cause.proposal_id,
+                cause.target_fingerprint,
+                cause.destination,
+                cause.actor,
+                cause.outcome,
+                "null",
+                cause.idempotency_digest,
+                cause.request_digest,
+                cause.occurred_at,
+                cause.to_json(),
+            ),
+        )
+        revoke(standing.decision_id, occurred_at)
+
+
+def target_level(connection: sqlite3.Connection) -> WorkIdentityLevel:
+    """The configured level every case is reconciled to (amendment 5)."""
+    row = connection.execute("SELECT " + _TARGET_LEVEL_SQL).fetchone()
+    try:
+        return WorkIdentityLevel(row[0])
+    except (TypeError, ValueError) as error:
+        raise MetadataReportError("work identity level is invalid") from error
+
+
+def reconciled_level(
+    connection: sqlite3.Connection, review_case_id: str
+) -> WorkIdentityLevel:
+    """The level a case was last reconciled at: marker, offer row, identifier."""
+    row = connection.execute(
+        "SELECT "
+        + _reconciled_level_sql("candidate.review_case_id")
+        + " FROM (SELECT ? AS review_case_id) candidate",
+        (review_case_id,),
+    ).fetchone()
+    try:
+        return WorkIdentityLevel(row[0])
+    except (TypeError, ValueError) as error:
+        raise MetadataReportError("work identity level is invalid") from error
+
+
+def case_level_unreconciled(
+    connection: sqlite3.Connection, review_case_id: str
+) -> bool:
+    """Whether a case still waits for its Book matching check (S10).
+
+    The same comparison the executor's deferral and the re-check selection
+    make, so the decision gate, the review API's ``checking`` and the writes
+    agree on every case.
+    """
+    row = connection.execute(
+        "SELECT "
+        + _unreconciled_case_sql("candidate.review_case_id")
+        + " FROM (SELECT ? AS review_case_id) candidate",
+        (review_case_id,),
+    ).fetchone()
+    return tuple(row) == (1,)
 
 
 def stored_level_offers(
@@ -326,10 +519,13 @@ def _decision_policy(
 
 
 __all__ = [
+    "case_level_unreconciled",
     "current_level_offer",
     "read_level_decision_notes",
     "read_level_proposal_set",
     "reconcile_case_level_in_transaction",
+    "reconciled_level",
     "stored_level_offer_documents",
     "stored_level_offers",
+    "target_level",
 ]

@@ -247,6 +247,7 @@ def test_actual_embedded_predecessor_refused_without_mutation(
         "DROP TABLE level_decision_notes;"
         "DROP TABLE level_proposal_sets;"
         "DROP TABLE review_case_level_reconciliation;"
+        "ALTER TABLE review_preparation_control DROP COLUMN work_identity_level;"
         "DROP TABLE retained_cover_listings;"
         "DROP TABLE retained_cover_removals;"
         "DROP TABLE retained_cover_bindings;"

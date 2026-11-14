@@ -11,8 +11,9 @@ result, are allowed whole.
 
 The level storage tables are read and written only by the level
 reconciliation module, and created only by the schema (S10, amendment 2).
-Automatic decisions, consent, field-effect planning and the executors never
-name them.
+The gate's SQL fragments read only their reconciled-level columns (P4), and
+the schema's field facts read the current offer (amendment 14). Automatic
+decisions, consent and field-effect planning never name them.
 """
 
 from __future__ import annotations
@@ -105,6 +106,8 @@ _LEVEL_TABLES = (
 _LEVEL_TABLE_MODULES = {
     "adapters/persistence/schema.py": "ddl",
     "adapters/persistence/level_reconciliation.py": "level_reconciliation",
+    # The gate's fragments: the reconciled-level columns only, never an offer.
+    "adapters/persistence/level_sql.py": "gate",
 }
 
 

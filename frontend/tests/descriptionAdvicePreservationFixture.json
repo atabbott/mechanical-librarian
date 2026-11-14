@@ -2,6 +2,7 @@
   "audiobook_review_scope": null,
   "comparison_notices": [],
   "current": true,
+  "checking": false,
   "fields": [
     {
       "automatic_decision": null,

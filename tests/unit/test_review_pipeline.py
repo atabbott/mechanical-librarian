@@ -12870,3 +12870,51 @@ def test_a_matching_check_projection_starts_no_description_attempt(
         stages.prepare_advice(repository, action)
     assert calls == [{"reuse_only": reuse_only}]
     assert order == ["cover"]
+
+
+def test_projection_reconciles_the_case_level_before_its_shadow_outcome() -> None:
+    """Each projection, a matching check's included, first reconciles the case
+    to the configured Book matching level from stored data (#1355, S10): an
+    admission that replays its recorded answer reconciles nothing."""
+    events: list[tuple[object, ...]] = []
+
+    class Repository:
+        def reconcile_case_level(self, case_id: str, at: int) -> str:
+            events.append(("reconcile", case_id, at))
+            return "reconciled"
+
+        def persist_shadow_outcome(
+            self, case_id: str, at: int, **keywords: object
+        ) -> str:
+            events.append(("persist", case_id, at, tuple(keywords)))
+            return "complete"
+
+    stages = _proposal_stages(lambda *_arguments: "unused")
+    repository = cast("ReviewPipelineRepository", Repository())
+    assert stages.project(repository, "case-0") == "complete"
+    action = PipelineAction(
+        "action-1",
+        "scan-1",
+        "projection",
+        1,
+        "primary",
+        "ebooks",
+        "library-id",
+        _PRODUCER,
+        1,
+        "a" * 64,
+        "item-1",
+        "b" * 64,
+        0,
+        source_fingerprint="c" * 64,
+        report_id="report-1",
+        proposal_set_id="proposal-1",
+        review_case_id="case-1",
+    )
+    assert stages.project(repository, action) == "complete"
+    assert events == [
+        ("reconcile", "case-0", 7),
+        ("persist", "case-0", 7, ()),
+        ("reconcile", "case-1", 7),
+        ("persist", "case-1", 7, ("staged_action",)),
+    ]

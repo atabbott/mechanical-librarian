@@ -4,6 +4,7 @@
     "recording_identity_basis": null,
     "audiobook_review_scope": "recording",
     "comparison_notices": [],
+    "checking": false,
     "current": true,
     "fields": [
       {

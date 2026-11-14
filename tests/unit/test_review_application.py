@@ -631,6 +631,61 @@ def test_published_preparation_work_wakes_the_guarded_scheduler(
     assert field_application.wakes == 1
 
 
+def test_admission_aligns_book_matching_before_any_lane_opens(
+    repository: FakeReviewRepository,
+) -> None:
+    """Every case follows the configured level before owner writes (#1355)."""
+    events: list[object] = []
+
+    class Preparation:
+        recovery_required = False
+        recovery_incidents = ()
+
+        def attach_updates(self, _announce) -> None:
+            return None
+
+        def admit(self) -> None:
+            events.append("preparation")
+
+    class FieldApplication(ContinuousGuardedApplication):
+        def __init__(self) -> None:
+            return None
+
+        def attach_timing(self, _timing) -> None:
+            return None
+
+        def attach_serialization(self, _serialize) -> None:
+            return None
+
+        def attach_updates(self, _announce) -> None:
+            return None
+
+        def admit(self) -> None:
+            events.append("field_application")
+
+    application = compose_review_application(
+        state_owner=repository,
+        session_store=repository,
+        case_store=repository,
+        decision_store=repository,
+        library_store=repository,
+        policy_store=repository,
+        verify_password=lambda value: value == "correct horse",
+        session_digest=lambda token: hashlib.sha256(token.encode()).hexdigest(),
+        client_digest=lambda value: hashlib.sha256(value.encode()).hexdigest(),
+        clock=lambda: _NOW,
+        session_lifetime_seconds=600,
+        graceful_shutdown_seconds=30,
+        preparation=cast("ReviewPreparationSupervisor", Preparation()),
+        field_application=FieldApplication(),
+        align_book_matching=lambda aligned_at: events.append(("align", aligned_at)),
+    )
+
+    application.admit()
+
+    assert events == [("align", _NOW), "field_application", "preparation"]
+
+
 def test_confirming_automatic_wakes_the_guarded_scheduler_once(
     repository: FakeReviewRepository,
 ) -> None:

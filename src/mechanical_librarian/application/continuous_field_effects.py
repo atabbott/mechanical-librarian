@@ -1495,7 +1495,14 @@ class ContinuousGuardedApplication:
                 raise GuardedApplicationError("activity") from error
         notes = page_projection.get("notes", {})
         if type(notes) is not dict or any(
-            type(key) is not str or value not in {"asked_again", "held_back"}
+            type(key) is not str
+            or value
+            not in {
+                "asked_again",
+                "asked_again_matching",
+                "held_back",
+                "waiting_for_check",
+            }
             for key, value in notes.items()
         ):
             raise GuardedApplicationError("activity")

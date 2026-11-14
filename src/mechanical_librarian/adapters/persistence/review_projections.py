@@ -42,6 +42,7 @@ from mechanical_librarian.adapters.persistence.field_effect_validation import (
     _automatic_decision_value,
 )
 from mechanical_librarian.adapters.persistence.level_reconciliation import (
+    case_level_unreconciled,
     current_level_offer,
     stored_level_offer_documents,
 )
@@ -271,6 +272,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 level_offer_document=current_level_offer(
                     self._connection, review_case_id
                 ),
+                checking=case_level_unreconciled(self._connection, review_case_id),
                 description_advice=self.description_advice(review_case_id),
                 case_document=case_document,
                 report_document=report.to_json(),

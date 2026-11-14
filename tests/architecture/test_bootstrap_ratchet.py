@@ -69,8 +69,10 @@ CEILING = {
     # write and the owner check, and the coalesced scan request into each
     # guarded application: straight-line construction and keyword arguments.
     # The currentness check also skips a retained source, whose original is
-    # in the retained store only (one import).
-    "composition.py": 3243,
+    # in the retained store only (one import). 3248 since #1355 passed each
+    # generation's Book matching alignment to the review application: one
+    # keyword argument per mode, straight-line wiring.
+    "composition.py": 3248,
     "contained_reviewer.py": 124,
     **ENTRY_POINTS,
 }
@@ -115,11 +117,11 @@ RESIDUAL: dict[str, int | None] = {
     _C + "run_cover_review": 105,
     # Build the whole store and setup runtimes from adapters (wiring kept by
     # A-U4); a feature split of composition is A-U6, deferred to stage 7.
-    _C + "compose_store_runtime_generation": 238,
+    _C + "compose_store_runtime_generation": 241,
     _C + "_compose_setup_runtime_generation": 145,
     # Server entry. Its file-authority branch still duplicates
     # compose_store_runtime_generation: the residual A-U4 kept.
-    _C + "run_review_server": 351,
+    _C + "run_review_server": 354,
     # Constructs the Codex device-auth manager, which tests replace on
     # composition, and the reviewer access around it.
     _C + "_compose_reviewer_access": 167,

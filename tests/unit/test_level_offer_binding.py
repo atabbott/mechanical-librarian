@@ -146,6 +146,7 @@ def level_store(root: Path, level: WorkIdentityLevel = LEVEL) -> OwnerStore:
     store.repository.bind_current_cover_authority(
         "cover_policy_" + "1" * 64, "cover_replay_" + "2" * 64, level.value
     )
+    store.repository.align_book_matching(level.value, 0)
     store.publish(level_description_report())
     return store
 
@@ -513,10 +514,23 @@ def test_a_digest_no_offer_holds_is_refused_at_readback(tmp_path: Path) -> None:
 # --- 17d: the API refuses before any write ------------------------------------
 
 
-@pytest.mark.parametrize("reason", ["digest_mismatch"])
+@pytest.mark.parametrize(
+    ("reason", "stale_digest"),
+    [
+        ("digest_mismatch", True),
+        ("unreconciled_case", False),
+        ("unreconciled_case", True),
+    ],
+)
 def test_choice_refused_offer_changed_before_any_write(
-    tmp_path: Path, reason: str
+    tmp_path: Path, reason: str, stale_digest: bool
 ) -> None:
+    """17d: a choice made in an offer that no longer stands is refused before
+    any write. ``digest_mismatch`` names a page that showed another offer;
+    ``unreconciled_case`` a case still waiting for its Book matching check,
+    which refuses even the current digest, every decision command included,
+    until the check reconciles it. A case that is both waiting and shown in
+    an older offer answers ``unreconciled_case``: that check runs first."""
     store = level_store(tmp_path)
     try:
         case_id = store.case.review_case_id
@@ -525,14 +539,17 @@ def test_choice_refused_offer_changed_before_any_write(
             field = field_of(detail, "description")
             live_digest = offer_digest(store.case.proposals, "description")
             assert field["offer_digest"] != live_digest
+            shown = live_digest if stale_digest else field["offer_digest"]
+            if reason == "unreconciled_case":
+                store.repository.align_book_matching(
+                    WorkIdentityLevel.TITLE_AND_CREATOR_EXACT.value, 4_000
+                )
+                assert (
+                    client.get(f"/api/v1/review-cases/{case_id}").json()["checking"]
+                    is True
+                )
             refused = post_choice(
-                client,
-                csrf,
-                case_id,
-                field,
-                LIVE_SYNOPSIS,
-                live_digest,
-                "stale-choice-0001",
+                client, csrf, case_id, field, LIVE_SYNOPSIS, shown, "stale-choice-0001"
             )
             assert refused.status_code == 409, refused.text
             assert refused.json()["error"] == {
@@ -540,6 +557,20 @@ def test_choice_refused_offer_changed_before_any_write(
                 "reason": reason,
             }
             assert counts(store) == (0, 0, 0)
+            if reason == "unreconciled_case":
+                # The record command refuses on its own too, before any write.
+                with pytest.raises(HumanDecisionError) as raised:
+                    store.repository.record_human_decision(
+                        choose(store, LIVE_SYNOPSIS, key="direct-choice-0001")
+                    )
+                assert raised.value.reason == "unreconciled_case"
+                assert counts(store) == (0, 0, 0)
+                assert store.repository.reconcile_case_level(case_id, 4_001) == (
+                    "reconciled"
+                )
+                detail = client.get(f"/api/v1/review-cases/{case_id}").json()
+                assert detail["checking"] is False
+                field = field_of(detail, "description")
             accepted = post_choice(
                 client,
                 csrf,
@@ -634,18 +665,23 @@ def test_no_api_view_carries_would_admit_or_notes(tmp_path: Path) -> None:
 
 
 def cause_row(store: OwnerStore, earlier: HumanDecision) -> HumanDecision:
-    """The valueless row P4's reconciliation writes (amendment 3)."""
-    return resealed(
-        earlier,
-        outcome="withdraw",
-        selected_value=None,
-        cause="matching_changed",
-        idempotency_digest=human_decision._sha256(
-            f"matching-changed-v1:{earlier.decision_id}:{LEVEL.value}"
-        ),
-        offered_alternatives_digest=offer_digest(offer_of(store), "description"),
-        occurred_at=earlier.occurred_at + 1,
+    """The valueless row P4's reconciliation writes (amendment 3), formed by
+    the domain's own constructor."""
+    row = HumanDecision.matching_changed(
+        store.case, earlier, LEVEL.value, offer_of(store), earlier.occurred_at + 1
     )
+    assert (row.outcome, row.selected_value, row.cause) == (
+        "withdraw",
+        None,
+        "matching_changed",
+    )
+    assert row.idempotency_digest == human_decision._sha256(
+        f"matching-changed-v1:{earlier.decision_id}:{LEVEL.value}"
+    )
+    assert row.offered_alternatives_digest == offer_digest(
+        offer_of(store), "description"
+    )
+    return row
 
 
 def test_a_cause_row_reads_as_no_human_decision(tmp_path: Path) -> None:

@@ -24,6 +24,8 @@ from typing import Any
 import pytest
 
 from mechanical_librarian.adapters.persistence.level_reconciliation import (
+    case_level_unreconciled,
+    current_level_offer,
     read_level_decision_notes,
     read_level_proposal_set,
     stored_level_offers,
@@ -495,6 +497,8 @@ def _bind(repository: Any, level: WorkIdentityLevel) -> None:
     repository.bind_current_cover_authority(
         "cover_policy_" + "1" * 64, "cover_replay_" + "2" * 64, level.value
     )
+    # The level every case follows is the one the gates read (amendment 5).
+    repository.align_book_matching(level.value, 0)
 
 
 def _admit(repository: Any, report: MetadataReport) -> str:
@@ -600,6 +604,9 @@ def _assert_born_reconciled(
     assert [row[1] for row in offers] == [level.value]
     assert rows["level_decision_notes"]
     assert rows["level_proposal_sets"]
+    # Born reconciled: never checking, so neither choices nor owner writes
+    # wait (17f).
+    assert not case_level_unreconciled(repository._connection, case_id)
 
 
 @pytest.mark.parametrize(
@@ -649,6 +656,33 @@ def test_case_created_at_wider_level_is_born_reconciled(path: str) -> None:
             ] == [case_id]
             return
         _assert_born_reconciled(repository, case_id, level)
+
+
+def test_a_case_admitted_again_at_identifier_is_born_reconciled() -> None:
+    """The P2 correction (17f, both directions): a case reconciled at a wider
+    level and admitted again at `identifier` has its marker written as
+    `identifier`, so it is never checking and offers its live proposals; at a
+    wider level again it is gated until its check."""
+    level = WorkIdentityLevel.TITLE_AND_CREATOR
+    report = _report(_refused(_synopsis()))
+    with _store(level) as repository:
+        repository.publish(report, lambda: True)
+        builtin = MetadataPolicyProfile.builtin()
+        case_id = _admit_under(repository, builtin, report)
+        assert _rows(repository)["review_case_level_reconciliation"] == [
+            (case_id, level.value)
+        ]
+        _activate(repository, builtin, builtin, 1, report)
+        _bind(repository, _IDENTIFIER)
+        assert case_level_unreconciled(repository._connection, case_id)
+        assert _admit_under(repository, builtin, report) == case_id
+        assert _rows(repository)["review_case_level_reconciliation"] == [
+            (case_id, _IDENTIFIER.value)
+        ]
+        assert not case_level_unreconciled(repository._connection, case_id)
+        assert current_level_offer(repository._connection, case_id) is None
+        _bind(repository, level)
+        assert case_level_unreconciled(repository._connection, case_id)
 
 
 def test_a_reactivated_case_continuing_its_episode_is_reconciled() -> None:

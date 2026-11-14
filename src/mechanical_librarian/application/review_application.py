@@ -161,6 +161,8 @@ class CaseDetailView:
     audiobook_review_scope: str | None
     # How the matched recording was found when its title differs (#1723).
     recording_admission_basis: dict[str, object] | None = None
+    # The case waits for its Book matching check (#1355, S10).
+    checking: bool = False
 
     @classmethod
     def from_data(cls, value: dict[str, object]) -> "CaseDetailView":
@@ -187,6 +189,7 @@ class CaseDetailView:
             None
             if value["recording_admission_basis"] is None
             else dict(cast("dict[str, object]", value["recording_admission_basis"])),
+            value.get("checking") is True,
         )
 
     def to_data(self) -> dict[str, object]:
@@ -202,6 +205,7 @@ class CaseDetailView:
             "recording_identity_basis": self.recording_identity_basis,
             "audiobook_review_scope": self.audiobook_review_scope,
             "recording_admission_basis": self.recording_admission_basis,
+            "checking": self.checking,
         }
 
 
@@ -554,6 +558,7 @@ class ReviewApplication:
         first_boot: bool = False,
         acknowledge_first_boot: Callable[[], None] | None = None,
         provider_throttling: Callable[[], dict[str, object]] | None = None,
+        align_book_matching: Callable[[int], object] | None = None,
     ) -> None:
         self._updates = updates
         self._state_owner = state_owner
@@ -593,6 +598,7 @@ class ReviewApplication:
         self._first_boot = first_boot
         self._acknowledge_first_boot = acknowledge_first_boot
         self._provider_throttling = provider_throttling
+        self._align_book_matching = align_book_matching
 
     def _reviewer_changed(self) -> None:
         # Other sessions still invalidate when a rescan request is refused.
@@ -764,7 +770,14 @@ class ReviewApplication:
             self._preparation.start_dormant()
 
     def admit(self) -> None:
-        """Open the already-started generation after no-fail publication."""
+        """Open the already-started generation after no-fail publication.
+
+        The configured Book matching level may have changed while no
+        generation ran, so every case follows it before any owner write or
+        scheduler claim is admitted (#1355, amendment 5).
+        """
+        if self._align_book_matching is not None:
+            self._align_book_matching(self._clock())
         if isinstance(self._field_application, ContinuousGuardedApplication):
             self._field_application.admit()
         if self._preparation is not None:
@@ -1872,6 +1885,7 @@ def compose_review_application(
     validated_documents: ValidatedDocumentCache | None = None,
     provider_throttling: Callable[[], dict[str, object]] | None = None,
     provider_recovery: ProviderRecoverySchedule | None = None,
+    align_book_matching: Callable[[int], object] | None = None,
 ) -> ReviewApplication:
     """Compose every operation before the HTTP adapter is created."""
     gate = operation_lock or RLock()
@@ -1958,6 +1972,7 @@ def compose_review_application(
         first_boot=first_boot,
         acknowledge_first_boot=acknowledge_first_boot,
         provider_throttling=provider_throttling,
+        align_book_matching=align_book_matching,
     )
     return application
 
