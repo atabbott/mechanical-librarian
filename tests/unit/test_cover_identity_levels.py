@@ -34,6 +34,10 @@ from mechanical_librarian.domain.metadata_report import (
     Comparison,
     MetadataReport,
     ProviderQueryKind,
+    TargetDestination,
+    TargetFacts,
+    TargetField,
+    TargetFieldState,
 )
 from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 from tests.unit.test_cover_consideration import _Store
@@ -452,3 +456,62 @@ def test_the_new_documents_read_back_and_each_predecessor_is_refused() -> None:
             )
     policy = json.loads(value["policy_report_document"])
     assert policy["schema_version"] == "cover-policy-report-v3"
+
+
+def _shadow_candidate(
+    reference: str, *, incumbent: bool, size: int, ordinal: int
+) -> dict[str, object]:
+    return {
+        "candidate_kind": "candidate",
+        "reference": reference,
+        "incumbent": incumbent,
+        "width": size,
+        "height": size * 3 // 2,
+        "ordinal": ordinal,
+        "identity": {
+            "outcome": "title_creator_work_match",
+            "reasons": sorted(_MET_EXACT),
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("cover_state", "expected"),
+    ((TargetFieldState.VALUE, "alternative"), (TargetFieldState.MISSING, None)),
+    ids=("incumbent_level_matched", "no_current_cover_value"),
+)
+def test_the_shadow_election_confirms_a_level_matched_incumbent(
+    cover_state: TargetFieldState, expected: str | None
+) -> None:
+    """An incumbent that only a level matches is, for the shadow election, a
+    confirmed current cover: a better level-matched alternative outranks it
+    and is named, though the live policy says `unknown` (Codex r5, 1)."""
+    from mechanical_librarian.application.cover_consideration import _would_admit
+    from tests.unit.test_cover_identity_listed_edition import _target
+
+    target = _target()
+    fields = tuple(
+        TargetField(field.destination, cover_state, "current-cover")
+        if field.destination is TargetDestination.COVER
+        and cover_state is TargetFieldState.VALUE
+        else field
+        for field in target.fields
+    )
+    report = cast(
+        "MetadataReport",
+        SimpleNamespace(
+            audio=None,
+            target=TargetFacts(
+                target.connection, target.library, target.item, fields
+            ),
+        ),
+    )
+    candidates = [
+        _shadow_candidate("current", incumbent=True, size=300, ordinal=0),
+        _shadow_candidate("alternative", incumbent=False, size=600, ordinal=1),
+    ]
+    policy = json.dumps(
+        {"actual_target_state": "unknown", "recommended_candidate_reference": None}
+    )
+    note = _would_admit(report, candidates, policy, provider_fetching=False)
+    assert (None if note is None else note["candidate_reference"]) == expected

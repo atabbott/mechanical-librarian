@@ -584,6 +584,19 @@ def _would_admit(
         return None
     best_key, best = min(keyed, key=lambda item: item[0])
     actual = policy.get("actual_target_state")
+    # The live state reads an incumbent confirmed only by a level match as
+    # `unknown`; for the shadow tiers that incumbent is a confirmed current
+    # cover, so a better level-matched alternative can outrank it.
+    if (
+        actual == "unknown"
+        and incumbent_key is not None
+        and any(
+            field.destination is TargetDestination.COVER
+            and field.state is TargetFieldState.VALUE
+            for field in report.target.fields
+        )
+    ):
+        actual = "confirmed"
     if not (
         actual == "known_empty"
         or (
