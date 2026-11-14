@@ -5351,6 +5351,8 @@ describe('Library route', () => {
       comparison.querySelector('.library-cover-pinned > aside')?.firstElementChild,
     ).toHaveClass('cover-choice')
     expect(within(comparison).getByText('Other covers')).toBeVisible()
+    // The gallery counts covers, not choices: two of these five cannot be chosen (#1790).
+    expect(within(comparison).getByText('5 covers')).toBeVisible()
     expect(comparison.querySelectorAll('.library-cover-gallery .library-cover-card')).toHaveLength(
       5,
     )

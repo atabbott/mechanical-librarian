@@ -615,7 +615,8 @@ function LibraryCoverChoicesContent({
           <div className="library-cover-gallery">
             <header>
               <strong>Other covers</strong>
-              <small>{String(alternatives.length)} available</small>
+              {/* A count of covers: some may be ones you cannot choose (#1790). */}
+              <small>{`${String(alternatives.length)} covers`}</small>
             </header>
             <div>
               {alternatives.map((candidate) => card(candidate, candidates.indexOf(candidate)))}

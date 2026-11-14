@@ -241,7 +241,8 @@ brackets are GitHub issues.
 - A cover you cannot choose because a source says it belongs to a different
   book or edition, or names a different author or contributor, now reads
   "Contradicts this book" with that reason, instead of "Match not confirmed"
-  or "Same book" (#1790).
+  or "Same book". The Other covers gallery now counts its covers instead of
+  calling them all available (#1790).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
