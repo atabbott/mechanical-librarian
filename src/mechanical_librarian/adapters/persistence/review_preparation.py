@@ -264,6 +264,23 @@ def _retry_failed_stage(
     )
 
 
+def matching_check_given_up(
+    connection: sqlite3.Connection, work_identity_level: str, review_case_id: str
+) -> bool:
+    """Whether one case's check against Book matching gave up.
+
+    The case is one ``matching_check_counts`` counts as could not be checked:
+    unchecked, and its item's work neither queued, delayed nor running.
+    """
+    unchecked, checking = connection.execute(
+        "SELECT count(*),coalesce(sum(w.state IN ('queued','delayed','running')),0) "
+        + _MATCHING_UNCHECKED_SQL
+        + "AND c.review_case_id=?",
+        (work_identity_level, work_identity_level, review_case_id),
+    ).fetchone()
+    return int(unchecked) > 0 and int(checking) == 0
+
+
 def matching_check_counts(
     connection: sqlite3.Connection, work_identity_level: str
 ) -> tuple[int, int, int]:

@@ -275,8 +275,10 @@ brackets are GitHub issues.
 - **Clean rebuild required.** With Book matching set wider than "Confirmed
   matches only", a field that needs you also offers values, such as a
   description or series, from source records with the book's title and author.
-  None is chosen automatically. Each report now keeps the records a title and
-  author search found but did not match, so they can be offered (#1355, #1780).
+  None is chosen automatically. A work whose check against a new setting could
+  not run says so in Library, with how to retry. Each report now keeps the
+  records a title and author search found but did not match, so they can be
+  offered (#1355, #1780).
 - **Clean rebuild required.** Covers follow measured rules: a readable cover
   with no fault is kept without asking, and a cover with a fault (wrong shape,
   under 300 px, unreadable, a sharper copy, another language's edition) is

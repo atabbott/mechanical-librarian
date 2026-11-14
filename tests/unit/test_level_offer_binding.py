@@ -83,15 +83,23 @@ def _description(provider: str, identity: str, value: str) -> ProviderClaim:
     )
 
 
-def level_description_report() -> MetadataReport:
+def level_description_report(*, live_description: bool = True) -> MetadataReport:
     """An ebook by "R. F. Example" whose description a live identifier
     answer proposes, and whose refused WORK answer (the author's initials
-    respelled) offers another description at a wider level."""
+    respelled) offers another description at a wider level.
+
+    Without ``live_description`` no live answer states a description, so the
+    live field is refused (``no_supported_evidence``) and offers nothing.
+    """
     live = retained._candidate("live-1", provider="open_library")
-    live = replace(
-        live,
-        claims=(*live.claims, _description("open_library", "live-1", LIVE_SYNOPSIS)),
-    )
+    if live_description:
+        live = replace(
+            live,
+            claims=(
+                *live.claims,
+                _description("open_library", "live-1", LIVE_SYNOPSIS),
+            ),
+        )
     refused = retained._candidate("refused-1")
     refused = replace(
         refused,
@@ -134,7 +142,9 @@ def level_description_report() -> MetadataReport:
     return MetadataReport.from_json(report.to_json())
 
 
-def level_store(root: Path, level: WorkIdentityLevel = LEVEL) -> OwnerStore:
+def level_store(
+    root: Path, level: WorkIdentityLevel = LEVEL, *, live_description: bool = True
+) -> OwnerStore:
     """A store configured at ``level`` holding the fixture's current case."""
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     store = OwnerStore(root, None)
@@ -142,7 +152,7 @@ def level_store(root: Path, level: WorkIdentityLevel = LEVEL) -> OwnerStore:
         "cover_policy_" + "1" * 64, "cover_replay_" + "2" * 64, level.value
     )
     store.repository.align_book_matching(level.value, 0)
-    store.publish(level_description_report())
+    store.publish(level_description_report(live_description=live_description))
     return store
 
 

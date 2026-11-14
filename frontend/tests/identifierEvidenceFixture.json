@@ -5,6 +5,7 @@
     "audiobook_review_scope": "recording",
     "comparison_notices": [],
     "checking": false,
+    "check_given_up": false,
     "current": true,
     "fields": [
       {

@@ -28,8 +28,10 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
 )
 from mechanical_librarian.adapters.persistence.review_preparation import (
     matching_check_counts,
+    matching_check_given_up,
 )
 from mechanical_librarian.adapters.persistence.schema import (
+    _offered_alternatives_sql,
     _review_case_field_fact_values_sql,
     refresh_offered_field_facts,
     refresh_policy_settled_field_facts,
@@ -703,12 +705,14 @@ def test_the_check_and_self_refresh_announce_the_case(
     assert InspectCurrentReviewCase(library.root).run(case_id)["checking"] is False
     recheck_level.value = _WIDE
     _save(library, _WIDE.value, at=40)
-    assert InspectCurrentReviewCase(library.root).run(case_id)["checking"] is True
+    waiting = InspectCurrentReviewCase(library.root).run(case_id)
+    assert (waiting["checking"], waiting["check_given_up"]) == (True, False)
     assert matching_check_counts(library.root._connection, _WIDE.value) == (1, 1, 0)
     library.now[0] = 41
     library.drain()
     assert ("case", case_id) in announced
-    assert InspectCurrentReviewCase(library.root).run(case_id)["checking"] is False
+    checked = InspectCurrentReviewCase(library.root).run(case_id)
+    assert (checked["checking"], checked["check_given_up"]) == (False, False)
     assert matching_check_counts(library.root._connection, _WIDE.value) == (1, 0, 0)
 
 
@@ -726,6 +730,11 @@ def test_a_refused_choice_requests_its_case_check_again(
     )
     connection.commit()
     assert matching_check_counts(connection, _WIDE.value) == (1, 0, 1)
+    # The case says its check gave up, by the rule Policy counts it with.
+    case_id = library.case_id()
+    given_up = InspectCurrentReviewCase(library.root).run(case_id)
+    assert (given_up["checking"], given_up["check_given_up"]) == (True, True)
+    assert matching_check_given_up(connection, _WIDE.value, case_id)
     case = library.case()
     destination = next(
         str(value["destination"]) for value in case.proposals if decision_actions(value)
@@ -738,6 +747,10 @@ def test_a_refused_choice_requests_its_case_check_again(
     assert connection.execute("SELECT count(*) FROM human_decisions").fetchone() == (0,)
     assert _work(library) == ("projection", "queued")
     assert matching_check_counts(connection, _WIDE.value) == (1, 1, 0)
+    # Queued again, it waits: the case no longer says it gave up.
+    queued = InspectCurrentReviewCase(library.root).run(case_id)
+    assert (queued["checking"], queued["check_given_up"]) == (True, False)
+    assert not matching_check_given_up(connection, _WIDE.value, case_id)
 
 
 # --- 17f: never gated at identifier; born reconciled; stuck checks ------------
@@ -958,4 +971,55 @@ def test_facts_that_differ_from_live_are_checked_and_kept_by_the_offer(
     finally:
         store.close()
     # The integrity check derives the stored facts from the offer, not live.
+    open_repository(tmp_path / "store" / "owner.sqlite").close()
+
+
+def test_sql_and_python_read_the_same_current_offer(tmp_path: Path) -> None:
+    """The schema's SQL reads each field's current offer as ``compose_offer``
+    does (review round 1, F3), on a case whose offer differs from live: the
+    level offers a refused description and the title group's alternatives.
+    A substituted field with an eligible alternative needs the owner in both
+    (amendment 24): the facts say so, and ``decision_actions`` offers it."""
+    store = level_store(tmp_path / "store", live_description=False)
+    connection = store.repository._connection
+    case_id = store.case.review_case_id
+    try:
+        live = {str(value["destination"]): value for value in store.case.proposals}
+        python = {str(value["destination"]): value for value in offer_of(store)}
+        sql = {
+            str(destination): json.loads(alternatives)
+            for destination, alternatives in connection.execute(
+                "SELECT json_extract(result.value,'$.destination'),"
+                + _offered_alternatives_sql("rc.review_case_id")
+                + " FROM review_cases rc,json_each(rc.document,'$.results') result "
+                "WHERE rc.review_case_id=?",
+                (case_id,),
+            ).fetchall()
+        }
+        assert sql == {
+            destination: proposal["result"]["alternatives"]
+            for destination, proposal in python.items()
+        }
+        differing = {
+            destination
+            for destination in python
+            if python[destination]["result"]["alternatives"]
+            != live[destination]["result"]["alternatives"]
+        }
+        assert {"description", "title", "authors"} <= differing
+        facts = dict(
+            connection.execute(
+                "SELECT destination,has_owner_decision_actions "
+                "FROM review_case_field_facts WHERE review_case_id=?",
+                (case_id,),
+            ).fetchall()
+        )
+        assert facts == {
+            destination: int(bool(decision_actions(proposal)))
+            for destination, proposal in python.items()
+        }
+        assert decision_actions(live["description"]) == ()
+        assert facts["description"] == 1
+    finally:
+        store.repository.close()
     open_repository(tmp_path / "store" / "owner.sqlite").close()

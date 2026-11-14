@@ -13,7 +13,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from mechanical_librarian.domain.human_decision import HumanDecision, offer_digest
+import pytest
+
+from mechanical_librarian.domain.human_decision import (
+    HumanDecision,
+    decision_actions,
+    offer_digest,
+)
 from tests.unit.test_level_offer_binding import (
     SYNOPSIS,
     counts,
@@ -25,14 +31,34 @@ from tests.unit.test_level_offer_binding import (
 )
 
 
-def test_a_level_alternative_reads_everywhere_and_writes(tmp_path: Path) -> None:
-    store = level_store(tmp_path / "store")
+@pytest.mark.parametrize("live_description", [True, False], ids=["live", "refused"])
+def test_a_level_alternative_reads_everywhere_and_writes(
+    tmp_path: Path, live_description: bool
+) -> None:
+    """``refused``: no live answer states a description, so the live field is
+    refused and offers nothing; its level alternative is still offered and
+    choosable, and the live outcome and reason are still shown (amendment 24).
+    """
+    store = level_store(tmp_path / "store", live_description=live_description)
     try:
         case_id = store.case.review_case_id
+        live = next(
+            value
+            for value in store.case.proposals
+            if value["destination"] == "description"
+        )
+        if not live_description:
+            assert live["result"]["outcome"] == "ineligible"
+            assert live["result"]["alternatives"] == []
+            assert decision_actions(live) == ()
         with owner_client(store, tmp_path) as (client, csrf):
             field = field_of(
                 client.get(f"/api/v1/review-cases/{case_id}").json(), "description"
             )
+            assert field["decision_actions"] == ["keep_current", "accept"]
+            assert field["manual_required"] is True
+            assert field["deterministic_disposition"] == live["result"]["outcome"]
+            assert field["notices"] == live["result"]["reasons"]
             assert field["offer_digest"] == offer_digest(offer_of(store), "description")
             assert field["offer_digest"] != offer_digest(
                 store.case.proposals, "description"

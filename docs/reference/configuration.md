@@ -620,6 +620,8 @@ confirmed match.
 | `title_and_creator_exact` | Same title and every author | Its title and its whole author set agree with the book's |
 | `title_and_creator` | Same title and any author | Its title agrees and it shares at least one author |
 
+A record that lists only some of the book's authors still does not count.
+
 At either wider value a cover from such a record is labelled "Same title and
 author". A title, subtitle, authors, description, genres, tags or series field
 that needs you also offers values from such records, including records a title
@@ -637,6 +639,8 @@ checked, its review says it is being checked, new choices on it are refused,
 and a change you chose shows "Waiting for check" in Activity. A choice whose
 field now offers something else no longer counts: the field asks again, and
 its pending change, like a pending cover change chosen under the old value,
-closes stale. Policy names works whose check gave up; saving again retries.
+closes stale. A choice sent after its field's offer changed is not recorded;
+the field asks you to choose again. Policy says how many works could not be
+checked; saving again retries.
 In file mode `review.work_identity` is read only in the browser, the check
 runs when the service starts, and a restart retries.

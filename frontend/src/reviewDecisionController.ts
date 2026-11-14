@@ -68,11 +68,11 @@ export const ownerRefusalCopy = (
 // A choice refused because Book matching changed (#1355): the field's offer
 // changed since the page showed it, so it asks again in place; or the work
 // waits for its check, which its case line says, so the field adds nothing.
+export const offerChangedNotice =
+  'Not recorded: Book matching changed what this field offers. Choose again.'
 export const offerChangedCopy = (error: unknown): string | undefined => {
   if (!(error instanceof ApiError) || error.code !== 'offer_changed') return undefined
-  return error.reason === 'digest_mismatch'
-    ? 'Not recorded: Book matching changed what this field offers. Choose again.'
-    : ''
+  return error.reason === 'digest_mismatch' ? offerChangedNotice : ''
 }
 const decisionStatusKey = (id: string) => ['decision-status', id] as const
 export type DecisionFailure = 'permanent' | 'retryable' | 'stale' | 'uncertain'

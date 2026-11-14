@@ -58,6 +58,11 @@ def _checking(payload: dict[str, object]) -> None:
     payload["checking"] = True
 
 
+def _given_up(payload: dict[str, object]) -> None:
+    payload["checking"] = True
+    payload["check_given_up"] = True
+
+
 def _serve(
     page: Page,
     edit: Callable[[dict[str, object]], None],
@@ -130,6 +135,8 @@ def test_a_level_offer_names_same_title_and_author_beside_its_source(
             evidence = page.get_by_role("region", name="evidence")
             source = evidence.get_by_text("Open Library · same title and author")
             expect(source).to_be_visible()
+            # Offered, not confirmed: no "sources confirm" line counts it.
+            expect(evidence.get_by_text("Confirms this value")).to_have_count(0)
             # The library's own value never carries it.
             expect(evidence.get_by_text("Local library record")).to_have_count(0)
             assert page.evaluate(_NO_SIDEWAYS_SCROLL), (scheme, width)
@@ -191,3 +198,33 @@ def test_a_choice_sent_as_the_offer_changed_is_not_recorded_and_says_so(
         assert json.loads(sent[0])["offered_alternatives_digest"] == "d" * 64
         expect(page.get_by_text("Your choice")).to_have_count(0)
         assert page.evaluate(_NO_SIDEWAYS_SCROLL), width
+
+
+@pytest.mark.parametrize("width", _WIDTHS)
+def test_a_work_whose_check_gave_up_says_how_to_retry(width: int) -> None:
+    """The check gave up: the line says so whole, links Book matching, and
+    the choices stay unavailable."""
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(
+            viewport={"width": width, "height": 900}, locale="en-US"
+        )
+        _serve(page, _given_up)
+        for scheme in ("light", "dark"):
+            page.emulate_media(color_scheme=scheme)
+            page.goto(_URL)
+            line = page.locator(".case-checking-line")
+            expect(line).to_have_text(
+                "This work could not be checked against the new Book matching"
+                " setting. Save Book matching again to retry."
+            )
+            expect(line.get_by_role("link", name="Book matching")).to_be_visible()
+            choice = page.get_by_role(
+                "radio", name=f"Choose proposed value: {_PROPOSED}", exact=True
+            )
+            expect(choice).to_be_disabled()
+            box = _in_view(page, ".case-checking-line")
+            assert 0 <= box["left"] and box["right"] <= box["width"], (scheme, box)
+            assert page.evaluate(_NO_SIDEWAYS_SCROLL), (scheme, width)

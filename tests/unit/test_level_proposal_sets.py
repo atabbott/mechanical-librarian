@@ -36,7 +36,11 @@ from mechanical_librarian.application.metadata_report import (
     provider_observation,
 )
 from mechanical_librarian.domain import level_proposal_set, shadow_review
-from mechanical_librarian.domain.human_decision import offer_digest
+from mechanical_librarian.domain.human_decision import (
+    decision_actions,
+    offer_digest,
+    validate_decision_action,
+)
 from mechanical_librarian.domain.level_proposal_set import (
     LevelDecisionNote,
     LevelProposalSetError,
@@ -61,6 +65,9 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
 )
 from mechanical_librarian.domain.proposal_set import (
+    ProposalAlternative,
+    ProposalAssessment,
+    ProposalOutcome,
     ProposalSet,
     evaluate_report,
     level_evidence,
@@ -340,6 +347,14 @@ def test_refused_description_offered_at_level_with_would_admit_note(
     assert description["proposal_id"] == live_description["proposal_id"]
     assert description["result"]["outcome"] == live_description["result"]["outcome"]
     assert description["result"]["reasons"] == live_description["result"]["reasons"]
+    # The decision stays manual, and the offered value is choosable: the live
+    # field offers nothing to decide, the composed one is the owner's to
+    # settle over the level alternative (amendment 24).
+    assert decision_actions(live_description) == ()
+    assert live_description["manual_required"] is False
+    assert description["manual_required"] is True
+    assert decision_actions(description) == ("keep_current", "accept")
+    validate_decision_action(description, "accept", alternative["value"])
     (note,) = (value for value in derivation.notes if value.field == "description")
     assert note.rule == f"work_identity:{level.value}"
     assert note.alternative_reference == alternative["alternative_id"]
@@ -393,6 +408,72 @@ def test_automatic_field_keeps_live_proposal_at_every_level() -> None:
         )
 
 
+def test_manual_field_without_an_eligible_level_alternative_keeps_live() -> None:
+    """Amendment 24: a manual field whose level alternatives would all keep
+    the current value is not substituted, so it never reads as needing the
+    owner over nothing to choose."""
+    report = _report(_refused(_synopsis()))
+    live, case = _sources(report)
+    original = level_proposal_set.evaluate_report
+
+    def preserving(*args: Any, **kwargs: Any) -> ProposalSet:
+        level_set = original(*args, **kwargs)
+        if kwargs.get("work_identity_level") is None:
+            return level_set
+        results = tuple(
+            replace(
+                result,
+                outcome=ProposalOutcome.UNRESOLVED_CHOICE,
+                selected_alternative_id=None,
+                reasons=("insufficient_independent_corroboration",),
+                alternatives=tuple(
+                    sorted(
+                        (
+                            ProposalAlternative.create(
+                                value.value,
+                                ProposalAssessment.PRESERVES_TARGET,
+                                value.evidence_references,
+                                value.correlations,
+                                value.scope,
+                                value.date_event,
+                                value.date_precision,
+                            )
+                            for value in result.alternatives
+                        ),
+                        key=lambda value: value.alternative_id,
+                    )
+                ),
+            )
+            if result.destination is TargetDestination.DESCRIPTION
+            else result
+            for result in level_set.results
+        )
+        return ProposalSet.create(
+            report_id=level_set.report_id,
+            target_fingerprint=level_set.target_fingerprint,
+            results=results,
+            resolved_policy_id=level_set.resolved_policy_id,
+            bibliographic_combinations=level_set.bibliographic_combinations,
+            media_kind=level_set.media_kind,
+        )
+
+    for level in _WIDER:
+        level_proposal_set.evaluate_report = preserving
+        try:
+            derivation = derive_level(report, live, case, _policy(report), 1, level)
+        finally:
+            level_proposal_set.evaluate_report = original
+        # The level does offer a description, which keeps the current one.
+        assert "description" not in _offered(derivation)
+        assert {"title", "subtitle", "series", "authors"} <= _offered(derivation)
+        offer = current_offer(case, derivation.offer)
+        assert next(
+            value for value in offer if value["destination"] == "description"
+        ) == next(
+            value for value in case.proposals if value["destination"] == "description"
+        )
+
+
 def test_combination_group_with_one_automatic_member_keeps_live_proposals() -> None:
     """Contract test 20: the title, subtitle and series group is substituted
     whole or not at all, and not at all when any member is automatic."""
@@ -404,6 +485,13 @@ def test_combination_group_with_one_automatic_member_keeps_live_proposals() -> N
     with _live_dispositions(series="keep_current"):
         derivation = derive_level(report, live, case, _policy(report), 1, level)
     assert not {"title", "subtitle", "series"} & _offered(derivation)
+    offer = current_offer(case, derivation.offer)
+    for destination in ("title", "subtitle", "series"):
+        assert next(
+            value for value in offer if value["destination"] == destination
+        ) == next(
+            value for value in case.proposals if value["destination"] == destination
+        )
     assert "description" in _offered(derivation)
 
 

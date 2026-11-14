@@ -494,14 +494,21 @@ def _offered_alternatives_sql(review_case_id: str) -> str:
     """
     return (
         "COALESCE((SELECT json_extract(offered_field.value,'$.alternatives') "
+        + _offered_field_sql(review_case_id)
+        + "),json_extract(result.value,'$.alternatives'))"
+    )
+
+
+def _offered_field_sql(review_case_id: str) -> str:
+    """The FROM and WHERE of a result's field in its case's current offer."""
+    return (
         "FROM review_case_level_offers offered_offer,"
         "json_each(offered_offer.document,'$.fields') offered_field "
         f"WHERE offered_offer.review_case_id={review_case_id} "
         "AND offered_offer.work_identity_level="
         + _reconciled_level_sql(review_case_id)
         + " AND json_extract(offered_field.value,'$.destination')="
-        "json_extract(result.value,'$.destination')),"
-        "json_extract(result.value,'$.alternatives'))"
+        "json_extract(result.value,'$.destination')"
     )
 
 
@@ -511,14 +518,18 @@ def _review_case_field_fact_values_sql(
     """One case result's field facts; ``offered`` reads its current offer.
 
     The insert trigger runs before any level offer of the case exists, so it
-    reads the live alternatives; every later derivation reads the offer.
+    reads the live alternatives; every later derivation reads the offer. A
+    field the offer substitutes is the owner's to settle, as
+    ``compose_offer``'s ``manual_required`` says (amendment 24).
     """
+    review_case_id = case_document.removesuffix(".document") + ".review_case_id"
     alternatives = (
-        _offered_alternatives_sql(
-            case_document.removesuffix(".document") + ".review_case_id"
-        )
+        _offered_alternatives_sql(review_case_id) if offered else _LIVE_ALTERNATIVES_SQL
+    )
+    substituted = (
+        " OR EXISTS (SELECT 1 " + _offered_field_sql(review_case_id) + ")"
         if offered
-        else _LIVE_ALTERNATIVES_SQL
+        else ""
     )
     return (
         "json_extract(result.value,'$.destination'),"
@@ -549,7 +560,9 @@ def _review_case_field_fact_values_sql(
         + ",'$.results') sibling "
         "WHERE json_extract(sibling.value,'$.destination') IN ('title','subtitle','series') "
         "AND json_array_length(json_extract(sibling.value,'$.reasons'))=1 "
-        "AND json_extract(sibling.value,'$.reasons[0]')='no_safe_bibliographic_combination'))) "
+        "AND json_extract(sibling.value,'$.reasons[0]')='no_safe_bibliographic_combination'))"
+        + substituted
+        + ") "
         f"AND EXISTS (SELECT 1 FROM json_each({alternatives}) alternative "
         "WHERE json_extract(alternative.value,'$.assessment')<>'preserves_target') "
         "THEN 1 ELSE 0 END"

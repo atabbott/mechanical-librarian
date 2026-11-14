@@ -37,11 +37,16 @@ export function ChoiceEvidencePanel({
   evidenceId: string
   label: string
 }) {
-  const corroboratingSources = new Set(
-    context?.evidence
-      .filter((row) => row.role === 'external_corroboration')
-      .map((row) => row.source),
-  ).size
+  // A record offered for the book's title and author offers its value; it
+  // confirms nothing, so it counts toward no "sources confirm" line (#1355).
+  const offered = context?.matchBasis === 'title_and_author'
+  const corroboratingSources = offered
+    ? 0
+    : new Set(
+        context?.evidence
+          .filter((row) => row.role === 'external_corroboration')
+          .map((row) => row.source),
+      ).size
   return (
     <section className="choice-evidence" id={evidenceId} aria-label={`${label} evidence`}>
       {corroboratingSources ? (
@@ -58,7 +63,11 @@ export function ChoiceEvidencePanel({
                 {row.source}
                 {sourceBasis(context, row.role)}
               </strong>
-              <span>{evidenceRoleLabel(row.role)}</span>
+              <span>
+                {offered && row.role === 'external_corroboration'
+                  ? 'Offers this value'
+                  : evidenceRoleLabel(row.role)}
+              </span>
               <p>{observationText(row)}</p>
             </li>
           ))}
@@ -256,9 +265,12 @@ export function MetadataChoice({
   const evidenceLabel =
     evidenceName ??
     (longDescription ? `Evidence for ${label} description` : `Evidence for ${label}: ${value}`)
+  // The card's source line says a title-and-author value as Evidence does.
   const rationale = adviceSource
     ? `${adviceSource.engine} · ${adviceSource.model}`
-    : context?.rationale
+    : context?.rationale && !current && context.matchBasis === 'title_and_author'
+      ? `${context.rationale} · same title and author`
+      : context?.rationale
   const recommendation = recording
     ? 'Recording…'
     : advice

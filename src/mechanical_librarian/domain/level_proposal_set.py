@@ -27,6 +27,7 @@ from mechanical_librarian.domain.metadata_report import (
 from mechanical_librarian.domain.proposal_set import (
     POLICY_VERSION,
     LevelEvidence,
+    ProposalAssessment,
     ProposalSet,
     ProposalValueError,
     evaluate_report,
@@ -293,7 +294,7 @@ def derive_level(
     ``live`` and ``case`` are the live set and its case, unchanged. The level
     set is evaluated with the same resolved policy; its decision set is
     computed and never stored. A live manual field the level offers other
-    alternatives for is substituted; the title, subtitle and series group is
+    alternatives for, one of which would change the value, is substituted; the title, subtitle and series group is
     substituted whole or not at all, and not at all when any member is
     decided automatically. A field decided automatically keeps its live
     proposal.
@@ -377,13 +378,24 @@ def _offer(
         if tuple(value.to_data() for value in live_results[destination].alternatives)
         != tuple(value.to_data() for value in level_results[destination].alternatives)
     }
-    substituted = {
+    # A substituted field is the owner's to settle, so a field whose level
+    # alternatives would all keep the current value is not substituted
+    # (amendment 24); the group needs one such alternative among its members.
+    eligible = {
         destination
         for destination in changed
+        if any(
+            value.assessment is not ProposalAssessment.PRESERVES_TARGET
+            for value in level_results[destination].alternatives
+        )
+    }
+    substituted = {
+        destination
+        for destination in eligible
         if destination not in LEVEL_COMBINATION_DESTINATIONS
         and _manual(dispositions, destination)
     }
-    if changed.intersection(LEVEL_COMBINATION_DESTINATIONS) and all(
+    if eligible.intersection(LEVEL_COMBINATION_DESTINATIONS) and all(
         _manual(dispositions, destination)
         for destination in LEVEL_COMBINATION_DESTINATIONS
     ):

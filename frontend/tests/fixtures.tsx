@@ -103,6 +103,7 @@ export const detail: CaseDetailView = {
   id: 'case-1',
   current: true,
   checking: false,
+  checkGivenUp: false,
   target: {
     connection: 'local',
     library: 'Books',

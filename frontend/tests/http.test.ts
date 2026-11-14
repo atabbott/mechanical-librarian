@@ -3715,6 +3715,7 @@ it('reads a case waiting for its check and a value offered for title and author 
   const changed = {
     ...payload,
     checking: true,
+    check_given_up: true,
     fields: payload.fields.map((field) =>
       field.destination === 'series'
         ? {
@@ -3730,6 +3731,7 @@ it('reads a case waiting for its check and a value offered for title and author 
   }
   const read = await readCase(changed)
   expect(read.checking).toBe(true)
+  expect(read.checkGivenUp).toBe(true)
   const series = read.fields.find((item) => item.destination === 'series')
   if (!series) throw new Error('fixture requires its series field')
   expect(series.choiceContexts.map((context) => context.matchBasis)).toEqual(

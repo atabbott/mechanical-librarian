@@ -614,6 +614,7 @@ def _case(case_id: str) -> dict[str, object]:
             "review_case_id": case_id,
             "current": False,
             "checking": False,
+            "check_given_up": False,
             "comparison_notices": [],
             "target": {
                 "connection": "primary",
@@ -1145,6 +1146,7 @@ def _case(case_id: str) -> dict[str, object]:
         "media_health": [],
         "writes_consented": False,
         "checking": False,
+        "check_given_up": False,
         "review_case_id": case_id,
         "current": True,
         "comparison_notices": [],

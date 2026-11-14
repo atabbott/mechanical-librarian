@@ -169,6 +169,8 @@ class CaseDetailView:
     recording_admission_basis: dict[str, object] | None = None
     # The case waits for its Book matching check (#1355, S10).
     checking: bool = False
+    # That check gave up; saving again, or a restart, retries it (#1355).
+    check_given_up: bool = False
 
     @classmethod
     def from_data(cls, value: dict[str, object]) -> "CaseDetailView":
@@ -196,6 +198,7 @@ class CaseDetailView:
             if value["recording_admission_basis"] is None
             else dict(cast("dict[str, object]", value["recording_admission_basis"])),
             value.get("checking") is True,
+            value.get("check_given_up") is True,
         )
 
     def to_data(self) -> dict[str, object]:
@@ -212,6 +215,7 @@ class CaseDetailView:
             "audiobook_review_scope": self.audiobook_review_scope,
             "recording_admission_basis": self.recording_admission_basis,
             "checking": self.checking,
+            "check_given_up": self.check_given_up,
         }
 
 

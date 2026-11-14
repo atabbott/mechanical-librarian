@@ -3681,6 +3681,10 @@
             ],
             "title": "Audiobook Review Scope"
           },
+          "check_given_up": {
+            "title": "Check Given Up",
+            "type": "boolean"
+          },
           "checking": {
             "title": "Checking",
             "type": "boolean"
@@ -3755,6 +3759,7 @@
           "comparison_notices",
           "current",
           "checking",
+          "check_given_up",
           "fields",
           "media_health",
           "review_case_id",

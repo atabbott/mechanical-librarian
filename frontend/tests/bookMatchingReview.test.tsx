@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../src/api/http'
 import type { CaseDetailView, ReviewHttp } from '../src/api/http'
 import { activity, createHttp, createLiveStream, detail, library, renderRoute } from './fixtures'
+import { view } from './settingsFixtures'
 
 // Book matching in review (#1355, activation B): a work waiting for its check,
 // a choice refused because the field's offer changed, the source line of a value
@@ -45,6 +46,122 @@ describe('a work waiting for its Book matching check', () => {
     expect(proposed()).toBeEnabled()
     expect(current()).toBeEnabled()
   }, 15_000)
+})
+
+describe('a work whose Book matching check gave up', () => {
+  const givenUp = 'This work could not be checked against the new Book matching setting.'
+  const serve = (http: ReviewHttp): ReviewHttp => ({
+    ...http,
+    getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+      ...detail,
+      checking: true,
+      checkGivenUp: true,
+    })),
+    getLibrary: vi.fn(async () => library),
+  })
+  const line = async () => {
+    const link = await screen.findByRole('link', { name: 'Book matching' })
+    const status = link.closest('p')
+    if (!status) throw new Error('the given-up line is required')
+    expect(status).toHaveAttribute('role', 'status')
+    return status
+  }
+
+  it('says the check could not run, links Book matching, and keeps its choices disabled', async () => {
+    const http = serve({ ...createHttp(), getSettings: vi.fn(async () => view('store')) })
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+    const status = await line()
+    await waitFor(() =>
+      expect(status).toHaveTextContent(`${givenUp} Save Book matching again to retry.`),
+    )
+    expect(screen.queryByText(checkingLine)).toBeNull()
+    const link = within(status).getByRole('link', { name: 'Book matching' })
+    expect(link.getAttribute('href')).toBe('/policy?section=curation#book-matching')
+    expect(proposed()).toBeDisabled()
+    expect(current()).toBeDisabled()
+  })
+
+  it('asks for a restart in file mode, where the setting cannot be saved', async () => {
+    const http = serve({ ...createHttp(), getSettings: vi.fn(async () => view('file')) })
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+    const status = await line()
+    await waitFor(() =>
+      expect(status).toHaveTextContent(
+        `${givenUp} Restart the Mechanical Librarian service to retry.`,
+      ),
+    )
+    expect(within(status).getByRole('link', { name: 'Book matching' })).toBeVisible()
+  })
+})
+
+describe('owner controls while the work waits for its check', () => {
+  const genres = {
+    ...title,
+    destination: 'genres' as const,
+    decisionActions: ['keep_current', 'accept'] as const,
+    currentValue: 'Drama',
+    currentRaw: ['Drama'],
+    proposedValues: [{ kind: 'list' as const, value: ['Fantasy', 'Mystery'] }],
+    choiceContexts: [],
+    ownerControl: {
+      entry: null,
+      withdraw: null,
+      subset: {
+        maxItems: 32,
+        options: [
+          { value: 'Drama', current: true, proposed: false, previous: false },
+          { value: 'Fantasy', current: false, proposed: true, previous: false },
+        ],
+      },
+    },
+  }
+  it.each([
+    ['checking', { checking: true, checkGivenUp: false }],
+    ['given up', { checking: true, checkGivenUp: true }],
+  ])('ignore a press on Choose genres while %s', async (_, state) => {
+    const user = userEvent.setup()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        ...state,
+        fields: [genres],
+      })),
+      getLibrary: vi.fn(async () => library),
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=genres', http)
+    const panel = await screen.findByRole('region', { name: 'Your value for Genres' })
+    const trigger = within(panel).getByRole('button', { name: 'Choose genres' })
+    expect(trigger).toHaveAttribute('aria-disabled', 'true')
+    await user.click(trigger)
+    expect(within(panel).queryByRole('group', { name: 'Choose genres' })).toBeNull()
+  })
+
+  it('says a refused choice under the choice cards, above Choose genres', async () => {
+    const user = userEvent.setup()
+    const field = { ...genres, ownerControl: { ...genres.ownerControl } }
+    let served: CaseDetailView = { ...detail, fields: [field] }
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => served),
+      getLibrary: vi.fn(async () => library),
+      recordDecision: vi.fn<ReviewHttp['recordDecision']>(async () => {
+        served = { ...detail, fields: [{ ...field, offerDigest: 'offer-digest-now' }] }
+        throw new ApiError(409, 'offer_changed', 'digest_mismatch')
+      }),
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=genres', http)
+    await user.click(
+      await screen.findByRole('radio', { name: 'Choose proposed value: Fantasy · Mystery' }),
+    )
+    const notice = await screen.findByText(offerChangedLine)
+    const panel = screen.getByRole('region', { name: 'Your value for Genres' })
+    const cards = screen.getByRole('radiogroup')
+    // Following in document order: cards, then the line, then Choose genres.
+    expect(cards.compareDocumentPosition(notice) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(notice.compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(screen.getAllByText(offerChangedLine)).toHaveLength(1)
+  })
 })
 
 describe('a choice refused because Book matching changed', () => {
@@ -113,10 +230,11 @@ it('names a value offered for the book’s title and author beside its source', 
             alternativeId: 'alternative-1',
             selection: 'proposed',
             matchBasis: 'title_and_author',
+            rationale: 'Hardcover',
             evidence: [
               {
                 source: 'Hardcover',
-                role: 'external_observation',
+                role: 'external_corroboration',
                 observation: 'New title',
                 language: null,
               },
@@ -143,6 +261,13 @@ it('names a value offered for the book’s title and author beside its source', 
   )
   const evidence = screen.getByRole('region', { name: 'evidence' })
   expect(within(evidence).getByText('Hardcover · same title and author')).toBeVisible()
+  // The card's own source line says it too, and the value is offered, not
+  // confirmed: it counts toward no "sources confirm" line.
+  const card = screen.getByRole('radio', { name: 'Choose proposed value: New title' })
+  expect(within(card).getByText('Hardcover · same title and author')).toBeVisible()
+  expect(within(evidence).getByText('Offers this value')).toBeVisible()
+  expect(within(evidence).queryByText('Confirms this value')).toBeNull()
+  expect(within(evidence).queryByText(/sources? confirms?/u)).toBeNull()
   // The library's own value is never described as a title-and-author match.
   expect(within(evidence).getByText('Library')).toBeVisible()
   expect(within(evidence).queryByText(/Library · same title and author/u)).toBeNull()

@@ -831,6 +831,9 @@ export interface CaseDetailView {
   // The work waits for its check against a changed Book matching setting:
   // its choices are refused until the check finishes (#1355).
   checking: boolean
+  // That check gave up: saving Book matching again, or a restart in file
+  // mode, retries it. Its choices stay disabled (#1355).
+  checkGivenUp: boolean
   fields: readonly ReviewFieldView[]
 }
 export interface EvidenceObservationView {
@@ -2776,6 +2779,7 @@ export const mapCaseDetail = (value: CaseDetailDto): CaseDetailView => {
     ),
     writesConsented: value.writes_consented,
     checking: value.checking,
+    checkGivenUp: value.check_given_up,
     fields: value.fields.map(mapReviewField),
   }
 }

@@ -108,7 +108,10 @@ _LEVEL_TABLES = (
     "review_case_level_reconciliation",
 )
 _LEVEL_TABLE_MODULES = {
-    "adapters/persistence/schema.py": "ddl",
+    # The tables' DDL, and the field facts' SQL, which reads each field's
+    # current offer as `compose_offer` does (amendments 14 and 24; held equal
+    # by `test_sql_and_python_read_the_same_current_offer`).
+    "adapters/persistence/schema.py": "ddl_and_offer_facts",
     "adapters/persistence/level_reconciliation.py": "level_reconciliation",
     # The gate's fragments: the reconciled-level columns only, never an offer.
     "adapters/persistence/level_sql.py": "gate",

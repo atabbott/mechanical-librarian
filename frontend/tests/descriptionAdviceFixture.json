@@ -1,6 +1,7 @@
 {
   "audiobook_review_scope": null,
   "checking": false,
+  "check_given_up": false,
   "comparison_notices": [],
   "current": true,
   "fields": [

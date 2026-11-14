@@ -125,6 +125,7 @@ export const reviewField = (overrides: Overrides = {}) => ({
 // `GET /api/v1/review-cases/{review_case_id}` 200.
 export const caseDetail = (overrides: Overrides = {}) => ({
   audiobook_review_scope: null,
+  check_given_up: false,
   checking: false,
   comparison_notices: [],
   current: true,

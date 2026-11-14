@@ -904,6 +904,9 @@ class _CaseDetailResponse(_ClosedModel):
     # The case waits for its Book matching check: choices are refused and
     # owner writes wait until it is reconciled (#1355, S10).
     checking: bool
+    # That check gave up, as Policy counts it: saving Book matching again, or
+    # a restart in file mode, retries it (#1355, review round 1).
+    check_given_up: bool
     fields: list[_ReviewField]
     # The same section the recorded-evidence view carries, under the same
     # bound: a work with a review case is the one an owner opens first, and a

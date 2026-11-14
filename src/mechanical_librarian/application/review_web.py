@@ -325,6 +325,9 @@ class CurrentReviewCaseSnapshot:
     # Whether the case waits for its Book matching check: its reconciled
     # level is not the configured one (#1355, S10).
     checking: bool = False
+    # Whether that check gave up: its work is neither queued, delayed nor
+    # running, as Policy's count of works that could not be checked reads it.
+    check_given_up: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -1168,6 +1171,7 @@ class InspectCurrentReviewCase:
                 # refused and owner writes wait until it is reconciled at the
                 # configured level (#1355, S10).
                 "checking": snapshot.checking,
+                "check_given_up": snapshot.check_given_up,
                 "fields": fields,
                 # An admitted audiobook opens its case, not its report, so the
                 # media-health section has to reach the owner here too -- and

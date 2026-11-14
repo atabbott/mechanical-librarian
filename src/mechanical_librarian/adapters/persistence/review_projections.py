@@ -45,6 +45,7 @@ from mechanical_librarian.adapters.persistence.level_reconciliation import (
     case_level_unreconciled,
     current_level_offer,
     stored_level_offer_documents,
+    target_level,
 )
 from mechanical_librarian.adapters.persistence.review_cases import (
     ReviewAttentionPage,
@@ -53,6 +54,9 @@ from mechanical_librarian.adapters.persistence.review_cases import (
 from mechanical_librarian.adapters.persistence.review_covers import (
     read_cover_page,
     read_switch_previews,
+)
+from mechanical_librarian.adapters.persistence.review_preparation import (
+    matching_check_given_up,
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
     _ATTENTION_FACT_CURRENT_SQL,
@@ -268,11 +272,18 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 earlier_documents,
                 source_documents,
             )
+            checking = case_level_unreconciled(self._connection, review_case_id)
             snapshot = CurrentReviewCaseSnapshot(
                 level_offer_document=current_level_offer(
                     self._connection, review_case_id
                 ),
-                checking=case_level_unreconciled(self._connection, review_case_id),
+                checking=checking,
+                check_given_up=checking
+                and matching_check_given_up(
+                    self._connection,
+                    target_level(self._connection).value,
+                    review_case_id,
+                ),
                 description_advice=self.description_advice(review_case_id),
                 case_document=case_document,
                 report_document=report.to_json(),

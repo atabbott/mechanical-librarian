@@ -825,8 +825,10 @@ def current_offer(
     A field's offer is its live proposal unless the case's level offer at the
     configured level substitutes it, when the offered alternatives are that
     row's level alternatives, each with its lineage. A substituted field keeps
-    its live proposal id, outcome and reasons: the decision stays manual. The
-    caller passes the row at the configured level, or ``None``.
+    its live proposal id, outcome and reasons: the decision stays manual, and
+    one with an eligible alternative is the owner's to settle
+    (``manual_required``, amendment 24). The caller passes the row at the
+    configured level, or ``None``.
     """
     if type(case) is not ReviewCase:
         raise ReviewCaseValueError("review case is invalid")
@@ -869,6 +871,13 @@ def compose_offer(
                     }
                     for entry in cast("list[dict[str, object]]", field["lineage"])
                 },
+                # The level offers a value to choose: keep-current and accept
+                # over it, while the live outcome and reasons stay as they are.
+                "manual_required": proposal["manual_required"] is True
+                or any(
+                    alternative["assessment"] != "preserves_target"
+                    for alternative in alternatives
+                ),
                 "result": result,
                 "work_identity_level": level,
             }
