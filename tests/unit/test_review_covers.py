@@ -106,8 +106,10 @@ def _library(
     undecodable: bool = False,
     abs_state: CoverSourceState | None = None,
     abs_digest: str | None = None,
+    fetching: bool = False,
 ) -> Iterator[_Library]:
-    """With ``put_back``, item-1's current cover is a verified automatic switch
+    """With ``fetching``, every report still waits on a provider lookup.
+    With ``put_back``, item-1's current cover is a verified automatic switch
     whose original is listed, and its report offers that original (#1363).
     With ``undecodable`` too, the decoder refused that original, so the
     report offers it by its digest with no preview (#1362)."""
@@ -169,6 +171,7 @@ def _library(
         retained_original=repository.retained_cover_original,
         # The copy itself is checked in test_cover_retention.py.
         require_retained=lambda _digest: None,
+        provider_fetching=lambda _report: fetching,
     )
     # The live reads composition binds: cover currentness for attention, and
     # the owner cover recheck for a decision.
@@ -1033,6 +1036,7 @@ def _attention_mirrors(library: _Library) -> tuple[bool, bool]:
     ("case", "attention"),
     (
         ("contradicted_with_choices", True),
+        ("contradicted_while_fetching", False),
         ("contradicted_without_actions", False),
         ("title_hold_without_actions", False),
         ("kept_unconfirmed", False),
@@ -1040,6 +1044,7 @@ def _attention_mirrors(library: _Library) -> tuple[bool, bool]:
     ),
     ids=(
         "contradicted_with_choices",
+        "contradicted_while_fetching",
         "contradicted_without_actions",
         "title_hold_without_actions",
         "kept_unconfirmed",
@@ -1071,6 +1076,10 @@ def test_python_and_sql_attention_agree_on_holds_and_kept_covers(
     options: dict[str, Any] = (
         {"readable_current": False, "abs_state": CoverSourceState.TIMEOUT}
         if case == "transient_with_choices"
+        # A hold with choices waits while a provider lookup runs: neither
+        # mirror counts it until the comparison is ready.
+        else {"fetching": True}
+        if case == "contradicted_while_fetching"
         else {}
     )
     with identity, _library(tmp_path, **options) as library:
@@ -1103,6 +1112,7 @@ def test_python_and_sql_attention_agree_on_holds_and_kept_covers(
 
     expected_stage = {
         "contradicted_with_choices": ("hold", "current_contradicted"),
+        "contradicted_while_fetching": ("hold", "current_contradicted"),
         "contradicted_without_actions": ("hold", "current_contradicted"),
         "title_hold_without_actions": ("hold", "title_names_other_work"),
         "kept_unconfirmed": ("keep", None),
@@ -1110,7 +1120,10 @@ def test_python_and_sql_attention_agree_on_holds_and_kept_covers(
     }[case]
     assert (stage["outcome"], stage["reason"]) == expected_stage
     assert mirrors == (attention, attention)
-    # The hold pill names its reason whether or not it is counted.
+    # The hold pill names its reason whether or not it is counted, once the
+    # comparison is ready; Covers shows no hold while a lookup runs.
     assert held == (
-        {"reason": expected_stage[1]} if expected_stage[0] == "hold" else None
+        {"reason": expected_stage[1]}
+        if expected_stage[0] == "hold" and case != "contradicted_while_fetching"
+        else None
     )

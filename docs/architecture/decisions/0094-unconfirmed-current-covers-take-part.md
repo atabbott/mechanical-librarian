@@ -46,8 +46,10 @@ ADR-0093's current-cover protection:
 - under `proposals_only`, nothing is replaced automatically.
 
 A positive contradiction on the current cover, meaning a retained identifier,
-edition, work or creator disagreement, still sends the field to attention and
-never to a keep. Identity grounds alone never replace a current cover.
+edition, work or creator disagreement, holds the field for the owner and is
+never a keep. The hold counts in attention while there is a cover to choose;
+with nothing to choose it shows on the book page only. Identity grounds alone
+never replace a current cover.
 
 **Unreadable** is a typed terminal outcome only: no cover, or bytes the
 decoder rejects. An unreadable current cover is replaceable by the first
@@ -114,15 +116,12 @@ separately.
 
 ### Neutral or deferred
 
-- How often the current cover matches no provider art is measured on the
-  #1294 snapshot, and on #744 where perceptual hashes are persisted, during
-  delivery.
+- How often the current cover matches no provider art, measured on the #1294
+  snapshot: 36 of 85 audiobook covers with provider art and 5 of 15 ebook
+  covers match none. #744 has no current covers to measure.
 - No new egress, disclosure or model input. Reasons are closed codes, and no
   cover bytes or paths reach logs, diagnostics, status or support bundles.
 - Clean rebuild required under ADR-0013: the decision policy version changes.
-- On acceptance, `security.md` (the cover-admission paragraph under Automatic
-  decisions), `automation-policy.md` and the changelog change in the activation
-  pull request.
 
 ## Alternatives considered
 
@@ -147,13 +146,13 @@ keeps that from happening, as #1333 already requires of placeholders.
   `unprotected`: a readable unverified current cover with no detectable issue,
   kept while no judge exists; one with a detectable issue, replaced; an
   unreadable one, replaced by the first eligible same-work candidate; an
-  owner-final cover, never replaced; a positive contradiction, sent to
-  attention.
+  owner-final cover, never replaced; a positive contradiction, held for the
+  owner.
 - A timeout, a throttled read and an unknown read result each keep the current
   cover.
 - Application tests: a stale target is refused at the effect path;
   undecodable current bytes are retained, and a revert restores them.
-- An offline replay over the #744 and #1294 snapshots reports, as aggregates,
-  which current covers would change.
+- An offline replay over the #1294 snapshot reports, as aggregates, which
+  current covers would change (#744 has no current covers).
 - The owner-run qualification held by #1418 before any such replacement is
   automatic.

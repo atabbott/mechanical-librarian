@@ -109,7 +109,7 @@ refused.
 | `cover-identity-report-v2` | Cover identity classification under one Book matching level, with the title-and-author outcome and level reasons |
 | `cover-policy-v2` | The cover policy, including when a current cover may be replaced and whether an edition's cover is preferred |
 | `cover-policy-report-v5` | Cover policy evaluation, embedding the cover identity report; owner readiness and automatic recommendation are independent, and the measured cover rules' outcome and reason are recorded |
-| `cover-automatic-decision-v5` | An automatic cover decision, with the measured rule's reason for a replacement |
+| `cover-automatic-decision-v5` | An automatic cover decision, with the measured rule's reason for a replacement and which shadow identity admitted it: one for a confirmed current cover, one for a cover that is not confirmed |
 | `cover-selection-authority-v1`, `cover-selection-authority-v3` | Cover selections: v1 wraps an automatic choice, v3 an owner choice and the switch a Put back undoes |
 | `field-effect-consent-state-v2` | A library consent and its basis: the owner's grant or the policy activation that carried it |
 | `field-effect-consent-envelope-v1` | The consent envelope whose identity digests the destination set |
