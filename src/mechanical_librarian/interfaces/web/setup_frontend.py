@@ -785,7 +785,7 @@ const renderMounts=async()=>{
     const draft={};
     for(const library of state.libraries){
       const control=form.elements[`path-${library.name}`];
-      // A library whose folder was found is compared as Audiobookshelf reports it.
+      // A library whose folder was found keeps the folder the server recorded.
       if(!control){
         service_paths[library.name]=null;
         continue

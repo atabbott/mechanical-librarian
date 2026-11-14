@@ -471,6 +471,55 @@ def test_mount_retest_uses_discovered_service_path_without_browser_input() -> No
     assert state.next_step() == "providers"
 
 
+def test_a_found_folder_keeps_the_path_it_was_found_with_while_another_is_checked() -> (
+    None
+):
+    _connection, store = _store()
+    state = _connected(store)
+    candidates = tuple(
+        SetupLibraryCandidate(
+            library_id=name,
+            name=name.title(),
+            media_kind="book",
+            service_paths=(f"/reported/{name}",),
+        )
+        for name in ("books", "audio")
+    )
+    mounts: dict[str, tuple[str, ...]] = {"/owner/books": ("books",)}
+    journey = _journey(store, candidates, mounts)
+    state = journey.libraries(
+        state.revision,
+        [
+            LibrarySettings(
+                name=name, connection="primary", library_id=name, media_kind="book"
+            )
+            for name in ("books", "audio")
+        ],
+    )
+    assert {value.state for value in state.mounts} == {"missing"}
+
+    # The owner corrects one path; the other folder is still not found.
+    state = journey.mounts(state.revision, {"books": "/owner/books", "audio": None})
+    assert {value.library: value.state for value in state.mounts} == {
+        "audio": "missing",
+        "books": "matched",
+    }
+
+    # The found library's field is hidden now, so it comes back without a path.
+    # It keeps its match while the other folder is found.
+    mounts["/owner/audio"] = ("audio",)
+    state = journey.mounts(state.revision, {"books": None, "audio": "/owner/audio"})
+    assert {value.library: value.state for value in state.mounts} == {
+        "audio": "matched",
+        "books": "matched",
+    }
+    assert {value.name: value.mount for value in state.libraries} == {
+        "audio": "audio",
+        "books": "books",
+    }
+    assert state.next_step() == "providers"
+
+
 @pytest.mark.parametrize(
     ("service_paths", "mounts", "expected"),
     (

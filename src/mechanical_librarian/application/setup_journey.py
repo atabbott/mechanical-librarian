@@ -136,9 +136,35 @@ class SetupJourneyOperation:
         discovered = {
             value.library_id: value for value in self._discover_libraries(current)
         }
-        libraries, results = self._compare_folders(
-            current.libraries, service_paths, discovered
+        # The folder step hides a library once its folder is found, so it comes
+        # back without a path. It keeps the folder it was found in, which may be
+        # a path the owner entered, rather than going back to the reported one.
+        recorded = {value.library: value.state for value in current.mounts}
+        kept = {
+            value.name
+            for value in current.libraries
+            if service_paths[value.name] is None
+            and value.mount is not None
+            and recorded.get(value.name) == "matched"
+        }
+        compared, compared_results = self._compare_folders(
+            [value for value in current.libraries if value.name not in kept],
+            service_paths,
+            discovered,
         )
+        checked = {
+            library.name: (library, result)
+            for library, result in zip(compared, compared_results, strict=True)
+        }
+        libraries: list[LibrarySettings] = []
+        results: list[SetupMountResult] = []
+        for value in current.libraries:
+            library, result = checked.get(
+                value.name,
+                (value, SetupMountResult(library=value.name, state="matched")),
+            )
+            libraries.append(library)
+            results.append(result)
         successor = SetupStateDocument.model_validate(
             {
                 **current.model_dump(),
