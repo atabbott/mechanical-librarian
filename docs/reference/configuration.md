@@ -67,7 +67,7 @@ The document:
 - rejects unknown fields, duplicate keys and the JSON constants `NaN` and
   `Infinity`;
 - is described by the generated
-  [`config-v11.schema.json`](config-v11.schema.json).
+  [`config.schema.json`](config.schema.json).
 
 Regenerate the schema after changing the model:
 
@@ -566,7 +566,7 @@ current cover
 cover when another is preferred, and `proposals_only` replaces nothing and
 suggests instead. `cover_prefer_edition` prefers a cover from the book's own
 edition over a cover of the work. In store mode both live in
-`owner-settings-v6.cover_preferences`, and Policy → Curation saves them with
+the owner settings' `cover_preferences`, and Policy → Curation saves them with
 their own button; in file mode they are read-only there. Changing either stales
 any planned automatic cover change before it writes, and a store-mode save
 requests a scan that compares each prepared cover again under the new policy.
@@ -584,7 +584,7 @@ kept.
 `description_remove_marketing`, `description_remove_sales_boasts` and
 `description_remove_praise` remove marketing material, sales figures and
 bestseller boasts, and pull quotes and author praise. In store mode these and
-`automatic_application` live in `owner-settings-v6.description_advice` without
+`automatic_application` live in the owner settings' `description_advice` without
 the `description_` prefix, and Policy → Curation saves them separately from the
 policy draft.
 
@@ -626,7 +626,7 @@ until #1418. An author whose dotted initials are written differently ("R.F."
 for "R. F.") is not a contradiction at a wider value. The default changes
 nothing.
 
-In store mode the value lives in `owner-settings-v6.matching.work_identity`,
+In store mode the value lives in the owner settings' `matching.work_identity`,
 and Policy → Curation saves it on its own, apart from the policy draft. A
 save writes no Activity row; it re-checks each current cover comparison made
 under another value, and a pending cover effect chosen under the old value
