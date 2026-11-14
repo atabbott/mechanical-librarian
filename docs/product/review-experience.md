@@ -343,38 +343,39 @@ and the field shows only what you decide now.
 
 ### Audiobooks
 
-An audiobook uses the same rail, with Narrators and ASIN, and the same guarded
-writes
+An audiobook uses the same tabs, with Narrators and ASIN added, and its writes
+need the same checks
 ([ADR-0071](../architecture/decisions/0071-book-media-guarded-application.md)).
-Until its recording identity qualifies
+Until its recording qualifies
 ([ADR-0073](../architecture/decisions/0073-audiobook-decision-qualification.md)),
-choices stay available but settled fills are not counted. Tag and ASIN fills
-never queue alone; narrators queue only under "Authors and narrators: Ask me".
+an undecided field outside Attention still offers its choices and reads
+Optional. Tag and ASIN fills never enter Attention on their own. A narrator fill
+enters it only when Authors and narrators is set to Ask me.
 
-When only the book is supported, the view says the recording is unresolved
-and offers series, title, description, genre, publication date and cover,
-never subtitle. The date reads as the book's first publication. A narrator
-choice from a Hardcover audio edition has its own sentence, is offered only for
-an empty field, and each evidence row names its edition by number and runtime.
-The cover gallery holds only the current cover and the covers the work route
-offers. Such a cover reads "Same book · recording not confirmed" and says it
-comes from the matched book, not a confirmed recording; its identity stays
-unverified, so choosing it still confirms an unverified match, and History
-says the same. The note's "Your choice applies only to this field" follows
-the number of fields offered.
-Recording identifiers and automatic changes stay unavailable. A description
-or genre that only trims or extends the current value is optional, unless the
-current value is a placeholder, contains markup, is visibly cut off, or lists
-only formats.
+When the evidence supports only the book, Recording match says the exact
+recording is not known. It also says your choices apply only to the fields
+offered, and that this evidence cannot set recording identifiers or make
+automatic changes. The canvas then offers choices only for series, title,
+description, genre, publication date, cover and an empty Narrators field, never
+subtitle. When the book is the first in its series and shares the series' title,
+the canvas keeps the title and offers the series name and position separately.
 
-A supported first book may share its title with its series. The canvas then
-keeps the title and offers series name and position separately.
+The date offered is the book's first publication. A narrator choice comes from a
+Hardcover audio edition and has its own sentence in Recording match. Each
+evidence row names that edition by number and running time. A description or
+genre that only trims or extends the current value reads Optional, unless the
+current value is a placeholder, has markup, is cut off or lists only formats.
 
-When Mechanical Librarian found the matched recording by a title other than
-the audiobook's own, a note says how, at the top of the Evidence page, in
-Recorded evidence and in Library's Recording match section. The section is named
-"How this recording was matched", quotes what was searched, and offers the
-Recording source as the chapter note does (#1723):
+The cover comparison then holds only the current cover and covers from the
+matched book. Each of those reads "Same book · recording not confirmed" and says
+it is from the matched book. Choosing one still confirms an unverified match,
+and History says so.
+
+When Mechanical Librarian found the matched recording by a title other than the
+audiobook's own, a note says how. It appears at the top of the Evidence page, in
+Recorded evidence and in Library's Recording match section. Named "How this
+recording was matched", it quotes what was searched and has the chapter note's
+Recording source (#1723):
 
 - "Mechanical Librarian found the matched recording by searching with “…”,
   read from this folder's name, which differs from this audiobook's title."
@@ -395,66 +396,66 @@ audiobook's own title and authors also found the recording.
 
 ## Covers
 
-Covers are compared side by side: the current cover and candidates equally in
-a small set, or the current cover pinned beside a larger gallery. At 1024 pixels
-and below they form one scrolling row. Each image sits whole in a 5:8 frame.
-Excluded candidates stay subordinate with their reason.
+The cover comparison shows three covers or fewer side by side, equally. With
+more, the current cover is pinned beside a gallery headed Other covers. At 1024
+pixels or narrower they form one scrolling row. Each image sits whole in a 5:8
+frame.
 
-Each candidate summarises its defect checks (clean, named defects, uncertain,
-or no result when the visual review ran); other notes and sources sit in
-disclosures. None of
-this confirms a match, changes order or earns automatic authority.
+When the visual review has run, each cover sums up its defect checks: none
+found, the defects found, uncertain checks or no result. Other notes sit under
+Visual check details. Nothing the visual review finds confirms a match, changes
+the order or lets Automatic choose a cover.
 
-The owner may choose any intact retained alternative, even of lower quality or
-with "Match not confirmed". One tap chooses; there is no dialog.
-Contradictory identity stays excluded. A choice against an outdated comparison
-shows the current one. A cover choice can be revised until its write begins.
+You can choose any other cover whose image loads, even a lower-quality one or
+one marked "Match not confirmed", with no extra step. A cover whose identity
+contradicts the book stays in the row with its reason, but you cannot choose it.
+A choice against an outdated comparison shows the current one.
 
 ### Covers view
 
-Library switches between **Works** and **Covers** with one control above each
-view's heading. Covers lists every work with a review case by what its cover
-asks of the owner, under four tabs with their counts: **To decide** (a
-suggested switch, then an open choice, under **Switch suggested** and
-**Choose**), **Kept** (the current cover stays and others can still be
-chosen), **Switched** and **All** (a wall of every cover, with each title and
-author). To decide counts exactly what Library's attention counts for covers,
-and the counts follow each decision. Pages hold 50 books, with **Show more
-covers** for the next; a page resumes after the last book shown, so a
-decision never makes it skip one. The tab and the open book live in the URL,
-and pages are private and never cached. A wall tile reads **No cover** when
-the cover field is empty and **Image unavailable** when the library's cover
-could not be read; a queue thumbnail, too small for the words, shows an empty
-frame and leaves the state to screen readers and the open book.
+A control above each heading switches Library between Works and Covers. Covers
+groups every work with a case by what its cover asks of you, under four tabs
+with their counts. To decide lists suggested switches under Switch suggested,
+then open choices under Choose. Kept lists books that keep their current cover
+while you can still choose another. All is a wall of every cover, with each
+title and author.
 
-On a wide screen To decide and Kept open their first undecided book beside
-the list; on a phone the list comes first and **Back to books** returns to
-it. A book shows its comparison, asking "Which cover should this book use?".
-One tap records the choice through the work's own decision command and opens
-the next book; **Skip for now** moves on and decides nothing. In All the book
-opens below its row, with **Close**. A book whose covers changed since the
-page loaded is refused on its own with **Reload**, which reopens the same
-book with its current covers; the others stay usable. If no answer comes
-back, the book says so rather than guessing.
+To decide counts exactly the works whose cover field is in Attention, and the
+counts follow each decision. Pages hold 50 books, and Show more covers loads the
+next. It starts after the last book shown, so a decision never makes you miss
+one. The URL keeps the tab and the open book. A wall tile reads "No cover" when
+the cover field is empty and "Image unavailable" when the library's cover cannot
+be read. A thumbnail in the list shows only an empty frame. Screen readers and
+the open book give the state.
 
-**Switched** lists automatic cover writes the owner has not answered since,
-newest first, as **Before** and **Now** with each cover's size; a write that
-filled an empty cover reads **No cover** before. The original is listed only
-while its copy is retained
+Above 1024 pixels, To decide and Kept open their first undecided book beside the
+list. At 1024 or narrower the list comes first, and Back to books returns to it.
+One tap records your choice, as the work's own page does, and opens the next
+book. Skip for now moves on and decides nothing. In All, a book opens below its
+row with Close, and a choice closes it. If a book's covers changed since the
+page loaded, Covers refuses that choice and offers Reload, which reopens the
+book with its current covers. The other books stay usable. If no answer comes
+back, the book says so and asks you to check before choosing again.
+
+Switched lists automatic cover writes you have not answered since, newest first.
+Each row shows Before and Now with each cover's size, and a write that filled an
+empty cover reads "No cover" under Before. A replacement stays listed only while
+Mechanical Librarian keeps a copy of the old cover
 ([ADR-0093](../architecture/decisions/0093-measured-cover-rules-and-current-cover-protection.md)).
-**Keep** records keeping the current cover, releases that copy and marks the
-row **Kept**; **Others** opens the comparison. A replaced cover is itself a
-choice, so a replaced row offers **Put back**, **Keep** and **Others** once
-the work is prepared again after its switch. **Put back** records choosing
-the original, which the guarded write uploads from the retained copy; the
-row reads **Put back** while that write runs and leaves Switched when it
-verifies, which releases the copy. If the cover was changed in
-Audiobookshelf first, the row says "The cover was changed in
-Audiobookshelf, so it was not put back." and keeps Keep and Others. In the
-comparison the original is the **Replaced cover** card. A fill replaced
-nothing, so its row offers Keep and Others only when another cover can be
-chosen. A cover field in the work view links to its book in Covers, which
-opens it wherever it falls in All.
+Keep records that you keep the current cover, releases that copy and marks the
+row Kept. Others opens the comparison. Both appear only when you can choose
+another cover.
+
+Once a replaced cover's work is prepared again after its switch, you can choose
+the old cover. Its row then also offers Put back, and the comparison names the
+old cover Replaced cover. Put back records choosing the
+old cover, and its write uploads it from the kept copy. The row reads Put back
+while that write runs, and leaves Switched when the write is verified, which
+releases the copy. If the cover was changed in Audiobookshelf first, the row
+says "The cover was changed in Audiobookshelf, so it was not put back." and
+offers Keep and Others again.
+
+A cover field's Covers link opens its book in All, wherever it falls.
 
 ## Evidence and History
 
