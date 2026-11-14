@@ -53,7 +53,12 @@ from mechanical_librarian.application.owner_settings import (
     FileOwnerSettingsRepository,
     OwnerSettingsOperations,
 )
+from mechanical_librarian.application.review_application import (
+    REVIEW_PREPARATION_SCHEMA,
+)
 from mechanical_librarian.application.review_web import (
+    REVIEW_CASE_EVIDENCE_SCHEMA,
+    REVIEW_CASE_HISTORY_SCHEMA,
     BrowseReviewLibrary,
     OwnerSessionService,
     ReviewWebError,
@@ -68,7 +73,10 @@ from mechanical_librarian.domain.cover_evidence import (
     cover_source_id,
 )
 from mechanical_librarian.domain.field_effect import FieldEffectError
-from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
+from mechanical_librarian.domain.owner_settings import (
+    OWNER_SETTINGS_SCHEMA,
+    OwnerSettingsDocument,
+)
 from mechanical_librarian.domain.preparation_presentation import (
     PreparationActiveBook,
     PreparationCompletion,
@@ -91,6 +99,7 @@ from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_OPTION_DISPOSITIONS,
 )
+from mechanical_librarian.domain.shadow_outcome import SHADOW_OUTCOME_SCHEMA
 from mechanical_librarian.interfaces.web.app import owner_password_binding
 from tests.support.proposal_evidence import _report as _proposal_report
 from tests.support.review_web_doubles import (
@@ -250,7 +259,7 @@ def test_settings_file_authority_transport_is_private_and_locked(
 ) -> None:
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v6",
+            "schema_version": OWNER_SETTINGS_SCHEMA,
             "revision": 1,
             "connections": [
                 {"name": "primary", "endpoint": "https://library.example.invalid"}
@@ -322,7 +331,7 @@ def test_settings_store_transport_redacts_secret_and_derives_effects(
 ) -> None:
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v6",
+            "schema_version": OWNER_SETTINGS_SCHEMA,
             "revision": 1,
             "connections": [
                 {"name": "primary", "endpoint": "https://library.example.invalid"}
@@ -553,7 +562,7 @@ def test_book_matching_saves_only_through_the_guarded_settings_write(
     settings write like every other group, and reads back as saved."""
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v6",
+            "schema_version": OWNER_SETTINGS_SCHEMA,
             "revision": 1,
             "connections": [
                 {"name": "primary", "endpoint": "https://library.example.invalid"}
@@ -1366,7 +1375,7 @@ def test_login_case_evidence_history_and_logout_round_trip(
     )
     history = web.client.get(f"/api/v1/review-cases/{web.case.review_case_id}/history")
     assert evidence.status_code == 200
-    assert evidence.json()["schema_version"] == "review-case-evidence-v5"
+    assert evidence.json()["schema_version"] == REVIEW_CASE_EVIDENCE_SCHEMA
     assert evidence.json()["items"][0]["source"] == "Local library record"
     assert evidence.json()["items"][0]["destinations"] == ["title"]
     assert "Exact evaluator candidate" in evidence.json()["items"][0]["observation"]
@@ -1378,7 +1387,7 @@ def test_login_case_evidence_history_and_logout_round_trip(
     assert invalid_cursor.status_code == 400
     assert invalid_cursor.json()["error"]["code"] == "request"
     assert history.json()["items"][0]["kind"] == "admitted"
-    assert history.json()["schema_version"] == "review-case-history-v3"
+    assert history.json()["schema_version"] == REVIEW_CASE_HISTORY_SCHEMA
     assert history.headers["cache-control"] == "no-store, private"
     assert "default-src 'none'" in detail.headers["content-security-policy"]
     missing = web.client.post(
@@ -2267,7 +2276,7 @@ def test_review_page_rotates_one_memory_only_csrf_token(
     inactive = web.client.get("/api/v1/review-preparation")
     assert inactive.status_code == 200, inactive.text
     assert inactive.json() == {
-        "schema_version": "review-preparation-v2",
+        "schema_version": REVIEW_PREPARATION_SCHEMA,
         "recovery_required": False,
         "libraries": [],
         "paused": False,
@@ -3182,7 +3191,7 @@ def test_openapi_names_shadow_only_in_the_stored_outcome_set_version() -> None:
         (
             "/components/schemas/_PreviewOutcomeSetResponse/properties"
             "/schema_version/const",
-            "shadow-outcome-set-v11",
+            SHADOW_OUTCOME_SCHEMA,
         )
     }
 

@@ -22,6 +22,7 @@ from uvicorn.server import ServerState
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.configuration import (
+    CONFIG_SCHEMA,
     ApplicationConfiguration,
     ConfigurationError,
     ReviewWebConfiguration,
@@ -232,7 +233,7 @@ def test_installed_command_serves_only_the_canonical_https_boundary() -> None:
         config.write_text(
             json.dumps(
                 {
-                    "schema_version": "config-v11",
+                    "schema_version": CONFIG_SCHEMA,
                     "provider_recovery_generation": 1,
                     "connections": [
                         {

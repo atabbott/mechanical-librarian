@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from pathlib import Path
-from typing import Annotated, Literal, TypeVar
+from typing import Annotated, Final, Literal, TypeVar
 
 from pydantic import (
     BaseModel,
@@ -35,6 +35,9 @@ from mechanical_librarian.infrastructure.configuration import (
     load_configuration_file,
 )
 
+ReviewBootstrapSchemaVersion = Literal["review-bootstrap-v2"]
+REVIEW_BOOTSTRAP_SCHEMA: Final[ReviewBootstrapSchemaVersion] = "review-bootstrap-v2"
+
 DEFAULT_REVIEWER_PROFILE = "/opt/mechanical-librarian/reviewer/profile.json"
 
 _Configuration = TypeVar("_Configuration")
@@ -52,7 +55,7 @@ class BootstrapMount(_Closed):
 
 
 class ReviewBootstrap(_Closed):
-    schema_version: Literal["review-bootstrap-v2"]
+    schema_version: ReviewBootstrapSchemaVersion
     canonical_origin: Annotated[StrictStr, Field(min_length=8, max_length=512)]
     tls_certificate_file: (
         Annotated[StrictStr, Field(min_length=1, max_length=1024)] | None

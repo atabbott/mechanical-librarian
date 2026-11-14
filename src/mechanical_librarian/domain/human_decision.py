@@ -7,7 +7,7 @@ import json
 import re
 import unicodedata
 from dataclasses import dataclass
-from typing import Literal, Mapping, Self, cast
+from typing import Final, Literal, Mapping, Self, cast
 
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
@@ -25,6 +25,10 @@ from mechanical_librarian.domain.review_case import (
     review_proposals,
 )
 from mechanical_librarian.domain.validation import owner_text_value
+
+COVER_SELECTION_AUTHORITY_SCHEMA: Final = "cover-selection-authority-v3"
+
+HUMAN_DECISION_SCHEMA: Final = "human-decision-v3"
 
 _IDEMPOTENCY_KEY = re.compile(r"^[A-Za-z0-9._:-]{16,128}$")
 # ``reject`` is readable history only; the last two are F59's owner commands
@@ -880,7 +884,7 @@ class HumanDecision:
             "proposal_id": self.proposal_id,
             "request_digest": self.request_digest,
             "review_case_id": self.review_case_id,
-            "schema_version": "human-decision-v3",
+            "schema_version": HUMAN_DECISION_SCHEMA,
             "selected_value": self.selected_value,
             "target_fingerprint": self.target_fingerprint,
         }
@@ -910,7 +914,7 @@ class HumanDecision:
                     "selected_value",
                     "target_fingerprint",
                 }
-                or raw["schema_version"] != "human-decision-v3"
+                or raw["schema_version"] != HUMAN_DECISION_SCHEMA
             ):
                 raise ValueError
             value = cls(

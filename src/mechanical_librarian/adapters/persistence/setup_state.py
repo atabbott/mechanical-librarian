@@ -25,8 +25,12 @@ from mechanical_librarian.adapters.persistence.schema import (
 )
 from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
 from mechanical_librarian.domain.owner_settings import OwnerSettingsError, SettingsView
-from mechanical_librarian.domain.reviewer_access import ReviewerAccessDocument
+from mechanical_librarian.domain.reviewer_access import (
+    REVIEWER_ACCESS_SCHEMA,
+    ReviewerAccessDocument,
+)
 from mechanical_librarian.domain.setup_state import (
+    SETUP_STATE_SCHEMA,
     SetupClaimTokenError,
     SetupStateDocument,
     SetupStateError,
@@ -64,7 +68,7 @@ class SetupStateStore(ConnectionScoped):
     def initialize(self, claim_token_digest: str) -> SetupStateDocument:
         """Create the verifier-free exact-current setup predecessor."""
         document = SetupStateDocument(
-            schema_version="setup-state-v4",
+            schema_version=SETUP_STATE_SCHEMA,
             revision=1,
             # This closed member has no verifier, claim-code, or authentication
             # meaning; it binds only the exact empty-volume predecessor. The
@@ -271,7 +275,7 @@ class SetupStateStore(ConnectionScoped):
             ).fetchone()
             if row is None:
                 reviewer = ReviewerAccessDocument(
-                    schema_version="reviewer-access-v3", revision=1
+                    schema_version=REVIEWER_ACCESS_SCHEMA, revision=1
                 )
             else:
                 reviewer = ReviewerAccessDocument.model_validate_json(row[1])

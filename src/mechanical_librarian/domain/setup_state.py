@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import re
-from typing import Annotated, Literal
+from typing import Annotated, Final, Literal
 
 from pydantic import (
     BaseModel,
@@ -18,10 +18,14 @@ from pydantic import (
 )
 
 from mechanical_librarian.domain.owner_settings import (
+    OWNER_SETTINGS_SCHEMA,
     LibrarySettings,
     OwnerSettingsDocument,
     ProviderSettings,
 )
+
+SetupStateSchemaVersion = Literal["setup-state-v4"]
+SETUP_STATE_SCHEMA: Final[SetupStateSchemaVersion] = "setup-state-v4"
 
 SetupStep = Literal[
     "claim", "connect", "providers", "libraries", "mounts", "reviewer", "kick_off"
@@ -77,7 +81,7 @@ class SetupLibraryCandidate(_Closed):
 class SetupStateDocument(_Closed):
     """The only incomplete authority admitted before the owner is established."""
 
-    schema_version: Literal["setup-state-v4"]
+    schema_version: SetupStateSchemaVersion
     revision: Annotated[StrictInt, Field(ge=1)]
     bootstrap_verifier_digest: StrictStr
     # Only the digest of the deployment-held token is kept, and only while the
@@ -182,7 +186,7 @@ class SetupStateDocument(_Closed):
             raise SetupStateError("setup state is incomplete")
         return OwnerSettingsDocument.model_validate(
             {
-                "schema_version": "owner-settings-v6",
+                "schema_version": OWNER_SETTINGS_SCHEMA,
                 "revision": 1,
                 "connections": [self.connection.model_dump()],
                 "providers": [item.model_dump() for item in self.providers],

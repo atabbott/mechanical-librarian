@@ -32,6 +32,9 @@ from mechanical_librarian.adapters.persistence.transactions import (
     local_operation,
 )
 from mechanical_librarian.application.cover_consideration import (
+    SCHEMA_VERSION as COVER_CONSIDERATION_SCHEMA,
+)
+from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationError,
     _validated_cover_consideration,
     cover_consideration_currentness_document,
@@ -58,6 +61,7 @@ from mechanical_librarian.domain.deterministic_cover_election import (
 )
 from mechanical_librarian.domain.field_effect import FieldEffectOperation
 from mechanical_librarian.domain.human_decision import (
+    COVER_SELECTION_AUTHORITY_SCHEMA,
     HumanDecision,
     HumanDecisionError,
     manual_cover_eligible,
@@ -693,7 +697,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             value = json.loads(document)
             if (
                 type(value) is not dict
-                or value.get("schema_version") != "cover-consideration-v8"
+                or value.get("schema_version") != COVER_CONSIDERATION_SCHEMA
                 or value.get("review_case_id") != review_case_id
                 or value.get("report_id") != report_id
                 or value.get("replay_digest") != replay_digest
@@ -1079,7 +1083,7 @@ def _owner_selection_document(
                 None if selected is None else selected["deterministic_rank_key"]
             ),
             "retained_plan_id": retained_plan_id,
-            "schema_version": "cover-selection-authority-v3",
+            "schema_version": COVER_SELECTION_AUTHORITY_SCHEMA,
             "confirmation": confirmation,
             "observed_identity": None if selected is None else selected["identity"],
             "candidate_reference": None if selected is None else selected["reference"],

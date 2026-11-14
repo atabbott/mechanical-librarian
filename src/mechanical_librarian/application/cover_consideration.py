@@ -32,14 +32,12 @@ from mechanical_librarian.application.cover_observation import (
     SCHEMA_VERSION as OBSERVATION_SCHEMA_VERSION,
 )
 from mechanical_librarian.application.cover_packet_semantics import (
+    COVER_REVIEW_PACKET_SCHEMA,
     canonical_packet_json,
     read_cover_packet_document,
 )
 from mechanical_librarian.application.cover_packets import (
     PRODUCER_REVISION as PACKET_PRODUCER_REVISION,
-)
-from mechanical_librarian.application.cover_packets import (
-    SCHEMA_VERSION as PACKET_SCHEMA_VERSION,
 )
 from mechanical_librarian.application.cover_packets import (
     PreparedCoverPacket,
@@ -95,7 +93,8 @@ from mechanical_librarian.domain.proposal_set import (
 )
 from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 
-SCHEMA_VERSION = "cover-consideration-v8"
+CoverConsiderationSchemaVersion = Literal["cover-consideration-v8"]
+SCHEMA_VERSION: Final[CoverConsiderationSchemaVersion] = "cover-consideration-v8"
 _IDENTITY_ELIGIBLE = frozenset({"verified_manifestation_match", "verified_work_match"})
 CoverConsiderationCurrentness = Literal["current", "refresh_required", "inactive"]
 _CONSIDERATION_FIELDS = frozenset(
@@ -1265,7 +1264,7 @@ class CoverConsiderationService:
                 "observation_schema": OBSERVATION_SCHEMA_VERSION,
                 "observer_output_schema": OUTPUT_SCHEMA_VERSION,
                 "packet_producer_revision": PACKET_PRODUCER_REVISION,
-                "packet_schema": PACKET_SCHEMA_VERSION,
+                "packet_schema": COVER_REVIEW_PACKET_SCHEMA,
                 "policy_report_schema": POLICY_REPORT_SCHEMA_VERSION,
                 "policy_schema": POLICY_SCHEMA_VERSION,
                 "taxonomy_reference": TAXONOMY_REFERENCE,

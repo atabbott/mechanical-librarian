@@ -29,6 +29,7 @@ from mechanical_librarian.application.setup_connection import SetupConnectionErr
 from mechanical_librarian.application.setup_journey import SetupJourneyOperation
 from mechanical_librarian.domain.owner_settings import PROVIDER_LABELS
 from mechanical_librarian.domain.setup_state import (
+    SETUP_STATE_SCHEMA,
     SetupClaimTokenError,
     SetupLibraryCandidate,
     SetupStateDocument,
@@ -301,7 +302,7 @@ class _State:
     def __init__(self, sessions: _Sessions | None = None) -> None:
         self.sessions = sessions
         self.document = SetupStateDocument(
-            schema_version="setup-state-v4",
+            schema_version=SETUP_STATE_SCHEMA,
             revision=1,
             bootstrap_verifier_digest="0" * 64,
             claim_token_digest=claim_token_digest(_CLAIM_TOKEN),
@@ -1913,7 +1914,7 @@ def test_setup_paints_the_saved_theme_first_and_serves_only_the_workspace_fonts(
 ):
     state = SimpleNamespace(
         read=lambda _verifier: SetupStateDocument(
-            schema_version="setup-state-v4",
+            schema_version=SETUP_STATE_SCHEMA,
             revision=1,
             bootstrap_verifier_digest="0" * 64,
             claim_token_digest=claim_token_digest(_CLAIM_TOKEN),

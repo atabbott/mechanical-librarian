@@ -14,7 +14,11 @@ from mechanical_librarian.application.setup_journey import (
     SetupJourneyError,
     SetupJourneyOperation,
 )
-from mechanical_librarian.domain.owner_settings import LibrarySettings, ProviderSettings
+from mechanical_librarian.domain.owner_settings import (
+    OWNER_SETTINGS_SCHEMA,
+    LibrarySettings,
+    ProviderSettings,
+)
 from mechanical_librarian.domain.setup_state import (
     SetupLibraryCandidate,
     SetupStateDocument,
@@ -600,7 +604,7 @@ def test_kickoff_atomically_promotes_and_preserves_connection_secret() -> None:
     journey.kick_off(state.revision)
 
     document = connection.execute("SELECT document FROM owner_settings").fetchone()[0]
-    assert '"schema_version":"owner-settings-v6"' in document
+    assert f'"schema_version":"{OWNER_SETTINGS_SCHEMA}"' in document
     assert '"pending_restart":[]' in document
     assert connection.execute(
         "SELECT field_id,value FROM owner_setting_secrets ORDER BY field_id"

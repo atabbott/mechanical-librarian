@@ -10,6 +10,9 @@ import pytest
 
 from mechanical_librarian.application import cover_observation
 from mechanical_librarian.application.cover_consideration import (
+    SCHEMA_VERSION as COVER_CONSIDERATION_SCHEMA,
+)
+from mechanical_librarian.application.cover_consideration import (
     CoverConsideration,
     CoverConsiderationError,
     CoverConsiderationService,
@@ -22,6 +25,9 @@ from mechanical_librarian.application.cover_consideration import (
 )
 from mechanical_librarian.application.cover_packet_semantics import (
     canonical_packet_json,
+)
+from mechanical_librarian.application.cover_policy import (
+    POLICY_SCHEMA_VERSION as COVER_POLICY_SCHEMA,
 )
 from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.review_web import _needs_attention
@@ -449,7 +455,7 @@ def test_exact_policy_preferences_are_persisted_and_projected(case: _Case) -> No
         "current_protection": "protected",
         "prefer_edition": False,
         "prefer_minimal_composition": True,
-        "schema_version": "cover-policy-v2",
+        "schema_version": COVER_POLICY_SCHEMA,
     }
     persisted = json.loads(case.store.current[case_id])
     assert json.loads(persisted["policy_document"]) == value["policy_preferences"]
@@ -1018,7 +1024,7 @@ def test_stale_reviewer_binding_is_current_only_and_replays_exactly(
         "profile contract requires process_limit=32"
     )
     different_document = json.loads(case.store.current[case_id])
-    assert different_document["schema_version"] == "cover-consideration-v8"
+    assert different_document["schema_version"] == COVER_CONSIDERATION_SCHEMA
     assert different_document["reviewer_failure"] is None
     assert "reviewer_unavailable_reason" not in different_document
 

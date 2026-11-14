@@ -17,6 +17,9 @@ from unittest import mock
 import pytest
 from PIL import Image, ImageCms
 
+from mechanical_librarian.application.cover_policy import (
+    SCHEMA_VERSION as COVER_POLICY_REPORT_SCHEMA,
+)
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
     CoverContext,
@@ -3366,7 +3369,7 @@ def test_closed_policy_is_content_bound_and_plain_policy_uses_packet_order() -> 
         == report["acceptable_candidate_references"][0]
     )
     assert report["reasons"] == ["deterministic_confirmed_order"]
-    assert report["schema_version"] == "cover-policy-report-v4"
+    assert report["schema_version"] == COVER_POLICY_REPORT_SCHEMA
     assert report["actual_target_state"] == "known_empty"
     assert report["owner_ready"] is True
     assert report["observation_taxonomy_reference"] == TAXONOMY_REFERENCE

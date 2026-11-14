@@ -29,6 +29,9 @@ from mechanical_librarian.adapters.persistence.metadata_reports import open_repo
 from mechanical_librarian.application.metadata_report import (
     MetadataReportError,
 )
+from mechanical_librarian.domain.cover_automatic_decision import (
+    SCHEMA_VERSION as COVER_AUTOMATIC_DECISION_SCHEMA,
+)
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
     CoverSource,
@@ -37,6 +40,7 @@ from mechanical_librarian.domain.cover_evidence import (
     cover_source_id,
 )
 from mechanical_librarian.domain.field_effect import FieldEffectError
+from mechanical_librarian.domain.human_decision import COVER_SELECTION_AUTHORITY_SCHEMA
 from mechanical_librarian.domain.metadata_report import (
     AudioDiscoveryTitle,
     FileFacts,
@@ -2661,8 +2665,11 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
             persistence_schema,
             "_COVER_SELECTION_AUTHORITIES_SQL",
             persistence_schema._COVER_SELECTION_AUTHORITIES_SQL.replace(
-                "'cover-selection-authority-v3'", "'cover-selection-authority-v2'"
-            ).replace("'cover-automatic-decision-v4'", "'cover-automatic-decision-v3'"),
+                f"'{COVER_SELECTION_AUTHORITY_SCHEMA}'",
+                "'cover-selection-authority-v2'",
+            ).replace(
+                f"'{COVER_AUTOMATIC_DECISION_SCHEMA}'", "'cover-automatic-decision-v3'"
+            ),
         )
         # The earlier producers predate #1245's report discriminator; the v20
         # producer wrote report v54.

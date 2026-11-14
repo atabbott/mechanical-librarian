@@ -41,6 +41,7 @@ from mechanical_librarian.adapters.providers.hardcover_metadata import (
     HardcoverMetadataProvider,
 )
 from mechanical_librarian.application.configuration import (
+    CONFIG_SCHEMA,
     ApplicationConfiguration,
     LibraryConfiguration,
     TargetConnectionConfiguration,
@@ -217,7 +218,7 @@ def test_generated_field_effect_configuration_admits_the_current_schema(
     def admit(path: Path) -> None:
         document = json.loads(path.read_text(encoding="utf-8"))
         admitted = ConfigurationInput.model_validate(document)
-        assert admitted.schema_version == "config-v11"
+        assert admitted.schema_version == CONFIG_SCHEMA
         raise _ConfigurationAdmitted
 
     monkeypatch.setattr(qualification, "load_configuration_file", admit)

@@ -27,6 +27,7 @@ from mechanical_librarian.adapters.field_effect_authority import (
 )
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
 from mechanical_librarian.application.continuous_field_effects import (
+    CONTINUOUS_FIELD_ACTIVITY_SCHEMA,
     ContinuousGuardedApplication,
 )
 from mechanical_librarian.application.metadata_policy import (
@@ -1224,7 +1225,7 @@ class FakeActivityApplication(ContinuousGuardedApplication):
             "current_waiting": None,
             "owner_action_required": projected["owner_action_required"],
             "prepared": {"automatic": 1, "human": 1, "total": 2},
-            "schema_version": "continuous-field-activity-v3",
+            "schema_version": CONTINUOUS_FIELD_ACTIVITY_SCHEMA,
             "suspensions": [],
             "waiting": {
                 "applying": 0,

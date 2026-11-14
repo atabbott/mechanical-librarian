@@ -33,8 +33,12 @@ from contextlib import contextmanager
 from dataclasses import replace
 from functools import partial
 from pathlib import Path
-from typing import cast
+from typing import Final, cast
 from unittest.mock import patch
+
+from mechanical_librarian.application.configuration import CONFIG_SCHEMA
+
+AUDIOBOOKSHELF_FIELD_EFFECT_SCHEMA: Final = "audiobookshelf-field-effect-v3"
 
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLED_ROOT = os.environ.get("MECHANICAL_LIBRARIAN_QUALIFICATION_INSTALL")
@@ -1635,7 +1639,7 @@ def _installed_continuous_qualification(
         provider_secrets[suffix] = provider_secret
     config_path = root / "installed-config.json"
     configuration_document = {
-        "schema_version": "config-v11",
+        "schema_version": CONFIG_SCHEMA,
         "provider_recovery_generation": 1,
         "connections": [
             {
@@ -3864,7 +3868,7 @@ def main() -> None:
     print(
         json.dumps(
             {
-                "schema": "audiobookshelf-field-effect-v3",
+                "schema": AUDIOBOOKSHELF_FIELD_EFFECT_SCHEMA,
                 "source_sha": arguments.source_sha,
                 "installed_artifact": True,
                 "latest_stable_version": latest,

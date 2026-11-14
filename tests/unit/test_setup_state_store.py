@@ -26,13 +26,18 @@ from mechanical_librarian.adapters.persistence.setup_state import SetupStateStor
 from mechanical_librarian.adapters.persistence.transactions import TransactionScope
 from mechanical_librarian.application.review_web import OwnerSessionService
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
-from mechanical_librarian.domain.owner_settings import OwnerSettingsError
+from mechanical_librarian.domain.owner_settings import (
+    OWNER_SETTINGS_SCHEMA,
+    OwnerSettingsError,
+)
 from mechanical_librarian.domain.reviewer_access import (
+    REVIEWER_ACCESS_SCHEMA,
     DescriptionModelMetadata,
     OpenRouterTaskSelection,
     ReviewerAccessDocument,
 )
 from mechanical_librarian.domain.setup_state import (
+    SETUP_STATE_SCHEMA,
     SetupClaimTokenError,
     SetupStateDocument,
     SetupStateError,
@@ -310,7 +315,7 @@ def _configured_reviewer(store: ReviewerAccessStore) -> ReviewerAccessDocument:
 
     return store.replace(
         ReviewerAccessDocument(
-            schema_version="reviewer-access-v3",
+            schema_version=REVIEWER_ACCESS_SCHEMA,
             cover_metadata=CoverModelMetadata(
                 model="provider/model",
                 observed_at=123,
@@ -533,12 +538,12 @@ def test_setup_state_v3_is_rejected_and_clean_v4_restarts(tmp_path: Path) -> Non
     connection = sqlite3.connect(path)
     _create_schema(connection)
     state = SetupStateStore(connection).initialize(_CLAIM_DIGEST)
-    assert state.schema_version == "setup-state-v4"
+    assert state.schema_version == SETUP_STATE_SCHEMA
     connection.close()
 
     reopened = sqlite3.connect(path)
     try:
-        assert SetupStateStore(reopened).read().schema_version == "setup-state-v4"
+        assert SetupStateStore(reopened).read().schema_version == SETUP_STATE_SCHEMA
     finally:
         reopened.close()
 
@@ -559,7 +564,7 @@ def test_claim_token_digest_exists_exactly_while_unclaimed(
     with pytest.raises(ValidationError):
         SetupStateDocument.model_validate(
             {
-                "schema_version": "setup-state-v4",
+                "schema_version": SETUP_STATE_SCHEMA,
                 "revision": 2 if claimed else 1,
                 "bootstrap_verifier_digest": "0" * 64,
                 "completed_steps": ["claim"] if claimed else [],
@@ -811,7 +816,7 @@ def test_promotion_replaces_incomplete_state_with_normal_owner_authority() -> No
     store.promote(_BOOTSTRAP, _OWNER)
 
     encoded = connection.execute("SELECT document FROM owner_settings").fetchone()[0]
-    assert '"schema_version":"owner-settings-v6"' in encoded
+    assert f'"schema_version":"{OWNER_SETTINGS_SCHEMA}"' in encoded
     assert connection.execute(
         "SELECT field_id,value FROM owner_setting_secrets ORDER BY field_id"
     ).fetchall() == [
@@ -880,7 +885,7 @@ def test_promotion_failpoint_retains_exact_resumable_state_and_retry_succeeds() 
     )
     connection.execute(
         "CREATE TRIGGER fail_owner_promotion BEFORE UPDATE ON owner_settings "
-        "WHEN json_extract(NEW.document,'$.schema_version')='owner-settings-v6' "
+        f"WHEN json_extract(NEW.document,'$.schema_version')='{OWNER_SETTINGS_SCHEMA}' "
         "BEGIN SELECT RAISE(ABORT,'failpoint'); END"
     )
 
@@ -922,7 +927,7 @@ def test_schema_admission_accepts_only_the_closed_incomplete_setup_document() ->
 def test_changing_a_recorded_step_removes_its_dependents() -> None:
     state = SetupStateDocument.model_validate(
         {
-            "schema_version": "setup-state-v4",
+            "schema_version": SETUP_STATE_SCHEMA,
             "revision": 1,
             "bootstrap_verifier_digest": "0" * 64,
             "claim_token_digest": _CLAIM_DIGEST,

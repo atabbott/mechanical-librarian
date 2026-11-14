@@ -7,7 +7,7 @@ import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Final, Literal, cast
 
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
@@ -86,8 +86,10 @@ from .cover_observation import (
 from .cover_packet_semantics import bind_cover_packet, canonical_packet_json
 from .cover_packets import cover_source_reference
 
-SCHEMA_VERSION = "cover-policy-report-v4"
-POLICY_SCHEMA_VERSION = "cover-policy-v2"
+CoverPolicyReportSchemaVersion = Literal["cover-policy-report-v4"]
+SCHEMA_VERSION: Final[CoverPolicyReportSchemaVersion] = "cover-policy-report-v4"
+CoverPolicySchemaVersion = Literal["cover-policy-v2"]
+POLICY_SCHEMA_VERSION: Final[CoverPolicySchemaVersion] = "cover-policy-v2"
 _IDENTITY_OUTCOMES = frozenset(
     {
         "conflict",

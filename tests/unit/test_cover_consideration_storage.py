@@ -19,7 +19,11 @@ from mechanical_librarian.adapters.persistence.cover_consideration_documents imp
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.domain.cover_automatic_decision import (
+    SCHEMA_VERSION as COVER_AUTOMATIC_DECISION_SCHEMA,
+)
 from mechanical_librarian.domain.field_effect import FieldEffectError
+from mechanical_librarian.domain.human_decision import COVER_SELECTION_AUTHORITY_SCHEMA
 from tests.support.cover_retention import retained_cover_case
 from tests.support.metadata_report_schemas import (
     PRIOR_ATTENTION_FACT_OBJECTS,
@@ -213,8 +217,11 @@ def test_actual_embedded_predecessor_refused_without_mutation(
             schema,
             "_COVER_SELECTION_AUTHORITIES_SQL",
             schema._COVER_SELECTION_AUTHORITIES_SQL.replace(
-                "'cover-selection-authority-v3'", "'cover-selection-authority-v2'"
-            ).replace("'cover-automatic-decision-v4'", "'cover-automatic-decision-v3'"),
+                f"'{COVER_SELECTION_AUTHORITY_SCHEMA}'",
+                "'cover-selection-authority-v2'",
+            ).replace(
+                f"'{COVER_AUTOMATIC_DECISION_SCHEMA}'", "'cover-automatic-decision-v3'"
+            ),
         ),
     ):
         schema._create_schema(connection)

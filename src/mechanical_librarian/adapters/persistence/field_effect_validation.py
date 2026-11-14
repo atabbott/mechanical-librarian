@@ -11,7 +11,7 @@ import hashlib
 import json
 import re
 import sqlite3
-from typing import cast
+from typing import Final, cast
 
 from mechanical_librarian.adapters.persistence.cover_consideration_documents import (
     expand_cover_consideration,
@@ -100,6 +100,10 @@ from mechanical_librarian.domain.validation import (
     text,
 )
 
+FIELD_EFFECT_CONSENT_STATE_SCHEMA: Final = "field-effect-consent-state-v2"
+
+FIELD_EFFECT_MANUAL_HOLD_SCHEMA: Final = "field-effect-manual-hold-v2"
+
 __all__ = [
     "_automatic_decision_value",
     "_consent_state",
@@ -116,7 +120,7 @@ _policy_activation = closed_document(
 )
 _consent_state = closed_document(
     "consent",
-    schema_version=literal("field-effect-consent-state-v2"),
+    schema_version=literal(FIELD_EFFECT_CONSENT_STATE_SCHEMA),
     basis=lambda value: _owner_grant(value) or _policy_activation(value),
     current=boolean,
     updated_at=non_negative_integer,
@@ -1135,7 +1139,7 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
             "destination",
             "pending_return",
             "review_case_id",
-            schema_version=literal("field-effect-manual-hold-v2"),
+            schema_version=literal(FIELD_EFFECT_MANUAL_HOLD_SCHEMA),
             active=boolean,
             decision_id=lambda value: (
                 type(value) is str

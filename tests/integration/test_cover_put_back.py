@@ -47,6 +47,7 @@ from mechanical_librarian.application.review_pipeline import (
 )
 from mechanical_librarian.domain.cover_evidence import CoverSourceKind
 from mechanical_librarian.domain.field_effect import FieldEffectOperation
+from mechanical_librarian.domain.human_decision import COVER_SELECTION_AUTHORITY_SCHEMA
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from tests.support.cover_images import synthetic_image
 from tests.support.field_effects import (
@@ -375,7 +376,7 @@ def _owner_put_back(
         {
             "candidate_kind": "retained",
             "retained_plan_id": switch_plan,
-            "schema_version": "cover-selection-authority-v3",
+            "schema_version": COVER_SELECTION_AUTHORITY_SCHEMA,
         }
     )
     connection = sqlite3.connect(effects.database_path)

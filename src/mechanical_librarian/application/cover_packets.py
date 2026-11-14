@@ -7,6 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from mechanical_librarian.application.cover_packet_semantics import (
+    COVER_REVIEW_PACKET_SCHEMA,
     MAX_COVER_PACKET_BYTES,
     MAX_COVER_PREVIEW_BYTES,
     MAX_COVER_PREVIEWS,
@@ -33,7 +34,6 @@ from mechanical_librarian.domain.cover_evidence import (
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from mechanical_librarian.domain.proposal_set import work_route_cover_sources
 
-SCHEMA_VERSION = "cover-review-packet-v2"
 PRODUCER_REVISION = "cover-packet-producer-v1"
 
 
@@ -390,7 +390,7 @@ def _finalize_cover_packet(
     packet_body = {
         "candidates": candidate_data,
         "omissions": omissions,
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": COVER_REVIEW_PACKET_SCHEMA,
     }
     packet = {
         **packet_body,
@@ -411,7 +411,6 @@ def _finalize_cover_packet(
 
 
 __all__ = [
-    "SCHEMA_VERSION",
     "CoverPacketImage",
     "MAX_COVER_PACKET_BYTES",
     "MAX_COVER_PREVIEW_BYTES",

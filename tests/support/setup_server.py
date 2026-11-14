@@ -17,6 +17,7 @@ import uvicorn
 
 from mechanical_librarian.bootstrap import composition
 from mechanical_librarian.infrastructure.settings_authority import (
+    REVIEW_BOOTSTRAP_SCHEMA,
     BootstrapMount,
     ReviewBootstrap,
 )
@@ -41,7 +42,7 @@ def real_setup_server(
     port = ReservedPort()
     origin = f"https://127.0.0.1:{port.number}"
     bootstrap = ReviewBootstrap(
-        schema_version="review-bootstrap-v2",
+        schema_version=REVIEW_BOOTSTRAP_SCHEMA,
         canonical_origin=origin,
         tls_certificate_file=str(certificate),
         tls_private_key_file=str(private_key),
