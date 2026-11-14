@@ -1690,7 +1690,13 @@ def test_setup_enables_cross_document_motion_only_for_the_workspace_handoff() ->
     assert "createElement('style')" not in SETUP_JS
     # Only the handoff into a known run's detail turns the motion on.
     assert "/^preparation_run_[0-9a-f]{64}$/.test(value)" in SETUP_JS
-    assert "if(run!==null)handoffMotion();" in SETUP_JS
+    assert "if(run!==null){handoffMotion();" in SETUP_JS
+    # The sheet applies on the next frame, so Library opens after it, or
+    # after 200 ms in a tab that draws no frames.
+    assert (
+        "await Promise.race([frame().then(frame),"
+        "new Promise(resolve=>setTimeout(resolve,200))])"
+    ) in SETUP_JS
     assert "motion.disabled=false" in SETUP_JS
     assert "addEventListener('pageswap'" in SETUP_JS
     assert "handoff.viewTransition.finished.then(disable,disable)" in SETUP_JS

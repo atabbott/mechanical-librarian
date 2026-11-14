@@ -2318,10 +2318,13 @@ describe('shipped first-run setup script', () => {
     expect(screen.getByText('Check the key to see this model’s prices.')).toBeVisible()
     expect(screen.getByText('One request per work, with every cover it compares.')).toBeVisible()
     expect(screen.getByText('Cover previews are sent to the selected provider.')).toBeVisible()
-    expect(screen.getByRole('link', { name: 'Get a key' })).toHaveAttribute(
-      'href',
-      'https://openrouter.ai/settings/keys',
-    )
+    const getKey = screen.getByRole('link', { name: 'Get a key' })
+    expect(getKey).toHaveAttribute('href', 'https://openrouter.ai/settings/keys')
+    expect(getKey).toHaveAttribute('rel', 'noreferrer')
+    expect(getKey).toBeVisible()
+    // The link sits right beside the key field, outside its label (#1516).
+    const keyInput = screen.getByLabelText('OpenRouter API key')
+    expect(getKey.parentElement?.previousElementSibling).toBe(keyInput.closest('.field'))
     fireEvent.click(
       screen.getByRole('button', { name: 'Use dots-studio/dots-3-note-preview:free (Free)' }),
     )
@@ -3644,9 +3647,12 @@ it.each([
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent(message)
     const keyField = screen.getByLabelText('OpenRouter API key')
-    // The alert sits between the key field and the button that was pressed,
-    // not at the top of a form that runs far above a phone viewport.
-    expect(alert.previousElementSibling).toBe(keyField.closest('.field'))
+    // The alert sits between the key field (with its Get a key link) and the
+    // button that was pressed, not at the top of a form that runs far above a
+    // phone viewport.
+    const getKey = screen.getByRole('link', { name: 'Get a key' }).parentElement
+    expect(getKey?.previousElementSibling).toBe(keyField.closest('.field'))
+    expect(alert.previousElementSibling).toBe(getKey)
     expect(alert.nextElementSibling).toBe(save)
     const field = screen.getByLabelText(fieldName)
     expect(field).toHaveFocus()

@@ -464,8 +464,9 @@ const renderClaim=async()=>{
     command.className='command';
     command.textContent='docker compose logs mechanical-librarian';
     source.append(command);
-    tokenField.append(source);
-    form.append(tokenField)
+    // The hint follows the field rather than sitting inside it, so a refusal
+    // lands right under the token it refuses (#1291).
+    form.append(tokenField,source)
   }
   const password=input('password','password');
   password.autocomplete=claim.claimed?'current-password':'new-password';
@@ -595,8 +596,15 @@ const renderConnect=()=>{
   section.append(form);
   endpoint.focus()
 };
-// Said on the step after the folders, once every one was found.
-const foundFiles=()=>state.next_step==='providers'?[`Found the files for ${listed(state.libraries.map(library=>library.display_name||humanName(library.name)))}.`]:[];
+// Said on the step after the folders, once every one was found, in the order
+// Audiobookshelf listed the libraries when this visit has seen that list.
+let libraryOrder=[];
+const foundFiles=()=>{
+  if(state.next_step!=='providers')return[];
+  const rank=library=>{const at=libraryOrder.indexOf(library.library_id);return at<0?libraryOrder.length:at};
+  const ordered=[...state.libraries].sort((left,right)=>rank(left)-rank(right));
+  return[`Found the files for ${listed(ordered.map(library=>library.display_name||humanName(library.name)))}.`]
+};
 const renderLibraries=async()=>{
   const section=card('Choose libraries');
   const form=document.createElement('form');
@@ -608,6 +616,7 @@ const renderLibraries=async()=>{
   section.append(form);
   try{
     const result=await api(`/api/setup/libraries?expected_revision=${state.revision}`);
+    libraryOrder=result.libraries.map(item=>item.library_id);
     loading.remove();
     const usedNames=new Set();
     if(result.libraries.some(item=>item.media_kind==='unsupported')){
@@ -1143,7 +1152,7 @@ const renderOpenRouterOption=(form,access,failed)=>{
   const caveat=document.createElement('p');
   caveat.textContent=access.data_use_caveat;
   about.append(aboutSummary,prices,packet,freeCaveat,caveat);
-  router.append(cost,toggle,others,getKey,keyField,save,about);
+  router.append(cost,toggle,others,keyField,getKey,save,about);
   form.append(router)
 };
 const renderReviewer=async()=>{
@@ -1226,7 +1235,13 @@ const land=async()=>{
     }catch{break}
     if(run===null)await new Promise(resolve=>setTimeout(resolve,500))
   }
-  if(run!==null)handoffMotion();
+  if(run!==null){
+    handoffMotion();
+    // The motion sheet applies on the next rendered frame; navigating before
+    // it would skip the transition. A hidden tab draws no frames, so wait at most 200 ms.
+    const frame=()=>new Promise(resolve=>requestAnimationFrame(()=>resolve()));
+    await Promise.race([frame().then(frame),new Promise(resolve=>setTimeout(resolve,200))])
+  }
   location.replace(run===null?'/library?lens=all':`/library?lens=all&preparation=${run}`)
 };
 const renderStart=async()=>{
