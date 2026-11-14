@@ -119,12 +119,12 @@ describe('the real review API document', () => {
     const emitted = Object.entries(responseDecoders).flatMap(([key, statuses]) =>
       Object.keys(statuses).map((status) => `${key} ${status}`),
     )
-    expect(emitted).toHaveLength(66)
+    expect(emitted).toHaveLength(69)
     expect(new Set(emitted)).toEqual(expected)
     expect(emitted.some((key) => key.startsWith('POST /api/v1/operations/support/export'))).toBe(
       false,
     )
-    expect(Object.keys(generated).filter((name) => name.startsWith('d_'))).toHaveLength(185)
+    expect(Object.keys(generated).filter((name) => name.startsWith('d_'))).toHaveLength(190)
   })
 
   it('fills a fresh default per decode and leaves an absent display name absent (NC12)', () => {

@@ -188,7 +188,11 @@ const uncertain = (failure: string) => {
 }
 
 const reviewerAccessPayload = (overrides: Record<string, unknown> = {}) => ({
-  schema_version: 'reviewer-access-view-v3',
+  schema_version: 'reviewer-access-view-v4',
+  taste_mapping: null,
+  taste_metadata: null,
+  taste_daily_requests: 8,
+  taste_recommendations: ['anthropic/claude-sonnet-5.5'],
   cover_metadata: null,
   cost_evidence: { models: [] },
   revision: 3,
@@ -6211,5 +6215,138 @@ describe('a cover that contradicts the book (#1790)', () => {
         ),
       ),
     ).toThrow(expect.objectContaining({ code: 'contradictory_cover_manual_eligibility' }))
+  })
+})
+
+// Covers → Taste profile's read (#1372): decoded whole, then the named checks.
+const readTasteProfile = (document: unknown) =>
+  new ReviewApiClient({
+    csrf,
+    fetch: vi.fn<typeof fetch>(async () => Response.json(document)),
+  }).getTasteProfile()
+const tasteDocument = {
+  schema_version: 'review-taste-profile-v1',
+  configured: true,
+  chosen: 30,
+  required: 25,
+  daily_limit: 8,
+  build: null,
+  profile: {
+    version: 2,
+    built_at: 20,
+    decisions: 30,
+    rules: [
+      { number: 1, section: 'drawn_to', text: 'Bold art.' },
+      { number: 2, section: 'avoid', text: 'Busy type.' },
+    ],
+  },
+  versions: [
+    { version: 2, built_at: 20, decisions: 30 },
+    { version: 1, built_at: 10, decisions: 25 },
+  ],
+}
+const failedBuild = (failure: string, retryAfter: number | null) => ({
+  build_id: `taste_build_${'a'.repeat(32)}`,
+  state: 'failed',
+  failure,
+  retry_after: retryAfter,
+})
+
+describe('taste profile decoder (#1372)', () => {
+  it('admits a profile, its versions and each build state', async () => {
+    expect(await readTasteProfile(tasteDocument)).toEqual(tasteDocument)
+    const building = {
+      ...tasteDocument,
+      build: { ...failedBuild('unavailable', null), state: 'building', failure: null },
+    }
+    expect((await readTasteProfile(building)).build?.state).toBe('building')
+    for (const [failure, retryAfter] of [
+      ['ceiling', 86_400],
+      ['unknown_charge', 86_400],
+      ['interrupted', null],
+    ] as const)
+      expect(
+        (await readTasteProfile({ ...tasteDocument, build: failedBuild(failure, retryAfter) }))
+          .build?.failure,
+      ).toBe(failure)
+  })
+
+  it.each([
+    ['a profile with no versions', { versions: [] }],
+    ['versions with no profile', { profile: null }],
+    ['a profile that is not the newest version', { versions: tasteDocument.versions.slice(1) }],
+    [
+      'versions out of order',
+      {
+        versions: [...tasteDocument.versions].reverse(),
+        profile: { ...tasteDocument.profile, version: 1, built_at: 10 },
+      },
+    ],
+    [
+      'rules numbered out of order',
+      {
+        profile: {
+          ...tasteDocument.profile,
+          rules: [
+            { number: 2, section: 'drawn_to', text: 'Bold art.' },
+            { number: 1, section: 'avoid', text: 'Busy type.' },
+          ],
+        },
+      },
+    ],
+    [
+      'rules out of section order',
+      {
+        profile: {
+          ...tasteDocument.profile,
+          rules: [
+            { number: 1, section: 'avoid', text: 'Busy type.' },
+            { number: 2, section: 'drawn_to', text: 'Bold art.' },
+          ],
+        },
+      },
+    ],
+    ['a ceiling with no reset time', { build: failedBuild('ceiling', null) }],
+    ['a reset time on another failure', { build: failedBuild('unavailable', 86_400) }],
+    [
+      'a running build with a failure',
+      { build: { ...failedBuild('unavailable', null), state: 'building' } },
+    ],
+  ])('refuses %s', async (_name, change) => {
+    await expect(readTasteProfile({ ...tasteDocument, ...change })).rejects.toMatchObject({
+      status: 502,
+      code: 'invalid_taste_profile',
+    })
+  })
+
+  it('refuses a member the contract does not name', async () => {
+    await expect(
+      readTasteProfile({ ...tasteDocument, references: ['taste_image_0'] }),
+    ).rejects.toBeInstanceOf(Error)
+  })
+
+  it('binds taste prices to the saved taste profile model', async () => {
+    const metadata = {
+      model: 'example/vision',
+      observed_at: 1,
+      prompt_price: '0.000001',
+      completion_price: null,
+      image_price: '0',
+      request_price: null,
+    }
+    const value = reviewerAccessPayload({
+      taste_mapping: { engine: 'openrouter', model: 'example/vision' },
+      taste_metadata: metadata,
+    })
+    expect((await readReviewerAccess(value)).taste_metadata).toEqual(metadata)
+    await expect(
+      readReviewerAccess({
+        ...value,
+        taste_mapping: { engine: 'openrouter', model: 'example/other' },
+      }),
+    ).rejects.toMatchObject({ status: 502, code: 'invalid_taste_metadata' })
+    await expect(
+      readReviewerAccess({ ...value, taste_metadata: { ...metadata, image_price: 'NaN' } }),
+    ).rejects.toMatchObject({ status: 502, code: 'invalid_cover_metadata' })
   })
 })

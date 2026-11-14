@@ -18,6 +18,7 @@ import { Dropdown } from '../components/Dropdown'
 import { FieldInput, FieldRow } from '../components/FieldRow'
 import { FinishTray } from '../components/FinishTray'
 import { ReviewerAccessPanel } from '../components/ReviewerAccessPanel'
+import { TasteReviewerSettings } from '../components/TasteReviewerSettings'
 import { SegmentedControl } from '../components/SegmentedControl'
 import { ReloadApplication, StaleBuildRead } from '../components/StaleBuildRead'
 import { StatusPill } from '../components/StatusPill'
@@ -1103,6 +1104,9 @@ const SettingsEditor = ({
                   Changes here apply at once and are not part of Save settings.
                 </p>
                 <ReviewerAccessPanel http={http} />
+                <div className="settings-reviewer">
+                  <TasteReviewerSettings http={http} />
+                </div>
               </>
             ) : null}
             {active === 'background' ? (

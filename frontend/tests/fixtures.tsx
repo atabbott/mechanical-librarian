@@ -21,6 +21,7 @@ import type {
   ReviewHttp,
   PreviewPostureView,
   PreviewSampleView,
+  TasteProfileView,
 } from '../src/api/http'
 import { mapActivity, mapCaseDetail, mapEvidence, mapHistory } from '../src/api/http'
 import { responseDecoders } from '../src/generated/review-decoders'
@@ -303,6 +304,17 @@ export const idlePreparation: PreparationView = {
 // How the fake's `previewPolicy` and `activatePolicy` reach `policyCommand`
 // (below): by path, outside the typed union, for tests only.
 type ScriptedPolicyCommand = (path: string, body?: unknown) => Promise<never>
+// Covers → Taste profile before any build: configured, nothing chosen yet.
+export const tasteProfile: TasteProfileView = {
+  schema_version: 'review-taste-profile-v1',
+  configured: true,
+  chosen: 0,
+  required: 25,
+  daily_limit: 8,
+  build: null,
+  profile: null,
+  versions: [],
+}
 export const createHttp = (): ReviewHttp => ({
   getReportDetail: vi.fn(async () => {
     throw new Error('not configured')
@@ -324,6 +336,9 @@ export const createHttp = (): ReviewHttp => ({
     throw new Error('unavailable')
   }),
   testDescriptionModel: vi.fn(async () => {
+    throw new Error('not configured')
+  }),
+  testTasteModel: vi.fn(async () => {
     throw new Error('not configured')
   }),
   configureOpenRouter: vi.fn(async () => {
@@ -363,6 +378,8 @@ export const createHttp = (): ReviewHttp => ({
     schema_version: 'review-covers-v1' as const,
     view,
   })),
+  getTasteProfile: vi.fn(async () => tasteProfile),
+  retryTasteBuild: vi.fn(async () => tasteProfile),
   getCaseDetail: vi.fn(async () => detail),
   getCaseSuccessor: vi.fn(async () => null),
   getEvidence: vi.fn(async () => ({ items: [], missingLineageCount: 0, sourceLedger: [] })),

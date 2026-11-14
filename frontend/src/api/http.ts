@@ -33,6 +33,10 @@ type AttentionDto = ResponseSchema<'_AttentionResponse'>
 export type CoversView = ResponseSchema<'_CoversResponse'>
 export type CoverWorkView = CoversView['items'][number]
 export type CoverTab = CoversView['view']
+// Taste profile is a Covers tab with no page of books (#1372).
+export type CoversTab = CoverTab | 'taste'
+export type TasteProfileView = ResponseSchema<'_TasteProfileResponse'>
+export type TasteBuildFailure = NonNullable<NonNullable<TasteProfileView['build']>['failure']>
 type CaseDetailDto = ResponseSchema<'_CaseDetailResponse'>
 type ReviewFieldDto = ResponseSchema<'_ReviewField'>
 type DescriptionCandidateDto = ResponseSchema<'DescriptionAdviceCandidate'>
@@ -74,7 +78,8 @@ export type ReviewerEngineStatus = ResponseSchema<'ReviewerEngineStatus'>
 export type ReviewerState = ReviewerEngineStatus['state']
 export type ReviewerReason = NonNullable<ReviewerEngineStatus['reason']>
 export type DescriptionModelMetadata = ResponseSchema<'DescriptionModelMetadata'>
-export type ReviewerTask = 'cover_observation' | 'description_rewrite'
+export type CoverModelMetadata = ResponseSchema<'CoverModelMetadata'>
+export type ReviewerTask = 'cover_observation' | 'description_rewrite' | 'cover_taste_build'
 export type ReviewerAccessView = ResponseSchema<'ReviewerAccessView'>
 export type CodexDeviceAuthState = ResponseSchema<'_CodexDeviceAuthResponse'>
 export type CodexDeviceStartResult = ResponseSchema<'_CodexDeviceStartResponse'>
@@ -175,7 +180,7 @@ export interface LibrarySearch {
   /** Library's Covers view (#1633); absent is Works. */
   view?: 'covers'
   /** The Covers tab, and the book whose covers are open in it. */
-  tab?: CoverTab
+  tab?: CoversTab
   cover?: string
   q?: string
   cursor?: string
@@ -1206,6 +1211,10 @@ export interface ReviewHttp {
     value: { expected_revision: number; api_key: string; model: string },
     signal?: AbortSignal,
   ): Promise<DescriptionModelMetadata>
+  testTasteModel(
+    value: { expected_revision: number; api_key: string; model: string },
+    signal?: AbortSignal,
+  ): Promise<CoverModelMetadata>
   clearOpenRouter(expectedRevision: number, signal?: AbortSignal): Promise<ReviewerAccessView>
   selectReviewer(
     engine: 'codex' | null,
@@ -1240,6 +1249,10 @@ export interface ReviewHttp {
     signal?: AbortSignal,
     workClass?: ReadWorkClass,
   ): Promise<CoversView>
+  /** Covers → Taste profile: the profile in use, its versions and build. */
+  getTasteProfile(signal?: AbortSignal, workClass?: ReadWorkClass): Promise<TasteProfileView>
+  /** Try again after the failed build `buildId`; it counts against the daily limit. */
+  retryTasteBuild(buildId: string, signal?: AbortSignal): Promise<TasteProfileView>
   getCaseDetail(
     reviewCaseId: string,
     signal?: AbortSignal,
@@ -1608,6 +1621,21 @@ export class ReviewApiClient implements ReviewHttp {
       (answer) => mapDescriptionMetadata(answer),
     )
   }
+  async testTasteModel(
+    value: { expected_revision: number; api_key: string; model: string },
+    signal?: AbortSignal,
+  ) {
+    return this.mutate(
+      '/api/v1/reviewer-access/taste-model/test',
+      { ...value, task: 'cover_taste_build' },
+      signal,
+      undefined,
+      'POST',
+      false,
+      false,
+      (answer) => mapCoverMetadata(answer),
+    )
+  }
   async clearOpenRouter(expectedRevision: number, signal?: AbortSignal) {
     return this.mutate(
       '/api/v1/reviewer-access/openrouter',
@@ -1703,6 +1731,21 @@ export class ReviewApiClient implements ReviewHttp {
     if (at.cursor) p.set('cursor', at.cursor)
     if (at.cover) p.set('cover', at.cover)
     return await this.read(`/api/v1/covers?${p}`, signal, workClass)
+  }
+  async getTasteProfile(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
+    return mapTasteProfile(await this.read('/api/v1/covers/taste', signal, workClass))
+  }
+  async retryTasteBuild(buildId: string, signal?: AbortSignal) {
+    return this.mutate(
+      '/api/v1/covers/taste/retry',
+      { build_id: buildId },
+      signal,
+      undefined,
+      'POST',
+      false,
+      false,
+      mapTasteProfile,
+    )
   }
   async getAttention(
     search: AttentionSearch,
@@ -2333,6 +2376,44 @@ const mapDescriptionMetadata = (value: DescriptionModelMetadata): DescriptionMod
   return value
 }
 
+const mapCoverMetadata = (value: CoverModelMetadata): CoverModelMetadata => {
+  if (
+    ![value.prompt_price, value.completion_price, value.image_price, value.request_price].every(
+      (price) => price === null || boundedPrice(price),
+    )
+  )
+    throw new ApiError(502, 'invalid_cover_metadata')
+  return value
+}
+
+// The profile shown is the newest version, its rules are numbered from 1 in
+// section order, and a failure is named exactly when the build failed (#1372).
+const tasteSections = ['drawn_to', 'avoid', 'trade_offs', 'keep_or_switch'] as const
+export const mapTasteProfile = (value: TasteProfileView): TasteProfileView => {
+  const { profile, versions, build } = value
+  const rules = profile?.rules ?? []
+  if (
+    (profile === null) !== (versions.length === 0) ||
+    (profile !== null &&
+      (profile.version !== versions[0]?.version || profile.built_at !== versions[0].built_at)) ||
+    versions.some(
+      (row, index) => index > 0 && row.version >= (versions[index - 1]?.version ?? 0),
+    ) ||
+    rules.some(
+      (rule, index) =>
+        rule.number !== index + 1 ||
+        tasteSections.indexOf(rule.section) <
+          tasteSections.indexOf(rules[index - 1]?.section ?? 'drawn_to'),
+    ) ||
+    (build !== null &&
+      ((build.state === 'failed') !== (build.failure !== null) ||
+        (build.retry_after !== null) !==
+          (build.failure === 'ceiling' || build.failure === 'unknown_charge')))
+  )
+    throw new ApiError(502, 'invalid_taste_profile')
+  return value
+}
+
 // The measured-cost accounting (X44), its prices (X45) and one row per model
 // and task (X46).
 const mapCostEvidence = ({ models }: ReviewerAccessView['cost_evidence']): void => {
@@ -2376,6 +2457,12 @@ const mapReviewerAccess = (value: ReviewerAccessView): ReviewerAccessView => {
   )
     throw new ApiError(502, 'invalid_cover_metadata')
   if (value.description_metadata !== null) mapDescriptionMetadata(value.description_metadata)
+  // Taste prices are observed for exactly the saved taste profile model.
+  if (value.taste_metadata !== null) {
+    if (value.taste_mapping?.model !== value.taste_metadata.model)
+      throw new ApiError(502, 'invalid_taste_metadata')
+    mapCoverMetadata(value.taste_metadata)
+  }
   return value
 }
 const reviewerAccess = (value: ReviewerAccessView) => mapReviewerAccess(value)
