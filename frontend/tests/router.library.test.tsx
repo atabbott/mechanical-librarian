@@ -5072,6 +5072,16 @@ describe('Library route', () => {
       (selector) => selector === ':focus-visible' || matches(selector),
     )
   }
+  // jsdom 31 matches :focus-visible on every focus, so pointer focus is stubbed
+  // the same way keyboard focus is.
+  const pointerFocus = (card: HTMLElement) => {
+    const matches = card.matches.bind(card)
+    const spy = vi
+      .spyOn(card, 'matches')
+      .mockImplementation((selector) => selector !== ':focus-visible' && matches(selector))
+    card.focus()
+    spy.mockRestore()
+  }
   // Six retained covers with complete visual checks, shared by the cover
   // check and one-tap tests.
   const coverChecks = () => {
@@ -5401,7 +5411,7 @@ describe('Library route', () => {
     } as DOMRect)
     // Focus from a pointer arrives on mousedown and must not move the card
     // from under the press; only keyboard focus reveals it (#1290).
-    forwardCard.focus()
+    pointerFocus(forwardCard)
     expect(pinnedTrack.scrollLeft).toBe(0)
     forwardCard.blur()
     keyboardFocus(forwardCard)
