@@ -74,7 +74,11 @@
     "openrouter_key_configured": false,
     "recommendations": ["openai/gpt-6-luna"],
     "revision": 8,
-    "schema_version": "reviewer-access-view-v3"
+    "schema_version": "reviewer-access-view-v4",
+    "taste_daily_requests": 8,
+    "taste_mapping": null,
+    "taste_metadata": null,
+    "taste_recommendations": ["anthropic/claude-sonnet-5.5"]
   },
   "method": "DELETE",
   "path": "/api/v1/reviewer-access/codex",

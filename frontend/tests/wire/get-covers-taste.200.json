@@ -1,0 +1,42 @@
+{
+  "body": {
+    "build": null,
+    "chosen": 25,
+    "configured": true,
+    "daily_limit": 8,
+    "profile": {
+      "built_at": 1000,
+      "decisions": 25,
+      "rules": [
+        {
+          "number": 1,
+          "section": "drawn_to",
+          "text": "Bold illustrated art over photography."
+        },
+        {
+          "number": 2,
+          "section": "avoid",
+          "text": "Covers whose title is hard to read at a glance."
+        },
+        {
+          "number": 3,
+          "section": "trade_offs",
+          "text": "Takes a sharper copy of the same art."
+        }
+      ],
+      "version": 1
+    },
+    "required": 25,
+    "schema_version": "review-taste-profile-v1",
+    "versions": [
+      {
+        "built_at": 1000,
+        "decisions": 25,
+        "version": 1
+      }
+    ]
+  },
+  "method": "GET",
+  "path": "/api/v1/covers/taste",
+  "status": 200
+}
