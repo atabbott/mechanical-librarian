@@ -162,25 +162,6 @@ class AdmittedTasteBuildRequest:
             for _reference, jpeg in self.images
         )
 
-    @property
-    def digest(self) -> str:
-        return hashlib.sha256(
-            canonical_json(
-                {
-                    "images": [
-                        {
-                            "reference": reference,
-                            "sha256": hashlib.sha256(jpeg).hexdigest(),
-                        }
-                        for reference, jpeg in self.images
-                    ],
-                    "input": self.packet_document,
-                    "instruction": self.instruction,
-                    "output_schema": self.output_schema,
-                }
-            ).encode("utf-8")
-        ).hexdigest()
-
 
 def _packet_references(packet_document: str) -> list[str]:
     value = json.loads(packet_document, object_pairs_hook=unique_json_object)
@@ -274,9 +255,13 @@ def admit_taste_build_request(
 
 @dataclass(frozen=True, slots=True)
 class TasteBuildReply:
-    """The builder's parsed JSON object and whether the provider reported usage."""
+    """The builder's parsed JSON object and whether the provider reported usage.
 
-    result: dict[str, object]
+    `result` is None when the reply arrived but its content was not one JSON
+    object from the selected model: the profile is `invalid_output` (S7).
+    """
+
+    result: dict[str, object] | None
     usage_reported: bool
 
 

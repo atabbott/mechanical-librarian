@@ -134,9 +134,10 @@ class CoverTasteBuildService:
 
     def _run(self, repository: CoverTasteRepository, build_id: str) -> None:
         try:
-            _revision, model, profile, client = self._access.open_taste_build()
+            model, profile, client = self._access.open_taste_build()
         except ReviewerAccessApplicationError as error:
-            repository.fail(
+            _end(
+                repository,
                 build_id,
                 self._clock(),
                 "unconfigured"
@@ -144,6 +145,14 @@ class CoverTasteBuildService:
                 else "unavailable",
             )
             return
+        except Exception:
+            # Nothing was sent; a build left `requested` would rerun every wake.
+            _end(repository, build_id, self._clock(), "unavailable")
+            raise
+        # What a lost write ends the build as: before `claim` nothing was sent
+        # or counted; after it, the request was counted and may be charged.
+        failure: TasteBuildFailure = "unavailable"
+        stop_day = False
         try:
             inputs = assemble_taste_inputs(repository.decisions(), self._read_preview)
             request = (
@@ -156,6 +165,9 @@ class CoverTasteBuildService:
                 return
             if repository.claim(build_id, self._clock(), model, self._daily_limit):
                 return
+            # From here a request may have reached the provider (#1372 S9).
+            failure = "unknown_charge"
+            stop_day = True
             try:
                 reply = client.run_taste_build(profile, request)
             except TasteChargeUnknownError:
@@ -164,29 +176,62 @@ class CoverTasteBuildService:
                 )
                 return
             except Exception:  # noqa: BLE001 - every other outcome sent no profile
+                failure = "unavailable"
+                stop_day = False
                 repository.fail(build_id, self._clock(), "unavailable")
                 return
+            # A reply arrived; without usage its charge is unknown (S9).
+            if reply.usage_reported:
+                failure = "unavailable"
+                stop_day = False
             try:
-                admitted = TasteProfile.from_output(reply.result)
-            except CoverTasteError:
-                repository.fail(
-                    build_id,
-                    self._clock(),
-                    "invalid_output",
-                    stop_day=not reply.usage_reported,
+                admitted = (
+                    None
+                    if reply.result is None
+                    else TasteProfile.from_output(reply.result)
                 )
+            except CoverTasteError:
+                admitted = None
+            if admitted is None:
+                # An unusable reply is `invalid_output`; one without usage
+                # stops the day as `unknown_charge` instead (S7, S9).
+                if reply.usage_reported:
+                    failure = "invalid_output"
+                repository.fail(build_id, self._clock(), failure, stop_day=stop_day)
                 return
             repository.succeed(
                 build_id,
                 self._clock(),
                 admitted,
                 inputs.record,
-                stop_day=not reply.usage_reported,
+                stop_day=stop_day,
             )
         except TasteContractError:
-            repository.fail(build_id, self._clock(), "unavailable")
+            # The sealed inputs failed admission before anything was claimed.
+            _end(repository, build_id, self._clock(), "unavailable")
+        except Exception:
+            # A failed write or an unexpected fault never leaves the build
+            # `requested` (rerun every wake) or `running` (shown as writing
+            # until a restart): it ends once, best effort.
+            _end(repository, build_id, self._clock(), failure, stop_day=stop_day)
+            raise
         finally:
             client.close()
+
+
+def _end(
+    repository: CoverTasteRepository,
+    build_id: str,
+    now: int,
+    failure: TasteBuildFailure,
+    *,
+    stop_day: bool = False,
+) -> None:
+    """End a build as `failure`; a second fault leaves it for restart recovery."""
+    try:
+        repository.fail(build_id, now, failure, stop_day=stop_day)
+    except Exception:  # noqa: BLE001 - the original fault is the one raised
+        pass
 
 
 __all__ = ["CoverTasteBuildService", "CoverTasteRepository", "CoverTasteRetryError"]

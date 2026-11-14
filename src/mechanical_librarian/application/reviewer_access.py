@@ -661,8 +661,8 @@ class ReviewerAccessOperations:
         selection = document.cover_taste_build
         return None if selection is None or key is None else selection.model
 
-    def open_taste_build(self) -> tuple[int, str, bytes, OpenRouterTasteClient]:
-        """One client for one taste build, bound to the current access revision."""
+    def open_taste_build(self) -> tuple[str, bytes, OpenRouterTasteClient]:
+        """One client for one taste build, opened at the current access revision."""
         document, key = self._snapshot()
         selection = document.cover_taste_build
         if selection is None:
@@ -680,7 +680,6 @@ class ReviewerAccessOperations:
             client.close()
             raise ReviewerAccessApplicationError("access_changed")
         return (
-            document.revision,
             selection.model,
             openrouter_taste_profile(selection.model),
             client,

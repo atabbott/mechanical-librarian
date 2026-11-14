@@ -35,17 +35,31 @@ _TASK = "cover_taste_build"
 _DAY_SECONDS = 86_400
 VERSIONS_SHOWN = 50
 # S2: the newest owner selection per item, naming a previewed cover that is
-# not a retained original, on a consideration offering at least two arts.
+# not a retained original, on a consideration offering at least two arts. The
+# chosen cover must be one the build sends (a previewed `candidate`, never a
+# larger copy) and the report must name a file format, so the count shown and
+# the 25/10 thresholds read exactly the decisions `_decision_source` keeps.
 _ELIGIBLE = (
     "FROM current_cover_selection_authorities current "
     "JOIN cover_selection_authorities selection "
     "ON selection.selection_id=current.selection_id "
     "JOIN cover_considerations consideration "
     "ON consideration.consideration_id=selection.consideration_id "
+    "JOIN metadata_report_browse_facts facts "
+    "ON facts.report_id=consideration.report_id "
     "WHERE selection.kind='owner' "
     "AND json_extract(selection.document,'$.preview_sha256') IS NOT NULL "
     "AND json_extract(selection.document,'$.candidate_kind') IS NOT 'retained' "
-    "AND json_extract(consideration.currentness_document,'$.cover_stage.arts')>=?"
+    "AND json_extract(consideration.currentness_document,'$.cover_stage.arts')>=? "
+    "AND typeof(facts.format)='text' "
+    "AND EXISTS (SELECT 1 FROM json_each(consideration.document,'$.candidates') "
+    "offered WHERE json_extract(offered.value,'$.reference')="
+    "json_extract(selection.document,'$.candidate_reference') "
+    "AND json_extract(offered.value,'$.candidate_kind')='candidate' "
+    "AND json_type(offered.value,'$.preview_sha256')='text' "
+    "AND json_type(offered.value,'$.transport_sha256')='text' "
+    "AND json_type(offered.value,'$.width')='integer' "
+    "AND json_type(offered.value,'$.height')='integer')"
 )
 _RECORD_KEYS = frozenset(
     {
@@ -359,9 +373,7 @@ class SQLiteCoverTasteRepository(ConnectionScoped):
     def decisions(self) -> tuple[TasteDecisionSource, ...]:
         rows = self._connection.execute(
             "SELECT selection.selection_id,selection.document,consideration.document,"
-            "json_extract(report.document,'$.file.format') "
-            f"{_ELIGIBLE.replace('WHERE', 'LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id WHERE', 1)} "
-            "ORDER BY selection.rowid",
+            f"facts.format {_ELIGIBLE} ORDER BY selection.rowid",
             (TASTE_MIN_ARTS,),
         ).fetchall()
         sources = (_decision_source(*row) for row in rows)

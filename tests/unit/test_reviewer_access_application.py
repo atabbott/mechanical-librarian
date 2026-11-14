@@ -1379,8 +1379,8 @@ def test_taste_model_is_tested_selected_and_cleared_beside_cover_review():
     assert view.taste_metadata.model == "example/vision"
     assert view.taste_daily_requests == 8
     assert operations.current_taste_build_model() == "example/vision"
-    revision, model, profile, client = operations.open_taste_build()
-    assert (revision, model) == (view.revision, "example/vision")
+    model, profile, client = operations.open_taste_build()
+    assert model == "example/vision"
     assert b"openrouter-taste-builder-profile-v1" in profile
     client.close()
     assert ("probe", "example/vision") in calls
@@ -1398,6 +1398,32 @@ def test_taste_model_is_tested_selected_and_cleared_beside_cover_review():
     assert calls[-1] == ("close", "example/vision")
     cleared = operations.clear_openrouter(expected_revision=view.revision)
     assert cleared.taste_mapping is None and cleared.taste_metadata is None
+    assert operations.current_taste_build_model() is None
+
+
+def test_continuing_without_a_taste_profile_clears_only_that_task():
+    """The taste profile is a separate opt-in (#1372 S11): withdrawing it keeps
+    cover review, description advice and the shared key."""
+    operations, _, _, _ = _operations()
+    revision = _description_configured(operations)
+    before = operations.read()
+    _, key = operations._repository.snapshot()
+    taste = operations.configure_openrouter(
+        expected_revision=revision,
+        api_key="",
+        model="example/vision",
+        task="cover_taste_build",
+    )
+    assert taste.taste_mapping is not None
+    without = operations.select_none(
+        expected_revision=taste.revision, task="cover_taste_build"
+    )
+    assert without.taste_mapping is None and without.taste_metadata is None
+    assert without.mapping == before.mapping
+    assert without.description_mapping == before.description_mapping
+    assert without.description_metadata == before.description_metadata
+    assert without.openrouter_key_configured is True
+    assert operations._repository.snapshot()[1] == key
     assert operations.current_taste_build_model() is None
 
 

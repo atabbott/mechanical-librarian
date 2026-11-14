@@ -24,6 +24,7 @@ from mechanical_librarian.application.cover_taste_contract import (
     taste_request_frame_bytes,
     taste_transport_jpeg,
 )
+from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.cover_taste import (
     TASTE_MAX_DECISIONS,
     TASTE_MAX_IMAGES,
@@ -114,7 +115,9 @@ def _sealed(
             if preview.digest != candidate.transport_sha256:
                 return None
             sealed.append((preview.payload, taste_transport_jpeg(preview.payload)))
-        except (OSError, ValueError):
+        except (OSError, ValueError, MetadataReportError):
+            # The artifact store refuses a missing, resized or changed file
+            # with `MetadataReportError`; the decision is dropped (R3).
             return None
     return sealed
 

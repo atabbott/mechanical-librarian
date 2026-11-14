@@ -374,8 +374,10 @@ class OpenRouterReviewer:
     ) -> TasteBuildReply:
         """Send one admitted taste build and parse its closed JSON object.
 
-        A completion that times out after it was sent may still be charged, so
-        it raises `TasteChargeUnknownError` instead of a provider failure.
+        A completion that times out after it was sent, or whose 200 body cannot
+        be read, may still be charged, so it raises `TasteChargeUnknownError`
+        instead of a provider failure. Content that is not one JSON object
+        from the selected model returns a reply with no result.
         """
         deadline = time.monotonic() + max(self._timeout_seconds, _TASTE_SECONDS)
         if profile != openrouter_taste_profile(self._model):
@@ -411,24 +413,40 @@ class OpenRouterReviewer:
         }
         if reasoning_supported:
             chat_body["reasoning"] = {"effort": "minimal", "exclude": True}
+        accepted: list[bool] = []
+        body = bytearray()
         try:
-            response = self._json_request(
+            self._exchange(
                 "POST",
                 _CHAT_PATH,
                 _MAX_CHAT_RESPONSE,
                 deadline,
-                json_body=chat_body,
-                phase_seconds=_TASTE_SECONDS,
+                body.extend,
+                chat_body,
+                _TASTE_SECONDS,
+                on_accepted=lambda: accepted.append(True),
             )
         except OpenRouterReviewerError as error:
             # Only a failure to connect proves nothing was sent; any other
-            # transport loss may follow a request the provider charges for.
+            # transport loss may follow a request the provider charges for,
+            # and a 200 whose body cannot be read reports no usage.
             unsent = isinstance(error.__cause__, _UNSENT)
-            if error.code == "timed_out" or (
-                error.code == "unreachable" and not unsent
+            if (
+                accepted
+                or error.code == "timed_out"
+                or (error.code == "unreachable" and not unsent)
             ):
                 raise TasteChargeUnknownError("taste build outcome unknown") from None
             raise
+        try:
+            response = json.loads(bytes(body).decode("utf-8", "strict"))
+        except (UnicodeError, ValueError, RecursionError):
+            raise TasteChargeUnknownError("taste build outcome unknown") from None
+        if type(response) is not dict:
+            raise TasteChargeUnknownError("taste build outcome unknown")
+        usage_reported = type(response.get("usage")) is dict
+        # The provider answered: a reply that is not one JSON object from the
+        # selected model is an unusable profile, never a provider failure.
         try:
             choices = response["choices"]
             if (
@@ -444,8 +462,8 @@ class OpenRouterReviewer:
             if type(result) is not dict:
                 raise ValueError
         except (ValueError, TypeError, KeyError, IndexError, RecursionError):
-            raise OpenRouterReviewerError("malformed_response") from None
-        return TasteBuildReply(result, type(response.get("usage")) is dict)
+            return TasteBuildReply(None, usage_reported)
+        return TasteBuildReply(result, usage_reported)
 
     def _current_model(self, deadline: float) -> dict[str, object]:
         catalogue = _Catalogue(self._model)
@@ -486,6 +504,7 @@ class OpenRouterReviewer:
         consume: Callable[[bytes], object],
         json_body: dict[str, object] | None = None,
         phase_seconds: float | None = None,
+        on_accepted: Callable[[], object] | None = None,
     ) -> None:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -525,6 +544,8 @@ class OpenRouterReviewer:
                             else "transport"
                         )
                     )
+                if on_accepted is not None:
+                    on_accepted()
                 for chunk in _chunks(response, maximum, deadline):
                     consume(chunk)
         except OpenRouterReviewerError:

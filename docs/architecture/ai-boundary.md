@@ -92,12 +92,16 @@ recommendation, decision or write.
   request is at most 24 MB. The cover observer keeps the PNG.
 - **Output.** A closed schema: at most 40 rules in four sections, each at
   most 400 code points, at most 1,200 words and 8,192 code points in all,
-  admitted as inert text and only ever rendered as text.
+  admitted as inert text and only ever rendered as text. A reply that is
+  not one such JSON object, including one cut at the output limit, is
+  `invalid_output`; a reply whose body cannot be read counts as
+  `unknown_charge`.
 - **Ceilings.** One build at a time and at most 4 scheduled a UTC day. Each
   request is counted durably before dispatch against
   `cover_taste_build_daily_requests`; a timeout after sending or a reply
   without usage stops the task for the day as `unknown_charge`. A build
-  interrupted by restart ends `interrupted` and is never retried silently.
+  interrupted by restart ends `interrupted` and is never retried silently; a
+  fault or lost write during a build ends it at once instead.
 - **Storage.** Versions are append-only by trigger, and each stored profile
   is re-admitted against its document when the database opens.
 - **Redaction.** Failures are closed codes. Rule text, choices, references,

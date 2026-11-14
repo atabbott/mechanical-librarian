@@ -1145,6 +1145,10 @@ _TASTE_OUTPUT = {
         "wrong_model",
         "duplicate",
         "not_object",
+        "truncated",
+        "truncated_no_usage",
+        "oversized",
+        "not_json",
         "timeout",
         "unsent",
     ],
@@ -1173,16 +1177,24 @@ def test_taste_build_sends_the_admitted_request_only_to_the_exact_model(
             raise httpx.ReadTimeout("synthetic", request=http_request)
         if answer == "unsent":
             raise httpx.ConnectError("synthetic", request=http_request)
+        if answer == "oversized":
+            return httpx.Response(200, content=b" " * (1_048_576 + 1))
+        if answer == "not_json":
+            return httpx.Response(200, content=b"<html>")
         content = {
             "duplicate": '{"sections":{},"sections":{}}',
             "not_object": "[]",
+            # Content cut at the output token limit (R6).
+            "truncated": json.dumps(_TASTE_OUTPUT)[:40],
+            "truncated_no_usage": json.dumps(_TASTE_OUTPUT)[:40],
         }.get(answer, json.dumps(_TASTE_OUTPUT))
+        usage = answer not in {"no_usage", "truncated_no_usage"}
         return httpx.Response(
             200,
             json={
                 "model": "other/model" if answer == "wrong_model" else "example/vision",
                 "choices": [{"message": {"content": content}}],
-                **({} if answer == "no_usage" else {"usage": {"total_tokens": 10}}),
+                **({"usage": {"total_tokens": 10}} if usage else {}),
             },
         )
 
@@ -1191,7 +1203,8 @@ def test_taste_build_sends_the_admitted_request_only_to_the_exact_model(
     )
     profile = openrouter_taste_profile("example/vision")
     try:
-        if answer == "timeout":
+        if answer in {"timeout", "oversized", "not_json"}:
+            # A 200 whose body cannot be read reports no usage either.
             with pytest.raises(TasteChargeUnknownError):
                 reviewer.run_taste_build(profile, request)
             return
@@ -1199,9 +1212,18 @@ def test_taste_build_sends_the_admitted_request_only_to_the_exact_model(
             with pytest.raises(OpenRouterReviewerError, match="unreachable"):
                 reviewer.run_taste_build(profile, request)
             return
-        if answer in {"wrong_model", "duplicate", "not_object"}:
-            with pytest.raises(OpenRouterReviewerError, match="malformed_response"):
-                reviewer.run_taste_build(profile, request)
+        if answer in {
+            "wrong_model",
+            "duplicate",
+            "not_object",
+            "truncated",
+            "truncated_no_usage",
+        }:
+            # OpenRouter answered: the reply is an unusable profile, never a
+            # provider failure, and says whether usage was reported.
+            unusable = reviewer.run_taste_build(profile, request)
+            assert unusable.result is None
+            assert unusable.usage_reported is (answer != "truncated_no_usage")
             return
         reply = reviewer.run_taste_build(profile, request)
         assert reply.result == _TASTE_OUTPUT

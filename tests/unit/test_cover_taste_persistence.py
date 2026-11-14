@@ -12,9 +12,11 @@ import json
 import sqlite3
 import threading
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
+from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.adapters.persistence.cover_taste import (
     _ELIGIBLE,
     SQLiteCoverTasteRepository,
@@ -83,6 +85,8 @@ class _Seed:
         preview: bool = True,
         candidate_kind: str = "candidate",
         kind: str = "owner",
+        offered_kind: str = "candidate",
+        file_format: str | None = "epub",
     ) -> str:
         self.count += 1
         tag = f"{item}-{self.count}"
@@ -91,19 +95,35 @@ class _Seed:
         stage = (
             None if arts is None else {"arts": arts, "outcome": "keep", "reason": None}
         )
+        report = "report_" + _hex(tag, 64)
         self.connection.execute("PRAGMA foreign_keys=OFF")
+        # The chosen cover as the consideration offered it.
+        offered = {
+            "candidate_kind": offered_kind,
+            "reference": "cover-a",
+            "preview_sha256": "4" * 64,
+            "transport_sha256": "5" * 64,
+            "width": 600,
+            "height": 900,
+        }
         self.connection.execute(
             "INSERT INTO cover_considerations VALUES(?,?,?,?,?,NULL,?,?,?)",
             (
                 consideration,
                 "review_case_" + _hex(item, 64),
-                "report_" + _hex(item, 64),
+                report,
                 "1" * 64,
                 "2" * 64,
                 1,
                 json.dumps({"cover_stage": stage}),
-                json.dumps({"report_document_digest": "3" * 64}),
+                json.dumps(
+                    {"report_document_digest": "3" * 64, "candidates": [offered]}
+                ),
             ),
+        )
+        self.connection.execute(
+            "INSERT INTO metadata_report_browse_facts VALUES(?,?,?,?,0,'matched')",
+            (report, item, file_format, file_format or ""),
         )
         previous = self.connection.execute(
             "SELECT selection_id FROM current_cover_selection_authorities WHERE item_id=?",
@@ -112,6 +132,7 @@ class _Seed:
         document = {
             "schema_version": COVER_SELECTION_AUTHORITY_SCHEMA,
             "candidate_kind": candidate_kind,
+            "candidate_reference": "cover-a",
             "preview_sha256": "4" * 64 if preview else None,
         }
         decision = (
@@ -204,6 +225,22 @@ def test_eligibility_excludes_one_art_retained_preview_less_and_automatic(
     seed.decision("item-0")
     seed.decision("item-0", arts=1)
     assert _store(repository).eligible_count() == 19
+
+
+def test_count_and_thresholds_read_only_decisions_a_build_sends(repository) -> None:
+    """A larger copy or a report with no file format is never sent, so it is
+    not counted toward "You have chosen {n}" or the 25 threshold."""
+    seed = _Seed(repository)
+    store = _store(repository)
+    seed.many(24)
+    seed.decision("larger-copy", offered_kind="larger_copy")
+    seed.decision("no-format", file_format=None)
+    assert store.eligible_count() == 24
+    store.schedule(NOW, True, LIMIT)
+    assert _state(repository) == []
+    seed.decision("item-24")
+    store.schedule(NOW, True, LIMIT)
+    assert _state(repository) == [("cadence", "requested", None)]
 
 
 def test_eligible_count_reads_considerations_by_key_only(repository) -> None:
@@ -361,7 +398,7 @@ class _Access:
     def open_taste_build(self):
         if isinstance(self.client, Exception):
             raise self.client
-        return 1, "example/vision", b"profile", self.client
+        return "example/vision", b"profile", self.client
 
 
 class _Client:
@@ -451,9 +488,22 @@ def test_invalid_output_keeps_version_n_in_use(repository) -> None:
     [
         (TasteChargeUnknownError(), "unknown_charge", "unknown_charge"),
         (RuntimeError("provider said something private"), "unavailable", None),
-        (TasteBuildReply({"sections": {}}, False), "invalid_output", "unknown_charge"),
+        (TasteBuildReply({"sections": {}}, True), "invalid_output", None),
+        # A reply that was not one JSON object, such as content cut at the
+        # output limit (R6), is an unusable profile; the day goes on.
+        (TasteBuildReply(None, True), "invalid_output", None),
+        # Without usage the charge is unknown, so the day stops (S9).
+        (TasteBuildReply({"sections": {}}, False), "unknown_charge", "unknown_charge"),
+        (TasteBuildReply(None, False), "unknown_charge", "unknown_charge"),
     ],
-    ids=["timed-out-after-send", "refused", "no-usage-invalid"],
+    ids=[
+        "timed-out-after-send",
+        "refused",
+        "schema-invalid",
+        "unparseable",
+        "no-usage-invalid",
+        "no-usage-unparseable",
+    ],
 )
 def test_build_failures_are_closed_codes(repository, answer, failure, stopped) -> None:
     _Seed(repository).many(25)
@@ -512,3 +562,145 @@ def test_the_first_wake_after_a_restart_ends_a_left_running_build(repository) ->
     assert repository._connection.execute(
         "SELECT requests FROM reviewer_task_requests"
     ).fetchall() == [(1,)]
+
+
+def _real_sources(digests: list[str]) -> tuple[TasteDecisionSource, ...]:
+    return tuple(
+        TasteDecisionSource(
+            f"selection-{index}",
+            "ebook",
+            "ref",
+            (
+                TasteCandidateSource(
+                    "ref",
+                    digest,
+                    canonical(stored_preview(index)).digest,
+                    600,
+                    900,
+                    False,
+                    1,
+                    0,
+                    False,
+                    "ref",
+                ),
+            ),
+        )
+        for index, digest in enumerate(digests)
+    )
+
+
+def test_a_missing_preview_in_the_real_store_drops_its_decision(
+    repository, tmp_path
+) -> None:
+    """R3: the real store refuses a missing file with `MetadataReportError`;
+    that decision is dropped and counted, and the build still runs."""
+    _Seed(repository).many(25)
+    root = tmp_path / "artifacts"
+    artifacts = CoverArtifactStore(root)
+    digests = []
+    for index in range(2):
+        payload = stored_preview(index)
+        digest = hashlib.sha256(payload).hexdigest()
+        (root / digest).write_bytes(payload)
+        digests.append(digest)
+    (root / digests[0]).unlink()
+    store = _store(repository)
+    store.decisions = lambda: _real_sources(digests)  # type: ignore[method-assign]
+    client = _Client(_VALID)
+    CoverTasteBuildService(
+        lambda: store,
+        _Access(client),  # type: ignore[arg-type]
+        artifacts.read_preview_digest,
+        daily_limit=LIMIT,
+        clock=lambda: NOW,
+    ).wake(NOW)
+    assert _state(repository) == [("cadence", "succeeded", None)]
+    [(_version, _created, document)] = cast(
+        "list[tuple[int, int, dict[str, Any]]]", store.read()["versions"]
+    )
+    assert document["input"]["dropped"] == 1
+    assert document["input"]["included"] == 1
+
+
+def test_an_unexpected_fault_before_claim_ends_the_build(repository) -> None:
+    """A build is never left `requested`, which would rerun it every wake."""
+    _Seed(repository).many(25)
+    service = _service(repository, _Client(_VALID))
+    store = _store(repository)
+
+    def broken() -> tuple[TasteDecisionSource, ...]:
+        raise RuntimeError("synthetic")
+
+    service._repository = lambda: store
+    store.decisions = broken  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError):
+        service.wake(NOW)
+    assert _state(repository) == [("cadence", "failed", "unavailable")]
+    assert store.pending() is None
+    assert repository._connection.execute(
+        "SELECT count(*) FROM reviewer_task_requests"
+    ).fetchone() == (0,)
+
+
+def test_an_unexpected_fault_opening_the_client_ends_the_build(repository) -> None:
+    _Seed(repository).many(25)
+    with pytest.raises(RuntimeError):
+        _service(repository, RuntimeError("synthetic")).wake(NOW)
+    assert _state(repository) == [("cadence", "failed", "unavailable")]
+
+
+class _FailingWrites:
+    """The real store, whose next `succeed` or `fail` raises once."""
+
+    def __init__(self, store: SQLiteCoverTasteRepository, method: str) -> None:
+        self._store = store
+        self._method = method
+
+    def __getattr__(self, name: str) -> object:
+        if name == self._method:
+            self._method = ""
+
+            def broken(*_args: object, **_kwargs: object) -> None:
+                raise sqlite3.OperationalError("database is locked")
+
+            return broken
+        return getattr(self._store, name)
+
+
+@pytest.mark.parametrize(
+    ("answer", "method", "failure", "stopped"),
+    [
+        (_VALID, "succeed", "unavailable", None),
+        (
+            TasteBuildReply(_VALID.result, False),
+            "succeed",
+            "unknown_charge",
+            "unknown_charge",
+        ),
+        (TasteChargeUnknownError(), "fail", "unknown_charge", "unknown_charge"),
+        (TasteBuildReply(None, True), "fail", "invalid_output", None),
+    ],
+    ids=["succeed-usage", "succeed-no-usage", "fail-unknown", "fail-invalid"],
+)
+def test_a_lost_write_after_claim_never_leaves_the_build_running(
+    repository, answer, method, failure, stopped
+) -> None:
+    """The request was counted at claim; the build ends at once, not at restart."""
+    _Seed(repository).many(25)
+    store = _store(repository)
+    store.decisions = _sources  # type: ignore[method-assign]
+    failing = _FailingWrites(store, method)
+    service = CoverTasteBuildService(
+        lambda: failing,  # type: ignore[arg-type,return-value]
+        _Access(_Client(answer)),  # type: ignore[arg-type]
+        lambda _digest: _PAYLOAD,
+        daily_limit=LIMIT,
+        clock=lambda: NOW,
+    )
+    with pytest.raises(sqlite3.OperationalError):
+        service.wake(NOW)
+    assert _state(repository) == [("cadence", "failed", failure)]
+    assert store.read()["versions"] == []
+    assert repository._connection.execute(
+        "SELECT requests,stopped FROM reviewer_task_requests"
+    ).fetchall() == [(1, stopped)]

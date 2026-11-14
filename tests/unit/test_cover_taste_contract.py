@@ -98,7 +98,6 @@ def test_admitted_request_carries_exactly_the_packet_and_its_jpegs() -> None:
     assert request.output_schema == TASTE_OUTPUT_SCHEMA
     assert request.images == tuple((image.reference, image.jpeg) for image in images)
     assert all(url.startswith("data:image/jpeg;base64,") for url in request.data_urls())
-    assert request.digest == admit_taste_build_request(packet, tuple(images)).digest
     with pytest.raises(TypeError):
         AdmittedTasteBuildRequest()
 
