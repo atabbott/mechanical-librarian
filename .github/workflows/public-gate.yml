@@ -32,7 +32,7 @@ concurrency:
 
 jobs:
   fast-source:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 25
     steps:
       - name: Check out the exact revision
@@ -115,7 +115,7 @@ jobs:
         run: uv run python scripts/run_test_tier.py fast --workers 2 --shard 1/4
 
   fast-source-2:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 12
     steps:
       - name: Check out the exact revision
@@ -154,7 +154,7 @@ jobs:
         run: uv run python scripts/run_test_tier.py fast --workers 2 --shard 2/4
 
   fast-source-3:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 12
     steps:
       - name: Check out the exact revision
@@ -193,7 +193,7 @@ jobs:
         run: uv run python scripts/run_test_tier.py fast --workers 2 --shard 3/4
 
   fast-source-4:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 12
     steps:
       - name: Check out the exact revision
@@ -232,7 +232,7 @@ jobs:
         run: uv run python scripts/run_test_tier.py fast --workers 2 --shard 4/4
 
   exact-installed:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
       - name: Check out the exact revision
@@ -274,7 +274,7 @@ jobs:
           --test-tier required
 
   protected-browser:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     steps:
       - name: Check out the exact revision
@@ -329,7 +329,7 @@ jobs:
       # `~/.cache/ms-playwright` and nothing else, so on a cache hit the flag's
       # only contribution was `apt-get` -- and an unreachable
       # `azure.archive.ubuntu.com` twice spent this job's entire ten-minute
-      # budget inside it without running one test. The `ubuntu-24.04` image
+      # budget inside it without running one test. The `ubuntu-26.04` image
       # already ships Chromium's shared libraries, so the flag bought a stall
       # rather than a dependency.
       #
@@ -385,7 +385,7 @@ jobs:
         run: uv run python scripts/run_test_tier.py browser --test-timeout-seconds 180
 
   container-image:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
       - name: Check out the exact revision
@@ -498,7 +498,7 @@ jobs:
           uv run python scripts/run_test_tier.py shipped-sqlite
 
   dependency-audit:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
       - name: Check out the exact revision
