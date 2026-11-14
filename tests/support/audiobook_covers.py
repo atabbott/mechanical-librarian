@@ -39,6 +39,7 @@ from tests.support.audiobook_reports import (
     publish_audiobook_preview,
 )
 from tests.support.cover_images import synthetic_image
+from tests.support.cover_producers import adapter_cover_value
 
 
 @contextlib.contextmanager
@@ -101,9 +102,7 @@ def _environment(
         )
     )
     fields = tuple(
-        TargetField(
-            field.destination, TargetFieldState.VALUE, decoded[0].artifact.artifact_id
-        )
+        TargetField(field.destination, TargetFieldState.VALUE, adapter_cover_value())
         if field.destination is TargetDestination.COVER
         else field
         for field in report.target.fields

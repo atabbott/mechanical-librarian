@@ -1,3 +1,4 @@
+import hashlib
 import io
 import json
 import tempfile
@@ -8,7 +9,10 @@ from unittest.mock import Mock, patch
 import pytest
 from PIL import Image
 
-from mechanical_librarian.adapters.cover_artifacts import CoverDecodeTimeout
+from mechanical_librarian.adapters.cover_artifacts import (
+    CoverDecodeRejected,
+    CoverDecodeTimeout,
+)
 from mechanical_librarian.adapters.cover_evidence_observer import CoverEvidenceObserver
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.adapters.providers.remote_cover import (
@@ -23,11 +27,13 @@ from mechanical_librarian.application.metadata_report import (
     CoverRedirects,
     CoverSourceChangedError,
     CoverTimeoutError,
+    MetadataReportError,
     ProviderCoverDescriptor,
     TargetCover,
     TargetSnapshot,
 )
 from mechanical_librarian.domain.cover_evidence import (
+    DECODER_REJECTED_STATES,
     CoverArtifact,
     CoverDesignation,
     CoverEvidenceError,
@@ -1142,3 +1148,89 @@ def test_a_full_hardcover_gallery_records_every_truncation_reason() -> None:
         for value in values
     )
     assert publication_ready(values)
+
+
+_DECLARED = TargetSnapshot(
+    "ebook", "Title", (), TargetCover("descriptor", "/cover.jpg")
+)
+
+
+@pytest.mark.parametrize(
+    "state",
+    sorted(DECODER_REJECTED_STATES),
+    ids=[state.value for state in sorted(DECODER_REJECTED_STATES)],
+)
+def test_bytes_the_decoder_refuses_record_their_digest(
+    state: CoverSourceState,
+) -> None:
+    # A cover write binds and keeps exactly the bytes it replaces, whether or
+    # not they decode (#1853).
+    body = b"\x89PNG\r\n\x1a\nrefused"
+    with (
+        tempfile.TemporaryDirectory() as directory,
+        patch(
+            "mechanical_librarian.adapters.cover_evidence_observer.decode_cover",
+            side_effect=CoverDecodeRejected(state),
+        ),
+    ):
+        value = CoverEvidenceObserver(
+            _Target(body), CoverArtifactStore(Path(directory))
+        ).observe_current(_DECLARED, ())
+    assert (value[0].state, value[0].artifact) == (state, None)
+    assert value[0].original_digest == hashlib.sha256(body).hexdigest()
+    assert value[0].bytes_digest == value[0].original_digest
+
+
+def test_the_real_decoder_refusal_records_the_digest_of_the_bytes_read() -> None:
+    body = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+    with tempfile.TemporaryDirectory() as directory:
+        value = CoverEvidenceObserver(
+            _Target(body), CoverArtifactStore(Path(directory))
+        ).observe_current(_DECLARED, ())
+    assert value[0].state in DECODER_REJECTED_STATES
+    assert value[0].original_digest == hashlib.sha256(body).hexdigest()
+
+
+@pytest.mark.parametrize(
+    "result",
+    (
+        CoverTimeoutError("elapsed"),
+        CoverSourceChangedError("changed"),
+        CoverReadError("unavailable"),
+        CoverReadError("oversized"),
+        CoverReadError("unsupported_format"),
+        MetadataReportError("unreadable"),
+    ),
+    ids=(
+        "timeout",
+        "source_changed",
+        "unavailable",
+        "reader_oversized",
+        "reader_unsupported_format",
+        "unexpected",
+    ),
+)
+def test_a_read_that_holds_no_bytes_records_no_digest(result: Exception) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        value = CoverEvidenceObserver(
+            _Target(result), CoverArtifactStore(Path(directory))
+        ).observe_current(_DECLARED, ())
+    assert value[0].state is not CoverSourceState.RETRIEVED
+    assert (value[0].original_digest, value[0].bytes_digest) == (None, None)
+
+
+def test_a_decoder_timeout_records_no_digest() -> None:
+    with (
+        tempfile.TemporaryDirectory() as directory,
+        patch(
+            "mechanical_librarian.adapters.cover_evidence_observer.decode_cover",
+            side_effect=CoverDecodeTimeout("elapsed"),
+        ),
+    ):
+        value = CoverEvidenceObserver(
+            _Target(_jpeg()), CoverArtifactStore(Path(directory))
+        ).observe_current(_DECLARED, ())
+    assert (value[0].state, value[0].original_digest) == (
+        CoverSourceState.TIMEOUT,
+        None,
+    )
