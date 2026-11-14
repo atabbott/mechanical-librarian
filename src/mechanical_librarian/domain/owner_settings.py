@@ -34,7 +34,6 @@ from mechanical_librarian.domain.validation import (
     OWNER_SESSION_LIFETIME_MINIMUM,
     credential,
 )
-from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 
 Name = Annotated[StrictStr, Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")]
 Email = Annotated[StrictStr, Field(min_length=3, max_length=254)]
@@ -277,13 +276,11 @@ class CoverPreferenceSettings(_Closed):
 
 
 # The Book matching levels' values for closed settings models, which need a
-# literal type: spelled once, here, and checked against the levels themselves
-# so neither drifts.
+# literal type: spelled once, here, and held equal to `WorkIdentityLevel` by
+# `test_the_settings_level_values_are_the_levels`.
 WorkIdentityLevelValue = Literal[
     "identifier", "title_and_creator_exact", "title_and_creator"
 ]
-if get_args(WorkIdentityLevelValue) != tuple(item.value for item in WorkIdentityLevel):
-    raise RuntimeError("work identity level values differ from the levels")
 
 
 class MatchingSettings(_Closed):

@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
+from typing import get_args
 
 import pytest
 from pydantic import ValidationError
@@ -29,7 +30,9 @@ from mechanical_librarian.domain.owner_settings import (
     MatchingCheck,
     OwnerSettingsDocument,
     OwnerSettingsError,
+    WorkIdentityLevelValue,
 )
+from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 from mechanical_librarian.infrastructure.configuration import (
     load_configuration_document,
 )
@@ -144,3 +147,10 @@ def test_the_matching_check_on_an_empty_library_requeues_nothing(
     assert _row_counts(connection) == before
     assert matching_check_counts(connection, "title_and_creator") == (0, 0, 0)
     repository.close()
+
+
+def test_the_settings_level_values_are_the_levels() -> None:
+    """Both settings models' literal is exactly the levels, in their order."""
+    assert get_args(WorkIdentityLevelValue) == tuple(
+        level.value for level in WorkIdentityLevel
+    )
