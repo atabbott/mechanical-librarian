@@ -2840,55 +2840,11 @@ export const mapEvidence = (value: EvidenceDto): EvidenceView => ({
   sourceLedger: value.source_ledger.map(mapProviderOutcome),
 })
 
-const mapHistoryItem = (item: HistoryDto['items'][number], index: number): HistoryItemView => {
-  if ('checkpoint' in item)
-    return { category: 'transition', occurredAt: null, outcome: item.kind, reason: item.reason }
+const mapCoverHistoryItem = (
+  item: Extract<HistoryDto['items'][number], { readonly consideration: unknown }>,
+  index: number,
+): HistoryItemView => {
   const occurredAt = item.occurred_at
-  // Each item kind has its own event schema, named by its version.
-  if (item.schema_version === 'description-advice-history-v1')
-    return {
-      category: 'description',
-      occurredAt,
-      outcome: item.kind,
-      state: item.state,
-      model: item.model,
-      engine: item.engine,
-      candidate: item.candidate === null ? null : mapDescriptionCandidate(item.candidate),
-      selected: item.kind === 'description_selected',
-      chosenBy:
-        item.decision === null ? null : item.decision.origin === 'human' ? 'owner' : 'automatic',
-    }
-  // Only an owner decision states what it may go on to do; a retained F45
-  // decision is the only one that carries a reason (#968).
-  if (item.schema_version === 'human-decision-event-v1')
-    return {
-      category: 'owner',
-      applicationReason: item.application_reason,
-      outcome: item.outcome,
-      occurredAt,
-      destination: item.destination,
-      previousValue: item.previous_value,
-      selectedValue: item.selected_value,
-    }
-  if (item.schema_version === 'automatic-decision-history-event-v1')
-    return {
-      category: 'automatic',
-      outcome: item.outcome,
-      occurredAt,
-      destination: item.destination,
-      previousValue: item.previous_value,
-      selectedValue: item.selected_value,
-    }
-  if (item.schema_version === 'preview-history-event-v1')
-    return {
-      category: 'preview',
-      occurredAt,
-      // The decoder holds each key to the disposition names (propertyNames).
-      dispositions: Object.entries(item.dispositions).map(([outcome, count]) => ({
-        count,
-        outcome: outcome as PreviewDisposition,
-      })),
-    }
   const { consideration, decision } = item
   const decisionOutcome = decision?.outcome
   const ownerOutcome =
@@ -2936,6 +2892,60 @@ const mapHistoryItem = (item: HistoryDto['items'][number], index: number): Histo
     reviewerStatus: consideration.reviewer_status,
     supersedesAutomatic:
       decision?.outcome === 'candidate' && decision.supersedes_decision_id !== null,
+  }
+}
+
+const mapHistoryItem = (item: HistoryDto['items'][number], index: number): HistoryItemView => {
+  if ('checkpoint' in item)
+    return { category: 'transition', occurredAt: null, outcome: item.kind, reason: item.reason }
+  // A cover item is told apart by its consideration; it carries no version of
+  // its own, because its event's version stays in the store (#1847).
+  if ('consideration' in item) return mapCoverHistoryItem(item, index)
+  const occurredAt = item.occurred_at
+  // Each other item kind has its own event schema, named by its version.
+  if (item.schema_version === 'description-advice-history-v1')
+    return {
+      category: 'description',
+      occurredAt,
+      outcome: item.kind,
+      state: item.state,
+      model: item.model,
+      engine: item.engine,
+      candidate: item.candidate === null ? null : mapDescriptionCandidate(item.candidate),
+      selected: item.kind === 'description_selected',
+      chosenBy:
+        item.decision === null ? null : item.decision.origin === 'human' ? 'owner' : 'automatic',
+    }
+  // Only an owner decision states what it may go on to do; a retained F45
+  // decision is the only one that carries a reason (#968).
+  if (item.schema_version === 'human-decision-event-v1')
+    return {
+      category: 'owner',
+      applicationReason: item.application_reason,
+      outcome: item.outcome,
+      occurredAt,
+      destination: item.destination,
+      previousValue: item.previous_value,
+      selectedValue: item.selected_value,
+    }
+  if (item.schema_version === 'automatic-decision-history-event-v1')
+    return {
+      category: 'automatic',
+      outcome: item.outcome,
+      occurredAt,
+      destination: item.destination,
+      previousValue: item.previous_value,
+      selectedValue: item.selected_value,
+    }
+  // What is left is the preview event.
+  return {
+    category: 'preview',
+    occurredAt,
+    // The decoder holds each key to the disposition names (propertyNames).
+    dispositions: Object.entries(item.dispositions).map(([outcome, count]) => ({
+      count,
+      outcome: outcome as PreviewDisposition,
+    })),
   }
 }
 

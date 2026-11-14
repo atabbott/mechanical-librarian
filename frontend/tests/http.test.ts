@@ -188,9 +188,9 @@ const uncertain = (failure: string) => {
 }
 
 const reviewerAccessPayload = (overrides: Record<string, unknown> = {}) => ({
-  schema_version: 'reviewer-access-view-v2',
+  schema_version: 'reviewer-access-view-v3',
   cover_metadata: null,
-  cost_evidence: { schema_version: 'reviewer-cost-evidence-v2', models: [] },
+  cost_evidence: { models: [] },
   revision: 3,
   mapping: null,
   description_mapping: null,
@@ -2240,10 +2240,9 @@ describe('ReviewApiClient', () => {
       },
     ]
     const state = {
-      schema_version: 'metadata-policy-notebook-v1',
+      schema_version: 'metadata-policy-notebook-v2',
       policy_id: 'policy-1',
       profile: {
-        schema_version: 'metadata-policy-profile-v3',
         name: 'Active',
         options: {},
         destinations: {},
@@ -2313,10 +2312,9 @@ describe('ReviewApiClient', () => {
       second: { option: 'two', destination: 'ignore' },
     }
     const active = {
-      schema_version: 'metadata-policy-notebook-v1',
+      schema_version: 'metadata-policy-notebook-v2',
       policy_id: 'policy-1',
       profile: {
-        schema_version: 'metadata-policy-profile-v3',
         name: 'Active',
         options: { title_layout: 'preserve' },
         destinations: { title_layout: 'ask' },
@@ -2334,10 +2332,9 @@ describe('ReviewApiClient', () => {
       ),
     ).toMatchObject({ changed: false, activeName: 'Active' })
     const reordered = {
-      schema_version: 'metadata-policy-notebook-v1',
+      schema_version: 'metadata-policy-notebook-v2',
       policy_id: 'policy-1',
       profile: {
-        schema_version: 'metadata-policy-profile-v3',
         name: 'Active',
         options: { first: 'one', second: 'two' },
         destinations: { first: 'ask', second: 'ignore' },
@@ -2373,10 +2370,9 @@ describe('ReviewApiClient', () => {
       tags: { option: 'off', destination: 'ask' },
     }
     const active = {
-      schema_version: 'metadata-policy-notebook-v1',
+      schema_version: 'metadata-policy-notebook-v2',
       policy_id: 'policy-1',
       profile: {
-        schema_version: 'metadata-policy-profile-v3',
         name: 'Active',
         options: { title_layout: 'preserve' },
         destinations: {},
@@ -2981,8 +2977,9 @@ describe('ReviewApiClient', () => {
     for (const [invalid, failure] of [
       [{ ...base, authority: 'deploy' }, 'enum@/authority'],
       [
-        { ...base, document: { ...doc, schema_version: 'owner-settings-v3' } },
-        'const@/document/schema_version',
+        // The stored settings version stays on the server (#1847).
+        { ...base, document: { ...doc, schema_version: 'any' } },
+        'unknown_key@/document/schema_version',
       ],
       [
         {
@@ -4023,7 +4020,6 @@ it.each([null, '0', '0.000001'])(
       readReviewerAccess({
         ...value,
         cost_evidence: {
-          schema_version: 'reviewer-cost-evidence-v2',
           models: [],
           private: 'forbidden',
         },
@@ -4049,7 +4045,7 @@ describe('reviewer cost evidence', () => {
   }
   const evidence = (cost_evidence: unknown) =>
     readReviewerAccess(reviewerAccessPayload({ cost_evidence }))
-  const valid = { schema_version: 'reviewer-cost-evidence-v2', models: [row] }
+  const valid = { models: [row] }
 
   it('admits per-row cost runs and refuses a missing row run or a top-level run', async () => {
     expect((await evidence(valid)).cost_evidence).toEqual(valid)
@@ -4065,7 +4061,7 @@ describe('reviewer cost evidence', () => {
         `pattern@${at}/models/0/measured_run/source_head`,
       ],
       [{ ...valid, measured_run: run }, `unknown_key@${at}/measured_run`],
-      [{ ...valid, schema_version: 'reviewer-cost-evidence-v1' }, `const@${at}/schema_version`],
+      [{ ...valid, schema_version: 'any' }, `unknown_key@${at}/schema_version`],
     ] as const)
       await expect(evidence(invalid)).rejects.toMatchObject(refused(failure))
   })
@@ -4489,7 +4485,7 @@ describe('central response decoding (#1685)', () => {
     [
       'GET /api/v1/metadata-policy/preview-mode/outcomes',
       (client: ReviewApiClient) => client.getPreviewSample(),
-      { schema_version: 'preview-outcome-sample-v1' },
+      { schema_version: 'preview-outcome-sample-v2' },
       '/authority',
     ],
     [
@@ -5179,7 +5175,6 @@ describe('reviewer-access write decoding (#1690)', () => {
       (client: ReviewApiClient) => client.selectReviewer(null, 3),
       reviewerAccessPayload({
         cost_evidence: {
-          schema_version: 'reviewer-cost-evidence-v2',
           models: [
             {
               model: 'openai/gpt-6-luna',

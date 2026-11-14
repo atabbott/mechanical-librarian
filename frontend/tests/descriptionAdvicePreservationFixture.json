@@ -695,8 +695,7 @@
             "provenance": "authored_content",
             "request_digest": "69714795d0ccb99e4555ddbf9ec989dd4e2b7479404cff51a64aaea173cbfc72",
             "request_identity": "4ebf3db299a6cc38d63f16eb69d99cfe1803203b9d95e0c3dafc21c1ba62b6b3",
-            "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6",
-            "schema_version": "description-advice-candidate-v1"
+            "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6"
           },
           "current": true
         },
@@ -719,8 +718,7 @@
           "origin": "automatic_policy",
           "outcome": "accept",
           "qualification_manifest_sha256": "b963ad0f8c3b7c7ac42527910b6fbc87a2e47590495fc5b63dc9e66e9b390894",
-          "resolved_policy_id": "resolved_policy_e387661e677db9a061e7895ab0f0ebfa329bde8d57677a39deade2408044623e",
-          "schema_version": "authored-description-decision-v1"
+          "resolved_policy_id": "resolved_policy_e387661e677db9a061e7895ab0f0ebfa329bde8d57677a39deade2408044623e"
         },
         "state": "requested"
       },
@@ -979,7 +977,7 @@
   "recording_admission_basis": null,
   "recording_identity_basis": null,
   "review_case_id": "review_case_7116b85e7b911487427bc70e2abc3fc0d5252a3bdaa8bb2a1d7653bccc474eb9",
-  "schema_version": "review-case-detail-v7",
+  "schema_version": "review-case-detail-v8",
   "target": {
     "authors": ["Mick Herron"],
     "connection": "primary",

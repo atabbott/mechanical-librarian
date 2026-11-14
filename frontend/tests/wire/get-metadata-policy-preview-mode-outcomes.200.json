@@ -3,7 +3,7 @@
     "authority": "none",
     "items": [],
     "next_cursor": null,
-    "schema_version": "preview-outcome-sample-v1"
+    "schema_version": "preview-outcome-sample-v2"
   },
   "method": "GET",
   "path": "/api/v1/metadata-policy/preview-mode/outcomes",

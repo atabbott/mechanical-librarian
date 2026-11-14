@@ -64,6 +64,10 @@ in [Deployment](../operations/deployment.md).
 
 ## Current versions
 
+<!-- The identifiers on this page come from the code. After a version move, run
+`uv run python scripts/compatibility_versions.py --write`; the documentation
+integrity check fails until then. Descriptions name no version number. -->
+
 These are the exact versions this build reads and writes. Any other value is
 refused.
 
@@ -74,7 +78,7 @@ refused.
 | `config-v11` | The file-mode configuration document at `/data/config.json` ([schema](config.schema.json)) |
 | `review-bootstrap-v2` | The store-mode bootstrap document at `/run/secrets/review-bootstrap.json` |
 | `owner-settings-v6` | Store-mode owner settings in the application database, including Book matching (`matching.work_identity`) and Current covers |
-| `setup-state-v5` | Incomplete first-run setup, with libraries and their folders recorded before sources, including the setup claim token digest ([ADR-0086](../architecture/decisions/0086-deployment-held-setup-claim-token.md)). An unfinished `setup-state-v4` setup is refused at startup |
+| `setup-state-v5` | Incomplete first-run setup, with libraries and their folders recorded before sources, including the setup claim token digest ([ADR-0086](../architecture/decisions/0086-deployment-held-setup-claim-token.md)). A setup left unfinished by an earlier build is refused at startup |
 | `reviewer-access-v3` | Optional reviewer access for cover review and description advice |
 
 ### Reports, proposals and policy
@@ -131,8 +135,8 @@ of their own and no separate version string.
 
 The owner API is served under `/api/v1`, and each response names its version
 in `schema_version`. The main ones are `review-session-v1`,
-`review-library-v5`, `review-preparation-v2`, `review-case-detail-v7`,
-`review-case-evidence-v5`, `review-report-detail-v6`, `review-case-history-v3`,
+`review-library-v5`, `review-preparation-v2`, `review-case-detail-v8`,
+`review-case-evidence-v5`, `review-report-detail-v6`, `review-case-history-v4`,
 `review-attention-v1` and `continuous-field-activity-v3`. The generated
 [OpenAPI document](review-openapi-v1.json) pins each of them except
 `review-session-v1`, which the server sets.

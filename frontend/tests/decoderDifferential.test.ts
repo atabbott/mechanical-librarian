@@ -395,7 +395,7 @@ const PRESENCE_SITES: readonly (readonly [string, Family, string, Case, string])
   [
     'mapCostEvidence:2111',
     'ReviewerAccess',
-    'ReviewerCostEvidence',
+    'ReviewerCostView',
     codexCleared,
     '/cost_evidence',
   ],

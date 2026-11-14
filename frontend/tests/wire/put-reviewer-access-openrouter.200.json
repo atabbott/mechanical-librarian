@@ -54,8 +54,7 @@
           "total_cost_usd": "0.063641500",
           "works": 100
         }
-      ],
-      "schema_version": "reviewer-cost-evidence-v2"
+      ]
     },
     "cover_metadata": {
       "completion_price": null,
@@ -94,7 +93,7 @@
     "openrouter_key_configured": true,
     "recommendations": ["openai/gpt-6-luna"],
     "revision": 3,
-    "schema_version": "reviewer-access-view-v2"
+    "schema_version": "reviewer-access-view-v3"
   },
   "method": "PUT",
   "path": "/api/v1/reviewer-access/openrouter",

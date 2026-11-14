@@ -36,6 +36,9 @@ from mechanical_librarian.application.cover_policy import (
     POLICY_SCHEMA_VERSION as COVER_POLICY_SCHEMA,
 )
 from mechanical_librarian.application.field_effects import GuardedApplicationError
+from mechanical_librarian.application.metadata_policy import (
+    PREVIEW_OUTCOME_SAMPLE_SCHEMA,
+)
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_application import (
     REVIEW_PREPARATION_SCHEMA,
@@ -120,6 +123,7 @@ from mechanical_librarian.domain.review_browse import ReviewBrowseValueError
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.review_field_classification import ReviewFieldState
 from mechanical_librarian.interfaces.web.app import (
+    METADATA_POLICY_NOTEBOOK_SCHEMA,
     _CaseDetailResponse,
     _CoverOmission,
     _MediaHealthObservation,
@@ -1174,7 +1178,6 @@ def test_policy_mutations_return_specific_bounded_problems_and_fail_closed(
     headers = {**web.origin, "X-CSRF-Token": login["csrf_token"]}
     active = web.client.get("/api/v1/metadata-policy/state")
     payload = active.json()["profile"]
-    del payload["schema_version"]
     payload["name"] = "Draft"
     payload["options"]["removed"] = "unknown"
     invalid = web.client.post(
@@ -1185,7 +1188,6 @@ def test_policy_mutations_return_specific_bounded_problems_and_fail_closed(
     assert "review-error-v1" == invalid.json()["schema_version"]
     assert "no-store, private" == invalid.headers["cache-control"]
     valid_payload = active.json()["profile"]
-    del valid_payload["schema_version"]
     denied = web.client.post(
         "/api/v1/metadata-policy/preview", headers=web.origin, json=valid_payload
     )
@@ -1278,7 +1280,6 @@ def test_policy_routes_are_closed_read_only_and_schema_deterministic(
     active = web.client.get("/api/v1/metadata-policy/state")
     assert 200 == active.status_code
     payload = active.json()["profile"]
-    del payload["schema_version"]
     payload["name"] = "<hostile draft>"
     payload["options"]["date_precision"] = "full_date"
     before = (dict(web.repository.decisions), dict(web.repository.policy_documents))
@@ -1286,7 +1287,7 @@ def test_policy_routes_are_closed_read_only_and_schema_deterministic(
         "/api/v1/metadata-policy/validate", headers=headers, json=payload
     )
     assert 200 == validated.status_code
-    assert "metadata-policy-notebook-v1" == validated.json()["schema_version"]
+    assert METADATA_POLICY_NOTEBOOK_SCHEMA == validated.json()["schema_version"]
     created = web.client.post(
         "/api/v1/metadata-policy/drafts", headers=headers, json=payload
     )
@@ -1351,7 +1352,6 @@ def test_preview_posture_and_sample_are_authenticated_non_authoritative(
     } == state.json()
     active = web.client.get("/api/v1/metadata-policy/state").json()
     automatic_payload = active["profile"]
-    del automatic_payload["schema_version"]
     automatic_payload["name"] = "Preview automatic intent"
     automatic_payload["destinations"]["title_layout"] = "automatic"
     validated_before_preview = web.client.post(
@@ -1403,7 +1403,7 @@ def test_preview_posture_and_sample_are_authenticated_non_authoritative(
         ]["title_layout"]
     )
     sample = web.client.get("/api/v1/metadata-policy/preview-mode/outcomes?limit=10")
-    assert "preview-outcome-sample-v1" == sample.json()["schema_version"]
+    assert PREVIEW_OUTCOME_SAMPLE_SCHEMA == sample.json()["schema_version"]
     assert [] == sample.json()["items"]
     leaving = web.client.get("/api/v1/metadata-policy/preview-mode/leave-preview")
     assert leaving.json()["confirmation_required"]
@@ -1440,7 +1440,6 @@ def test_policy_draft_persistence_failure_is_unavailable_not_validation(
     login = web.login()
     headers = {**web.origin, "X-CSRF-Token": login["csrf_token"]}
     payload = web.client.get("/api/v1/metadata-policy/state").json()["profile"]
-    del payload["schema_version"]
     response = web.client.post(
         "/api/v1/metadata-policy/drafts", headers=headers, json=payload
     )
