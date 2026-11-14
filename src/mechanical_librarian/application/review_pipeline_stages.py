@@ -102,6 +102,18 @@ if TYPE_CHECKING:
 __all__ = ["ReviewPipelineStages", "ReviewStageRepository"]
 
 
+class DescriptionPreparation(Protocol):
+    """Prepares description advice; reuse_only binds earlier attempts and starts none."""
+
+    def __call__(
+        self,
+        repository: ReviewPipelineRepository,
+        action: PipelineAction,
+        *,
+        reuse_only: bool = False,
+    ) -> None: ...
+
+
 class ReviewStageRepository(ReviewPipelineRepository, Protocol):
     """``ReviewPipelineRepository`` plus the three reads the stages also perform.
 
@@ -149,7 +161,7 @@ class ReviewPipelineStages:
         google_burst_remaining: Callable[[], int | None] | None = None,
         admit_description: Callable[[ReviewPipelineRepository, PipelineAction], None]
         | None = None,
-        prepare_description: Callable[..., None] | None = None,
+        prepare_description: DescriptionPreparation | None = None,
         observation_repository_factory: Callable[[], ReviewPipelineRepository]
         | None = None,
     ) -> None:

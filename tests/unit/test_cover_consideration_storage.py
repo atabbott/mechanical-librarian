@@ -447,3 +447,16 @@ def test_corrupt_report_sql_type_rolls_back_publication(tmp_path: Path) -> None:
         assert connection.execute(
             "SELECT count(*) FROM cover_considerations"
         ).fetchone() == (1,)
+
+
+@pytest.mark.parametrize(
+    "reader",
+    ["current_cover_consideration_document", "current_cover_consideration_level"],
+)
+def test_current_comparison_readers_hold_the_connection_lock(reader: str) -> None:
+    from mechanical_librarian.adapters.persistence.cover_considerations import (
+        SQLiteCoverConsiderationRepository,
+    )
+
+    method = getattr(SQLiteCoverConsiderationRepository, reader)
+    assert getattr(method, "__wrapped__", None) is not None, reader

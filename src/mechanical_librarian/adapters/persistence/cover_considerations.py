@@ -479,6 +479,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         ).fetchone()
         return None if row is None or type(row[0]) is not str else row[0]
 
+    @local_operation
     def current_cover_consideration_document(self, review_case_id: str) -> str | None:
         row = self._connection.execute(
             "SELECT consideration.document,report.document,report.document_digest,consideration.document_digest,consideration.report_id FROM current_cover_considerations current "
