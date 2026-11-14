@@ -303,10 +303,15 @@ def _string_literals(tree: ast.AST) -> list[tuple[int, str]]:
             if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant):
                 prose.add(id(first.value))
     return [
-        (node.lineno, node.value)
+        (
+            node.lineno,
+            node.value
+            if isinstance(node.value, str)
+            else node.value.decode("utf-8", "replace"),
+        )
         for node in ast.walk(tree)
         if isinstance(node, ast.Constant)
-        and isinstance(node.value, str)
+        and isinstance(node.value, str | bytes)
         and id(node) not in prose
     ]
 
