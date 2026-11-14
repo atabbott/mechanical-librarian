@@ -27,7 +27,8 @@
       }
       // Chromium skips the transition when it cannot draw it in time, most
       // often under load, and rejects `ready` with "Transition was skipped".
-      // Handled, the skip is not an uncaught page error; `finished` still settles.
+      // Handling it keeps the skip from surfacing as an uncaught page error;
+      // `finished` still settles.
       transition.ready.catch(() => {})
       void transition.finished.then(disable, disable)
     },

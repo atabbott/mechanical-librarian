@@ -7368,7 +7368,10 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
 # Chromium skips a cross-document view transition when it cannot draw it in
 # time, most often under CPU load, and then rejects the transition's `ready`
 # with "Transition was skipped". Each side of the setup-to-Library handoff
-# skips it here on purpose; neither may leave that rejection unhandled.
+# skips it here on purpose, and the handoff must still complete with no page
+# error. Only the Library side's rejection reaches Playwright's page errors; the
+# setup side's handler is pinned by
+# `test_setup_enables_cross_document_motion_only_for_the_workspace_handoff`.
 _SKIP_HANDOFF_TRANSITION = (
     "addEventListener('{event}',event=>{{"
     "if(!event.viewTransition)return;"
@@ -7475,8 +7478,7 @@ def test_a_skipped_setup_handoff_transition_raises_no_page_error(event: str) -> 
                 expect(
                     page.get_by_role("heading", name="Preparing libraries")
                 ).to_be_visible()
-                # The motion sheet is switched off once the skipped transition
-                # finishes, as it is after one that runs.
+                # The motion sheet ends switched off, as after a transition that runs.
                 expect(page.locator("#preparation-handoff-motion")).to_have_js_property(
                     "disabled", True
                 )
