@@ -433,3 +433,54 @@ it('shows no would-admit, work identity or shadow wording on the review screens 
   await screen.findByText(checkingLine)
   expect(document.body.textContent).not.toMatch(/would.admit|work.identity|shadow/iu)
 })
+
+describe('a field Book matching substituted and made choosable', () => {
+  // Live had no supported value; the level offers one. The server sends no
+  // reason for withholding the live value (#1355), so the question line is the
+  // field's own: it never says no value can be used beside one that can.
+  const substituted = (automaticWithheldReason: string | null): CaseDetailView => ({
+    ...detail,
+    fields: [
+      {
+        ...title,
+        disposition: 'ineligible',
+        notices: ['no_supported_evidence'],
+        decisionActions: ['keep_current', 'accept'],
+        automaticWithheldReason,
+      },
+    ],
+  })
+  const questionLine = async () => {
+    const question = await screen.findByRole('heading', {
+      name: 'Which title should this work use?',
+    })
+    const line = question.nextElementSibling
+    if (!line) throw new Error('the question line is required')
+    return line
+  }
+
+  it('reads the field’s own reason under the question when the server sends none', async () => {
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => substituted(null)),
+      getLibrary: vi.fn(async () => library),
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+    expect(await questionLine()).toHaveTextContent(
+      'None of these values can be applied for you. Compare them yourself.',
+    )
+    expect(proposed()).toBeEnabled()
+    expect(screen.queryByText('No source offered a value that can be used here.')).toBeNull()
+  })
+
+  it('still shows a reason the server sends for a field it did not substitute', async () => {
+    const reason = 'No source offered a value that can be used here.'
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => substituted(reason)),
+      getLibrary: vi.fn(async () => library),
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+    expect(await questionLine()).toHaveTextContent(reason)
+  })
+})

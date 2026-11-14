@@ -835,6 +835,17 @@ def current_offer(
     return compose_offer(case.review_case_id, case.proposals, offer_document)
 
 
+def level_offer_destinations(offer_document: str | None) -> frozenset[str]:
+    """The destinations a case's stored level offer substitutes.
+
+    Read beside ``compose_offer`` over the same document, which validates it.
+    """
+    if offer_document is None:
+        return frozenset()
+    raw = json.loads(offer_document)
+    return frozenset(cast("str", value["destination"]) for value in raw["fields"])
+
+
 def compose_offer(
     review_case_id: str,
     proposals: tuple[dict[str, object], ...],

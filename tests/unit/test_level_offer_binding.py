@@ -627,6 +627,80 @@ def test_the_review_api_composes_a_case_with_its_offer_row(tmp_path: Path) -> No
             store.repository.close()
 
 
+def _with_automatic_description(store: OwnerStore) -> dict[str, dict[str, Any]]:
+    """The case detail under a policy that sets Description to Automatic."""
+    from unittest.mock import patch
+
+    from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+    from mechanical_librarian.domain.metadata_policy import (
+        MetadataPolicyProfile,
+        resolve_policy,
+    )
+
+    repository = store.repository
+    snapshot = repository.read_current_review_case(store.case.review_case_id, None)
+    builtin = MetadataPolicyProfile.builtin()
+    policy = resolve_policy(
+        MetadataPolicyProfile.create(
+            "Automatic description",
+            dict(builtin.options) | {"description_fill": "safe_plain_text"},
+            dict(builtin.destinations) | {"description_fill": "automatic"},
+        ),
+        snapshot.report.target.library,
+    )
+    with patch.object(
+        repository,
+        "read_current_review_case",
+        return_value=replace(snapshot, resolved_policy_document=policy.canonical_json),
+    ):
+        detail = InspectCurrentReviewCase(repository).run(store.case.review_case_id)
+    return {field["destination"]: field for field in detail["fields"]}
+
+
+def test_a_substituted_choosable_field_gives_no_live_withheld_reason(
+    tmp_path: Path,
+) -> None:
+    """Why Automatic withheld the live value is untrue beside a level value the
+    owner can choose, so the substituted field gives none; every field the
+    level does not substitute, and the live case, keep theirs (#1355)."""
+    withheld = "No recorded automatic evaluation is available for this field."
+    store = level_store(tmp_path / "level", live_description=False)
+    try:
+        fields = _with_automatic_description(store)
+        description = fields["description"]
+        assert [value["value"] for value in description["proposed_values"]] == [
+            SYNOPSIS
+        ]
+        assert description["manual_required"] is True
+        assert description["decision_actions"] == ["keep_current", "accept"]
+        assert description["automatic_withheld_reason"] is None
+        assert description["automatic_withheld_condition"] is None
+        substituted = {
+            value["destination"]
+            for value in offer_of(store)
+            if "work_identity_level" in value
+        }
+        # A field the level offer leaves alone keeps its reason.
+        assert "genres" not in substituted
+        assert fields["genres"]["automatic_withheld_reason"] == withheld
+        # So does one the offer carries but leaves with nothing to choose.
+        assert "subtitle" in substituted
+        assert fields["subtitle"]["decision_actions"] == []
+        assert fields["subtitle"]["automatic_withheld_reason"] == withheld
+    finally:
+        store.repository.close()
+    live = level_store(
+        tmp_path / "identifier", WorkIdentityLevel.IDENTIFIER, live_description=False
+    )
+    try:
+        fields = _with_automatic_description(live)
+        assert fields["description"]["automatic_withheld_reason"] == withheld
+        assert fields["title"]["decision_actions"] == ["keep_current", "accept"]
+        assert fields["title"]["automatic_withheld_reason"] == withheld
+    finally:
+        live.repository.close()
+
+
 # --- Test 22, server half: no view carries the level's notes ------------------
 
 

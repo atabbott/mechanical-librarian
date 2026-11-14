@@ -111,6 +111,7 @@ from mechanical_librarian.domain.review_case import (
     _thaw_json_object,
     compose_offer,
     current_offer,
+    level_offer_destinations,
 )
 from mechanical_librarian.domain.review_field_classification import (
     ReviewFieldCause,
@@ -1427,6 +1428,9 @@ class InspectCurrentReviewCase:
         if snapshot.resolved_policy_document is None:
             return detail
         try:
+            # The fields Book matching's level offer substitutes: the offer
+            # `_read` composed and validated from this snapshot (#1355).
+            substituted = level_offer_destinations(snapshot.level_offer_document)
             policy = ResolvedMetadataPolicy.from_data(
                 json.loads(snapshot.resolved_policy_document)
             )
@@ -1494,6 +1498,15 @@ class InspectCurrentReviewCase:
                     "manual",
                     "unsupported",
                 }:
+                    continue
+                # A field the level offer substitutes and makes choosable
+                # offers a value; why Automatic withheld the live one is
+                # untrue beside it, so the field gives its own reason (#1355).
+                if (
+                    destination in substituted
+                    and field["manual_required"] is True
+                    and field["decision_actions"]
+                ):
                     continue
                 (
                     field["automatic_withheld_reason"],
