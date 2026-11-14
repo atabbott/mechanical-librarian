@@ -366,9 +366,9 @@ genre that only trims or extends the current value reads Optional, unless the
 current value is a placeholder, has markup, is cut off or lists only formats.
 
 The cover comparison then holds only the current cover and covers from the
-matched book. Each of those reads "Same book · recording not confirmed" and says
-it is from the matched book. Choosing one still confirms an unverified match,
-and History says so.
+matched book. Each one you can choose reads "Same book · recording not
+confirmed" and says it is from the matched book. Choosing one still confirms an
+unverified match, and History says so.
 
 When Mechanical Librarian found the matched recording by a title other than the
 audiobook's own, a note says how. It appears at the top of the Evidence page, in
@@ -406,9 +406,11 @@ Visual check details. Nothing the visual review finds confirms a match, changes
 the order or lets Automatic choose a cover.
 
 You can choose any other cover whose image loads, even a lower-quality one or
-one marked "Match not confirmed", with no extra step. A cover whose identity
-contradicts the book stays in the row with its reason, but you cannot choose it.
-A choice against an outdated comparison shows the current one.
+one marked "Match not confirmed", with no extra step. A cover that contradicts
+the book stays in the row, but you cannot choose it. It reads "Contradicts this
+book" and says whether a source says it belongs to a different book or edition,
+or names a different author or contributor. A choice against an outdated
+comparison shows the current one.
 
 ### Covers view
 

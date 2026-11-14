@@ -238,6 +238,10 @@ brackets are GitHub issues.
   or not an image, reads **Image unavailable** instead of **No cover** in
   Covers and on the book page, and a rotated cover reports the size it is
   shown at (#1363).
+- A cover you cannot choose because a source says it belongs to a different
+  book or edition, or names a different author or contributor, now reads
+  "Contradicts this book" with that reason, instead of "Match not confirmed"
+  or "Same book" (#1790).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
