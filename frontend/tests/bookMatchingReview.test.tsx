@@ -143,6 +143,69 @@ describe('the works row of a work whose Book matching check gave up', () => {
   })
 })
 
+describe('a given-up work that still needs attention, in lens All', () => {
+  // The lens reads a work with an open decision as needing attention, ahead of
+  // a later failure (#1413), and the server counts it so. Its heading and count
+  // follow the lens; its row still says the check gave up and how to retry.
+  const preparation = {
+    attempt: 1,
+    checkGivenUp: true,
+    diagnosticReference: 'prep-0123456789abcdef',
+    mediaHealth: [],
+    provider: 'provider',
+    reason: 'The review could not be put together.',
+    recovery: 'Scan this library again to retry it.',
+    recoveryAttempt: 0,
+    stage: 'projection' as const,
+    status: 'projection' as const,
+  }
+  it('is grouped with the works needing attention, not under Could not finish', async () => {
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getLibrary: vi.fn(async () => ({
+        ...library,
+        counts: { ...library.counts, failed: 0 },
+        works: library.works.map((work) => ({
+          ...work,
+          attentionCount: 2,
+          attention: 'needs_attention' as const,
+          preparation,
+        })),
+      })),
+      getSettings: vi.fn(async () => view('store')),
+    }
+    renderRoute('/library?lens=all', http)
+    const work = await screen.findByRole('button', { name: /^A Book\./u })
+    await waitFor(() =>
+      expect(work).toHaveTextContent(
+        'Could not be checked against the new Book matching setting. Save Book matching again to retry.',
+      ),
+    )
+    expect(within(work).getByText('Not checked')).toBeVisible()
+    expect(screen.queryByRole('heading', { name: 'Could not finish' })).toBeNull()
+    expect(screen.getByRole('heading', { name: 'Every lookup finished' })).toBeVisible()
+  })
+
+  it('keeps a failed work that needs no attention under Could not finish', async () => {
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getLibrary: vi.fn(async () => ({
+        ...library,
+        counts: { ...library.counts, failed: 1 },
+        works: library.works.map((work) => ({
+          ...work,
+          attentionCount: 0,
+          attention: 'preparation_failed' as const,
+          preparation,
+        })),
+      })),
+      getSettings: vi.fn(async () => view('store')),
+    }
+    renderRoute('/library?lens=all', http)
+    expect(await screen.findByRole('heading', { name: 'Could not finish' })).toBeVisible()
+  })
+})
+
 describe('the given-up case line waits for the settings read', () => {
   it('shows no way to retry until the read answers, then the file mode one', async () => {
     let answer: (value: ReturnType<typeof view>) => void = () => undefined

@@ -65,9 +65,12 @@ const notMatchedReasons: Partial<Record<WorkSummaryState, string>> = {
   not_matched_no_match: 'No source matched',
 }
 // A failed preparation's group shares its lens's name, so a "needs attention"
-// heading never sits outside the Needs attention lens (#1413).
+// heading never sits outside the Needs attention lens (#1413). The lens reads
+// a work with an open decision as needing attention ahead of a later failure,
+// so such a work is grouped there too, as a given-up Book matching check's
+// work is (#1355); its row still says what failed.
 const providerGroup = (work: LibraryWorkView) =>
-  work.preparation
+  work.preparation && work.attentionCount === 0
     ? 'Could not finish'
     : work.attention === 'not_matched'
       ? 'Not matched'
