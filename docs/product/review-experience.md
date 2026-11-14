@@ -443,7 +443,7 @@ it switch by itself. Its row carries a pill naming the fault, such as "Under
 the reason. To decide counts the works whose cover field is in Attention plus
 the suggested switches; Library's Needs attention counts only the first,
 because a suggestion is optional. A readable cover with no fault is kept
-without asking and appears under Kept. The counts follow each decision. Pages hold 50 books, and Show more covers loads the
+without asking and appears under Kept. Pages hold 50 books, and Show more covers loads the
 next. It starts after the last book shown, so a decision never makes you miss
 one. The URL keeps the tab and the open book. A wall tile reads "No cover" when
 the cover field is empty and "Image unavailable" when the library's cover cannot
@@ -453,7 +453,7 @@ and the open book give the state.
 Above 1024 pixels, To decide and Kept open their first undecided book beside the
 list. At 1024 or narrower the list comes first, and Back to books returns to it.
 One tap records your choice, as the work's own page does, and opens the next
-book. Skip for now moves on and decides nothing. In All, a book opens below its
+book. Skip for now moves on without deciding. In All, a book opens below its
 row with Close, and a choice closes it. If a book's covers changed since the
 page loaded, Covers refuses that choice and offers Reload, which reopens the
 book with its current covers. The other books stay usable. If no answer comes
@@ -482,7 +482,7 @@ says "The cover was changed in Audiobookshelf, so it was not put back." and
 offers Keep and Others again.
 
 A cover field's Covers link opens its book in All, wherever it falls. The
-fifth tab, [Taste profile](cover-taste-profile.md), has no count.
+fifth tab is [Taste profile](cover-taste-profile.md).
 
 ## Evidence and History
 
@@ -591,9 +591,9 @@ buttons to move or remove each and a picker to add one, up to eight. In a
 file-managed deployment the list is read only.
 
 Reviewer sign-in, validation and tests take effect at once, outside Save
-settings. Cover review and description advice each have a model picker with an
-example cost per 1,000 works. All reviewer tasks share one OpenRouter key, and
-replacing it keeps every model choice. Reviewer advice allows no write
+settings. Each reviewer task has a model picker, with a cost per 1,000 works for
+covers and descriptions. One OpenRouter key serves all three; replacing it
+keeps every choice. Reviewer advice allows no write
 ([ADR-0062](../architecture/decisions/0062-owner-managed-reviewer-access.md)).
 
 ## Words and values
