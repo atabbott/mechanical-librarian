@@ -525,10 +525,12 @@ def _reconstruct_report(document: str) -> _ReconstructedReport:
             # followed no Open Library redirect, so a retrieved Open Library
             # cover was served by `covers.openlibrary.org` itself; every other
             # source states none. A retrieved source's artifact is invalidated
-            # below in any case, so no family is ever kept.
+            # below in any case, so no family is ever kept. v26 recorded no
+            # digest of refused bytes either.
             cover = _cover_source_from_data(
                 {
                     **cover_data,
+                    "original_digest": None,
                     "final_host": (
                         CoverFinalHost.COVERS_OPEN_LIBRARY.value
                         if cover_data["kind"] == CoverSourceKind.OPEN_LIBRARY.value

@@ -196,7 +196,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.domain.metadata_report",
         "REPORT_SCHEMA",
-        "metadata-report-v79",
+        "metadata-report-v80",
     ),
     (
         "mechanical_librarian.domain.metadata_report",

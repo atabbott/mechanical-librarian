@@ -487,6 +487,17 @@ alternative, `cover-consideration-v6` names each candidate's kind, and
 verified Put back releases its copy. Every earlier application database is
 rejected before mutation and needs a clean rebuild; no adoption is supplied.
 
+Issue #1853 also takes the clean-rebuild branch. `metadata-report-v80`
+records `original_digest` on an Audiobookshelf cover source the decoder
+refused: the SHA-256 of the bytes it read. Every cover write now binds the
+bytes the report read, decoded or refused, rather than the report's target
+value, which names only the cover's path, and report publication rechecks a
+refused cover's bytes as it does a decoded one's. A v79 report holds no digest
+for a refused cover, and a report carries forward while its file and
+configuration fingerprints are unchanged, so a stored report could never bind
+such a cover. Every earlier application database is rejected before mutation
+and needs a clean rebuild; no adoption is supplied.
+
 Issue #1355's activation A takes the clean-rebuild branch. `config-v10` adds
 `review.work_identity`, and `owner-settings-v5` adds its store-managed
 equivalent, `matching.work_identity`; a v9 file and a v4 settings document are

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import struct
 import zlib
@@ -145,6 +146,16 @@ def _source(
     )
 
 
+def adapter_cover_value(item: str = "item-1") -> str:
+    """The target cover value the Audiobookshelf adapter states for a cover.
+
+    It is the digest of the cover's path, never of its bytes, so a write that
+    took it for the bytes' identity would bind nothing real (#1853).
+    """
+    path = f"/metadata/items/{item}/cover.jpg"
+    return hashlib.sha256(path.encode()).hexdigest()
+
+
 def _qualified_cover_report(
     root: Path,
     *,
@@ -244,7 +255,7 @@ def _qualified_cover_report(
         TargetField(
             value.destination,
             TargetFieldState.VALUE,
-            incumbent_artifact.artifact_id,
+            adapter_cover_value(),
         )
         if value.destination is TargetDestination.COVER
         else value

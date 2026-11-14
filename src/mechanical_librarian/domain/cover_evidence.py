@@ -88,6 +88,19 @@ class CoverFinalHost(StrEnum):
     US_ARCHIVE = "us.archive.org"
 
 
+# The states in which the constrained decoder refused bytes it was given. Only
+# an Audiobookshelf source in one of them records the bytes' digest, so a cover
+# write can bind exactly what it replaces (#1362).
+DECODER_REJECTED_STATES = frozenset(
+    {
+        CoverSourceState.DECODE_FAILED,
+        CoverSourceState.ANIMATED_OR_MULTIFRAME,
+        CoverSourceState.OVERSIZED,
+        CoverSourceState.UNSUPPORTED_FORMAT,
+    }
+)
+
+
 class CoverDesignation(StrEnum):
     EXACT_EDITION = "exact_edition"
     RELATED_EDITION = "related_edition"
@@ -299,8 +312,19 @@ class CoverSource:
     timeout_scope: str | None = None
     provenance: CoverProvenance | None = None
     final_host: CoverFinalHost | None = None
+    # The SHA-256 of the exact bytes Audiobookshelf served when the decoder
+    # refused them. A retrieved source's digest is its artifact's; a transient
+    # or reader-refused source read no bytes worth binding and records none.
+    original_digest: str | None = None
 
     def __post_init__(self) -> None:
+        if self.original_digest is not None and (
+            type(self.original_digest) is not str
+            or _DIGEST.fullmatch(self.original_digest) is None
+            or self.kind is not CoverSourceKind.ABS
+            or self.state not in DECODER_REJECTED_STATES
+        ):
+            raise CoverEvidenceError("cover source digest is inconsistent")
         if (
             _SOURCE_ID.fullmatch(self.source_id) is None
             or type(self.kind) is not CoverSourceKind
@@ -353,7 +377,17 @@ class CoverSource:
                 None if self.provenance is None else self.provenance.to_data()
             ),
             "final_host": None if self.final_host is None else self.final_host.value,
+            "original_digest": self.original_digest,
         }
+
+    @property
+    def bytes_digest(self) -> str | None:
+        """The SHA-256 of the bytes this source read, decoded or refused."""
+        return (
+            self.artifact.original_digest
+            if self.artifact is not None
+            else self.original_digest
+        )
 
 
 class EpubCoverFallback(StrEnum):
@@ -529,6 +563,7 @@ __all__ = [
     "CoverSourceKind",
     "CoverSourceState",
     "CoverTruncationReason",
+    "DECODER_REJECTED_STATES",
     "EpubCoverFallback",
     "EpubCoverRecovery",
     "EpubCoverRecoveryRefusal",
