@@ -494,7 +494,7 @@ function OpenRouterReviewer({
           <ReviewerCost view={view} model={effectiveModel} task="cover" />
           <div>
             <dt>Cover request</dt>
-            <dd>One request per book, with all the covers being compared.</dd>
+            <dd>One request per book, with every cover it compares.</dd>
           </div>
         </dl>
       </div>
@@ -599,10 +599,7 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
           <div className="settings-field-row">
             <div>
               <h4>Codex</h4>
-              <p>
-                Uses the Codex sign-in above. Reviews count against your plan’s usage limits, so no
-                cost is shown.
-              </p>
+              <p>Reviews count against your plan’s usage limits, so no cost is shown.</p>
             </div>
             <div className="settings-field-control">
               <button

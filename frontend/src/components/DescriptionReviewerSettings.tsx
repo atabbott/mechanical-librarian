@@ -133,14 +133,14 @@ export const DescriptionReviewerSettings = ({
         <div>
           <h3 id="description-reviewer-heading">Description adviser</h3>
           <p>
-            Only the descriptions from your sources and your cleanup choices are sent. Your
-            decisions, titles, IDs, file paths and keys are not.
+            Only the descriptions from your sources and your cleanup choices are sent. Titles, IDs,
+            file paths, keys and your decisions on books are not.
           </p>
         </div>
         <div className="settings-field-control">
           <p role="status">
             {selected
-              ? `Selected: ${selected.engine === 'openrouter' ? selected.model : `Codex (${view.codex.model ?? 'model unavailable'})`}. Status: ${view.description === null ? 'unavailable' : reviewerStateLabels[view.description.state]}.`
+              ? `Selected: ${selected.engine === 'openrouter' ? `${selected.model} on OpenRouter` : `Codex (${view.codex.model ?? 'model unavailable'})`}. Status: ${view.description === null ? 'unavailable' : reviewerStateLabels[view.description.state]}.`
               : 'No description adviser selected.'}
           </p>
           <a href="/policy?section=curation#description-advice">Set description advice in Policy</a>
@@ -159,16 +159,13 @@ export const DescriptionReviewerSettings = ({
             Continue without description advice
           </button>
           {failureUnder('without')}
-          {selection.isSuccess ? <p role="status">Description adviser saved.</p> : null}
+          {selection.isSuccess ? <p role="status">Description adviser choice saved.</p> : null}
         </div>
       </div>
       <div className="settings-field-row">
         <div>
           <h4>Codex</h4>
-          <p>
-            Uses the Codex sign-in above. Advice counts against your plan’s usage limits, so no cost
-            is shown.
-          </p>
+          <p>Advice counts against your plan’s usage limits, so no cost is shown.</p>
         </div>
         <div className="settings-field-control">
           <p>Model: {view.codex.model ?? 'Unavailable'}</p>

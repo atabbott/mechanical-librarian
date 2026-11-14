@@ -37,7 +37,7 @@ export const failureCopy: Readonly<Record<string, string>> = {
     'No provider for this model accepts your OpenRouter data policy. Change your privacy settings on OpenRouter, or choose another model.',
   image_limit_exceeded:
     'That model accepts fewer images than a cover review sends. Choose another vision model.',
-  credential_clear_failed: 'Nothing was cleared. Try again.',
+  credential_clear_failed: 'The OpenRouter key was not cleared. Try again.',
   not_provisioned: 'Codex is not set up on this host. Reload the page to see what to fix.',
   host_unsupported: 'Codex is not supported on this host. Reload the page to see what to fix.',
   credential_unavailable:
@@ -59,7 +59,7 @@ const reviewerMutationFailure = (error: Error | null, action: Action | undefined
   error instanceof CsrfRenewedError
     ? sessionRefreshedCopy
     : action?.kind === 'codex-clear' || action?.kind === 'codex-start'
-      ? 'No answer came back. Check whether the Codex sign-in changed before trying again.'
+      ? 'The Codex sign-in change was not confirmed. Check whether the sign-in changed before trying again.'
       : // OpenRouter's probe raises these before anything is saved.
         error instanceof ApiError &&
           action?.kind === 'openrouter' &&

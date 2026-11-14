@@ -10697,7 +10697,7 @@ def test_description_unavailable_inputs_and_explicit_metadata_recovery(state):
                         ).click()
                     assert refreshed.value.status == 200
                     expect(adviser).to_contain_text(
-                        "Selected: synthetic/description-b. Status: ready to use."
+                        "Selected: synthetic/description-b on OpenRouter. Status: ready to use."
                     )
                     prices = adviser.locator("dt").filter(
                         has_text=re.compile(r"^Prices in USD$")

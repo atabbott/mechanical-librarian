@@ -992,9 +992,7 @@ describe('owner settings route', () => {
     expect(cover.getByText('Validate this model to see its prices.')).toBeVisible()
     expect(cover.getByText('Cover review: not measured for this model.')).toBeVisible()
     expect(cover.getByText('Description advice: not measured for this model.')).toBeVisible()
-    expect(
-      cover.getByText('One request per book, with all the covers being compared.'),
-    ).toBeVisible()
+    expect(cover.getByText('One request per book, with every cover it compares.')).toBeVisible()
     expect(cover.queryByText(/Metadata observed|Maximum-size|sample|methodology/u)).toBeNull()
     // The Model row tracks a controlled input, so the list must not be a live
     // region; the status paragraph above owns the announcements.
@@ -2417,7 +2415,9 @@ it('discloses an unavailable description request price and still saves the model
   await user.click(screen.getByRole('button', { name: 'Test description model and prices' }))
   expect(await screen.findByText(prices, { selector: 'dd' })).toBeVisible()
   await user.click(enable)
-  expect(await screen.findByText('Selected: example/text-b. Status: ready to use.')).toBeVisible()
+  expect(
+    await screen.findByText('Selected: example/text-b on OpenRouter. Status: ready to use.'),
+  ).toBeVisible()
   expect(http.configureOpenRouter).toHaveBeenCalledWith({
     expected_revision: 3,
     api_key: '',
@@ -2933,9 +2933,9 @@ it.each(['clear', 'start'] as const)(
         name: command === 'clear' ? 'Confirm clear Codex sign-in' : 'Confirm replace Codex sign-in',
       }),
     )
-    expect(await screen.findByText(/No answer came back/u)).toHaveTextContent(
-      'Check whether the Codex sign-in changed',
-    )
+    expect(
+      await screen.findByText(/The Codex sign-in change was not confirmed/u),
+    ).toHaveTextContent('Check whether the sign-in changed before trying again.')
     await waitFor(() => expect(http.getReviewerAccess).toHaveBeenCalledTimes(2))
     expect(http.getCodexDevice).toHaveBeenCalledOnce()
     expect(
