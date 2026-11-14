@@ -845,6 +845,96 @@ const renderProviders=async()=>{
 };
 const reviewerLabels={'openai/gpt-6-luna':'GPT-6 Luna','xiaomi/mimo-v2.6-flash':'MiMo 2.6 Flash','qwen/qwen3.8-flash':'Qwen 3.8 Flash','mistralai/ministral-3b-2512':'Ministral 3B','openai/gpt-5.6-luna':'GPT-5.6 Luna','mistralai/mistral-small-2603':'Mistral Small 4'};
 const reviewerLabel=model=>reviewerLabels[model]||model;
+const codexActive=value=>['starting','issued','waiting','validating'].includes(value);
+// Only a press moves focus to Cancel; resuming on page load leaves it.
+const followCodexSignIn=async(codex,form,failed,focus)=>{
+  const cancel=button('Cancel sign-in');
+  cancel.type='button';
+  cancel.addEventListener('click',async()=>{
+    if(cancel.getAttribute('aria-disabled')==='true')return;
+    cancel.setAttribute('aria-disabled','true');
+    try{
+      codexTerminal=await api('/api/setup/reviewer/codex/device/cancel',{method:'POST',body:'{}',mutation:true});
+      await render()
+    }catch(e){
+      cancel.removeAttribute('aria-disabled');
+      failed(e,null,cancel)
+    }
+  });
+  codex.append(cancel);
+  if(focus)cancel.focus();
+  try{
+    let device;
+    do{
+      device=await api('/api/setup/reviewer/codex/device');
+      if(!form.isConnected)return;
+      let prompt=codex.querySelector('[data-device-prompt]');
+      if(device.verification_url&&device.user_code&&prompt?.dataset.code!==device.user_code){
+        if(!prompt){
+          prompt=document.createElement('div');
+          prompt.dataset.devicePrompt='true';
+          codex.append(prompt)
+        }
+        prompt.dataset.code=device.user_code;
+        const lead=document.createElement('p');
+        const link=document.createElement('a');
+        link.href=device.verification_url;
+        link.target='_blank';
+        link.rel='noreferrer';
+        link.textContent='Open the device sign-in page';
+        lead.append(link,document.createTextNode(' in a new tab and enter this code:'));
+        const row=document.createElement('p');
+        row.className='device-code-row';
+        const code=document.createElement('code');
+        code.className='device-code';
+        code.textContent=device.user_code;
+        const copy=document.createElement('button');
+        copy.type='button';
+        copy.textContent='Copy code';
+        const copied=document.createElement('span');
+        copied.setAttribute('role','status');
+        copy.addEventListener('click',async()=>{
+          try{
+            await navigator.clipboard.writeText(device.user_code);
+            copied.textContent='Copied.'
+          }catch{
+            const range=document.createRange();
+            range.selectNodeContents(code);
+            getSelection()?.removeAllRanges();
+            getSelection()?.addRange(range);
+            copied.textContent='Code selected. Press Ctrl+C or Command+C to copy it.'
+          }
+        });
+        row.append(code,copy,copied);
+        prompt.replaceChildren(lead,row)
+      }
+      if(codexActive(device.state))await new Promise(resolve=>setTimeout(resolve,1000))
+    }while(form.isConnected&&codexActive(device.state));
+    if(!form.isConnected)return;
+    codexTerminal=device;
+    await render()
+  }catch(e){if(form.isConnected)failed(e,null,cancel)}
+};
+// A blocked host can still cancel a sign-in a previous run left open.
+const blockedCancel=(codex,failed)=>{
+  const cancel=button('Cancel sign-in');
+  cancel.type='button';
+  const feedback=document.createElement('p');
+  feedback.setAttribute('role','status');
+  cancel.addEventListener('click',async()=>{
+    if(cancel.getAttribute('aria-disabled')==='true')return;
+    cancel.setAttribute('aria-disabled','true');
+    try{
+      const result=await api('/api/setup/reviewer/codex/device/cancel',{method:'POST',body:'{}',mutation:true});
+      feedback.textContent=result.state==='cancelled'?'The sign-in was cancelled.':['ready','usable'].includes(result.state)?'No sign-in was in progress.':'The sign-in was not cancelled. Try again.';
+      codex.querySelector('.error')?.remove()
+    }catch(e){
+      feedback.textContent='';
+      failed(e,null,cancel)
+    }finally{cancel.removeAttribute('aria-disabled')}
+  });
+  codex.append(cancel,feedback)
+};
 const renderCodexOption=(form,access,failed)=>{
   const codex=document.createElement('div');
   codex.className='option';
@@ -862,7 +952,6 @@ const renderCodexOption=(form,access,failed)=>{
   const blocked=['host_unsupported','not_provisioned'].includes(access.codex.state);
   const codexState=blocked?access.codex:(codexTerminal||access.codex);
   const signedIn=['usable','configured'].includes(codexState.state);
-  const active=value=>['starting','issued','waiting','validating'].includes(value);
   const line=document.createElement('p');
   line.setAttribute('aria-live','polite');
   line.textContent=signedIn?'Signed in':'Not signed in';
@@ -881,76 +970,7 @@ const renderCodexOption=(form,access,failed)=>{
   const codexRemedy=document.createElement('p');
   codexRemedy.textContent=blocked?'':deviceRemedy[codexTerminal?codexTerminal.failure:access.codex.reason]||'';
   if(codexRemedy.textContent)codex.append(codexRemedy);
-  // Only a press moves focus to Cancel; resuming on page load leaves it.
-  const follow=async focus=>{
-    const cancel=button('Cancel sign-in');
-    cancel.type='button';
-    cancel.addEventListener('click',async()=>{
-      if(cancel.getAttribute('aria-disabled')==='true')return;
-      cancel.setAttribute('aria-disabled','true');
-      try{
-        codexTerminal=await api('/api/setup/reviewer/codex/device/cancel',{method:'POST',body:'{}',mutation:true});
-        await render()
-      }catch(e){
-        cancel.removeAttribute('aria-disabled');
-        failed(e,null,cancel)
-      }
-    });
-    codex.append(cancel);
-    if(focus)cancel.focus();
-    try{
-      let device;
-      do{
-        device=await api('/api/setup/reviewer/codex/device');
-        if(!form.isConnected)return;
-        let prompt=codex.querySelector('[data-device-prompt]');
-        if(device.verification_url&&device.user_code&&prompt?.dataset.code!==device.user_code){
-          if(!prompt){
-            prompt=document.createElement('div');
-            prompt.dataset.devicePrompt='true';
-            codex.append(prompt)
-          }
-          prompt.dataset.code=device.user_code;
-          const lead=document.createElement('p');
-          const link=document.createElement('a');
-          link.href=device.verification_url;
-          link.target='_blank';
-          link.rel='noreferrer';
-          link.textContent='Open the device sign-in page';
-          lead.append(link,document.createTextNode(' in a new tab and enter this code:'));
-          const row=document.createElement('p');
-          row.className='device-code-row';
-          const code=document.createElement('code');
-          code.className='device-code';
-          code.textContent=device.user_code;
-          const copy=document.createElement('button');
-          copy.type='button';
-          copy.textContent='Copy code';
-          const copied=document.createElement('span');
-          copied.setAttribute('role','status');
-          copy.addEventListener('click',async()=>{
-            try{
-              await navigator.clipboard.writeText(device.user_code);
-              copied.textContent='Copied.'
-            }catch{
-              const range=document.createRange();
-              range.selectNodeContents(code);
-              getSelection()?.removeAllRanges();
-              getSelection()?.addRange(range);
-              copied.textContent='Code selected. Press Ctrl+C or Command+C to copy it.'
-            }
-          });
-          row.append(code,copy,copied);
-          prompt.replaceChildren(lead,row)
-        }
-        if(active(device.state))await new Promise(resolve=>setTimeout(resolve,1000))
-      }while(form.isConnected&&active(device.state));
-      if(!form.isConnected)return;
-      codexTerminal=device;
-      await render()
-    }catch(e){if(form.isConnected)failed(e,null,cancel)}
-  };
-  if(active(access.codex.state))void follow();
+  if(codexActive(access.codex.state))void followCodexSignIn(codex,form,failed);
   else if(signedIn){
     if(access.mapping?.engine!=='codex'){
       const use=button('Use Codex');
@@ -991,7 +1011,7 @@ const renderCodexOption=(form,access,failed)=>{
         signIn.remove();
         codexRemedy.remove();
         codex.querySelector('.error')?.remove();
-        await follow(true)
+        await followCodexSignIn(codex,form,failed,true)
       }catch(e){
         signIn.removeAttribute('aria-disabled');
         failed(e,null,signIn)
@@ -1020,25 +1040,7 @@ const renderCodexOption=(form,access,failed)=>{
       })()
     }
   }
-  if(blocked){
-    const cancel=button('Cancel sign-in');
-    cancel.type='button';
-    const feedback=document.createElement('p');
-    feedback.setAttribute('role','status');
-    cancel.addEventListener('click',async()=>{
-      if(cancel.getAttribute('aria-disabled')==='true')return;
-      cancel.setAttribute('aria-disabled','true');
-      try{
-        const result=await api('/api/setup/reviewer/codex/device/cancel',{method:'POST',body:'{}',mutation:true});
-        feedback.textContent=result.state==='cancelled'?'The sign-in was cancelled.':['ready','usable'].includes(result.state)?'No sign-in was in progress.':'The sign-in was not cancelled. Try again.';
-        codex.querySelector('.error')?.remove()
-      }catch(e){
-        feedback.textContent='';
-        failed(e,null,cancel)
-      }finally{cancel.removeAttribute('aria-disabled')}
-    });
-    codex.append(cancel,feedback)
-  }
+  if(blocked)blockedCancel(codex,failed);
   form.append(codex)
 };
 const renderOpenRouterOption=(form,access,failed)=>{
