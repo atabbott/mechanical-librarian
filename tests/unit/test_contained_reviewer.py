@@ -1224,6 +1224,7 @@ arguments = sys.argv[1:]
 block = int(arguments[arguments.index("--block-fd") + 1])
 info = int(arguments[arguments.index("--info-fd") + 1])
 images = [int(arguments[i + 1]) for i, a in enumerate(arguments) if a == "--ro-bind-data"]
+expected = [int(arguments[i + 1]) for i, a in enumerate(arguments) if a == "--expect-fd"]
 hold_read, hold_write = os.pipe()
 child = os.fork()
 if child == 0:
@@ -1245,12 +1246,27 @@ for descriptor in images:
 os.close(hold_write)
 os.waitpid(child, 0)
 limit = resource.getrlimit(resource.RLIMIT_NOFILE)
-sys.stdout.write(json.dumps({"digests": digests, "limit": list(limit)}))
+received = []
+for descriptor in expected:
+    try:
+        os.fstat(descriptor)
+        received.append(descriptor)
+    except OSError:
+        pass
+report = {"digests": digests, "limit": list(limit), "expected": expected}
+sys.stdout.write(json.dumps({**report, "received": received}))
 """
 
 
-def _run_gated_for_real(image_count: int) -> tuple[int, dict[str, Any], list[str]]:
-    """Run the real fork, broker and descriptor handoff with sealed previews."""
+def _run_gated_for_real(
+    image_count: int, *, renumber_above: int | None = None
+) -> tuple[int, dict[str, Any], list[str]]:
+    """Run the real fork, broker and descriptor handoff with sealed previews.
+
+    With `renumber_above`, the codex, sandbox, credential and image descriptors
+    are moved above that number, past the child's descriptor budget, as a busy
+    server can hand them out.
+    """
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
         reviewer = adapter.ContainedReviewerAdapter(_profile(root))
@@ -1260,8 +1276,20 @@ def _run_gated_for_real(image_count: int) -> tuple[int, dict[str, Any], list[str
         flags = os.O_RDONLY | os.O_CLOEXEC
         # Hold low descriptors so the previews land above 64, as in a server.
         filler = [os.open(os.devnull, flags) for _ in range(48)]
-        held = [os.open(os.devnull, flags) for _ in range(3)]
+        opened = [os.open(os.devnull, flags) for _ in range(3)]
+        held = opened
+        moved: list[int] = []
+
+        def renumber(descriptor: int) -> int:
+            if renumber_above is None:
+                return descriptor
+            target = renumber_above + len(moved) + 1
+            os.dup2(descriptor, target, inheritable=False)
+            moved.append(target)
+            return target
+
         try:
+            held = [renumber(descriptor) for descriptor in opened]
             payloads = [
                 b"\xff\xd8\xff" + bytes([index]) + b"\xff\xd9"
                 for index in range(image_count)
@@ -1275,12 +1303,21 @@ def _run_gated_for_real(image_count: int) -> tuple[int, dict[str, Any], list[str
                 for payload in payloads
             )
             with (
-                adapter._sealed_cover_images(images) as sealed,
+                adapter._sealed_cover_images(images) as originals,
                 tempfile.TemporaryFile() as stdin,
                 tempfile.TemporaryFile() as stdout,
                 tempfile.TemporaryFile() as stderr,
             ):
+                sealed = tuple(
+                    adapter._SealedImage(
+                        target, f"/proc/self/fd/{target}", image.digest
+                    )
+                    for image in originals
+                    for target in (renumber(image.descriptor),)
+                )
                 command = [str(bwrap)]
+                for descriptor in held:
+                    command.extend(("--expect-fd", str(descriptor)))
                 for index, image in enumerate(sealed, start=1):
                     command.extend(
                         (
@@ -1307,7 +1344,7 @@ def _run_gated_for_real(image_count: int) -> tuple[int, dict[str, Any], list[str
                     assert max(image.descriptor for image in sealed) > 64
                 return returncode, report, [image.digest for image in images]
         finally:
-            for descriptor in (*filler, *held):
+            for descriptor in {*filler, *opened, *moved}:
                 os.close(descriptor)
 
 
@@ -1317,6 +1354,18 @@ def test_a_full_taste_build_carries_every_preview_through_the_real_broker() -> N
     assert returncode == 0
     assert report["digests"] == digests
     assert report["limit"] == [164, 164]
+    assert report["received"] == report["expected"]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="sealed previews are Linux-only")
+def test_descriptors_numbered_past_the_budget_still_reach_bubblewrap() -> None:
+    """The broker forwards exactly what the parent names, whatever the number."""
+    returncode, report, digests = _run_gated_for_real(100, renumber_above=200)
+    assert returncode == 0
+    assert report["digests"] == digests
+    assert report["limit"] == [164, 164]
+    assert min(report["expected"]) > 200
+    assert report["received"] == report["expected"]
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="sealed previews are Linux-only")
@@ -1325,18 +1374,23 @@ def test_an_image_free_request_still_runs_at_64_descriptors() -> None:
     assert returncode == 0
     assert digests == report["digests"] == []
     assert report["limit"] == [64, 64]
+    assert report["received"] == report["expected"]
 
 
 def test_review_path_routes_the_exact_bwrap_command_through_the_broker() -> None:
     command = ["/sandbox", "--unshare-user", "/runtime/codex", "exec"]
-    assert adapter._resource_command(command) == (
+    assert adapter._resource_command(command, (10, 250)) == (
         sys.executable,
         "-m",
         "mechanical_librarian.adapters.reviewers.resource_exec",
         "--descriptor-limit=64",
+        "--forward-fds=10,250",
         *command,
     )
-    assert adapter._resource_command(command, 164)[3] == "--descriptor-limit=164"
+    assert adapter._resource_command(command, (), 164)[3:5] == (
+        "--descriptor-limit=164",
+        "--forward-fds=",
+    )
     assert command == ["/sandbox", "--unshare-user", "/runtime/codex", "exec"]
 
 

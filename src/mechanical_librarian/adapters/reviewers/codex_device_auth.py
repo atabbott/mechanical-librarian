@@ -499,7 +499,7 @@ class CodexDeviceAuthManager:
                 self._spawning = True
             try:
                 process = self._popen(
-                    _resource_command(prepared.command),
+                    _resource_command(prepared.command, prepared.pass_fds),
                     env=dict(prepared.environment),
                     pass_fds=prepared.pass_fds,
                     stdin=subprocess.DEVNULL,
@@ -803,8 +803,17 @@ def _stop_process(
         raise CodexDeviceAuthError("process") from error
 
 
-def _resource_command(command: Sequence[str]) -> tuple[str, ...]:
-    return (sys.executable, "-m", _RESOURCE_EXEC_MODULE, *command)
+def _resource_command(
+    command: Sequence[str], forwarded: Sequence[int]
+) -> tuple[str, ...]:
+    """Start the broker, naming the exact descriptors it forwards."""
+    return (
+        sys.executable,
+        "-m",
+        _RESOURCE_EXEC_MODULE,
+        "--forward-fds=" + ",".join(str(value) for value in forwarded),
+        *command,
+    )
 
 
 def _bounded_status(

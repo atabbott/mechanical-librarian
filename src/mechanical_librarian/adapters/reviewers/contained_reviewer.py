@@ -1055,14 +1055,11 @@ class ContainedReviewerAdapter:
                     str(seccomp_descriptor),
                     "/runtime/seccomp.bpf",
                 )
+                pass_fds = (codex.descriptor, sandbox.descriptor, seccomp_descriptor)
                 completed = _run_owned_command(
-                    _resource_command(command),
+                    _resource_command(command, pass_fds),
                     env={},
-                    pass_fds=(
-                        codex.descriptor,
-                        sandbox.descriptor,
-                        seccomp_descriptor,
-                    ),
+                    pass_fds=pass_fds,
                     timeout=min(self._profile.identity.timeout_seconds, 30),
                 )
         except (OSError, subprocess.SubprocessError, ReviewerResourceError) as error:
@@ -1261,7 +1258,7 @@ class ContainedReviewerAdapter:
             pass_fds = (*pass_fds, credential_descriptor)
         try:
             return _run_owned_command(
-                _resource_command(command),
+                _resource_command(command, pass_fds),
                 env=self._auth_environment(),
                 pass_fds=pass_fds,
                 timeout=min(
@@ -1546,18 +1543,24 @@ class ContainedReviewerAdapter:
                     os.dup2(stdin_descriptor, 0)
                     os.dup2(stdout_descriptor, 1)
                     os.dup2(stderr_descriptor, 2)
-                    os.set_inheritable(codex.descriptor, True)
-                    os.set_inheritable(sandbox.descriptor, True)
-                    os.set_inheritable(credential_descriptor, True)
-                    if seccomp_descriptor is not None:
-                        os.set_inheritable(seccomp_descriptor, True)
-                    if model_catalog_descriptor is not None:
-                        os.set_inheritable(model_catalog_descriptor, True)
-                    for image in sealed_images:
-                        os.set_inheritable(image.descriptor, True)
+                    forwarded = (
+                        codex.descriptor,
+                        sandbox.descriptor,
+                        credential_descriptor,
+                        *(
+                            value
+                            for value in (seccomp_descriptor, model_catalog_descriptor)
+                            if value is not None
+                        ),
+                        *(image.descriptor for image in sealed_images),
+                    )
+                    for descriptor in forwarded:
+                        os.set_inheritable(descriptor, True)
                     descriptor_limit = REVIEWER_DESCRIPTOR_LIMIT + len(sealed_images)
                     self._limit_child(descriptor_limit)
-                    broker_command = _resource_command(command, descriptor_limit)
+                    broker_command = _resource_command(
+                        command, forwarded, descriptor_limit
+                    )
                     os.execve(sys.executable, broker_command, {})
                 except BaseException:
                     os.write(failure_write, b"S")
@@ -2343,14 +2346,18 @@ def _auth_config() -> tuple[str, ...]:
 
 
 def _resource_command(
-    command: list[str], descriptor_limit: int = REVIEWER_DESCRIPTOR_LIMIT
+    command: list[str],
+    forwarded: tuple[int, ...],
+    descriptor_limit: int = REVIEWER_DESCRIPTOR_LIMIT,
 ) -> tuple[str, ...]:
-    """Start the broker, telling it the descriptor budget of this request."""
+    """Start the broker with this request's descriptor budget and the exact
+    descriptors it forwards to Bubblewrap, whatever their numbers."""
     return (
         sys.executable,
         "-m",
         _RESOURCE_EXEC_MODULE,
         f"--descriptor-limit={descriptor_limit}",
+        "--forward-fds=" + ",".join(str(value) for value in forwarded),
         *command,
     )
 
