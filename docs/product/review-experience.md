@@ -148,8 +148,8 @@ unknown review path shows a recovery state, not an error.
 The preparation panel states one run in five counts. Their labels are "ready
 to browse", "recorded, nothing to decide", "not matched", "could not finish"
 and "in progress". Ready to browse and in progress always show. The others hide
-at zero, and an unknown count reads `…`. Counts describe the run's books as
-they stand now. Each stage bar counts books that first reached it in this run.
+at zero; an unknown count reads `…`. Counts describe the run's books as
+they stand. Each stage bar counts books that first reached it in this run.
 A book that could not finish stops at its last stage. Bars glide to each new
 count unless reduced motion is set. The status line's wipe plays only when the
 run's state changes. Recent completions record each book's first finish, one
