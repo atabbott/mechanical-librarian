@@ -45,6 +45,10 @@ def _limits() -> BodyLimitMiddleware:
     )
 
 
+def _methods(route: APIRoute) -> set[str]:
+    return route.methods or set()
+
+
 def _api_routes(web: ReviewWebContext[FakeReviewRepository]) -> list[APIRoute]:
     return [route for route in web.client.app.routes if isinstance(route, APIRoute)]
 
@@ -56,7 +60,7 @@ def _unsafe(
         (
             (method, route.path, route)
             for route in _api_routes(web)
-            for method in route.methods - _SAFE
+            for method in _methods(route) - _SAFE
         ),
         key=lambda row: (row[1], row[0]),
     )
@@ -118,9 +122,9 @@ def test_no_safe_route_reads_a_body(
     # The limit passes GET, HEAD and OPTIONS through unread; this keeps that
     # sound by refusing any route that would parse a body on those methods.
     readers = [
-        (sorted(route.methods), route.path)
+        (sorted(_methods(route)), route.path)
         for route in _api_routes(web)
-        if route.body_field is not None and route.methods & _SAFE
+        if route.body_field is not None and _methods(route) & _SAFE
     ]
     assert readers == []
 

@@ -42,6 +42,7 @@ from mechanical_librarian.domain.setup_state import (
     claim_token_digest,
     claim_token_matches,
 )
+from mechanical_librarian.interfaces.web import setup as setup_web
 from mechanical_librarian.interfaces.web.app import (
     BodyLimitMiddleware,
     owner_password_binding,
@@ -52,7 +53,6 @@ from mechanical_librarian.interfaces.web.review_frontend import (
     THEME_JS,
     inter_font_faces,
 )
-from mechanical_librarian.interfaces.web import setup as setup_web
 from mechanical_librarian.interfaces.web.setup import create_setup_app
 from mechanical_librarian.interfaces.web.setup_frontend import (
     SETUP_CSS,
@@ -670,7 +670,7 @@ def test_every_unsafe_setup_route_is_bounded_before_parsing_or_authentication() 
         (method, route.path)
         for route in client.app.routes
         if isinstance(route, APIRoute)
-        for method in route.methods - {"GET", "HEAD", "OPTIONS"}
+        for method in (route.methods or set()) - {"GET", "HEAD", "OPTIONS"}
     )
     assert ("POST", "/api/setup/reviewer/codex/recheck") in unsafe
     for method, path in unsafe:

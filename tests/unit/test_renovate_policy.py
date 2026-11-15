@@ -4,8 +4,8 @@ import json
 import re
 import subprocess
 import tomllib
-from typing import cast
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -332,8 +332,9 @@ def test_ffmpeg_release_tags_read_as_versions() -> None:
     manager = _custom_manager("ffmpeg")
     assert manager["packageNameTemplate"] == "FFmpeg/FFmpeg"
     extract = cast("str", manager["extractVersionTemplate"]).replace("(?<", "(?P<")
-    assert re.fullmatch(extract, "n7.1.6")["version"] == "7.1.6"  # type: ignore[index]  # reason: fullmatch is asserted to match by the subscript itself
-    assert re.fullmatch(extract, "n8.0")["version"] == "8.0"  # type: ignore[index]  # reason: as above
+    for tag, version in (("n7.1.6", "7.1.6"), ("n8.0", "8.0")):
+        match = re.fullmatch(extract, tag)
+        assert match is not None and match["version"] == version
     assert re.fullmatch(extract, "n8.1-dev") is None
 
 
