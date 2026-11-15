@@ -103,7 +103,8 @@ licence files.
   encodes its bounded PNG preview in a one-shot child that first sets
   `RLIMIT_AS` 256 MiB, `RLIMIT_CPU` 30 seconds, `RLIMIT_NOFILE` 64,
   `RLIMIT_NPROC` 1 and `RLIMIT_CORE` 0, replaces the `socket` entry points, and
-  on Linux installs a syscall filter that denies networking; byte and pixel
+  on Linux applies the shared parser confinement
+  ([parsers](../architecture/parser-confinement.md)); byte and pixel
   caps bound the input first. `application/cover_packet_semantics.py` only
   decodes one digest-verified, report-bound preview and treats
   decompression-bomb and unidentified-image errors as rejection. Pillow gets no

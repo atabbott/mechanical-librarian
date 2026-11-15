@@ -54,6 +54,7 @@ How the pipeline prepares each work, stage by stage:
 - [Application service contracts](architecture/service-port-contracts.md)
 - [SQLite topology](architecture/sqlite-topology.md)
 - [Security and threat model](architecture/security.md)
+- [Parser confinement](architecture/parser-confinement.md)
 - [Data privacy](architecture/data-privacy.md)
 - [AI trust boundary](architecture/ai-boundary.md)
 - [Architecture decisions (ADRs)](architecture/decisions/README.md)
