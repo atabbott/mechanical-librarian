@@ -23,7 +23,11 @@ from mechanical_librarian.application.reviewer_host import ReviewerHostStatus
 from mechanical_librarian.domain.description_advice import (
     DescriptionAdviceSettings,
 )
-from tests.support.description_advice import _guarded_application, _prepared
+from tests.support.description_advice import (
+    _guarded_application,
+    _prepared,
+    _preserved_description_report,
+)
 from tests.unit.test_reviewer_access_application import _Auth
 
 
@@ -319,6 +323,111 @@ def test_authority_refuses_automatic_decision_below_floor(
     assert decision.origin == "automatic_policy"
     with pytest.raises(FieldEffectError, match="authority_binding"):
         PersistedFieldEffectAuthority(repository).resolve(decision)
+    repository.close()
+
+
+_DESCRIPTION_CHOICE_SQL = (
+    "SELECT has_owner_decision_actions FROM review_case_field_facts "
+    "WHERE review_case_id=? AND destination='description'"
+)
+
+
+def test_automatic_advice_never_admits_a_description_the_owner_cannot_choose(
+    tmp_path: Path,
+) -> None:
+    from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+
+    repository, store, binding, candidate, _ = _prepared(
+        tmp_path, report_override=_preserved_description_report()
+    )
+    case_id = binding.review_case_id
+    # Every source repeats the current description: no Keep current, no choice.
+    assert repository._connection.execute(
+        _DESCRIPTION_CHOICE_SQL, (case_id,)
+    ).fetchone() == (0,)
+    with pytest.raises(ValueError, match="description automatic admission unavailable"):
+        store.admit(candidate.candidate_id, binding, "automatic_policy", "a" * 64, 11)
+    assert repository._connection.execute(
+        "SELECT count(*) FROM description_decisions"
+    ).fetchone() == (0,)
+    advice = store.read(case_id)
+    assert advice["candidate"]["candidate_id"] == candidate.candidate_id
+    assert advice["selection"] is None
+    assert not any(
+        candidate.candidate_id in document
+        for document in repository.pending_field_effect_decision_documents(100)
+    )
+    description = next(
+        field
+        for field in InspectCurrentReviewCase(repository).run(case_id)["fields"]
+        if field["destination"] == "description"
+    )
+    assert description["editable"] is False
+    assert description["decision_actions"] == []
+    assert description["description_advice"]["candidate"]["candidate_id"] == (
+        candidate.candidate_id
+    )
+    repository.close()
+
+
+@pytest.mark.parametrize("origin", ["human", "automatic_policy"])
+def test_description_authority_lapses_for_automatic_only_when_the_field_stops_offering_a_choice(
+    tmp_path: Path, origin: str
+) -> None:
+    from mechanical_librarian.domain.field_effect import FieldEffectError
+
+    repository, store, binding, candidate, _ = _prepared(tmp_path)
+    decision = store.admit(candidate.candidate_id, binding, origin, "a" * 64, 11)
+    authority = PersistedFieldEffectAuthority(repository)
+    assert authority.resolve(decision).decision_value == {
+        "kind": "text",
+        "value": "Authored synthetic description.",
+    }
+    # The offer changes after admission, so the field no longer offers a choice.
+    repository._connection.execute(
+        "UPDATE review_case_field_facts SET has_owner_decision_actions=0 "
+        "WHERE review_case_id=? AND destination='description'",
+        (binding.review_case_id,),
+    )
+    if origin == "automatic_policy":
+        with pytest.raises(FieldEffectError, match="authority_binding"):
+            authority.resolve(decision)
+    else:
+        # An owner's choice is never withdrawn by a later offer change.
+        assert authority.resolve(decision).decision_value == {
+            "kind": "text",
+            "value": "Authored synthetic description.",
+        }
+    repository.close()
+
+
+def test_owner_cannot_select_advice_on_a_field_without_a_choice(
+    tmp_path: Path,
+) -> None:
+    from mechanical_librarian.application.review_web import (
+        RecordHumanDecision,
+        ReviewWebError,
+    )
+
+    repository, store, binding, candidate, _ = _prepared(
+        tmp_path, automatic=False, report_override=_preserved_description_report()
+    )
+    with pytest.raises(ValueError, match="description choice unavailable"):
+        store.admit(candidate.candidate_id, binding, "human", "a" * 64, 11)
+    with pytest.raises(ReviewWebError, match="stale"):
+        RecordHumanDecision(repository, clock=lambda: 12).select_description(
+            binding.review_case_id,
+            candidate.candidate_id,
+            binding,
+            "choose-advice-without-a-choice",
+        )
+    assert (
+        repository.field_effect_manual_hold_token(binding.review_case_id, "description")
+        is None
+    )
+    assert repository._connection.execute(
+        "SELECT count(*) FROM description_decisions"
+    ).fetchone() == (0,)
     repository.close()
 
 
@@ -1559,8 +1668,10 @@ def test_verified_deterministic_fill_retires_advice_before_successor_scan(
     assert len(calls) == 1
     assert store.read(case_id)["current"] is True
     assert store.read(case_id)["binding"] == fresh.model_dump()
-    selected = store.admit(candidate.candidate_id, fresh, "human", "f" * 64, 41)
-    assert selected.binding == fresh
+    # The successor's binding is current (no "stale" refusal), but its sources
+    # now repeat the written description, so the field offers no choice to make.
+    with pytest.raises(ValueError, match="description choice unavailable"):
+        store.admit(candidate.candidate_id, fresh, "human", "f" * 64, 41)
     repository.close()
 
 

@@ -31,6 +31,15 @@ from mechanical_librarian.domain.description_advice import (
 )
 from mechanical_librarian.domain.metadata_report import MetadataReport
 
+# Whether the case's description field offers the owner a choice: the same
+# fact, read from the current offer, that makes the field editable and offers
+# Keep current. Description advice never decides a field the owner could not
+# have decided or reversed (configuration.md, Description advice).
+_DESCRIPTION_CHOICE_SQL = (
+    "SELECT 1 FROM review_case_field_facts WHERE review_case_id=? "
+    "AND destination='description' AND has_owner_decision_actions=1"
+)
+
 
 class SQLiteDescriptionAdviceRepository(ConnectionScoped):
     def __init__(
@@ -289,6 +298,10 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                 "SELECT d.document FROM current_description_decisions p JOIN description_decisions d ON d.decision_id=p.decision_id WHERE p.review_case_id=?",
                 (case_id,),
             ).fetchone()
+            choosable = (
+                self._connection.execute(_DESCRIPTION_CHOICE_SQL, (case_id,)).fetchone()
+                is not None
+            )
             if origin == "automatic_policy":
                 safety = self._connection.execute(
                     "SELECT paused,global_suspension,category_suspensions_document FROM automatic_safety_state WHERE singleton=1"
@@ -301,6 +314,7 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                     or candidate.output.disposition != "ready"
                     or not automatic_description_floor_met(candidate.output.description)
                     or human is not None
+                    or not choosable
                     # An owner's hold does not refuse the decision: a successor
                     # carries it with nothing yet to hold, and authority_value
                     # holds the write (ADR-0085).
@@ -316,6 +330,10 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                     raise ValueError("description automatic admission unavailable")
             elif origin != "human":
                 raise ValueError("invalid description authority")
+            elif not choosable:
+                # The review page offers no choice here, so the owner could
+                # neither make this one nor reverse it with Keep current.
+                raise ValueError("description choice unavailable")
             competing = [
                 row[0]
                 for row in self._connection.execute(
@@ -428,11 +446,17 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                 "UNION ALL SELECT 1 FROM field_effect_manual_holds WHERE review_case_id=? AND destination='description' AND active=1 LIMIT 1",
                 (decision.review_case_id, decision.review_case_id),
             ).fetchone()
+            # An owner's choice keeps its authority when the offer changes;
+            # an automatic one writes only while the field offers a choice.
+            choosable = self._connection.execute(
+                _DESCRIPTION_CHOICE_SQL, (decision.review_case_id,)
+            ).fetchone()
             if (
                 not self.current_settings().automatic_application
                 or candidate.output.disposition != "ready"
                 or not automatic_description_floor_met(candidate.output.description)
                 or owner_final is not None
+                or choosable is None
                 or posture != ("automatic",)
                 or safety is None
                 or safety[0]
