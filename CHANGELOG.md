@@ -318,7 +318,7 @@ brackets are GitHub issues.
 - With automatic description advice on, a description whose sources all
   repeat the current text is no longer replaced by the adviser's result,
   which you could not have chosen or reversed there. The result stays shown
-  for reference, and the review API refuses choosing it directly too (#1886).
+  for reference, and the review API refuses choosing it directly too (#1892).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
