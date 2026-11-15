@@ -12,6 +12,13 @@ from mechanical_librarian.adapters.persistence.metadata_reports import open_repo
 from mechanical_librarian.domain.description_advice import (
     DescriptionAdviceCandidate,
 )
+from tests.support.description_advice import qualify_description_advice
+
+
+@pytest.fixture(autouse=True)
+def _qualified_adviser(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These proofs admit automatic advice, so a record names their adviser."""
+    qualify_description_advice(monkeypatch)
 
 
 def test_attempt_persisted_before_dispatch_and_success_rebinds_without_call(

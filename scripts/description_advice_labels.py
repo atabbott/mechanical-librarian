@@ -123,9 +123,9 @@ _NO_ADVISER = (
     "wait for Preparation idle, then copy the database again."
 )
 _AUTOMATIC_ON = (
-    "Automatically apply ready description advice is on, so the app decides "
-    "these descriptions itself. Turn it off in Policy → Curation, then copy "
-    "the database again."
+    "Automatically apply ready description advice is on. Turn it off in "
+    "Policy → Curation so Automatic decides none of these descriptions, then "
+    "copy the database again."
 )
 _AUTOMATIC_ON_IN_FILE = (
     "Automatically apply ready description advice is on in config.json, so "

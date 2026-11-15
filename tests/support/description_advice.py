@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import itertools
 from dataclasses import replace
 from pathlib import Path
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 
 import pytest
 
@@ -20,10 +21,15 @@ from mechanical_librarian.application.reviewer_contracts import (
     ReviewerProvisioningStatus,
 )
 from mechanical_librarian.application.reviewer_host import ReviewerHostStatus
+from mechanical_librarian.domain import description_advice as description_advice_domain
 from mechanical_librarian.domain.description_advice import (
+    DESCRIPTION_INSTRUCTION,
+    DESCRIPTION_OUTPUT_SCHEMA,
     DescriptionAdviceBinding,
     DescriptionAdviceCandidate,
     DescriptionAdviceSettings,
+    DescriptionAdviserIdentity,
+    DescriptionPreferences,
     description_digest,
 )
 from mechanical_librarian.domain.metadata_policy import (
@@ -340,3 +346,45 @@ def _contained_profile(root: Path) -> Path:
     )
     profile.chmod(0o600)
     return profile
+
+
+# The score digest a synthetic qualification record carries (ADR-0099).
+SYNTHETIC_DESCRIPTION_SCORE_SHA256 = "7" * 64
+
+
+def synthetic_description_record(
+    *models: str,
+) -> MappingProxyType[DescriptionAdviserIdentity, str]:
+    """A record naming each model with this checkout's contract and every cleanup.
+
+    Every cleanup combination is named, so a test that varies the cleanup
+    choices refuses or admits for its own reason, not for the record.
+    """
+    return MappingProxyType(
+        {
+            DescriptionAdviserIdentity(
+                "codex",
+                model,
+                hashlib.sha256(DESCRIPTION_INSTRUCTION.encode()).hexdigest(),
+                hashlib.sha256(DESCRIPTION_OUTPUT_SCHEMA.encode()).hexdigest(),
+                description_digest(
+                    DescriptionPreferences(
+                        remove_marketing=marketing,
+                        remove_sales_boasts=boasts,
+                        remove_praise=praise,
+                    ).model_dump()
+                ),
+            ): SYNTHETIC_DESCRIPTION_SCORE_SHA256
+            for model in models or ("gpt-5.6-sol",)
+            for marketing, boasts, praise in itertools.product((False, True), repeat=3)
+        }
+    )
+
+
+def qualify_description_advice(monkeypatch: pytest.MonkeyPatch, *models: str) -> None:
+    """Record the synthetic advisers for the rest of one test."""
+    monkeypatch.setattr(
+        description_advice_domain,
+        "QUALIFIED_DESCRIPTION_ADVISERS",
+        synthetic_description_record(*models),
+    )

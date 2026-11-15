@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Annotated, Literal
+from collections.abc import Mapping
+from types import MappingProxyType
+from typing import Annotated, Literal, NamedTuple
 
 from pydantic import (
     BaseModel,
@@ -254,6 +256,45 @@ class DescriptionAdviceCandidate(_Closed):
                 "candidate_id": "description_candidate_" + description_digest(core),
             }
         )
+
+
+class DescriptionAdviserIdentity(NamedTuple):
+    """What a description qualification names (ADR-0099 Decision 7).
+
+    The fields are the label score's identity keys, in its order, so a record
+    is copied from the passing score JSON verbatim.
+    """
+
+    engine: str
+    model: str
+    instruction_sha256: str
+    output_schema_sha256: str
+    preferences_digest: str
+
+
+# The shipped qualification records (ADR-0099 Decision 10): each adviser
+# identity whose owner labels met the bar, mapped to the SHA-256 of the
+# passing `description-advice-label-score-v1` JSON attached to #1886. None is
+# recorded yet, so automatic description advice only suggests. Read on each
+# ask, so a record activates its identity without another edit; the first one
+# must also make the Policy → Curation line name the advisers that write.
+QUALIFIED_DESCRIPTION_ADVISERS: Mapping[DescriptionAdviserIdentity, str] = (
+    MappingProxyType({})
+)
+
+
+def description_advice_qualified(candidate: DescriptionAdviceCandidate) -> bool:
+    """Whether a shipped record names the adviser identity of this advice."""
+    return (
+        DescriptionAdviserIdentity(
+            candidate.engine,
+            candidate.model,
+            candidate.instruction_digest,
+            candidate.schema_digest,
+            candidate.preferences_digest,
+        )
+        in QUALIFIED_DESCRIPTION_ADVISERS
+    )
 
 
 class AuthoredDescriptionDecision(_Closed):
