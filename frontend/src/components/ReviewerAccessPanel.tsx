@@ -1,5 +1,6 @@
 import { ReviewerCost } from './ReviewerCost'
 import { DescriptionReviewerSettings } from './DescriptionReviewerSettings'
+import { TasteReviewerSettings } from './TasteReviewerSettings'
 import { StaleBuildRead } from './StaleBuildRead'
 import { ModelPicker } from './ModelPicker'
 import { coverReviewerLabel, reviewerFailureCopy, reviewerStateLabels } from '../labels'
@@ -176,7 +177,10 @@ function CodexSignIn({
     <div className="settings-field-row">
       <div>
         <h3 tabIndex={-1}>Shared Codex sign-in</h3>
-        <p>Cover review and description advice both use it. Choose Codex for each task below.</p>
+        <p>
+          Cover review, description advice and the taste profile can use it. Choose Codex for each
+          task below.
+        </p>
         <p>Model: {view.codex.model ?? 'Unavailable'}</p>
         <p aria-live="polite">Status: {reviewerStateLabels[codexState]}</p>
         {codexReason ? <p role="alert">{codexReason}</p> : null}
@@ -547,6 +551,7 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
   const codexManaged =
     view.mapping?.engine === 'codex' ||
     view.description_mapping?.engine === 'codex' ||
+    view.taste_mapping?.engine === 'codex' ||
     codexUsable ||
     view.codex.state === 'configured'
   const coverEngine =
@@ -625,6 +630,13 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
         http={http}
         view={view}
         codexUsable={codexUsable}
+        onCodexRefused={access.refreshAfterCodexRefusal}
+      />
+      <TasteReviewerSettings
+        http={http}
+        view={view}
+        codexUsable={codexUsable}
+        codexManaged={codexManaged && !waiting}
         onCodexRefused={access.refreshAfterCodexRefusal}
       />
     </div>

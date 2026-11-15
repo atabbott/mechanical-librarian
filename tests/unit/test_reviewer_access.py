@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from mechanical_librarian.domain.reviewer_access import (
     REVIEWER_ACCESS_SCHEMA,
+    CodexTaskSelection,
     DescriptionModelMetadata,
     OpenRouterTaskSelection,
     ReviewerAccessDocument,
@@ -179,8 +180,8 @@ _TASTE_PRICES = {
 }
 
 
-def test_taste_build_is_openrouter_only_with_prices_for_its_model() -> None:
-    """The taste profile builder is its own OpenRouter task (#1372 R3)."""
+def test_taste_build_takes_either_engine_with_prices_only_for_openrouter() -> None:
+    """The taste profile builder is its own task on either engine (#1372 C1)."""
     document = ReviewerAccessDocument.model_validate(
         {
             "schema_version": REVIEWER_ACCESS_SCHEMA,
@@ -192,8 +193,18 @@ def test_taste_build_is_openrouter_only_with_prices_for_its_model() -> None:
     assert document.cover_taste_build == OpenRouterTaskSelection(
         engine="openrouter", model="example/vision"
     )
+    codex = ReviewerAccessDocument.model_validate(
+        {
+            "schema_version": REVIEWER_ACCESS_SCHEMA,
+            "revision": 1,
+            "cover_taste_build": {"engine": "codex"},
+        }
+    )
+    assert codex.cover_taste_build == CodexTaskSelection(engine="codex")
+    assert codex.taste_metadata is None
     for refused in (
-        {"cover_taste_build": {"engine": "codex"}},
+        {"cover_taste_build": {"engine": "codex"}, "taste_metadata": _TASTE_PRICES},
+        {"cover_taste_build": {"engine": "codex", "model": "gpt-5.6-sol"}},
         {
             "cover_taste_build": {
                 "engine": "openrouter",

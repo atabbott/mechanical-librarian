@@ -6,6 +6,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import resource
 import shutil
 import stat
@@ -29,6 +30,7 @@ from mechanical_librarian.adapters.reviewers.resource_budget import (
     no_process_seccomp_descriptor,
 )
 from mechanical_librarian.application.contained_reviewer_contract import (
+    REVIEWER_DESCRIPTOR_LIMIT,
     ContainedReviewerAttempt,
     ContainedReviewerError,
     ContainedReviewerIdentity,
@@ -40,6 +42,13 @@ from mechanical_librarian.application.contained_reviewer_contract import (
     canonical_json,
     cover_profile_contract_mismatch,
 )
+from mechanical_librarian.application.cover_taste_contract import (
+    TASTE_CODEX_OUTPUT_SCHEMA,
+    TASTE_INSTRUCTION,
+    TASTE_OUTPUT_SCHEMA,
+    AdmittedTasteBuildRequest,
+)
+from mechanical_librarian.domain.cover_taste import TASTE_MAX_IMAGES
 
 PROFILE_SCHEMA = "contained-reviewer-profile-v1"
 MAX_PROFILE_BYTES = 65_536
@@ -225,6 +234,30 @@ class _SchemaBinding:
 
 
 @dataclass(frozen=True, slots=True)
+class _TasteImage:
+    """One digest-bound JPEG preview from an admitted taste build request."""
+
+    reference: str
+    digest: str
+    payload: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class _TasteReviewRequest:
+    """An admitted taste build restated with the contained engine's schema."""
+
+    instruction: str
+    input_document: str
+    output_schema: str
+    images: tuple[_TasteImage, ...]
+
+
+_TASTE_REFERENCE = re.compile(r"^taste_image_[0-9a-f]{64}$")
+_ReviewRequest = ContainedReviewRequest | _CoverReviewRequest | _TasteReviewRequest
+_ReviewImages = tuple[_CoverReviewImage, ...] | tuple[_TasteImage, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class _SealedImage:
     descriptor: int
     invocation_path: str
@@ -288,7 +321,7 @@ def _sealed_model_catalog_descriptor() -> Iterator[int]:
 
 @contextmanager
 def _sealed_cover_images(
-    images: tuple[_CoverReviewImage, ...],
+    images: _ReviewImages,
 ) -> Iterator[tuple[_SealedImage, ...]]:
     """Copy admitted bytes into immutable sealed descriptors for sandbox bind."""
     descriptors: list[int] = []
@@ -671,11 +704,64 @@ class ContainedReviewerAdapter:
             raise ContainedReviewerProcessError("response_format") from error
         return self._run(admitted, dispatched, admitted.images, retry_local_abort=True)
 
+    def run_taste_build(
+        self,
+        request: AdmittedTasteBuildRequest,
+        dispatched: Callable[[int, int, str], None],
+    ) -> ContainedReviewResult:
+        """Run one admitted taste build once, its previews mounted as JPEGs.
+
+        Only an exact admitted request is accepted. Each preview is re-checked
+        as a JPEG and bound to its digest, which the sealed copy, the child's
+        reader and the prompt each verify; one attempt is one counted build.
+        """
+        if type(request) is not AdmittedTasteBuildRequest:
+            raise ContainedReviewerProcessError("response_format")
+        if cover_profile_contract_mismatch(self._profile.identity) is not None:
+            raise ContainedReviewerProcessError("profile_contract_mismatch")
+        try:
+            images = request.images
+            references = [reference for reference, _jpeg in images]
+            if (
+                request.instruction != TASTE_INSTRUCTION
+                or request.output_schema != TASTE_OUTPUT_SCHEMA
+                or type(images) is not tuple
+                or not 1 <= len(images) <= TASTE_MAX_IMAGES
+                or len(set(references)) != len(references)
+            ):
+                raise ValueError
+            admitted: list[_TasteImage] = []
+            for reference, jpeg in images:
+                if (
+                    type(reference) is not str
+                    or _TASTE_REFERENCE.fullmatch(reference) is None
+                    or type(jpeg) is not bytes
+                    or not jpeg.startswith(b"\xff\xd8\xff")
+                    or not jpeg.endswith(b"\xff\xd9")
+                ):
+                    raise ValueError
+                admitted.append(
+                    _TasteImage(reference, hashlib.sha256(jpeg).hexdigest(), jpeg)
+                )
+            # The image-free port bounds the packet as canonical JSON.
+            base = ContainedReviewRequest(
+                TASTE_INSTRUCTION, request.packet_document, TASTE_CODEX_OUTPUT_SCHEMA
+            )
+            taste = _TasteReviewRequest(
+                base.instruction,
+                base.input_document,
+                base.output_schema,
+                tuple(admitted),
+            )
+        except (ContainedReviewerError, TypeError, ValueError) as error:
+            raise ContainedReviewerProcessError("response_format") from error
+        return self._run(taste, dispatched, taste.images)
+
     def _run(
         self,
-        request: ContainedReviewRequest | _CoverReviewRequest,
+        request: _ReviewRequest,
         dispatched: Callable[[int, int, str], None],
-        images: tuple[_CoverReviewImage, ...],
+        images: _ReviewImages,
         *,
         retry_local_abort: bool = False,
     ) -> ContainedReviewResult:
@@ -786,7 +872,7 @@ class ContainedReviewerAdapter:
 
     def _run_attempt(
         self,
-        request: ContainedReviewRequest | _CoverReviewRequest,
+        request: _ReviewRequest,
         dispatched: Callable[[int, int, str], None],
         sealed_images: tuple[_SealedImage, ...],
         codex: _BoundArtifact,
@@ -853,6 +939,7 @@ class ContainedReviewerAdapter:
                         credential.invocation_path,
                         seccomp_descriptor,
                         model_catalog_descriptor,
+                        "jpg" if type(request) is _TasteReviewRequest else "png",
                     ),
                     codex,
                     sandbox,
@@ -968,14 +1055,11 @@ class ContainedReviewerAdapter:
                     str(seccomp_descriptor),
                     "/runtime/seccomp.bpf",
                 )
+                pass_fds = (codex.descriptor, sandbox.descriptor, seccomp_descriptor)
                 completed = _run_owned_command(
-                    _resource_command(command),
+                    _resource_command(command, pass_fds),
                     env={},
-                    pass_fds=(
-                        codex.descriptor,
-                        sandbox.descriptor,
-                        seccomp_descriptor,
-                    ),
+                    pass_fds=pass_fds,
                     timeout=min(self._profile.identity.timeout_seconds, 30),
                 )
         except (OSError, subprocess.SubprocessError, ReviewerResourceError) as error:
@@ -1174,7 +1258,7 @@ class ContainedReviewerAdapter:
             pass_fds = (*pass_fds, credential_descriptor)
         try:
             return _run_owned_command(
-                _resource_command(command),
+                _resource_command(command, pass_fds),
                 env=self._auth_environment(),
                 pass_fds=pass_fds,
                 timeout=min(
@@ -1272,6 +1356,7 @@ class ContainedReviewerAdapter:
         credential_path: str,
         seccomp_descriptor: int,
         model_catalog_descriptor: int,
+        image_extension: str = "png",
     ) -> list[str]:
         command = [
             sandbox_path,
@@ -1390,12 +1475,12 @@ class ContainedReviewerAdapter:
                     (
                         "--ro-bind-data",
                         str(descriptor),
-                        f"/images/{index:02d}.png",
+                        f"/images/{index:02d}.{image_extension}",
                     )
                 )
             command[command.index("--tmpfs") : command.index("--tmpfs")] = mounts
             for index in range(1, len(image_descriptors) + 1):
-                command.extend(("--image", f"/images/{index:02d}.png"))
+                command.extend(("--image", f"/images/{index:02d}.{image_extension}"))
         for value in _exact_config(self._profile.identity.reasoning):
             command.extend(("-c", value))
         command.append("-")
@@ -1458,17 +1543,24 @@ class ContainedReviewerAdapter:
                     os.dup2(stdin_descriptor, 0)
                     os.dup2(stdout_descriptor, 1)
                     os.dup2(stderr_descriptor, 2)
-                    os.set_inheritable(codex.descriptor, True)
-                    os.set_inheritable(sandbox.descriptor, True)
-                    os.set_inheritable(credential_descriptor, True)
-                    if seccomp_descriptor is not None:
-                        os.set_inheritable(seccomp_descriptor, True)
-                    if model_catalog_descriptor is not None:
-                        os.set_inheritable(model_catalog_descriptor, True)
-                    for image in sealed_images:
-                        os.set_inheritable(image.descriptor, True)
-                    self._limit_child()
-                    broker_command = _resource_command(command)
+                    forwarded = (
+                        codex.descriptor,
+                        sandbox.descriptor,
+                        credential_descriptor,
+                        *(
+                            value
+                            for value in (seccomp_descriptor, model_catalog_descriptor)
+                            if value is not None
+                        ),
+                        *(image.descriptor for image in sealed_images),
+                    )
+                    for descriptor in forwarded:
+                        os.set_inheritable(descriptor, True)
+                    descriptor_limit = REVIEWER_DESCRIPTOR_LIMIT + len(sealed_images)
+                    self._limit_child(descriptor_limit)
+                    broker_command = _resource_command(
+                        command, forwarded, descriptor_limit
+                    )
                     os.execve(sys.executable, broker_command, {})
                 except BaseException:
                     os.write(failure_write, b"S")
@@ -1528,7 +1620,7 @@ class ContainedReviewerAdapter:
             elif not finished:
                 _kill_and_prove_dead(pid, pid, _safe_start_token(pid))
 
-    def _limit_child(self) -> None:
+    def _limit_child(self, descriptor_limit: int = REVIEWER_DESCRIPTOR_LIMIT) -> None:
         try:
             resource.setrlimit(
                 resource.RLIMIT_AS,
@@ -1543,7 +1635,7 @@ class ContainedReviewerAdapter:
             )
             resource.setrlimit(
                 resource.RLIMIT_NOFILE,
-                (64, 64),
+                (descriptor_limit, descriptor_limit),
             )
         except (OSError, ValueError) as error:
             raise ContainedReviewerProcessError("spawn") from error
@@ -1984,18 +2076,18 @@ def _validated_result(
 
 
 def _prompt(
-    request: ContainedReviewRequest | _CoverReviewRequest,
+    request: _ReviewRequest,
     *,
     schema_digest: str,
 ) -> str:
     image_binding = ",".join(
         value.reference + "=" + value.digest
-        # The union holds two unrelated dataclasses, so failing the exact-type
-        # check leaves only _CoverReviewRequest, which carries `images`.
+        # The union holds unrelated dataclasses, so failing the exact-type
+        # check leaves only the two image requests, which carry `images`.
         for value in (
             ()
             if type(request) is ContainedReviewRequest
-            else cast("_CoverReviewRequest", request).images
+            else cast("_CoverReviewRequest | _TasteReviewRequest", request).images
         )
     )
     return (
@@ -2011,7 +2103,7 @@ def _prompt(
 
 
 def _output_schema(
-    request: ContainedReviewRequest | _CoverReviewRequest,
+    request: _ReviewRequest,
 ) -> dict[str, object]:
     raw = json.loads(
         request.output_schema,
@@ -2023,7 +2115,7 @@ def _output_schema(
 
 
 def _schema_binding(
-    request: ContainedReviewRequest | _CoverReviewRequest,
+    request: _ReviewRequest,
 ) -> _SchemaBinding:
     schema = _output_schema(request)
     _validate_output_schema(schema)
@@ -2253,8 +2345,21 @@ def _auth_config() -> tuple[str, ...]:
     )
 
 
-def _resource_command(command: list[str]) -> tuple[str, ...]:
-    return (sys.executable, "-m", _RESOURCE_EXEC_MODULE, *command)
+def _resource_command(
+    command: list[str],
+    forwarded: tuple[int, ...],
+    descriptor_limit: int = REVIEWER_DESCRIPTOR_LIMIT,
+) -> tuple[str, ...]:
+    """Start the broker with this request's descriptor budget and the exact
+    descriptors it forwards to Bubblewrap, whatever their numbers."""
+    return (
+        sys.executable,
+        "-m",
+        _RESOURCE_EXEC_MODULE,
+        f"--descriptor-limit={descriptor_limit}",
+        "--forward-fds=" + ",".join(str(value) for value in forwarded),
+        *command,
+    )
 
 
 def _run_owned_command(

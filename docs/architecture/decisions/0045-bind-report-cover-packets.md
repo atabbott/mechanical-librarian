@@ -81,7 +81,11 @@ child file limit fails before dispatch. After gated release, the child reopens
 every sealed descriptor read-only through its own `/proc`, verifies the same
 descriptor identity, seals, size, and digest, rewinds the resulting independent
 open-file description, and replaces the inherited descriptor before limits and
-exec. Bubblewrap then copies from those child-private cursors through
+exec. The child's and the resource broker's open-descriptor limit is 64 plus
+one per sealed image. The parent names the exact descriptors the broker
+forwards, whatever their numbers, and the broker refuses one it did not
+inherit, so a 100-preview taste build reaches Bubblewrap whole (#1372).
+Bubblewrap then copies from those child-private cursors through
 descriptor-data mounts into private read-only sandbox files before passing them
 as repeatable ordered `codex exec --image` arguments. This closes both
 byte-mutation and shared file-offset races without asking Bubblewrap to resolve

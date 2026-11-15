@@ -3,13 +3,25 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Callable
 from importlib.resources import files
 from threading import RLock
-from typing import Annotated, Final, Literal, Protocol, cast, runtime_checkable
+from typing import (
+    Annotated,
+    Final,
+    Literal,
+    Protocol,
+    TypeVar,
+    cast,
+    runtime_checkable,
+)
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr
 
+from mechanical_librarian.application.contained_reviewer_contract import (
+    ContainedReviewerError,
+)
 from mechanical_librarian.application.cover_observation import Reviewer
 from mechanical_librarian.application.cover_taste_contract import (
     AdmittedTasteBuildRequest,
@@ -48,9 +60,9 @@ from mechanical_librarian.domain.reviewer_cost import (
 )
 from mechanical_librarian.domain.validation import credential
 
-ReviewerAccessViewSchemaVersion = Literal["reviewer-access-view-v4"]
+ReviewerAccessViewSchemaVersion = Literal["reviewer-access-view-v5"]
 REVIEWER_ACCESS_VIEW_SCHEMA: Final[ReviewerAccessViewSchemaVersion] = (
-    "reviewer-access-view-v4"
+    "reviewer-access-view-v5"
 )
 # The measured default for taste profile builds (#1372 R5).
 TASTE_RECOMMENDED_MODEL: Final = "anthropic/claude-sonnet-5.5"
@@ -160,14 +172,49 @@ class OpenRouterClient(Protocol):
 
 
 @runtime_checkable
-class OpenRouterTasteClient(Protocol):
-    """What a taste build needs from an OpenRouter client (#1372)."""
+class TasteBuildClient(Protocol):
+    """What a taste build needs from the selected engine's client (#1372)."""
 
     def run_taste_build(
         self, profile: bytes, request: AdmittedTasteBuildRequest
     ) -> TasteBuildReply: ...
 
     def close(self) -> None: ...
+
+
+# Runs one admitted build on the contained engine and returns its result
+# document, already checked against the taste schema.
+TasteBuildRunner = Callable[[bytes, AdmittedTasteBuildRequest], str]
+
+
+class _CodexTasteClient:
+    """One contained taste build, bound to the profile it was admitted with."""
+
+    def __init__(self, profile: bytes, runner: TasteBuildRunner) -> None:
+        self._profile = profile
+        self._runner = runner
+
+    def run_taste_build(
+        self, profile: bytes, request: AdmittedTasteBuildRequest
+    ) -> TasteBuildReply:
+        """Codex reports no per-request cost, so a reply counts as usage reported.
+
+        A result that fails the taste schema is a reply with no result
+        (`invalid_output`); every other failure raises, so the build ends
+        `unavailable` without stopping the day (#1372 C6).
+        """
+        if profile != self._profile:
+            raise ReviewerAccessApplicationError("access_changed")
+        try:
+            document = self._runner(profile, request)
+        except ContainedReviewerError as error:
+            if error.code == "malformed_output":
+                return TasteBuildReply(None, True)
+            raise
+        return TasteBuildReply(json.loads(document), True)
+
+    def close(self) -> None:
+        """The contained engine holds nothing between builds."""
 
 
 class _Closed(BaseModel):
@@ -235,7 +282,7 @@ class ReviewerAccessView(_Closed):
     description_mapping: ReviewerTaskSelection | None = None
     description_metadata: DescriptionModelMetadata | None = None
     cover_metadata: CoverModelMetadata | None = None
-    taste_mapping: OpenRouterTaskSelection | None = None
+    taste_mapping: ReviewerTaskSelection | None = None
     taste_metadata: CoverModelMetadata | None = None
     taste_daily_requests: Annotated[StrictInt, Field(ge=1, le=100)] = 8
     taste_recommendations: tuple[_OpenRouterModel, ...] = (TASTE_RECOMMENDED_MODEL,)
@@ -266,6 +313,8 @@ class ReviewerAccessView(_Closed):
 OpenRouterFactory = Callable[[str, str], OpenRouterClient]
 CodexBinding = Callable[[], tuple[str, bytes, Reviewer]]
 CodexIdentity = Callable[[], tuple[str, bytes]]
+CodexTasteBinding = Callable[[], tuple[str, bytes, TasteBuildRunner]]
+_Runner = TypeVar("_Runner")
 
 
 class ReviewerAccessOperations:
@@ -282,6 +331,7 @@ class ReviewerAccessOperations:
         codex_binding: CodexBinding,
         openrouter_factory: OpenRouterFactory,
         codex_description_binding: CodexBinding | None = None,
+        codex_taste_binding: CodexTasteBinding | None = None,
         taste_daily_requests: int = 8,
     ) -> None:
         self._taste_daily_requests = taste_daily_requests
@@ -293,6 +343,7 @@ class ReviewerAccessOperations:
         self._codex_provisioning = codex_provisioning
         self._codex_binding = codex_binding
         self._codex_description_binding = codex_description_binding
+        self._codex_taste_binding = codex_taste_binding
         self._codex_identity = codex_identity or (lambda: self._codex_binding()[:2])
         self._openrouter_factory = openrouter_factory
         self._serialized: Callable[[Callable[[], object]], object] = lambda call: call()
@@ -478,8 +529,13 @@ class ReviewerAccessOperations:
             )
         elif codex is not None:
             codex_status = codex
-        elif isinstance(selection, CodexTaskSelection) or isinstance(
-            document.description_rewrite, CodexTaskSelection
+        elif any(
+            isinstance(task, CodexTaskSelection)
+            for task in (
+                selection,
+                document.description_rewrite,
+                document.cover_taste_build,
+            )
         ):
             host = self._codex_host()
             flow = self._codex_auth.status()
@@ -656,24 +712,43 @@ class ReviewerAccessOperations:
         return _cover_metadata(account)
 
     def current_taste_build_model(self) -> str | None:
-        """The selected taste model while its key is saved, without any transport."""
+        """The selected taste model, without any transport or process.
+
+        OpenRouter needs its key saved. Codex needs its profile provisioned, a
+        host that can run it and its sign-in usable, each read as the access
+        view reads it, so a lapsed sign-in or host schedules no build.
+        """
         document, key = self._snapshot()
         selection = document.cover_taste_build
+        if isinstance(selection, CodexTaskSelection):
+            try:
+                model, _profile = self._codex_identity()
+                if not self._codex_host().available:
+                    return None
+                credential = self.codex_status()
+            except (OSError, RuntimeError):
+                return None
+            return model if credential.state in {"usable", "configured"} else None
         return None if selection is None or key is None else selection.model
 
-    def open_taste_build(self) -> tuple[str, bytes, OpenRouterTasteClient]:
+    def open_taste_build(self) -> tuple[str, bytes, TasteBuildClient]:
         """One client for one taste build, opened at the current access revision."""
         document, key = self._snapshot()
         selection = document.cover_taste_build
         if selection is None:
             raise ReviewerAccessApplicationError("not_configured")
+        if isinstance(selection, CodexTaskSelection):
+            model, profile, runner = self._bind_codex(
+                document.revision, self._codex_taste_binding
+            )
+            return model, profile, _CodexTasteClient(profile, runner)
         if key is None:
             raise ReviewerAccessApplicationError("credential_unavailable")
         try:
             client = self._openrouter_factory(key, selection.model)
         except Exception:
             raise ReviewerAccessApplicationError("unreachable") from None
-        if not isinstance(client, OpenRouterTasteClient):
+        if not isinstance(client, TasteBuildClient):
             client.close()
             raise ReviewerAccessApplicationError("unreachable")
         if not self._repository.revision_is_current(document.revision):
@@ -763,9 +838,6 @@ class ReviewerAccessOperations:
     def _select_codex(
         self, *, expected_revision: int, task: ReviewerTask = "cover_observation"
     ) -> ReviewerAccessView:
-        if task == "cover_taste_build":
-            # Taste profiles run on OpenRouter only in 0.31.0 (#1372 R3).
-            raise ReviewerAccessApplicationError("reviewer_access_invalid")
         host = self._admit_codex()
         with self._command_lock:
             credential = self._codex_auth.recheck_credential_status()
@@ -809,7 +881,11 @@ class ReviewerAccessOperations:
                 "cover_observation": selection,
                 "cover_metadata": None,
                 "description_metadata": None,
-                "cover_taste_build": None,
+                "cover_taste_build": (
+                    None
+                    if isinstance(document.cover_taste_build, OpenRouterTaskSelection)
+                    else document.cover_taste_build
+                ),
                 "taste_metadata": None,
                 "description_rewrite": (
                     None
@@ -833,9 +909,14 @@ class ReviewerAccessOperations:
             if document.revision != expected_revision:
                 raise ReviewerAccessApplicationError("access_changed")
             self._admit_codex()
-            committed = isinstance(
-                document.cover_observation, CodexTaskSelection
-            ) or isinstance(document.description_rewrite, CodexTaskSelection)
+            committed = any(
+                isinstance(task, CodexTaskSelection)
+                for task in (
+                    document.cover_observation,
+                    document.description_rewrite,
+                    document.cover_taste_build,
+                )
+            )
             if committed:
                 document, configured = self._clear_codex_selections(
                     document, expected_revision
@@ -897,6 +978,9 @@ class ReviewerAccessOperations:
                 "description_rewrite": None
                 if isinstance(document.description_rewrite, CodexTaskSelection)
                 else document.description_rewrite,
+                "cover_taste_build": None
+                if isinstance(document.cover_taste_build, CodexTaskSelection)
+                else document.cover_taste_build,
             }
         )
         result = self._replace_document(replacement, expected_revision)
@@ -914,37 +998,12 @@ class ReviewerAccessOperations:
         if selection is None:
             raise ReviewerAccessApplicationError("not_configured")
         if isinstance(selection, CodexTaskSelection):
-            self._admit_codex()
-            try:
-                model, profile = self._codex_identity()
-            except ReviewerAccessApplicationError:
-                raise
-            except Exception:
-                raise ReviewerAccessApplicationError("credential_unavailable") from None
-            identity = (document.revision, "codex", model, profile)
-            if not self._codex_host().available:
-                raise ReviewerAccessApplicationError("host_unsupported", identity)
-            if self._codex_auth.recheck_credential_status().state != "usable":
-                raise ReviewerAccessApplicationError("credential_unavailable", identity)
-            try:
-                binding = (
-                    self._codex_binding
-                    if task == "cover_observation"
-                    else self._codex_description_binding
-                )
-                if binding is None:
-                    raise RuntimeError("description binding unavailable")
-                bound_model, bound_profile, runner = binding()
-            except ReviewerAccessApplicationError:
-                raise
-            except Exception:
-                raise ReviewerAccessApplicationError(
-                    "credential_unavailable", identity
-                ) from None
-            if (bound_model, bound_profile) != (model, profile):
-                raise ReviewerAccessApplicationError("access_changed", identity)
-            if not self._repository.revision_is_current(document.revision):
-                raise ReviewerAccessApplicationError("access_changed", identity)
+            bound_model, bound_profile, runner = self._bind_codex(
+                document.revision,
+                self._codex_binding
+                if task == "cover_observation"
+                else self._codex_description_binding,
+            )
             return ReviewerDispatch(
                 document.revision, "codex", bound_model, bound_profile, runner
             )
@@ -975,6 +1034,40 @@ class ReviewerAccessOperations:
             dispatch.close()
             raise ReviewerAccessApplicationError("access_changed", identity)
         return dispatch
+
+    def _bind_codex(
+        self,
+        revision: int,
+        binding: Callable[[], tuple[str, bytes, _Runner]] | None,
+    ) -> tuple[str, bytes, _Runner]:
+        """Admit the contained engine and bind the identity this revision reads."""
+        self._admit_codex()
+        try:
+            model, profile = self._codex_identity()
+        except ReviewerAccessApplicationError:
+            raise
+        except Exception:
+            raise ReviewerAccessApplicationError("credential_unavailable") from None
+        identity = (revision, "codex", model, profile)
+        if not self._codex_host().available:
+            raise ReviewerAccessApplicationError("host_unsupported", identity)
+        if self._codex_auth.recheck_credential_status().state != "usable":
+            raise ReviewerAccessApplicationError("credential_unavailable", identity)
+        try:
+            if binding is None:
+                raise RuntimeError("task binding unavailable")
+            bound_model, bound_profile, runner = binding()
+        except ReviewerAccessApplicationError:
+            raise
+        except Exception:
+            raise ReviewerAccessApplicationError(
+                "credential_unavailable", identity
+            ) from None
+        if (bound_model, bound_profile) != (model, profile):
+            raise ReviewerAccessApplicationError("access_changed", identity)
+        if not self._repository.revision_is_current(revision):
+            raise ReviewerAccessApplicationError("access_changed", identity)
+        return bound_model, bound_profile, runner
 
     def dispatch_description_rewrite(self) -> ReviewerDispatch:
         return self._dispatch_cover_observation("description_rewrite")
