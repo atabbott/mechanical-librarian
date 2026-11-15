@@ -573,12 +573,10 @@ are append-only. Automation never overrides an owner decision.
 Withdrawal appends a valueless row, revokes unclaimed authority in the same
 transaction and never re-arms automation. A previous value offered as a
 suggestion grants no authority: choosing it is an ordinary owner-entered write,
-stale if the field changed. Every owner decision but a withdrawal sets a
-manual hold on its field, which follows the work to its successor case; Return
-to automatic releases it only after the scan it requests succeeds, and only if
-no later owner decision replaced the hold
-([ADR-0039](decisions/0039-continuous-guarded-application.md),
-[ADR-0085](decisions/0085-owner-entered-values-withdrawal-and-reselection.md)).
+stale if the field changed. Any decision but a withdrawal holds its field
+(covers aside) on the work's later cases until Return to automatic releases
+it, after its scan succeeds and if no later decision replaced it
+([ADR-0085](decisions/0085-owner-entered-values-withdrawal-and-reselection.md)).
 
 Owner-entered text is refused, never rewritten, unless it is 1 to 512 code
 points of NFC text with no control, path, credential or URI. No automatic path
