@@ -3371,6 +3371,11 @@ class _OfflineSessionStore:
     def end_review_sessions_except(self, session_digest: str) -> int:
         raise self._unavailable()
 
+    def end_other_review_sessions(
+        self, session_digest: str, csrf_digest: str, now: int
+    ) -> tuple[str, int]:
+        raise self._unavailable()
+
 
 def run_cover_review(
     config_path: Path,

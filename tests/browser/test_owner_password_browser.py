@@ -1,9 +1,15 @@
-"""Settings changes the owner password in store mode, and only there.
+"""Settings changes the owner password in store mode, and only there, and
+signs out every other browser in either mode.
 
 The change keeps the browser that made it signed in on a new session, and
 ends every other session: a second browser context signed in beforehand is
 sent to sign-in on its next request. The new password signs in afterwards and
 the old one is refused. File mode keeps its hash file and shows no row.
+
+Sign out other browsers keeps the browser that pressed it signed in on the
+same session and CSRF token, and sends a second browser context to sign-in on
+its next request. Its row fits a 320 px window at 200% text in both themes and
+is reached with the keyboard.
 """
 
 from __future__ import annotations
@@ -16,6 +22,7 @@ from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Literal
 
+import pytest
 from argon2 import PasswordHasher
 from playwright.sync_api import Browser, Page, expect, sync_playwright
 
@@ -26,10 +33,12 @@ from tests.browser.test_review_browser import (
     _login,
     _server,
 )
+from tests.browser.text_size import set_root_text
 from tests.support.ports import ReservedPort
 
 _NEW_PASSWORD = "synthetic replacement password"
 _LIBRARY = re.compile(r".*/library(\?.*)?$")
+_SIGNED_OUT = "Every other browser was signed out."
 
 
 @contextmanager
@@ -192,3 +201,107 @@ def test_store_mode_changes_the_password_and_signs_out_every_other_browser() -> 
             assert "/login" in elsewhere.url
             _sign_in(elsewhere, origin, _NEW_PASSWORD)
             elsewhere.wait_for_url(_LIBRARY)
+
+
+@pytest.mark.parametrize("mode", ["file", "store"])
+def test_signing_out_other_browsers_keeps_this_one(
+    mode: Literal["file", "store"],
+) -> None:
+    with _owner_server(mode) as (browser, origin):
+        owner = browser.new_context(
+            ignore_https_errors=True, viewport={"width": 1180, "height": 900}
+        )
+        other = browser.new_context(ignore_https_errors=True)
+        with _closing_context(owner), _closing_context(other):
+            page = owner.new_page()
+            _login(page, origin)
+            elsewhere = other.new_page()
+            _login(elsewhere, origin)
+
+            _access(page, origin)
+            titles = page.locator(".settings-sheet .settings-field-title")
+            expect(titles.nth(0 if mode == "file" else 1)).to_have_text(
+                "Other browsers"
+            )
+            expect(page.get_by_text("This browser stays signed in.")).to_be_visible()
+            button = page.get_by_role("button", name="Sign out other browsers")
+            button.click()
+            status = page.get_by_role("status").filter(has_text=_SIGNED_OUT)
+            expect(status).to_be_visible()
+            expect(status).to_be_focused()
+            expect(button).to_be_enabled()
+
+            # Leaving Settings clears the line; coming back in the same page
+            # keeps the session and its CSRF token.
+            page.get_by_role("link", name="Library", exact=True).click()
+            page.wait_for_url(_LIBRARY)
+            page.get_by_role("heading", name="Works", exact=True).wait_for()
+            page.get_by_role("link", name="Settings", exact=True).click()
+            page.get_by_role(
+                "button", name=re.compile("^Access and diagnostics")
+            ).click()
+            page.get_by_role(
+                "heading", name="Access and diagnostics", exact=True
+            ).wait_for()
+            expect(page.get_by_text(_SIGNED_OUT)).to_have_count(0)
+            if mode == "store":
+                page.get_by_role("group", name="Diagnostic timings").get_by_role(
+                    "button", name="On"
+                ).click()
+                page.get_by_role("button", name="Save settings").click()
+                expect(page.get_by_text("Settings saved and in use.")).to_be_visible()
+            else:
+                button.click()
+                expect(status).to_be_visible()
+                expect(status).to_be_focused()
+
+            # The other browser is sent to sign-in on its next request.
+            elsewhere.get_by_role("link", name="Settings", exact=True).click()
+            elsewhere.wait_for_url(re.compile(r".*/login(\?.*)?$"))
+
+
+def test_other_browsers_row_fits_320_px_and_200_percent_text_in_both_themes() -> None:
+    with _owner_server("store") as (browser, origin):
+        context = browser.new_context(
+            ignore_https_errors=True, viewport={"width": 320, "height": 800}
+        )
+        with _closing_context(context):
+            page = context.new_page()
+            _login(page, origin)
+            page.goto(f"{origin}/settings")
+            page.get_by_role("combobox", name="Settings section").click()
+            page.get_by_role(
+                "option", name=re.compile("^Access and diagnostics")
+            ).click()
+            page.get_by_role(
+                "heading", name="Access and diagnostics", exact=True
+            ).wait_for()
+            html = page.locator("html")
+            before = page.get_by_role("button", name="Change password")
+            button = page.get_by_role("button", name="Sign out other browsers")
+            for theme in ("light", "dark"):
+                if html.get_attribute("data-theme") != theme:
+                    page.locator(".theme-toggle").click()
+                expect(html).to_have_attribute("data-theme", theme)
+                for size in ("", "200%"):
+                    set_root_text(page, size)
+                    where = f"{theme} at {size or 'default'} text"
+                    widths = page.evaluate(
+                        "() => [document.documentElement.scrollWidth, window.innerWidth]"
+                    )
+                    assert widths[0] <= widths[1], where
+                    box = button.bounding_box()
+                    assert box is not None, where
+                    assert box["height"] >= 44, where
+                    assert box["x"] >= 0 and box["x"] + box["width"] <= widths[1], where
+                    before.focus()
+                    page.keyboard.press("Tab")
+                    expect(button).to_be_focused()
+            page.keyboard.press("Enter")
+            status = page.get_by_role("status").filter(has_text=_SIGNED_OUT)
+            expect(status).to_be_visible()
+            expect(status).to_be_focused()
+            widths = page.evaluate(
+                "() => [document.documentElement.scrollWidth, window.innerWidth]"
+            )
+            assert widths[0] <= widths[1]

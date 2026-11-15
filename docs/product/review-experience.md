@@ -596,10 +596,10 @@ OpenRouter key serves all three tasks; replacing it keeps every choice.
 Reviewer advice allows no write
 ([ADR-0062](../architecture/decisions/0062-owner-managed-reviewer-access.md)).
 
-In store mode, Access and diagnostics has Owner password. It takes the current
-password, applies at once outside Save settings and signs out every other
-browser
-([deployment](../operations/deployment.md#changing-the-owner-password)).
+In Access and diagnostics, Sign out other browsers and, in store mode, Owner
+password (given the current one) apply at once outside Save settings. Both
+sign out every other browser
+([deployment](../operations/deployment.md#owner-sessions)).
 
 ## Words and values
 

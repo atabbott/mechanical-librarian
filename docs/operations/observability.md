@@ -91,6 +91,7 @@ text, credential or path.
 | `activity_projector` | The background Activity projector stopped. `code` is `stopped`, `released` or `admission_closed` (info), or `unexpected` (WARNING, with the exception type in `error`). Shutdown adds `join_timeout` (WARNING) if the projector's current step outlasts the join bound; closing still waits for that step. |
 | `provider_recovery_schedule` | The review library cannot read the recovery schedule, so it withdraws the retry promise (WARNING, `code: unavailable`). |
 | `owner_password_change` | An owner password change reached the sign-in throttle. `outcome` is `changed` or the refusal code; `sessions_ended` counts the other session rows removed, or is null when nothing changed or their removal failed. Info, or WARNING for `persistence`, `runtime` or a failed removal. |
+| `owner_sign_out_others` | Sign out other browsers reached the session store. `outcome` is `signed_out`, `csrf`, `unauthorized` or `persistence`; `sessions_ended` counts the other session rows removed, or is null when nothing was removed. Info, or WARNING for `persistence`. |
 | `provider_request_failed`, `provider_throttled`, `provider_deadline_stop`, `provider_adapter_fault`, `provider_recovery_job` | See [provider logs](#provider-logs). |
 
 `preparation_unknown_failure` holds only validated code identities and
