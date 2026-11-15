@@ -19,6 +19,6 @@ export const descriptionAdviceStatus = (advice: DescriptionAdviceView, selected 
   if (!advice.current)
     return 'This advice is out of date. Choose another value, or retry to ask for new advice.'
   return advice.candidate?.output.disposition === 'needs_review'
-    ? 'Needs you. This description is never applied automatically.'
+    ? 'The adviser was unsure of this text, so Automatic never applies it.'
     : 'Ready to choose.'
 }
