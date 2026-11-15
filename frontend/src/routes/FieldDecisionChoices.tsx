@@ -1,4 +1,5 @@
 import { queryWorkClass } from '../queryWork'
+import { KeyBadge } from './ReviewKeys'
 import { descriptionAdviceStatus } from '../descriptionAdviceStatus'
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { useRef, useState } from 'react'
@@ -305,6 +306,7 @@ export function MetadataChoice({
         disabled={disabled}
         onClick={onChoose}
       >
+        <KeyBadge position={radio['aria-posinset']} />
         <small>
           {label}
           {context?.recommendation === 'recommended' ? `${label ? ' · ' : ''}Recommended` : ''}

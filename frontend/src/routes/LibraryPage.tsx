@@ -56,6 +56,7 @@ import type { ReviewField } from '../fieldDecision'
 import { LibraryViewSwitch } from '../components/LibraryViewSwitch'
 import { CaseCheckingLine } from '../components/CaseCheckingLine'
 import { ReviewCompletion } from './ReviewCompletion'
+import { ReviewKeys } from './ReviewKeys'
 import { useStaleCoverReview } from './StaleCoverReview'
 import { useCoverPrepareFailure } from '../coverChoices'
 import { FieldDecisionCanvas } from './FieldDecisionCanvas'
@@ -1488,6 +1489,13 @@ export default function LibraryPage({
             </>
           ) : null}
         </button>
+        <ReviewKeys
+          ready={
+            !(preparationSelected || search.attention === 'open') &&
+            !(controller.recording || controller.checking || controller.reloadRequired) &&
+            (!search.preview || selectedDetailReady || (selectedReadError && !selectedReadLoading))
+          }
+        />
         <WriteReadyNotice />
       </header>
       <PreparationNotice routeIdentity={routeIdentity} />

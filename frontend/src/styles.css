@@ -1781,3 +1781,26 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
   .taste-section li:not(.taste-editing) > .taste-who { grid-column:2; grid-row:2; justify-self:start; align-self:center; padding-top:0; }
   .taste-section li:not(.taste-editing) > .taste-pencil { grid-column:3; grid-row:2; justify-self:end; align-self:center; margin-block:0; }
 }
+/* Review keys (#1337): the Library toolbar button, the key list and the card badges. */
+.variant-m-workspace .library-header > .attention-toggle { margin-inline-start:auto; }
+.review-keys-toggle { flex:none; min-height:44px; padding:4px 15px; border:1px solid var(--line-strong); border-radius:999px; color:var(--accent-strong); background:var(--surface-strong); font-weight:650; white-space:nowrap; }
+.review-keys-toggle:hover { border-color:var(--accent); }
+.review-keys-dialog kbd, .review-key-badge { display:inline-grid; place-items:center; box-sizing:border-box; min-width:1.4rem; height:1.4rem; padding:0 .35rem; color:var(--ink); background:var(--surface); border:1px solid var(--field-line); border-bottom-width:2px; border-radius:.3rem; font:650 .75rem/1 Inter, ui-sans-serif, system-ui, sans-serif; font-variant-numeric:tabular-nums; letter-spacing:0; text-transform:none; }
+.review-key-badge { display:none; }
+:root[data-review-keys='on'] .library-page :is(.value-choice, .library-cover-card):not(:disabled) > .review-key-badge { display:inline-grid; position:absolute; z-index:1; top:.65rem; right:.65rem; }
+.library-page .library-cover-card { position:relative; }
+:root[data-review-keys='on'] .library-page .library-cover-card:not(:disabled) > .review-key-badge { top:1rem; right:1rem; box-shadow:0 1px 3px rgb(0 0 0 / .25); }
+/* The badge keeps a corner clear of the label line and the value, so Your choice never runs under it. */
+:root[data-review-keys='on'] .library-page .metadata-choice .choice-select:has(> .review-key-badge):not(:disabled) > :is(small, strong) { padding-inline-end:2rem; }
+.review-keys-dialog { box-sizing:border-box; width:min(30rem,calc(100vw - 2rem)); max-height:calc(100dvh - 2rem); overflow:auto; padding:1.25rem 1.5rem; color:var(--ink); background:var(--surface); border:1px solid var(--line-strong); border-radius:.75rem; box-shadow:var(--shadow); }
+.review-keys-dialog::backdrop { background:rgb(23 32 30 / .45); }
+:root[data-theme='dark'] .review-keys-dialog { background:var(--surface-strong); border-color:var(--soft); }
+:root[data-theme='dark'] .review-keys-dialog::backdrop { background:rgb(0 0 0 / .65); }
+.review-keys-dialog h2 { margin:0 0 .75rem; font-size:1.15rem; }
+.review-keys-list { display:grid; margin:0; }
+.review-keys-list > div { display:flex; flex-wrap:wrap; align-items:center; gap:.4rem .75rem; padding:.55rem 0; border-bottom:1px solid var(--line); }
+.review-keys-list dt { flex:0 1 4.75rem; display:flex; flex-wrap:wrap; gap:.25rem; }
+.review-keys-list dd { flex:1 1 11rem; min-width:0; margin:0; font-size:.875rem; line-height:1.4; }
+.review-keys-switch { display:flex; align-items:center; gap:.65rem; min-height:44px; margin-top:.75rem; font-weight:650; cursor:pointer; }
+.review-keys-switch input { flex:none; width:1.25rem; height:1.25rem; min-height:0; margin:0; accent-color:var(--accent-strong); }
+.review-keys-close { display:block; margin:.75rem 0 0 auto; }

@@ -2122,9 +2122,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         assert page.get_by_role("button", name="Previous").count() == 0
         assert page.get_by_role("button", name="Next").count() == 0
         # One toolbar in both states, the Library title's Works and Covers
-        # switch beside the Attention toggle; Back to works leads the
-        # workspace (#1284).
-        expect(page.locator(".library-header button")).to_have_count(3)
+        # switch beside the Attention toggle and Keys (#1337); Back to works
+        # leads the workspace (#1284). The closed key list's button is not shown.
+        expect(page.locator(".library-header button:visible")).to_have_count(4)
         expect(
             page.locator(".library-header .library-title").get_by_role(
                 "heading", level=1, name="Library", exact=True
@@ -2135,7 +2135,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         ).to_be_visible()
         expect(page.get_by_role("button", name="Back to works")).to_be_visible()
         for control in (
-            page.locator(".library-header button").all()
+            page.locator(".library-header button:visible").all()
             + page.locator(".compact-workspace-back").all()
         ):
             assert control.bounding_box()["height"] >= 44
