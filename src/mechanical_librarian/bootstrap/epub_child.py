@@ -631,8 +631,8 @@ def main(argv: list[str] | None = None) -> int:
     limits = EpubOpeningLimits()
     sys.dont_write_bytecode = True
     try:
-        # First, while this is the only thread: Landlock binds only the
-        # threads that exist when it is applied.
+        # First, while this is the only thread: Landlock binds the calling
+        # thread and the threads it starts later, never one already running.
         confine_interpreter()
         _install_parent_guard(control_descriptor, done, expected_parent)
         _apply_limits()

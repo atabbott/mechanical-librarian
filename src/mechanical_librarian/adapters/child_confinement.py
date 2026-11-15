@@ -11,7 +11,9 @@ its shim) calls one entry point here first. Two kernel mechanisms do the work:
   it, such as the server.
 - seccomp: a filter that first checks the architecture (a foreign or x32
   system call kills the process), then refuses sockets, io_uring, new
-  processes, namespace changes and cross-process access. Threads still work.
+  processes, namespace changes, cross-process access, and the truncate,
+  permission, owner, timestamp and extended-attribute changes Landlock does
+  not cover. Threads still work.
 
 Landlock is best effort by kernel: where the kernel has none, or the
 container's profile refuses it, the child keeps the seccomp filter and its
@@ -94,7 +96,13 @@ _MACHINES = {
         # fork, vfork, bpf, perf_event_open, userfaultfd, keyctl, add_key,
         # request_key.
         refused=(41, 53, 425, 426, 427, 101, 310, 311, 434, 438, 272, 308, 57, 58)
-        + (321, 298, 323, 250, 248, 249),
+        + (321, 298, 323, 250, 248, 249)
+        # Changes Landlock never covers (or covers only from ABI 3): truncate,
+        # chmod, fchmod, fchmodat, fchmodat2, chown, fchown, lchown, fchownat,
+        # utime, utimes, futimesat, utimensat, setxattr, lsetxattr, fsetxattr,
+        # setxattrat, removexattr, lremovexattr, fremovexattr, removexattrat.
+        + (76, 90, 91, 268, 452, 92, 93, 94, 260, 132, 235, 261, 280)
+        + (188, 189, 190, 463, 197, 198, 199, 466),
     ),
     "aarch64": _Machine(
         arch=0xC00000B7,
@@ -104,9 +112,12 @@ _MACHINES = {
         clone=220,
         clone3=435,
         exec=(221, 281),
-        # The same calls in the same order, without fork and vfork.
+        # The same calls in the same order, without the ones aarch64 lacks
+        # (fork, vfork, chmod, chown, lchown, utime, utimes, futimesat).
         refused=(198, 199, 425, 426, 427, 117, 270, 271, 434, 438, 97, 268)
-        + (280, 241, 282, 219, 217, 218),
+        + (280, 241, 282, 219, 217, 218)
+        + (45, 52, 53, 452, 55, 54, 88)
+        + (5, 6, 7, 463, 14, 15, 16, 466),
     ),
 }
 _MACHINE_ALIASES = {"amd64": "x86_64", "arm64": "aarch64"}

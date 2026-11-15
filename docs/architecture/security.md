@@ -380,8 +380,9 @@ Settings write that sends no request, and no view shows a key's value.
 
 ## Parsers and hostile input
 
-No untrusted media or image byte is parsed in the server process, and each
-parser helper is [confined](parser-confinement.md) to the files it was handed.
+No untrusted media or image byte is parsed in the server process. Where the
+kernel allows, each parser helper is [confined](parser-confinement.md) to its
+handed files.
 
 **EPUB.** A child with no credentials or persistence parses one bounded
 immutable snapshot
@@ -411,7 +412,7 @@ image byte reaches a report, log, diagnostic, status or support bundle.
 
 **Audiobooks.** `ffprobe` runs over a passed descriptor
 ([ADR-0063](decisions/0063-isolated-audiobook-inspector.md)) with no inherited
-`PATH` and with CPU, memory, file, output and wall-clock limits. Its output and
+`PATH`, and CPU, memory, file, output and wall-clock limits. Its output and
 sidecars are read in the audio child under a closed recognition grammar, never
 an XML or container parser.
 
@@ -475,7 +476,7 @@ markup never reaches a write. Markup built to hide a path is an accepted
 risk.
 
 **Images.** JPEG, PNG and static WebP are decoded only in a constrained
-child, which also computes the perceptual hash.
+child that also computes the perceptual hash.
 
 ## AI reviewer boundary
 

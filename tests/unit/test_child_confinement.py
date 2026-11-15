@@ -97,6 +97,24 @@ def test_the_filter_refuses_network_processes_and_exec(machine: str) -> None:
     assert _evaluate(probe, arch=arch, syscall=socket_call) == _EPERM
 
 
+@pytest.mark.parametrize(
+    ("machine", "arch", "changes"),
+    (
+        # truncate, chmod, fchmod, fchmodat, fchmodat2, chown, fchownat,
+        # utimensat, setxattr, fsetxattr, setxattrat, removexattr, removexattrat
+        ("x86_64", 0xC000003E, (76, 90, 91, 268, 452, 92, 260, 280, 188, 190, 463)),
+        ("aarch64", 0xC00000B7, (45, 52, 53, 452, 55, 54, 88, 5, 7, 463, 14, 466)),
+    ),
+)
+def test_the_filter_refuses_changes_landlock_does_not_cover(
+    machine: str, arch: int, changes: tuple[int, ...]
+) -> None:
+    for allow_exec in (False, True):
+        program = child_confinement.filter_program(machine, allow_exec=allow_exec)
+        for syscall in changes:
+            assert _evaluate(program, arch=arch, syscall=syscall) == _EPERM
+
+
 def test_an_unknown_machine_is_refused_rather_than_left_open() -> None:
     with pytest.raises(child_confinement.ConfinementError):
         child_confinement.filter_program("riscv64", allow_exec=False)
@@ -191,6 +209,9 @@ def report(extra=None):
     result = {
         "read_other": attempt(lambda: open(SECRET, "rb").read()),
         "append_other": attempt(lambda: open(SECRET, "ab").close()),
+        "truncate_other": attempt(lambda: os.truncate(SECRET, 0)),
+        "chmod_other": attempt(lambda: os.chmod(SECRET, 0o600)),
+        "utime_other": attempt(lambda: os.utime(SECRET)),
         "create": attempt(lambda: open(SECRET + ".new", "wb").close()),
         "connect": attempt(connect),
         "socketpair": attempt(socket.socketpair),
@@ -227,6 +248,9 @@ def _run(body: str, secret: Path, port: int, **kwargs: object) -> tuple[int, dic
 _CONFINED = {
     "read_other": "PermissionError",
     "append_other": "PermissionError",
+    "truncate_other": "PermissionError",
+    "chmod_other": "PermissionError",
+    "utime_other": "PermissionError",
     "create": "PermissionError",
     "connect": "PermissionError",
     "socketpair": "PermissionError",
@@ -357,6 +381,28 @@ def test_the_probe_reads_only_its_media_and_runs_only_its_binary(
     assert completed.returncode != 0
     assert b"Permission denied" in completed.stderr
     assert received == []
+
+
+@linux_only
+def test_a_landlock_failure_after_a_good_version_query_is_raised() -> None:
+    if child_confinement.landlock_abi() == 0:
+        pytest.skip("this kernel has no Landlock")
+    code, result = _run(
+        """
+        from mechanical_librarian.adapters import child_confinement
+        read, write = os.pipe()
+        try:
+            child_confinement.confine_probe("/bin/sh", read)
+            outcome = "confined"
+        except child_confinement.ConfinementError:
+            outcome = "raised"
+        os.write(2, json.dumps({"outcome": outcome}).encode())
+        """,
+        Path("/nonexistent"),
+        0,
+    )
+    assert code == 0
+    assert result["outcome"] == "raised"
 
 
 @linux_only
