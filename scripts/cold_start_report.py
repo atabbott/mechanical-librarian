@@ -2024,7 +2024,10 @@ def _store_configuration(
     except OwnerSettingsError as error:
         raise SystemExit(_NO_SAVED_SETTINGS) from error
     listed = {mount.name for mount in bootstrap.mounts}
-    if any(library.mount not in listed for library in settings.document.libraries):
+    if any(
+        library.mount is not None and library.mount not in listed
+        for library in settings.document.libraries
+    ):
         raise SystemExit(_UNLISTED_MOUNT)
     try:
         return store_runtime_configuration(settings, bootstrap)

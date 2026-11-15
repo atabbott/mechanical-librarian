@@ -25,6 +25,7 @@ import scripts.cold_start_report as cold_start
 import scripts.persistence_census as persistence_census
 
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
+from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
     open_repository,
@@ -47,6 +48,7 @@ from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     TargetFacts,
 )
+from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.infrastructure.settings_authority import (
     REVIEW_BOOTSTRAP_SCHEMA,
@@ -1061,6 +1063,36 @@ def test_store_configuration_is_the_runtime_projection(tmp_path: Path) -> None:
     assert all(item.secret_file is None for item in configuration.providers)
     assert configuration.review is not None
     assert configuration.review.canonical_origin == "http://localhost:8080"
+
+
+def test_store_configuration_accepts_a_library_without_a_mount(
+    tmp_path: Path,
+) -> None:
+    """A saved library may name no mount; the runtime accepts it, so must the report."""
+    database = tmp_path / "application.sqlite3"
+    repository, _ = _seed_full_store(database)
+    connection = cast(SQLiteMetadataReportRepository, repository)._connection
+    (encoded,) = connection.execute("SELECT document FROM owner_settings").fetchone()
+    document = json.loads(encoded)
+    document["libraries"][0]["mount"] = None
+    connection.execute(
+        "UPDATE owner_settings SET document=?",
+        (_canonical_json(OwnerSettingsDocument.model_validate(document).model_dump()),),
+    )
+    connection.commit()
+    cast(SQLiteMetadataReportRepository, repository).close()
+    bootstrap = cold_start._review_bootstrap(
+        _write_bootstrap(tmp_path / "review-bootstrap.json", mounts=[])
+    )
+    read_only = cold_start._open_read_only(database)
+    try:
+        configuration = cold_start._store_configuration(read_only, bootstrap)
+    finally:
+        read_only.close()
+
+    (library,) = configuration.libraries
+    assert library.mount is None
+    assert configuration.mounts == ()
 
 
 def _refusal_arguments(case: str, root: Path) -> list[str]:
