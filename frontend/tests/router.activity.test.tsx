@@ -3834,6 +3834,54 @@ it('saves the write plan file from the permission review without granting anythi
   }
 })
 
+it('lists each field’s prepared changes under it in the permission review (#1336)', async () => {
+  const user = userEvent.setup()
+  const http = createHttp()
+  vi.mocked(http.getActivity).mockResolvedValue(permissionHistory)
+  vi.mocked(http.getActivityConsent).mockResolvedValue(consentOf(permissionHistory))
+  vi.mocked(http.getActivityPermissionReadiness).mockResolvedValue({
+    ...permissionReadiness(permissionHistory),
+    plan: {
+      total: 1,
+      groups: [
+        {
+          library: 'fiction',
+          destination: 'title',
+          kind: 'automatic',
+          count: 1,
+          rows: [
+            {
+              work: 'Real Tigers',
+              authors: 'Mick Herron',
+              current: 'Not set',
+              new: 'Real Tigers',
+              reason: 'Title and subtitle: Separate title and subtitle',
+              sources: ['Hardcover'],
+            },
+          ],
+        },
+      ],
+    },
+  })
+  renderRoute('/activity', http, createLiveStream())
+  await user.click(await screen.findByRole('button', { name: 'Review write permissions' }))
+
+  const fields = await screen.findByRole('list', { name: /fields$/ })
+  const title = within(fields).getByText('Title').closest('li') as HTMLElement
+  const group = within(title).getByRole('group')
+  // A small plan starts open and lists every change where its field is decided.
+  expect(group).toHaveAttribute('open')
+  expect(within(title).getByText('Chosen automatically')).toBeVisible()
+  expect(within(title).getByText('1 change')).toBeVisible()
+  expect(within(title).getByText('Real Tigers', { selector: 'strong' })).toBeVisible()
+  expect(within(title).getByText('Not set')).toBeVisible()
+  expect(
+    within(title).getByText('Title and subtitle: Separate title and subtitle · Hardcover'),
+  ).toBeVisible()
+  // The ticks are untouched by reading the plan.
+  expect(screen.getByRole('checkbox')).not.toBeChecked()
+})
+
 const basisChanged = 'Your library settings changed. Check write permissions again.'
 const grantedHistory: ActivityView = {
   ...permissionHistory,

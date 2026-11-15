@@ -1222,7 +1222,10 @@ def test_the_write_plan_downloads_as_a_saved_file_without_granting_anything() ->
                     assert download.suggested_filename == filename
                     path = download.path()
                     saved[filename] = Path(path).read_bytes()
-                    expect(review.get_by_role("status").last).to_have_text("")
+                    # The file's own status line, empty (and so hidden) once saved.
+                    expect(
+                        review.locator(".activity-write-plan > p[role='status']")
+                    ).to_have_text("")
 
                 csv_lines = saved["mechanical-librarian-write-plan.csv"].split(b"\r\n")
                 assert csv_lines[0] == (

@@ -1423,10 +1423,20 @@ def test_a_cover_decision_names_its_cited_cover_sources(
     ids=("automatic", "human"),
 )
 def test_description_advice_is_planned_naming_no_sources(
-    tmp_path: Path, origin: str, kind: str, reason: str
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    origin: str,
+    kind: str,
+    reason: str,
 ) -> None:
     """D4: description advice keeps digests only, so it names no sources."""
-    from tests.support.description_advice import _prepared
+    from tests.support.description_advice import (
+        _prepared,
+        qualify_description_advice,
+    )
+
+    # Automatic advice is admitted only once a record names its adviser (#1901).
+    qualify_description_advice(monkeypatch)
 
     repository, store, binding, candidate, _ = _prepared(tmp_path)
     try:

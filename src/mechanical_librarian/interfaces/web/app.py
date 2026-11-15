@@ -266,12 +266,13 @@ async def _marking_aborted(
     """Relay a route's body, marking the request before an exception leaves it.
 
     The middleware below shares this scope; ``_unless_aborted`` reads the mark
-    once the relayed body has ended.
+    once the relayed body has ended. A cancellation or a body closed early, as
+    an abandoned download is, is not a fault and leaves no mark.
     """
     try:
         async for chunk in content:
             yield chunk
-    except BaseException as error:
+    except Exception as error:
         scope[_ABORTED_BODY] = type(error).__name__
         raise
 

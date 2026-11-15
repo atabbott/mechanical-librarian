@@ -136,9 +136,11 @@ from mechanical_librarian.interfaces.web.app import (
     AbortedResponseBody,
     _CaseDetailResponse,
     _CoverOmission,
+    _marking_aborted,
     _MediaHealthObservation,
     _ReportDetailResponse,
     _ReviewField,
+    _unless_aborted,
 )
 from tests.support.audiobook_reports import (
     admitted_audiobook_report,
@@ -1092,12 +1094,63 @@ def test_write_plan_aborted_after_the_head_never_completes_the_response(
     assert bodies and bodies[0]["body"].startswith(b"\xef\xbb\xbf")
     assert all(message.get("more_body", False) for message in bodies)
     assert isinstance(raised, AbortedResponseBody)
+    # Each abort is an ordinary exception, so the route marked its request.
+    assert scope["mechanical_librarian.aborted_body"] in {
+        "FieldEffectError",
+        "GuardedApplicationError",
+    }
     # Value-free: the message names only the original error's type.
     assert str(raised) in {
         "response body aborted by FieldEffectError",
         "response body aborted by GuardedApplicationError",
     }
     _released(plan, started)
+
+
+@pytest.mark.parametrize(
+    "end", ("closed", "cancelled", "fault"), ids=("closed", "cancelled", "fault")
+)
+def test_only_a_faulted_body_marks_its_request_aborted(end: str) -> None:
+    """An abandoned download is closed or cancelled, never logged as aborted (#1336)."""
+    scope: dict[str, object] = {}
+
+    async def body() -> Any:
+        yield b"head"
+        if end == "fault":
+            raise FieldEffectError("persistence")
+        await anyio.sleep_forever()
+
+    async def relayed() -> Any:
+        return
+        yield
+
+    async def drive() -> None:
+        content = _marking_aborted(scope, body())
+        assert await anext(content) == b"head"
+        if end == "closed":
+            await content.aclose()
+        elif end == "cancelled":
+            with anyio.CancelScope() as cancelled:
+                cancelled.cancel()
+                await anext(content)
+            assert cancelled.cancelled_caught
+        else:
+            with pytest.raises(FieldEffectError):
+                await anext(content)
+        relay = _unless_aborted(scope, relayed())
+        if end == "fault":
+            with pytest.raises(AbortedResponseBody, match="by FieldEffectError$"):
+                await anext(relay)
+        else:
+            with pytest.raises(StopAsyncIteration):
+                await anext(relay)
+
+    anyio.run(drive)
+    assert scope == (
+        {"mechanical_librarian.aborted_body": "FieldEffectError"}
+        if end == "fault"
+        else {}
+    )
 
 
 def test_activity_is_permanent_and_consent_is_csrf_bound(

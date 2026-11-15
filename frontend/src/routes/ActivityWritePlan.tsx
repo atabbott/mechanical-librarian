@@ -28,7 +28,7 @@ type DownloadState =
   | { readonly kind: 'stale' }
 
 // Firefox and Safari can drop a download whose URL is revoked straight after
-// the click, so a saved file's URL is kept this long, or until the panel ends.
+// the click, so a saved file's URL is kept this long, even after the panel ends.
 export const SAVED_URL_LIFETIME_MS = 60_000
 
 const save = (blob: Blob, filename: string): string => {
@@ -50,20 +50,8 @@ export const ActivityWritePlan = ({ plan }: { plan: WritePlanView }) => {
   const { http } = useReviewContext()
   const [state, setState] = useState<DownloadState>({ kind: 'idle' })
   const controller = useRef<AbortController | null>(null)
-  const saved = useRef(new Map<string, ReturnType<typeof setTimeout>>())
-  // A download in flight ends with the panel; nothing is saved after it, and
-  // every saved file's URL is let go.
-  useEffect(() => {
-    const urls = saved.current
-    return () => {
-      controller.current?.abort()
-      for (const [url, timer] of urls) {
-        clearTimeout(timer)
-        URL.revokeObjectURL(url)
-      }
-      urls.clear()
-    }
-  }, [])
+  // A download in flight ends with the panel; nothing is saved after it.
+  useEffect(() => () => controller.current?.abort(), [])
   if (plan.total === 0) return null
   const busy = state.kind === 'busy'
   const expected = Math.min(plan.total, WRITE_PLAN_FILE_ROWS)
@@ -84,13 +72,9 @@ export const ActivityWritePlan = ({ plan }: { plan: WritePlanView }) => {
       const file = await http.downloadActivityWritePlan(format, current.signal, progress)
       if (current.signal.aborted) return
       const url = save(file.blob, file.filename)
-      saved.current.set(
-        url,
-        setTimeout(() => {
-          saved.current.delete(url)
-          URL.revokeObjectURL(url)
-        }, SAVED_URL_LIFETIME_MS),
-      )
+      // Each saved file's URL is let go at its own time; the browser may
+      // still be starting that download when the panel ends.
+      setTimeout(() => URL.revokeObjectURL(url), SAVED_URL_LIFETIME_MS)
       setState({ kind: 'idle' })
     } catch (error) {
       if (current.signal.aborted) return

@@ -45,8 +45,6 @@ export const ActivityPermissionCheck = ({
   /** The check button, or Reload once the tab is on an earlier build. */
   checkButton: RefObject<HTMLButtonElement | null>
   check: () => void
-  /** Unread since the plan's groups sit under each named library (#1336). */
-  libraryName: (library: string) => string
 }) => {
   // Another check cannot succeed on an earlier build: only a reload can.
   const staleLead = basisStale

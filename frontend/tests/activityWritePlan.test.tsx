@@ -246,7 +246,7 @@ describe('ActivityWritePlan: the lead and the two files (#1336)', () => {
     expect(screen.getByRole('status')).toHaveTextContent('')
   })
 
-  it('lets a saved file go a minute later, or when the panel ends', async () => {
+  it('lets each saved file go a minute later, even after the panel ends', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     download.mockResolvedValue(file)
     const { unmount } = render(<ActivityWritePlan plan={plan(3, [])} />)
@@ -269,12 +269,14 @@ describe('ActivityWritePlan: the lead and the two files (#1336)', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Download JSON' }))
     })
     expect(saved).toHaveLength(2)
+    // The browser may still be starting this download, so the panel ending
+    // lets nothing go early.
     unmount()
-    expect(URL.revokeObjectURL).toHaveBeenLastCalledWith('blob:second')
-    act(() => {
-      vi.advanceTimersByTime(SAVED_URL_LIFETIME_MS)
-    })
+    vi.advanceTimersByTime(SAVED_URL_LIFETIME_MS - 1)
+    expect(URL.revokeObjectURL).toHaveBeenCalledTimes(1)
+    vi.advanceTimersByTime(1)
     expect(URL.revokeObjectURL).toHaveBeenCalledTimes(2)
+    expect(URL.revokeObjectURL).toHaveBeenLastCalledWith('blob:second')
   })
 
   it('counts received changes at most once a second, up to the file limit', async () => {

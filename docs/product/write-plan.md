@@ -19,8 +19,9 @@ identity.
 
 Sources are provider names only. A value you accepted names the providers of
 the evidence behind it, and an automatic one the providers its outcome cites.
-A cover names where the chosen image came from: the provider that supplied it,
-or "Local library record" for the library's own cover. A value you entered or
+A cover names only the sources its chosen image was found in: each provider
+that supplied it, or "Local library record" for the library's own cover; the
+evidence that matched the image to the book is not named. A value you entered or
 restored names none, and neither does description advice, which keeps no
 evidence of its own.
 
