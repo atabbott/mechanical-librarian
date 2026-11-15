@@ -309,7 +309,11 @@ describe('Library review ownership', () => {
     const { router } = renderRoute(
       '/review/case-1?lens=no_attention_needed&field=title&subview=evidence',
     )
-    await screen.findByRole('heading', { name: 'Evidence' })
+    // The section tabs name the view, so its h2 is read but not shown, and the
+    // old visible sheet header is gone (#1894).
+    const evidenceHeading = await screen.findByRole('heading', { level: 2, name: 'Evidence' })
+    expect(evidenceHeading).toHaveClass('sr-only')
+    expect(document.querySelector('.diagnostic-sheet > header')).toBeNull()
     await user.click(screen.getByRole('link', { name: 'History' }))
     await waitFor(() =>
       expect(router.state.location.search).toEqual({
@@ -318,7 +322,10 @@ describe('Library review ownership', () => {
         subview: 'history',
       }),
     )
-    expect(await screen.findByRole('heading', { name: 'History' })).toBeVisible()
+    const historyHeading = await screen.findByRole('heading', { level: 2, name: 'History' })
+    expect(historyHeading).toBeVisible()
+    expect(historyHeading).toHaveClass('sr-only')
+    expect(document.querySelector('.diagnostic-sheet > header')).toBeNull()
     expect(screen.queryByRole('button', { name: /Choose|Return|Resume/u })).toBeNull()
     expect(screen.queryByRole('radio')).toBeNull()
     router.history.back()

@@ -6707,6 +6707,9 @@ describe('Library route', () => {
       // The figures beside the question are gone; the choices themselves remain.
       expect(screen.queryByText('Choices')).toBeNull()
       expect(screen.queryByText('Queue position')).toBeNull()
+      expect(
+        within(screen.getByRole('region', { name: 'Choose a cover' })).getAllByRole('radio'),
+      ).toHaveLength(2)
       const compactTrack = currentCover.closest<HTMLElement>('.library-cover-layout')
       const alternativeCover = screen.getByRole('radio', { name: /Open Library cover/u })
       const alternativeChoice = alternativeCover.closest<HTMLElement>('.cover-choice')
@@ -7202,8 +7205,9 @@ describe('Library route', () => {
     renderRoute('/library?lens=all&preview=case-1&field=cover', http)
 
     const prepare = await screen.findByRole('button', { name: 'Prepare cover comparison' })
-    expect(screen.queryByText('Choices')).toBeNull()
-    expect(screen.queryByText('Queue position')).toBeNull()
+    // Before preparation there is no cover to choose among.
+    expect(screen.queryByRole('region', { name: 'Choose a cover' })).toBeNull()
+    expect(screen.queryAllByRole('radio')).toHaveLength(0)
     await user.click(prepare)
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'The cover comparison could not be prepared. Nothing was changed.',
@@ -7216,7 +7220,9 @@ describe('Library route', () => {
     await waitFor(() => expect(retryCoverConsideration).toHaveBeenCalledTimes(2))
     expect(retryCoverConsideration).toHaveBeenLastCalledWith('case-1')
     expect(await screen.findByLabelText('Choose a cover')).toBeVisible()
-    expect(screen.queryByText('Choices')).toBeNull()
+    expect(
+      within(screen.getByRole('region', { name: 'Choose a cover' })).getAllByRole('radio'),
+    ).toHaveLength(2)
     // A prepared comparison can change what the work asks, so Library and
     // Attention counts are read again, as after a decision (#1866).
     await waitFor(() => {
@@ -8691,8 +8697,6 @@ describe('Library route', () => {
     expect(screen.getByRole('button', { name: 'Evidence' })).toHaveFocus()
     expect(screen.queryByText('No source is recorded for this value.')).toBeNull()
     expect(screen.queryByText('Which title should this work use?')).toBeNull()
-    expect(screen.queryByText('Queue position')).toBeNull()
-    expect(screen.queryByText('Choices')).toBeNull()
     expect(screen.queryByRole('radio', { name: /Choose current value/u })).toBeNull()
     expect(screen.queryByRole('radio', { name: /Choose proposed value/u })).toBeNull()
     expect(screen.queryByRole('button', { name: /Take no action|Reject/u })).toBeNull()
@@ -8713,8 +8717,6 @@ describe('Library route', () => {
     expect(await screen.findByRole('heading', { name: 'Subtitle' })).toBeVisible()
     expect(screen.queryByText('This field needs your review.')).toBeNull()
     expect(screen.queryByText('Which subtitle should this work use?')).toBeNull()
-    expect(screen.queryByText('Queue position')).toBeNull()
-    expect(screen.queryByText('Choices')).toBeNull()
     expect(screen.getByLabelText('Subtitle current value')).toHaveTextContent(
       'Current valueUnavailable',
     )
@@ -8818,8 +8820,15 @@ describe('Library route', () => {
       expect(screen.queryByText('Choice recorded.')).toBeNull()
       expect(document.body.textContent).not.toContain('Recording accept…')
       expect(document.body.textContent).not.toContain('Recording choice…')
-      expect(screen.queryByText(/remaining ·/u)).toBeNull()
+      // The failed command leaves the work's attention count and the open field alone.
+      expect(
+        screen.getByText('Needs you', { selector: 'dt' }).nextElementSibling,
+      ).toHaveTextContent(/^1$/u)
       expect(screen.getByRole('button', { name: /Title.*Needs you/u })).toBeVisible()
+      expect(screen.getByRole('button', { name: /Title.*Needs you/u })).toHaveAttribute(
+        'aria-current',
+        'true',
+      )
       const retry = screen.getByRole('button', { name: 'Try the same decision again' })
       expect(retry).toHaveFocus()
       const firstCommand = recordDecision.mock.calls[0]?.[1]
@@ -9014,7 +9023,10 @@ describe('Library route', () => {
       expect(
         screen.getByText('Needs you', { selector: 'dt' }).nextElementSibling,
       ).toHaveTextContent('1')
-      expect(screen.queryByText(/remaining ·/u)).toBeNull()
+      expect(screen.getByRole('button', { name: /^Title/u })).toHaveAttribute(
+        'aria-current',
+        'true',
+      )
       const rail = screen.getByRole('button', { name: /^ASIN/u })
       expect(rail).toHaveAccessibleName('ASIN Optional')
 
@@ -9235,8 +9247,15 @@ describe('Library route', () => {
     expect(document.body.textContent).not.toContain('Recording choice…')
     expect(proposed).toHaveAttribute('aria-checked', 'false')
     expect(proposed).not.toHaveTextContent('Recording…')
-    expect(screen.queryByText(/remaining ·/u)).toBeNull()
+    // The stale command recorded nothing, so the work still needs the owner on Title.
+    expect(screen.getByText('Needs you', { selector: 'dt' }).nextElementSibling).toHaveTextContent(
+      /^1$/u,
+    )
     expect(screen.getByRole('button', { name: /Title.*Needs you/u })).toBeVisible()
+    expect(screen.getByRole('button', { name: /Title.*Needs you/u })).toHaveAttribute(
+      'aria-current',
+      'true',
+    )
   })
 
   it.each([
@@ -12392,7 +12411,11 @@ describe('Library route', () => {
     renderRoute('/library?lens=all&preview=case-1', http)
 
     const rail = await screen.findByRole('navigation', { name: 'Review fields' })
-    expect(screen.queryByText(/remaining ·/u)).toBeNull()
+    // Nothing needs the owner and no field is open.
+    expect(screen.getByText('Needs you', { selector: 'dt' }).nextElementSibling).toHaveTextContent(
+      /^0$/u,
+    )
+    expect(rail.querySelector('[aria-current="true"]')).toBeNull()
     expect(within(rail).getByRole('button', { name: 'Show 2 more fields' })).toBeVisible()
     expect(within(rail).queryByRole('button', { name: /^Title/u })).toBeNull()
 
@@ -16646,6 +16669,12 @@ describe('a focused field decision (#1519)', () => {
     const currentList = current.closest('.current-choice-list')
     expect(currentList?.querySelector(':scope > header')).toHaveTextContent(/^Keep current value$/u)
     expect(currentList).not.toContainElement(sourced)
+    // The current radio is the only one on its side, and the first in the group.
+    if (!(currentList instanceof HTMLElement)) throw new Error('the current side is missing')
+    expect(within(currentList).getAllByRole('radio')).toEqual([current])
+    const group = current.closest<HTMLElement>('[role="radiogroup"]')
+    if (!group) throw new Error('the choice radiogroup is missing')
+    expect(within(group).getAllByRole('radio')).toEqual([current, sourced, unsourced])
     expect(
       sourced.closest('.proposed-choice-list')?.querySelector(':scope > header strong'),
     ).toHaveTextContent(/^Choose a new value$/u)
@@ -16658,6 +16687,18 @@ describe('a focused field decision (#1519)', () => {
     expect(screen.getByRole('button', { name: 'Evidence for proposed value: New title' })).toBe(
       sourced.parentElement?.querySelector('.choice-evidence-toggle'),
     )
+  })
+
+  it('shows no current side for a field that cannot keep its current value', async () => {
+    open(focused({ decisionActions: ['accept'] }))
+    const sourced = await screen.findByRole('radio', { name: 'Choose proposed value: New title' })
+    const group = sourced.closest<HTMLElement>('[role="radiogroup"]')
+    if (!group) throw new Error('the choice radiogroup is missing')
+    expect(within(group).getAllByRole('radio')).toHaveLength(2)
+    expect(document.querySelector('.current-choice-list')).toBeNull()
+    expect(screen.queryByText('Keep current value')).toBeNull()
+    expect(screen.queryByRole('radio', { name: /^Choose current value/u })).toBeNull()
+    expect(sourced.closest('.proposed-choice-list')).not.toBeNull()
   })
 
   it('states only the specific reason under the question', async () => {

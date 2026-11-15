@@ -4513,6 +4513,27 @@ _SOURCES_SUMMARY_GEOMETRY = """() => {
 }"""
 
 
+# The ring of each long description choice, from its value's rect and the
+# ring's own computed offset and size, beside the choice it belongs to (#1894).
+_LONG_DESCRIPTION_RING_GEOMETRY = """() =>
+  [...document.querySelectorAll('.description-choice-content + .choice-select > strong')]
+    .filter(strong => strong.getClientRects().length)
+    .map(strong => {
+      const value = strong.getBoundingClientRect();
+      const ring = getComputedStyle(strong, '::before');
+      const box = strong.closest('.choice-select').getBoundingClientRect();
+      const left = value.left + strong.clientLeft + parseFloat(ring.left);
+      const top = value.top + strong.clientTop + parseFloat(ring.top);
+      const width = parseFloat(ring.width);
+      const height = parseFloat(ring.height);
+      return {
+        left, top, width, right: left + width, bottom: top + height,
+        boxLeft: box.left, boxRight: box.right, boxTop: box.top, boxBottom: box.bottom,
+        viewport: document.documentElement.clientWidth,
+      };
+    })"""
+
+
 @pytest.mark.parametrize("identity", [False, True])
 @pytest.mark.parametrize("dark", [False, True])
 def test_library_description_controls_preserve_words_at_enlarged_text(
@@ -4617,6 +4638,29 @@ def test_library_description_controls_preserve_words_at_enlarged_text(
                         sources,
                     )
                 if not identity:
+                    # A long description's radio ring sits inside its own
+                    # choice and inside the window, not on or past the card's
+                    # edge (#1894).
+                    set_root_text(page, "100%")
+                    for width in (1280, 900, 320):
+                        page.set_viewport_size({"width": width, "height": 900})
+                        page.evaluate(
+                            "() => new Promise(resolve => requestAnimationFrame(() => "
+                            "requestAnimationFrame(resolve)))"
+                        )
+                        rings = page.evaluate(_LONG_DESCRIPTION_RING_GEOMETRY)
+                        assert rings, width
+                        for ring in rings:
+                            assert ring["width"] == 20, (width, ring)
+                            assert (
+                                ring["left"] >= ring["boxLeft"] - 0.5
+                                and ring["right"] <= ring["boxRight"] + 0.5
+                                and ring["top"] >= ring["boxTop"] - 0.5
+                                and ring["bottom"] <= ring["boxBottom"] + 0.5
+                            ), (width, ring)
+                            assert (
+                                ring["left"] >= 0 and ring["right"] <= ring["viewport"]
+                            ), (width, ring)
                     disclosure = page.get_by_role(
                         "button", name="Read full description"
                     ).first
@@ -6191,6 +6235,18 @@ def test_review_choice_group_keyboard_model(width: int) -> None:
                 )
                 assert len(toggle_heights) >= 2, toggle_heights
                 assert min(toggle_heights) >= 44, (width, toggle_heights)
+                # The current value's own choice stays a 44px target beside a
+                # one-line value, side by side and stacked (#1894).
+                for target_width in (1280, 390):
+                    page.set_viewport_size({"width": target_width, "height": 900})
+                    current_select = page.locator(
+                        ".current-choice-list .choice-select"
+                    ).evaluate_all(
+                        "nodes => nodes.map((node) => node.getBoundingClientRect().height)"
+                    )
+                    assert len(current_select) == 1, (target_width, current_select)
+                    assert current_select[0] >= 44, (target_width, current_select)
+                page.set_viewport_size({"width": width, "height": 900})
                 radios = group.get_by_role("radio")
                 count = radios.count()
                 assert count >= 2, snapshot
@@ -14679,6 +14735,27 @@ def _check_cover_tabs_after_swipe_back_and_tab(page: Page, origin: str) -> None:
         page.wait_for_function(_COVER_TAB_IN_VIEW, arg=":focus", timeout=5_000)
 
 
+# A To decide row's status and hold pills, read from their shared row (#1894).
+_COVERS_QUEUE_PILLS_ROW = """item => {
+  const row = item.querySelector('.covers-queue-pills')
+  const [status, hold] = [...row.children].map(pill => pill.getBoundingClientRect())
+  const title = item.querySelector(
+    ':scope > span:not(.covers-image-missing, .covers-queue-pills)').getBoundingClientRect()
+  const gap = parseFloat(getComputedStyle(row).columnGap) || 0
+  const width = row.getBoundingClientRect().width
+  return {
+    count: row.children.length,
+    status: [status.left, status.top, status.width],
+    hold: [hold.left, hold.top, hold.width],
+    row: width,
+    fits: status.width + gap + hold.width <= width + 0.5,
+    sameRow: Math.abs(status.top - hold.top) <= 1,
+    sameLeft: Math.abs(status.left - hold.left) <= 1,
+    belowTitle: status.top >= title.bottom - 1,
+  }
+}"""
+
+
 @pytest.mark.parametrize(
     ("journey", "incumbent"),
     (
@@ -14928,6 +15005,45 @@ def test_measured_cover_rules_keep_or_suggest_through_covers(
                     assert wrapped["height"] > 2 * wrapped["lineHeight"], wrapped
                     assert wrapped["radius"] * 2 < wrapped["height"], wrapped
                     set_root_text(page, "")
+                    # #1894: at 390 px the status and hold pills share one
+                    # wrapping row under the title. A short hold sits beside
+                    # the status; the longest hold moves whole under it only
+                    # because the two do not fit side by side.
+                    for reason, fits in (
+                        ("below_floor", True),
+                        ("current_contradicted", False),
+                    ):
+
+                        def hold_reason(reason: str) -> Callable[[Any], None]:
+                            def fulfil(route: Any) -> None:
+                                listed = route.fetch().json()
+                                listed["items"][0].update(
+                                    group="choice",
+                                    suggestion=None,
+                                    hold={"reason": reason},
+                                    cover=None,
+                                    unreadable_cover=True,
+                                )
+                                route.fulfill(json=listed)
+
+                            return fulfil
+
+                        page.unroute("**/api/v1/covers?*")
+                        page.route("**/api/v1/covers?*", hold_reason(reason))
+                        page.goto(f"{origin}/library?lens=all&view=covers&tab=decide")
+                        expect(hold).to_be_visible()
+                        pills_row = cast(
+                            "dict[str, Any]",
+                            item.evaluate(_COVERS_QUEUE_PILLS_ROW),
+                        )
+                        assert pills_row["count"] == 2, (reason, pills_row)
+                        assert pills_row["belowTitle"], (reason, pills_row)
+                        assert pills_row["fits"] is fits, (reason, pills_row)
+                        if fits:
+                            assert pills_row["sameRow"], (reason, pills_row)
+                        else:
+                            assert not pills_row["sameRow"], (reason, pills_row)
+                            assert pills_row["sameLeft"], (reason, pills_row)
                     page.unroute("**/api/v1/covers?*")
                     page.set_viewport_size({"width": 1280, "height": 900})
                     page.goto(f"{origin}/library?lens=all&view=covers&tab={tab}")
