@@ -271,10 +271,15 @@ described in [observability](observability.md).
 
 A sign-in creates a persistent session cookie with a fixed absolute lifetime of
 up to 30 days, the default. Set a shorter `review.session_lifetime_seconds` if
-you need one. Sessions survive restarts until you sign out, they expire or the
-owner password changes, and are kept in
+you need one. Sessions survive restarts until you sign out, they expire, the
+owner password changes or another browser signs them out, and are kept in
 `/data/private/review-sessions.sqlite`. A remembered session is a bearer
 credential: do not use it on an untrusted device or network.
+
+Settings → Access and diagnostics → Sign out other browsers ends every session
+except the browser you use, in store mode and file mode. It does not change
+the password: after a password was exposed, change it instead
+([changing the owner password](#changing-the-owner-password)).
 
 ## Changing the owner password
 

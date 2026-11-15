@@ -13,7 +13,7 @@ import threading
 import unicodedata
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, replace
 from dataclasses import field as dataclass_field
 from functools import partial
@@ -400,6 +400,9 @@ class ReviewSessionStore(Protocol):
         self, session_digest: str, csrf_digest: str, now: int
     ) -> str: ...
     def end_review_sessions_except(self, session_digest: str) -> int: ...
+    def end_other_review_sessions(
+        self, session_digest: str, csrf_digest: str, now: int
+    ) -> tuple[str, int]: ...
 
 
 class OwnerCredential(Protocol):
@@ -415,6 +418,10 @@ class OwnerPasswordChange(Protocol):
 
     def current(self) -> OwnerCredential: ...
     def successor(self, password: str) -> OwnerCredential: ...
+    def exclusive(self) -> AbstractContextManager[bool]:
+        """Hold off adopt while a session write must not interleave with one."""
+        ...
+
     def adopt(
         self,
         expected: OwnerCredential,
@@ -811,6 +818,35 @@ class OwnerSessionService:
                 outcome if outcome in {"unauthorized", "csrf"} else "persistence"
             )
 
+    def logout_others(self, session_token: str, csrf_token: str) -> int:
+        """End every session but this one, and keep this one and its CSRF token.
+
+        In store mode the call holds off a password change in flight, so it can
+        never delete the session that change has just issued. Returns how many
+        other session rows were removed.
+        """
+        if not _bounded_token(session_token):
+            raise ReviewWebError("unauthorized")
+        if not _bounded_token(csrf_token):
+            raise ReviewWebError("csrf")
+        change = self._password_change
+        try:
+            with nullcontext() if change is None else change.exclusive():
+                outcome, ended = self._repository.end_other_review_sessions(
+                    self._session_digest(session_token),
+                    _digest(csrf_token),
+                    self._clock(),
+                )
+        except Exception as error:
+            _owner_sign_out_others_event("persistence", None)
+            raise ReviewWebError("persistence") from error
+        if outcome != "ended":
+            code = outcome if outcome in {"unauthorized", "csrf"} else "persistence"
+            _owner_sign_out_others_event(code, None)
+            raise ReviewWebError(code)
+        _owner_sign_out_others_event("signed_out", ended)
+        return ended
+
     def change_password(
         self,
         session_token: str,
@@ -836,8 +872,9 @@ class OwnerSessionService:
         now = self._clock()
         credential = change.current()
         try:
+            own_session_digest = credential.session_digest(session_token)
             _, expected_csrf, _ = self._repository.authenticate_review_session(
-                credential.session_digest(session_token), now
+                own_session_digest, now
             )
         except Exception as error:
             # Fail closed, as ``authenticate`` does.
@@ -854,7 +891,13 @@ class OwnerSessionService:
             raise ReviewWebError("invalid_password")
         try:
             tokens, ended = self._replace_password(
-                change, credential, current_password, new_password, client, now
+                change,
+                credential,
+                own_session_digest,
+                current_password,
+                new_password,
+                client,
+                now,
             )
         except ReviewWebError as error:
             _owner_password_change_event(error.code, None)
@@ -866,6 +909,7 @@ class OwnerSessionService:
         self,
         change: OwnerPasswordChange,
         credential: OwnerCredential,
+        own_session_digest: str,
         current_password: str,
         new_password: str,
         client: str,
@@ -907,35 +951,45 @@ class OwnerSessionService:
         if not 32 <= len(session_token) <= 128 or not 32 <= len(csrf_token) <= 128:
             raise ReviewWebError("runtime")
         expires_at = now + self._lifetime_seconds
-        try:
-            self._repository.create_review_session(
-                session_digest, _digest(csrf_token), now, expires_at, client_key
-            )
-        except Exception as error:
-            raise ReviewWebError("persistence") from error
-        ended: int | None = None
-
-        def purge() -> None:
-            # Runs between the commit and the swap, so every other row is keyed
-            # by the replaced verifier: a sign-in or a later change under the
-            # successor cannot have written one yet. Best effort, because those
-            # rows are unreachable either way.
-            nonlocal ended
+        # Held from the new session through the swap, so a sign-out of other
+        # browsers cannot delete the session this change has just issued.
+        with change.exclusive():
+            # The passwords were checked outside the hold. A browser signed out
+            # meanwhile changes nothing: its session is read again before
+            # anything is written.
             try:
-                ended = self._repository.end_review_sessions_except(session_digest)
-            except Exception:
-                ended = None
+                self._repository.authenticate_review_session(own_session_digest, now)
+            except Exception as error:
+                raise ReviewWebError("unauthorized") from error
+            try:
+                self._repository.create_review_session(
+                    session_digest, _digest(csrf_token), now, expires_at, client_key
+                )
+            except Exception as error:
+                raise ReviewWebError("persistence") from error
+            ended: int | None = None
 
-        try:
-            adopted = change.adopt(credential, successor, purge)
-        except Exception as error:
-            self._discard_session(session_digest, csrf_token, now)
-            raise ReviewWebError("persistence") from error
-        if adopted is not True:
-            # Another change replaced the verifier this request was checked
-            # against, so its session is gone with the rest.
-            self._discard_session(session_digest, csrf_token, now)
-            raise ReviewWebError("unauthorized")
+            def purge() -> None:
+                # Runs between the commit and the swap, so every other row is keyed
+                # by the replaced verifier: a sign-in or a later change under the
+                # successor cannot have written one yet. Best effort, because those
+                # rows are unreachable either way.
+                nonlocal ended
+                try:
+                    ended = self._repository.end_review_sessions_except(session_digest)
+                except Exception:
+                    ended = None
+
+            try:
+                adopted = change.adopt(credential, successor, purge)
+            except Exception as error:
+                self._discard_session(session_digest, csrf_token, now)
+                raise ReviewWebError("persistence") from error
+            if adopted is not True:
+                # Another change replaced the verifier this request was checked
+                # against, so its session is gone with the rest.
+                self._discard_session(session_digest, csrf_token, now)
+                raise ReviewWebError("unauthorized")
         return SessionTokens(session_token, csrf_token, expires_at), ended
 
     def _discard_session(self, session_digest: str, csrf_token: str, now: int) -> None:
@@ -985,6 +1039,40 @@ def _owner_password_change_event(outcome: str, sessions_ended: int | None) -> No
             or known in {"current_password_invalid", "throttled", "unauthorized"}
             else "warning"
         ),
+        "outcome": known,
+        "sessions_ended": ended,
+    }
+    try:
+        sys.stderr.write(
+            json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n"
+        )
+    except Exception:
+        pass
+
+
+_OWNER_SIGN_OUT_OTHERS_OUTCOMES: Final = frozenset(
+    {"signed_out", "csrf", "unauthorized", "persistence"}
+)
+
+
+def _owner_sign_out_others_event(outcome: str, sessions_ended: int | None) -> None:
+    """Write one value-free line for a sign-out of other browsers.
+
+    It carries a closed outcome and the number of other session rows removed,
+    or null when nothing was removed. Never a cookie, token, digest, client or
+    password. A failing sink cannot fail the request.
+    """
+    known = outcome if outcome in _OWNER_SIGN_OUT_OTHERS_OUTCOMES else "persistence"
+    ended = (
+        sessions_ended
+        if known == "signed_out"
+        and type(sessions_ended) is int
+        and 0 <= sessions_ended <= 2**31
+        else None
+    )
+    event = {
+        "event": "owner_sign_out_others",
+        "level": "warning" if known == "persistence" else "info",
         "outcome": known,
         "sessions_ended": ended,
     }

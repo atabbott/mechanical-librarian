@@ -347,6 +347,41 @@ class SQLiteReviewSessionRepository:
                 self._rollback()
                 raise MetadataReportError("review session is unavailable") from error
 
+    def end_other_review_sessions(
+        self, session_digest: str, csrf_digest: str, now: int
+    ) -> tuple[str, int]:
+        """Delete every session but this live one, when its CSRF digest matches.
+
+        Unlike ``end_review_sessions_except``, which runs under a verifier change,
+        this keeps every failed sign-in attempt: the verifier, and so every client
+        key, is unchanged, so the sign-in throttle's counts still stand. Returns
+        ("ended", rows removed), or ("unauthorized", 0) or ("csrf", 0) with
+        nothing changed.
+        """
+        with self._lock:
+            try:
+                self._connection.execute("BEGIN IMMEDIATE")
+                row = self._connection.execute(
+                    "SELECT csrf_digest=? FROM review_sessions "
+                    "WHERE session_digest=? AND revoked_at IS NULL AND expires_at>?",
+                    (csrf_digest, session_digest, now),
+                ).fetchone()
+                if row is None:
+                    self._rollback()
+                    return ("unauthorized", 0)
+                if row[0] != 1:
+                    self._rollback()
+                    return ("csrf", 0)
+                ended = self._connection.execute(
+                    "DELETE FROM review_sessions WHERE session_digest<>?",
+                    (session_digest,),
+                ).rowcount
+                self._connection.execute("COMMIT")
+                return ("ended", ended)
+            except sqlite3.Error as error:
+                self._rollback()
+                raise MetadataReportError("review session is unavailable") from error
+
     def _rollback(self) -> None:
         if self._connection.in_transaction:
             self._connection.execute("ROLLBACK")
