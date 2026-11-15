@@ -84,7 +84,8 @@ Library, Attention and case detail share one closed field classification:
 - `automatic_recorded` stays inspectable and editable but is not owner work.
 - `human_recorded` is a recorded owner decision or a pin in force. A pinned
   field whose library value changed is `needs_attention` until the owner pins
-  it again, unpins it or chooses another value.
+  it again, unpins it or chooses another value. A pin on a chosen value that
+  is not yet written leaves the field as its decision reads.
 - `unsupported` explains the missing capability without offering an empty
   value.
 - `owner_choosable` is an editable settled fill that is neither queued nor
@@ -183,8 +184,10 @@ body is refused before parsing.
 - Errors: `404` for an absent case, `401` for an invalid session, `403` for a
   CSRF mismatch, `503` for a persistence outage.
 - A pin is refused with `409 pin_change_waiting` while a change to the field
-  waits to be written and `409 already_pinned` when the field is already
-  pinned at this value; an unpin is refused with `409 not_pinned`.
+  that is not the owner's standing answer waits to be written and
+  `409 already_pinned` when the field is already pinned at this value; an
+  unpin is refused with `409 not_pinned`, and a withdrawal with `409 pinned`
+  while the field is pinned.
 - The response's `confirmation` is `confirmed` with the current case, or
   `unavailable` if readback failed after commit. Unavailable is still
   recorded; the browser offers a reload and never resubmits.

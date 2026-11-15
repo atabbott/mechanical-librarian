@@ -245,23 +245,29 @@ instruction that one field of one work is finished.
   carries a value and neither grants write authority: no planning query,
   pending count or authority reader accepts them. A pin may be recorded on
   any field of the case except the cover, whether or not the field offers a
-  choice. It is refused while a write for the field is planned, in flight or
-  verified in the case's episode, or while the owner's latest choice for it
-  is not yet written (`pin_change_waiting`), because the case's value is then
-  not what the library will hold; after the write is read back the new case
-  can be pinned. It is refused where the library's value could
+  choice. It is refused while a change to the field waits to be written and
+  no answer of the owner's stands on the case, and where an answer stands
+  whose hold was released or has a Resume asked of it
+  (`pin_change_waiting`). It is refused where the library's value could
   not be read (`unsupported`) and where the field is already pinned at this
   value (`already_pinned`). `unpin` is refused where no pin stands
-  (`not_pinned`). Neither row can be withdrawn.
-- **The pin lives on the hold.** A pin sets the field's manual hold, with the
-  pin decision as its token, as every answer does, and the hold document
+  (`not_pinned`). Neither row is ever a field's latest decision: every reader
+  of the latest decision leaves them out, so an answer under a pin keeps its
+  meaning and its write. An answer cannot be withdrawn while its field is
+  pinned (`pinned`).
+- **The pin lives on the hold.** Where an answer of the owner's stands on the
+  case, a pin sets only the `pin` key on that answer's hold and keeps its
+  token, so it revokes nothing and the answer's own write goes on. Otherwise
+  it sets the hold with the pin decision as its token. The hold document
   (`field-effect-manual-hold-v3`) gains a `pin` key: null, or the
   fingerprint of the pinned value and whether the pin is in force on this
-  case. A pin stands only on an active hold with no Resume asked of it. The fingerprint hashes the destination, the value and its state,
+  case. A pin stands only on an active hold with no Resume asked of it. The
+  fingerprint hashes the destination, the value and its state,
   with missing, null and empty read as one empty state, so a field pinned
   empty stays pinned however the library stores nothing. The pinned value is
-  read from the pin decision's own case, so nothing larger than a digest is
-  stored. No table is added, and the proposal set, case identity, report and
+  the chosen value where the standing answer chose one, and the case's value
+  otherwise; it is read from the token decision or its case, so nothing
+  larger than a digest is stored. No table is added, and the proposal set, case identity, report and
   policy do not depend on pins.
 - **In force is a comparison.** Each time admission carries the hold to a
   case, and when a withdrawal restores it, the case's value for the field is
@@ -270,10 +276,12 @@ instruction that one field of one work is finished.
   Automatic records no decision for it, and none for a bundle that contains
   it; description advice admits no automatic description; Book matching
   does not ask it again; and the hold refuses every write. Resume automatic
-  handling is not offered; Unpin is.
+  handling is not offered; Unpin is. A pin on a chosen value is not in force
+  until a later case shows that value. Until then the field reads as its
+  answer leaves it.
 - **A changed value asks once.** When the value differs, after an edit in
-  Audiobookshelf or because it could not be read, the pin is carried as
-  changed. The field joins Attention with its own reason, even where it
+  Audiobookshelf, because it could not be read, or because the chosen value
+  was never read back, the pin is carried as changed. The field joins Attention with its own reason, even where it
   offers no other value, and shows the pinned value beside the current one.
   Automatic still records nothing and the hold still refuses writes. A new
   `pin` keeps the current value and `unpin` releases the pin. A later read
@@ -281,8 +289,9 @@ instruction that one field of one work is finished.
 - **Unpin keeps the hold.** `unpin` removes the pin from the case's hold and
   leaves an ordinary hold with the same token, its update time moved to the
   unpin and its row written afresh, so the work's latest hold carries no pin
-  to later cases even when a carried copy shares that second. Like a
-  withdrawal an unpin row settles nothing, so the field can be asked again;
+  to later cases even when a carried copy shares that second. An unpin row
+  settles nothing, so the field reads as it would without the pin: decided
+  where an answer stands, and open to be asked where none does;
   Automatic stays off it until Resume automatic handling, as for any answer.
 - **Another answer ends the pin.** A later `accept`, `keep_current` or
   `owner_entered`, or an owner description choice, replaces the hold without
@@ -308,7 +317,20 @@ column. Treating any direct Audiobookshelf edit as a hold is left to the
 owner's decision.
 
 Proof: `tests/unit/test_owner_pins.py`, the pinned-bundle test in
-`tests/unit/test_shadow_outcome_persistence.py`, the attention-facts test in
-`tests/unit/test_review_attention_facts.py` and the Book matching test in
+`tests/unit/test_shadow_outcome_persistence.py`, the attention-facts tests in
+`tests/unit/test_review_attention_facts.py` and the Book matching tests in
 `tests/integration/test_book_matching_fields.py`, each failing before this
-amendment.
+amendment. A pin on a chosen value is proved there by
+`test_a_pin_on_a_chosen_value_is_accepted_at_every_stage`,
+`test_a_pin_on_a_chosen_value_is_in_force_once_read_back`,
+`test_a_pinned_choice_never_read_back_asks_with_the_chosen_value`,
+`test_a_second_choice_under_a_pin_closes_the_first_choices_write`,
+`test_a_pin_after_resume_is_refused_and_revives_nothing`,
+`test_withdraw_is_refused_while_pinned`, `test_pin_and_unpin_plan_nothing`
+and `test_offer_change_closes_a_pinned_choice`; by
+`test_a_pin_never_reopens_a_description_choice` in
+`tests/unit/test_description_advice_persistence.py`; by
+`test_chosen_value_fingerprint_matches_the_value_read_back` in
+`tests/unit/test_human_decision.py`; and by
+`test_choose_then_pin_through_the_decision_route` in
+`tests/unit/test_review_web_transport.py`.
