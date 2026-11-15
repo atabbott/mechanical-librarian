@@ -378,10 +378,11 @@ but keeps its history.
    select it. One saved OpenRouter key can serve different cover and
    description models. Selecting a model starts advice preparation; it does not
    turn on automatic application.
-3. In Library, choose between the current, provider and **Advised · Authored
-   content** descriptions. History records advice, selection and application.
-   Stale advice stays visible but cannot be selected. Failed work needs an
-   explicit retry and never spends again on its own.
+3. In Library, a work's description offers the current value, each source's
+   description and the **Description adviser**'s text. History records advice,
+   selection and application. Stale advice stays visible but cannot be
+   selected. Failed work needs an explicit retry and never spends again on its
+   own.
 
 Field limits and request contents are in
 [description advice](../reference/configuration.md#description-advice).
