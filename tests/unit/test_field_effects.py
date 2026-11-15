@@ -1410,6 +1410,30 @@ def test_a_cover_decision_names_its_cited_cover_sources(
         assert activity._plan_source_labels(
             state.report.report_id, (*decision.citation_ids, local)
         ) == ["Audible", "Local library record"]
+        # A cover the owner chooses cites its source itself, and names it too.
+        proposal = next(
+            row for row in state.case.proposals if row["destination"] == "cover"
+        )
+        replacement = next(
+            alternative
+            for alternative in proposal["result"]["alternatives"]
+            if alternative["assessment"] == "replaces_target"
+        )
+        chosen = HumanDecision.create(
+            state.case,
+            proposal_id=proposal["proposal_id"],
+            target_fingerprint=state.case.target_fingerprint,
+            destination="cover",
+            actor="owner",
+            outcome="accept",
+            selected_value=replacement["value"],
+            idempotency_key="owner-cover-0001",
+            occurred_at=20,
+        )
+        assert state.repo.field_effect_plan_row(chosen)["sources"] == ["Audible"]
+        assert activity._plan_source_labels(
+            state.report.report_id, (incumbent.source_id,)
+        ) == ["Local library record"]
         assert activity._plan_source_labels(state.report.report_id, ()) == []
         _resolved_with_and_without_reuse(state.repo, [decision])
 

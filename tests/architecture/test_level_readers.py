@@ -7,7 +7,8 @@ Every function that reads the attribute, or the serialized key, is listed with
 its role, so a new reader fails here and is reviewed against S11 before it
 lands. The report module itself, which validates, serializes and bounds them,
 and the provider adapters, which only copy their lanes' records into the lane
-result, are allowed whole.
+result, are allowed whole. The review API and the write plan read them only to
+name the evidence of a choice the owner made from a level offer.
 
 The level storage tables are read and written only by the level
 reconciliation module, and created only by the schema (S10, amendment 2).

@@ -886,7 +886,12 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             if any(claim.reference in cited for claim in candidate.claims)
         )
         for source in report.cover_sources:
-            if cover_source_reference(report.report_id, source.source_id) in cited:
+            # An owner's cover choice cites the source itself; an automatic one
+            # cites its packet reference.
+            if (
+                source.source_id in cited
+                or cover_source_reference(report.report_id, source.source_id) in cited
+            ):
                 labels.add(
                     LOCAL_LIBRARY_RECORD
                     if source.kind in LOCAL_COVER_SOURCE_KINDS
