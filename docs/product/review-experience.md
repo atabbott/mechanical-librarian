@@ -535,7 +535,7 @@ permission are in a section you open.
 
 ### Write permission
 
-Review write permissions opens one panel, from Activity or Library's
+Review write permissions opens one panel, from Activity or from Library's
 write handoff, and opening it grants nothing. Mechanical Librarian then checks
 that its own database is consistent and shows the prepared work, the fields
 each library can write and the [write plan](write-plan.md). You can confirm

@@ -143,8 +143,8 @@ brackets are GitHub issues.
   the same counts per library and the works that need you per field. Counts of
   works group their digits (#1335).
 - Settings → Appearance has a Theme choice: Follow system, Light or Dark. It
-  applies at once and is saved in this browser, as the masthead switch is, and
-  Follow system goes back to the system theme after either was used (#1341).
+  applies at once and is saved in this browser. Follow system returns to the
+  system theme after a choice here or with the theme switch (#1341).
 
 ## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
 
