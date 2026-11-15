@@ -950,7 +950,7 @@ const followCodexSignIn=async(codex,form,failed,focus)=>{
       const status=main.querySelector('[data-codex-status]');
       announce(status?.textContent||'');
       const next=status?.closest('.reviewer-option')?.querySelector('button:not(:disabled)');
-      if(next)requestAnimationFrame(()=>{if(next.isConnected)next.focus({preventScroll:true})})
+      if(next)requestAnimationFrame(()=>{if(next.isConnected)next.focus()})
     }catch(e){
       cancel.removeAttribute('aria-disabled');
       failed(e,null,cancel)

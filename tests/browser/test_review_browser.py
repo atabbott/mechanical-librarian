@@ -9505,6 +9505,9 @@ def test_setup_reviewer_buttons_dim_and_announce_while_pending(
                 idle = sign_in.evaluate(_PENDING_STYLE)
                 assert checking["color"] != idle["color"]
 
+                # A phone with 200% text, where the card runs below the fold.
+                page.set_viewport_size({"width": 390, "height": 844})
+                set_root_text(page, "200%")
                 sign_in.focus()
                 sign_in.press("Enter")
                 expect(status).to_have_text("Starting sign-in…")
@@ -9537,6 +9540,11 @@ def test_setup_reviewer_buttons_dim_and_announce_while_pending(
                 expect(status).to_have_text("Not signed in")
                 expect(sign_in).to_be_enabled()
                 expect(sign_in).to_be_focused()
+                page.evaluate(_TWO_FRAMES)
+                assert sign_in.evaluate(
+                    "node => { const box = node.getBoundingClientRect(); "
+                    "return box.top >= 0 && box.bottom <= innerHeight + 0.5; }"
+                ), "focused Sign in is off screen after a cancel"
 
                 codex["state"] = "usable"
                 page.goto(origin)
