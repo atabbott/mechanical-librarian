@@ -44,6 +44,7 @@ from mechanical_librarian.adapters.persistence.review_preparation import (
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
     _SHADOW_OUTCOME_HISTORY_SQL,
+    _WORK_LATEST_MANUAL_HOLDS_SQL,
     _active_generation_automatic_sql,
     _episode_decision_sql,
 )
@@ -75,6 +76,9 @@ from mechanical_librarian.domain.description_advice import (
 from mechanical_librarian.domain.field_effect import (
     FieldEffectOperation,
     decision_value_kind,
+)
+from mechanical_librarian.domain.field_effect import (
+    canonical_json as canonical_effect_json,
 )
 from mechanical_librarian.domain.human_decision import (
     HUMAN_DECISION_EVENT_SCHEMA,
@@ -689,22 +693,17 @@ class SQLiteDecisionRepository(ConnectionScoped):
             self._revoke_field_effect_authority_in_transaction(
                 earlier, decision.occurred_at, required=False
             )
-        if automatic is None:
-            # A case admitted again can carry a release made on a later
-            # case, and a released row excludes its human decisions from
-            # planning. With no automatic decision here there is nothing
-            # to hold, so the row goes and the case reads as never held:
-            # the owner's decision plans and nothing carries (ADR-0085).
-            self._connection.execute(
-                "DELETE FROM field_effect_manual_holds WHERE "
-                "review_case_id=? AND destination=? AND active=0",
-                (decision.review_case_id, decision.destination),
+        if automatic is not None and (previous is None or automatic[0] != previous[0]):
+            self._revoke_field_effect_authority_in_transaction(
+                automatic[0], decision.occurred_at, required=False
             )
+        if decision.outcome == "withdraw":
+            self._withdraw_manual_hold(decision, previous)
         else:
-            if previous is None or automatic[0] != previous[0]:
-                self._revoke_field_effect_authority_in_transaction(
-                    automatic[0], decision.occurred_at, required=False
-                )
+            # Every owner answer holds its field from Automatic, whether or
+            # not an automatic decision is on this case: the owner's choice
+            # wins over Automatic until the owner resumes it, and the hold
+            # follows the work to its later cases (ADR-0085, Amendment 1).
             self._set_field_effect_manual_hold(
                 decision.review_case_id,
                 decision.destination,
@@ -721,6 +720,73 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 decision.destination,
                 decision.occurred_at,
                 decision.decision_id,
+            )
+
+    def _withdraw_manual_hold(
+        self,
+        decision: HumanDecision,
+        withdrawn: sqlite3.Row | tuple[object, ...] | None,
+    ) -> None:
+        """Take back the hold the withdrawn answer set (ADR-0085, Amendment 1).
+
+        A withdrawal holds nothing itself. The hold the withdrawn answer set
+        goes with it, and the work's hold from its earlier cases, if one is
+        still in force, speaks for the field again, as it did before that
+        answer. A hold this answer did not set stays. A released row goes,
+        so the case reads as never held (a withdrawal is only accepted on a
+        case with no automatic decision).
+
+        Runs inside `record_human_decision`'s transaction.
+        """
+        row = self._connection.execute(
+            "SELECT active,document FROM field_effect_manual_holds "
+            "WHERE review_case_id=? AND destination=?",
+            (decision.review_case_id, decision.destination),
+        ).fetchone()
+        if row is None:
+            return
+        if row[0]:
+            hold = json.loads(row[1])
+            if (
+                withdrawn is None
+                or hold["decision_id"] != withdrawn[0]
+                or hold["pending_return"] is not None
+            ):
+                return
+        self._connection.execute(
+            "DELETE FROM field_effect_manual_holds WHERE "
+            "review_case_id=? AND destination=?",
+            (decision.review_case_id, decision.destination),
+        )
+        if not row[0]:
+            return
+        lineage = self._connection.execute(
+            "SELECT connection_name,library_name,item_id "
+            "FROM current_review_case_lineages WHERE review_case_id=?",
+            (decision.review_case_id,),
+        ).fetchone()
+        if lineage is None:
+            return
+        for destination, active, document in self._connection.execute(
+            _WORK_LATEST_MANUAL_HOLDS_SQL, tuple(lineage)
+        ).fetchall():
+            earlier = json.loads(document)
+            if (
+                destination != decision.destination
+                or not active
+                or earlier["pending_return"] is not None
+            ):
+                continue
+            earlier["review_case_id"] = decision.review_case_id
+            self._connection.execute(
+                "INSERT INTO field_effect_manual_holds(review_case_id,"
+                "destination,active,updated_at,document) VALUES(?,?,1,?,?)",
+                (
+                    decision.review_case_id,
+                    destination,
+                    earlier["updated_at"],
+                    canonical_effect_json(earlier),
+                ),
             )
 
     @local_operation

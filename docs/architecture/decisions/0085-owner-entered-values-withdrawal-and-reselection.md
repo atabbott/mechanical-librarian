@@ -165,3 +165,55 @@ verify and choose the previous value again through the guarded pipeline over a
 fake library. Vitest and browser journeys cover entry, subset, withdraw, the
 previous value, a stale reselection, and unbroken words at every width, theme
 and motion setting. The installed idle-load replay counts are unchanged.
+
+## Amendment 1: every owner answer holds its field (2026-11-15)
+
+- Status: proposed. Only the owner's own answer makes this amendment
+  accepted; until then the body above stays the accepted record.
+
+An audit of the automatic decision paths found that an owner's answer was not
+kept once Automatic could act on its field. A hold was created only where an
+automatic decision sat on the same case as the answer. After Automatic's write
+was read back the work had a new case with no automatic decision on it (for
+the fields decided by the scalar engine, such as the title, the read-back is
+an abstention), so the owner's correction there, a typed value or Previous
+value, set no hold, and Automatic wrote its own value again on the read-back
+or the next changed read. The same rule lost answers given in Preview, while
+automatic decisions were paused, and while the field was Ask me and later set
+to Automatic. That contradicts the product rule that the owner's decision on
+a field always overrides Automatic for that field
+(`docs/product/automation-policy.md`).
+
+- **Every answer holds.** Every owner decision except a withdrawal, whatever
+  its outcome (`accept`, `keep_current` or `owner_entered`) and whatever the
+  mode or field setting when it was given, sets the field's manual hold on
+  its case, with that decision as the release token, whether or not an
+  automatic decision is on the case. The hold follows the work as before, so
+  Automatic still records its decisions on later cases but plans no write
+  from them until the owner chooses Resume automatic handling. This replaces
+  "Holds are still created only where an automatic decision exists" above,
+  and, on a re-admitted case, "a new owner decision there removes its
+  released row, so the decision plans and nothing carries forward": the new
+  answer's hold replaces the released row, the answer still plans, and its
+  hold carries forward.
+- **A withdrawal holds nothing.** It sets no hold, and the hold the withdrawn
+  answer set goes with it: the case takes back the work's latest hold from
+  its earlier cases if that hold is still in force and has no return
+  pending, and otherwise holds nothing. A hold the withdrawn answer did not
+  set stays. A withdrawal is still refused on a case with an automatic
+  decision (`automatic_hold`).
+- **Resume shows only where it can act.** Nothing on the case page changes:
+  a field shows the hold, and Resume automatic handling, only where the case
+  has an automatic decision for the hold to hold, which happens only while
+  the field is Automatic and Automatic is on. An answer given under Ask me,
+  in Preview or while paused therefore shows as an ordinary answer until a
+  later case of the work has an automatic decision.
+- **Answers recorded before this amendment** carry no hold where they set
+  none. No stored document changes shape and no version moves; the clean
+  rebuild already planned leaves no such answer behind.
+
+Book matching's `matching_changed` row is not an owner answer and leaves the
+hold untouched, as before. Proof: `tests/unit/test_owner_answer_holds.py`,
+whose title, genres, Preview, pause, Ask me, withdrawal and Resume cases each
+failed before this amendment, and the recurring-case tests in
+`tests/unit/test_owner_command_persistence.py`.
