@@ -1387,6 +1387,7 @@ export interface ReviewHttp {
   ): Promise<ActivityView | undefined>
   logout(signal?: AbortSignal): Promise<void>
   changePassword(value: PasswordChange, signal?: AbortSignal): Promise<void>
+  logoutOthers(signal?: AbortSignal): Promise<void>
 }
 
 export interface CsrfTokenStore {
@@ -2212,6 +2213,13 @@ export class ReviewApiClient implements ReviewHttp {
     } catch {
       // The next unsafe request renews the token itself.
     }
+  }
+
+  // Ends every other session and leaves this one, its cookie and its CSRF
+  // token as they were, so nothing is renewed or held back afterwards. Never
+  // sent again after a CSRF challenge: the owner presses again.
+  async logoutOthers(signal?: AbortSignal) {
+    await this.mutate('/api/v1/session/logout-others', undefined, signal)
   }
 
   private async read<P extends RoutablePath<'GET'>>(

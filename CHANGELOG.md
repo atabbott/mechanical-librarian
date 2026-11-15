@@ -15,6 +15,8 @@ brackets are GitHub issues.
 - In store mode, Settings can change the owner password. It asks for the
   current password, keeps this browser signed in and signs out every other
   browser (#1385).
+- Settings can sign out every other browser from Access and diagnostics, in
+  store and file mode, and keeps this browser signed in (#1385).
 
 ## 0.37.0 — Provider economy (in progress)
 
@@ -23,6 +25,10 @@ brackets are GitHub issues.
   A failed lookup keeps nothing and is asked again, and the weekly search for
   an unmatched audiobook always asks live. The answers are kept in
   `/data/private/provider-responses.sqlite`; losing it only means asking again
+  (#1064).
+- A clean rebuild can keep those answers, so a rebuilt library does not ask
+  every source again for every book.
+  [Upgrades](docs/operations/upgrades.md#keeping-provider-answers) says how
   (#1064).
 
 ## 0.36.1 — Persistence health (in progress)

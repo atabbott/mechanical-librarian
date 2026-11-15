@@ -1,7 +1,7 @@
 import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
 import { useMutation } from '@tanstack/react-query'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { ReactNode, RefObject } from 'react'
+import type { Dispatch, ReactNode, RefObject, SetStateAction } from 'react'
 
 import {
   AmbiguousMutationError,
@@ -17,6 +17,8 @@ import { Disclosure } from '../components/Disclosure'
 import { Dropdown } from '../components/Dropdown'
 import { FieldInput, FieldRow } from '../components/FieldRow'
 import { FinishTray } from '../components/FinishTray'
+import { OtherBrowsersSettings } from '../components/OtherBrowsersSettings'
+import type { OtherBrowsersState } from '../components/OtherBrowsersSettings'
 import { OwnerPasswordSettings } from '../components/OwnerPasswordSettings'
 import { ReviewerAccessPanel } from '../components/ReviewerAccessPanel'
 import { SegmentedControl } from '../components/SegmentedControl'
@@ -309,6 +311,7 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false)
   // Held here because the editor below remounts on every save.
   const passwordForm = useOwnerPasswordForm()
+  const otherBrowsers = useState<OtherBrowsersState>({ kind: 'idle' })
   // `stale`: the reload met a newer build, so only reloading the tab can show the settings.
   const [reconciliation, setReconciliation] = useState<
     'idle' | 'checking' | 'failed' | 'stale' | 'checked'
@@ -389,6 +392,7 @@ export default function SettingsPage() {
         key={`${query.data.authority}:${String(recoveryGeneration)}:${String(savedGeneration)}`}
         view={query.data}
         passwordForm={passwordForm}
+        otherBrowsers={otherBrowsers}
         saveBlocked={
           reconciliation === 'checking' || reconciliation === 'failed' || reconciliation === 'stale'
         }
@@ -416,6 +420,7 @@ export default function SettingsPage() {
 const SettingsEditor = ({
   view,
   passwordForm,
+  otherBrowsers,
   saveBlocked,
   reloadEnded,
   onSaved,
@@ -425,6 +430,7 @@ const SettingsEditor = ({
 }: {
   view: SettingsView
   passwordForm: ReturnType<typeof useOwnerPasswordForm>
+  otherBrowsers: [OtherBrowsersState, Dispatch<SetStateAction<OtherBrowsersState>>]
   saveBlocked: boolean
   /** The reload after an uncertain save failed or met a newer build: nothing is still coming. */
   reloadEnded: boolean
@@ -1135,6 +1141,7 @@ const SettingsEditor = ({
             {active === 'access' ? (
               <>
                 {locked ? null : <OwnerPasswordSettings http={http} form={passwordForm} />}
+                <OtherBrowsersSettings http={http} state={otherBrowsers} />
                 {sectionNumbers('access', false)}
                 <FieldRow
                   {...recordRow('server.diagnostic_timings_enabled')}

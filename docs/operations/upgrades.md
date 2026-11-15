@@ -52,8 +52,9 @@ File mode is selected whenever `/data/config.json` exists.
 1. Stop the container and back up `/data`.
 2. Move the old `/data` contents somewhere outside the volume and keep them
    offline if their history matters. The new build will not read them.
-3. Put back only `config.json`. Leave the secret, password-hash and TLS
-   mounts it names as they are. If a changelog entry names a new configuration
+3. Put back only `config.json`, and the provider answers if you are
+   [keeping them](#keeping-provider-answers). Leave the secret, password-hash
+   and TLS mounts it names as they are. If a changelog entry names a new configuration
    version, write that version instead; see
    [Configuration](../reference/configuration.md).
 4. Start the container. It creates fresh stores, and preparation regenerates
@@ -67,13 +68,44 @@ the application database, so a clean rebuild repeats first-run setup.
 
 1. Stop the container and back up `/data`.
 2. Move the old `/data` contents out of the volume, or start with a new empty
-   volume. First-run setup only starts on an empty volume.
+   volume. First-run setup only starts on an empty volume, or on one that
+   holds nothing but [kept provider answers](#keeping-provider-answers).
 3. Start the container. Read the new setup claim token from
    `docker compose logs mechanical-librarian`.
 4. Complete the setup steps in
    [First-run setup](deployment.md#first-run-setup). Your
    `review-bootstrap.json` is reused as it is.
 5. Grant consent in Activity before anything is written.
+
+### Keeping provider answers
+
+This step is optional and works in both modes. The provider-response database
+holds the answers your sources gave to lookups that ended clean
+([Held provider answers](metadata-report.md#held-provider-answers)). It holds
+no decisions and nothing the new build depends on. If you carry it across the
+rebuild, preparation reuses those answers instead of asking every source again
+for every book. A volume last run by a build before 0.37.0 has no such file.
+
+1. Before you move the old contents away, copy
+   `private/provider-responses.sqlite` out of the stopped volume.
+2. In the emptied or new volume, create `private/` with mode `0700` and put
+   the file back inside it with mode `0600`, both owned by the container user
+   (UID 65532). Put nothing else in `private/`. From the volume's directory
+   on the host, with your copy beside you:
+
+   ```text
+   sudo install -d -m 0700 -o 65532 -g 65532 private
+   sudo install -m 0600 -o 65532 -g 65532 provider-responses.sqlite private/
+   ```
+
+3. Continue with the steps for your mode.
+
+In either mode, a `private/` with another owner or mode stops startup. In
+store mode, first-run setup also refuses to start if `private/` holds anything
+else or the file has another owner or mode. A file that is damaged or was
+written by an incompatible build never stops startup: every source is asked
+live and a `provider_response_store` line says `unavailable`
+([Rebuilding one store](#rebuilding-one-store)).
 
 ## Rebuilding one store
 

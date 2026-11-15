@@ -5938,6 +5938,9 @@ describe('answer types of read and mutate (#1730)', () => {
     // An operation with no decoder documents only 204, the only answer
     // `request()` accepts from it (#1731).
     expectTypeOf<RequestAnswer<'POST', '/api/v1/session/logout'>>().toEqualTypeOf<undefined>()
+    expectTypeOf<
+      RequestAnswer<'POST', '/api/v1/session/logout-others'>
+    >().toEqualTypeOf<undefined>()
     expectTypeOf<RequestAnswer<'POST', `/api/v1/${ActivityCommandPath}`>>().toEqualTypeOf<
       Answer<'_ActivityResponse'> | undefined
     >()
@@ -5960,6 +5963,7 @@ describe('answer types of read and mutate (#1730)', () => {
     expectTypeOf<'/api/v1/nothing'>().not.toExtend<RoutablePath<'GET'>>()
     expectTypeOf<`/api/v1/attention${string}`>().not.toExtend<RoutablePath<'GET'>>()
     expectTypeOf<'/api/v1/session/logout'>().toExtend<RoutablePath<'POST'>>()
+    expectTypeOf<'/api/v1/session/logout-others'>().toExtend<RoutablePath<'POST'>>()
   })
 })
 
@@ -6910,5 +6914,132 @@ describe('changePassword', () => {
       components['schemas']['_PasswordChangeRequest']
     >()
     expect(matchOperation('POST', '/api/v1/session/password')).toBeUndefined()
+  })
+})
+
+describe('logoutOthers', () => {
+  const build = 'c'.repeat(64)
+  const route = '/api/v1/session/logout-others'
+  const ended = () => new Response(null, { status: 204 })
+  const gone = () => Response.json({ error: { code: 'unauthorized' } }, { status: 401 })
+  const refused = (status: number, code: string) => Response.json({ error: { code } }, { status })
+  const flush = () => new Promise<void>((resolve) => window.setTimeout(resolve, 0))
+  const client = (fetchMock: typeof fetch, buildIdentity: string | null = build) => {
+    const expired = vi.fn()
+    const mismatch = vi.fn()
+    const tokens = { current: () => token, renew: vi.fn(async () => renewedToken) }
+    return {
+      expired,
+      mismatch,
+      tokens,
+      client: new ReviewApiClient({
+        csrf: tokens,
+        fetch: fetchMock,
+        ...(buildIdentity === null ? {} : { buildIdentity }),
+        onSessionExpired: expired,
+        onBuildMismatch: mismatch,
+      }),
+    }
+  }
+
+  it('posts to the sign-out route with build identity and CSRF and no body', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => ended())
+    const { client: http, tokens } = client(fetchMock)
+
+    await expect(http.logoutOthers()).resolves.toBeUndefined()
+
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const [path, init] = fetchMock.mock.calls[0] ?? []
+    expect(path).toBe(route)
+    expect(init?.method).toBe('POST')
+    expect(init?.body).toBeUndefined()
+    const headers = new Headers(init?.headers)
+    expect(headers.get('x-ml-build-identity')).toBe(build)
+    expect(headers.get('x-csrf-token')).toBe(token)
+    expect(headers.get('content-type')).toBeNull()
+    // This session and its token are unchanged, so nothing is renewed.
+    expect(tokens.renew).not.toHaveBeenCalled()
+  })
+
+  it('never sends again after a CSRF challenge', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => refused(403, 'csrf'))
+    const { client: http, tokens } = client(fetchMock)
+
+    await expect(http.logoutOthers()).rejects.toBeInstanceOf(CsrfRenewedError)
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(tokens.renew).toHaveBeenCalledOnce()
+  })
+
+  it('reports a lost answer as uncertain', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => {
+      throw new TypeError('network')
+    })
+    const { client: http } = client(fetchMock)
+
+    const failure = await http.logoutOthers().catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(AmbiguousMutationError)
+    expect(uncertainWriteOutcome(failure)).toBe(true)
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it('reports a body in a 204-only answer as uncertain', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => Response.json({ signed_out: 2 }))
+    const { client: http } = client(fetchMock)
+
+    const failure = await http.logoutOthers().catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(UncertainMutationError)
+    expect(failure).toMatchObject({
+      ...uncertain('no_decoder@'),
+      operation: `POST ${route}`,
+      responseStatus: 200,
+    })
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it('reads a 503 as uncertain and a pre-call 503 as a refusal', async () => {
+    const lost = await client(vi.fn<typeof fetch>(async () => refused(503, 'persistence')))
+      .client.logoutOthers()
+      .catch((error: unknown) => error)
+    expect(lost).toMatchObject({ status: 503, code: 'persistence' })
+    expect(uncertainWriteOutcome(lost)).toBe(true)
+    const recovering = await client(
+      vi.fn<typeof fetch>(async () => refused(503, 'react_assets_unavailable')),
+    )
+      .client.logoutOthers()
+      .catch((error: unknown) => error)
+    expect(recovering).toMatchObject({ status: 503, code: 'react_assets_unavailable' })
+    expect(uncertainWriteOutcome(recovering)).toBe(false)
+  })
+
+  it('hands a 401 to session expiry at once', async () => {
+    const { client: http, expired } = client(vi.fn<typeof fetch>(async () => gone()))
+
+    await expect(http.logoutOthers()).rejects.toBeInstanceOf(SessionExpiredError)
+    await vi.waitFor(() => expect(expired).toHaveBeenCalledOnce())
+  })
+
+  it('holds back no 401 a parallel request gets while it is in flight', async () => {
+    let release: (response: Response) => void = () => undefined
+    const fetchMock = vi.fn<typeof fetch>()
+    fetchMock.mockImplementationOnce(() => new Promise<Response>((resolve) => (release = resolve)))
+    fetchMock.mockResolvedValue(gone())
+    const { client: http, expired } = client(fetchMock)
+
+    const signingOut = http.logoutOthers()
+    await expect(http.getAttention({})).rejects.toBeInstanceOf(SessionExpiredError)
+    await vi.waitFor(() => expect(expired).toHaveBeenCalledOnce())
+    release(ended())
+    await expect(signingOut).resolves.toBeUndefined()
+    await flush()
+    expect(expired).toHaveBeenCalledOnce()
+  })
+
+  it('refuses without a build identity before sending', async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+    const { client: http, mismatch } = client(fetchMock, null)
+
+    await expect(http.logoutOthers()).rejects.toBeInstanceOf(BuildMismatchError)
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(mismatch).toHaveBeenCalledOnce()
   })
 })

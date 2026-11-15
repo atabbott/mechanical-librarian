@@ -955,7 +955,7 @@ class ReviewApplication:
     def ready(self) -> bool:
         return self._operations is None or self._operations.ready()
 
-    # The five session operations below deliberately bypass ``serialized``:
+    # The six session operations below deliberately bypass ``serialized``:
     # the session store owns its dedicated database and lock (#912), so owner
     # sign-in and session checks never queue behind an operation that holds
     # the application gate while it waits on a scan's write transaction.
@@ -971,6 +971,9 @@ class ReviewApplication:
 
     def logout(self, session_token: str, csrf_token: str) -> None:
         self._sessions.logout(session_token, csrf_token)
+
+    def logout_others(self, session_token: str, csrf_token: str) -> int:
+        return self._sessions.logout_others(session_token, csrf_token)
 
     def change_owner_password(
         self,

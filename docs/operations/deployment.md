@@ -173,8 +173,10 @@ out for up to five minutes at a time. A reverse proxy listed in
 
 ## First-run setup
 
-An empty `/data` volume starts guided setup. Until setup finishes, the service
-serves only health checks and the setup pages.
+An empty `/data` volume starts guided setup, as does one that holds only
+[provider answers kept across a clean rebuild](upgrades.md#keeping-provider-answers).
+Until setup finishes, the service serves only health checks and the setup
+pages.
 
 **Claim token.** Every start that finds setup unclaimed creates a new setup
 claim token and revokes the previous one. It is printed once in the container
@@ -234,12 +236,12 @@ to change them.
 ## Starting, stopping and restarting
 
 **Startup refuses rather than repairs.** The container starts only from an
-empty volume, a resumable setup, or exact-current stores with complete
-settings. It stops without changing anything if it finds a schema mismatch,
-missing or incomplete settings, a volume owned by another user, an invalid
-configuration or bootstrap file, or a permission failure. It never falls back,
-imports, migrates or repairs. What to do after a refusal is in
-[upgrades](upgrades.md).
+empty volume (kept provider answers aside), a resumable setup, or exact-current
+stores with complete settings. It stops without changing anything if it finds a
+schema mismatch, missing or incomplete settings, a volume owned by another
+user, an invalid configuration or bootstrap file, or a permission failure. It
+never falls back, imports, migrates or repairs. What to do after a refusal is
+in [upgrades](upgrades.md).
 
 **Crash recovery.** After a crash the container can recover one interrupted
 database transaction on its own. It checks a private copy first and needs free
@@ -269,10 +271,15 @@ described in [observability](observability.md).
 
 A sign-in creates a persistent session cookie with a fixed absolute lifetime of
 up to 30 days, the default. Set a shorter `review.session_lifetime_seconds` if
-you need one. Sessions survive restarts until you sign out, they expire or the
-owner password changes, and are kept in
+you need one. Sessions survive restarts until you sign out, they expire, the
+owner password changes or another browser signs them out, and are kept in
 `/data/private/review-sessions.sqlite`. A remembered session is a bearer
 credential: do not use it on an untrusted device or network.
+
+Settings → Access and diagnostics → Sign out other browsers ends every session
+except the browser you use, in store mode and file mode. It does not change
+the password: after a password was exposed, change it instead
+([changing the owner password](#changing-the-owner-password)).
 
 ## Changing the owner password
 

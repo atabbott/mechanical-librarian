@@ -86,10 +86,12 @@ CEILING = {
     # 3350 since #1064 opened the provider-response store beside the recovery
     # store, closed it on stop, and passed it and each adapter's reuse binding
     # through the report and retry constructors: imports and keyword arguments.
-    # 3363 since #1336 opened the write plan's export reader beside the
+    # 3354 since #1385's sign-out refusal (2026-11-15): the offline store
+    # refuses signing out other browsers too.
+    # 3367 since #1336 opened the write plan's export reader beside the
     # permission reader: one more query-only projection, its window and close,
     # and one keyword argument at each review application.
-    "composition.py": 3363,
+    "composition.py": 3367,
     # 142 since #1372 PR 1c's run_taste_build_reviewer, the taste build's
     # counterpart of run_description_reviewer.
     "contained_reviewer.py": 142,
@@ -99,8 +101,10 @@ DEF_COUNT = {
     "__init__.py": 1,
     # 111 since #1372's _compose_cover_taste, a one-call constructor; 113
     # since PR 1c's Codex taste binding and its runner; 114 since #1385's
-    # _OfflineSessionStore.end_review_sessions_except.
-    "composition.py": 114,
+    # _OfflineSessionStore.end_review_sessions_except; 115 since #1385's
+    # sign-out refusal, _OfflineSessionStore.end_other_review_sessions
+    # (2026-11-15).
+    "composition.py": 115,
     # 7 since PR 1c's run_taste_build_reviewer and its dispatch recorder.
     "contained_reviewer.py": 7,
 }
@@ -168,8 +172,9 @@ RESIDUAL: dict[str, int | None] = {
     _C + "_compose_cover_considerations": 78,
     # Fail-closed session store for run_cover_review, its only user; the
     # optional move to application was not taken (A-U4). 43 since #1385's
-    # end_review_sessions_except refusal.
-    _C + "_OfflineSessionStore": 43,
+    # end_review_sessions_except refusal; 48 since #1385's sign-out refusal,
+    # end_other_review_sessions (2026-11-15).
+    _C + "_OfflineSessionStore": 48,
 }
 
 _FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
