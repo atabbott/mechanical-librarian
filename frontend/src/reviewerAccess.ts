@@ -51,6 +51,22 @@ export const failureCopy: Readonly<Record<string, string>> = {
 export const credentialRefused = (error: unknown) =>
   error instanceof ApiError && error.code === 'credential_unavailable'
 
+// Codex left the host while the page was open. The cover reviewer's Codex
+// button keeps its row and says so without reading access again; the task
+// sections' Codex buttons do the same.
+export const codexUnavailable = (error: unknown) =>
+  error instanceof ApiError &&
+  (error.code === 'not_provisioned' || error.code === 'host_unsupported')
+
+// The words for a refused Codex choice in a task section: the refusal's own
+// line, as the cover reviewer's Codex button says it, else the task's fallback.
+export const codexRefusal = (error: unknown, fallback: string) =>
+  error instanceof CsrfRenewedError
+    ? sessionRefreshedCopy
+    : error instanceof ApiError
+      ? (failureCopy[error.code] ?? fallback)
+      : fallback
+
 // The words for a failed reviewer command, in precedence order: a renewed
 // session, an uncertain credential command, OpenRouter's pre-save probe, an
 // uncertain write, then the server's refusal code. Split out of the hook under

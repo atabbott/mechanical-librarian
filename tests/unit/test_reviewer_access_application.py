@@ -16,6 +16,9 @@ from mechanical_librarian.adapters.reviewers.codex_device_auth import (
     CodexDeviceAuthState,
 )
 from mechanical_librarian.adapters.reviewers.openrouter import OpenRouterAccountStatus
+from mechanical_librarian.application.contained_reviewer_contract import (
+    ContainedReviewerError,
+)
 from mechanical_librarian.application.review_pipeline import ReviewPipelineError
 from mechanical_librarian.application.reviewer_access import (
     ReviewerAccessApplicationError,
@@ -30,7 +33,10 @@ from mechanical_librarian.application.reviewer_contracts import (
     ReviewerProvisioningStatus,
 )
 from mechanical_librarian.application.reviewer_host import ReviewerHostStatus
-from mechanical_librarian.domain.reviewer_access import OpenRouterTaskSelection
+from mechanical_librarian.domain.reviewer_access import (
+    CodexTaskSelection,
+    OpenRouterTaskSelection,
+)
 
 
 class _Auth:
@@ -1427,8 +1433,234 @@ def test_continuing_without_a_taste_profile_clears_only_that_task():
     assert operations.current_taste_build_model() is None
 
 
-def test_codex_is_refused_for_the_taste_build():
-    operations, _, _, _ = _operations()
+def _codex_taste(
+    operations: ReviewerAccessOperations,
+    replies: list[object],
+) -> list[tuple[bytes, object]]:
+    """Bind a fake contained taste runner that answers from `replies`."""
+    runs: list[tuple[bytes, object]] = []
+
+    def runner(profile: bytes, request: object) -> str:
+        runs.append((profile, request))
+        reply = replies.pop(0)
+        if isinstance(reply, BaseException):
+            raise reply
+        return cast("str", reply)
+
+    operations._codex_taste_binding = lambda: ("gpt-5.4", b"codex-profile", runner)
+    return runs
+
+
+def test_codex_taste_selection_needs_a_usable_credential_and_clears_prices():
+    """The owner can choose Codex for the taste profile (#1372 C8)."""
+    operations, auth, openrouter, _codex = _operations(auth_state="failed")
+    taste = operations.configure_openrouter(
+        expected_revision=1,
+        api_key="saved-secret",
+        model="example/vision",
+        task="cover_taste_build",
+    )
+    assert taste.taste_metadata is not None
+    with pytest.raises(ReviewerAccessApplicationError) as unusable:
+        operations.select_codex(
+            expected_revision=taste.revision, task="cover_taste_build"
+        )
+    assert unusable.value.code == "credential_unavailable"
+    auth.recheck_state = "usable"
+    selected = operations.select_codex(
+        expected_revision=taste.revision, task="cover_taste_build"
+    )
+    assert selected.taste_mapping == CodexTaskSelection(engine="codex")
+    assert selected.taste_metadata is None
+    assert selected.mapping is None and selected.description_mapping is None
+    assert selected.codex.state == "usable"
+    # The fake does not record its recheck; the installed sign-in now reads usable.
+    auth.state = "usable"
+    assert operations.current_taste_build_model() == "gpt-5.4"
+    assert ("taste", "example/vision") not in openrouter
+
+    unprovisioned, _auth, _openrouter, _codex = _operations(auth_state="usable")
+    unprovisioned._codex_provisioning = lambda _refresh: ReviewerProvisioningStatus(
+        False, "profile_not_provisioned"
+    )
     with pytest.raises(ReviewerAccessApplicationError) as refused:
-        operations.select_codex(expected_revision=1, task="cover_taste_build")
-    assert refused.value.code == "reviewer_access_invalid"
+        unprovisioned.select_codex(expected_revision=1, task="cover_taste_build")
+    assert refused.value.code == "not_provisioned"
+    assert unprovisioned.read().taste_mapping is None
+
+
+@pytest.mark.parametrize(
+    ("state", "configured"),
+    (
+        ("usable", True),
+        ("configured", True),
+        ("expired", False),
+        ("failed", False),
+        ("ready", False),
+        ("waiting", False),
+    ),
+)
+def test_codex_taste_counts_as_configured_only_while_the_sign_in_is_usable(
+    state: DeviceAuthStatus, configured: bool
+) -> None:
+    """A lapsed Codex sign-in schedules no taste build, read without a process."""
+    operations, auth, _openrouter, _codex = _operations(auth_state="usable")
+    operations.select_codex(expected_revision=1, task="cover_taste_build")
+    auth.state = state
+
+    def no_process() -> object:
+        raise AssertionError("the configured check must not start a process")
+
+    auth.recheck_credential_status = no_process  # type: ignore[method-assign]
+    auth.start = no_process  # type: ignore[method-assign]
+    assert (operations.current_taste_build_model() == "gpt-5.4") is configured
+
+
+def test_codex_taste_counts_as_unconfigured_on_a_host_that_cannot_run_it() -> None:
+    """A host that lost the headroom Codex needs schedules no taste build."""
+    operations, _auth, _openrouter, _codex = _operations(auth_state="usable")
+    operations.select_codex(expected_revision=1, task="cover_taste_build")
+    assert operations.current_taste_build_model() == "gpt-5.4"
+    operations._codex_host = lambda: ReviewerHostStatus(
+        False, "headroom_below_1_gib", 512 * 1024**2
+    )
+    assert operations.current_taste_build_model() is None
+
+
+def test_codex_sign_in_changes_clear_only_codex_taste_and_openrouter_clear_keeps_it():
+    """Start and clear Codex drop a Codex taste task; clearing OpenRouter keeps it."""
+    operations, auth, _openrouter, _codex = _operations(auth_state="usable")
+    cover = operations.configure_openrouter(
+        expected_revision=1, api_key="saved-secret", model="example/a"
+    )
+    taste = operations.select_codex(
+        expected_revision=cover.revision, task="cover_taste_build"
+    )
+    cleared = operations.clear_openrouter(expected_revision=taste.revision)
+    assert cleared.mapping is None
+    assert cleared.taste_mapping == CodexTaskSelection(engine="codex")
+    access, started = operations.start_codex(expected_revision=cleared.revision)
+    assert started.state == "waiting"
+    assert access.revision == cleared.revision + 1
+    assert access.taste_mapping is None
+    assert operations._repository.read()[0].cover_taste_build is None
+
+    auth.state = "usable"
+    again = operations.select_codex(
+        expected_revision=access.revision, task="cover_taste_build"
+    )
+    assert (
+        operations.clear_codex(expected_revision=again.revision).taste_mapping is None
+    )
+
+    # Clearing OpenRouter still drops an OpenRouter taste task and its prices.
+    openrouter = operations.configure_openrouter(
+        expected_revision=again.revision + 1,
+        api_key="saved-secret",
+        model="example/vision",
+        task="cover_taste_build",
+    )
+    dropped = operations.clear_openrouter(expected_revision=openrouter.revision)
+    assert dropped.taste_mapping is None and dropped.taste_metadata is None
+
+
+def test_status_reads_codex_exactly_when_only_the_taste_task_uses_it():
+    operations, auth, _openrouter, _codex = _operations(auth_state="usable")
+    selected = operations.select_codex(expected_revision=1, task="cover_taste_build")
+    calls = auth.status_calls
+    view = operations.read()
+    assert auth.status_calls == calls + 1
+    assert view.codex.state == "usable"
+    assert view.codex.model == "gpt-5.6-sol"
+    operations._codex_host = lambda: ReviewerHostStatus(
+        False, "headroom_below_1_gib", None
+    )
+    assert operations.read().codex.state == "host_unsupported"
+    assert selected.mapping is None
+
+
+def test_codex_taste_build_opens_only_at_the_bound_identity_and_revision():
+    """A Codex build uses the contained profile's model and identity (#1372 C7)."""
+    operations, auth, openrouter, _codex = _operations(auth_state="usable")
+    with pytest.raises(ReviewerAccessApplicationError) as unset:
+        operations.open_taste_build()
+    assert unset.value.code == "not_configured"
+    selected = operations.select_codex(expected_revision=1, task="cover_taste_build")
+    # No taste binding composed: nothing runs.
+    with pytest.raises(ReviewerAccessApplicationError) as unbound:
+        operations.open_taste_build()
+    assert unbound.value.code == "credential_unavailable"
+    runs = _codex_taste(operations, ['{"sections":{}}'])
+    model, profile, client = operations.open_taste_build()
+    assert (model, profile) == ("gpt-5.4", b"codex-profile")
+    request = object()
+    reply = client.run_taste_build(profile, request)  # type: ignore[arg-type]  # reason: the fake runner never reads the request
+    assert reply.result == {"sections": {}} and reply.usage_reported is True
+    assert runs == [(b"codex-profile", request)]
+    client.close()
+    assert openrouter == []
+
+    def expired(_operations: ReviewerAccessOperations, auth: _Auth) -> None:
+        auth.recheck_state = "expired"
+
+    def host_lost(operations: ReviewerAccessOperations, _auth: _Auth) -> None:
+        operations._codex_host = lambda: ReviewerHostStatus(
+            False, "headroom_below_1_gib", None
+        )
+
+    def profile_replaced(operations: ReviewerAccessOperations, _auth: _Auth) -> None:
+        operations._codex_taste_binding = lambda: (
+            "gpt-5.4",
+            b"other-profile",
+            lambda *_: "{}",
+        )
+
+    for drift, code in (
+        (expired, "credential_unavailable"),
+        (host_lost, "host_unsupported"),
+        (profile_replaced, "access_changed"),
+    ):
+        retained, retained_auth, _o, _c = _operations(auth_state="usable")
+        retained.select_codex(expected_revision=1, task="cover_taste_build")
+        _codex_taste(retained, [])
+        drift(retained, retained_auth)
+        with pytest.raises(ReviewerAccessApplicationError) as refused:
+            retained.open_taste_build()
+        assert refused.value.code == code
+
+    revised, _auth, _o, _c = _operations(auth_state="usable")
+    revised.select_codex(expected_revision=1, task="cover_taste_build")
+    _codex_taste(revised, [])
+    revised._repository.revision_is_current = lambda revision: False  # type: ignore[method-assign]  # reason: a concurrent write between snapshot and open
+    with pytest.raises(ReviewerAccessApplicationError) as changed:
+        revised.open_taste_build()
+    assert changed.value.code == "access_changed"
+    unprovisioned, _auth, _o, _c = _operations(auth_state="usable")
+    unprovisioned.select_codex(expected_revision=1, task="cover_taste_build")
+    unprovisioned._codex_identity = lambda: (_ for _ in ()).throw(
+        ReviewerAccessApplicationError("not_provisioned")
+    )
+    assert unprovisioned.current_taste_build_model() is None
+    assert selected.taste_mapping == CodexTaskSelection(engine="codex")
+
+
+def test_codex_taste_replies_count_usage_and_map_schema_failure_to_no_result():
+    """Codex reports no cost: a reply counts as usage reported (#1372 C6)."""
+    operations, _auth, _openrouter, _codex = _operations(auth_state="usable")
+    operations.select_codex(expected_revision=1, task="cover_taste_build")
+    _codex_taste(
+        operations,
+        [
+            ContainedReviewerError("malformed_output"),
+            ContainedReviewerError("timeout"),
+        ],
+    )
+    _model, profile, client = operations.open_taste_build()
+    malformed = client.run_taste_build(profile, object())  # type: ignore[arg-type]  # reason: the fake runner never reads the request
+    assert (malformed.result, malformed.usage_reported) == (None, True)
+    with pytest.raises(ContainedReviewerError) as timeout:
+        client.run_taste_build(profile, object())  # type: ignore[arg-type]  # reason: as above
+    assert timeout.value.code == "timeout"
+    with pytest.raises(ReviewerAccessApplicationError) as other:
+        client.run_taste_build(b"other-profile", object())  # type: ignore[arg-type]  # reason: as above
+    assert other.value.code == "access_changed"

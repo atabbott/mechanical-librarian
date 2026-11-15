@@ -167,6 +167,9 @@ from mechanical_librarian.application.cover_taste_build import (
     CoverTasteRepository,
     CoverTasteRepositoryLease,
 )
+from mechanical_librarian.application.cover_taste_contract import (
+    AdmittedTasteBuildRequest,
+)
 from mechanical_librarian.application.decision_preview import preview_shadow_decision
 from mechanical_librarian.application.description_advice import (
     admit_staged_description,
@@ -249,6 +252,7 @@ from mechanical_librarian.application.reviewer_access import (
     CodexAuth,
     ReviewerAccessApplicationError,
     ReviewerAccessOperations,
+    TasteBuildRunner,
 )
 from mechanical_librarian.application.reviewer_contracts import (
     ReviewerProvisioningStatus,
@@ -266,6 +270,7 @@ from mechanical_librarian.application.setup_journey import SetupJourneyOperation
 from mechanical_librarian.bootstrap.contained_reviewer import (
     run_cover_packet_reviewer,
     run_description_reviewer,
+    run_taste_build_reviewer,
 )
 from mechanical_librarian.domain.audiobook_corroboration import (
     recording_unmatched,
@@ -3184,6 +3189,19 @@ def _compose_reviewer_access(
 
         return model, payload, run
 
+    def taste_binding() -> tuple[str, bytes, TasteBuildRunner]:
+        if profile_file is None:
+            raise ReviewerAccessApplicationError("not_provisioned")
+        model, payload = lazy_codex_auth.bind(codex_identity)
+
+        def run(profile: bytes, request: AdmittedTasteBuildRequest) -> str:
+            with active_coordinator.activity():
+                with lazy_codex_auth.review_admission():
+                    pass
+                return run_taste_build_reviewer(profile, request)
+
+        return model, payload, run
+
     return ReviewerAccessOperations(
         repository.reviewer_access_store(),
         codex_auth=codex_auth,
@@ -3197,6 +3215,7 @@ def _compose_reviewer_access(
         ),
         openrouter_factory=lambda key, model: OpenRouterReviewer(key, model),
         codex_description_binding=description_binding,
+        codex_taste_binding=taste_binding,
         taste_daily_requests=review.cover_taste_build_daily_requests,
     )
 

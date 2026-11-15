@@ -148,8 +148,9 @@ The product sends no telemetry. It contacts only:
   profile sends up to 100 previews of covers the owner chose and passed over,
   as JPEGs, with each cover's size, shape, same-art group and role and the
   book's format; never a title, author, identifier, path or provider text.
-  OpenRouter cover and taste profile requests ask providers to deny data
-  collection; description requests do not. Read the model provider's data
+  With Codex selected, those covers go to OpenAI through the owner's ChatGPT
+  sign-in, as cover review's do. OpenRouter cover and taste profile requests
+  ask providers to deny data collection; description requests do not. Read the model provider's data
   policy before enabling any of them.
 
 ## What surfaces show

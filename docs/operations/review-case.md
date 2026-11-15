@@ -86,8 +86,8 @@ Library, Attention and case detail share one closed field classification:
 - `unsupported` explains the missing capability without offering an empty
   value.
 - `owner_choosable` is an editable settled fill that is neither queued nor
-  counted, such as a tag or ASIN fill, or narrators outside "Authors and
-  narrators: Ask me".
+  counted, such as a tag or ASIN fill under Ask me, or a recording's narrators
+  outside "Authors and narrators: Ask me".
 
 The list and both counts always agree.
 

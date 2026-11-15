@@ -332,9 +332,19 @@ nothing reads it. Three decisions made while building it amend the text above:
   sealed packet and re-derived and compared byte for byte before sending. A
   build request is at most 24 MB and 100 images. The judge keeps PNG, as the
   cover observer does.
-- **OpenRouter only (R3).** In 0.31.0 both taste tasks run on OpenRouter, so
-  the builder is one new OpenRouter task mapping, not one per transport. The
-  contained Codex reviewer may serve them later.
+- **Either engine (Amendment 1).** The builder is one task mapping that the
+  owner points at the contained Codex reviewer or an OpenRouter model, one
+  engine at a time with no fallback. Codex receives the same admitted request:
+  the pinned instruction, the sealed packet and the same JPEG previews in
+  packet order, each re-checked and bound to its digest and mounted read-only
+  as `/images/NN.jpg`. A Codex build is one attempt, so one build is one
+  counted request. Codex reports no per-request cost, so a Codex reply counts
+  as usage reported and a Codex failure ends the build `unavailable` without
+  stopping the day; `unknown_charge` stays OpenRouter only.
+  A Codex mapping counts as configured, so builds are scheduled, only
+  while the Codex profile is provisioned and its sign-in is usable, read from
+  the recorded sign-in flow or the installed sign-in files without starting a
+  process or calling the network.
 - **Closed facts (S5).** Per image: the original's decoded width and height,
   shape `fits` or `wrong_shape` against the medium, an opaque same-art group
   letter, role `chosen` or `passed_over` and the current marker; per decision,

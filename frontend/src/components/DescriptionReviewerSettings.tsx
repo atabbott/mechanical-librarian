@@ -7,7 +7,7 @@ import { ModelPicker } from './ModelPicker'
 import { refusalCopy, uncertainWriteOutcome } from '../api/http'
 import { invalidateForegroundQueries } from '../queryWork'
 import { reviewerStateLabels } from '../labels'
-import { credentialRefused, failureCopy } from '../reviewerAccess'
+import { codexRefusal, codexUnavailable, credentialRefused, failureCopy } from '../reviewerAccess'
 import type { DescriptionModelMetadata, ReviewHttp, ReviewerAccessView } from '../api/http'
 
 // The description adviser's draft, its four commands and the latest failure,
@@ -57,8 +57,14 @@ const useDescriptionAdviser = (
       cache.setQueryData(['reviewer-access'], saved)
     },
     // A refused Codex sign-in is recorded into reviewer access; read it (#1617).
+    // Codex missing from the host keeps the row and its line, as the cover
+    // reviewer's Codex button does.
     onError: (error, engine) =>
-      engine === 'codex' && credentialRefused(error) ? onCodexRefused() : reloadAfterFailedWrite(),
+      engine === 'codex' && credentialRefused(error)
+        ? onCodexRefused()
+        : engine === 'codex' && codexUnavailable(error)
+          ? undefined
+          : reloadAfterFailedWrite(),
   })
   const refresh = useMutation({
     mutationFn: () => http.refreshOpenRouter(undefined, 'description_rewrite'),
@@ -73,17 +79,6 @@ const useDescriptionAdviser = (
     onMutate: () => setLatest('contained'),
   })
   const error = latest === null ? null : { test, selection, refresh, contained }[latest].error
-  const failure =
-    error === null
-      ? null
-      : (latest === 'selection' || latest === 'refresh') && uncertainWriteOutcome(error)
-        ? 'No answer came back. Check whether the description adviser change was saved before trying again.'
-        : credentialRefused(error)
-          ? failureCopy.credential_unavailable
-          : refusalCopy(
-              error,
-              'Description adviser setup did not complete. Check the model and key, then try again.',
-            )
   // The command the failure belongs to, so it renders under that button (#1663).
   const failedAt =
     latest === 'selection'
@@ -93,6 +88,19 @@ const useDescriptionAdviser = (
           ? 'openrouter'
           : 'without'
       : latest
+  const failure =
+    error === null
+      ? null
+      : (latest === 'selection' || latest === 'refresh') && uncertainWriteOutcome(error)
+        ? 'No answer came back. Check whether the description adviser change was saved before trying again.'
+        : failedAt === 'codex'
+          ? codexRefusal(error, 'Codex was not chosen for descriptions. Reload, then try again.')
+          : credentialRefused(error)
+            ? failureCopy.credential_unavailable
+            : refusalCopy(
+                error,
+                'Description adviser setup did not complete. Check the model and key, then try again.',
+              )
   const failureUnder = (at: typeof failedAt) =>
     failure !== null && failedAt === at ? <p role="alert">{failure}</p> : null
   const busy = contained.isPending || test.isPending || selection.isPending || refresh.isPending

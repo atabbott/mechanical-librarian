@@ -46,6 +46,10 @@ _ARCHIVE_DATANODE = re.compile(
 )
 _ARCHIVE_ITEM_PATH = re.compile(r"/[0-9]{1,4}/items/(.*)")
 _UNSAFE_REDIRECT = "unsafe remote redirect"
+# IPv6 that stands for an IPv4 address or lies outside allocated global
+# unicast reads as global to ``is_global`` on Python 3.13 and 3.14 (#1758).
+_GLOBAL_UNICAST = ipaddress.IPv6Network("2000::/3")
+_WELL_KNOWN_NAT64 = ipaddress.IPv6Network("64:ff9b::/96")
 
 
 class RemoteCoverError(RuntimeError):
@@ -107,12 +111,29 @@ def _pinned_address(
         raise RemoteCoverError("unsafe remote cover")
     host = parts.hostname
     addresses = _resolve(host, deadline)
-    if not addresses or any(
-        not ipaddress.ip_address(item[4][0]).is_global for item in addresses
-    ):
+    if not addresses or not all(_public_address(item[4][0]) for item in addresses):
         raise RemoteCoverError("unsafe remote cover")
     selected = addresses[0][4][0]
     return host, selected, _parts(url).path or "/"
+
+
+def _public_address(text: str) -> bool:
+    """Whether one DNS answer is a public address a cover may come from.
+
+    A well-known NAT64 or IPv4-mapped answer is judged by the IPv4 address it
+    carries, so DNS64 still reaches public hosts. Any other IPv6 answer must
+    be global unicast. The connection still goes to the answer's own literal.
+    """
+    address = ipaddress.ip_address(text)
+    if type(address) is ipaddress.IPv6Address:
+        if address in _WELL_KNOWN_NAT64:
+            return ipaddress.IPv4Address(int(address) & 0xFFFFFFFF).is_global
+        mapped = address.ipv4_mapped
+        if mapped is not None:
+            return mapped.is_global
+        if address not in _GLOBAL_UNICAST:
+            return False
+    return address.is_global
 
 
 def _resolve(host: str, deadline: float | CoverDeadline | None) -> list[_AddressInfo]:

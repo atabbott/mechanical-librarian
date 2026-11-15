@@ -98,6 +98,8 @@ brackets are GitHub issues.
   writes rules about the covers you choose and pass over. The profile is shown
   read-only and changes nothing yet. `review.cover_taste_build_daily_requests`
   (default 8) caps its requests a day (#1372).
+- **Clean rebuild required.** Codex can write the taste profile too: choose it
+  or an OpenRouter model in Settings → Reviewer › Taste profile (#1372).
 - **Clean rebuild required.** Choosing, putting back or automatically
   switching a cover over one Audiobookshelf already holds no longer fails
   before it writes. The write binds the current cover's exact bytes, even when
@@ -622,6 +624,18 @@ brackets are GitHub issues.
   longer reads as having no other value: the case shows that earlier choice
   beside the current value and says Automatic doesn’t write in Preview and
   decides the field again when you turn it on (#1575).
+- Remote cover downloads now refuse a host whose IPv6 answer carries a
+  private, loopback or link-local IPv4 address, such as a NAT64 address, or
+  lies outside public unicast space (#1758).
+- On an ebook, a field set to Ask me with a proposed value the queue does not
+  ask about, such as an ASIN or a tag list for empty Tags, is now an optional
+  choice you can take, as on an audiobook, instead of reading "Nothing to
+  decide for this field." (#1707).
+- Setup now dims a button while its step runs without fading its focus
+  outline, and tells screen readers "Selecting Codex…", "Starting sign-in…" or
+  "Cancelling sign-in…" while the reviewer step's Codex buttons work. Pending
+  buttons in Settings, Policy, a field's own value and Activity keep a
+  full-strength focus outline too (#1698).
 
 ## 0.29.2 — Delivery reliability and hygiene
 

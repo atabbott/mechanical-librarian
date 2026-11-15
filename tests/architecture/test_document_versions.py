@@ -85,7 +85,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.application.reviewer_access",
         "REVIEWER_ACCESS_VIEW_SCHEMA",
-        "reviewer-access-view-v4",
+        "reviewer-access-view-v5",
     ),
     (
         "mechanical_librarian.application.review_web",
@@ -145,7 +145,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.domain.reviewer_access",
         "REVIEWER_ACCESS_SCHEMA",
-        "reviewer-access-v4",
+        "reviewer-access-v5",
     ),
     (
         "mechanical_librarian.application.cover_packet_semantics",

@@ -319,10 +319,11 @@ Allowed cover origins:
 - Audible on `m.media-amazon.com`, and iTunes on `is1-ssl` to
   `is5-ssl.mzstatic.com`.
 
-No other provider follows a redirect. Any other host is a typed `unsafe_remote` outcome and no socket
-opens. Remote covers use their own address-pinned transport with
-bounded bytes, attempts and deadline. Embedded audiobook art is never
-acquired. Reports never keep the remote URL.
+No other provider follows a redirect. Other hosts are `unsafe_remote`
+before a socket opens. Remote covers' own transport bounds bytes, attempts
+and deadline, pinned per hop; every answer must be public: IPv6 within
+`2000::/3`, or an IPv4-mapped or `64:ff9b::/96` answer judged by its IPv4.
+Embedded audiobook art is never acquired. Reports never keep the remote URL.
 
 A Hardcover edition row becomes a listed-edition descriptor only after a
 pre-filter on what the row states, before any request is built. Its stated
@@ -347,17 +348,16 @@ collapses, nor do covers from different providers.
 Open Library's route is a code constant on its two cover descriptors, never
 configuration, and holds only for the constructed
 `covers.openlibrary.org/b/id/<id>-L.jpg?default=false` URL. Each `Location`
-is checked as the exact header text, before any join or decoding, with one
-anchored full match: printable ASCII, lowercase `https://`, port absent or
+header is matched exactly, before any join or decoding, by one anchored full
+match: printable ASCII, lowercase `https://`, port absent or
 443. Hop 1 must be `archive.org/download/<item>/<zip>/<file>` with no query,
 fragment or `%`. Hop 2 must be `ia<N>.us.archive.org/view_archive.php` whose
 `&`-split query holds exactly `archive` and `file`, bound byte for byte to hop
-1. The file must be `<id>-L.jpg` or its ten-digit zero-padded form. There are
-at most three requests, in fixed positions, inside one attempt window; any
-other redirect is `unsafe_remote` before a lookup. Every hop is pinned and
-bounded as above. The `archive.org` hops send no User-Agent, so the contact
-email stays on Open Library's origin. A retrieved Open Library cover records
-only the closed `final_host` family: `covers.openlibrary.org`, `archive.org`
+1. The file must be `<id>-L.jpg` or its ten-digit zero-padded form. At most
+three requests, in fixed positions, share one attempt window; any other
+redirect is `unsafe_remote` before a lookup. The `archive.org` hops send no
+User-Agent, so the contact email stays on Open Library's origin. A retrieved Open Library cover records
+only the `final_host` family: `covers.openlibrary.org`, `archive.org`
 or `us.archive.org`.
 
 Book matching (`review.work_identity`, #1355) changes which retrieved covers
@@ -443,7 +443,7 @@ an XML or container parser.
   within 64 characters, at most 64 matches, and no DTD or entity beyond the
   five XML escapes is resolved. A JSON document is parsed whole within 1 MiB;
   deep nesting or an over-long integer drops it. Every remaining pattern is
-  anchored and bounded, and the child's CPU and wall limits still contain it.
+  anchored and bounded, and the child's CPU and wall limits contain it.
 - A sidecar's title, creators and CUE `FILE` value are association text: each
   at most 255 characters and 16 creators, refused whole on a forbidden code
   point, used only to decide whether the document belongs to the item, and
@@ -504,7 +504,7 @@ known refusals and never kept.
 
 ### Contained Codex reviewer
 
-Each use re-admits the image-owned or deployment-owned profile bytes, and an
+Each use re-admits the image-owned or deployment-owned profile bytes; an
 invalid override never falls back
 ([ADR-0081](decisions/0081-image-owned-reviewer-provisioning.md)). Device
 sign-in uses a private staging `CODEX_HOME`; cancellation or shutdown kills
@@ -517,11 +517,11 @@ after the owner selects Codex again.
   ([deployment](../operations/deployment.md#contained-codex-reviewer)).
 - Inside, a second seccomp program denies `unshare`, `setns` and process
   creation. No procfs is mounted.
-- Broker, supervisor, namespace init and Codex have 64, 64, 64 and 832 MiB
-  address-space ceilings.
+- Broker, supervisor and namespace init have 64 MiB address-space ceilings,
+  Codex 832 MiB.
 - Every optional Codex tool is off (shell, agents, plugins, browser, web
   search, image viewing). `danger-full-access` only skips a
-  redundant inner sandbox: the process still sees only the sealed binary,
+  redundant inner sandbox: the process sees only the sealed binary,
   read-only credential, private job directory, images and one request's
   network.
 
@@ -539,8 +539,9 @@ observer output (#1355).
 
 Each preview is verified against its report digest and re-encoded into a
 metadata-free single-frame PNG; admission requires byte equality after
-re-decoding. Bytes go into sealed memory descriptors, re-verified in the child
-before Bubblewrap copies them read-only.
+re-decoding. Bytes, and taste profile JPEGs (`/images/NN.jpg`), go into sealed
+memory descriptors, re-verified in the child before Bubblewrap copies them
+read-only.
 
 ### Description advice
 

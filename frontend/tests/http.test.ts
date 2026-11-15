@@ -189,7 +189,7 @@ const uncertain = (failure: string) => {
 }
 
 const reviewerAccessPayload = (overrides: Record<string, unknown> = {}) => ({
-  schema_version: 'reviewer-access-view-v4',
+  schema_version: 'reviewer-access-view-v5',
   taste_mapping: null,
   taste_metadata: null,
   taste_daily_requests: 8,
@@ -6478,5 +6478,18 @@ describe('taste profile decoder (#1372)', () => {
     await expect(
       readReviewerAccess({ ...value, taste_metadata: { ...metadata, image_price: 'NaN' } }),
     ).rejects.toMatchObject({ status: 502, code: 'invalid_cover_metadata' })
+    // Codex writes taste profiles too, and has no prices (#1372 C1).
+    const codex = reviewerAccessPayload({ taste_mapping: { engine: 'codex' } })
+    expect((await readReviewerAccess(codex)).taste_mapping).toEqual({ engine: 'codex' })
+    await expect(readReviewerAccess({ ...codex, taste_metadata: metadata })).rejects.toMatchObject({
+      status: 502,
+      code: 'invalid_taste_metadata',
+    })
+    await expect(
+      readReviewerAccess({
+        ...codex,
+        taste_mapping: { engine: 'codex', model: 'gpt-5.6-sol' },
+      }),
+    ).rejects.toBeInstanceOf(Error)
   })
 })

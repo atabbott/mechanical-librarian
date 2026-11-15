@@ -19,6 +19,7 @@ from mechanical_librarian.adapters.persistence.schema import _create_schema
 from mechanical_librarian.adapters.persistence.transactions import TransactionScope
 from mechanical_librarian.domain.reviewer_access import (
     REVIEWER_ACCESS_SCHEMA,
+    CodexTaskSelection,
     OpenRouterTaskSelection,
     ReviewerAccessDocument,
 )
@@ -458,8 +459,8 @@ def _store_with(payload: str) -> ReviewerAccessStore:
     return ReviewerAccessStore(connection)
 
 
-def test_taste_selection_round_trips_and_v3_is_refused() -> None:
-    """reviewer-access-v4 stores the taste task and its prices (#1372)."""
+def test_taste_selection_round_trips_and_v4_is_refused() -> None:
+    """reviewer-access-v5 stores the taste task on either engine (#1372)."""
     current = (
         '{"cover_metadata":null,"cover_observation":null,"cover_taste_build":'
         '{"engine":"openrouter","model":"example/vision"},"description_metadata":null,'
@@ -469,15 +470,36 @@ def test_taste_selection_round_trips_and_v3_is_refused() -> None:
         '"observed_at":1,"prompt_price":"0.000003","request_price":null}}'
     )
     document, _configured = _store_with(current).read()
-    assert document.cover_taste_build is not None
+    assert isinstance(document.cover_taste_build, OpenRouterTaskSelection)
     assert document.cover_taste_build.model == "example/vision"
     assert _canonical_json(document.model_dump()) == current
-    v3 = (
-        '{"cover_metadata":null,"cover_observation":null,"description_metadata":null,'
-        '"description_rewrite":null,"revision":2,"schema_version":"reviewer-access-v3"}'
+    codex = (
+        '{"cover_metadata":null,"cover_observation":null,"cover_taste_build":'
+        '{"engine":"codex"},"description_metadata":null,'
+        '"description_rewrite":null,"revision":2,'
+        f'"schema_version":"{REVIEWER_ACCESS_SCHEMA}","taste_metadata":null}}'
     )
+    document, _configured = _store_with(codex).read()
+    assert document.cover_taste_build == CodexTaskSelection(engine="codex")
+    assert _canonical_json(document.model_dump()) == codex
+    # A v4 reader refuses a Codex taste selection, so v4 is refused whole.
+    for frozen in (
+        current.replace(REVIEWER_ACCESS_SCHEMA, "reviewer-access-v4"),
+        '{"cover_metadata":null,"cover_observation":null,"description_metadata":null,'
+        '"description_rewrite":null,"revision":2,"schema_version":"reviewer-access-v3"}',
+    ):
+        with pytest.raises(ReviewerAccessStoreError, match="unavailable"):
+            _store_with(frozen).read()
+    # Taste prices beside a Codex selection are refused.
     with pytest.raises(ReviewerAccessStoreError, match="unavailable"):
-        _store_with(v3).read()
+        _store_with(
+            codex.replace(
+                '"taste_metadata":null',
+                '"taste_metadata":{"completion_price":null,"image_price":null,'
+                '"model":"example/vision","observed_at":1,"prompt_price":null,'
+                '"request_price":null}',
+            )
+        ).read()
     # Taste prices for another model than the selected one are refused.
     with pytest.raises(ReviewerAccessStoreError, match="unavailable"):
         _store_with(

@@ -8,8 +8,9 @@ what the model receives is in the
 [AI trust boundary](../architecture/ai-boundary.md#taste-profile-builder).
 
 Before the first profile, it reads "No taste profile yet" and says what is
-missing: "Choose a taste profile model in Settings.", linking to Settings →
-Reviewer, or "Mechanical Librarian writes it once you have chosen 25 covers in
+missing: "Set up the taste profile model in Settings.", linking to Settings →
+Reviewer (no model is chosen, or its Codex sign-in or OpenRouter key is not
+ready), or "Mechanical Librarian writes it once you have chosen 25 covers in
 To decide. You have chosen {n}.", linking to To decide. A first profile needs
 25 recorded choices and a later one 10 more; at most 4 are scheduled a day.
 
@@ -36,11 +37,20 @@ decisions".
 
 ## Settings
 
-Settings → Reviewer › Taste profile picks the OpenRouter vision model that
-writes the taste profile, from recommended models measured for it. It says
-what OpenRouter receives, and Test taste profile model and prices shows the
-model's prices per input token, output token, image and request before Use
-for taste profile saves it. Continue without a taste profile stops taste
-profiles and keeps cover review and description advice. It also states the
-daily limit, "Mechanical Librarian asks for at most 8 taste profiles a day.",
-which the configuration sets ([configuration](../reference/configuration.md#taste-profile)).
+Settings → Reviewer › Taste profile, inside the reviewer panel below the
+description adviser, picks what writes the taste profile: Codex or an
+OpenRouter vision model. It says what the model receives, which model is
+selected, and the daily limit, "Mechanical Librarian asks for at most 8 taste
+profiles a day.", which the configuration sets
+([configuration](../reference/configuration.md#taste-profile)). Continue
+without a taste profile stops taste profiles and keeps cover review and
+description advice.
+
+The Codex row appears once Codex is signed in or selected for any task. It
+names the Codex model, says taste profiles count against the plan's usage
+limits, and Use Codex for taste profiles selects it; it is disabled until the
+Codex sign-in is usable. While the Codex sign-in is not usable, no taste profile
+build is scheduled. The OpenRouter row offers recommended models measured
+for taste profiles, and Test taste profile model and prices shows the model's
+prices per input token, output token, image and request before Use for taste
+profile saves it. A failure shows under the button that met it.

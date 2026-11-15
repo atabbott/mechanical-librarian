@@ -1,8 +1,9 @@
 """A taste profile written from recorded owner cover choices, end to end (#1372).
 
 Decisions go through the real decision command; the builder answers through a
-fake OpenRouter client behind the real reviewer access, so every seam from the
-eligible-decision SQL to the read route is the shipped one.
+fake OpenRouter client, or a fake contained Codex runner, behind the real
+reviewer access, so every seam from the eligible-decision SQL to the read
+route is the shipped one.
 """
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -28,6 +29,10 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
 )
 from mechanical_librarian.adapters.reviewers.openrouter import OpenRouterAccountStatus
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
+from mechanical_librarian.application.contained_reviewer_contract import (
+    ContainedReviewerError,
+    canonical_json,
+)
 from mechanical_librarian.application.cover_taste_build import CoverTasteBuildService
 from mechanical_librarian.application.cover_taste_contract import (
     AdmittedTasteBuildRequest,
@@ -57,7 +62,19 @@ CODEX = ("gpt-5.6-sol", b"synthetic-contained-profile")
 
 
 def _never(*_args: object) -> str:
-    raise AssertionError("the taste profile never runs on Codex")
+    raise AssertionError("cover review and description advice never run here")
+
+
+_CODEX_PROFILE = canonical_json(
+    {
+        "sections": {
+            "avoid": [],
+            "drawn_to": [SENTINEL],
+            "keep_or_switch": [],
+            "trade_offs": [],
+        }
+    }
+)
 
 
 @dataclass
@@ -114,7 +131,14 @@ class _Built:
 
 
 @contextmanager
-def _built(root: Path, decisions: int = 25) -> Iterator[_Built]:
+def _built(
+    root: Path,
+    decisions: int = 25,
+    *,
+    codex: Callable[[bytes, AdmittedTasteBuildRequest], str] | None = None,
+    daily_limit: int = 8,
+) -> Iterator[_Built]:
+    """Select OpenRouter for the taste build, or Codex answering through `codex`."""
     repository = open_repository(root / "reports.sqlite", cross_thread=True)
     clients: list[_TasteOpenRouter] = []
 
@@ -133,25 +157,29 @@ def _built(root: Path, decisions: int = 25) -> Iterator[_Built]:
         codex_identity=lambda: CODEX,
         codex_binding=lambda: (*CODEX, _never),
         codex_description_binding=lambda: (*CODEX, _never),
+        codex_taste_binding=lambda: (*CODEX, codex or _never),
         # A taste build uses only `run_taste_build` and `close`.
         openrouter_factory=cast("OpenRouterFactory", factory),
     )
     try:
         record_owner_cover_decisions(root, repository, decisions)
         revision = access.read().revision
-        access.test_taste_model("synthetic-key", MODEL)
-        access.configure_openrouter(
-            expected_revision=revision,
-            api_key="synthetic-key",
-            model=MODEL,
-            task="cover_taste_build",
-        )
+        if codex is not None:
+            access.select_codex(expected_revision=revision, task="cover_taste_build")
+        else:
+            access.test_taste_model("synthetic-key", MODEL)
+            access.configure_openrouter(
+                expected_revision=revision,
+                api_key="synthetic-key",
+                model=MODEL,
+                task="cover_taste_build",
+            )
         clients.clear()
         service = CoverTasteBuildService(
             repository.cover_taste_store,
             access,
             CoverArtifactStore(root / "artifacts", create=False).read_preview_digest,
-            daily_limit=8,
+            daily_limit=daily_limit,
             clock=lambda: NOW,
         )
         yield _Built(root, repository, access, service, clients)
@@ -217,6 +245,78 @@ def test_a_profile_is_written_from_owner_choices_and_shown_read_only(tmp_path) -
             assert body["versions"] == [
                 {"version": 1, "built_at": NOW, "decisions": 25}
             ]
+
+
+def test_a_profile_is_written_on_codex_with_the_contained_model(tmp_path) -> None:
+    """Codex receives the same admitted request and its model is stored (#1372 C4)."""
+    runs: list[tuple[bytes, AdmittedTasteBuildRequest]] = []
+
+    def codex(profile: bytes, request: AdmittedTasteBuildRequest) -> str:
+        runs.append((profile, request))
+        return _CODEX_PROFILE
+
+    with _built(tmp_path, codex=codex) as built:
+        assert built.service.read()["configured"] is True
+        built.service.wake(NOW)
+        [(profile, request)] = runs
+        assert profile == CODEX[1]
+        assert type(request) is AdmittedTasteBuildRequest
+        assert len(json.loads(request.packet_document)["decisions"]) == 25
+        assert len(request.images) == 50
+        assert built.openrouter == []
+        state = built.service.read()
+        assert state["build"] is None
+        [(version, _created, document)] = cast(
+            "list[tuple[int, int, dict[str, Any]]]", state["versions"]
+        )
+        assert version == 1
+        assert document["model"] == CODEX[0]
+        assert document["rules"][0]["text"] == SENTINEL
+        assert built.repository._connection.execute(
+            "SELECT model FROM cover_taste_builds"
+        ).fetchall() == [(CODEX[0],)]
+
+
+def test_codex_failures_end_closed_without_stopping_the_day_and_count(
+    tmp_path,
+) -> None:
+    """A Codex failure is `unavailable`, a bad reply `invalid_output`; both count."""
+    answers: list[object] = [
+        ContainedReviewerError("timeout"),
+        ContainedReviewerError("malformed_output"),
+        canonical_json({"sections": {"drawn_to": ["x" * 401]}}),
+    ]
+
+    def codex(_profile: bytes, _request: AdmittedTasteBuildRequest) -> str:
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return cast("str", answer)
+
+    def requests_today(built: _Built) -> list[tuple[int, str | None]]:
+        return cast(
+            "list[tuple[int, str | None]]",
+            built.repository._connection.execute(
+                "SELECT requests,stopped FROM reviewer_task_requests"
+            ).fetchall(),
+        )
+
+    with _built(tmp_path, codex=codex, daily_limit=3) as built:
+        failures = []
+        for offset in range(3):
+            built.service.wake(NOW + offset)
+            build = cast("dict[str, Any]", built.service.read()["build"])
+            failures.append(build["failure"])
+            assert requests_today(built) == [(offset + 1, None)]
+            built.service.retry(build["build_id"])
+        assert failures == ["unavailable", "invalid_output", "invalid_output"]
+        assert answers == []
+        # The third build used the day's last request: the next is refused.
+        built.service.wake(NOW + 3)
+        build = cast("dict[str, Any]", built.service.read()["build"])
+        assert build["failure"] == "ceiling"
+        assert requests_today(built) == [(3, None)]
+        assert built.service.read()["versions"] == []
 
 
 def test_a_failed_build_is_retried_once_by_the_owner(tmp_path) -> None:
