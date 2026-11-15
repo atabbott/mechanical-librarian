@@ -114,6 +114,9 @@ _CLASSIFIER_RULES = (
     "provider-identity-without-identifier-level-refused-or-ambiguous:unchanged",
     "listed-edition-beside-another-source-contradiction:level-refused",
     "level-one-work-rule-per-level:strictest-unambiguous-level",
+    "level-title-and-creator-nested-author-lists:own-list-comparison",
+    "level-title-and-creator-overlapping-author-lists:level-refused",
+    "level-contradiction-gate-per-level:exact-and-wide-apart",
 )
 CLASSIFIER_REFERENCE = (
     "cover_identity_classifier_"
@@ -600,13 +603,19 @@ def _classify_sources(
 
 
 def _level_set(
-    report: MetadataReport, matches: tuple[_Match, ...], level: WorkIdentityLevel
+    report: MetadataReport,
+    matches: tuple[_Match, ...],
+    level: WorkIdentityLevel,
+    *,
+    exact_refused: bool = False,
 ) -> tuple[str, LevelAdmission | None, bool]:
     """The bound records' verdict at one level: met, ambiguous or refused.
 
     S6's one-work rule counts only the records meeting `level`, so a record
     may be one work at the exact level and ambiguous at the wide one. Met
     names the strictest level met and whether only the initials fold met it.
+    With `exact_refused` (the exact level is refused), the strictest level
+    met is the wide one, whatever level each record meets on its own.
     """
     records: list[LevelAdmissionRecord] = []
     for _source, observation, candidate, _isbn, _recording in matches:
@@ -620,6 +629,15 @@ def _level_set(
     admitted = [record for record in records if record.admission is not None]
     if not admitted:
         return "refused", None, False
+    if exact_refused:
+        return (
+            "met",
+            LevelAdmission(
+                WorkIdentityLevel.TITLE_AND_CREATOR,
+                f"work_identity:{WorkIdentityLevel.TITLE_AND_CREATOR.value}",
+            ),
+            all(record.creator_comparison == "initials_fold" for record in admitted),
+        )
     met = min(
         (cast("LevelAdmission", record.admission) for record in admitted),
         key=lambda admission: _LEVEL_WIDTH[admission.level],
@@ -642,28 +660,48 @@ def _level_outcome(
 ) -> tuple[str, list[str], list[str]]:
     """Add ADR-0096's level facts to an unverified candidate (#1355, S8).
 
-    Any contradiction wins. Otherwise the reasons record the strictest level
-    at which the bound records are one work and meet the predicate, so they
-    say what a configured level would admit: met at the exact level, else
-    the wide level's verdict (met, ambiguous or refused). At the configured
-    wide level an ambiguous set is recorded as ambiguous. When the configured
-    level is at or wider than the level met, the outcome is
-    ``title_creator_work_match`` and a creator disagreement the initials fold
-    resolves is no longer a reason; otherwise the identifier outcome and its
-    reasons stand, beside the level facts. A record in `contradicting` (a
-    listed edition beside another source) only refuses: it never admits.
+    Any contradiction at a level refuses that level: each of the exact and
+    wide levels is refused when a bound record is contradicted at it.
+    Otherwise the reasons record the strictest level at which the bound
+    records are one work and meet the predicate, so they say what a
+    configured level would admit: met at the exact level, else the wide
+    level's verdict (met, ambiguous or refused). At the configured wide level
+    an ambiguous set is recorded as ambiguous. When the configured level is
+    at or wider than the level met, the outcome is ``title_creator_work_match``
+    and a creator disagreement the initials fold resolves is no longer a
+    reason; otherwise the identifier outcome and its reasons stand, beside
+    the level facts. A record in `contradicting` (a listed edition beside
+    another source) only refuses: it never admits.
     """
     outcome, reasons, evidence = identifier
-    if any(
-        level_contradiction(report, observation, candidate)
-        for _source, observation, candidate, _isbn, _recording in (
-            *contradicting,
-            *matches,
+
+    def contradicted(level: WorkIdentityLevel) -> bool:
+        return any(
+            level_contradiction(report, observation, candidate, level)
+            for _source, observation, candidate, _isbn, _recording in (
+                *contradicting,
+                *matches,
+            )
         )
-    ):
-        return outcome, [*reasons, "work_identity_level_refused"], evidence
-    wide = _level_set(report, matches, WorkIdentityLevel.TITLE_AND_CREATOR)
-    exact = _level_set(report, matches, WorkIdentityLevel.TITLE_AND_CREATOR_EXACT)
+
+    refused: tuple[str, LevelAdmission | None, bool] = ("refused", None, False)
+    exact = (
+        refused
+        if contradicted(WorkIdentityLevel.TITLE_AND_CREATOR_EXACT)
+        else _level_set(report, matches, WorkIdentityLevel.TITLE_AND_CREATOR_EXACT)
+    )
+    # A record met at the exact level beside one the exact level refuses is
+    # met only at the wide level, so a configured exact level keeps refusing.
+    wide = (
+        refused
+        if contradicted(WorkIdentityLevel.TITLE_AND_CREATOR)
+        else _level_set(
+            report,
+            matches,
+            WorkIdentityLevel.TITLE_AND_CREATOR,
+            exact_refused=exact[0] == "refused",
+        )
+    )
     state, met, folded = (
         wide
         if level is WorkIdentityLevel.TITLE_AND_CREATOR and wide[0] == "ambiguous"

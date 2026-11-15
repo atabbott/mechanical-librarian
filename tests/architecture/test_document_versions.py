@@ -58,6 +58,16 @@ PINS: tuple[tuple[str, str, str], ...] = (
     ),
     ("mechanical_librarian.domain.review_case", "REVIEW_CASE_SCHEMA", "review-case-v2"),
     (
+        "mechanical_librarian.domain.review_case",
+        "LEVEL_OFFER_SCHEMA",
+        "review-case-level-offer-v2",
+    ),
+    (
+        "mechanical_librarian.domain.level_proposal_set",
+        "LEVEL_PROPOSAL_SET_SCHEMA",
+        "level-proposal-set-v2",
+    ),
+    (
         "mechanical_librarian.application.cover_consideration",
         "SCHEMA_VERSION",
         "cover-consideration-v9",

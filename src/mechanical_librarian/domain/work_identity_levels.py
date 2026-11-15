@@ -28,7 +28,10 @@ edition, work, manifestation and creator contradictions, ADR-0018's
 translation, adaptation, abridgement and variant-marker vetoes, an audiobook
 recording variant conflict), and an inverted creator form only the query used
 (#1380). `level_admission` takes the first two as caller-decided flags; the
-creator form is the caller's to exclude before building the reference.
+creator form is the caller's to exclude before building the reference. At
+`title_and_creator` the provider level path also refuses two author lists that
+share a creator while each names one the other lacks (#1355), in
+`proposal_set.level_contradiction`.
 
 Callers pass length-bounded text: the stored claim or association projections
 the product already bounds. The decoration grammar's patterns are proven only

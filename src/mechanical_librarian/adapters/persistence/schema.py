@@ -98,7 +98,7 @@ from mechanical_librarian.domain.proposal_set import (
     ProposalSet,
     evaluate_report,
 )
-from mechanical_librarian.domain.review_case import ReviewCase
+from mechanical_librarian.domain.review_case import LEVEL_OFFER_SCHEMA, ReviewCase
 from mechanical_librarian.domain.reviewer_access import REVIEWER_ACCESS_SCHEMA
 from mechanical_librarian.domain.shadow_decision import (
     DECISION_POLICY_SHA256,
@@ -1322,7 +1322,7 @@ _REVIEW_CASE_LEVEL_OFFERS_SQL = (
     "level_proposal_set_id TEXT NOT NULL REFERENCES level_proposal_sets(level_proposal_set_id), "
     "reconciled_level TEXT NOT NULL CHECK(reconciled_level=work_identity_level), "
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 2097152 "
-    "AND json_extract(document,'$.schema_version')='review-case-level-offer-v1'), "
+    "AND json_extract(document,'$.schema_version')='" + LEVEL_OFFER_SCHEMA + "'), "
     "UNIQUE(review_case_id,work_identity_level))"
 )
 _REVIEW_CASE_LEVEL_RECONCILIATION_SQL = (

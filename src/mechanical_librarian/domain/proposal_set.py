@@ -89,6 +89,7 @@ from mechanical_librarian.domain.metadata_report import (
     canonical_json,
     complete_creator_identity_bindings,
     creator_comparison_key,
+    creator_list_relation,
     creator_sequence_methods,
     derive_identifier_evidence,
     discovery_lane_identity,
@@ -4488,25 +4489,49 @@ def level_contradiction(
     report: MetadataReport,
     provider: ProviderObservation,
     candidate: ProviderCandidate,
+    level: WorkIdentityLevel,
 ) -> bool:
-    """Whether retained evidence contradicts a record on the level path (S6).
+    """Whether retained evidence contradicts a record at one wider level (S6).
 
     Any of: the classifier's explicit contradiction read with the initials
-    fold; an unrelated identifier bound to the record or an edition-work
-    contradiction; an accepted manifestation whose publication is
-    contradicted (an ISBN that merely differs is not a contradiction); an
-    audiobook recording variant conflict; or a creator disagreement with no
-    agreement, the fold counting as agreement.
+    fold, and at ``title_and_creator`` with partial author lists (a record
+    whose author list contains the target's stored AUTHORS, or is contained
+    in them, is compared against its own list); at ``title_and_creator``
+    only, author lists that overlap while each names a creator the other
+    lacks, whatever claim set the record states (#1355); an unrelated
+    identifier bound to the record or an edition-work contradiction; an
+    accepted manifestation whose publication is contradicted (an ISBN that
+    merely differs is not a contradiction); an audiobook recording variant
+    conflict; or a creator disagreement with no agreement, the fold counting
+    as agreement. ``identifier`` adds no level path, so it is refused.
     """
+    if type(level) is not WorkIdentityLevel or level is WorkIdentityLevel.IDENTIFIER:
+        raise ReportValueError("work identity level is invalid")
+    wide = level is WorkIdentityLevel.TITLE_AND_CREATOR
     target_title = report.target.current_title
     target_authors = _target_stored_authors(report)
     if (
         target_title is not None
         and target_authors
         and provider_candidate_work_identity_contradiction(
-            candidate, target_title, target_authors, fold_initials=True
+            candidate,
+            target_title,
+            target_authors,
+            fold_initials=True,
+            partial_authors=wide,
         )
         is WorkIdentityContradiction.EXPLICIT
+    ):
+        return True
+    record_creators = tuple(
+        dict.fromkeys(_level_work_claims(candidate, ClaimKind.CREATOR))
+    )
+    if (
+        wide
+        and target_authors
+        and record_creators
+        and creator_list_relation(target_authors, record_creators, fold_initials=True)
+        == "overlap"
     ):
         return True
     bound = _level_bound_identifiers(report, provider, candidate)
@@ -4606,7 +4631,7 @@ def _candidate_level_admission(
         record_title,
         record_creators,
         omnibus_against_volume=omnibus,
-        contradicted=level_contradiction(report, provider, candidate),
+        contradicted=level_contradiction(report, provider, candidate, level),
         fold_initials=fold_initials,
     )
 
@@ -4756,9 +4781,17 @@ class LevelEvidence:
         target_title: str,
         target_authors: tuple[str, ...],
     ) -> WorkIdentityContradiction:
-        """The level path's contradiction classifier: initials fold (S10)."""
+        """The level path's contradiction classifier (S10).
+
+        It reads the initials fold, and at ``title_and_creator`` partial
+        author lists, as ``level_contradiction`` does (#1355).
+        """
         return provider_candidate_work_identity_contradiction(
-            candidate, target_title, target_authors, fold_initials=True
+            candidate,
+            target_title,
+            target_authors,
+            fold_initials=True,
+            partial_authors=self.level is WorkIdentityLevel.TITLE_AND_CREATOR,
         )
 
     def references(self) -> frozenset[str]:

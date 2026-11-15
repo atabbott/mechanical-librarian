@@ -26,7 +26,9 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderEvidenceKind,
     ProviderObservation,
     ProviderQueryKind,
+    ReportValueError,
     WorkIdentityContradiction,
+    creator_list_relation,
     provider_candidate_work_identity_contradiction,
 )
 from mechanical_librarian.domain.proposal_set import (
@@ -70,13 +72,26 @@ def _record(
     )
 
 
-def _complete_record(creators: tuple[str, ...]) -> ProviderCandidate:
-    """A real record, which the classifier alone requires."""
+def _complete_record(
+    creators: tuple[str, ...],
+    *,
+    title: str = "Synthetic Title",
+    identity: str = "record-1",
+    work: str = _WORK,
+    roles: tuple[str | None, ...] | None = None,
+    translator: bool = False,
+) -> ProviderCandidate:
+    """A real record, which the classifier alone requires.
+
+    `roles` gives each creator's role; a `None` role is a neutral creator
+    with no identity binding, so the record states no classifier-complete
+    claim set.
+    """
 
     def claim(kind: ClaimKind, value: str, **values: Any) -> ProviderClaim:
         return ProviderClaim.create(
             provider="hardcover",
-            candidate="record-1",
+            candidate=identity,
             kind=kind,
             value=value,
             state=FieldState.VALID,
@@ -86,19 +101,37 @@ def _complete_record(creators: tuple[str, ...]) -> ProviderCandidate:
         )
 
     return ProviderCandidate(
-        "record-1",
-        _WORK,
+        identity,
+        work,
         (
-            claim(ClaimKind.TITLE, "Synthetic Title"),
+            claim(ClaimKind.TITLE, title),
             *(
-                claim(ClaimKind.CREATOR, value, role="author", raw_order=index + 1)
-                for index, value in enumerate(creators)
+                claim(ClaimKind.CREATOR, value, role=role, raw_order=index + 1)
+                for index, (value, role) in enumerate(
+                    zip(
+                        creators,
+                        ("author",) * len(creators) if roles is None else roles,
+                        strict=True,
+                    )
+                )
+            ),
+            *(
+                (
+                    claim(
+                        ClaimKind.CONTRIBUTOR,
+                        "Tess Translator",
+                        role="translator",
+                        raw_order=len(creators) + 1,
+                    ),
+                )
+                if translator
+                else ()
             ),
         ),
     )
 
 
-def _lane(*records: SimpleNamespace) -> SimpleNamespace:
+def _lane(*records: SimpleNamespace | ProviderCandidate) -> SimpleNamespace:
     return SimpleNamespace(
         kind=ProviderQueryKind.WORK,
         candidates=tuple(
@@ -111,7 +144,7 @@ def _lane(*records: SimpleNamespace) -> SimpleNamespace:
 
 
 def _report(
-    *records: SimpleNamespace,
+    *records: SimpleNamespace | ProviderCandidate,
     title: str = "Synthetic Title",
     authors: tuple[str, ...] | None = ("R. F. Example",),
     lanes: tuple[SimpleNamespace, ...] = (),
@@ -325,6 +358,7 @@ def _refused_record(
 
 def _refused_set(
     *records: ProviderCandidate,
+    authors: tuple[str, ...] = ("R. F. Example",),
 ) -> tuple[MetadataReport, ProviderObservation]:
     """An observation whose lanes refused every record, so it keeps them."""
     provider = SimpleNamespace(
@@ -338,7 +372,7 @@ def _refused_set(
     )
     report = SimpleNamespace(
         audio=None,
-        target=_target("Synthetic Title", ("R. F. Example",)),
+        target=_target("Synthetic Title", authors),
         providers=(provider,),
         identifier_evidence=(),
         local_claims=(),
@@ -435,8 +469,10 @@ def _isbn_claim(value: str, *, scope: ClaimScope) -> SimpleNamespace:
 def test_level_contradiction_matrix(
     record: Any, evidence: tuple[object, ...], contradicted: bool
 ) -> None:
+    # Every case is single-author, so both wider levels compose alike.
     report, provider = _report(record, identifier_evidence=evidence)
-    assert level_contradiction(report, provider, record) is contradicted
+    for level in (_EXACT, _WIDE):
+        assert level_contradiction(report, provider, record, level) is contradicted
 
 
 def _contributor(role: str, value: str) -> SimpleNamespace:
@@ -550,8 +586,8 @@ def test_contradiction_precedes_level_admission(
     # Without its contradiction the same record meets the exact level
     # (`test_the_same_title_and_every_author_meets_the_exact_level`); the
     # vetoes are the set rule's, the rest `level_contradiction`'s.
-    assert level_contradiction(report, provider, record) is composed  # type: ignore[arg-type]
     for level in (_EXACT, _WIDE):
+        assert level_contradiction(report, provider, record, level) is composed  # type: ignore[arg-type]
         assert _admit(report, provider, record, level) == LevelAdmissionRecord(
             None, "refused"
         )
@@ -574,7 +610,8 @@ def test_a_manifestation_sharing_the_isbn_family_that_contradicts_is_refused() -
         record, identifier_evidence=(_identifier(IdentifierRelation.ACCEPTED),)
     )
     cast("SimpleNamespace", report).local_claims = (local,)
-    assert level_contradiction(report, provider, record) is True  # type: ignore[arg-type]
+    for level in (_EXACT, _WIDE):
+        assert level_contradiction(report, provider, record, level) is True  # type: ignore[arg-type]
     assert _admit(report, provider, record) == LevelAdmissionRecord(None, "refused")
 
 
@@ -613,7 +650,10 @@ def _classifier_callers() -> list[tuple[str, int, bool]]:
                 )
                 == "provider_candidate_work_identity_contradiction"
             ):
-                folds = any(keyword.arg == "fold_initials" for keyword in node.keywords)
+                folds = any(
+                    keyword.arg in {"fold_initials", "partial_authors"}
+                    for keyword in node.keywords
+                )
                 calls.append((str(path.relative_to(root)), node.lineno, folds))
     return calls
 
@@ -630,5 +670,248 @@ def _classifier_callers() -> list[tuple[str, int, bool]]:
 def test_every_live_classifier_caller_keeps_the_explicit_default(
     caller: tuple[str, int, bool],
 ) -> None:
-    """Guard: only the level path reads the fold (#1780 S9)."""
+    """Guard: only the level path reads the fold (#1780 S9) or partial author
+    lists (#1355)."""
     assert caller[2] is False
+
+
+# --- 6. Partial author lists at `title_and_creator` (#1355) -----------------
+
+_FIRST = "R. F. Example"
+_SECOND = "Bea Example"
+
+
+@pytest.mark.parametrize(
+    ("target", "record", "fold", "relation"),
+    (
+        ((_FIRST, _SECOND), (_FIRST, _SECOND), True, "same"),
+        ((_FIRST, _SECOND), (_SECOND, _FIRST), True, "same"),
+        # A middle initial on one side only: the replay's four-record class.
+        (("John Q. Public", _SECOND), ("John Public", _SECOND), True, "same"),
+        ((_FIRST, _SECOND), (_FIRST,), True, "nested"),
+        ((_FIRST,), (_FIRST, _SECOND), True, "nested"),
+        (("J. R. Example",), ("J.R. Example", "Co Author"), True, "nested"),
+        (("J. R. Example",), ("J.R. Example", "Co Author"), False, "disjoint"),
+        ((_FIRST, _SECOND), (_FIRST, "Cy Example"), True, "overlap"),
+        ((_FIRST,), ("Other Author",), True, "disjoint"),
+        # The collapse guard: a fold merging two of one side's creators is not
+        # tried, so no folded pairing is made.
+        (("A. B. Name",), ("A B Name",), True, "same"),
+        (("A. B. Name", "A.B. Name"), ("A B Name",), True, "disjoint"),
+        # Duplicate keys count once.
+        ((_FIRST, "r. f. example", _SECOND), (_FIRST,), True, "nested"),
+        ((_FIRST, _FIRST.upper()), (_FIRST,), True, "same"),
+    ),
+    ids=(
+        "equal",
+        "reordered",
+        "middle_initial_on_one_side",
+        "subset",
+        "superset",
+        "folded_nested",
+        "unfolded_disjoint",
+        "overlap",
+        "disjoint",
+        "fold_without_collapse",
+        "collapse_guard",
+        "duplicate_keys_nested",
+        "duplicate_keys_same",
+    ),
+)
+def test_creator_list_relation(
+    target: tuple[str, ...], record: tuple[str, ...], fold: bool, relation: str
+) -> None:
+    assert creator_list_relation(target, record, fold_initials=fold) == relation
+
+
+@pytest.mark.parametrize(
+    ("target", "record", "fold"),
+    (
+        ([_FIRST], (_FIRST,), True),
+        ((_FIRST,), (), True),
+        ((), (_FIRST,), True),
+        ((_FIRST, ""), (_FIRST,), True),
+        ((_FIRST,), (1,), True),
+        ((_FIRST,), (_FIRST,), 1),
+    ),
+    ids=(
+        "list_target",
+        "empty_record",
+        "empty_target",
+        "empty_value",
+        "non_text_value",
+        "non_bool_fold",
+    ),
+)
+def test_creator_list_relation_refuses_bad_input(
+    target: Any, record: Any, fold: Any
+) -> None:
+    with pytest.raises(ReportValueError, match="creator list relation input"):
+        creator_list_relation(target, record, fold_initials=fold)
+
+
+def _classify(
+    record: ProviderCandidate, authors: tuple[str, ...], **values: Any
+) -> Any:
+    return provider_candidate_work_identity_contradiction(
+        record, "Synthetic Title", authors, **values
+    )
+
+
+def test_the_classifier_reads_partial_authors_only_when_asked() -> None:
+    explicit = WorkIdentityContradiction.EXPLICIT
+    unavailable = WorkIdentityContradiction.UNAVAILABLE
+    subset = (_complete_record((_FIRST,)), (_FIRST, _SECOND))
+    superset = (_complete_record((_FIRST, _SECOND)), (_FIRST,))
+    for record, authors in (subset, superset):
+        assert _classify(record, authors) is explicit
+        assert _classify(record, authors, fold_initials=True) is explicit
+        assert _classify(record, authors, partial_authors=True) is unavailable
+        assert (
+            _classify(record, authors, fold_initials=True, partial_authors=True)
+            is unavailable
+        )
+    # The record's own list still meets every other check.
+    retitled = _complete_record((_FIRST,), title="Another Title")
+    assert (
+        _classify(retitled, (_FIRST, _SECOND), fold_initials=True, partial_authors=True)
+        is explicit
+    )
+    overlapping = _complete_record((_FIRST, "Cy Example"))
+    assert (
+        _classify(
+            overlapping, (_FIRST, _SECOND), fold_initials=True, partial_authors=True
+        )
+        is explicit
+    )
+    # Equal lists keep today's verdict.
+    equal = _complete_record((_FIRST, _SECOND))
+    assert (
+        _classify(equal, (_FIRST, _SECOND), partial_authors=True)
+        is WorkIdentityContradiction.NOT_CONTRADICTED
+    )
+    with pytest.raises(ReportValueError, match="contradiction input is invalid"):
+        _classify(equal, (_FIRST,), partial_authors=1)
+
+
+@pytest.mark.parametrize(
+    ("target", "creators", "wide", "comparison"),
+    (
+        ((_FIRST, _SECOND), (_FIRST,), _WIDE, "closed"),
+        ((_FIRST,), (_FIRST, _SECOND), _WIDE, "closed"),
+        (("J. R. Example",), ("J.R. Example", "Co Author"), _WIDE, "initials_fold"),
+        ((_FIRST, _SECOND), (_FIRST, _SECOND), _EXACT, "closed"),
+    ),
+    ids=("subset", "superset", "folded", "equal"),
+)
+def test_a_nested_author_list_meets_only_the_wide_level(
+    target: tuple[str, ...],
+    creators: tuple[str, ...],
+    wide: WorkIdentityLevel,
+    comparison: str,
+) -> None:
+    record = _complete_record(creators)
+    report, provider = _report(record, authors=target)
+    value = provider_candidate_level_admission(report, provider, record, _WIDE)
+    assert _level(value) is wide
+    assert value is not None and value.creator_comparison == comparison
+    exact = provider_candidate_level_admission(report, provider, record, _EXACT)
+    if wide is _EXACT:
+        assert _level(exact) is _EXACT
+    else:
+        assert exact == LevelAdmissionRecord(None, "refused")
+    assert (
+        provider_candidate_level_admission(
+            report, provider, record, WorkIdentityLevel.IDENTIFIER
+        )
+        is None
+    )
+
+
+_OVERLAPPING = (_FIRST, "Cy Example")
+
+
+@pytest.mark.parametrize(
+    ("record", "complete"),
+    (
+        (_complete_record(_OVERLAPPING), True),
+        (_complete_record(_OVERLAPPING, roles=(None, None)), False),
+        (_complete_record(_OVERLAPPING, roles=("author", None)), False),
+        (_record(creators=_OVERLAPPING), False),
+    ),
+    ids=("complete", "neutral_unbound", "mixed_typed_and_neutral", "duck"),
+)
+def test_overlapping_author_lists_are_refused_at_every_level(
+    record: Any, complete: bool
+) -> None:
+    report, provider = _report(record, authors=(_FIRST, _SECOND))
+    for level in (_EXACT, _WIDE):
+        assert provider_candidate_level_admission(
+            report, provider, record, level
+        ) == LevelAdmissionRecord(None, "refused")
+    assert level_contradiction(report, provider, record, _WIDE) is True
+    # The exact composition is today's: only the classifier refuses there.
+    assert level_contradiction(report, provider, record, _EXACT) is complete
+
+
+def test_two_nested_works_in_one_set_are_ambiguous() -> None:
+    first = _complete_record((_FIRST,), identity="record-1", work=_WORK)
+    second = _complete_record((_FIRST,), identity="record-2", work=_OTHER_WORK)
+    report, provider = _report(
+        first, second, authors=(_FIRST, _SECOND), lanes=(_lane(first, second),)
+    )
+    for record in (first, second):
+        assert provider_candidate_level_admission(
+            report, provider, record, _WIDE
+        ) == LevelAdmissionRecord(None, "ambiguous")
+
+
+def test_a_nested_record_with_a_translator_is_refused() -> None:
+    translated = _complete_record((_FIRST,), identity="record-2", translator=True)
+    sibling = _complete_record((_FIRST,), identity="record-1")
+    authors = (_FIRST, _SECOND)
+    alone, lone = _report(translated, authors=authors)
+    assert provider_candidate_level_admission(
+        alone, lone, translated, _WIDE
+    ) == LevelAdmissionRecord(None, "refused")
+    report, provider = _report(
+        sibling, translated, authors=authors, lanes=(_lane(sibling, translated),)
+    )
+    for record in (sibling, translated):
+        assert provider_candidate_level_admission(
+            report, provider, record, _WIDE
+        ) == LevelAdmissionRecord(None, "refused")
+
+
+def test_a_nested_refused_answer_is_admitted_at_the_wide_level() -> None:
+    authors = (_FIRST, _SECOND)
+    record = _refused_record("record-1", _WORK)
+    report, provider = _refused_set(record, authors=authors)
+    value = provider_candidate_level_admission(report, provider, record, _WIDE)
+    assert _level(value) is _WIDE
+    assert value is not None and value.creator_comparison == "initials_fold"
+    assert provider_candidate_level_admission(
+        report, provider, record, _EXACT
+    ) == LevelAdmissionRecord(None, "refused")
+    other = _refused_record("record-2", _OTHER_WORK)
+    both, observation = _refused_set(record, other, authors=authors)
+    for value_record in (record, other):
+        assert provider_candidate_level_admission(
+            both, observation, value_record, _WIDE
+        ) == LevelAdmissionRecord(None, "ambiguous")
+    cast("SimpleNamespace", provider).identity_refused_truncated = 1
+    assert provider_candidate_level_admission(
+        report, provider, record, _WIDE
+    ) == LevelAdmissionRecord(None, "truncated")
+
+
+@pytest.mark.parametrize(
+    "level",
+    (WorkIdentityLevel.IDENTIFIER, "title_and_creator"),
+    ids=("identifier", "non_member"),
+)
+def test_level_contradiction_refuses_identifier(level: Any) -> None:
+    record = _record()
+    report, provider = _report(record)
+    with pytest.raises(ReportValueError, match="work identity level is invalid"):
+        level_contradiction(report, provider, record, level)  # type: ignore[arg-type]
