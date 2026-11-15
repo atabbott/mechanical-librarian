@@ -2,7 +2,8 @@
 
 A workbench instrument, deliberately not part of the installed product: run it
 from the checkout an install was built from, against a folder holding copies
-of that install's files, named as they are in ``/data``:
+of that install's files under these names (where each comes from is in
+``docs/operations/rebuild-checks.md``):
 
 - ``application.sqlite3`` (required);
 - ``catalogue.sqlite3``;
@@ -159,8 +160,14 @@ def _save(folder: Path, file: str, text: str) -> str:
     except OSError as error:
         return f"Did not write {file}: saving it stopped with {type(error).__name__}."
     try:
-        os.fchmod(descriptor, 0o600)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        stream = os.fdopen(descriptor, "w", encoding="utf-8")
+    except OSError as error:
+        os.close(descriptor)
+        path.unlink(missing_ok=True)
+        return f"Did not write {file}: saving it stopped with {type(error).__name__}."
+    try:
+        with stream:
+            os.fchmod(stream.fileno(), 0o600)
             stream.write(text)
     except OSError as error:
         try:
