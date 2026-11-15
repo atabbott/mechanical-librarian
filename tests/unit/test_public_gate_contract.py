@@ -198,7 +198,7 @@ def test_every_job_is_bounded_and_the_source_job_gates_before_it_tests() -> None
     )
 
 
-def test_the_documented_check_set_matches_the_only_workflow() -> None:
+def test_the_documented_check_set_matches_the_gate_workflow() -> None:
     """Bind CONTRIBUTING's reconciliation table to the workflow it describes.
 
     Both halves of the drift this exists to stop were real. Prose claimed
@@ -225,7 +225,19 @@ def test_the_documented_check_set_matches_the_only_workflow() -> None:
     directory = ROOT / ".github" / "workflows"
     assert sorted(
         path.name for path in directory.iterdir() if path.suffix in {".yml", ".yaml"}
-    ) == ["public-gate.yml"]
+    ) == ["public-gate.yml", "scheduled-audit.yml"]
+    # The weekly audit reruns one gate scan on `main` and gates nothing: it is
+    # started by the clock or by hand, never by a pull request or a push.
+    scheduled = (directory / "scheduled-audit.yml").read_text(encoding="utf-8")
+    # The whole block up to the next top-level key, blank lines included, and
+    # no second or quoted `on` key beside it.
+    triggers = re.search(r"^on:\n((?:[ \t].*\n|\n)*)", scheduled, re.M)
+    assert triggers is not None
+    assert (
+        triggers[1].strip("\n")
+        == '  schedule:\n    - cron: "23 5 * * 1"\n  workflow_dispatch:'
+    )
+    assert len(re.findall(r"^[\"']?on[\"']?\s*:", scheduled, re.M)) == 1
     # Automation under `.github/` is invoked by that workflow or it is nothing.
     for path in (ROOT / ".github").rglob("*"):
         if path.is_file() and path.suffix in {".py", ".sh"}:

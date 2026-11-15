@@ -36,6 +36,8 @@ def _evaluate(program: bytes, *, arch: int, syscall: int, argument_0: int = 0) -
             position += 1
         elif code == 0x15:
             position += 1 + (jump_true if accumulator == value else jump_false)
+        elif code == 0x35:
+            position += 1 + (jump_true if accumulator >= value else jump_false)
         elif code == 0x54:
             accumulator &= value
             position += 1
@@ -63,6 +65,12 @@ def test_seccomp_program_allows_threads_and_denies_new_processes(
         assert _evaluate(program, arch=arch, syscall=syscall) & 0xFFFF0000 == _ERRNO
     assert _evaluate(program, arch=arch, syscall=0) == _ALLOW
     assert _evaluate(program, arch=0, syscall=0) == _KILL
+
+
+def test_seccomp_program_kills_x32_calls_that_share_the_x86_64_arch() -> None:
+    program = resource_budget.no_process_seccomp_program("x86_64")
+    for syscall in (0x40000000 | 56, 0x40000000 | 57, 0x40000000):
+        assert _evaluate(program, arch=0xC000003E, syscall=syscall) == _KILL
 
 
 @pytest.mark.parametrize("network", (False, True))

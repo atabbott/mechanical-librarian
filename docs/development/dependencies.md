@@ -103,7 +103,8 @@ licence files.
   encodes its bounded PNG preview in a one-shot child that first sets
   `RLIMIT_AS` 256 MiB, `RLIMIT_CPU` 30 seconds, `RLIMIT_NOFILE` 64,
   `RLIMIT_NPROC` 1 and `RLIMIT_CORE` 0, replaces the `socket` entry points, and
-  on Linux installs a syscall filter that denies networking; byte and pixel
+  on Linux applies the shared parser confinement
+  ([parsers](../architecture/parser-confinement.md)); byte and pixel
   caps bound the input first. `application/cover_packet_semantics.py` only
   decodes one digest-verified, report-bound preview and treats
   decompression-bomb and unidentified-image errors as rejection. Pillow gets no
@@ -180,7 +181,9 @@ added rules are described in [the seccomp notice](../../config/seccomp/README.md
 | Checked-in derivative | `04151878f5bb17b00d216d552f8b8a8bc3683549517193e4f8d6501f1e7530ff` |
 | Moby Profiles licence (Apache-2.0), kept beside it | `cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30` |
 
-No Renovate rule or runtime updater owns these artifacts. Change them through
+No runtime updater owns these artifacts. Renovate lists a new `@openai/codex`
+release on its Dependency Dashboard for approval and never proposes or merges
+one by itself, because it cannot refresh the checksums. Change them through
 tracked work that updates the Dockerfile, these tables and the licence files
 together.
 
@@ -270,8 +273,16 @@ The Mend-hosted Renovate GitHub App proposes updates within
   refuse a partial update. Playwright has its own group too (below).
 - **Auto-merge.** Every managed update class, including lockfile maintenance,
   requests squash auto-merge, except any major update, a new Python minor, a
-  replacement, or Playwright. Those need Dependency Dashboard approval and do
-  not auto-merge.
+  replacement, Playwright, FFmpeg or Codex. Those need Dependency Dashboard
+  approval and do not auto-merge.
+- **FFmpeg and Codex.** The image builds FFmpeg from a source release and
+  installs one Codex platform package, each checked against a SHA-256 in the
+  `Dockerfile` that Renovate cannot compute. Renovate watches both versions so
+  a security release appears on the Dependency Dashboard. An approved pull
+  request moves only `FFMPEG_VERSION`, or the native `codex-cli` version check,
+  so it fails until the rest is updated by hand: the FFmpeg checksum, or
+  Codex's other version strings, tarball checksums and
+  [artifact tables](#contained-reviewer-image-artifacts).
 - **Playwright.** A Playwright update brings a newer Chromium, so it gets its
   own pull request and waits for approval. Approve it when someone can look
   into a browser-test failure: 1.64.1 failed the direct-route document count
@@ -283,13 +294,36 @@ says what an auto-merge must still pass, and
 Renovate pull requests carry no closing issue.
 
 New or replacement dependencies, compatibility-policy changes, the Python
-range, and the FFmpeg and contained-reviewer bundles are manual tracked work.
+range, and moving the FFmpeg and contained-reviewer bundles are manual tracked
+work.
 Renovate publishes no releases.
 
 To stop updates, set top-level `enabled` to `false` through a tracked pull
 request. For urgent containment, a repository administrator may suspend or
 uninstall the App and record that action. Close unwanted Renovate pull requests
 unmerged; revert a merged one as a defect.
+
+## Automated scanning
+
+`dependency-audit`, a required public-gate job, scans `uv.lock` with a
+digest-pinned OSV-Scanner on every pull request and push to `main`, failing
+on any known advisory in runtime or development dependencies;
+`.github/workflows/public-gate.yml` has the command, and
+`.github/workflows/scheduled-audit.yml` reruns it weekly on `main`. Frontend checks are in
+[what merging proves](../../CONTRIBUTING.md#what-merging-proves).
+
+The only way to hold a failure open is an `osv-scanner.toml` entry naming one
+advisory, a reason and an expiry at most 90 days out; there is no severity
+floor or package exclusion.
+`tests/unit/test_security_scanning_contract.py` enforces the register and
+checks that every workflow has `contents: read`, pins actions to commits and
+sets `persist-credentials: false`.
+
+CodeQL's default setup analyses Python, TypeScript and workflows on every
+pull request and push.
+
+Not covered: triage and fixes, pull-request dependency review, extra secret
+scanning, SBOMs and container image scanning.
 
 ## Automation security review
 

@@ -30,8 +30,8 @@ Do not include real credentials, private media, or personal database snapshots.
 
 ## Supported versions
 
-No supported public version exists yet. Before the first stable release this
-section must define the supported release window and security backport policy.
+The latest 1.x release receives security fixes. Until 1.0 is released, fixes
+land on `main` only.
 
 ## Security promises
 
