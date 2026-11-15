@@ -320,11 +320,10 @@ Allowed cover origins:
   `is5-ssl.mzstatic.com`.
 
 No other provider follows a redirect. Other hosts are `unsafe_remote`
-before a socket opens. Remote covers use their own transport, bounding bytes,
-attempts and deadline, pinned per hop; every answer must be public: IPv6
-within `2000::/3`, or an IPv4-mapped or `64:ff9b::/96` answer judged by its
-IPv4. Embedded audiobook art is never
-acquired. Reports never keep the remote URL.
+before a socket opens. Remote covers' own transport bounds bytes, attempts
+and deadline, pinned per hop; every answer must be public: IPv6 within
+`2000::/3`, or an IPv4-mapped or `64:ff9b::/96` answer judged by its IPv4.
+Embedded audiobook art is never acquired. Reports never keep the remote URL.
 
 A Hardcover edition row becomes a listed-edition descriptor only after a
 pre-filter on what the row states, before any request is built. Its stated
