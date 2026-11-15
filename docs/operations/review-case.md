@@ -23,6 +23,10 @@ Admission returns one typed result:
 A ProposalSet is actionable when any result is `propose_change`,
 `acceptable_choice` or `unresolved_choice`.
 
+A scheduled search whose proposals equal the current case's, that fails at a
+provider, or that now identifies nothing never reaches admission
+([metadata report](metadata-report.md#after-the-report)).
+
 Failures are redacted to `invalid`, `incompatible`, `currentness` (including
 an unavailable currentness check) or `persistence`.
 

@@ -12,7 +12,7 @@ neither direction.
 `_review_pipeline_claim` moves here with the two methods that write and take
 it: it is a claim over this module's work rows and nothing else observes it.
 
-Six seams cross the boundary and each is injected as a lambda through the
+Seven seams cross the boundary and each is injected as a lambda through the
 composing repository rather than as a bound method, which is load-bearing
 rather than stylistic. `test_failed_action_requeues_a_pending_manual_return`
 and two siblings substitute `_has_pending_field_effect_manual_return` on the
@@ -35,6 +35,9 @@ aggregate moves, as long as its delegating stub stays on the repository.
   admits or retires a work, the field effects still waiting on a case other
   than the work's current one. The field-effect aggregate owns that write
   (#1658).
+- `_current_resolved_metadata_policy` reads the library's bound policy, under
+  which a scheduled search's report is evaluated to tell whether its proposals
+  equal the current ones. Policy owns that read.
 - `_restart_metadata_policy_work` is not injected: it writes
   `review_preparation_work`, so under the ownership rule it belongs here, and
   the metadata-policy aggregate has always received it as an injected callable
@@ -78,9 +81,17 @@ from mechanical_librarian.application.review_pipeline import (
 )
 from mechanical_librarian.domain.audio_inspection import MAX_AUDIO_TRACKS
 from mechanical_librarian.domain.audiobook_corroboration import recording_unmatched
-from mechanical_librarian.domain.metadata_report import MetadataReport
+from mechanical_librarian.domain.metadata_policy import (
+    ResolvedMetadataPolicy,
+    human_review_destinations,
+)
+from mechanical_librarian.domain.metadata_report import MetadataReport, ProviderStatus
 from mechanical_librarian.domain.preparation_presentation import (
     PreparationTrigger,
+)
+from mechanical_librarian.domain.proposal_set import (
+    evaluate_report,
+    proposal_set_content_address,
 )
 from mechanical_librarian.domain.review_case import (
     ReviewAdmissionStaleError,
@@ -316,8 +327,61 @@ def matching_check_counts(
 # so a code added to one and not the other fails the gate instead of silently
 # collapsing to `failed` (#734).
 # How long an audiobook whose report admitted no recording waits before its
-# unchanged file is prepared again, so its search is asked afresh (#1451).
+# unchanged file is prepared again, so its search is asked afresh (#1451). It
+# is also the least time any finished work waits before it is searched again.
 RESEARCH_INTERVAL_SECONDS = 7 * 86_400
+# Every finished work is searched again once in each such period, at a slot
+# fixed by its work id, so about a ninetieth of a library comes due each day
+# whatever its size (ADR-0102).
+REFRESH_INTERVAL_SECONDS = 90 * 86_400
+# The provider and lane statuses of an observation that ran to its end. A
+# report whose every status is one of these is complete; any other status is a
+# failure that a later ask may answer differently.
+_COMPLETE_STATUSES = frozenset(
+    (
+        ProviderStatus.CANDIDATES,
+        ProviderStatus.NO_MATCH,
+        ProviderStatus.INSUFFICIENT_INPUT,
+        ProviderStatus.NOT_NEEDED,
+        ProviderStatus.DISABLED,
+    )
+)
+
+
+def next_research_slot(work_id: str, after: int) -> int:
+    """The first time strictly after `after` at this work's phase (ADR-0102).
+
+    The phase is the work id's last sixteen hex digits modulo the refresh
+    period, so phases spread evenly over the period and each work's slots fall
+    exactly one period apart. The result is always in `(after, after + period]`.
+    """
+    phase = int(work_id[-16:], 16) % REFRESH_INTERVAL_SECONDS
+    return after + 1 + (phase - after - 1) % REFRESH_INTERVAL_SECONDS
+
+
+def _research_mark(work_id: str, completed_at: int, recording_unmatched: bool) -> int:
+    """When a work prepared at `completed_at` is next searched again.
+
+    An audiobook that admitted no recording keeps its weekly search (#1451)
+    unless its slot comes first; every other work waits at least a week and
+    then for its slot.
+    """
+    if recording_unmatched:
+        return min(
+            completed_at + RESEARCH_INTERVAL_SECONDS,
+            next_research_slot(work_id, completed_at),
+        )
+    return next_research_slot(work_id, completed_at + RESEARCH_INTERVAL_SECONDS)
+
+
+def _report_complete(report: MetadataReport) -> bool:
+    """Whether every provider and lane of this report ran to its end."""
+    return all(
+        provider.status in _COMPLETE_STATUSES
+        and all(lane.status in _COMPLETE_STATUSES for lane in provider.lanes)
+        for provider in report.providers
+    )
+
 
 _FAILURE_CODES = frozenset(
     (
@@ -412,6 +476,9 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         supersede_displaced_waiting_effects: Callable[
             [str, str, str, str | None, int], int
         ],
+        current_resolved_metadata_policy: Callable[
+            [str], ResolvedMetadataPolicy | None
+        ],
     ) -> None:
         super().__init__(connection, binding)
         self._has_pending_field_effect_manual_return = (
@@ -423,6 +490,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         self._refresh_metadata_policy_transition = refresh_metadata_policy_transition
         self._enqueue_provider_recovery_outbox = enqueue_provider_recovery_outbox
         self._supersede_displaced_waiting_effects = supersede_displaced_waiting_effects
+        self._current_resolved_metadata_policy = current_resolved_metadata_policy
         self._review_pipeline_claim: PipelineAction | None = None
         self._claim_owner: Callable[[PipelineAction | None], None] | None = None
         self._pending_claim: tuple[PipelineAction | None] | None = None
@@ -838,10 +906,8 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                     report.report_id,
                     source_report_id,
                     # A successor is a fresh search, so its own answer sets
-                    # when the item is searched again (#1451).
-                    staged_at + RESEARCH_INTERVAL_SECONDS
-                    if recording_unmatched(report)
-                    else None,
+                    # when the item is searched again (#1451, ADR-0102).
+                    _research_mark(row[0], staged_at, recording_unmatched(report)),
                     staged_at,
                     row[0],
                 ),
@@ -1126,11 +1192,10 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 and research_not_before is not None
                 and research_not_before <= completed_at
             ):
-                # An audiobook that admitted no recording is searched
-                # again once its interval has passed (#1451). The
-                # retained mark tells publication this is a re-search,
-                # which keeps an open case unless a recording is now
-                # admitted.
+                # A finished work is searched again once its mark has
+                # passed (#1451, ADR-0102). The retained mark tells
+                # publication this is a scheduled search, which keeps the
+                # case and report its answers do not change.
                 stage = "extraction"
                 report_id = proposal_set_id = review_case_id = None
             elif previous_state == "complete" and previous_outcome == "evidence_only":
@@ -1191,6 +1256,10 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 else:
                     stage = "admission"
                     review_case_id = None
+            if state == "complete" and research_not_before is None:
+                # A work finished before scheduled searches has no mark;
+                # it takes its slot from this scan, without a backfill.
+                research_not_before = _research_mark(work_id, completed_at, False)
         self._connection.execute(
             "INSERT INTO review_preparation_work("
             "work_id,scan_id,ordinal,connection_name,library_name,library_id,"
@@ -1609,12 +1678,11 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
     ) -> None:
         """Bind report publication and provider disposition atomically.
 
-        `recording_unmatched` is an audiobook report that admitted no
-        recording: its work is marked to be searched again after
-        `RESEARCH_INTERVAL_SECONDS` (#1451). When that later search still
-        admits none, an open case stays as it was: its report is current
-        again, the new one is kept only as history, and the work completes
-        where it stood.
+        Every prepared work is marked to be searched again at its next slot
+        (ADR-0102); `recording_unmatched` is an audiobook report that admitted
+        no recording, whose work is searched again weekly unless its slot comes
+        first (#1451). A scheduled search that changes nothing keeps the
+        case: see `_keep_after_research`.
         """
         if (
             not self._connection.in_transaction
@@ -1651,11 +1719,12 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             )
         ):
             raise MetadataReportError("review preparation state is invalid")
-        research_not_before = (
-            completed_at + RESEARCH_INTERVAL_SECONDS if recording_unmatched else None
-        )
-        kept = recording_unmatched and self._keep_case_after_research(
-            action, report_id, completed_at + RESEARCH_INTERVAL_SECONDS, completed_at
+        kept = self._keep_after_research(
+            action,
+            report_id,
+            completed_at,
+            provider_failure_code == "evidence_only",
+            recording_unmatched,
         )
         if kept:
             updated = 1
@@ -1687,6 +1756,11 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 "authentication",
                 "configuration",
             }
+            research_not_before = (
+                None
+                if terminal_failure
+                else _research_mark(action.action_id, completed_at, recording_unmatched)
+            )
             updated = self._connection.execute(
                 "UPDATE review_preparation_work SET stage=?,state=?,attempt=0,"
                 "retry_not_before=0,report_id=?,failure_code=?,failure_root=?,outcome=?,"
@@ -1777,20 +1851,24 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         )
         self._pending_claim = (self._review_pipeline_claim,)
 
-    def _keep_case_after_research(
+    def _keep_after_research(
         self,
         action: PipelineAction,
         report_id: str,
-        research_not_before: int,
         completed_at: int,
+        evidence_only: bool,
+        recording_unmatched: bool,
     ) -> bool:
-        """Keep an open case a re-search did not improve on (#1451).
+        """Keep what a scheduled search did not change (#1451, ADR-0102).
 
-        Only a work the discovery scan queued again for its interval, whose
-        item's current case was admitted from a report of this same file, is
-        kept. Its report and lineage pointers return to that case's report,
-        which the publication just replaced, and the work completes on the
-        case it held. Anything else proceeds as a fresh preparation.
+        Only a claim that holds a fired mark is considered, and only while the
+        item's current package and case lineage agree on a report of this file
+        that the publication just replaced. Everything stays, and the new report
+        is history only, when the search proposes what the package's proposal
+        set proposes, when it failed at a provider over a complete report, when
+        a weekly search of an audiobook again admits no recording and a case is
+        open (ADR-0089), or when a search that now identifies nothing would
+        take a case away. Anything else proceeds as a fresh preparation.
         """
         marked = self._connection.execute(
             "SELECT research_not_before FROM review_preparation_work "
@@ -1799,13 +1877,14 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         ).fetchone()
         if marked is None or marked[0] is None:
             return False
-        pointer = self._connection.execute(
-            "SELECT l.proposal_set_id,l.report_id,l.review_case_id FROM "
-            "current_review_case_lineages l JOIN metadata_reports r "
-            "ON r.report_id=l.report_id WHERE l.connection_name=? "
-            "AND l.library_name=? AND l.item_id=? AND l.review_case_id IS NOT NULL "
-            "AND l.outcome IN ('admitted','superseded') AND r.file_identity=? "
-            "AND r.report_id<>?",
+        package = self._connection.execute(
+            "SELECT p.proposal_set_id,p.report_id,p.review_case_id,p.outcome,"
+            "l.proposal_set_id,l.report_id,l.review_case_id,l.outcome "
+            "FROM current_review_packages p JOIN metadata_reports r "
+            "ON r.report_id=p.report_id LEFT JOIN current_review_case_lineages l "
+            "ON l.connection_name=p.connection_name AND l.library_name=p.library_name "
+            "AND l.item_id=p.item_id WHERE p.connection_name=? AND p.library_name=? "
+            "AND p.item_id=? AND r.file_identity=? AND r.report_id<>?",
             (
                 action.connection,
                 action.library,
@@ -1814,9 +1893,40 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 report_id,
             ),
         ).fetchone()
-        if pointer is None:
+        if package is None:
             return False
-        proposal_set_id, kept_report_id, review_case_id = pointer
+        proposal_set_id, kept_report_id, review_case_id, outcome = package[:4]
+        if outcome == "evidence_only":
+            if package[4:] != (None, None, None, None):
+                return False
+        elif outcome not in {"admitted", "superseded", "no_case", "retired"} or (
+            package[4:] != package[:4]
+        ):
+            return False
+        new_report = self._stored_report(report_id)
+        failed = not _report_complete(new_report) and _report_complete(
+            self._stored_report(kept_report_id)
+        )
+        # A weekly search of an audiobook that still admits no recording keeps
+        # its case (ADR-0089), and a search of any kind that now identifies
+        # nothing never takes a case away (ADR-0102).
+        case_kept = review_case_id is not None and (
+            evidence_only
+            or (
+                recording_unmatched
+                and next_research_slot(action.action_id, marked[0] - 1) != marked[0]
+            )
+        )
+        if not (
+            failed
+            or case_kept
+            or (
+                not evidence_only
+                and proposal_set_id is not None
+                and self._proposes_the_same(new_report, kept_report_id, proposal_set_id)
+            )
+        ):
+            return False
         restored = self._connection.execute(
             "UPDATE current_metadata_reports SET report_id=? WHERE connection_name=? "
             "AND library_name=? AND item_id=? AND file_identity=? AND report_id=?",
@@ -1843,14 +1953,24 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         restored += self._connection.execute(
             "UPDATE review_preparation_work SET stage='complete',state='complete',"
             "attempt=0,retry_not_before=0,report_id=?,proposal_set_id=?,"
-            "review_case_id=?,failure_code=NULL,failure_root=NULL,outcome='case',"
+            "review_case_id=?,failure_code=NULL,failure_root=NULL,outcome=?,"
             "research_not_before=?,updated_at=? WHERE work_id=? "
             "AND stage='extraction' AND state='running' AND attempt=?",
             (
                 kept_report_id,
                 proposal_set_id,
                 review_case_id,
-                research_not_before,
+                "evidence_only"
+                if outcome == "evidence_only"
+                else "no_case"
+                if review_case_id is None
+                else "case",
+                # A failed search is asked again within the week.
+                completed_at + RESEARCH_INTERVAL_SECONDS
+                if failed
+                else _research_mark(
+                    action.action_id, completed_at, recording_unmatched
+                ),
                 completed_at,
                 action.action_id,
                 action.attempt,
@@ -1859,6 +1979,44 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         if restored != 3:
             raise MetadataReportError("review preparation state changed")
         return True
+
+    def _stored_report(self, report_id: str) -> MetadataReport:
+        # Publication validated both rows' envelopes in this transaction: the
+        # new one as it inserted it, the replaced one as it read it current.
+        row = self._connection.execute(
+            "SELECT document FROM metadata_reports WHERE report_id=?",
+            (report_id,),
+        ).fetchone()
+        if row is None or type(row[0]) is not str:
+            raise MetadataReportError("review preparation state changed")
+        return MetadataReport.from_json(row[0])
+
+    def _proposes_the_same(
+        self, report: MetadataReport, prior_report_id: str, proposal_set_id: str
+    ) -> bool:
+        """Whether `report` proposes exactly what `proposal_set_id` does.
+
+        The report is evaluated as the proposal stage would evaluate it: under
+        the library's bound policy, or, with none bound, under the built-in
+        policy without destinations, as `CreateProposalSet` does. The result is
+        addressed over the prior report, so only its content can differ. An
+        evaluation that cannot be made is a change.
+        """
+        try:
+            policy = self._current_resolved_metadata_policy(report.target.library)
+            evaluated = evaluate_report(
+                report,
+                None if policy is None else policy.resolved_id,
+                None if policy is None else human_review_destinations(policy),
+            )
+        except (MetadataReportError, ValueError):
+            return False
+        data = evaluated.to_data()
+        data["report"] = {
+            "report_id": prior_report_id,
+            "target_fingerprint": evaluated.target_fingerprint,
+        }
+        return proposal_set_content_address(data) == proposal_set_id
 
     @local_operation
     def fail_review_pipeline_action(

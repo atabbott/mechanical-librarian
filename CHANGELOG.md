@@ -30,6 +30,9 @@ brackets are GitHub issues.
   every source again for every book.
   [Upgrades](docs/operations/upgrades.md#keeping-provider-answers) says how
   (#1064).
+- Every finished book is searched again every 90 days, spread evenly across
+  the library. Its review case changes only when the new answers would propose
+  something different, and a failed search changes nothing (#747).
 
 ## 0.36.1 — Persistence health (in progress)
 

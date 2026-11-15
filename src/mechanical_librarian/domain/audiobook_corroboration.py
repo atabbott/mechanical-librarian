@@ -1943,7 +1943,8 @@ def recording_unmatched(report: MetadataReport) -> bool:
     """Whether this is an audiobook report that admitted no recording (#1451).
 
     Its preparation is searched again after `RESEARCH_INTERVAL_SECONDS`; an
-    ebook, or an audiobook that admitted a recording, never is.
+    ebook, or an audiobook that admitted a recording, waits for its slot in
+    `REFRESH_INTERVAL_SECONDS` (ADR-0102).
     """
     return report.file.format in AUDIO_FILE_FORMATS and not recording_admitted(report)
 
