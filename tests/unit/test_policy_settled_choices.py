@@ -6,14 +6,19 @@ import json
 from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.review_web import (
     BrowseReviewLibrary,
+    CurrentReviewCaseSnapshot,
     InspectCurrentReviewCase,
     RecordHumanDecision,
+    ReviewWebError,
+    _ask_destinations,
 )
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyProfile,
@@ -42,6 +47,11 @@ from tests.support.proposal_evidence import _claim
 _TAGS_OFF = (
     "Tags are off in your settings, so your tags are left as they are and no "
     "review is needed. You can still choose proposed tags."
+)
+
+_OWNER_CHOOSABLE = (
+    "No review is needed. You can still keep the current value or choose a "
+    "proposed one."
 )
 
 
@@ -223,17 +233,19 @@ def _with_audiobook_tag(report: MetadataReport, tag: str) -> MetadataReport:
 
 @pytest.mark.parametrize(
     ("medium", "tags_option"),
-    (("epub", "off"), ("m4b", "off"), ("epub", "fill_empty")),
+    (("epub", "off"), ("m4b", "off"), ("epub", "fill_empty"), ("m4b", "fill_empty")),
+    ids=("epub_off", "m4b_off", "epub_fill_empty", "m4b_fill_empty"),
 )
 def test_a_single_proposed_tag_list_under_off_is_kept_and_still_choosable(
     tmp_path: Path, medium: str, tags_option: str
 ) -> None:
-    """With tags off, one proposed list for empty Tags is the owner's to choose.
+    """One proposed list for empty Tags is the owner's to choose.
 
-    On every medium the case page says tags are off and left as they are rather
-    than "nothing to decide", the queue and facts are unchanged, and the owner
-    can still accept the proposed list (#1661). With tags on, an ebook's fill
-    reads exactly as before.
+    On every medium, with tags off the case page says tags are off and left as
+    they are rather than "nothing to decide" (#1661). With tags on and set to
+    Ask me, the fill is the same optional choice on an ebook as on a recording
+    (#1707). Either way the queue and facts are unchanged, and the owner can
+    still accept the proposed list.
     """
     if medium == "epub":
         report = genre_report(current=("Mystery",), genres=("Fantasy",))
@@ -266,14 +278,11 @@ def test_a_single_proposed_tag_list_under_off_is_kept_and_still_choosable(
         assert field["deterministic_disposition"] == "propose_change"
         assert field["decision_actions"] == ["keep_current", "accept"]
         assert field["needs_attention"] is False
-        if tags_option == "fill_empty":
-            assert field["classification"] == "unsupported"
-            assert field["editable"] is False
-            assert field["classification_reason"] != _TAGS_OFF
-            return
         assert field["classification"] == "owner_choosable"
         assert field["editable"] is True
-        assert field["classification_reason"] == _TAGS_OFF
+        assert field["classification_reason"] == (
+            _TAGS_OFF if tags_option == "off" else _OWNER_CHOOSABLE
+        )
         attention = BrowseReviewLibrary(repository).attention(
             search=None, limit=50, cursor=None
         )
@@ -301,3 +310,27 @@ def test_a_single_proposed_tag_list_under_off_is_kept_and_still_choosable(
             "You decided this field. You can change it here."
         )
         assert _tags_fact(repository, case_id) == 0
+
+
+@pytest.mark.parametrize(
+    "document", ("not json", '{"destinations": 7}'), ids=("not_json", "wrong_shape")
+)
+def test_an_unreadable_live_policy_makes_the_case_read_unavailable(
+    document: str,
+) -> None:
+    """The Ask set comes from the live policy; an unreadable one is refused (#1707).
+
+    It is read the way the automatic-withheld note reads it, so the case page
+    reports unavailable rather than guessing which fields are set to Ask me.
+    """
+    snapshot = cast(
+        CurrentReviewCaseSnapshot,
+        SimpleNamespace(resolved_policy_document=document),
+    )
+    proposal: dict[str, object] = {"destination": "tags"}
+    with pytest.raises(ReviewWebError, match="^unavailable$"):
+        _ask_destinations(snapshot, (proposal,))
+    absent = cast(
+        CurrentReviewCaseSnapshot, SimpleNamespace(resolved_policy_document=None)
+    )
+    assert _ask_destinations(absent, (proposal,)) == frozenset()

@@ -38,7 +38,7 @@ SETUP_HTML = """<!doctype html>
 </html>
 """
 
-SETUP_CSS = """:root{color-scheme:light dark;--paper:#f4f2ec;--sheet:#fbfaf6;--ink:#17201e;--quiet:#56615e;--teal:#0f4c42;--wash:#dcebe6;--line:#d9d7cf;--strong:#b9beb9;--ochre:#8a5a16;--red:#8c3434;--focus:#146fba;font-family:Inter,ui-sans-serif,system-ui,sans-serif;background:var(--paper);color:var(--ink)}*{box-sizing:border-box}body{margin:0;min-width:320px;background:var(--paper);color:var(--ink)}button,input,select{font:inherit}button,input,select{min-height:44px;border:1px solid var(--strong);border-radius:.5rem;background:var(--sheet);color:var(--ink);padding:.65rem .8rem}button{font-weight:750;cursor:pointer}.primary{background:var(--teal);color:#fbfaf6;border-color:var(--teal)}button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{outline:3px solid var(--focus);outline-offset:3px}.masthead{min-height:62px;display:flex;align-items:center;gap:.75rem;padding:.7rem clamp(1rem,3vw,2.6rem);border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--sheet) 92%,transparent)}.masthead span:last-child{margin-left:auto;color:var(--quiet);font-size:.78rem}.book-mark{display:grid;place-items:center;min-width:34px;height:40px;padding:0 .25rem;white-space:nowrap;border:1px solid var(--teal);border-radius:2px 5px 5px 2px;background:var(--teal);color:#fff;font:700 .75rem Georgia,serif}.setup-shell{max-width:76rem;margin:0 auto;padding:clamp(1rem,4vw,3rem);display:grid;grid-template-columns:minmax(0,min(21rem,30%)) minmax(0,1fr);gap:clamp(1.5rem,5vw,5rem)}aside{align-self:start;position:sticky;top:1.5rem;max-height:calc(100dvh - 3rem);overflow-y:auto;scrollbar-width:thin;margin:-6px;padding:6px}h1,h2,h3{font-family:Georgia,Times New Roman,serif;line-height:1.17}h1{font-size:clamp(1.8rem,4vw,2.65rem);margin:.25rem 0 1rem}h2{font-size:clamp(1.55rem,3vw,2.1rem);margin:.25rem 0 .75rem}p{line-height:1.55}ol{list-style:none;padding:0;margin:1.5rem 0}.ledger-row{display:grid;grid-template-columns:1.5rem 1fr auto;align-items:center;gap:.6rem;padding:.7rem 0;border-top:1px solid var(--line);font-size:.82rem}.ledger-row[aria-current=step]{color:var(--teal);font-weight:800}.ledger-row button{min-height:2.75rem;padding:.35rem .55rem;font-size:.75rem}.step-card{border:1px solid var(--line);border-radius:1rem;background:var(--sheet);padding:clamp(1rem,4vw,2.2rem);min-height:26rem}.intro{max-width:66ch;color:var(--quiet)}form{display:grid;gap:1rem;margin-top:1.5rem}.field{display:grid;gap:.4rem}.field[hidden]{display:none}.field span{font-size:.75rem;font-weight:800}.actions{display:flex;flex-wrap:wrap;gap:.7rem;margin-top:.6rem}.notice{border-left:3px solid var(--ochre);padding:.8rem 1rem;background:color-mix(in srgb,var(--ochre) 10%,var(--sheet));border-radius:0 .65rem .65rem 0}.error{color:var(--red);font-weight:700}.option{display:grid;gap:.7rem;padding:1rem;border:1px solid var(--line);border-radius:.75rem}.option>label:first-child{display:flex;align-items:center;gap:.7rem;font-family:Georgia,serif;font-weight:700}.option input[type=checkbox]{min-height:auto;width:1.1rem;height:1.1rem}.muted{color:var(--quiet);font-size:.8rem}.mount-state{font-weight:800}.device-code-row{display:flex;flex-wrap:wrap;align-items:center;gap:.7rem}.device-code{padding:.35rem .6rem;border:1px solid var(--line);border-radius:.4rem;background:var(--paper);font:700 1.3rem ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.08em;-webkit-user-select:all;user-select:all}.skip-link{position:fixed;left:1rem;top:1rem;z-index:4;transform:translateY(-200%);padding:.7rem;background:var(--sheet);color:var(--teal)}.skip-link:focus{transform:none}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}@media(max-width:47.5rem){.setup-shell{grid-template-columns:1fr;padding:1rem .75rem 4rem}.masthead{padding:.65rem .75rem}aside{position:static;max-height:none;overflow:visible}.step-card{min-height:0}.actions>*{flex:1 1 10rem}}:root[data-theme=light]{color-scheme:light}:root[data-theme=dark]{color-scheme:dark;--paper:#0f1512;--sheet:#151d19;--ink:#edf2ee;--quiet:#a9b6b0;--teal:#8ed2c1;--wash:#203b34;--line:#2d3933;--strong:#4a5a52;--ochre:#efbd70;--red:#f39b9b;--focus:#78bdf2}:root[data-theme=dark] .primary{background:#61b29f;color:#0f1512}:root[data-theme=dark] .book-mark{background:#315c52}@media(prefers-color-scheme:dark){:root:not([data-theme]){--paper:#0f1512;--sheet:#151d19;--ink:#edf2ee;--quiet:#a9b6b0;--teal:#8ed2c1;--wash:#203b34;--line:#2d3933;--strong:#4a5a52;--ochre:#efbd70;--red:#f39b9b;--focus:#78bdf2}:root:not([data-theme]) .primary{background:#61b29f;color:#0f1512}:root:not([data-theme]) .book-mark{background:#315c52}}@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important;animation:none!important}}.provider-links{display:flex;flex-wrap:wrap;justify-content:center;gap:.5rem 1rem;padding:1rem;color:var(--quiet);font-size:.75rem}.provider-links a{min-height:44px;display:inline-flex;align-items:center;color:var(--teal);font-weight:700}"""
+SETUP_CSS = """:root{color-scheme:light dark;--paper:#f4f2ec;--sheet:#fbfaf6;--ink:#17201e;--quiet:#56615e;--teal:#0f4c42;--wash:#dcebe6;--line:#d9d7cf;--strong:#b9beb9;--ochre:#8a5a16;--red:#8c3434;--focus:#146fba;font-family:Inter,ui-sans-serif,system-ui,sans-serif;background:var(--paper);color:var(--ink)}*{box-sizing:border-box}body{margin:0;min-width:320px;background:var(--paper);color:var(--ink)}button,input,select{font:inherit}button,input,select{min-height:44px;border:1px solid var(--strong);border-radius:.5rem;background:var(--sheet);color:var(--ink);padding:.65rem .8rem}button{font-weight:750;cursor:pointer}.primary{--primary-fill:var(--teal);--primary-text:#fbfaf6;background:var(--primary-fill);color:var(--primary-text);border-color:var(--teal)}button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{outline:3px solid var(--focus);outline-offset:3px}.masthead{min-height:62px;display:flex;align-items:center;gap:.75rem;padding:.7rem clamp(1rem,3vw,2.6rem);border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--sheet) 92%,transparent)}.masthead span:last-child{margin-left:auto;color:var(--quiet);font-size:.78rem}.book-mark{display:grid;place-items:center;min-width:34px;height:40px;padding:0 .25rem;white-space:nowrap;border:1px solid var(--teal);border-radius:2px 5px 5px 2px;background:var(--teal);color:#fff;font:700 .75rem Georgia,serif}.setup-shell{max-width:76rem;margin:0 auto;padding:clamp(1rem,4vw,3rem);display:grid;grid-template-columns:minmax(0,min(21rem,30%)) minmax(0,1fr);gap:clamp(1.5rem,5vw,5rem)}aside{align-self:start;position:sticky;top:1.5rem;max-height:calc(100dvh - 3rem);overflow-y:auto;scrollbar-width:thin;margin:-6px;padding:6px}h1,h2,h3{font-family:Georgia,Times New Roman,serif;line-height:1.17}h1{font-size:clamp(1.8rem,4vw,2.65rem);margin:.25rem 0 1rem}h2{font-size:clamp(1.55rem,3vw,2.1rem);margin:.25rem 0 .75rem}p{line-height:1.55}ol{list-style:none;padding:0;margin:1.5rem 0}.ledger-row{display:grid;grid-template-columns:1.5rem 1fr auto;align-items:center;gap:.6rem;padding:.7rem 0;border-top:1px solid var(--line);font-size:.82rem}.ledger-row[aria-current=step]{color:var(--teal);font-weight:800}.ledger-row button{min-height:2.75rem;padding:.35rem .55rem;font-size:.75rem}.step-card{border:1px solid var(--line);border-radius:1rem;background:var(--sheet);padding:clamp(1rem,4vw,2.2rem);min-height:26rem}.intro{max-width:66ch;color:var(--quiet)}form{display:grid;gap:1rem;margin-top:1.5rem}.field{display:grid;gap:.4rem}.field[hidden]{display:none}.field span{font-size:.75rem;font-weight:800}.actions{display:flex;flex-wrap:wrap;gap:.7rem;margin-top:.6rem}.notice{border-left:3px solid var(--ochre);padding:.8rem 1rem;background:color-mix(in srgb,var(--ochre) 10%,var(--sheet));border-radius:0 .65rem .65rem 0}.error{color:var(--red);font-weight:700}.option{display:grid;gap:.7rem;padding:1rem;border:1px solid var(--line);border-radius:.75rem}.option>label:first-child{display:flex;align-items:center;gap:.7rem;font-family:Georgia,serif;font-weight:700}.option input[type=checkbox]{min-height:auto;width:1.1rem;height:1.1rem}.muted{color:var(--quiet);font-size:.8rem}.mount-state{font-weight:800}.device-code-row{display:flex;flex-wrap:wrap;align-items:center;gap:.7rem}.device-code{padding:.35rem .6rem;border:1px solid var(--line);border-radius:.4rem;background:var(--paper);font:700 1.3rem ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.08em;-webkit-user-select:all;user-select:all}.skip-link{position:fixed;left:1rem;top:1rem;z-index:4;transform:translateY(-200%);padding:.7rem;background:var(--sheet);color:var(--teal)}.skip-link:focus{transform:none}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}@media(max-width:47.5rem){.setup-shell{grid-template-columns:1fr;padding:1rem .75rem 4rem}.masthead{padding:.65rem .75rem}aside{position:static;max-height:none;overflow:visible}.step-card{min-height:0}.actions>*{flex:1 1 10rem}}:root[data-theme=light]{color-scheme:light}:root[data-theme=dark]{color-scheme:dark;--paper:#0f1512;--sheet:#151d19;--ink:#edf2ee;--quiet:#a9b6b0;--teal:#8ed2c1;--wash:#203b34;--line:#2d3933;--strong:#4a5a52;--ochre:#efbd70;--red:#f39b9b;--focus:#78bdf2}:root[data-theme=dark] .primary{--primary-fill:#61b29f;--primary-text:#0f1512}:root[data-theme=dark] .book-mark{background:#315c52}@media(prefers-color-scheme:dark){:root:not([data-theme]){--paper:#0f1512;--sheet:#151d19;--ink:#edf2ee;--quiet:#a9b6b0;--teal:#8ed2c1;--wash:#203b34;--line:#2d3933;--strong:#4a5a52;--ochre:#efbd70;--red:#f39b9b;--focus:#78bdf2}:root:not([data-theme]) .primary{--primary-fill:#61b29f;--primary-text:#0f1512}:root:not([data-theme]) .book-mark{background:#315c52}}@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important;animation:none!important}}.provider-links{display:flex;flex-wrap:wrap;justify-content:center;gap:.5rem 1rem;padding:1rem;color:var(--quiet);font-size:.75rem}.provider-links a{min-height:44px;display:inline-flex;align-items:center;color:var(--teal);font-weight:700}"""
 SETUP_CSS += (
     "main,.step-card,form,.option,.field,.option>label:first-child,.setup-shell>*,"
     ".ledger-row>*,.masthead>*,.actions>*{min-width:0}"
@@ -81,7 +81,15 @@ SETUP_CSS += (
     ".reviewer-detail{display:grid;gap:.4rem}"
     ".reviewer-models:not([hidden]){display:grid;gap:.7rem}"
     ".reviewer-models ul{display:grid;gap:.7rem;margin:0;padding:0;list-style:none}"
-    "button:disabled,button[aria-disabled=true]{opacity:.55;cursor:not-allowed}"
+    # A pending or unavailable button mixes its own colours toward the sheet
+    # rather than fading, so a focused one keeps an unmixed outline (#1698).
+    "button:is(:disabled,[aria-disabled=true]){cursor:not-allowed;"
+    "color:color-mix(in srgb,var(--ink) 55%,var(--sheet));"
+    "border-color:color-mix(in srgb,var(--strong) 55%,var(--sheet))}"
+    ".primary:is(:disabled,[aria-disabled=true]){"
+    "background:color-mix(in srgb,var(--primary-fill) 55%,var(--sheet));"
+    "color:color-mix(in srgb,var(--primary-text) 55%,var(--sheet));"
+    "border-color:color-mix(in srgb,var(--teal) 55%,var(--sheet))}"
     ".rules .rule-refused{color:var(--red);font-weight:700}"
     ".reviewer-detail p{color:var(--quiet);font-size:.8rem}"
     ".reviewer-detail p+p{margin-top:.5rem}"
@@ -933,9 +941,16 @@ const followCodexSignIn=async(codex,form,failed,focus)=>{
   cancel.addEventListener('click',async()=>{
     if(cancel.getAttribute('aria-disabled')==='true')return;
     cancel.setAttribute('aria-disabled','true');
+    announce('Cancelling sign-in…');
     try{
       codexTerminal=await api('/api/setup/reviewer/codex/device/cancel',{method:'POST',body:'{}',mutation:true});
-      await render()
+      // Say the redrawn line, which stays true if the sign-in finished first,
+      // and return focus to that card's command rather than the step heading.
+      await render();
+      const status=main.querySelector('[data-codex-status]');
+      announce(status?.textContent||'');
+      const next=status?.closest('.reviewer-option')?.querySelector('button:not(:disabled)');
+      if(next)requestAnimationFrame(()=>{if(next.isConnected)next.focus()})
     }catch(e){
       cancel.removeAttribute('aria-disabled');
       failed(e,null,cancel)
@@ -986,7 +1001,9 @@ const followCodexSignIn=async(codex,form,failed,focus)=>{
           }
         });
         row.append(code,copy,copied);
-        prompt.replaceChildren(lead,row)
+        prompt.replaceChildren(lead,row);
+        // Focus sits on Cancel after a press, so the code is said there too.
+        if(focus)announce(`${lead.textContent} ${device.user_code}`)
       }
       if(codexActive(device.state))await new Promise(resolve=>setTimeout(resolve,1000))
     }while(form.isConnected&&codexActive(device.state));
@@ -1014,6 +1031,7 @@ const renderCodexOption=(form,access,failed)=>{
   const signedIn=['usable','configured'].includes(codexState.state);
   const line=document.createElement('p');
   line.setAttribute('aria-live','polite');
+  line.dataset.codexStatus='';
   line.textContent=signedIn?'Signed in':'Not signed in';
   const allowance=document.createElement('p');
   allowance.textContent='Uses your ChatGPT plan.';
@@ -1038,6 +1056,7 @@ const renderCodexOption=(form,access,failed)=>{
       use.addEventListener('click',async()=>{
         if(use.getAttribute('aria-disabled')==='true')return;
         use.setAttribute('aria-disabled','true');
+        announce('Selecting Codex…');
         try{
           await api('/api/setup/reviewer/selection',{method:'POST',body:JSON.stringify({expected_revision:access.revision,engine:'codex'}),mutation:true});
           await render();
@@ -1066,6 +1085,7 @@ const renderCodexOption=(form,access,failed)=>{
     signIn.addEventListener('click',async()=>{
       if(signIn.disabled||signIn.getAttribute('aria-disabled')==='true')return;
       signIn.setAttribute('aria-disabled','true');
+      announce('Starting sign-in…');
       try{
         await api('/api/setup/reviewer/codex/device',{method:'POST',body:JSON.stringify({expected_revision:access.revision}),mutation:true});
         signIn.remove();

@@ -209,6 +209,24 @@ describe('Design tokens', () => {
     ])
   })
 
+  it("keeps a pending command's focus outline unmixed", () => {
+    // A focusable aria-disabled command dims its own colours, never the whole
+    // element, so its Focus Blue outline holds 3:1 on every surface (#1698).
+    const faded = (css: string) =>
+      rules(css)
+        .filter(
+          ({ selector, body }) =>
+            selector.includes("[aria-disabled='true']") && property(body, 'opacity') !== undefined,
+        )
+        .map(({ selector }) => selector)
+    expect(faded(styles)).toEqual([])
+    expect(
+      faded(
+        ".settings-reviewer button[aria-disabled='true'] { opacity:.55; } button:disabled { opacity:.55; } .owner-trigger[aria-disabled='true'] { color:red; }",
+      ),
+    ).toEqual([".settings-reviewer button[aria-disabled='true']"])
+  })
+
   it('sets no type below the .75rem floor', () => {
     expect(belowFloor(sheets)).toEqual([])
     expect(

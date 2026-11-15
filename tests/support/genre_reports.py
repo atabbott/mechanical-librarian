@@ -99,16 +99,21 @@ def publish_genre_case(
     report: MetadataReport,
     destination: str = "automatic",
     others: str = "ask",
+    tags_option: str | None = None,
 ):
-    """Publish an actual policy, proposal, review case and persisted outcome."""
+    """Publish an actual policy, proposal, review case and persisted outcome.
+
+    ``tags_option`` replaces the default tags option (off) when given.
+    """
     destinations = {
         name: "unsupported" if name == "explicit" else others
         for name in OPTION_CATALOGUE
     }
     destinations["genres"] = destination
-    profile = MetadataPolicyProfile.create(
-        "Genre evidence", dict(DEFAULT_OPTIONS) | {"genres": "fill_empty"}, destinations
-    )
+    options = dict(DEFAULT_OPTIONS) | {"genres": "fill_empty"}
+    if tags_option is not None:
+        options["tags"] = tags_option
+    profile = MetadataPolicyProfile.create("Genre evidence", options, destinations)
     resolved = resolve_policy(profile, report.target.library)
     repository.enter_shadow_preview(1, ())
     repository.create_metadata_policy_draft(profile.canonical_json)

@@ -56,9 +56,15 @@ Run it from the checkout the install was built from, and give it a new folder
 for the results:
 
 ```
-uv run python scripts/rebuild_checks.py \
-    --copies ~/ml-copies --output ~/ml-results \
-    [--mount-root books=/host/path/to/mount ...] [--limit 50]
+uv run python scripts/rebuild_checks.py --copies ~/ml-copies --output ~/ml-results
+```
+
+To map a media mount or list a different number of Hardcover links, add the
+options described below the table, for example:
+
+```
+uv run python scripts/rebuild_checks.py --copies ~/ml-copies --output ~/ml-results \
+    --mount-root books=/host/path/to/mount --limit 50
 ```
 
 | File | Check |
