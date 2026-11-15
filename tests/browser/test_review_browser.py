@@ -11047,9 +11047,7 @@ def test_description_advice_displays_real_persisted_outcomes(state, monkeypatch)
                         )
                         expect(select.locator("strong strong")).to_have_count(0)
                         if state == "needs_review":
-                            expect(select).to_contain_text(
-                                "never applied automatically"
-                            )
+                            expect(select).to_contain_text("Automatic never applies it")
                         selection_requests = []
                         page.on(
                             "request",

@@ -988,7 +988,9 @@ def _classify_field(
             "candidate"
             if authored_selection is not None
             else "abstention"
-            if destination in snapshot.shadow_abstention_destinations
+            # A repeated description is optional, never attention, so neither
+            # an abstention nor a pause asks about it (#1905).
+            if destination in snapshot.shadow_abstention_destinations and not repeated
             else None
             if automatic_decision is None
             else str(automatic_decision["outcome"])
@@ -1020,6 +1022,7 @@ def _classify_field(
         cause=(
             "automatic_safety_suspended"
             if destination in snapshot.automatic_safety_suspended_destinations
+            and not repeated
             else context.suspension_causes.get(destination)
         ),
         current_value=target_fields[destination]["value"],
@@ -1925,33 +1928,28 @@ class RecordHumanDecision:
         decision = AuthoredDescriptionDecision.from_json(document)
         return {"decision_id": decision.decision_id, "advised": True}
 
-    def _field_admits(
-        self, review_case_id: str, destination: str, keep_description: bool
+    def _keep_refused(
+        self,
+        review_case_id: str,
+        offer: tuple[dict[str, object], ...],
+        proposal_id: str,
     ) -> bool:
-        """Whether the projected field takes this owner command.
+        """Whether a keep binds a description every source repeats while its
+        field, as advice decides, does not offer Keep current (#1905).
 
-        A contextual row takes no owner entry, and a description is kept only
-        while its field offers that, as advice decides where every source
-        repeats it (#1905). The store's own checks follow.
+        Only that shape reads the page; the store's own checks follow.
         """
-        field = next(
-            (
-                value
-                for value in cast(
-                    "list[dict[str, object]]",
-                    InspectCurrentReviewCase(self._repository).run(review_case_id)[
-                        "fields"
-                    ],
-                )
-                if value["destination"] == destination
-            ),
-            None,
-        )
-        if keep_description:
-            return field is not None and "keep_current" in cast(
-                "list[str]", field["decision_actions"]
+        proposal = next(value for value in offer if value["proposal_id"] == proposal_id)
+        return preserved_description(proposal) and not any(
+            field["destination"] == "description"
+            and "keep_current" in cast("list[str]", field["decision_actions"])
+            for field in cast(
+                "list[dict[str, object]]",
+                InspectCurrentReviewCase(self._repository).run(review_case_id)[
+                    "fields"
+                ],
             )
-        return field is None or field["inventory_role"] != "contextual"
+        )
 
     def run(
         self,
@@ -2052,12 +2050,19 @@ class RecordHumanDecision:
                 # only consequence is that no ``human_wait`` sample is recorded.
                 ready_at = None
             previous = None
-            keep_description = (destination, outcome) == ("description", "keep_current")
-            if (
-                outcome == "owner_entered" or keep_description
-            ) and not self._field_admits(review_case_id, destination, keep_description):
-                raise HumanDecisionError("unsupported")
             if outcome == "owner_entered":
+                # A contextual row offers no owner entry, so it takes none.
+                if any(
+                    field["destination"] == destination
+                    and field["inventory_role"] == "contextual"
+                    for field in cast(
+                        "list[dict[str, object]]",
+                        InspectCurrentReviewCase(self._repository).run(review_case_id)[
+                            "fields"
+                        ],
+                    )
+                ):
+                    raise HumanDecisionError("unsupported")
                 target = case.target
                 try:
                     previous = dict(
@@ -2091,6 +2096,10 @@ class RecordHumanDecision:
                 occurred_at=self._clock(),
                 previous=previous,
             )
+            if outcome == "keep_current" and self._keep_refused(
+                review_case_id, offer, proposal_id
+            ):
+                raise HumanDecisionError("unsupported")
             try:
                 stored = HumanDecision.from_json(
                     self._repository.record_human_decision(

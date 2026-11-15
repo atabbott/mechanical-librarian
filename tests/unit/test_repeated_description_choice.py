@@ -331,3 +331,130 @@ def test_keep_current_writes_back_after_the_advice_was_written(
     assert restored.decision_value == {"kind": "text", "value": snapshot.pre_value}
     assert apply(keep, corrective=True) == snapshot.pre_value
     repository.close()
+
+
+def _description_of_snapshot(repository, case_id: str, **changes) -> dict:
+    """The field read over a snapshot with these fields replaced."""
+    from dataclasses import replace
+
+    read = repository.read_current_review_case
+
+    class Reader:
+        def __getattr__(self, name):
+            return getattr(repository, name)
+
+        def read_current_review_case(self, *args, **kwargs):
+            return replace(read(*args, **kwargs), **changes)
+
+    return next(
+        field
+        for field in InspectCurrentReviewCase(Reader()).run(case_id)["fields"]
+        if field["destination"] == "description"
+    )
+
+
+def _optional(field: dict) -> None:
+    assert field["classification"] == "owner_choosable"
+    assert field["classification_reason"] == REPEATED
+    assert field["needs_attention"] is False
+    assert field["navigation_role"] == "inspect"
+    assert field["editable"] is True
+    assert field["decision_actions"] == ["keep_current", "accept"]
+
+
+def test_a_paused_automatic_does_not_ask_about_a_repeated_description(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Paused before its shadow run, the field is optional, not Needs you."""
+    import tests.support.description_advice as support
+
+    original = support._automatic_decisions
+
+    def paused(environment, *args, **kwargs):
+        repository = environment.repository
+        persist = repository.persist_shadow_outcome
+
+        def pause_then_persist(case_id, at):
+            repository.pause_automatic_safety(True, at)
+            return persist(case_id, at)
+
+        monkeypatch.setattr(repository, "persist_shadow_outcome", pause_then_persist)
+        return original(environment, *args, **kwargs)
+
+    monkeypatch.setattr(support, "_automatic_decisions", paused)
+    repository, _store, binding, _candidate, _ = _prepared(
+        tmp_path, automatic=False, report_override=_preserved_description_report()
+    )
+    case_id = binding.review_case_id
+    snapshot = repository.read_current_review_case(case_id, None)
+    assert "description" in snapshot.automatic_safety_suspended_destinations
+    field = _description(repository, case_id)
+    assert field["automatic_decision"] is None
+    _optional(field)
+    _no_attention(repository, case_id)
+    repository.close()
+
+
+def test_an_abstention_does_not_ask_about_a_repeated_description(
+    tmp_path: Path,
+) -> None:
+    repository, _store, binding, _candidate, _ = _ask_only(tmp_path)
+    case_id = binding.review_case_id
+    _optional(
+        _description_of_snapshot(
+            repository, case_id, shadow_abstention_destinations=("description",)
+        )
+    )
+    _no_attention(repository, case_id)
+    repository.close()
+
+
+def test_a_changed_offer_wins_over_the_keep_refusal(tmp_path: Path) -> None:
+    repository, store, binding, _candidate, _ = _ask_only(tmp_path)
+    case_id = binding.review_case_id
+    field = _description(repository, case_id)
+    _retire_advice(store)
+    with pytest.raises(ReviewWebError) as refused:
+        RecordHumanDecision(repository, clock=lambda: 20).run(
+            case_id,
+            proposal_id=field["proposal_id"],
+            target_fingerprint=field["target_fingerprint"],
+            destination="description",
+            actor="owner",
+            outcome="keep_current",
+            selected_value=None,
+            idempotency_key="keep-after-the-offer-changed",
+            offered_alternatives_digest="0" * 64,
+        )
+    assert refused.value.code == "offer_changed"
+    assert repository._connection.execute(
+        "SELECT count(*) FROM human_decisions"
+    ).fetchone() == (0,)
+    repository.close()
+
+
+def test_a_keep_on_an_offered_description_reads_no_page(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only the repeated shape reads the field; a source offer does not."""
+    repository, _store, binding, _candidate, _ = _prepared(tmp_path, automatic=False)
+    case_id = binding.review_case_id
+    assert repository._connection.execute(_FACT, (case_id,)).fetchone() == (1,)
+    field = _description(repository, case_id)
+
+    def unread(self, review_case_id):
+        raise AssertionError("the keep read the page")
+
+    monkeypatch.setattr(InspectCurrentReviewCase, "run", unread)
+    acknowledgement = RecordHumanDecision(repository, clock=lambda: 20).run(
+        case_id,
+        proposal_id=field["proposal_id"],
+        target_fingerprint=field["target_fingerprint"],
+        destination="description",
+        actor="owner",
+        outcome="keep_current",
+        selected_value=None,
+        idempotency_key="keep-an-offered-description",
+    )
+    assert acknowledgement["outcome"] == "keep_current"
+    repository.close()

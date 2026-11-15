@@ -15,6 +15,7 @@ import {
 import descriptionAdviceFixture from './descriptionAdviceFixture.json'
 import { coalesceMilliseconds, libraryRefreshMilliseconds } from '../src/liveInvalidation'
 import { UNOFFERED_DISSENT_TEXT } from '../src/fieldReasons'
+import { descriptionAdviceStatus } from '../src/descriptionAdviceStatus'
 import { reconciliationKey } from '../src/reviewDecisionController'
 import { sourceStatusLabels } from '../src/labels'
 import { advancePresentationSettled } from '../src/reviewAdvancePresentation'
@@ -14854,9 +14855,30 @@ it('keeps retained automatic advice reversible during a preservation-only retry'
   expect(screen.queryByRole('radio', { name: /^Choose proposed value/u })).toBeNull()
   expect(screen.getByText(/Preparing description advice/)).toBeVisible()
   expect(screen.queryByText('Choice recorded.')).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Description Decided' })).toBeNull()
+  expect(screen.getByRole('button', { name: /^Description/u })).toHaveAccessibleName(
+    'Description Automatic',
+  )
   expect(screen.getByLabelText('Writing to the library')).toHaveTextContent(
     'No library connection is set up to write it.',
   )
+})
+
+it('says advice the adviser was unsure of is never applied by Automatic', async () => {
+  const { default: payload } = await import('./descriptionAdviceRepeatedFixture.json')
+  const advice = readCaseDetail(payload).fields.find(
+    (item) => item.destination === 'description',
+  )?.descriptionAdvice
+  if (!advice?.candidate) throw new Error('Repeated advice fixture required')
+  expect(
+    descriptionAdviceStatus({
+      ...advice,
+      candidate: {
+        ...advice.candidate,
+        output: { ...advice.candidate.output, disposition: 'needs_review' },
+      },
+    }),
+  ).toBe('The adviser was unsure of this text, so Automatic never applies it.')
 })
 
 it('offers Keep current beside advice on a description every source repeats', async () => {

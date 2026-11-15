@@ -620,7 +620,8 @@ The floor is valid plain text with no markup or visible cut-off, not a
 placeholder and not mostly quoted praise. The owner can still choose a result
 below it. A field whose sources all repeat the current description offers the
 result and Keep current while the result is shown, as an optional choice that
-is not in Attention, so Automatic may write the result there too (#1905).
+is not in Attention. Automatic may write the result there too, under the same
+rules as any other field (#1905).
 
 Automatic admission also needs a shipped qualification record that names the
 result's adviser: its engine, model, instruction and output schema digests and
