@@ -444,13 +444,14 @@ def test_an_answer_reached_through_a_retry_is_not_kept(tmp_path: Path) -> None:
     served in its place and the reused report would lose it."""
     store = _store(tmp_path)
     reuse = ProviderResponseReuse(store, "open_library", False)
-    answers = iter(
-        (
-            httpx.Response(503, headers={"content-type": "application/json"}),
-            _json({"value": 1})(None),
-        )
-    )
-    session = _session(lambda _: next(answers), reuse)
+    statuses = iter((503, 200))
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        if next(statuses) == 503:
+            return httpx.Response(503, headers={"content-type": "application/json"})
+        return _json({"value": 1})(request)
+
+    session = _session(answer, reuse)
     assert _ask(session) == {"value": 1}
     assert [record.outcome for record in session.attempt_records] == [
         "retry",
