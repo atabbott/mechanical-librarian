@@ -97,6 +97,14 @@ answer must bring back the time it was fetched for the report to be the same.
    the others, by the owner's choice. Google's API terms appear to limit
    cached copies to what Google's cache headers allow; that wording was not
    confirmed from Google's own page.
+10. **Kept across a clean rebuild.** The store holds no application state,
+    so an owner may carry it across a clean rebuild (the owner's choice).
+    First-run setup starts on a volume whose only content is an owner-only
+    `0700` `private/` holding this file, with its rollback journal if one
+    is beside it, each the owner's regular `0600` file, and setup in
+    progress tolerates the same two names. First boot never opens the file;
+    the store's own admission (decision 8) refuses a damaged or foreign one
+    without changing it. Anything else in `private/` still fails closed.
 
 ## Consequences
 
@@ -105,8 +113,8 @@ answer must bring back the time it was fetched for the report to be the same.
 - An unchanged item prepared again sends no provider request and yields the
   byte-identical report, so its publish, proposal and admission reselect what
   is current.
-- A regeneration of derived state, or a rebuild that keeps
-  `/data/private`, no longer repeats the whole provider pass.
+- A regeneration of derived state, or a clean rebuild that keeps the store
+  (decision 10), no longer repeats the whole provider pass.
 - No report, application schema or numbered version changes; losing the
   store costs only requests.
 
@@ -187,3 +195,7 @@ evict a full library's oldest answers and defeat reuse.
   disagree are not kept, and the next observation asks for them again.
 - `tests/unit/test_batch_composition.py`: preparation binds each adapter to
   the store; a re-search and a provider retry bind it to ask live.
+- `tests/unit/test_first_boot.py`: kept answers start and resume first-run
+  setup; a link, directory, FIFO, wider mode, lone journal, any other name or
+  an unsafe `private/` fails closed; a real kept store still serves its
+  answer after setup has started.

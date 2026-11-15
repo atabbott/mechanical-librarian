@@ -84,8 +84,10 @@ visitor who reaches the port first cannot take the workspace
   `409`. The token file is then removed. Later steps need a session, and
   kickoff closes setup for good.
 
-Startup admits only the exact seeded predecessor or valid current incomplete
-setup; any other non-empty, malformed or store-mode state fails closed.
+Startup admits only the exact seeded predecessor, valid current incomplete
+setup, or
+[kept provider answers](decisions/0101-reuse-stored-provider-answers.md)
+alone; any other non-empty, malformed or store-mode state fails closed.
 Connection setup stores endpoint and key only after one bounded
 `GET /api/libraries` under the [egress rules](#credentials-and-egress)
 succeeds, and failures echo no key or userinfo. Service folder paths are kept
