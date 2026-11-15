@@ -364,7 +364,8 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
 .cm-policy-mode { margin:auto .65rem .65rem; padding:.7rem .55rem; border-top:1px solid var(--line); }
 .cm-policy-mode summary { display:flex; flex-wrap:nowrap; align-items:center; gap:.25rem .55rem; color:var(--accent-strong); cursor:pointer; list-style:none; }
 .cm-policy-mode summary::-webkit-details-marker { display:none; }
-.cm-policy-mode summary::after { width:6px; height:6px; border-right:1.5px solid currentColor; border-bottom:1.5px solid currentColor; content:''; transform:translateY(-2px) rotate(45deg); transition:transform 160ms ease-out; }
+/* The chevron keeps 2px from the edge: turned 45°, its 7.5px box reaches 1.55px past each side. */
+.cm-policy-mode summary::after { flex:none; width:6px; height:6px; margin-inline-end:2px; border-right:1.5px solid currentColor; border-bottom:1.5px solid currentColor; content:''; transform:translateY(-2px) rotate(45deg); transition:transform 160ms ease-out; }
 .cm-policy-mode[open] summary::after { transform:translateY(2px) rotate(225deg); }
 .cm-policy-mode summary strong { flex:1 1 auto; min-width:0; color:var(--ink); font-size:.76rem; }
 .cm-policy-mode > div { display:grid; gap:.4rem; padding-top:.5rem; }

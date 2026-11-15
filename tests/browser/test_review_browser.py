@@ -3088,6 +3088,11 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 if not page.locator(".cm-policy-mode").evaluate("node => node.open"):
                     page.locator(".cm-policy-mode summary").click()
                 page.get_by_role("button", name="Enter Preview mode").wait_for()
+                # Measured at the page's end, with the sidebar held below the
+                # masthead. The phone masthead now scrolls away (#1894), so the
+                # theme click above scrolled to the top rather than leaving the
+                # page at its end as it used to.
+                page.evaluate("scrollTo(0, document.documentElement.scrollHeight)")
                 sidebar_box = page.locator(".cm-policy-sidebar").bounding_box()
                 tray_box = page.locator(".cm-finish-tray").bounding_box()
                 assert sidebar_box is not None and tray_box is not None
@@ -4090,10 +4095,14 @@ def test_library_search_scopes_the_list_and_leaves_global_counts() -> None:
             expect(page).to_have_url(re.compile(r"q=Retained"))
             expect(status).to_have_text(announced)
             assert status.evaluate(shown) == visible
-            # It stays on the Works heading's line.
+            # It keeps its own line directly under the Works heading, starting
+            # where the heading starts (#1894).
             heading = page.locator("#library-works-title").bounding_box()
             line = status.bounding_box()
-            assert heading and line and line["y"] < heading["y"] + heading["height"]
+            assert heading and line
+            bottom = heading["y"] + heading["height"]
+            assert bottom - 0.5 <= line["y"] <= bottom + 8, (heading, line)
+            assert abs(line["x"] - heading["x"]) <= 1, (heading, line)
         expect(badge).to_have_text("1 work")
 
 
@@ -5866,7 +5875,10 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
                     """() => {
                       const card = document.activeElement?.closest('.metadata-choice')
                       const probe = document.createElement('div')
-                      probe.style.background = 'var(--surface-strong)'
+                      // The current value rests on its lightly tinted side (#1894).
+                      probe.style.background = card?.closest('.current-choice-list')
+                        ? 'color-mix(in srgb, var(--surface) 70%, var(--surface-strong))'
+                        : 'var(--surface-strong)'
                       document.body.append(probe)
                       const result = {
                         background: card && getComputedStyle(card).backgroundColor,
@@ -6060,7 +6072,14 @@ def test_compact_lower_choice_reveals_only_the_next_focused_control() -> None:
                             """button => {
                                 const masthead = document.querySelector('.masthead');
                                 const top = button.getBoundingClientRect().top + scrollY;
-                                window.scrollTo(0, top - masthead.getBoundingClientRect().bottom - 24);
+                                // A masthead taller than a sixth of the window scrolls
+                                // away (#1894), so its live bottom is no clearance;
+                                // the tab keeps its place below where it rests.
+                                const box = masthead.getBoundingClientRect();
+                                const clearance = document.documentElement.dataset.masthead === 'static'
+                                    ? box.height
+                                    : box.bottom;
+                                window.scrollTo(0, top - clearance - 24);
                             }"""
                         )
                         if keyboard:
@@ -11535,6 +11554,9 @@ def test_generated_authors_fixture_reaches_library_choice_and_evidence(
             browser.close()
 
 
+_UNKNOWN_LANGUAGE_EVIDENCE = "UND. Not offered as a choice. The language is not known."
+
+
 @pytest.mark.parametrize("audio", (False, True))
 @pytest.mark.parametrize(
     # A tag reads by name beside the tag itself, so it never reads like the
@@ -11578,11 +11600,13 @@ def test_language_observed_form_and_unknown_evidence_in_owner_workspace(
             page.get_by_text(
                 "Not offered as a choice. The language is not known.", exact=False
             ).wait_for()
-            expect(page.get_by_text("Language: UND.", exact=False)).to_be_visible()
-            # The page names the language beside its tag, as Library does (#1286 L1).
+            # A value is shown without its own field's prefix: the Language
+            # heading names the field once (#1894).
             expect(
-                page.get_by_text("Language: English (en)", exact=True).first
+                page.get_by_text(_UNKNOWN_LANGUAGE_EVIDENCE, exact=True)
             ).to_be_visible()
+            # The page names the language beside its tag, as Library does (#1286 L1).
+            expect(page.get_by_text("English (en)", exact=True).first).to_be_visible()
             page.get_by_role("link", name="History", exact=True).click()
             expect(page.get_by_text(f"To {expected}", exact=True)).to_be_visible()
             page.get_by_role("link", name="Activity", exact=True).click()
@@ -11658,7 +11682,9 @@ def test_language_ask_owner_choice_is_reachable_and_durable(audio):
                 )
             ).to_have_attribute("aria-checked", "true")
             page.get_by_role("link", name="Evidence", exact=True).click()
-            expect(page.get_by_text("Language: UND.", exact=False)).to_be_visible()
+            expect(
+                page.get_by_text(_UNKNOWN_LANGUAGE_EVIDENCE, exact=True)
+            ).to_be_visible()
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         browser.close()
 
