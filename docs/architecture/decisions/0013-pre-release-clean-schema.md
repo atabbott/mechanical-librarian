@@ -571,3 +571,14 @@ document how many distinct pictures the stage kept (`arts`). Three new tables
 hold the builds, the append-only `cover-taste-profile-v1` versions and the
 daily request count. Every earlier application database is rejected before
 mutation and needs a clean rebuild; no adoption is supplied.
+
+Issue #1355 also takes the clean-rebuild branch. At `title_and_creator` a
+provider record whose author list contains the book's, or is contained in it,
+now counts, so `level-proposal-set-v2` and `review-case-level-offer-v2` may
+hold alternatives a v1 set or offer never held, and both carry forward while
+their report and case are unchanged. The cover classifier reference rotates,
+because the level facts of a cover bound to such a record change at every
+level. The metadata report, proposal policy, shadow decision policy and
+decision-set versions do not move: live decisions are unchanged at every
+level. Every earlier application database is rejected before mutation and
+needs a clean rebuild; no adoption is supplied.
