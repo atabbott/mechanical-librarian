@@ -401,6 +401,18 @@ INVENTORY: dict[tuple[str, str], Row] = {
         (409, "stale"): "pre-commit",
         (503, "unavailable"): "post-commit",
     },
+    # `edit_taste_rule`: every refusal is raised inside the edit transaction,
+    # which rolls back; the profile read after the committed version can
+    # answer `unavailable` (#1372 PR 2).
+    ("POST", "/api/v1/covers/taste/rules"): {
+        (409, "stale"): "pre-commit",
+        (422, "rule_empty"): "pre-commit",
+        (422, "rule_too_long"): "pre-commit",
+        (422, "rule_text"): "pre-commit",
+        (422, "rule_limit"): "pre-commit",
+        (422, "profile_full"): "pre-commit",
+        (503, "unavailable"): "post-commit",
+    },
     # --- review preparation -----------------------------------------------------
     ("POST", "/api/v1/review-preparation/dismiss"): _PREPARATION,
     ("POST", "/api/v1/review-preparation/first-boot/acknowledge"): {

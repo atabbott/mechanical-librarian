@@ -227,13 +227,25 @@ controls, diagnostics, and operational copy with compact precision.
 - **Display** (700, `clamp(1.65rem, 3vw, 2.5rem)`, 1.12): page identity, with
   `-0.025em` tracking so large headings remain composed.
 - **Headline** (700, approximately `1.25rem`–`1.45rem`, 1.2): section and work
-  headings that need bibliographic emphasis.
+  headings that need bibliographic emphasis. A section heading—a region the
+  owner moves between, such as Works, the ledger or a work's title in Covers—is
+  serif at `1.45rem`, `1.25rem` at 760px and below.
+- **Sub-section heading** (Inter 700, `0.875rem`, 1.3, ink): a block inside a
+  section, such as Other source values or Switch suggested.
 - **Title** (700, approximately `0.9rem`–`1.05rem`): work titles, field values,
   and compact editorial emphasis.
 - **Body** (400, commonly `0.75rem`–`0.82rem`, 1.45–1.55): bounded operational
   explanation; introductory copy stays near 68–72 characters per line.
 - **Label** (750–800, `0.75rem`, up to `0.08em`, uppercase when used as an
-  eyebrow): state, category, and compact navigation language.
+  eyebrow): state, category, and compact navigation language. The uppercase
+  group label heads a run of list rows.
+
+Every screen uses these steps the same way, whatever element carries them, and
+a heading that wraps balances its words between its lines. Library, Policy and
+Activity open with their Display title above a 2px ink rule `1.25rem` below
+it; Library's title carries the Works and Covers switch beside it. A heading
+never repeats the one directly above it: where a tab already names the view,
+its heading is kept for screen readers only.
 
 ### Named Rules
 
@@ -263,7 +275,7 @@ theme and sign-out controls. The status slot sits between the destinations and
 the actions and holds the live-update status (shown only while it reconnects)
 and preparation status, so whatever it says moves nothing else: squeezed, its
 labels wrap within the row rather than clip. The masthead is sticky only
-while it takes at most a quarter of the viewport; taller—a
+while it takes at most a sixth of the viewport; taller—a
 phone, a short window, enlarged text—it scrolls away with the page, so it
 never covers what the owner reads or focuses, and sticky regions then sit at
 the top of the window. Between 1025px and 1199px of shell width the product
@@ -283,14 +295,16 @@ Width breakpoints follow one ladder: 1200px, 1024px, 760px, and 390px, with a
 range above a step. Below 1200px, detail facts move below the field heading,
 Activity ledger columns tighten, and from 761px attention becomes a contextual
 Library drawer. At 1024px, workspace columns tighten, selected Library work
-replaces the index with an explicit back control, and cover comparisons and
-direct choices fold into one scrollable or stacked row. At 760px, grids become
+replaces the index with an explicit back control, cover comparisons fold into
+one scrollable row, and a field's two choice sides stack as two boxes. At 760px, grids become
 single-column, sticky side regions become inline or compact pickers, the
 masthead becomes three rows—identity and actions, a status row held open
 whether or not anything is in it, and the four destinations in equal
-columns—and page padding becomes `1rem 0.75rem 4rem`. Focused refinements at
-390px preserve controls and ledger reading order. Nothing assumes a viewport
-wider than 320px.
+columns—page padding becomes `1rem 1rem 4rem`, a 16px margin on both sides
+that 390px keeps (enlarged text keeps its `.75rem` there), and Library's
+workspace drops its card frame so the work sits on the page. Focused
+refinements at 390px preserve controls and ledger reading order. Nothing
+assumes a viewport wider than 320px.
 
 The masthead's arrangements follow the shell's width in rem at the same
 steps, through container queries rather than width media queries, so enlarged
@@ -342,7 +356,7 @@ Its initials are the first letter of each of the first two words that have one,
 so punctuation never stands for a word.
 In the dark theme every mark (masthead, Library, and Policy) shares one spine,
 `#315c52`, so its paper-colored initial keeps 4.5:1.
-Dashed borders distinguish current-value choices; left rules mark notices,
+A dashed frame marks the current cover; left rules mark notices,
 status, recovery, and current ledger events.
 
 ## Components
@@ -356,10 +370,13 @@ One `Button` carries three variants: primary, secondary, and danger. It sets no
 default type, so every call site states its own.
 
 - **Shape:** compact rounded rectangle (`0.5rem`) with `0.6rem 0.85rem` default
-  padding. Primary task and touch targets are at least `2.75rem`/44px; dense
-  desktop inspection and pagination controls may use 40px before returning to
-  44px at compact widths. Disclosure summaries and owner-authority controls
-  take no dense exception: they are 44px at every width.
+  padding. A button that sets no size of its own uses `0.875rem` (14px) text;
+  the Activity pager's buttons take the pager's smaller text so its five
+  controls fit one row. Primary task and touch targets are at least
+  `2.75rem`/44px; dense desktop inspection and pagination controls may use
+  40px before returning to 44px at compact widths. Disclosure summaries and
+  owner-authority controls take no dense exception: they are 44px at every
+  width.
 - **Primary link:** a link styled as the primary action takes the primary
   button's type, weight, and 44px target, without an underline, so the two
   read as one control.
@@ -410,7 +427,8 @@ default type, so every call site states its own.
 ### Inputs / Fields
 
 - **Style:** Bright Sheet, Field Line, `0.45rem` corners, and a minimum 44px
-  control height where explicitly sized.
+  control height where explicitly sized. Text fields keep `1rem` (16px) text so
+  phones do not zoom into them.
 - **Focus:** the global Focus Blue outline remains visible outside the field;
   focus is never communicated by color fill alone.
 - **Error / Disabled:** error text and boundaries use Correction Red. Disabled
@@ -440,22 +458,28 @@ Hover uses a subtle page/surface mix; selection adds an Archive Teal boundary
 and wash. The mark is identity support, never a fake cover. When a work's report
 retains the cover its library holds, that real cover takes the mark's place in
 the row and the open work's header, contained whole. In the header it is at
-most 60 by 90px. In a row it fits the spine's own column, at most 48 by 72px (42
+most 60 by 90px; at 760px and below it is up to 84px wide and 132px tall, with
+Needs you and Automatic under the title beside it. In a row it fits the spine's own column, at most 48 by 72px (42
 by 63px below 760px), centred as the spine is, so every title starts at the same
 edge and the cover never sets the row's height. Every other work keeps its
 spine, and a cover that fails to load falls back to it.
 
 ### Direct Value Choice
 
-Field decisions are large, left-aligned surface buttons with a minimum height of
-`9.5rem`, Strong Catalogue Line, `0.7rem` corners, and serif values. A field's
+A field's question holds its choices in one panel with two sides. "Keep current
+value" heads the current value on a lightly tinted side; "Choose a new value"
+heads the proposed values, set as rows divided by a line. Above 1024px the
+panel is one Strong Catalogue Line frame with 12px corners and the two headings
+sit above it, one over each side; at 1024px and below the sides stack as two
+boxes, each under its heading. The current value starts level with the first
+proposed value, values are serif and left-aligned, and a choice is as tall as
+its words. Evidence is a small underlined link with a 44px target. A field's
 choices are one radio group: each states its state with a 20px ring in the
-field-line colour, which hover previews with a dot. The recorded choice fills
+field-line colour, set in a gutter and centred on the value's first line, which hover previews with a dot. The recorded choice fills
 the ring, takes the Archive Teal Wash with a 2px inner accent edge, and says
 "Your choice" in words; a recommendation is stated in its label, not by a wash.
-Keyboard focus is a 3px focus-colour outline drawn inside the choice. A dashed
-edge means the current value; automatic, resolved, or stale fields must not
-present a false choice. Field tabs name their status in words (Needs you,
+Keyboard focus is a 3px focus-colour outline drawn inside the choice. Automatic,
+resolved, or stale fields must not present a false choice. Field tabs name their status in words (Needs you,
 Decided, Automatic, Optional, No change), never by a glyph.
 
 ### Cover Choice
@@ -465,7 +489,10 @@ says "Match not confirmed" or "Same title and author" is itself the explicit
 choice, with no confirming dialog. Each card states its pixel size and every source that offered the image
 on their own lines, then its rationale; one image offered by several sources is
 one card naming them all, and the merged count is said apart from unavailable
-candidates. Off-screen cover images load lazily.
+candidates. Each card is one frame around the cover and its Evidence link, and
+the frame carries hover, recommended and chosen states. Above 1024px the
+current cover takes the first of four equal columns, the same size as the other
+covers and level with them. Off-screen cover images load lazily.
 
 ### Cover Observation Evidence
 
@@ -491,7 +518,14 @@ sticky impact tray so validation, preview, and activation remain one continuous
 decision. Activity uses a denser ruled ledger: state and owner authority appear
 before filterable event rows, and expanded evidence stays attached to its
 event. At compact widths both surfaces preserve document order rather than
-compressing their desktop columns.
+compressing their desktop columns. A Policy field says what Automatic does on
+ebooks and on audiobooks ("Not offered." for one that has nothing), unless
+neither does, when the setting's "Automatic not offered" says it once; its
+disclosures sit side by side as underlined links. Activity's six counts sit in
+two rows of three beside its status (fewer a row when enlarged text leaves no
+room), its status pill is level with the title, the ledger heading shares a row
+with its date range, and the pager appears only when there is more than one
+page.
 
 Settings shares the notebook's controls rather than restyling copies:
 segmented Off/On choices, dropdowns, native disclosures, change-count badges

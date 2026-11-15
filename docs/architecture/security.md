@@ -167,11 +167,11 @@ Every response has a restrictive same-origin CSP, frame denial,
 vendored. Errors are fixed value-free codes.
 
 Everything is `private, no-store` except content-hashed assets and
-session-checked cover previews addressed by digest
-(`private, max-age=31536000, immutable`). Logout does not clear the browser
-cache, so that profile can show a viewed cover for up to a year. The library
-cover route serves only the preview the current report binds to the item's
-cover, digest-verified and never decoded.
+session-checked cover previews addressed by digest (`private,
+max-age=31536000, immutable`). Logout keeps the browser cache, so that profile
+can show a viewed cover for up to a year. The library cover route serves only
+the preview the current report binds to the item's cover, digest-verified and
+never decoded.
 
 The preparation panel's book names (at most five current and eight recent)
 never enter update-stream frames, logs, audit identifiers, diagnostics,
@@ -227,7 +227,7 @@ transport detail.
 ### Metadata providers
 
 A disabled provider builds no client and loses its library associations,
-which enabling does not restore.
+which enabling never restores.
 
 - Every adapter dispatches through the bounded session in
   `adapters/providers/sdk.py` (request, retry, byte and deadline limits),
@@ -399,7 +399,7 @@ immutable snapshot
 revalidates file content and target identity inside the publication
 transaction, so a replaced file is refused. Digits inside non-ISBN schemes
 and URIs never become ISBNs. A declared cover that `encryption.xml` lists is
-refused as `unsupported_format` before any of its bytes is read, and no member
+refused as `unsupported_format` before any byte is read, and no member
 name reaches a report.
 
 When neither the EPUB 3 `cover-image` nor the legacy `meta name="cover"` is
@@ -472,7 +472,7 @@ ADR-0096's creator predicates also fold dotted initials ("R.F." and "R. F."
 agree), only in a name whose dotted tokens are letters and that keeps a token
 of two or more letters. Letter count and order still count, no NFKC,
 confusable mapping or other dot character applies, a fold that would merge two
-listed creators is not applied, and the fold never removes an agreement the
+listed creators is skipped, and the fold never removes an agreement the
 unfolded comparison makes. Sidecar belonging compares creators exactly until
 #1418 (#1780). The fold is read only on ADR-0096's level path (#1355).
 Belonging never reads the level.
@@ -500,13 +500,16 @@ the mapping revision and secret together and releases the owner-operation
 gate before network work; the result write rechecks the revision, so an A-B-A
 change cannot make old evidence current.
 
+Owner taste rules reach the builder only as sealed packet data; edits are
+capped at 8 KiB.
+
 ### OpenRouter
 
 Egress is fixed to `https://openrouter.ai` and one exact model, with
-`require_parameters: true`. Cover and
-[taste profile](ai-boundary.md#taste-profile-builder) requests deny data
-collection; description requests set `allow_fallbacks: false`. Upstream data
-practice is not verified. Responses past each endpoint's cap are refused as
+`require_parameters: true`. Cover and [taste
+profile](ai-boundary.md#taste-profile-builder) requests deny data collection;
+description requests set `allow_fallbacks: false`. Upstream data practice is
+unverified. Responses past each endpoint's cap are refused as
 `response_too_large`, whatever `Content-Length` says. One deadline spans the
 key, catalogue and chat requests; a single read can overrun it by its phase
 cap (30 seconds by default). Error bodies are read up to 8 KiB to recognise
@@ -537,8 +540,7 @@ after the owner selects Codex again.
 
 ### Cover observer
 
-The cover observer is the only model use that can influence a decision, as
-advisory evidence
+Only the cover observer influences decisions, as advisory evidence
 ([ADR-0049](decisions/0049-owner-confirmed-cover-considerations.md)). It
 returns a fixed set of visual properties with explicit unknowns and no
 ranking, winner or identity field. The local parser needs exactly one
@@ -591,9 +593,9 @@ it, after its scan succeeds and if no later decision replaced it
 
 Owner-entered text is refused, never rewritten, unless it is 1 to 512 code
 points of NFC text with no control, path, credential or URI. No automatic path
-reads an owner-entered value. Clearing, rollback and undo are not available
+reads an owner-entered value. Clearing, rollback and undo are unavailable
 ([ADR-0085](decisions/0085-owner-entered-values-withdrawal-and-reselection.md)).
-An owner may choose a retained cover whose match is not confirmed, but not
+An owner may choose a retained cover whose match is unconfirmed, but not
 one with a positive contradiction.
 
 Decisions bind their offer's digest. Until its case is checked at the saved
@@ -651,7 +653,7 @@ Writes need the owner's library-scoped consent for the exact destination set
 shown in Activity; adding a destination lapses it, and policy activation
 carries forward only current consent, never wider. A grant must match
 a fresh capability probe. A policy or consent change between the browser's
-re-read and the grant is not detected; a capability or library change is
+re-read and the grant goes undetected; a capability or library change is
 still refused.
 
 Every claim rechecks backup readiness, capability, authority, consent,
@@ -713,7 +715,7 @@ mutation. Admission does not rely on SQLite alone:
 - A read-only open re-evaluates every CHECK constraint itself, because
   SQLite's read-only integrity check skips them. A CHECK it cannot extract
   refuses.
-- The permission-readiness check does not see a CHECK-breaking row, an
+- The permission-readiness check misses a CHECK-breaking row, an
   accepted gap since adding one needs write access to the volume.
 - Browse and attention facts are compared with their documents at open for
   every current row; any difference refuses the database

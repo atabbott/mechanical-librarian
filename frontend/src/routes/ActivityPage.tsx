@@ -236,9 +236,24 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   // The focused ledger control, and the focus key of the checks toggle whose
   // list holds it, if any.
   const ledgerFocus = useRef<{ control: HTMLElement; toggle: string | undefined } | null>(null)
+  const pagerFallback = useRef<HTMLElement | null>(null)
+  // A control the user left is forgotten; one a refetch removed is still
+  // remembered, whether or not the engine fired a blur for it.
+  const forgetLeftControl = (left: HTMLElement) => {
+    queueMicrotask(() => {
+      // A window blur fires this while the control keeps focus; keep it.
+      if (
+        left.isConnected &&
+        ledgerFocus.current?.control === left &&
+        document.activeElement !== left
+      )
+        ledgerFocus.current = null
+    })
+  }
   // A focused ledger control that a changed page removed hands focus to its
   // replacement, then to its group's toggle, then to the ledger heading; it
-  // never falls to the document.
+  // never falls to the document. A page control removed because one page is
+  // left hands focus to the page size beside it.
   useLayoutEffect(() => {
     const removed = ledgerFocus.current
     if (!removed || removed.control.isConnected) return
@@ -246,6 +261,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     if (document.activeElement !== null && document.activeElement !== document.body) return
     const controls = [
       ...(eventsElement.current?.querySelectorAll<HTMLElement>('[data-activity-focus]') ?? []),
+      ...(pagerFallback.current ? [pagerFallback.current] : []),
     ]
     const find = (key: string | undefined) =>
       key ? controls.find((control) => control.dataset.activityFocus === key) : undefined
@@ -882,20 +898,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               toggle: list ? list.id.replace(/^activity-/u, '') : undefined,
             }
           }}
-          onBlur={(event) => {
-            // A control the user left is forgotten; one a refetch removed is
-            // still remembered, whether or not the engine fired a blur for it.
-            const left = event.target
-            queueMicrotask(() => {
-              // A window blur fires this while the control keeps focus; keep it.
-              if (
-                left.isConnected &&
-                ledgerFocus.current?.control === left &&
-                document.activeElement !== left
-              )
-                ledgerFocus.current = null
-            })
-          }}
+          onBlur={(event) => forgetLeftControl(event.target)}
         >
           {data.events.length ? (
             rows.map((row, index) => {
@@ -1048,7 +1051,13 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                 : '0'}
             </strong>
             <span>of {ledger.total} events</span>
-            <label className="cm-activity-page-size">
+            <label
+              className="cm-activity-page-size"
+              ref={(node) => {
+                pagerFallback.current =
+                  node?.querySelector<HTMLElement>('[data-activity-focus="page-size"]') ?? null
+              }}
+            >
               <span>Events</span>
               <Dropdown
                 compact
@@ -1069,45 +1078,55 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               />
             </label>
           </div>
-          <nav className="cm-activity-pagination-nav" aria-label="Activity pages">
-            <button
-              data-activity-focus="first"
-              disabled={ledger.page === 1}
-              onClick={() => goToPage(1, 'first')}
-            >
-              First
-            </button>
-            <button
-              data-activity-focus="previous"
-              disabled={ledger.page === 1}
-              onClick={() => goToPage((page) => page - 1, 'previous')}
-            >
-              Previous
-            </button>
-            <PageJump
-              shownFor={`${String(ledger.page)}:${search.q ?? ''}:${search.eventType}:${String(search.rangeDays)}:${String(search.pageSize)}`}
-              page={ledger.page}
-              pageCount={ledger.page_count}
-              onCommit={goToPage}
-              onEdit={() => {
-                ++focusVersion.current
+          {/* One page needs no page controls. */}
+          {ledger.page_count > 1 || ledger.page > 1 ? (
+            <nav
+              className="cm-activity-pagination-nav"
+              aria-label="Activity pages"
+              onFocus={(event) => {
+                ledgerFocus.current = { control: event.target, toggle: 'page-size' }
               }}
-            />
-            <button
-              data-activity-focus="next"
-              disabled={ledger.page >= ledger.page_count}
-              onClick={() => goToPage((page) => page + 1, 'next')}
+              onBlur={(event) => forgetLeftControl(event.target)}
             >
-              Next
-            </button>
-            <button
-              data-activity-focus="last"
-              disabled={ledger.page >= ledger.page_count}
-              onClick={() => goToPage(ledger.page_count, 'last')}
-            >
-              Last
-            </button>
-          </nav>
+              <button
+                data-activity-focus="first"
+                disabled={ledger.page === 1}
+                onClick={() => goToPage(1, 'first')}
+              >
+                First
+              </button>
+              <button
+                data-activity-focus="previous"
+                disabled={ledger.page === 1}
+                onClick={() => goToPage((page) => page - 1, 'previous')}
+              >
+                Previous
+              </button>
+              <PageJump
+                shownFor={`${String(ledger.page)}:${search.q ?? ''}:${search.eventType}:${String(search.rangeDays)}:${String(search.pageSize)}`}
+                page={ledger.page}
+                pageCount={ledger.page_count}
+                onCommit={goToPage}
+                onEdit={() => {
+                  ++focusVersion.current
+                }}
+              />
+              <button
+                data-activity-focus="next"
+                disabled={ledger.page >= ledger.page_count}
+                onClick={() => goToPage((page) => page + 1, 'next')}
+              >
+                Next
+              </button>
+              <button
+                data-activity-focus="last"
+                disabled={ledger.page >= ledger.page_count}
+                onClick={() => goToPage(ledger.page_count, 'last')}
+              >
+                Last
+              </button>
+            </nav>
+          ) : null}
         </footer>
       </section>
       {consentActionable && names.ready ? (

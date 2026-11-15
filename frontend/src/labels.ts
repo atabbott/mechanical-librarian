@@ -91,7 +91,7 @@ const materialReasonLabels = {
   provider_consensus_title_subtitle_segment:
     'Independent sources agree once the part after the colon is kept as the subtitle',
   provider_consensus_title_colon_unused:
-    'Only this book’s own details give the part after the colon as a subtitle. Choose the title yourself',
+    'Only this work’s own details give the part after the colon as a subtitle. Choose the title yourself',
   provider_consensus_title_series_unpreserved:
     'No source gives the series name in brackets as the series',
   decoration_equivalent_bracket_source_tag:
@@ -332,10 +332,10 @@ export const writeHoldReasons = {
 export const scanStateLabels = {
   idle: 'Not scanned yet',
   queued: 'Waiting to start',
-  discovering: 'Finding your books',
-  processing: 'Preparing your books',
+  discovering: 'Finding works',
+  processing: 'Preparing works',
   completed: 'Complete',
-  completed_with_failures: 'Complete · some books could not finish',
+  completed_with_failures: 'Complete · some works could not finish',
 } satisfies Record<ScanState, string>
 
 // A recorded write's lifecycle, read the same way in Activity and History.
@@ -565,6 +565,17 @@ export const observationText = (row: { observation: string; language: string | n
   return match === null
     ? observation
     : observation.slice(0, match.index) + name + observation.slice(match.index + language.length)
+}
+
+// Under a heading that already names the field, a value drops its own
+// "Title: " prefix, so the field is named once.
+export const fieldObservationText = (
+  row: { observation: string; language: string | null },
+  destination: TargetDestination,
+) => {
+  const text = observationText(row)
+  const prefix = `${destinationLabel(destination)}: `
+  return text.startsWith(prefix) ? text.slice(prefix.length) : text
 }
 
 // One vocabulary for every preparation count, in the masthead and the run line

@@ -61,6 +61,18 @@ export function OwnerControls({
   const notice = useRef<HTMLParagraphElement>(null)
   const statusLine = useRef<HTMLParagraphElement>(null)
   const sent = useRef<{ key: string; outcome: OwnerOutcome } | null>(null)
+  const section = useRef<HTMLElement>(null)
+  // A withdrawal takes away the recorded value and its context, so the detail
+  // column keeps its height until this field closes: the page does not move
+  // under the outcome line on a phone (#1365). This component is keyed by work
+  // and field, so another field, work or route releases the hold.
+  const held = useRef<HTMLElement | null>(null)
+  useEffect(
+    () => () => {
+      held.current?.style.removeProperty('min-height')
+    },
+    [],
+  )
   const busy = progress?.phase === 'recording'
   const decision = field.humanDecision
   // Any standing decision is changed, not entered afresh (D5).
@@ -105,6 +117,11 @@ export function OwnerControls({
     if (blocked || sent.current !== null) return
     setProblem('')
     setDismissed(null)
+    const column = section.current?.closest<HTMLElement>('.workspace-detail')
+    if (outcome === 'withdraw' && column) {
+      column.style.minHeight = `${String(column.getBoundingClientRect().height)}px`
+      held.current = column
+    }
     sent.current = { key: submit(outcome, value), outcome }
   }
   const close = (target: RefObject<HTMLButtonElement | null>) => {
@@ -179,7 +196,7 @@ export function OwnerControls({
     </p>
   )
   return (
-    <section className="owner-controls" aria-label={`Your value for ${label}`}>
+    <section ref={section} className="owner-controls" aria-label={`Your value for ${label}`}>
       {recordedCopy ? (
         <p ref={recorded} tabIndex={-1} className="owner-recorded">
           {recordedCopy}

@@ -46,7 +46,6 @@ export const PolicySafety = ({
               ? 'Automatic active'
               : 'Human review active'}
         </strong>
-        <span>Mode</span>
       </summary>
       <div>
         <p>
