@@ -1,11 +1,11 @@
-import { act, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ReviewHttp, WritePlanFile, WritePlanView } from '../src/api/http'
 import { BuildMismatchError } from '../src/api/http'
 import { WritePlanField } from '../src/components/WritePlanGroups'
-import { ActivityWritePlan } from '../src/routes/ActivityWritePlan'
+import { ActivityWritePlan, SAVED_URL_LIFETIME_MS } from '../src/routes/ActivityWritePlan'
 
 const context: { http: Partial<ReviewHttp> } = vi.hoisted(() => ({ http: {} }))
 vi.mock('../src/router', () => ({ useReviewContext: () => context }))
@@ -108,6 +108,26 @@ describe('WritePlanField: one library and field of the plan (#1336)', () => {
     expect(container).toBeEmptyDOMElement()
     rerender(<WritePlanField plan={undefined} library="books" destination="title" />)
     expect(container).toBeEmptyDOMElement()
+  })
+
+  it('never sends a row it could not read to the file when every row is shown', () => {
+    // Three changes, one unreadable: the inline plan lists the other two.
+    const unreadable = plan(3, [
+      {
+        library: 'books',
+        destination: 'title',
+        kind: 'human',
+        count: 3,
+        rows: [row('Real Tigers'), row('Slow Horses')],
+      },
+    ])
+    const { container } = render(
+      <WritePlanField plan={unreadable} library="books" destination="title" />,
+    )
+
+    expect(within(container).getByText('3 changes')).toBeVisible()
+    expect(within(container).getAllByRole('listitem')).toHaveLength(2)
+    expect(container).not.toHaveTextContent(/more in the file/)
   })
 
   it('starts a large plan closed, with examples and the rest in the file', async () => {
@@ -220,9 +240,41 @@ describe('ActivityWritePlan: the lead and the two files (#1336)', () => {
     await act(async () => finish(file))
 
     expect(saved).toEqual([{ href: 'blob:plan', download: 'mechanical-librarian-write-plan.csv' }])
-    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:plan')
+    // Not let go at once: some browsers would drop the download.
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled()
     expect(csv).not.toHaveAttribute('aria-disabled')
     expect(screen.getByRole('status')).toHaveTextContent('')
+  })
+
+  it('lets a saved file go a minute later, or when the panel ends', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    download.mockResolvedValue(file)
+    const { unmount } = render(<ActivityWritePlan plan={plan(3, [])} />)
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Download CSV' }))
+    })
+    expect(saved).toHaveLength(1)
+    act(() => {
+      vi.advanceTimersByTime(SAVED_URL_LIFETIME_MS - 1)
+    })
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled()
+    act(() => {
+      vi.advanceTimersByTime(1)
+    })
+    expect(URL.revokeObjectURL).toHaveBeenCalledExactlyOnceWith('blob:plan')
+
+    vi.mocked(URL.createObjectURL).mockReturnValue('blob:second')
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Download JSON' }))
+    })
+    expect(saved).toHaveLength(2)
+    unmount()
+    expect(URL.revokeObjectURL).toHaveBeenLastCalledWith('blob:second')
+    act(() => {
+      vi.advanceTimersByTime(SAVED_URL_LIFETIME_MS)
+    })
+    expect(URL.revokeObjectURL).toHaveBeenCalledTimes(2)
   })
 
   it('counts received changes at most once a second, up to the file limit', async () => {

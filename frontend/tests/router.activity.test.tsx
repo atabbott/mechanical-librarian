@@ -3753,7 +3753,8 @@ it('saves the write plan file from the permission review without granting anythi
       expect.any(AbortSignal),
       expect.any(Function),
     )
-    expect(revoked).toHaveBeenCalledWith('blob:plan')
+    // The saved file's URL outlives the click; it is let go a minute later.
+    expect(revoked).not.toHaveBeenCalled()
     expect(http.activityCommand).not.toHaveBeenCalled()
     expect(screen.getByRole('checkbox')).toBeChecked()
   } finally {

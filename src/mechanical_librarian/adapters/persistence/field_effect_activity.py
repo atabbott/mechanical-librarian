@@ -102,6 +102,7 @@ from mechanical_librarian.application.operation_admission import AdmissionClosed
 from mechanical_librarian.application.review_pipeline import (
     preparation_failure_reference,
 )
+from mechanical_librarian.application.write_plan import LOCAL_LIBRARY_RECORD
 from mechanical_librarian.domain.activity_records import (
     ReadableActivityEvent,
     activity_search_text,
@@ -871,12 +872,12 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         for source in report.cover_sources:
             if cover_source_reference(report.report_id, source.source_id) in cited:
                 labels.add(
-                    "Local library record"
+                    LOCAL_LIBRARY_RECORD
                     if source.kind in LOCAL_COVER_SOURCE_KINDS
                     else provider_label(source.kind.value)
                 )
         if any(claim.reference in cited for claim in report.local_claims):
-            labels.add("Local library record")
+            labels.add(LOCAL_LIBRARY_RECORD)
         return sorted(labels)
 
     def _plan_report(self, report_id: str) -> MetadataReport:

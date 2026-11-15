@@ -113,6 +113,7 @@ from mechanical_librarian.application.reviewer_contracts import (
     DeviceAuthStatus,
     OpenRouterPublicFailure,
 )
+from mechanical_librarian.application.write_plan import PLAN_SOURCE_LABELS
 from mechanical_librarian.domain.audio_health import MAX_HEALTH_OBSERVATIONS
 from mechanical_librarian.domain.cover_taste import (
     MAX_TASTE_RULE_CODE_POINTS,
@@ -242,6 +243,62 @@ _FIELD_EFFECT_STATE_CONFLICT = frozenset(
 
 _Result = TypeVar("_Result")
 _SessionDependency: TypeAlias = Callable[[Request, str | None], str]
+
+
+# The scope key a streamed body sets when it ends by an exception (#1336).
+_ABORTED_BODY: Final = "mechanical_librarian.aborted_body"
+
+
+class AbortedResponseBody(Exception):
+    """A streamed body ended by an exception, so its response is not completed.
+
+    The message names only the type of the original error, never a value.
+    """
+
+
+async def _marking_aborted(
+    scope: Scope, content: AsyncIterator[bytes]
+) -> AsyncIterator[bytes]:
+    """Relay a route's body, marking the request before an exception leaves it.
+
+    The middleware below shares this scope; ``_unless_aborted`` reads the mark
+    once the relayed body has ended.
+    """
+    try:
+        async for chunk in content:
+            yield chunk
+    except BaseException as error:
+        scope[_ABORTED_BODY] = type(error).__name__
+        raise
+
+
+async def _unless_aborted(
+    scope: Scope, relayed: AsyncIterator[Any]
+) -> AsyncIterator[Any]:
+    """Re-yield a relayed body, then raise if the route marked it aborted.
+
+    ``BaseHTTPMiddleware`` ends its relayed body normally when the inner app
+    raises, and would then send the final frame. Raising here, before that
+    frame, leaves the response unfinished, so the server closes the connection
+    and a short file is never received as a complete one.
+    """
+    async for chunk in relayed:
+        yield chunk
+    aborted = scope.get(_ABORTED_BODY)
+    if aborted is not None:
+        raise AbortedResponseBody(f"response body aborted by {aborted}")
+
+
+def _withhold_aborted_end(scope: Scope, response: Response) -> None:
+    """Make a relayed response raise, not complete, when its route aborted it.
+
+    For an ``@app.middleware("http")`` function, after ``call_next``: the
+    relayed body then ends through ``_unless_aborted``.
+    """
+    relayed = getattr(response, "body_iterator", None)
+    if relayed is not None:
+        # Starlette's relay type is private, so the attribute is set by name.
+        setattr(response, "body_iterator", _unless_aborted(scope, relayed))  # noqa: B010
 
 
 class _ReleasingStreamingResponse(StreamingResponse):
@@ -1956,7 +2013,10 @@ class _WritePlanRow(_ClosedModel):
     current: str = Field(max_length=512)
     new: str = Field(max_length=512)
     reason: str = Field(max_length=512)
-    sources: list[Annotated[str, Field(max_length=128)]] = Field(max_length=16)
+    # Distinct names from a closed set, so the bound admits all of them.
+    sources: list[Annotated[str, Field(max_length=128)]] = Field(
+        max_length=len(PLAN_SOURCE_LABELS)
+    )
 
 
 class _WritePlanGroup(_ClosedModel):
@@ -3114,6 +3174,7 @@ def create_review_app(
                 response = await call_next(request)
         finally:
             _OWNER_SESSION_AUTHENTICATED.reset(marker)
+        _withhold_aborted_end(request.scope, response)
         if await _answers_an_owner_session(request, response, authenticated[0]):
             bundle = assets.load()
             if isinstance(bundle, ReactAssetBundle):
@@ -3823,6 +3884,7 @@ def _register_write_plan_route(
         },
     )
     def activity_write_plan(
+        request: Request,
         format: Literal["csv", "json"] = Query(),
         ml_session: str = Depends(authenticated_session_cookie),
     ) -> Response:
@@ -3859,7 +3921,7 @@ def _register_write_plan_route(
                 yield chunk
 
         return _ReleasingStreamingResponse(
-            body(),
+            _marking_aborted(request.scope, body()),
             produced.stop,
             media_type="text/csv; charset=utf-8"
             if format == "csv"

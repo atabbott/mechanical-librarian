@@ -58,6 +58,7 @@ from mechanical_librarian.application.field_effects import (
     GuardedFieldApplication,
 )
 from mechanical_librarian.application.operations import StageTimer, aggregate_incidents
+from mechanical_librarian.application.write_plan import inline_row, plan_reason
 from mechanical_librarian.domain import audiobook_decision_qualification
 from mechanical_librarian.domain.activity_records import readable_activity_event
 from mechanical_librarian.domain.automatic_decision import (
@@ -1305,6 +1306,148 @@ def test_read_scoped_reuse_resolves_exactly_what_a_fresh_read_resolves(
     assert activity._plan_reuse is None
     assert fresh == reused == again
     assert resolved() == fresh
+
+
+def _plan_application(repository: Any) -> ContinuousGuardedApplication:
+    return ContinuousGuardedApplication(
+        repository,
+        {},
+        {},
+        PersistedFieldEffectAuthority(repository),
+        (("primary", "ebooks"),),
+        lambda: 2_000_000_000,
+        lambda *_: None,
+        activity_only=True,
+    )
+
+
+def _resolved_with_and_without_reuse(repository: Any, decisions: list[Any]) -> None:
+    """A plan read's reuse changes nothing a resolve or a row returns (#1336)."""
+    authority = PersistedFieldEffectAuthority(repository)
+
+    def resolved() -> list[tuple[object, object]]:
+        return [
+            (authority.resolve(source), repository.field_effect_plan_row(source))
+            for source in decisions
+        ]
+
+    activity = repository._field_effect_activity
+    fresh = resolved()
+    with activity._plan_documents():
+        reused = resolved()
+        again = resolved()
+        assert activity._plan_reuse.report.cache_info().currsize >= 1
+    assert activity._plan_reuse is None
+    assert fresh == reused == again
+
+
+def test_an_automatic_decision_is_planned_under_its_policy_setting(
+    effects: _EffectEnvironment,
+) -> None:
+    from tests.unit.test_activity_end_to_end import _automatic_candidate_decision
+
+    decision = _automatic_candidate_decision(effects)
+
+    assert plan_reason(decision) == (
+        f"{policy_setting_label(decision.policy_category)}: "
+        f"{policy_option_label(decision.policy_option, decision.policy_category)}"
+    )
+    assert plan_reason(decision).startswith("Description: ")
+    row = _plan_application(effects.repository)._plan_row(decision.to_json())
+    assert row is not None
+    assert (row.kind, row.reason, row.sources) == (
+        "automatic",
+        plan_reason(decision),
+        ("Hardcover",),
+    )
+
+
+def test_a_cover_decision_names_its_cited_cover_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D4: a cover names its candidate's sources; a local one is the library record."""
+    from mechanical_librarian.application.cover_packets import cover_source_reference
+    from mechanical_librarian.domain import cover_qualification_policy
+
+    monkeypatch.setattr(
+        cover_qualification_policy,
+        "MEASURED_REPLACEMENT_QUALIFICATION_SHA256",
+        SYNTHETIC_MEASURED_RECORD,
+    )
+    with audiobook_cover_environment(
+        tmp_path / "cover",
+        [(200, 200), (600, 600)],
+        measured_record=SYNTHETIC_MEASURED_RECORD,
+    ) as state:
+        (decision,) = state.decisions
+        assert decision.policy_category == "cover_order"
+        assert plan_reason(decision).startswith("Cover: ")
+        assert state.repo.field_effect_plan_row(decision) == {
+            "work": "Ember Tide Protocol",
+            "authors": "Corin Halloway",
+            "sources": ["Audible"],
+        }
+        row = _plan_application(state.repo)._plan_row(decision.to_json())
+        assert row is not None
+        assert (row.kind, row.destination, row.sources) == (
+            "automatic",
+            "cover",
+            ("Audible",),
+        )
+        # The owner reads words for a cover, never its identity.
+        assert inline_row(row)["new"] == "Selected cover"
+        # A citation of the library's own cover is named as the local record.
+        incumbent = next(
+            source
+            for source in state.report.cover_sources
+            if source.kind is CoverSourceKind.ABS
+        )
+        local = cover_source_reference(state.report.report_id, incumbent.source_id)
+        activity = state.repo._field_effect_activity
+        assert activity._plan_source_labels(state.report.report_id, (local,)) == [
+            "Local library record"
+        ]
+        assert activity._plan_source_labels(
+            state.report.report_id, (*decision.citation_ids, local)
+        ) == ["Audible", "Local library record"]
+        assert activity._plan_source_labels(state.report.report_id, ()) == []
+        _resolved_with_and_without_reuse(state.repo, [decision])
+
+
+@pytest.mark.parametrize(
+    ("origin", "kind", "reason"),
+    (
+        ("automatic_policy", "automatic", "Description advice"),
+        ("human", "human", "You chose this value"),
+    ),
+    ids=("automatic", "human"),
+)
+def test_description_advice_is_planned_naming_no_sources(
+    tmp_path: Path, origin: str, kind: str, reason: str
+) -> None:
+    """D4: description advice keeps digests only, so it names no sources."""
+    from tests.support.description_advice import _prepared
+
+    repository, store, binding, candidate, _ = _prepared(tmp_path)
+    try:
+        decision = store.admit(candidate.candidate_id, binding, origin, "a" * 64, 11)
+        assert plan_reason(decision) == reason
+        assert repository.field_effect_plan_row(decision) == {
+            "work": "Real Tigers",
+            "authors": "Mick Herron",
+            "sources": [],
+        }
+        row = _plan_application(repository)._plan_row(decision.to_json())
+        assert row is not None
+        assert (row.kind, row.destination, row.reason, row.sources) == (
+            kind,
+            "description",
+            reason,
+            (),
+        )
+        _resolved_with_and_without_reuse(repository, [decision])
+    finally:
+        repository.close()
 
 
 def test_activity_backup_readiness_rechecks_each_exact_database_revision(

@@ -27,27 +27,43 @@ type DownloadState =
   | { readonly kind: 'failed' }
   | { readonly kind: 'stale' }
 
-const save = (blob: Blob, filename: string) => {
+// Firefox and Safari can drop a download whose URL is revoked straight after
+// the click, so a saved file's URL is kept this long, or until the panel ends.
+export const SAVED_URL_LIFETIME_MS = 60_000
+
+const save = (blob: Blob, filename: string): string => {
   const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.hidden = true
+  document.body.append(link)
   try {
-    const link = document.createElement('a')
-    link.href = url
-    link.download = filename
-    link.hidden = true
-    document.body.append(link)
     link.click()
-    link.remove()
   } finally {
-    URL.revokeObjectURL(url)
+    link.remove()
   }
+  return url
 }
 
 export const ActivityWritePlan = ({ plan }: { plan: WritePlanView }) => {
   const { http } = useReviewContext()
   const [state, setState] = useState<DownloadState>({ kind: 'idle' })
   const controller = useRef<AbortController | null>(null)
-  // A download in flight ends with the panel; nothing is saved after it.
-  useEffect(() => () => controller.current?.abort(), [])
+  const saved = useRef(new Map<string, ReturnType<typeof setTimeout>>())
+  // A download in flight ends with the panel; nothing is saved after it, and
+  // every saved file's URL is let go.
+  useEffect(() => {
+    const urls = saved.current
+    return () => {
+      controller.current?.abort()
+      for (const [url, timer] of urls) {
+        clearTimeout(timer)
+        URL.revokeObjectURL(url)
+      }
+      urls.clear()
+    }
+  }, [])
   if (plan.total === 0) return null
   const busy = state.kind === 'busy'
   const expected = Math.min(plan.total, WRITE_PLAN_FILE_ROWS)
@@ -67,7 +83,14 @@ export const ActivityWritePlan = ({ plan }: { plan: WritePlanView }) => {
     try {
       const file = await http.downloadActivityWritePlan(format, current.signal, progress)
       if (current.signal.aborted) return
-      save(file.blob, file.filename)
+      const url = save(file.blob, file.filename)
+      saved.current.set(
+        url,
+        setTimeout(() => {
+          saved.current.delete(url)
+          URL.revokeObjectURL(url)
+        }, SAVED_URL_LIFETIME_MS),
+      )
       setState({ kind: 'idle' })
     } catch (error) {
       if (current.signal.aborted) return

@@ -1455,7 +1455,11 @@ class ReviewApplication:
             labels = {
                 library: label for (_, library), label in self._library_labels().items()
             }
-            reader = self._export_projection or self._permission_reader()
+            # Never the permission reader, which can be the writer: a file
+            # holds its read for minutes.
+            reader = self._export_projection
+            if reader is None:
+                raise ReviewApplicationError("unavailable")
             stream = reader.activity_write_plan_file(
                 format, lambda: self._browse_closed, labels
             )

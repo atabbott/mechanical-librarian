@@ -24,6 +24,11 @@ from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticD
 from mechanical_librarian.domain.description_advice import AuthoredDescriptionDecision
 from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_report import TargetDestination
+from mechanical_librarian.domain.owner_settings import (
+    PROVIDER_LABELS,
+    audio_edition_label,
+    provider_label,
+)
 from mechanical_librarian.domain.readable_activity import (
     ABSENT,
     EVIDENCE_LIMIT,
@@ -46,6 +51,16 @@ FILE_ROWS: Final = 20_000
 FILE_BYTES: Final = 16_777_216
 # A closing application is noticed within this many resolved rows.
 CLOSING_CHECK_ROWS: Final = 100
+
+# A source the library itself holds: its own cover or local claims (D4).
+LOCAL_LIBRARY_RECORD: Final = "Local library record"
+# Every name a row's sources can carry: each provider, by book and by audio
+# edition, an unnamed provider either way, and the library's own record.
+PLAN_SOURCE_LABELS: Final = frozenset(
+    {provider_label(authority) for authority in (*PROVIDER_LABELS, None)}
+    | {audio_edition_label(authority) for authority in (*PROVIDER_LABELS, None)}
+    | {LOCAL_LIBRARY_RECORD}
+)
 
 PlanKind = Literal["human", "automatic"]
 PlanFormat = Literal["csv", "json"]

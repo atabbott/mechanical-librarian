@@ -10,7 +10,7 @@ import json
 import re
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from types import SimpleNamespace
 from typing import Any, cast, get_args
 from unittest.mock import Mock, patch
@@ -25,6 +25,7 @@ from mechanical_librarian.adapters.evidence_extractors.audio_local import (
     AudioSidecar,
     interpret,
 )
+from mechanical_librarian.application import write_plan
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
 from mechanical_librarian.application.continuous_field_effects import (
     CONTINUOUS_FIELD_ACTIVITY_SCHEMA,
@@ -132,6 +133,7 @@ from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.review_field_classification import ReviewFieldState
 from mechanical_librarian.interfaces.web.app import (
     METADATA_POLICY_NOTEBOOK_SCHEMA,
+    AbortedResponseBody,
     _CaseDetailResponse,
     _CoverOmission,
     _MediaHealthObservation,
@@ -760,6 +762,8 @@ def test_shutdown_closes_both_admissions_before_one_shared_deadline(
 def _write_plan_web(
     web: ReviewWebContext[_CloseRecordingRepository],
     application: FakeActivityApplication,
+    *,
+    export: bool = True,
 ) -> Any:
     configuration = ReviewWebConfiguration(
         tls_certificate_file="/synthetic/review.crt",
@@ -774,6 +778,7 @@ def _write_plan_web(
         configuration,
         clock=lambda: web.now,
         field_application=application,
+        export_projection=application if export else None,
     )
     web.client = TestClient(app, base_url="https://review.test")
     return app
@@ -830,6 +835,30 @@ def test_write_plan_file_refuses_an_unknown_format(
     assert web.client.get(f"/api/v1/activity/write-plan{query}").status_code == 422
 
 
+def test_write_plan_file_is_refused_without_its_own_reader(
+    web: ReviewWebContext[_CloseRecordingRepository],
+) -> None:
+    """Never served from the permission reader, which can be the writer (#1336)."""
+    application = FakeActivityApplication()
+    started: list[str] = []
+
+    def producing(_format, _emit, _cancelled) -> None:
+        started.append("produced")
+
+    application.plan_file = producing
+    _write_plan_web(web, application, export=False)
+    web.login()
+
+    response = web.client.get("/api/v1/activity/write-plan?format=csv")
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "unavailable"
+    assert "content-disposition" not in response.headers
+    assert started == []
+    review = web.client.app.state.review_application
+    assert review._active_browses == 0
+
+
 @pytest.mark.parametrize(
     "fault",
     (
@@ -857,37 +886,6 @@ def test_write_plan_fault_before_the_first_byte_is_unavailable(
     assert "content-disposition" not in response.headers
 
 
-def test_write_plan_fault_after_the_first_byte_never_completes_the_body(
-    web: ReviewWebContext[_CloseRecordingRepository],
-) -> None:
-    application = FakeActivityApplication()
-    finished: list[str] = []
-
-    def faulting(_format, emit, _cancelled) -> None:
-        try:
-            emit(b'{"changes":[\n')
-            emit(b'{"work":"Book One"}\n')
-            raise FieldEffectError("persistence")
-        finally:
-            finished.append("snapshot ended")
-
-    application.plan_file = faulting
-    _write_plan_web(web, application)
-    web.login()
-
-    received = b""
-    with pytest.raises(FieldEffectError, match="^persistence$"):
-        with web.client.stream(
-            "GET", "/api/v1/activity/write-plan?format=json"
-        ) as response:
-            assert response.status_code == 200
-            for chunk in response.iter_bytes():
-                received += chunk
-    # Whatever arrived is not a complete file: no closing summary.
-    assert b"]," not in received
-    assert finished == ["snapshot ended"]
-
-
 class _EndlessPlan:
     """A file that never ends by itself, recording its snapshot's life."""
 
@@ -908,7 +906,7 @@ class _EndlessPlan:
 
 def _write_plan_asgi(
     web: ReviewWebContext[_CloseRecordingRepository],
-    plan: _EndlessPlan,
+    plan: Callable[..., None],
 ) -> tuple[Any, dict[str, object], list[ReviewApplication]]:
     """The app, an authenticated CSV request scope, and its application."""
     application = FakeActivityApplication()
@@ -1026,6 +1024,79 @@ def test_write_plan_cancelled_by_an_enclosing_scope_still_releases_its_reader(
         return bodies
 
     assert anyio.run(drive) >= 2
+    _released(plan, started)
+
+
+class _FaultAfterTheHead(_EndlessPlan):
+    """A file whose storage fails after its head and one row."""
+
+    def __call__(self, _format, emit, cancelled) -> None:
+        self.events.append("snapshot began")
+        try:
+            emit(b'\xef\xbb\xbf"Library"\r\n')
+            emit(b'"fiction"\r\n')
+            raise FieldEffectError("persistence")
+        finally:
+            self.events.append("snapshot ended")
+            self.ended.set()
+
+
+@pytest.mark.parametrize(
+    "abort", ("fault", "closing", "stall"), ids=("fault", "closing", "stall")
+)
+def test_write_plan_aborted_after_the_head_never_completes_the_response(
+    web: ReviewWebContext[_CloseRecordingRepository],
+    monkeypatch: pytest.MonkeyPatch,
+    abort: str,
+) -> None:
+    """Behind the app's own middleware, an abort sends no final body frame (#1336).
+
+    The server then closes the connection instead of ending the body, so a
+    short file is never received as a complete one.
+    """
+    if abort == "stall":
+        monkeypatch.setattr(write_plan, "STALLED_CONSUMER_SECONDS", 0.3)
+    plan = _FaultAfterTheHead() if abort == "fault" else _EndlessPlan()
+    app, scope, started = _write_plan_asgi(web, plan)
+
+    async def drive() -> tuple[list[dict[str, object]], BaseException | None]:
+        sent: list[dict[str, object]] = []
+
+        async def receive() -> dict[str, object]:
+            await anyio.sleep_forever()
+            raise AssertionError("unreachable")
+
+        async def send(message: dict[str, object]) -> None:
+            sent.append(message)
+            if message["type"] != "http.response.body" or len(sent) != 2:
+                return
+            if abort == "closing":
+                await anyio.to_thread.run_sync(started[0].begin_drain)
+            elif abort == "stall":
+                # Nobody takes a chunk for longer than the stall bound.
+                await anyio.sleep(1.0)
+
+        raised = None
+        try:
+            with anyio.fail_after(10):
+                await app(scope, receive, send)
+        except Exception as error:  # noqa: BLE001 - the server sees what escapes
+            raised = error
+        return sent, raised
+
+    sent, raised = anyio.run(drive)
+
+    assert sent[0]["type"] == "http.response.start"
+    assert sent[0]["status"] == 200
+    bodies = [message for message in sent if message["type"] == "http.response.body"]
+    assert bodies and bodies[0]["body"].startswith(b"\xef\xbb\xbf")
+    assert all(message.get("more_body", False) for message in bodies)
+    assert isinstance(raised, AbortedResponseBody)
+    # Value-free: the message names only the original error's type.
+    assert str(raised) in {
+        "response body aborted by FieldEffectError",
+        "response body aborted by GuardedApplicationError",
+    }
     _released(plan, started)
 
 

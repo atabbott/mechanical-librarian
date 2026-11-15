@@ -14,7 +14,7 @@ import os
 import shutil
 import tempfile
 from collections.abc import Callable, Iterator
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Generic, TypeVar, cast
@@ -1147,6 +1147,11 @@ class FakeActivityApplication(ContinuousGuardedApplication):
     def __init__(self) -> None:
         self.enabled_libraries: set[str] = set()
         self.paused = False
+
+    def classify_request(self, work_class):
+        # Composed as the export reader too, which has no admission here.
+        del work_class
+        return nullcontext()
 
     def destinations_consented(
         self, connection: str, library: str, destinations: tuple[str, ...]

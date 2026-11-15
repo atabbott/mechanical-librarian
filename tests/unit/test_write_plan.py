@@ -411,3 +411,37 @@ def test_a_stopped_stream_never_ends_its_body_normally() -> None:
     assert reader.left.wait(5)
     _resume(stream)
     stream.close()
+
+
+def test_a_row_admits_every_source_name_a_plan_can_carry() -> None:
+    """The row bound is the closed set of source names, never fewer (#1336)."""
+    from pydantic import ValidationError
+
+    from mechanical_librarian.application.write_plan import (
+        LOCAL_LIBRARY_RECORD,
+        PLAN_SOURCE_LABELS,
+    )
+    from mechanical_librarian.domain.owner_settings import (
+        PROVIDER_LABELS,
+        audio_edition_label,
+        provider_label,
+    )
+    from mechanical_librarian.interfaces.web.app import _WritePlanRow
+
+    # Every name `_plan_source_labels` can project, including an unknown provider.
+    for authority in (*PROVIDER_LABELS, "unknown_provider", None):
+        assert provider_label(authority) in PLAN_SOURCE_LABELS
+        assert audio_edition_label(authority) in PLAN_SOURCE_LABELS
+    assert LOCAL_LIBRARY_RECORD in PLAN_SOURCE_LABELS
+    assert len(PLAN_SOURCE_LABELS) == 2 * (len(PROVIDER_LABELS) + 1) + 1
+    row = {
+        "work": "A Work",
+        "authors": "An Author",
+        "current": "Old",
+        "new": "New",
+        "reason": "You chose this value",
+    }
+    every = sorted(PLAN_SOURCE_LABELS)
+    assert _WritePlanRow.model_validate(row | {"sources": every}).sources == every
+    with pytest.raises(ValidationError):
+        _WritePlanRow.model_validate(row | {"sources": [*every, "Audible"]})

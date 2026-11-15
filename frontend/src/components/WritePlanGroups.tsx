@@ -32,10 +32,18 @@ const WritePlanRow = ({ row }: { row: WritePlanRowView }) => (
   </li>
 )
 
-const WritePlanGroup = ({ group, open }: { group: WritePlanGroupView; open: boolean }) => {
-  const more = group.count - group.rows.length
+const WritePlanGroup = ({
+  group,
+  everyRowShown,
+}: {
+  group: WritePlanGroupView
+  everyRowShown: boolean
+}) => {
+  // When every listable change is shown, a missing row could not be read, and
+  // the file leaves it out too, so nothing is announced as being there.
+  const more = everyRowShown ? 0 : group.count - group.rows.length
   return (
-    <details className="write-plan-group" open={open}>
+    <details className="write-plan-group" open={everyRowShown}>
       {/* The Show or Hide cue is generated content; <details> states the
           expanded state to assistive technology itself. */}
       <summary>
@@ -74,11 +82,11 @@ export const WritePlanField = ({
       (group) => group.library === library && group.destination === destination,
     ) ?? []
   if (plan === undefined || groups.length === 0) return null
-  const open = plan.total <= WRITE_PLAN_OPEN_ALL
+  const everyRowShown = plan.total <= WRITE_PLAN_OPEN_ALL
   return (
     <div className="write-plan-field">
       {groups.map((group) => (
-        <WritePlanGroup key={group.kind} group={group} open={open} />
+        <WritePlanGroup key={group.kind} group={group} everyRowShown={everyRowShown} />
       ))}
     </div>
   )

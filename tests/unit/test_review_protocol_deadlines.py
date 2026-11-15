@@ -9,13 +9,16 @@ shipped values are asserted separately.
 from __future__ import annotations
 
 import asyncio
+import logging
 import socket
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 
 import pytest
 import uvicorn
+from fastapi import FastAPI, Request, Response
+from fastapi.responses import StreamingResponse
 from starlette.types import Receive, Scope, Send
 
 from mechanical_librarian.infrastructure.security import review_protocol
@@ -23,6 +26,10 @@ from mechanical_librarian.infrastructure.security.review_protocol import (
     REVIEW_BODY_TIMEOUT_SECONDS,
     REVIEW_HEADER_TIMEOUT_SECONDS,
     BoundedReviewH11Protocol,
+)
+from mechanical_librarian.interfaces.web.app import (
+    _marking_aborted,
+    _withhold_aborted_end,
 )
 
 _DEADLINE = 0.5
@@ -289,3 +296,67 @@ def test_a_streamed_answer_to_a_complete_get_outlives_both_deadlines(
     assert elapsed > 2 * _DEADLINE
     assert received.startswith(b"HTTP/1.1 200 ")
     assert all(f"row-{index}\n".encode() in received for index in range(8))
+
+
+def _aborting_app() -> FastAPI:
+    """The app's middleware shape with a route whose body fails after its head."""
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def relay(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        response = await call_next(request)
+        _withhold_aborted_end(request.scope, response)
+        return response
+
+    @app.get("/api/v1/activity/write-plan")
+    def plan(request: Request) -> StreamingResponse:
+        async def body() -> AsyncIterator[bytes]:
+            yield b'"Library"\r\n"Secret Title"\r\n'
+            await asyncio.sleep(_DEADLINE / 2)
+            raise RuntimeError("Secret Title /books/secret.epub")
+
+        return StreamingResponse(
+            _marking_aborted(request.scope, body()), media_type="text/csv"
+        )
+
+    return app
+
+
+def test_an_aborted_stream_is_closed_without_its_chunked_terminator(
+    short_deadlines: None, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A body that fails after its head never reads as complete on the wire (#1336).
+
+    The relayed body raises before the middleware's final frame, so the server
+    closes the connection instead of sending the terminator, and logs only the
+    original error's type.
+    """
+    with (
+        caplog.at_level(logging.DEBUG),
+        _Edge(_aborting_app()) as edge,
+        edge.connect() as client,
+    ):
+        client.sendall(
+            b"GET /api/v1/activity/write-plan HTTP/1.1\r\nHost: edge\r\n\r\n"
+        )
+        received, elapsed = _read_until_closed(client)
+    assert elapsed < _PATIENCE
+    assert received.startswith(b"HTTP/1.1 200 ")
+    assert b"transfer-encoding: chunked" in received.lower()
+    assert b'"Secret Title"' in received
+    assert not received.endswith(b"0\r\n\r\n")
+    logged = "\n".join(
+        record.getMessage()
+        + "\n"
+        + (
+            logging.Formatter().formatException(record.exc_info)
+            if record.exc_info
+            else ""
+        )
+        for record in caplog.records
+    )
+    assert "response body aborted by RuntimeError" in logged
+    assert "Secret Title" not in logged
+    assert "/books/" not in logged

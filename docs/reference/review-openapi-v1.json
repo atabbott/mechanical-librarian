@@ -12445,7 +12445,7 @@
               "maxLength": 128,
               "type": "string"
             },
-            "maxItems": 16,
+            "maxItems": 19,
             "title": "Sources",
             "type": "array"
           },
