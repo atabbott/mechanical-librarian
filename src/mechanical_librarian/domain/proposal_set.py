@@ -5518,7 +5518,10 @@ def _undecodable_retained_alternatives(
     ]
 
 
-def _cover_result(report: MetadataReport, target: TargetField) -> ProposalResult:
+def _considered_cover_sources(
+    report: MetadataReport, target: TargetField
+) -> tuple[CoverSource, ...] | None:
+    """Return the cover sources this proposal considers, or None when withheld."""
     considered = report.cover_sources
     if report.file.format in AUDIO_FILE_FORMATS and not any(
         provider_candidate_represents_target_recording(report, provider, candidate)
@@ -5529,13 +5532,7 @@ def _cover_result(report: MetadataReport, target: TargetField) -> ProposalResult
         # considered, beside the current cover itself (#1642).
         offered = _work_cover_sources(report, target)
         if not offered:
-            return ProposalResult(
-                TargetDestination.COVER,
-                ProposalOutcome.INELIGIBLE,
-                (),
-                None,
-                ("audiobook_cover_withheld",),
-            )
+            return None
         # A work cover still pending keeps the gallery incomplete (#1642).
         considered = tuple(
             source
@@ -5548,6 +5545,13 @@ def _cover_result(report: MetadataReport, target: TargetField) -> ProposalResult
                 and _cover_bound_to_work_source(report, source)
             )
         )
+    return considered
+
+
+def _cover_alternatives(
+    considered: tuple[CoverSource, ...], target: TargetField
+) -> tuple[ProposalAlternative, ...]:
+    """Group the retrieved cover sources into ordered proposal alternatives."""
     # A retained original is only ever a way back to a replaced cover: it is
     # offered over a populated cover and never fills an empty one (#1363, D2).
     retrieved = [
@@ -5600,7 +5604,20 @@ def _cover_result(report: MetadataReport, target: TargetField) -> ProposalResult
             )
         )
     alternatives.extend(_undecodable_retained_alternatives(considered, target, grouped))
-    ordered = tuple(sorted(alternatives, key=lambda value: value.alternative_id))
+    return tuple(sorted(alternatives, key=lambda value: value.alternative_id))
+
+
+def _cover_result(report: MetadataReport, target: TargetField) -> ProposalResult:
+    considered = _considered_cover_sources(report, target)
+    if considered is None:
+        return ProposalResult(
+            TargetDestination.COVER,
+            ProposalOutcome.INELIGIBLE,
+            (),
+            None,
+            ("audiobook_cover_withheld",),
+        )
+    ordered = _cover_alternatives(considered, target)
     if target.state in {
         TargetFieldState.UNLOADED,
         TargetFieldState.MALFORMED,
@@ -5613,6 +5630,15 @@ def _cover_result(report: MetadataReport, target: TargetField) -> ProposalResult
             None,
             ("target_state_unusable",),
         )
+    if target.state is TargetFieldState.VALUE:
+        return _populated_cover_result(ordered)
+    return _empty_cover_result(ordered, considered)
+
+
+def _populated_cover_result(
+    ordered: tuple[ProposalAlternative, ...],
+) -> ProposalResult:
+    """Decide a populated cover: keep, review, or defer the current one."""
     current = next(
         (
             value
@@ -5642,31 +5668,36 @@ def _cover_result(report: MetadataReport, target: TargetField) -> ProposalResult
             None,
             ("current_cover_verified",),
         )
-    if target.state is TargetFieldState.VALUE:
-        candidates = tuple(
-            value
-            for value in ordered
-            if value.assessment is not ProposalAssessment.PRESERVES_TARGET
-        )
-        if candidates:
-            return ProposalResult(
-                TargetDestination.COVER,
-                ProposalOutcome.UNRESOLVED_CHOICE,
-                candidates,
-                None,
-                (
-                    "current_cover_unavailable",
-                    "current_cover_unverified",
-                    "owner_cover_choice_required",
-                ),
-            )
+    candidates = tuple(
+        value
+        for value in ordered
+        if value.assessment is not ProposalAssessment.PRESERVES_TARGET
+    )
+    if candidates:
         return ProposalResult(
             TargetDestination.COVER,
-            ProposalOutcome.DEFER,
-            (),
+            ProposalOutcome.UNRESOLVED_CHOICE,
+            candidates,
             None,
-            ("current_cover_unverified",),
+            (
+                "current_cover_unavailable",
+                "current_cover_unverified",
+                "owner_cover_choice_required",
+            ),
         )
+    return ProposalResult(
+        TargetDestination.COVER,
+        ProposalOutcome.DEFER,
+        (),
+        None,
+        ("current_cover_unverified",),
+    )
+
+
+def _empty_cover_result(
+    ordered: tuple[ProposalAlternative, ...], considered: tuple[CoverSource, ...]
+) -> ProposalResult:
+    """Decide an empty cover: fill it, wait for the gallery, or ask the owner."""
     candidates = tuple(
         value
         for value in ordered
