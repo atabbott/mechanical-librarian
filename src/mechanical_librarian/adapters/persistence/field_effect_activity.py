@@ -611,116 +611,11 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             )
             value = decision.selected_value
         else:
-            automatic = cast(AutomaticDecision | CoverAutomaticDecision, decision)
-            report_row = self._connection.execute(
-                "SELECT document FROM metadata_reports WHERE report_id=?",
-                (automatic.report_id,),
-            ).fetchone()
-            proposal_row = self._connection.execute(
-                "SELECT document FROM proposal_sets WHERE proposal_set_id=?",
-                (automatic.proposal_set_id,),
-            ).fetchone()
-            if report_row is None or proposal_row is None:
-                raise FieldEffectError("authority_binding")
-            try:
-                if type(automatic) is CoverAutomaticDecision:
-                    consideration_row = self._connection.execute(
-                        "SELECT consideration.document,report.document,report.document_digest,consideration.document_digest,consideration.report_id FROM current_cover_considerations current "
-                        "JOIN cover_considerations consideration ON consideration.consideration_id=current.consideration_id "
-                        "LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id "
-                        "WHERE current.review_case_id=? AND current.consideration_id=?",
-                        (automatic.review_case_id, automatic.consideration_id),
-                    ).fetchone()
-                    if consideration_row is None:
-                        raise FieldEffectError("authority_binding")
-                    value = _cover_automatic_decision_value(
-                        self._connection,
-                        automatic,
-                        case,
-                        MetadataReport.from_json(report_row[0]),
-                        ProposalSet.from_json(proposal_row[0]),
-                        expand_cover_consideration(*consideration_row),
-                    )
-                else:
-                    # A decision authorizes a write only against its case's
-                    # newest outcome set. Leaving Automatic with the policy
-                    # unchanged projects the same case again under a new
-                    # generation (#1568), so an earlier generation's decision
-                    # fails its binding here whatever order rows are read in.
-                    outcome_row = self._connection.execute(
-                        "SELECT document FROM shadow_decision_outcomes WHERE review_case_id=? "
-                        "AND report_id=? AND proposal_set_id=? AND resolved_policy_id=? "
-                        "ORDER BY json_extract(document,'$.policy_generation') DESC,"
-                        "evaluated_at DESC,outcome_set_id DESC LIMIT 1",
-                        (
-                            automatic.review_case_id,
-                            automatic.report_id,
-                            automatic.proposal_set_id,
-                            automatic.resolved_policy_id,
-                        ),
-                    ).fetchone()
-                    if outcome_row is None:
-                        raise FieldEffectError("authority_binding")
-                    value = _automatic_decision_value(
-                        cast(AutomaticDecision, automatic),
-                        case,
-                        MetadataReport.from_json(report_row[0]),
-                        ProposalSet.from_json(proposal_row[0]),
-                        ShadowOutcomeSet.from_json(outcome_row[0]),
-                    )
-                    from mechanical_librarian.domain.automatic_decision import (
-                        audiobook_title_subtitle_bundle,
-                    )
-
-                    members = tuple(
-                        field
-                        for field in ShadowOutcomeSet.from_json(outcome_row[0]).outcomes
-                        if field.destination in {"title", "subtitle"}
-                    )
-                    if (
-                        decision.destination in {"title", "subtitle"}
-                        and audiobook_title_subtitle_bundle(members) is not None
-                    ):
-                        paired_bundle_id = automatic.bundle_id
-                        sibling_source = next(
-                            field
-                            for field in members
-                            if field.destination != decision.destination
-                        )
-                        sibling_row = self._connection.execute(
-                            # The sibling of the decision's own generation
-                            # (#1573).
-                            "SELECT document FROM automatic_decisions WHERE review_case_id=? AND destination=? AND policy_generation=?",
-                            (
-                                decision.review_case_id,
-                                sibling_source.destination,
-                                cast(AutomaticDecision, automatic).policy_generation,
-                            ),
-                        ).fetchone()
-                        if sibling_row is None:
-                            raise FieldEffectError("authority_binding")
-                        sibling = AutomaticDecision.from_json(sibling_row[0])
-                        if (
-                            sibling.bundle_id != paired_bundle_id
-                            or sibling.source_outcome_id != sibling_source.outcome_id
-                        ):
-                            raise FieldEffectError("authority_binding")
-                        _automatic_decision_value(
-                            sibling,
-                            case,
-                            MetadataReport.from_json(report_row[0]),
-                            ProposalSet.from_json(proposal_row[0]),
-                            ShadowOutcomeSet.from_json(outcome_row[0]),
-                        )
-                        paired_decision_id = sibling.decision_id
-            except (
-                MetadataReportError,
-                ReportValueError,
-                ProposalValueError,
-                RichMetadataPreviewError,
-                ShadowOutcomeError,
-            ) as error:
-                raise FieldEffectError("authority_binding") from error
+            value, paired_bundle_id, paired_decision_id = (
+                self._automatic_authority_value(
+                    cast(AutomaticDecision | CoverAutomaticDecision, decision), case
+                )
+            )
         lineage = self._connection.execute(
             "SELECT connection_name,library_name,item_id FROM current_review_case_lineages "
             "WHERE review_case_id=?",
@@ -728,76 +623,11 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         ).fetchone()
         if lineage is None:
             raise FieldEffectError("authority_binding")
-        target_fields = case.target.get("fields")
-        if type(target_fields) is not list:
-            raise FieldEffectError("authority_binding")
-        target_field = next(
-            (
-                item
-                for item in target_fields
-                if type(item) is dict
-                and item.get("destination") == decision.destination
-            ),
-            None,
-        )
-        if type(target_field) is not dict or target_field.get("state") not in {
-            "value",
-            "null",
-            "empty",
-            "missing",
-        }:
-            raise FieldEffectError("authority_binding")
-        case_pre_value = (
-            target_field.get("value") if target_field["state"] == "value" else None
-        )
-        if decision.destination == "cover":
-            case_pre_value = self._cover_pre_value(case)
+        case_pre_value = self._case_target_pre_value(case, decision.destination)
         pre_value = case_pre_value
         predecessor = None
         if type(decision) is HumanDecision:
-            predecessor = self._connection.execute(
-                "SELECT effect.document FROM field_effects effect JOIN ("
-                "SELECT decision_id,ordinal FROM human_decisions earlier WHERE "
-                "earlier.review_case_id=? AND earlier.destination=? AND earlier.ordinal<("
-                "SELECT ordinal FROM human_decisions WHERE decision_id=?) UNION ALL "
-                "SELECT decision_id,-1 FROM automatic_decisions earlier WHERE "
-                "earlier.review_case_id=? AND earlier.destination=?"
-                ") recorded ON (recorded.decision_id=effect.decision_id OR recorded.decision_id="
-                + _FIELD_EFFECT_COMPANION_DECISION_SQL
-                + ") WHERE effect.state='verified' "
-                # A write planned before the case was admitted again is not
-                # what the library holds now: the work has left that content
-                # and returned to the case's own (#1358).
-                "AND +effect.rowid>COALESCE((SELECT effect_floor FROM "
-                "review_case_episodes WHERE review_case_id=?),0) "
-                "ORDER BY recorded.ordinal DESC,effect.rowid LIMIT 1",
-                (
-                    decision.review_case_id,
-                    decision.destination,
-                    decision.decision_id,
-                    decision.review_case_id,
-                    decision.destination,
-                    decision.review_case_id,
-                ),
-            ).fetchone()
-            if decision.destination == "description":
-                authored_predecessor = self._connection.execute(
-                    "SELECT effect.document FROM field_effects effect "
-                    "JOIN description_decisions authored ON authored.decision_id=effect.decision_id "
-                    "WHERE authored.review_case_id=? AND effect.state='verified' "
-                    "AND +effect.rowid>COALESCE((SELECT effect_floor FROM "
-                    "review_case_episodes WHERE review_case_id=?),0) "
-                    "ORDER BY effect.updated_at DESC,effect.rowid DESC LIMIT 1",
-                    (decision.review_case_id, decision.review_case_id),
-                ).fetchone()
-                if authored_predecessor is not None and (
-                    predecessor is None
-                    or FieldEffectOperation.from_json(
-                        authored_predecessor[0]
-                    ).updated_at
-                    > FieldEffectOperation.from_json(predecessor[0]).updated_at
-                ):
-                    predecessor = authored_predecessor
+            predecessor = self._human_predecessor(decision)
         if predecessor is not None:
             try:
                 previous = FieldEffectOperation.from_json(predecessor[0])
@@ -846,6 +676,201 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             "pre_value": pre_value,
             "dependency_digests": dependency_digests,
         }
+
+    def _automatic_authority_value(
+        self,
+        automatic: AutomaticDecision | CoverAutomaticDecision,
+        case: ReviewCase,
+    ) -> tuple[object, str | None, str | None]:
+        """Bind the automatic value to its newest outcome set and title/subtitle sibling."""
+        paired_bundle_id: str | None = None
+        paired_decision_id: str | None = None
+        value: object
+        report_row = self._connection.execute(
+            "SELECT document FROM metadata_reports WHERE report_id=?",
+            (automatic.report_id,),
+        ).fetchone()
+        proposal_row = self._connection.execute(
+            "SELECT document FROM proposal_sets WHERE proposal_set_id=?",
+            (automatic.proposal_set_id,),
+        ).fetchone()
+        if report_row is None or proposal_row is None:
+            raise FieldEffectError("authority_binding")
+        try:
+            if type(automatic) is CoverAutomaticDecision:
+                consideration_row = self._connection.execute(
+                    "SELECT consideration.document,report.document,report.document_digest,consideration.document_digest,consideration.report_id FROM current_cover_considerations current "
+                    "JOIN cover_considerations consideration ON consideration.consideration_id=current.consideration_id "
+                    "LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id "
+                    "WHERE current.review_case_id=? AND current.consideration_id=?",
+                    (automatic.review_case_id, automatic.consideration_id),
+                ).fetchone()
+                if consideration_row is None:
+                    raise FieldEffectError("authority_binding")
+                value = _cover_automatic_decision_value(
+                    self._connection,
+                    automatic,
+                    case,
+                    MetadataReport.from_json(report_row[0]),
+                    ProposalSet.from_json(proposal_row[0]),
+                    expand_cover_consideration(*consideration_row),
+                )
+            else:
+                # A decision authorizes a write only against its case's
+                # newest outcome set. Leaving Automatic with the policy
+                # unchanged projects the same case again under a new
+                # generation (#1568), so an earlier generation's decision
+                # fails its binding here whatever order rows are read in.
+                outcome_row = self._connection.execute(
+                    "SELECT document FROM shadow_decision_outcomes WHERE review_case_id=? "
+                    "AND report_id=? AND proposal_set_id=? AND resolved_policy_id=? "
+                    "ORDER BY json_extract(document,'$.policy_generation') DESC,"
+                    "evaluated_at DESC,outcome_set_id DESC LIMIT 1",
+                    (
+                        automatic.review_case_id,
+                        automatic.report_id,
+                        automatic.proposal_set_id,
+                        automatic.resolved_policy_id,
+                    ),
+                ).fetchone()
+                if outcome_row is None:
+                    raise FieldEffectError("authority_binding")
+                value = _automatic_decision_value(
+                    cast(AutomaticDecision, automatic),
+                    case,
+                    MetadataReport.from_json(report_row[0]),
+                    ProposalSet.from_json(proposal_row[0]),
+                    ShadowOutcomeSet.from_json(outcome_row[0]),
+                )
+                from mechanical_librarian.domain.automatic_decision import (
+                    audiobook_title_subtitle_bundle,
+                )
+
+                members = tuple(
+                    field
+                    for field in ShadowOutcomeSet.from_json(outcome_row[0]).outcomes
+                    if field.destination in {"title", "subtitle"}
+                )
+                if (
+                    automatic.destination in {"title", "subtitle"}
+                    and audiobook_title_subtitle_bundle(members) is not None
+                ):
+                    paired_bundle_id = automatic.bundle_id
+                    sibling_source = next(
+                        field
+                        for field in members
+                        if field.destination != automatic.destination
+                    )
+                    sibling_row = self._connection.execute(
+                        # The sibling of the decision's own generation
+                        # (#1573).
+                        "SELECT document FROM automatic_decisions WHERE review_case_id=? AND destination=? AND policy_generation=?",
+                        (
+                            automatic.review_case_id,
+                            sibling_source.destination,
+                            cast(AutomaticDecision, automatic).policy_generation,
+                        ),
+                    ).fetchone()
+                    if sibling_row is None:
+                        raise FieldEffectError("authority_binding")
+                    sibling = AutomaticDecision.from_json(sibling_row[0])
+                    if (
+                        sibling.bundle_id != paired_bundle_id
+                        or sibling.source_outcome_id != sibling_source.outcome_id
+                    ):
+                        raise FieldEffectError("authority_binding")
+                    _automatic_decision_value(
+                        sibling,
+                        case,
+                        MetadataReport.from_json(report_row[0]),
+                        ProposalSet.from_json(proposal_row[0]),
+                        ShadowOutcomeSet.from_json(outcome_row[0]),
+                    )
+                    paired_decision_id = sibling.decision_id
+        except (
+            MetadataReportError,
+            ReportValueError,
+            ProposalValueError,
+            RichMetadataPreviewError,
+            ShadowOutcomeError,
+        ) as error:
+            raise FieldEffectError("authority_binding") from error
+        return value, paired_bundle_id, paired_decision_id
+
+    def _case_target_pre_value(self, case: ReviewCase, destination: str) -> object:
+        """Read the case's own pre-value for the destination, with the cover override."""
+        target_fields = case.target.get("fields")
+        if type(target_fields) is not list:
+            raise FieldEffectError("authority_binding")
+        target_field = next(
+            (
+                item
+                for item in target_fields
+                if type(item) is dict and item.get("destination") == destination
+            ),
+            None,
+        )
+        if type(target_field) is not dict or target_field.get("state") not in {
+            "value",
+            "null",
+            "empty",
+            "missing",
+        }:
+            raise FieldEffectError("authority_binding")
+        case_pre_value = (
+            target_field.get("value") if target_field["state"] == "value" else None
+        )
+        if destination == "cover":
+            case_pre_value = self._cover_pre_value(case)
+        return case_pre_value
+
+    def _human_predecessor(
+        self, decision: HumanDecision
+    ) -> sqlite3.Row | tuple[str, ...] | None:
+        """Find the verified effect an owner decision follows."""
+        predecessor: sqlite3.Row | tuple[str, ...] | None
+        predecessor = self._connection.execute(
+            "SELECT effect.document FROM field_effects effect JOIN ("
+            "SELECT decision_id,ordinal FROM human_decisions earlier WHERE "
+            "earlier.review_case_id=? AND earlier.destination=? AND earlier.ordinal<("
+            "SELECT ordinal FROM human_decisions WHERE decision_id=?) UNION ALL "
+            "SELECT decision_id,-1 FROM automatic_decisions earlier WHERE "
+            "earlier.review_case_id=? AND earlier.destination=?"
+            ") recorded ON (recorded.decision_id=effect.decision_id OR recorded.decision_id="
+            + _FIELD_EFFECT_COMPANION_DECISION_SQL
+            + ") WHERE effect.state='verified' "
+            # A write planned before the case was admitted again is not
+            # what the library holds now: the work has left that content
+            # and returned to the case's own (#1358).
+            "AND +effect.rowid>COALESCE((SELECT effect_floor FROM "
+            "review_case_episodes WHERE review_case_id=?),0) "
+            "ORDER BY recorded.ordinal DESC,effect.rowid LIMIT 1",
+            (
+                decision.review_case_id,
+                decision.destination,
+                decision.decision_id,
+                decision.review_case_id,
+                decision.destination,
+                decision.review_case_id,
+            ),
+        ).fetchone()
+        if decision.destination == "description":
+            authored_predecessor = self._connection.execute(
+                "SELECT effect.document FROM field_effects effect "
+                "JOIN description_decisions authored ON authored.decision_id=effect.decision_id "
+                "WHERE authored.review_case_id=? AND effect.state='verified' "
+                "AND +effect.rowid>COALESCE((SELECT effect_floor FROM "
+                "review_case_episodes WHERE review_case_id=?),0) "
+                "ORDER BY effect.updated_at DESC,effect.rowid DESC LIMIT 1",
+                (decision.review_case_id, decision.review_case_id),
+            ).fetchone()
+            if authored_predecessor is not None and (
+                predecessor is None
+                or FieldEffectOperation.from_json(authored_predecessor[0]).updated_at
+                > FieldEffectOperation.from_json(predecessor[0]).updated_at
+            ):
+                predecessor = authored_predecessor
+        return predecessor
 
     def _cover_pre_value(self, case: ReviewCase) -> str | None:
         """Bind a cover write to the bytes its case's report read (#1362)."""
@@ -4421,122 +4446,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     raise FieldEffectError("consent")
                 authority = member.authority
                 if authority.source == "persisted_review_case":
-                    try:
-                        case_envelope = json.loads(
-                            self.get_review_case(authority.review_case_id)
-                        )
-                        case = case_envelope["case"]
-                        target = case["target"]
-                    except (
-                        MetadataReportError,
-                        KeyError,
-                        TypeError,
-                        json.JSONDecodeError,
-                    ) as error:
-                        raise FieldEffectError("authority") from error
-                    if (
-                        case_envelope.get("current") is not True
-                        or not self._review_case_accepts_authority(
-                            authority.review_case_id
-                        )
-                        or case.get("target_fingerprint")
-                        != authority.target_fingerprint
-                        or (
-                            target.get("connection"),
-                            target.get("library"),
-                            target.get("item"),
-                        )
-                        != (
-                            member.connection,
-                            member.library,
-                            member.work_id,
-                        )
-                    ):
-                        raise FieldEffectError("authority")
-                    authored_row = self._connection.execute(
-                        "SELECT document FROM description_decisions WHERE decision_id=?",
-                        (authority.decision_id,),
-                    ).fetchone()
-                    if authored_row is not None:
-                        from mechanical_librarian.application.field_effects import (
-                            authority_from_decision,
-                        )
-
-                        authored = AuthoredDescriptionDecision.from_json(
-                            authored_row[0]
-                        )
-                        projected = authority_from_decision(authored)
-                        source = self._authority_source(authored)
-                        if (
-                            projected is None
-                            or source["source"] != "persisted_review_case"
-                            or replace(projected, source="persisted_review_case")
-                            != authority
-                        ):
-                            raise FieldEffectError("authority")
-                    else:
-                        if authority.origin == "human":
-                            decision = self._connection.execute(
-                                "SELECT document FROM human_decisions WHERE decision_id=? "
-                                "AND review_case_id=? AND destination=?",
-                                (
-                                    authority.decision_id,
-                                    authority.review_case_id,
-                                    member.destination,
-                                ),
-                            ).fetchone()
-                        else:
-                            decision = self._connection.execute(
-                                "SELECT document FROM automatic_decisions WHERE decision_id=? "
-                                "AND review_case_id=? AND destination=? UNION ALL "
-                                "SELECT json_extract(selection.document,'$.decision_document') "
-                                "FROM current_cover_selection_authorities current "
-                                "JOIN cover_selection_authorities selection "
-                                "ON selection.selection_id=current.selection_id "
-                                "WHERE selection.decision_id=? AND selection.kind='automatic' "
-                                "AND ?='cover'",
-                                (
-                                    authority.decision_id,
-                                    authority.review_case_id,
-                                    member.destination,
-                                    authority.decision_id,
-                                    member.destination,
-                                ),
-                            ).fetchone()
-                        if (
-                            decision is None
-                            or json.loads(decision[0]).get("target_fingerprint")
-                            != authority.target_fingerprint
-                        ):
-                            raise FieldEffectError("authority")
-                        if authority.origin == "automatic_policy":
-                            automatic = json.loads(decision[0])
-                            safety = self._connection.execute(
-                                "SELECT paused,global_suspension,category_suspensions_document "
-                                "FROM automatic_safety_state WHERE singleton=1"
-                            ).fetchone()
-                            suspended = (
-                                {} if safety is None else dict(json.loads(safety[2]))
-                            )
-                            if (
-                                safety is None
-                                or safety[0] != 0
-                                or safety[1] is not None
-                                or automatic_safety_category(
-                                    automatic["policy_category"],
-                                    automatic["policy_option"],
-                                )
-                                in suspended
-                                or (
-                                    member.destination != "cover"
-                                    and not qualification_manifest_is_current(
-                                        automatic["policy_category"],
-                                        automatic["policy_option"],
-                                        automatic["qualification_manifest_sha256"],
-                                    )
-                                )
-                            ):
-                                raise FieldEffectError("authority")
+                    self._require_review_case_authority(member, authority)
                 if (
                     member.destination == "cover"
                     and authority.source == "persisted_review_case"
@@ -4580,6 +4490,120 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             if isinstance(error, FieldEffectError):
                 raise
             raise FieldEffectError("persistence") from error
+        except BaseException:
+            transaction.rollback()
+            raise
+
+    def _require_review_case_authority(
+        self, member: FieldEffectPlan, authority: EffectAuthority
+    ) -> None:
+        """Check one claimed member's persisted-review-case authority still holds."""
+        try:
+            case_envelope = json.loads(self.get_review_case(authority.review_case_id))
+            case = case_envelope["case"]
+            target = case["target"]
+        except (
+            MetadataReportError,
+            KeyError,
+            TypeError,
+            json.JSONDecodeError,
+        ) as error:
+            raise FieldEffectError("authority") from error
+        if (
+            case_envelope.get("current") is not True
+            or not self._review_case_accepts_authority(authority.review_case_id)
+            or case.get("target_fingerprint") != authority.target_fingerprint
+            or (
+                target.get("connection"),
+                target.get("library"),
+                target.get("item"),
+            )
+            != (
+                member.connection,
+                member.library,
+                member.work_id,
+            )
+        ):
+            raise FieldEffectError("authority")
+        authored_row = self._connection.execute(
+            "SELECT document FROM description_decisions WHERE decision_id=?",
+            (authority.decision_id,),
+        ).fetchone()
+        if authored_row is not None:
+            from mechanical_librarian.application.field_effects import (
+                authority_from_decision,
+            )
+
+            authored = AuthoredDescriptionDecision.from_json(authored_row[0])
+            projected = authority_from_decision(authored)
+            source = self._authority_source(authored)
+            if (
+                projected is None
+                or source["source"] != "persisted_review_case"
+                or replace(projected, source="persisted_review_case") != authority
+            ):
+                raise FieldEffectError("authority")
+        else:
+            if authority.origin == "human":
+                decision = self._connection.execute(
+                    "SELECT document FROM human_decisions WHERE decision_id=? "
+                    "AND review_case_id=? AND destination=?",
+                    (
+                        authority.decision_id,
+                        authority.review_case_id,
+                        member.destination,
+                    ),
+                ).fetchone()
+            else:
+                decision = self._connection.execute(
+                    "SELECT document FROM automatic_decisions WHERE decision_id=? "
+                    "AND review_case_id=? AND destination=? UNION ALL "
+                    "SELECT json_extract(selection.document,'$.decision_document') "
+                    "FROM current_cover_selection_authorities current "
+                    "JOIN cover_selection_authorities selection "
+                    "ON selection.selection_id=current.selection_id "
+                    "WHERE selection.decision_id=? AND selection.kind='automatic' "
+                    "AND ?='cover'",
+                    (
+                        authority.decision_id,
+                        authority.review_case_id,
+                        member.destination,
+                        authority.decision_id,
+                        member.destination,
+                    ),
+                ).fetchone()
+            if (
+                decision is None
+                or json.loads(decision[0]).get("target_fingerprint")
+                != authority.target_fingerprint
+            ):
+                raise FieldEffectError("authority")
+            if authority.origin == "automatic_policy":
+                automatic = json.loads(decision[0])
+                safety = self._connection.execute(
+                    "SELECT paused,global_suspension,category_suspensions_document "
+                    "FROM automatic_safety_state WHERE singleton=1"
+                ).fetchone()
+                suspended = {} if safety is None else dict(json.loads(safety[2]))
+                if (
+                    safety is None
+                    or safety[0] != 0
+                    or safety[1] is not None
+                    or automatic_safety_category(
+                        automatic["policy_category"],
+                        automatic["policy_option"],
+                    )
+                    in suspended
+                    or (
+                        member.destination != "cover"
+                        and not qualification_manifest_is_current(
+                            automatic["policy_category"],
+                            automatic["policy_option"],
+                            automatic["qualification_manifest_sha256"],
+                        )
+                    )
+                ):
+                    raise FieldEffectError("authority")
 
     @local_operation
     def operational_snapshot(self) -> dict[str, object]:

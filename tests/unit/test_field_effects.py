@@ -3746,6 +3746,92 @@ def test_newer_report_wins_claim_before_case_retirement(
     assert effects.target.read(operation.plan).value == "Old title"
 
 
+def test_claim_releases_its_scope_when_a_stored_decision_fails_to_decode(
+    effects: _EffectEnvironment,
+) -> None:
+    from mechanical_librarian.application.operation_admission import (
+        OperationAdmission,
+    )
+
+    report = metadata_report("Old title", "1", "2")
+    effects.repository.publish(report, lambda: True)
+    proposal = evaluate_report(report)
+    effects.repository.publish_proposal(proposal)
+    case_id = json.loads(effects.repository.admit_review_case(proposal))[
+        "review_case_id"
+    ]
+    case = ReviewCase.create_from_data(
+        json.loads(effects.repository.get_review_case(case_id))["case"]
+    )
+    candidate = next(
+        item
+        for item in case.proposals
+        if item["result"]["outcome"] == "unresolved_choice"
+    )
+    selected = candidate["result"]["alternatives"][0]["value"]
+    source = HumanDecision.create(
+        case,
+        proposal_id=candidate["proposal_id"],
+        target_fingerprint=case.target_fingerprint,
+        destination=candidate["destination"],
+        actor="owner",
+        outcome="accept",
+        selected_value=selected,
+        idempotency_key="field-effect-claim-undecodable-decision",
+        occurred_at=1,
+    )
+    effects.repository.record_human_decision(source)
+    effects.authority.bind(
+        source,
+        connection="primary",
+        library="books",
+        work_id=report.target.item,
+        target_version=case.target_fingerprint,
+        source="persisted_review_case",
+    )
+    effects.consent.allow(
+        connection="primary", library="books", destination=source.destination
+    )
+    operation = effects.service.plan(
+        source,
+        connection="primary",
+        library="books",
+        work_id=report.target.item,
+        destination=source.destination,
+        pre_value="Old title",
+        desired_value=selected,
+        target_fingerprint=case.target_fingerprint,
+        target_version=case.target_fingerprint,
+        dependency_digests=(DEPENDENCY,),
+        capability_digest=CAPABILITY,
+    )
+    assert operation is not None
+    # The authority check decodes the stored owner decision; a document that
+    # is not JSON escapes the claim's mapped errors as it is.
+    connection = effects.repository._connection
+    connection.execute("DROP TRIGGER human_decisions_no_update")
+    connection.execute(
+        "UPDATE human_decisions SET document=? WHERE decision_id=?",
+        ("{not json", source.decision_id),
+    )
+    connection.commit()
+    admission = OperationAdmission()
+    lock = threading.RLock()
+    effects.repository.bind_operation_admission(admission, lock)
+
+    with pytest.raises(json.JSONDecodeError):
+        effects.repository.claim_field_effect(
+            operation.plan.plan_id, "planned", "a" * 64, effects.clock()
+        )
+
+    # The scope unwound: no transaction, serialization lock or admission is
+    # left held, and the effect is still planned for a later claim.
+    assert not connection.in_transaction
+    assert not lock._is_owned()
+    assert not admission.held
+    assert effects.service.status(operation.plan.plan_id).state == "planned"
+
+
 def test_accepted_readback_mismatch_schedules_durable_targeted_read(
     effects: _EffectEnvironment,
 ) -> None:

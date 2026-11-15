@@ -3569,9 +3569,76 @@ def _list_observations(
         else _scope(scope)
     )
     work_only = report.audio is not None and not admitted_audiobook_identity(report)
+    values = _local_list_observations(
+        report, destination, kind, role, scope, observed_scope, work_only
+    )
+    if work_only and destination is TargetDestination.NARRATORS:
+        return _unconfirmed_edition_narrators(report)
+    values.extend(
+        _provider_list_observations(
+            report, destination, kind, role, scope, observed_scope, work_only, level
+        )
+    )
+    if destination is TargetDestination.AUTHORS:
+        # Neutral package metadata is not an author assertion. Admit its complete
+        # set only when an already-admitted explicit set supplies the role.
+        neutral = tuple(
+            claim
+            for claim in report.local_claims
+            if claim.basis == "package_metadata"
+            and claim.kind is ClaimKind.CREATOR
+            and claim.scope is ClaimScope.WORK
+        )
+        if (
+            neutral
+            and all(
+                claim.role is None
+                and claim.state is FieldState.VALID
+                and claim.canonical is not None
+                for claim in neutral
+            )
+            and not any(
+                claim.basis == "package_metadata"
+                and claim.kind is ClaimKind.CONTRIBUTOR
+                and claim.scope is ClaimScope.WORK
+                and claim.role in {None, "author", "pseudonym", "collective"}
+                for claim in report.local_claims
+            )
+        ):
+            names = tuple(cast("str", claim.canonical) for claim in neutral)
+            keys = tuple(creator_comparison_key(name) for name in names)
+            if len(set(keys)) == len(keys) and any(
+                tuple(
+                    creator_comparison_key(name)
+                    for name in cast("tuple[str, ...]", observation.value.value)
+                )
+                == keys
+                for observation in values
+            ):
+                values.append(
+                    _Observed(
+                        _value(destination, names),
+                        tuple(claim.reference for claim in neutral),
+                        _local_correlation(report),
+                        ProposalScope.WORK,
+                        _local_representation("package_metadata"),
+                    )
+                )
+        values.extend(_corroborated_untyped_author_observations(report))
+    return tuple(values)
+
+
+def _local_list_observations(
+    report: MetadataReport,
+    destination: TargetDestination,
+    kind: ClaimKind,
+    role: str | None,
+    scope: ClaimScope,
+    observed_scope: ProposalScope,
+    work_only: bool,
+) -> list[_Observed]:
+    """One list observation per local basis."""
     values: list[_Observed] = []
-    members: tuple[LocalClaim, ...] | tuple[ProviderClaim, ...]
-    claims: tuple[LocalClaim, ...] | tuple[ProviderClaim, ...]
     bases = tuple(
         sorted(
             {
@@ -3648,8 +3715,21 @@ def _list_observations(
                     _local_representation(basis),
                 )
             )
-    if work_only and destination is TargetDestination.NARRATORS:
-        return _unconfirmed_edition_narrators(report)
+    return values
+
+
+def _provider_list_observations(
+    report: MetadataReport,
+    destination: TargetDestination,
+    kind: ClaimKind,
+    role: str | None,
+    scope: ClaimScope,
+    observed_scope: ProposalScope,
+    work_only: bool,
+    level: LevelEvidence | None,
+) -> list[_Observed]:
+    """One list observation per provider candidate."""
+    values: list[_Observed] = []
     level = level if destination in LEVEL_READ_DESTINATIONS else None
     for provider in field_evidence_providers(report):
         candidates = _level_candidates(provider, destination, level)
@@ -3743,53 +3823,7 @@ def _list_observations(
                         _provider_representation(provider, candidate),
                     )
                 )
-    if destination is TargetDestination.AUTHORS:
-        # Neutral package metadata is not an author assertion. Admit its complete
-        # set only when an already-admitted explicit set supplies the role.
-        neutral = tuple(
-            claim
-            for claim in report.local_claims
-            if claim.basis == "package_metadata"
-            and claim.kind is ClaimKind.CREATOR
-            and claim.scope is ClaimScope.WORK
-        )
-        if (
-            neutral
-            and all(
-                claim.role is None
-                and claim.state is FieldState.VALID
-                and claim.canonical is not None
-                for claim in neutral
-            )
-            and not any(
-                claim.basis == "package_metadata"
-                and claim.kind is ClaimKind.CONTRIBUTOR
-                and claim.scope is ClaimScope.WORK
-                and claim.role in {None, "author", "pseudonym", "collective"}
-                for claim in report.local_claims
-            )
-        ):
-            names = tuple(cast("str", claim.canonical) for claim in neutral)
-            keys = tuple(creator_comparison_key(name) for name in names)
-            if len(set(keys)) == len(keys) and any(
-                tuple(
-                    creator_comparison_key(name)
-                    for name in cast("tuple[str, ...]", observation.value.value)
-                )
-                == keys
-                for observation in values
-            ):
-                values.append(
-                    _Observed(
-                        _value(destination, names),
-                        tuple(claim.reference for claim in neutral),
-                        _local_correlation(report),
-                        ProposalScope.WORK,
-                        _local_representation("package_metadata"),
-                    )
-                )
-        values.extend(_corroborated_untyped_author_observations(report))
-    return tuple(values)
+    return values
 
 
 def _corroborated_untyped_author_observations(
