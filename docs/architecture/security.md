@@ -131,13 +131,14 @@ verification every three seconds.
 - Exact Host is enforced on every request, exact Origin on every unsafe one.
   Forwarded Host or scheme is honoured only from a trusted proxy; Uvicorn's
   own proxy handling is off.
+- Every request but `GET`, `HEAD` and `OPTIONS` has its body bounded before
+  routing, at 2 KiB unless its route needs more (`413 body_too_large`).
 - Every unsafe request needs the session, the CSRF token and an
   `x-ml-build-identity` header matching the installed build.
-- The build identity is a non-secret version gate, not a credential. It is
-  sent only to the audience that already has it in the authenticated shell: a
-  response header on `/api/v1` responses to owner-authenticated requests. It
-  is never sent on a 401, on sign-in, in asset-recovery mode, on an early Host, Origin or body-size refusal, or to a
-  request without a valid session
+- The build identity is a non-secret version gate. It is sent only as a
+  response header to owner-authenticated `/api/v1` requests: never on a 401,
+  sign-in, asset recovery, an early Host, Origin or body-size refusal, or
+  without a valid session
   ([ADR-0091](decisions/0091-decode-browser-responses-and-report-uncertain-writes.md)).
 - Serving an authenticated page rotates the CSRF digest. The raw token lives
   only in that no-store HTML and page memory.
@@ -195,8 +196,8 @@ credentials, sessions and metadata in plaintext, so it is for an
 owner-controlled network or VPN only. There is no TLS-disable flag. Direct
 TLS validates certificate and key as one identity before the database or
 listener opens and limits TLS 1.2 to ECDHE AEAD ciphers. The edge admits at
-most 100 connections, limits incomplete events to 16 KiB and closes
-incomplete headers after 10 seconds.
+most 100 connections, limits incomplete events to 16 KiB and closes a
+request whose headers take over 10 seconds or whose body takes 30 more.
 
 ## Credentials and egress
 
@@ -275,7 +276,8 @@ Per provider, where *5xx* means 500, 502, 503 and 504:
   User-Agent to its fixed origins and is stored nowhere else. Retries 5xx,
   never 429.
 - **Google Books**: fixed-origin `GET` with an optional API key that only the
-  credential-bearing controller reads. Retries 503 only.
+  credential-bearing controller reads, sent in a header, never the URL.
+  Retries 503 only.
 - **Inventaire**: fixed-origin `GET`, no credential. Retries 5xx, and 429
   only with a bounded `Retry-After`; at most three attempts per request.
 - **Audible catalog**: `GET` to ten hosts from a closed marketplace map, so no
@@ -758,19 +760,5 @@ None of these has target-write, media-write or startup authority.
 
 ## Automated scanning boundary
 
-`dependency-audit`, a required public-gate job, scans `uv.lock` with a
-digest-pinned OSV-Scanner on every pull request and push to `main`, failing
-on any known advisory in runtime or development dependencies;
-`.github/workflows/public-gate.yml` has the command. Frontend checks are in
-[what merging proves](../../CONTRIBUTING.md#what-merging-proves).
-
-The only way to hold a failure open is an `osv-scanner.toml` entry naming one
-advisory, a reason and an expiry at most 90 days out; there is no severity
-floor or package exclusion.
-`tests/unit/test_security_scanning_contract.py` enforces the register and
-checks that every workflow has `contents: read`, pins actions to commits and
-sets `persist-credentials: false`.
-
-Not covered: triage and fixes, source static analysis, pull-request
-dependency review (these need GitHub Code Security), extra secret scanning,
-SBOMs and container image scanning.
+Dependency audits, CodeQL and what scanning does not cover are in
+[automated scanning](../development/dependencies.md#automated-scanning).
