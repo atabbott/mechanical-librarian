@@ -1079,7 +1079,7 @@ export default function CoversView() {
   )
   return (
     <div className={`covers-page${selected ? ' has-selection' : ''}`}>
-      <header className="library-header covers-header">
+      <header className="library-header">
         <div className="library-title">
           <h1 data-route-focus tabIndex={-1}>
             Library

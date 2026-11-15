@@ -66,6 +66,10 @@ type PolicyMutation =
   | { action: PolicyCommandPath; body?: PolicyCommandBody<PolicyCommandPath> }
 
 // "a, b or c": one comma list, never a chain of "or".
+// What a field with no qualified Automatic operation says on a medium. The
+// activation review reads it as written; a field card says "Not offered." instead.
+const noAutomaticEffect = 'No automatic effect. Needs you.'
+
 const plainList = (items: readonly string[], last: 'or' | 'and') =>
   items.length < 2
     ? (items[0] ?? '')
@@ -442,7 +446,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
     const available = entries.filter((entry) => entry.automatic_available)
     // Each value is a sentence with no label of its own, so it reads
     // plainly after "Ebooks:" and "Automatic." (#1760).
-    if (!available.length) return 'No automatic effect. Needs you.'
+    if (!available.length) return noAutomaticEffect
     // A current cover is replaced only as Current covers allows (#1363).
     if (field.key === 'cover_order') return 'Fills an empty cover.'
     if (field.key === 'language_rendering') return `${operationScopeLabels.fill_or_respell}.`
@@ -484,7 +488,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
     media: 'ebook' | 'audiobook',
   ) => {
     const effect = mediaQualification(field, option, media)
-    return effect === 'No automatic effect. Needs you.' ? 'Not offered.' : effect
+    return effect === noAutomaticEffect ? 'Not offered.' : effect
   }
 
   const mediaBehavior = (field: FieldDefinition, option: string, media: 'ebook' | 'audiobook') => {

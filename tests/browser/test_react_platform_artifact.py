@@ -298,6 +298,11 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 )
                 return
             payload = rich_payload(route.request.url)
+            if path == "/api/v1/activity":
+                # One page shows no pager, so the ledger reads as three pages
+                # and the target-size sweep below has a pager to measure.
+                ledger = cast("dict[str, Any]", payload)["ledger"]
+                ledger |= {"page_count": 3, "total": 3 * ledger["page_size"]}
             if genres_reappeared and path == "/api/v1/review-cases/case-1":
                 detail = cast("dict[str, object]", payload)
                 fields = cast("list[dict[str, object]]", detail["fields"])
@@ -1232,6 +1237,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                             page.evaluate("() => document.documentElement.scrollWidth")
                             <= width
                         )
+                        expect(
+                            page.locator(".cm-activity-pagination-nav")
+                        ).to_be_visible()
                         for control in page.locator(
                             ".cm-activity-filters button, .cm-activity-pagination button"
                         ).all():
@@ -1975,7 +1983,16 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             )
             == "fixed"
         )
-        page.locator(".masthead").evaluate("node => { node.style.minHeight = '220px' }")
+        # A masthead grown to 140 px is under a sixth of this 900 px window,
+        # so it still sticks and the rail must clear its new height.
+        page.locator(".masthead").evaluate("node => { node.style.minHeight = '140px' }")
+        expect(page.locator("html")).not_to_have_attribute("data-masthead", "static")
+        assert (
+            page.locator(".masthead").evaluate(
+                "node => getComputedStyle(node).position"
+            )
+            == "sticky"
+        )
         attention_rail_clears_masthead()
         assert page.evaluate("() => document.documentElement.scrollWidth") <= 900
         page.locator(".attention-rail header button").click()
@@ -4708,7 +4725,7 @@ _MASTHEAD_COVER = """() => {
 
 
 def test_compact_and_enlarged_masthead_never_covers_content() -> None:
-    """The masthead sticks only while it takes at most a quarter of the
+    """The masthead sticks only while it takes at most a sixth of the
     viewport, and otherwise scrolls with the page; whichever it is, no focused
     control and no sticky region lies beneath it, and the preparation popover
     opens inside the viewport. Enlarged text is root font-size 200%, which rem
@@ -4744,7 +4761,7 @@ def test_compact_and_enlarged_masthead_never_covers_content() -> None:
                     page.locator(".masthead .preparation-activity > button").wait_for()
                     page.evaluate(_TWO_FRAMES)
                     cover = page.evaluate(_MASTHEAD_COVER)
-                    assert cover["static"] == (cover["share"] > 0.25), (
+                    assert cover["static"] == (cover["share"] > 1 / 6), (
                         f"{where}: {cover}"
                     )
                     assert cover["position"] == (

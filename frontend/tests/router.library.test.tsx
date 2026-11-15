@@ -1318,7 +1318,7 @@ describe('Library route', () => {
   })
 
   it.each([
-    ['starting', 'Preparation is starting', 'Waiting for the first book to begin'],
+    ['starting', 'Preparation is starting', 'Waiting for the first work to begin'],
     [
       'running',
       'Preparing libraries',
@@ -4155,6 +4155,10 @@ describe('Library route', () => {
       screen.getByRole('button', { name: 'Evidence for Current value: Old title' }),
     ).toHaveTextContent('Hide evidence')
     expect(await screen.findByText('Local library record')).toBeVisible()
+    // The panel carries the name of the control that opened it (#1894).
+    expect(
+      screen.getByRole('region', { name: 'Evidence for Current value: Old title' }),
+    ).toHaveTextContent('Local library record')
     expect(screen.getByText('Title: Old title')).toBeVisible()
     expect(screen.getByText('Already in the library')).toBeVisible()
     expect(screen.queryByText('No recommendation retained')).toBeNull()

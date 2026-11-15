@@ -4986,11 +4986,23 @@ def test_protected_cover_comparison_contains_every_image_without_cropping() -> N
                 assert last["y"] >= max(
                     box["y"] + box["height"] for box in (first, second, third)
                 )
+                # The current cover is the same size as the other covers and
+                # level with them. Its evidence is closed first, so only the
+                # card itself is measured.
+                disclosure.click()
+                expect(disclosure).to_have_attribute("aria-expanded", "false")
+                page.set_viewport_size({"width": 1280, "height": 900})
+                page.evaluate("() => document.documentElement.offsetWidth")
                 current_box = page.locator(
                     ".library-cover-pinned > aside .cover-choice"
                 ).bounding_box()
-                assert current_box is not None
-                assert current_box["height"] > first["height"]
+                first = cards.nth(0).bounding_box()
+                assert current_box is not None and first is not None
+                assert abs(current_box["height"] - first["height"]) <= 1, (
+                    current_box,
+                    first,
+                )
+                assert abs(current_box["y"] - first["y"]) <= 1, (current_box, first)
 
                 # 200% zoom is a halved CSS-pixel viewport at twice the device
                 # scale, which is exactly the layout the owner gets when they
@@ -14875,14 +14887,14 @@ def test_measured_cover_rules_keep_or_suggest_through_covers(
                               return {
                                 lines: lines.size,
                                 // It shares the pills' row inside the item.
-                                parent: hold.parentElement.classList.contains('covers-queue-pills')
-                                  && hold.parentElement.parentElement === item ? 1 : 0,
+                                parent: hold.closest('.covers-queue-item') === item
+                                  && hold.parentElement.classList.contains('covers-queue-pills') ? 1 : 0,
                                 frame: frame.textContent.length,
                                 stateWidth: state.getBoundingClientRect().width,
                                 // The pill sits just under the text, not
                                 // under the taller thumbnail.
                                 gap: hold.getBoundingClientRect().top
-                                  - item.querySelector(':scope > span:not(.status-pill, .covers-image-missing, .covers-queue-pills)').getBoundingClientRect().bottom,
+                                  - item.querySelector(':scope > span:not(.covers-image-missing, .covers-queue-pills)').getBoundingClientRect().bottom,
                                 radius: parseFloat(getComputedStyle(hold).borderTopLeftRadius),
                                 height: hold.getBoundingClientRect().height,
                               }

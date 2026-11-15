@@ -37,10 +37,13 @@ export function ChoiceEvidencePanel({
   context,
   evidenceId,
   label,
+  name,
 }: {
   context: ChoiceContextView | undefined
   evidenceId: string
   label: string
+  /** The region's name when it should match the Evidence control that opens it. */
+  name?: string
 }) {
   // A record offered for the book's title and author offers its value; it
   // confirms nothing, so it counts toward no "sources confirm" line (#1355).
@@ -53,7 +56,7 @@ export function ChoiceEvidencePanel({
           .map((row) => row.source),
       ).size
   return (
-    <section className="choice-evidence" id={evidenceId} aria-label={`${label} evidence`}>
+    <section className="choice-evidence" id={evidenceId} aria-label={name ?? `${label} evidence`}>
       {corroboratingSources ? (
         <p>
           {corroboratingSources}{' '}
@@ -330,7 +333,12 @@ export function MetadataChoice({
         </button>
       ) : null}
       {expanded ? (
-        <ChoiceEvidencePanel context={context} evidenceId={evidenceId} label={label} />
+        <ChoiceEvidencePanel
+          context={context}
+          evidenceId={evidenceId}
+          label={label}
+          name={evidenceLabel}
+        />
       ) : null}
     </article>
   )

@@ -405,7 +405,7 @@ it('names a value offered for the book’s title and author beside its source', 
   await user.click(
     await screen.findByRole('button', { name: 'Evidence for proposed value: New title' }),
   )
-  const evidence = screen.getByRole('region', { name: 'evidence' })
+  const evidence = screen.getByRole('region', { name: 'Evidence for proposed value: New title' })
   expect(within(evidence).getByText('Hardcover · same title and author')).toBeVisible()
   // The card's own source line says it too, and the value is offered, not
   // confirmed: it counts toward no "sources confirm" line.

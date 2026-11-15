@@ -327,7 +327,6 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .detail-layout .direct-choice-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
 .value-choice { display:grid; min-width:0; min-height:9.5rem; align-content:start; gap:.55rem; padding:1rem; border:1px solid var(--line-strong); border-radius:.7rem; background:var(--surface-strong); text-align:left; }
 .value-choice:hover:not(:disabled), .value-choice:focus-visible { border-color:var(--accent); background:var(--accent-soft); }
-.value-choice.current-value { border-style:dashed; }
 .value-choice strong { overflow-wrap:anywhere; font-family:Georgia,serif; font-size:1.05rem; line-height:1.3; }
 .value-choice span { color:var(--soft); font-size:.75rem; }
 .field-notices { display:grid; gap:.35rem; margin-top:1rem; padding:.75rem; border-left:3px solid var(--notice); background:var(--notice-soft); }
@@ -368,7 +367,6 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
 .cm-policy-mode summary::after { width:6px; height:6px; border-right:1.5px solid currentColor; border-bottom:1.5px solid currentColor; content:''; transform:translateY(-2px) rotate(45deg); transition:transform 160ms ease-out; }
 .cm-policy-mode[open] summary::after { transform:translateY(2px) rotate(225deg); }
 .cm-policy-mode summary strong { flex:1 1 auto; min-width:0; color:var(--ink); font-size:.76rem; }
-.cm-policy-mode summary span { font-size:.75rem; font-weight:700; }
 .cm-policy-mode > div { display:grid; gap:.4rem; padding-top:.5rem; }
 .cm-policy-mode p, .cm-policy-mode small { margin:0; color:var(--soft); font-size:.75rem; line-height:1.4; }
 .cm-policy-safety-actions { display:grid; gap:.3rem; }
@@ -856,8 +854,6 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .workspace-detail { min-width: 0; min-height: 72vh; padding: 32px clamp(24px, 3vw, 48px) 56px; background: var(--surface-strong); }
 .selected-work-header { display: flex; flex-wrap:wrap; align-items: center; gap: 17px; padding-bottom: 18px; border-bottom: 1px solid var(--line); }.selected-work-header > div { flex:1 1 min-content; min-width:0; }.selected-work-header .library-book-mark { flex: 0 0 auto; }.selected-work-header h2 { margin: 2px 0 5px; font-size: clamp(1.45rem,2.4vw,1.95rem); overflow-wrap:break-word; }.selected-work-header p { margin: 0; color: var(--soft); overflow-wrap:anywhere; }.selected-work-status { display:flex; gap:20px; margin:0; text-align:left; }.selected-work-status div { display:grid; gap:2px; }.selected-work-status dt { color:var(--soft); font-size:.75rem; }.selected-work-status dd { margin:0; font-family:Georgia,'Times New Roman',serif; font-size:1.3rem; font-weight:700; }
 .field-map { display: grid; min-width: 0; gap: 6px; }
-.field-map > header { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
-.field-map > header strong { color: var(--soft); font-size: .75rem; font-weight: 650; }
 .field-filmstrip { display: flex; gap: 8px; padding: 0 0 20px; overflow-x: auto; border-bottom: 1px solid var(--line); }.field-filmstrip button { display: grid; min-width: 180px; min-height: 88px; gap: 3px; padding: 12px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); color: var(--ink); text-align: left; }.field-filmstrip button[aria-current='true'] { border-color: var(--accent); background: var(--accent-soft); }.field-filmstrip small,.field-filmstrip span { color: var(--soft); }.field-filmstrip span { max-width:22ch; overflow:hidden; font-size:.75rem; text-overflow:ellipsis; white-space:nowrap; }
 .automatic-resolution-details { margin:18px 0 0; border:1px solid var(--line); border-radius:10px; background:var(--surface); }.automatic-resolution-details summary { display:flex; min-height:48px; align-items:center; justify-content:space-between; gap:16px; padding:10px 14px; cursor:pointer; }.automatic-resolution-details summary > span { display:grid; gap:2px; font-weight:650; }.automatic-resolution-details summary small { flex:none; }.automatic-resolution-details summary small { color:var(--soft); }.automatic-resolution-list { display:grid; border-top:1px solid var(--line); }.automatic-resolution-row { display:grid; padding:12px 14px; border-bottom:1px solid var(--line); }.automatic-resolution-row:not(.is-unchanged) { box-shadow:inset 3px 0 var(--notice); }.automatic-resolution-row strong { display:flex; flex-wrap:wrap; align-items:center; gap:.4rem; }.automatic-resolution-row:last-child { border-bottom:0; }.automatic-resolution-row small { display:block; min-width:0; overflow-wrap:anywhere; }.automatic-resolution-row small { margin-top:3px; color:var(--soft); }
 .decision-canvas { padding-top: 16px; }.decision-canvas > header { display: flex; justify-content: space-between; gap: 24px; }.decision-canvas > header p { max-width:68ch; margin: 0 0 7px; color: var(--soft); }.decision-canvas > header > div > p:first-child { color: var(--accent-strong); font-size: .75rem; font-weight:700; letter-spacing: .07em; text-transform: uppercase; }.decision-canvas dl { display: flex; flex:0 0 auto; gap: 18px; margin: 0; color: var(--soft); font-size: .78rem; }.decision-canvas dt { margin-bottom: 4px; }.decision-canvas dd { margin: 0; color: var(--ink); font-weight: 700; }.queue-movement { display:flex; justify-content:flex-end; gap:8px; margin:0 0 12px; }.queue-movement button,.decision-retry { min-height:44px; padding:0 13px; border:1px solid var(--line-strong); border-radius:8px; background:var(--surface); color:var(--accent-strong); font-weight:650; }.queue-movement button:disabled { opacity:.45; }.decision-retry { margin:14px 0 0; }.decision-retry + p,.description-advice-preparation > button + p { margin-top:8px; }
@@ -944,22 +940,16 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .decision-confirmed { display: flex; min-height: 190px; align-items: center; justify-content: center; gap: 14px; border: 1px solid var(--accent); border-radius: 12px; color: var(--accent-strong); background: var(--accent-soft); text-align: left; }
 .decision-confirmed > span { display: grid; width: 42px; height: 42px; place-items: center; border-radius: 50%; color: var(--surface); background: var(--accent-strong); font-weight: 900; }
 .decision-confirmed p { margin: 3px 0 0; color: var(--ink); }
-.protected-choice .direct-choice-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; overflow: hidden; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--surface-strong); }
+.protected-choice .direct-choice-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; }
 .protected-choice .value-choice { min-height: 0; border: 0; border-radius: 0; background: transparent; }
-.protected-choice .current-value { display: grid; align-content: start; }
-.protected-choice .metadata-choice { min-height: 100%; }
-.protected-choice .current-value strong { font-family: Georgia, 'Times New Roman', serif; font-size: clamp(1.08rem, 2vw, 1.4rem); }
 .protected-choice .proposed-choice-list { display: grid; align-content: start; padding: 0; background: transparent; }
-.protected-choice .proposed-choice-list > header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 16px 20px 0 52px; }
+.protected-choice .proposed-choice-list > header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .protected-choice .proposed-choice-list > header strong { font-size: .75rem; }
 .protected-choice .proposed-choice-list > header small { color: var(--soft); font-size: .75rem; text-align: right; }
 .protected-choice .proposed-choice-list > header small.is-active { color: var(--accent-strong); font-weight: 700; }
 .protected-choice .proposed-choice-list.has-one-choice { position:relative; align-content:center; }
 .protected-choice .proposed-choice-list.has-one-choice > header { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); clip-path:inset(50%); white-space:nowrap; }
-.protected-choice .proposed-value { text-align: left; }
-.protected-choice .proposed-value + .proposed-value { border-top: 1px solid var(--line); border-radius: 0; }
 .metadata-choice { position:relative; display:grid; align-content:start; min-width:0; border:1px solid transparent; background:var(--surface-strong); }
-.metadata-choice.is-current { border-right-color:var(--line); }
 /* Every card has the same padding, and its Evidence control sits directly under its value (#1519). */
 /* The radio sits beside the value, in a gutter of its own, so a choice is as tall as its words. */
 .metadata-choice .choice-select { position:relative; min-height:0; gap:.25rem; padding:16px 20px 16px 52px; }
@@ -1056,7 +1046,7 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .review-complete > p, .review-complete footer { grid-column: 1 / -1; }.review-complete footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: .75rem; }.review-complete footer button { min-height: 44px; padding: 0 14px; }
 @keyframes library-field-arrive { from { opacity: .28; transform: translateX(8px); } to { opacity: 1; transform: translateX(0); } }
 @keyframes library-complete-arrive { from { opacity: .15; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-@media (max-width: 1024px) { .protected-choice .direct-choice-grid { grid-template-columns: 1fr; }.metadata-choice.is-current { border-right:0; border-bottom:1px solid var(--line); }.metadata-choice .choice-evidence-toggle, .cover-choice .choice-evidence-toggle { min-height:44px; }.library-cover-layout, .library-cover-pinned { grid-auto-flow: column; grid-auto-columns: minmax(min(11.875rem, 100%), 62%); grid-template-columns: none; align-items: start; overflow-x: auto; padding-bottom: 6px; overscroll-behavior-x: contain; scroll-snap-type: x proximity; scrollbar-width: thin; }.library-cover-pinned > aside, .library-cover-gallery, .library-cover-gallery > div { display: contents; }.library-cover-pinned > aside > strong, .library-cover-gallery > header { display: none; }.library-cover-pinned .library-cover-card { position: static; width: auto; }.library-cover-layout > .cover-choice, .library-cover-pinned > .cover-choice, .library-cover-pinned .cover-choice { scroll-snap-align: start; } }
+@media (max-width: 1024px) { .protected-choice .direct-choice-grid { grid-template-columns: 1fr; }.metadata-choice .choice-evidence-toggle, .cover-choice .choice-evidence-toggle { min-height:44px; }.library-cover-layout, .library-cover-pinned { grid-auto-flow: column; grid-auto-columns: minmax(min(11.875rem, 100%), 62%); grid-template-columns: none; align-items: start; overflow-x: auto; padding-bottom: 6px; overscroll-behavior-x: contain; scroll-snap-type: x proximity; scrollbar-width: thin; }.library-cover-pinned > aside, .library-cover-gallery, .library-cover-gallery > div { display: contents; }.library-cover-pinned > aside > strong, .library-cover-gallery > header { display: none; }.library-cover-pinned .library-cover-card { position: static; width: auto; }.library-cover-layout > .cover-choice, .library-cover-pinned > .cover-choice, .library-cover-pinned .cover-choice { scroll-snap-align: start; } }
 @media (max-width: 760px) { .variant-m-workspace .field-filmstrip button { flex: 0 0 auto; min-width: 86px; }.variant-m-workspace .library-work-row { grid-template-columns: 42px minmax(0, 1fr); }:root .library-work-row > .library-book-mark.has-cover { width: 42px; max-height: 63px; }.library-cover-comparison > header { align-items:start; flex-direction:column; gap:4px; }.library-cover-comparison > header small { text-align:left; }.library-cover-layout, .library-cover-pinned { grid-auto-columns: minmax(min(10.625rem, 100%), 58%); }.cover-observation-details dl > div { display:grid; gap:1px; }.cover-observation-details dd { text-align:left; overflow-wrap:break-word; }.review-complete { grid-template-columns: 1fr; }.review-complete-mark { width: 42px; height: 42px; }.review-complete ol, .review-complete > p, .review-complete footer { grid-column: 1; }.review-complete footer { flex-direction: column; align-items: stretch; }.review-complete footer button { width: 100%; } }
 /* An outcome list too narrow for its label column beside a value, as enlarged text makes it on a phone, stacks each value whole under its label. */
 @container review-outcomes (max-width: 14rem) { .review-complete li button { grid-template-columns: minmax(0, 1fr); gap: 2px; }.review-complete li strong { white-space: normal; overflow-wrap: anywhere; } }
@@ -1231,10 +1221,6 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .diagnostic-route .subviews a[aria-current='page'] { border-color:var(--accent); color:var(--accent-strong); background:var(--accent-soft); }
 .diagnostic-route .subviews a:focus-visible,.diagnostic-back-to-work:focus-visible,.selected-work-diagnostics a:focus-visible { outline:2px solid var(--focus); outline-offset:2px; }
 .diagnostic-sheet { min-width:0; padding:clamp(1.1rem,4vw,2rem); border:1px solid var(--line); border-radius:.75rem; background:var(--surface); }
-.diagnostic-sheet > header { margin-bottom:1.5rem; padding-bottom:1rem; border-bottom:1px solid var(--line); }
-.diagnostic-sheet > header h2,.diagnostic-sheet > header p { margin:0; }
-.diagnostic-sheet > header h2 { font:700 clamp(1.55rem,4vw,2rem)/1.15 Georgia,'Times New Roman',serif; }
-.diagnostic-sheet > header p { margin-top:.35rem; color:var(--soft); font-size:.82rem; line-height:1.55; }
 .diagnostic-list { display:grid; min-width:0; }
 .diagnostic-entry { min-width:0; padding:1.15rem 0; border-bottom:1px solid var(--line); }
 .diagnostic-entry:first-child { padding-top:0; }
@@ -1531,14 +1517,14 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 .covers-queue-item.is-selected { border-color:var(--accent); background:var(--accent-soft); }
 .covers-queue-item img, .covers-queue-item .covers-image-missing { width:3rem; aspect-ratio:2 / 3; object-fit:contain; }
 .covers-queue-pills { display:contents; }
-.covers-queue-item > span:not(.status-pill, .covers-image-missing, .covers-queue-pills) { display:grid; justify-items:start; min-width:0; }
+.covers-queue-item > span:not(.covers-image-missing, .covers-queue-pills) { display:grid; justify-items:start; min-width:0; }
 .covers-queue-item strong { overflow-wrap:anywhere; }
 .covers-queue-item small { color:var(--soft); }
 /* A hold's pill is its own row under the title and status, so it has their width (#1866). */
 .covers-queue-pills > .covers-queue-hold { grid-column:2 / -1; justify-self:start; align-self:start; border-radius:1rem; }
 /* A held row's thumbnail spans the pill's row too, so the pill sits just under the byline. */
 .covers-queue-item:has(.covers-queue-hold) > :first-child { grid-row:span 2; }
-.covers-queue-item:has(.covers-queue-hold) > span:not(.status-pill, .covers-image-missing, .covers-queue-pills) { align-self:end; }
+.covers-queue-item:has(.covers-queue-hold) > span:not(.covers-image-missing, .covers-queue-pills) { align-self:end; }
 .covers-comparison { display:grid; gap:.75rem; min-width:0; }
 /* The work's title, then one line of facts and the way to its fields. Focus
    moved to the heading by a selection draws no ring: it is not a control. */
@@ -1662,14 +1648,11 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
    first proposed value start on one line under headers of one style, and the
    current cover is the same size as the other covers and level with them. */
 .protected-choice .current-choice-list { display:grid; align-content:start; }
-.protected-choice :is(.current-choice-list, .proposed-choice-list) > header { display:flex; align-items:baseline; justify-content:space-between; gap:12px; padding:16px 20px 2px 52px; }
+.protected-choice :is(.current-choice-list, .proposed-choice-list) > header { display:flex; align-items:baseline; justify-content:space-between; gap:12px; }
 /* One panel holds the whole question: the current value on one side, the
    proposed values as rows on the other, split by a line. */
 .protected-choice .direct-choice-grid { gap:0; }
 .protected-choice :is(.current-choice-list, .proposed-choice-list) { gap:0; }
-.protected-choice .current-choice-list { border-right:1px solid var(--line); }
-/* The current value's side is lightly tinted: what you have now, beside what you could choose. */
-.protected-choice .current-choice-list { background:color-mix(in srgb, var(--surface) 70%, var(--surface-strong)); }
 .protected-choice .current-choice-list > .metadata-choice { background:transparent; }
 .protected-choice .metadata-choice, .protected-choice .metadata-choice.is-current { min-height:0; border:0; border-radius:0; }
 .protected-choice .proposed-choice-list > .metadata-choice + .metadata-choice { border-top:1px solid var(--line); }
