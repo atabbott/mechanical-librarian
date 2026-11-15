@@ -59,7 +59,8 @@ Open the links in order, without skipping any. On each work's page:
 - Choose **Description adviser** if you are content for that text to be
   written without being asked.
 - Otherwise choose **Current value**, or a source's description you prefer.
-- Do not press **Retry description advice**: asking again counts as wrong.
+- Do not press **Retry description advice**. Choosing or keeping after a
+  retry counts as wrong for the advice it replaced.
 
 Your latest choice on a work counts. Leave a link whose advice is out of date.
 Copy the database again and rerun `sample` until it says your labels meet the

@@ -43,7 +43,6 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteShadowPreviewRepository,
     open_shadow_preview_repository,
 )
-from mechanical_librarian.adapters.persistence.review_sql import _episode_decision_sql
 from mechanical_librarian.application.contained_reviewer_contract import (
     canonical_json,
 )
@@ -307,14 +306,14 @@ def _case_decisions(connection: sqlite3.Connection) -> list[_Decision]:
 
     A current authored selection is the latest where it exists, since a later
     human decision on the description removes it; otherwise the latest human
-    decision of the case's episode.
+    decision on the case by ordinal, over every episode: the label reads
+    history, not what the case's current episode still holds.
     """
     latest: dict[str, _Decision] = {}
     for case_id, outcome, occurred_at in connection.execute(
         "SELECT human.review_case_id,human.outcome,human.occurred_at "
-        "FROM human_decisions human WHERE human.destination='description' AND "
-        + _episode_decision_sql("human")
-        + " ORDER BY human.ordinal"
+        "FROM human_decisions human WHERE human.destination='description' "
+        "ORDER BY human.ordinal"
     ):
         latest[case_id] = _Decision(case_id, occurred_at, outcome, None)
     for case_id, document in connection.execute(
@@ -350,22 +349,20 @@ def _displayed(copy: _Copy, decision: _Decision) -> DescriptionAdviceCandidate |
     )
 
 
-def _first_eligible(
-    copy: _Copy, displayed: DescriptionAdviceCandidate, decision: _Decision
-) -> DescriptionAdviceCandidate | None:
-    """L: the earliest eligible advice of D's request, what Automatic would
-    have admitted."""
-    current = copy.current(decision.case_id)
+def _first(
+    displayed: DescriptionAdviceCandidate, copy: _Copy, decision: _Decision
+) -> DescriptionAdviceCandidate:
+    """L: the earliest advice of D's request, the answer Automatic would have
+    acted on before any retry. D itself qualifies, so there is always one."""
     return min(
         (
             candidate
             for candidate in copy.candidates.values()
             if candidate.request_identity == displayed.request_identity
             and candidate.created_at <= decision.occurred_at
-            and eligible(candidate, current)
         ),
         key=lambda candidate: (candidate.created_at, candidate.candidate_id),
-        default=None,
+        default=displayed,
     )
 
 
@@ -383,9 +380,10 @@ def _label(copy: _Copy, labels: Labels, decision: _Decision) -> None:
         group.profiles.add(displayed.profile_digest)
         group.not_counted["decided_by_automatic"] += 1
         return
-    first = _first_eligible(copy, displayed, decision)
-    if first is None:
-        group.profiles.add(displayed.profile_digest)
+    first = _first(displayed, copy, decision)
+    if not eligible(first, copy.current(decision.case_id)):
+        # Automatic would never have written it unasked (ADR-0099 Decision 3).
+        group.profiles.add(first.profile_digest)
         group.not_counted["not_eligible"] += 1
         return
     group.profiles.add(first.profile_digest)
@@ -913,7 +911,9 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None) -> int:
                 if arguments.format == "json"
                 else render_score(document)
             )
-    except (sqlite3.Error, ValueError) as error:
+    except Exception as error:
+        # Anything this checkout cannot read in the copy, including a damaged
+        # document whose validation error would carry library text.
         raise SystemExit(series_sample._UNREADABLE) from error
     finally:
         reader.close()

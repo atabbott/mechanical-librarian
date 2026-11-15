@@ -27,7 +27,8 @@ reverted. Choosing the adviser's text records an authored decision in
 `current_description_decisions` row at it. A later human decision on the
 description deletes that pointer. On one case the latest decision is
 therefore the authored selection where the pointer exists, and otherwise the
-latest human decision of the case's episode.
+latest human decision on the case. A case that returns as a new episode keeps
+its earlier decisions as history; the label reads that history.
 
 A rescan admits a new case for the same library item. As the admission-rule
 ledger does, an item is the case's target connection, library and item. Advice
@@ -65,8 +66,8 @@ the decision actions.
    requests advice to make labels. The owner chose labelling in the Library,
    with keeping the current description counting as wrong, on 2026-11-15.
 2. **One label per library item.** On each case the latest decision is the
-   current authored selection, else the latest human decision of the case's
-   episode. Across the item's cases the latest by `occurred_at` wins, with
+   current authored selection, else the latest human decision on the case,
+   over every episode. Across the item's cases the latest by `occurred_at` wins, with
    ties to the case identifier. A withdrawal labels nothing and is counted as
    withdrawn. A current authored decision with origin `automatic_policy` is
    not a label and is counted as decided by Automatic.
@@ -74,10 +75,12 @@ the decision actions.
    adviser choice. Otherwise it is the newest advice created at or before the
    decision whose request identity the decided case X offered: the identity
    bound to X, or that of any attempt bound to X. With no such advice the
-   decision is counted as decided before any advice. L, what Automatic would
-   have admitted, is the earliest eligible advice with D's request identity
-   created at or before the decision. With no L the decision is counted as not
-   eligible, under D's identity.
+   decision is counted as decided before any advice. L, the answer Automatic
+   would have acted on, is the earliest advice with D's request identity
+   created at or before the decision, eligible or not. When L is not eligible
+   the decision is counted as not eligible, under D's identity: advice that
+   exists only because the owner retried an answer that needed review or
+   fell below the floor is advice Automatic would never have written unasked.
 4. **Eligible advice and strata.** Advice is eligible when it is ready, meets
    the description floor (`automatic_description_floor_met`) and does not
    match the description in X's report under the product's no-change test.
@@ -85,8 +88,9 @@ the decision actions.
    and `replaces` otherwise. Eligibility is judged at the decision's time by
    the advice's creation time, which approximates what the page showed: a
    decision made while advice was out of date can count as wrong.
-5. **Right and wrong.** With D not L, the label is wrong (asked for new
-   advice). Otherwise choosing the adviser's text is right, and keeping the
+5. **Right and wrong.** With L eligible and D not L, the label is wrong
+   (asked for new advice): the owner pressed Retry over text Automatic would
+   have written. Otherwise choosing the adviser's text is right, and keeping the
    current description, choosing a source's description, declining the
    change or entering your own is wrong. Withdrawn, decided by Automatic, not
    eligible, decided before any advice, and current eligible advice still
@@ -94,10 +98,10 @@ the decision actions.
    description counts as wrong on 2026-11-15.
 6. **Fields the owner cannot choose.** Where every source repeats the
    library's description, the advice cannot be chosen, so those fields cannot
-   be labelled and qualification does not cover them. Lane BO ("Stop
-   automatic writes on unchoosable descriptions", opened 2026-11-15) is the
-   pending fix: once it merges, Automatic never writes a description field
-   with no decision actions, and the labelled population is the whole
+   be labelled and qualification does not cover them. Issue #1892
+   ("Automatic description advice writes descriptions the owner cannot
+   choose") is the pending fix: once it is done, Automatic never writes a
+   description field with no decision actions, and the labelled population is the whole
    population Automatic may write. Until then any enforcement must leave
    those fields suggest-only.
 7. **Identity.** Labels are pooled by the advice's engine, model, instruction
@@ -125,7 +129,7 @@ the decision actions.
     admission refuses unless a shipped qualification record names the
     advice's engine, model, instruction digest, schema digest and cleanup
     choices. The switch stays choosable but only proposes until then. The
-    owner chose this on 2026-11-15; it is built in a separate lane. This
+    owner chose this on 2026-11-15; it is built in a separate change. This
     decision changes no behaviour now.
 
 ## Consequences
@@ -146,8 +150,8 @@ the decision actions.
 
 ### Neutral or deferred
 
-- The qualification record and the admission check are built in a later lane
-  (Decision 10), and the unchoosable fields in lane BO (Decision 6).
+- The qualification record and the admission check are built in a later change
+  (Decision 10), and the unchoosable fields in #1892 (Decision 6).
 
 ## Alternatives considered
 

@@ -784,13 +784,105 @@ def test_choosing_retried_advice_is_asked_again(tmp_path: Path) -> None:
     assert (group["right"], group["wrong"]) == (0, _wrong(asked_again=1))
 
 
-def test_choosing_the_first_eligible_advice_after_a_retry_is_right(
+def test_advice_that_exists_only_after_a_retry_is_not_eligible(
     tmp_path: Path,
 ) -> None:
+    """The first answer needed the owner, so Automatic would never have
+    written the retried one unasked."""
     prepared = _store(tmp_path, disposition="needs_review")
     prepared.choose(prepared.retry())
     group = _only(_score(prepared.copy()))
-    assert (group["right"], group["wrong"]) == (1, _wrong())
+    assert (group["labels"], group["not_counted"]["not_eligible"]) == (0, 1)
+
+
+def _readmit(prepared: Store, report) -> str:
+    """Rescan the item to other content and back, so its case returns as a
+    new episode."""
+    repository = prepared.repository
+    target = report.target
+    for scanned in (_description_report("Another library description."), report):
+        (current,) = repository._connection.execute(
+            "SELECT report_id FROM current_metadata_report_lineages "
+            "WHERE connection_name=? AND library_name=? AND item_id=?",
+            (target.connection, target.library, target.item),
+        ).fetchone()
+        resolved = repository.metadata_policy_resolution_for_preview(target.library)
+        proposal_set = evaluate_report(
+            scanned, resolved.resolved_id, human_review_destinations(resolved)
+        )
+        repository.publish(
+            scanned,
+            lambda: True,
+            current if current != scanned.report_id else None,
+        )
+        repository.publish_proposal(proposal_set)
+        case_id = json.loads(repository.admit_review_case(proposal_set))[
+            "review_case_id"
+        ]
+    return str(case_id)
+
+
+@pytest.mark.parametrize("across_cases", [False, True], ids=["same_case", "successor"])
+def test_a_new_episode_keeps_the_latest_decision(
+    tmp_path: Path, across_cases: bool
+) -> None:
+    """Choosing the advice, then keeping the current description, stays wrong
+    after the deciding case returns as a new episode."""
+    prepared = _store(tmp_path)
+    prepared.choose()
+    report = prepared_report(prepared)
+    case, binding = prepared.case, prepared.binding
+    if across_cases:
+        successor = _admit(prepared, report, "Ask only again")
+        case, binding = successor.review_case_id, _advise(prepared, successor)
+    prepared.decide("keep_current", case=case, binding=binding)
+    assert _readmit(prepared, report) == case
+    assert prepared.repository._connection.execute(
+        "SELECT count(*) FROM review_case_episodes WHERE review_case_id=?", (case,)
+    ).fetchone() == (1,)
+    group = _only(_score(prepared.copy()))
+    assert (group["labels"], group["right"]) == (1, 0)
+    assert group["wrong"] == _wrong(kept_current=1)
+
+
+@pytest.mark.parametrize(
+    "first,then,right",
+    [("choose", "keep_current", 0), ("keep_current", "choose", 1)],
+    ids=["choose_then_keep_on_successor", "keep_then_choose_on_successor"],
+)
+def test_the_latest_decision_across_cases_is_the_label(
+    tmp_path: Path, first: str, then: str, right: int
+) -> None:
+    prepared = _store(tmp_path)
+    if first == "choose":
+        prepared.choose()
+    else:
+        prepared.decide(first)
+    successor = _admit(prepared, prepared_report(prepared), "Ask only again")
+    binding = _advise(prepared, successor)
+    if then == "choose":
+        prepared.binding = binding
+        prepared.choose()
+    else:
+        prepared.decide(then, case=successor.review_case_id, binding=binding)
+    group = _only(_score(prepared.copy()))
+    assert (group["labels"], group["right"]) == (1, right)
+    if not right:
+        assert group["wrong"] == _wrong(kept_current=1)
+
+
+def test_anything_unreadable_after_opening_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = _store(tmp_path).copy()
+
+    def broken(_copy: object) -> None:
+        raise RuntimeError(SENTINEL)
+
+    monkeypatch.setattr(labels, "read_labels", broken)
+    for command in ("sample", "score"):
+        refusal = _refusal(command, "--database", str(database))
+        assert refusal == series_sample._UNREADABLE
 
 
 @pytest.mark.parametrize(
