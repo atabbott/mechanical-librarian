@@ -1,0 +1,37 @@
+name: Scheduled dependency audit
+
+# The public gate audits `uv.lock` on every pull request and push to `main`.
+# A quiet repository raises no such event, so an advisory published against a
+# released closure would go unseen; this weekly run of the same scan on `main`
+# fails instead. The scanner pin matches the gate's, and Renovate moves both.
+on:
+  schedule:
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scheduled-audit
+  cancel-in-progress: false
+
+jobs:
+  scheduled-dependency-audit:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Audit the locked Python dependency closure
+        run: >-
+          docker run --rm
+          --volume "$PWD:/src:ro"
+          --workdir /src
+          ghcr.io/google/osv-scanner:v2.5.0@sha256:5b8b38e45bb2c5c4976f0f1f07860551ea6e1f235f642cf215f74d266fec2c1b
+          scan source
+          --lockfile=uv.lock
+          --config=osv-scanner.toml

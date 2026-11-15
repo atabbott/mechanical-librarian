@@ -63,6 +63,12 @@ brackets are GitHub issues.
   and their response versions start with `preview-`. A script that calls the
   old paths gets 404. Stored outcome sets keep `shadow-outcome-set-v11`; no
   rebuild is needed (#1739).
+- Every request but `GET`, `HEAD` and `OPTIONS` now has its body size limited
+  before sign-in, at 2 KiB unless its route needs more, with `413
+  body_too_large` above it, and a body that has not arrived 30 seconds after
+  its headers closes the connection. The Google Books key now travels in a
+  header instead of the address, and the dependency audit also runs weekly on
+  `main` (#1887).
 
 ## 0.33.0 — First library (in progress)
 
