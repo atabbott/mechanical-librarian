@@ -26,9 +26,11 @@ from tests.browser.fidelity_cohort import (
     HOSTILE_TEXT as _HOSTILE,
 )
 from tests.browser.fidelity_cohort import (
+    LIBRARY_PROGRESS_STATES,
     LONG_TITLE,
     TERMINAL_FAILURE_COPY,
     UNBROKEN_TITLE_SEGMENT,
+    finished_preparation,
     rich_payload,
     synthetic_preview,
     synthetic_preview_key,
@@ -5595,3 +5597,71 @@ def test_library_handoff_arrives_with_the_works() -> None:
             )
             assert abs(now - first["top"]) <= 1, (where, first, now)
             assert moved == 0, (where, moved)
+
+
+def test_library_progress_sits_above_the_ledger_and_beside_the_run_box() -> None:
+    """The Activity card follows the status box on a wide screen and comes
+    first above the Ledger on a phone; a finished run's line sits beside its
+    button, never in it, and no width scrolls sideways (#1335)."""
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        for width in (320, 390, 1280):
+            page = browser.new_page(
+                viewport={"width": width, "height": 900}, locale="en-US"
+            )
+            _serve_cohort(page)
+            page.route(
+                "**/api/v1/library/progress",
+                lambda route: route.fulfill(
+                    content_type="application/json",
+                    body=json.dumps(LIBRARY_PROGRESS_STATES["two_libraries"]),
+                ),
+            )
+            page.goto(
+                "https://react-platform.invalid/activity"
+                "?eventType=all&rangeDays=30&page=1&pageSize=25"
+            )
+            card = page.get_by_role("region", name="Library progress")
+            expect(card).to_contain_text("1,840 of 2,026 works settled")
+            mine = card.bounding_box()
+            ledger = page.locator(".cm-activity-ledger").bounding_box()
+            status = page.locator(".cm-activity-status").bounding_box()
+            assert mine is not None and ledger is not None and status is not None
+            assert mine["y"] + mine["height"] <= ledger["y"] + 1, (width, mine, ledger)
+            if width > 760:
+                assert mine["y"] >= status["y"] + status["height"] - 1, (width, mine)
+            else:
+                # The phone puts the Ledger before the status box; the card
+                # is directly above the Ledger.
+                assert status["y"] >= ledger["y"], (width, status, ledger)
+            _fits_its_container(page, ".activity-library-progress", width)
+
+            page.route(
+                "**/api/v1/review-preparation",
+                lambda route: route.fulfill(
+                    content_type="application/json",
+                    body=json.dumps(
+                        finished_preparation("completed_with_failures", failed=3)
+                    ),
+                ),
+            )
+            page.goto("https://react-platform.invalid/library?lens=all")
+            line = page.locator(".preparation-summary-progress")
+            expect(line).to_contain_text("works settled")
+            assert (
+                page.locator(
+                    ".preparation-summary .preparation-summary-progress"
+                ).count()
+                == 0
+            )
+            expect(
+                page.get_by_role("button", name=re.compile("^Preparation completed"))
+            ).to_be_visible()
+            _fits_its_container(page, ".preparation-summary-box", width)
+            assert page.evaluate(
+                "() => document.documentElement.scrollWidth"
+                " <= document.documentElement.clientWidth"
+            ), width
+            page.close()

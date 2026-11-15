@@ -145,26 +145,25 @@ unknown review path shows a recovery state, not an error.
 
 ## Preparation and source status
 
-The preparation panel states one run in five counts. Their labels are "ready
-to browse", "recorded, nothing to decide", "not matched", "could not finish"
-and "in progress". Ready to browse and in progress always show. The others hide
-at zero, and an unknown count reads `…`. Counts describe the run's books as
-they stand now. Each stage bar counts books that first reached it in this run.
-A book that could not finish stops at its last stage. Bars glide to each new
+The preparation panel states one run's books as they stand now in five counts:
+"ready to browse" and "in progress", always shown, and "recorded, nothing to
+decide", "not matched" and "could not finish", hidden at zero. An unknown count
+reads `…`. Each stage bar counts books that first reached it in this run, a
+book that could not finish stopping at its last stage, and glides to each new
 count unless reduced motion is set. The status line's wipe plays only when the
 run's state changes. Recent completions record each book's first finish, one
-row each: the title, linked into Library, then "Prepared" or "Couldn't
-finish". A rate in works a minute appears only while the run is running.
+row each: the title, linked into Library, then "Prepared" or "Couldn't finish".
+A rate in works a minute shows only while running.
 
 The masthead's background-work control shows each library's scan state and
 counts, and marks a library outside the current run. At idle it reads
-`Preparation idle` and still offers Scan now and Pause. Pause stops new scans.
-Source lookups already waiting keep their schedule. The popover fits the window
-below the masthead, and scrolls inside itself when it must. `Escape` closes it
-and returns focus to its trigger. The popover disables a pending command
-instead of removing it, so focus stays put and a second press sends nothing.
-When no answer confirms a command's result, the popover shows the refreshed
-state, says no answer came back and does not offer to try again.
+`Preparation idle` and still offers Scan now and Pause, which stops new scans
+but not source lookups already waiting. The popover fits below the masthead and
+scrolls inside itself when it must. `Escape` closes it and returns focus to its
+trigger. The popover disables a pending command instead of removing it, so
+focus stays put and a second press sends nothing. When no answer confirms a
+command, it shows the refreshed state and says no answer came back, without
+offering to try again.
 
 These controls retry different things:
 
@@ -179,37 +178,40 @@ a report has no automatic retry
 
 Library and Settings share one notice of source lookups waiting to retry. Each
 entry names a source, a library, the reason, how many lookups wait and when
-they retry. Mechanical Librarian does not retry a refused key on its own: fix
-the key, then use Retry now (or the file instruction). An entry with no
-automatic retry left says so. An entry that needs an API key added or checked
-links to Settings › Metadata sources. Mechanical Librarian announces the
-outcome of Retry now beside it. A file-managed deployment shows the file
-instruction instead. With nothing waiting, the notice takes no space.
+they retry, or says no automatic retry is left. A refused key is never retried
+automatically: fix the key, then use Retry now (or the file instruction). An
+entry that needs an API key added or checked links to Settings › Metadata
+sources. Retry now announces its outcome beside it, or a file-managed
+deployment shows the file instruction. With nothing waiting, the notice takes
+no space.
 
 A work whose preparation could not finish stays in Library as a row that does
-not open, marked Could not finish. It keeps its title while the catalogue
-still matches. Each failure code has one reason and one next step. The next
-step is a change you make followed by a scan, an automatic retry, or a new
-scan of the library. A new scan queues a failed book again from the step that
-failed. That retry rereads what earlier steps saved. So when saved data could
-not be read, the row says "Library has no step that fixes this." Mechanical
-Librarian refuses an unknown code and invents no guidance for it. The row
-shows its reason, next step and a copyable reference, never a stage code, path
-or raw source response. Once the catalogue no longer matches, the row reads
-`Preparation unavailable`.
+not open, marked Could not finish. It keeps its title while the catalogue still
+matches. Each failure code has one reason and one next step: a change you make
+followed by a scan, an automatic retry, or a new scan of the library. A new
+scan requeues a failed book from the step that failed, rereading what earlier
+steps saved, so when saved data could not be read the row says "Library has no
+step that fixes this." An unknown code is refused without invented guidance.
+The row shows its reason, next step and a copyable reference, never a stage
+code, path or raw source response. Once the catalogue no longer matches, the
+row reads `Preparation unavailable`.
 
 ## Library
 
 Library is the complete work list and the only place you make decisions. It
 opens with its write handoff in place, so the notice never moves the works.
 
+A finished run's box atop Works adds "1,840 of 2,026 works settled · 174 need
+you", naming could not finish and not matched when nonzero, each nonzero number
+opening its lens, and Open in Activity. It counts the whole library, not the
+run, until you dismiss it.
+
 ### Counts and lenses
 
-Every library-wide count comes from one summary and names its unit. The
-Attention button counts works that need a decision. Under a search the status
-reads `Found m
-of n works` and the lens. A search narrows the list and Attention, never the
-totals.
+Every library-wide count comes from one summary, names its unit and groups its
+digits ("2,026 works"). The Attention button counts works that need a decision.
+Under a search the status reads `Found m of n works` and the lens. A search
+narrows the list and Attention, never the totals.
 
 The lenses are All (the default), Needs attention, No attention needed, Not
 matched and Could not finish, in one row that scrolls sideways when the panel
@@ -219,47 +221,43 @@ An empty list says so in one line, and with no library connected it links to
 Settings to add one.
 
 Works that need a decision come first, under "Every lookup finished" and then
-"Some lookups gave no usable answer". The first heading does not promise a
-match, and the second does not promise a retry. Works that could not finish
-follow under Could not finish, then Not matched, then the rest. The other
+"Some lookups gave no usable answer". The headings promise neither a match nor
+a retry. Could not finish follows, then Not matched, then the rest. The other
 lenses are alphabetical.
 
 A work with no case, nothing to decide and no source evidence accepted for it
 is Not matched, counted beside Works as `7 works · 4 not matched`. Its status
 gives the first reason that applies. "Found, but not this work" means sources
-found books, but none of them matched this work. "Sources unavailable" reads
-"Sources unavailable, retry scheduled" only while a retry is scheduled.
-"Failed in Mechanical Librarian" is never retried. Otherwise the status reads
-"No source matched".
+found books, none of them this one. "Sources unavailable" adds ", retry
+scheduled" only while one is. "Failed in Mechanical Librarian" is never
+retried. Otherwise the status reads "No source matched".
 
-An audiobook's iTunes listing is only its cover. It never matches the
-audiobook, so an audiobook that only iTunes found reads "No source matched".
-An iTunes failure never makes its sources unavailable or puts it under "Some
-lookups gave no usable answer".
+An audiobook's iTunes listing is only its cover and never matches it, so an
+audiobook only iTunes found reads "No source matched". An iTunes failure never
+makes its sources unavailable or puts it under "Some lookups gave no usable
+answer".
 
-A work whose latest preparation could not finish reads Could not finish and
-sits under that heading, counted beside Works as `2 could not
-finish`. This holds even when an earlier report exists, matched or not. A
-decision still open on its earlier case keeps it in Needs attention. An ebook
-that a source matched without offering a change worth proposing stays in No
-attention needed.
+A work whose latest preparation could not finish reads Could not finish under
+that heading, counted beside Works as `2 could not finish`, even when an
+earlier report exists. A decision still open on its earlier case keeps it in
+Needs attention. An ebook a source matched with no change worth proposing stays
+in No attention needed.
 
 ### Rows and selection
 
 Rows show title, authors, library and format, never internal keys. Long titles
 wrap within two lines. A work whose report recorded its library's cover shows
-it, and others show a spine of initials. Search covers title, authors,
-library, Audiobookshelf item ID and format, and takes wildcards literally. A
-work without a case opens a summary with no decision controls. Could not
-finish rows with no report do not open. A prepared audiobook with no case
-counts as recorded, and its summary shows its evidence
+it, and others show a spine of initials. Search covers title, authors, library,
+Audiobookshelf item ID and format, and takes wildcards literally. A work
+without a case opens a summary with no decision controls. A prepared audiobook
+with no case counts as recorded, and its summary shows its evidence
 ([ADR-0069](../architecture/decisions/0069-audiobook-review-cases-and-terminal-outcomes.md)).
 
-Selecting a work never moves the workspace. Above 760 pixels, Library opens
-the first reviewable work and records nothing. At 760 or narrower the list
-comes first. Library reads the selected work on its own, so a search or
-outcome that moves it off the page leaves it open. It says it could not be
-loaded only when that read fails.
+Selecting a work never moves the workspace. Above 760 pixels, Library opens the
+first reviewable work and records nothing; at 760 or narrower the list comes
+first. Library reads the selected work on its own, so a search or outcome that
+moves it off the page leaves it open; only that read failing says it could not
+be loaded.
 
 ## Attention
 
@@ -533,21 +531,24 @@ you, such as a description to restore in Audiobookshelf, the page never says
 no action is needed. Pausing writes and removing a library's write
 permission are in a section you open.
 
+While Library has works, a Library progress card above the ledger gives the
+same line, each library's when several, and works needing you per field.
+
 ### Write permission
 
-Review write permissions opens one panel, from Activity or from Library's
-write handoff, and opening it grants nothing. Mechanical Librarian then checks
-that its own database is consistent and shows the prepared work, the fields
-each library can write and one before-and-after example. You can confirm only
-once that check passes and you include at least one library.
+Review write permissions opens one panel, from Activity or from Library's write
+handoff, and opening it grants nothing. Mechanical Librarian then checks that
+its own database is consistent and shows the prepared work, the fields each
+library can write and one before-and-after example. You can confirm only once
+that check passes and you include at least one library.
 
-The libraries you include stay included through page updates and repeat
-checks. A change to the libraries, their fields' write support or permission,
-or the active policy clears your choice and says why. Cancel or leaving the
-page clears it too. Confirming grants only the libraries you included. If the
-libraries, their fields, the policy or the database check changed since, it
-grants nothing and says so. Library and Activity both state a lapsed
-permission, and neither says no action is needed while no library has permission
+The libraries you include stay included through page updates and repeat checks.
+A change to the libraries, their fields' write support or permission, or the
+active policy clears your choice and says why, as Cancel and leaving the page
+do. Confirming grants only the libraries you included. If the libraries, their
+fields, the policy or the database check changed since, it grants nothing and
+says so. Library and Activity both state a lapsed permission, and neither says
+no action is needed while no library has permission
 ([ADR-0039](../architecture/decisions/0039-continuous-guarded-application.md)).
 
 ### The ledger

@@ -5791,7 +5791,9 @@ def _case_call(call: Callable[[], _Result]) -> _Result:
 def _query_call(call: Callable[[], _Result]) -> _Result:
     try:
         return call()
-    except ReviewWebError as error:
+    # A closing application refuses admission with the application's error, so
+    # it answers 503 as a storage fault does rather than escaping as a 500.
+    except (ReviewWebError, ReviewApplicationError) as error:
         status = 400 if error.code == "request" else 503
         raise HTTPException(status, detail={"code": error.code}) from None
 

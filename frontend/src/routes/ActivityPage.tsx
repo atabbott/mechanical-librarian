@@ -46,6 +46,7 @@ import { ActivityEventRow, PageJump, RowTime } from './ActivityLedgerRow'
 import { ActivityStatusCopy, ProviderRecoveryPanel } from './ActivityStatus'
 import { focusAfterRetry } from '../focusAfterRetry'
 import { ActivityPermissionCheck, readinessUnavailableCopy } from './ActivityPermissionCheck'
+import { ActivityLibraryProgress } from './ActivityLibraryProgress'
 import type { PermissionCheck } from './ActivityPermissionCheck'
 // The activity response is validated into `ActivityDisplayView` at the
 // transport boundary, so this route reads it as the typed view it already is
@@ -1491,6 +1492,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
           </details>
         ) : null}
       </section>
+      <ActivityLibraryProgress http={http} />
       <PreparationNotice routeIdentity={routeIdentity} />
     </div>
   )

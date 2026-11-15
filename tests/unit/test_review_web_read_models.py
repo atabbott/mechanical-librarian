@@ -5196,3 +5196,22 @@ def test_library_progress_model_is_closed_and_bounded() -> None:
     ):
         with pytest.raises(ValidationError):
             _LibraryProgressResponse.model_validate(invalid)
+
+
+@pytest.mark.parametrize("path", ("/api/v1/library/progress", "/api/v1/library"))
+def test_library_reads_answer_503_once_admission_closes(
+    web: ReviewWebContext[_CloseRecordingRepository], path: str
+) -> None:
+    """A closing application refuses a browse read as 503, never 500 (#1335)."""
+    web.login()
+    assert web.client.get(path).status_code == 200
+    # Shutdown closes admission; the read is refused before it starts.
+    web.client.app.state.review_application._admission.close()
+
+    refused = web.client.get(path)
+
+    assert refused.status_code == 503, refused.text
+    assert refused.json() == {
+        "error": {"code": "unavailable"},
+        "schema_version": "review-error-v1",
+    }

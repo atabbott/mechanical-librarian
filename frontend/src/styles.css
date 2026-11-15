@@ -1769,3 +1769,20 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
   .taste-section li:not(.taste-editing) > .taste-who { grid-column:2; grid-row:2; justify-self:start; align-self:center; padding-top:0; }
   .taste-section li:not(.taste-editing) > .taste-pencil { grid-column:3; grid-row:2; justify-self:end; align-self:center; margin-block:0; }
 }
+
+/* Library progress (#1335): Activity's card, after the status box and above
+   the Ledger, and the line under a finished run's box at the top of Works. */
+.cm-activity-route > .activity-library-progress { order:4; min-width:0; margin:0 0 1rem; padding:1rem 1.15rem; border:1px solid var(--line); border-radius:.75rem; background:var(--surface); }
+.activity-library-progress h2 { margin:0 0 .35rem; font:700 1.15rem/1.25 Georgia,serif; }
+.activity-library-progress h3 { margin:1rem 0 .35rem; font-size:.875rem; }
+.activity-library-progress p { margin:0; line-height:1.45; }
+.activity-library-progress ul { display:grid; gap:.3rem; margin:0; padding:0; list-style:none; overflow-wrap:anywhere; line-height:1.45; }
+.activity-library-progress > p[role='status'] { color:var(--soft); }
+.activity-library-progress [role='alert'] button { margin-top:.5rem; }
+.preparation-summary-box { margin:0 0 1rem; }
+.preparation-summary-box > .preparation-summary { margin:0; }
+.preparation-summary-progress { margin:.4rem 0 0; padding-inline:.75rem; color:var(--soft); font-size:.8rem; line-height:1.45; overflow-wrap:anywhere; }
+.preparation-summary-progress > a { white-space:nowrap; }
+/* The phone puts the Ledger before the status box, so the card goes first,
+   directly above it. */
+@media (max-width:760px) { .cm-activity-route > .activity-library-progress { order:1; padding:.9rem; } }
