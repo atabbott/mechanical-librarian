@@ -13,6 +13,7 @@ import itertools
 import re
 from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
+from typing import Any
 
 import pytest
 import scripts.description_advice_labels as labels
@@ -156,7 +157,7 @@ def test_the_pipeline_decides_no_description_without_a_record(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repository, _, binding, _, _ = _prepared(tmp_path)
-    action = SimpleNamespace(review_case_id=binding.review_case_id, report_id=None)
+    action: Any = SimpleNamespace(review_case_id=binding.review_case_id, report_id=None)
     admit_staged_description(repository, action)
     assert _decisions(repository) == 0
     qualify_description_advice(monkeypatch)
@@ -171,13 +172,12 @@ def test_a_record_copied_from_the_score_json_admits_the_advice(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     repository, store, binding, candidate, _ = _prepared(tmp_path)
+    identity = _identity(candidate)
     tally = labels.Labels()
-    tally.group(tuple(_identity(candidate))).right = 35
-    document = labels._group_document(
-        tuple(_identity(candidate)), tally.groups[tuple(_identity(candidate))]
-    )
+    tally.group(identity).right = 35
+    document = labels._group_document(identity, tally.groups[identity])
     copied = DescriptionAdviserIdentity(
-        **{name: document[name] for name in DescriptionAdviserIdentity._fields}
+        *(str(document[name]) for name in DescriptionAdviserIdentity._fields)
     )
     _record(monkeypatch, copied)
     decision = store.admit(
