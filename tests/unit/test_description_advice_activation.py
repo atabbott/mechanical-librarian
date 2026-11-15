@@ -27,8 +27,15 @@ from tests.support.description_advice import (
     _guarded_application,
     _prepared,
     _preserved_description_report,
+    qualify_description_advice,
 )
 from tests.unit.test_reviewer_access_application import _Auth
+
+
+@pytest.fixture(autouse=True)
+def _qualified_adviser(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These proofs admit automatic advice, so a record names their adviser."""
+    qualify_description_advice(monkeypatch)
 
 
 @pytest.mark.parametrize("version_drift", [False, True])

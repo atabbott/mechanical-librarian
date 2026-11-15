@@ -2061,6 +2061,13 @@ it('saves description preferences independently next to Cover guidance and keeps
     'aria-pressed',
     'true',
   )
+  // No release records a qualified adviser, so the switch only proposes (ADR-0099).
+  expect(
+    within(region).getByText(
+      'Ready advice is only suggested until a release shows, from your decisions, that the adviser is right often enough.',
+    ),
+  ).toBeVisible()
+  expect(within(region).queryByText(/written with your write permission/)).toBeNull()
   // Current covers sits between Cover and Description advice (#1363).
   expect(screen.getByRole('region', { name: 'Cover' }).nextElementSibling).toHaveAccessibleName(
     'Current covers',

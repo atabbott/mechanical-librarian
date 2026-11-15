@@ -345,6 +345,11 @@ brackets are GitHub issues.
   repeat the current text is no longer replaced by the adviser's result,
   which you could not have chosen or reversed there. The result stays shown
   for reference, and the review API refuses choosing it directly too (#1892).
+- Automatically apply ready description advice now only suggests until a
+  release shows, from your decisions, that the adviser is right often enough
+  with those cleanup choices. No release does yet, so the adviser's text is
+  offered on the work's page as with the switch off, and an automatic choice
+  stored before this change is not written (ADR-0099, #1886).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
