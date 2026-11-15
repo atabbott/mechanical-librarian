@@ -224,14 +224,8 @@ def settled_recovery_evidence(
     return RecoveryAttemptEvidence(outcome)
 
 
-def observed_recovery_evidence(
-    observation: object, evidence: object
-) -> RecoveryAttemptEvidence:
-    """Capture only the actual replacement's validated accounting.
-
-    A held answer served in place of a dispatch counts in the accounting but
-    is no physical request, so its attempt records are taken out (#1064).
-    """
+def observed_recovery_evidence(observation: object) -> RecoveryAttemptEvidence:
+    """Capture only the actual replacement's validated accounting."""
     unknown = RecoveryAttemptEvidence("terminal_failure")
     if type(observation) is not ProviderObservation:
         return unknown
@@ -242,20 +236,7 @@ def observed_recovery_evidence(
         replace(accounting)  # Revalidate even an improperly constructed typed value.
     except (ReportValueError, TypeError, AttributeError):
         return unknown
-    records = (
-        evidence.attempt_records
-        if type(evidence) is ProviderOperationalEvidence
-        and type(evidence.attempt_records) is tuple
-        else ()
-    )
-    count = (
-        accounting.initial_dispatches
-        + accounting.retry_dispatches
-        - sum(
-            type(record) is ProviderAttemptRecord and record.reused is True
-            for record in records
-        )
-    )
+    count = accounting.initial_dispatches + accounting.retry_dispatches
     if not bounded_integer(0, 54)(count):
         return unknown
     return RecoveryAttemptEvidence("terminal_failure", count, "observed")
@@ -286,11 +267,7 @@ def partial_recovery_evidence(
         for ordinal, record in enumerate(records, 1)
     ):
         return unknown
-    return RecoveryAttemptEvidence(
-        "terminal_failure",
-        sum(record.reused is not True for record in records),
-        "partial",
-    )
+    return RecoveryAttemptEvidence("terminal_failure", len(records), "partial")
 
 
 def provider_statuses(report: MetadataReport) -> tuple[ProviderStatus, ...]:

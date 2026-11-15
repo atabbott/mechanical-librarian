@@ -32,10 +32,10 @@ answer must bring back the time it was fetched for the report to be the same.
    replaces: the deadline check, dispatch and retry counts, ledger, byte
    budget and the current per-response bound apply as they would live, and
    the body goes through the same decoder and adapter parser. Only the pacer
-   wait and the network are skipped. The attempt record keeps the live
-   outcome and is marked `reused`; provider recovery's physical request
-   counts leave reused records out. A session whose first answer is reused
-   reports that answer's fetch time as its access time.
+   wait and the network are skipped. The attempt record is the live one.
+   Provider recovery's physical request counts are unchanged, because a
+   retry never reuses a held answer (decision 5). A session whose first
+   answer is reused reports that answer's fetch time as its access time.
 2. **Key.** `(adapter kind, SHA-256 of the canonical method, scheme, host,
    port, path, sorted query items, body and the adapter's revision)`. Headers
    never enter the key, so a credential sent in a header never does. Each
@@ -122,12 +122,13 @@ answer must bring back the time it was fetched for the report to be the same.
 
 ## Alternatives considered
 
-### A new attempt outcome for a reused answer
+### Marking a reused answer in its attempt record
 
-Hardcover's refusal path rewrites only a `response_received` record, so a
-distinct outcome would either escape the refusal, changing the report's
-diagnostics against live, or be overwritten and counted as physical. A flag
-beside an unchanged outcome keeps both right.
+A distinct outcome would escape Hardcover's refusal path, which rewrites only
+a `response_received` record, and so change the report's diagnostics against
+live. A flag beside an unchanged outcome was only needed to keep reused
+answers out of provider recovery's physical request counts, and a retry never
+reuses one. The record is left exactly as live.
 
 ### Committing every accepted answer at once
 
@@ -162,6 +163,5 @@ evict a full library's oldest answers and defeat reuse.
   through the real pipeline from the same answers converges on the same
   report, proposal and case; a different access time names a different
   report.
-- `tests/unit/test_provider_recovery_evidence.py` and
-  `tests/unit/test_provider_retry_successor.py`: reused records are not
-  physical requests.
+- `tests/unit/test_batch_composition.py`: preparation binds each adapter to
+  the store; a re-search and a provider retry bind it to ask live.

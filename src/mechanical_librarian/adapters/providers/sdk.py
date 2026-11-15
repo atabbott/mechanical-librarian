@@ -174,10 +174,8 @@ class BoundedProviderSession:
         # Whether an empty success body is an unavailable response, refused
         # before its encoding or media type is judged.
         self._refuse_empty_success = refuse_empty_success
-        # The held answers this observation may reuse instead of asking, and
-        # whether the latest dispatch was one of them (#1064).
+        # The held answers this observation may reuse instead of asking (#1064).
         self._responses = responses
-        self._dispatch_reused = False
         self.attempt_count = 0
         self.retry_count = 0
         self.remaining_response_bytes = bounds.aggregate_response_bytes
@@ -422,7 +420,6 @@ class BoundedProviderSession:
             )
             self._ledger.dispatch(retry=is_retry)
             self.attempt_count += 1
-            self._dispatch_reused = False
             if is_retry:
                 self.retry_count += 1
             with self._client.stream(
@@ -527,7 +524,6 @@ class BoundedProviderSession:
             self._accessed_at = provider_access_time(fetched_at_us / 1_000_000)
         self._ledger.dispatch(retry=is_retry)
         self.attempt_count += 1
-        self._dispatch_reused = True
         if is_retry:
             self.retry_count += 1
         # A body over its bound is refused as a declared length is, before any
@@ -611,7 +607,6 @@ class BoundedProviderSession:
             delay_seconds=None,
             elapsed_seconds=prior.elapsed_seconds,
             outcome="terminal",
-            reused=prior.reused,
         )
         # A refused answer is never kept, even when its lane still ends clean,
         # and a reused one that is refused is removed from the store.
@@ -661,7 +656,6 @@ class BoundedProviderSession:
                 delay_seconds=delay,
                 elapsed_seconds=bounded_attempt_elapsed(started, self._clocks.clock()),
                 outcome=outcome,
-                reused=self._dispatch_reused,
             )
         )
 

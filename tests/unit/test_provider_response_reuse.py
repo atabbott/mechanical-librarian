@@ -187,12 +187,8 @@ def test_a_held_answer_is_served_without_pacing_or_network(tmp_path: Path) -> No
     assert (reused.attempt_count, reused.retry_count) == (1, 0)
     assert reused.remaining_response_bytes == live.remaining_response_bytes
     (record,) = reused.attempt_records
-    assert (record.outcome, record.category, record.reused) == (
-        "response_received",
-        "none",
-        True,
-    )
-    assert live.attempt_records[0].reused is False
+    # The attempt reads as the live one did.
+    assert reused.attempt_records == live.attempt_records
     # The session reports when the held answer was fetched, not now.
     assert reused.accessed_at == live.accessed_at == "2023-11-14T22:13:20.123456Z"
     store.close()
@@ -246,8 +242,6 @@ def test_a_reused_observation_reads_exactly_as_the_live_one(tmp_path: Path) -> N
     assert [
         (value.ordinal, value.category, value.outcome) for value in reused_records
     ] == [(value.ordinal, value.category, value.outcome) for value in live_records]
-    assert all(value.reused for value in reused_records)
-    assert not any(value.reused for value in live_records)
     # A hit writes nothing.
     assert _rows(store) == stored
     store.close()
@@ -265,11 +259,7 @@ def test_a_held_body_over_the_current_bound_is_oversized(
     assert raised.value.status is ProviderStatus.OVERSIZED
     assert session.remaining_response_bytes == (before if keeps_budget else 0)
     (record,) = session.attempt_records
-    assert (record.category, record.outcome, record.reused) == (
-        "response_oversized",
-        "terminal",
-        True,
-    )
+    assert (record.category, record.outcome) == ("response_oversized", "terminal")
     store.close()
 
 
@@ -319,12 +309,16 @@ def test_a_refused_answer_is_never_kept_even_when_its_lane_ends_clean(
     assert _rows(store) == 1
     assert session.attempt_records[-1].outcome == "terminal"
 
-    replay = _session(
-        _json({"value": 1}), ProviderResponseReuse(store, "hardcover", False)
-    )
+    asked: list[str] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        asked.append(request.url.params["q"])
+        return _json({"value": 1})(request)
+
+    replay = _session(answer, ProviderResponseReuse(store, "hardcover", False))
     _ask(replay, "kept")
     _ask(replay, "refused")
-    assert [value.reused for value in replay.attempt_records] == [True, False]
+    assert asked == ["refused"]
     store.close()
 
 
@@ -333,7 +327,7 @@ def test_a_held_answer_its_adapter_now_refuses_is_removed(tmp_path: Path) -> Non
     session = _session(_never, reuse)
     _ask(session)
     session.mark_response_attempt("candidate_limit_exceeded")
-    assert session.attempt_records[-1].reused
+    assert session.attempt_records[-1].outcome == "terminal"
     assert _rows(store) == 0
     store.close()
 
@@ -623,4 +617,3 @@ def test_a_session_without_a_store_reads_the_wall_clock_as_before() -> None:
     _ask(session, "one")
     _ask(session, "two")
     assert len(reads) == 1
-    assert not any(value.reused for value in session.attempt_records)

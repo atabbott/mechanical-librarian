@@ -700,7 +700,7 @@ class GenerateProviderRetrySuccessor:
             )
         )
         observation = result.observation
-        evidence = observed_recovery_evidence(observation, result.evidence)
+        evidence = observed_recovery_evidence(observation)
         try:
             if (
                 type(observation) is ProviderObservation

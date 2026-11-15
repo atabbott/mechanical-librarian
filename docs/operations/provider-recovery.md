@@ -166,9 +166,8 @@ identifiers.
 
 Each recovery event is recorded with the job and health change it describes.
 A settled item records `outcome`, `job_attempt`, `physical_requests` (at most
-54) and `request_count_status` (`observed`, `partial` or `unknown`). A
-[held answer](metadata-report.md#held-provider-answers) served in place of a
-request is not a physical request. A retry never reuses one: it asks live and
-replaces what is held. This history is neither a complete request log
+54) and `request_count_status` (`observed`, `partial` or `unknown`). A retry
+never reuses a [held answer](metadata-report.md#held-provider-answers): it
+asks live and replaces what is held, so every request it counts was sent. This history is neither a complete request log
 nor a billing record. The matching
 stderr lines are in [observability](observability.md#provider-logs).
