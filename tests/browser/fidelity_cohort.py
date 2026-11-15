@@ -81,6 +81,8 @@ def _work(
     preparation_outcomes: list[dict[str, object]] | None = None,
     summary: dict[str, object] | None = None,
     cover: dict[str, object] | None = None,
+    not_matched: bool = False,
+    value_flags: list[dict[str, str]] | None = None,
 ) -> dict[str, object]:
     return {
         "cover": cover,
@@ -98,6 +100,8 @@ def _work(
             if attention
             else "preparation_failed"
             if preparation is not None
+            else "not_matched"
+            if not_matched
             else "no_attention_needed"
         ),
         "detail_url": f"/review/{case}" if case else None,
@@ -108,9 +112,9 @@ def _work(
         "preparation": preparation,
         "preparation_outcomes": preparation_outcomes or [],
         "summary": summary,
-        # No cohort work looks wrong; the Looks wrong lens is proven by the
-        # component and router suites (#1334).
-        "value_flags": [],
+        # What the server's Looks wrong rules find in this title and these
+        # authors, in rule order (#1334).
+        "value_flags": value_flags or [],
     }
 
 
@@ -324,12 +328,14 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
     # without drawing on a contributor's library or a live provider response.
     _work(
         13,
-        "Frankenstein; or, The Modern Prometheus",
+        # Looks wrong and needs attention (#1334).
+        "frankenstein; or, the modern prometheus",
         ["Mary Shelley"],
         "Local collection",
         "epub",
         case="case-13",
         attention=1,
+        value_flags=[{"destination": "title", "rule": "title_all_lower_case"}],
         dispositions=["unresolved_choice", "duplicate"],
     ),
     _work(
@@ -342,55 +348,90 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
         attention=0,
         dispositions=["automatic"],
     ),
+    # The Looks wrong rows (#1334): each title and author list below is one
+    # the server's rules flag exactly so.
     _work(
         15,
-        "Moby-Dick; or, The Whale",
+        "MOBY-DICK; OR, THE WHALE",
         ["Herman Melville"],
         "Google Books catalogue",
         "epub",
         case="case-15",
         attention=0,
         dispositions=["corroborated"],
+        value_flags=[{"destination": "title", "rule": "title_all_capitals"}],
     ),
     _work(
         16,
-        "Dracula",
+        "ГРАФ ДРАКУЛА",
         ["Bram Stoker"],
         "Open Library catalogue",
         "m4b",
         case="case-16",
         attention=0,
         dispositions=["missing"],
+        value_flags=[{"destination": "title", "rule": "title_all_capitals"}],
     ),
     _work(
         17,
-        "The Time Machine",
-        ["H. G. Wells"],
+        "THE TIME MACHINE - DISC 1",
+        ["Written by H. G. Wells"],
         "Local collection",
         "epub",
         case="case-17",
         attention=0,
         dispositions=["conflict"],
+        value_flags=[
+            {"destination": "title", "rule": "title_disc_number"},
+            {"destination": "title", "rule": "title_all_capitals"},
+            {"destination": "authors", "rule": "credit_label"},
+        ],
     ),
     _work(
         18,
-        "The Adventures of Sherlock Holmes",
+        "THE ADVENTURES OF SHERLOCK HOLMES, WITH THE MEMOIRS AND THE RETURN OF "
+        "SHERLOCK HOLMES, COMPLETE IN ONE VOLUME",
         ["Arthur Conan Doyle"],
         "Project Gutenberg",
         "m4b",
         case="case-18",
         attention=0,
         dispositions=["duplicate"],
+        value_flags=[{"destination": "title", "rule": "title_all_capitals"}],
     ),
     _work(
         19,
-        "The Republic",
+        "Plato",
         ["Plato"],
         "Google Books catalogue",
         "epub",
-        case="case-19",
+        case=None,
         attention=0,
-        dispositions=["unknown"],
+        dispositions=[],
+        not_matched=True,
+        preparation_outcomes=[
+            {
+                "companion_isbn": False,
+                "cover_only": False,
+                "provider_requests": 1,
+                "lane_kind": "work",
+                "provider": "hardcover-main",
+                "reason": "Found no matching work.",
+                "status": "no_match",
+            }
+        ],
+        summary={
+            "fields": [
+                {"destination": "title", "state": "value", "value": "Plato"},
+                {"destination": "authors", "state": "value", "value": ["Plato"]},
+            ],
+            "reason": (
+                "Nothing to decide for this work. These are its values as "
+                "Mechanical Librarian last read them."
+            ),
+            "state": "not_matched_no_match",
+        },
+        value_flags=[{"destination": "title", "rule": "title_is_author"}],
     ),
     _work(
         20,
@@ -1315,6 +1356,8 @@ def _progress_counts(
         "no_attention_needed": all_works - needs - not_matched - failed,
         "not_matched": not_matched,
         "preparation_failed": failed,
+        # The progress card reads no Looks wrong count (#1334).
+        "flagged": 0,
     }
 
 

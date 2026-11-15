@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import unicodedata
 from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
@@ -32,6 +33,7 @@ from mechanical_librarian.domain.human_decision import HumanDecision, decision_a
 from mechanical_librarian.domain.identifiers import canonical_json
 from mechanical_librarian.domain.metadata_report import (
     PROVIDER_AUTHORITIES,
+    ClaimKind,
     FileFacts,
     MetadataReport,
     ProviderLaneObservation,
@@ -122,6 +124,18 @@ def _canonical_report_facts(report: MetadataReport) -> LibraryReportFacts:
                 if source.kind is CoverSourceKind.ABS and source.artifact is not None
             ),
             None,
+        ),
+        # Every candidate title claim, as the Looks wrong rules compare it (#1334).
+        source_titles=tuple(
+            sorted(
+                {
+                    " ".join(unicodedata.normalize("NFC", claim.value).split())
+                    for provider in report.providers
+                    for candidate in provider.candidates
+                    for claim in candidate.claims
+                    if claim.kind is ClaimKind.TITLE and type(claim.value) is str
+                }
+            )
         ),
     )
 

@@ -212,18 +212,18 @@ reads `Found m
 of n works` and the lens. A search narrows the list and Attention, never the
 totals.
 
-The lenses are All (the default), Needs attention, No attention needed, Not
-matched and Could not finish, in one row that scrolls sideways when the panel
-is narrow. Lens, search, page, selected work and field live in the URL, so
-links and Back and Forward work. The pager offers only the moves that exist.
-An empty list says so in one line, and with no library connected it links to
-Settings to add one.
+The lenses are All (default), [Looks wrong](looks-wrong.md), Needs attention,
+No attention needed, Not matched and Could not finish, in one row that scrolls
+sideways when the panel is narrow. Lens, search, page, selected work and field
+live in the URL, so links, Back and Forward work. The pager offers only the
+moves that exist. An empty list says so in one line; with no library connected
+it links to Settings.
 
 Works that need a decision come first, under "Every lookup finished" and then
 "Some lookups gave no usable answer". The first heading does not promise a
 match, and the second does not promise a retry. Works that could not finish
 follow under Could not finish, then Not matched, then the rest. The other
-lenses are alphabetical.
+lenses, except Looks wrong, are alphabetical.
 
 A work with no case, nothing to decide and no source evidence accepted for it
 is Not matched, counted beside Works as `7 works · 4 not matched`. Its status

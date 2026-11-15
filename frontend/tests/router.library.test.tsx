@@ -25,6 +25,7 @@ import type {
   FieldCause,
   LibrarySearch,
   LibraryView,
+  LibraryWorkView,
   PreparationView,
   ProviderThrottleEntry,
   ProviderThrottlingView,
@@ -3211,7 +3212,7 @@ describe('Library route', () => {
     expect(await screen.findByText('5 works · 5 not matched')).toBeVisible()
     expect(
       within(screen.getByRole('navigation', { name: 'Library lenses' })).getAllByRole('link'),
-    ).toHaveLength(5)
+    ).toHaveLength(6)
     expect(screen.getByRole('heading', { name: 'Not matched' })).toBeVisible()
     for (const [key, reason] of [
       ['refused', 'Found, but not this work'],
@@ -17137,7 +17138,7 @@ describe('Library progress in the finished run box', () => {
       const http = createHttp()
       http.getPreparation = vi.fn(async () => finished(state))
       http.getLibraryProgress = vi.fn(async () => ({
-        totals: { all: 2026, attention: 174, clear: 1840, notMatched: 9, failed: 3 },
+        totals: { all: 2026, attention: 174, clear: 1840, notMatched: 9, failed: 3, flagged: 0 },
         libraries: [],
         fields: [],
       }))
@@ -17191,7 +17192,7 @@ describe('Library progress in the finished run box', () => {
     const http = createHttp()
     http.getLibrary = vi.fn(async () => ({
       ...library,
-      counts: { all: 2026, attention: 174, clear: 1840, notMatched: 9, failed: 3 },
+      counts: { all: 2026, attention: 174, clear: 1840, notMatched: 9, failed: 3, flagged: 0 },
     }))
     renderRoute('/library?lens=all', http)
     expect(
@@ -17294,7 +17295,7 @@ describe('Library progress in the finished run box', () => {
       .fn<ReviewHttp['getLibraryProgress']>()
       .mockRejectedValueOnce(new ApiError(503, 'unavailable'))
       .mockResolvedValue({
-        totals: { all: 3, attention: 1, clear: 2, notMatched: 0, failed: 0 },
+        totals: { all: 3, attention: 1, clear: 2, notMatched: 0, failed: 0, flagged: 0 },
         libraries: [],
         fields: [],
       })
@@ -17321,5 +17322,130 @@ describe('Library progress in the finished run box', () => {
     await waitFor(() => expect(http.getLibraryProgress).toHaveBeenCalled())
     await waitFor(() => expect(document.querySelector('.preparation-summary-box')).not.toBeNull())
     expect(progressLine()).toBeNull()
+  })
+})
+
+describe('Looks wrong (#1334)', () => {
+  const firstWork = library.works[0]
+  if (!firstWork) throw new Error('library fixture has a work')
+  const flaggedWork: LibraryWorkView = {
+    ...firstWork,
+    title: 'THE EXAMPLE STORY',
+    valueFlags: [
+      { destination: 'title', rule: 'title_all_capitals' },
+      { destination: 'narrators', rule: 'credit_label' },
+    ],
+  }
+  const page =
+    (works: readonly LibraryWorkView[], flagged: number) =>
+    async (search: LibrarySearch): Promise<LibraryView> => ({
+      ...library,
+      lens: search.lens,
+      counts: { ...library.counts, all: 2026, notMatched: 3, failed: 9, flagged },
+      works,
+    })
+
+  it('puts Looks wrong second in the lens row and reads it from the URL', async () => {
+    const getLibrary = vi.fn(page([flaggedWork], 37))
+    renderRoute('/library?lens=flagged', { ...createHttp(), getLibrary })
+    const lenses = within(await screen.findByRole('navigation', { name: 'Library lenses' }))
+    expect(lenses.getAllByRole('link').map((link) => link.textContent)).toEqual([
+      'All',
+      'Looks wrong',
+      'Needs attention',
+      'No attention needed',
+      'Not matched',
+      'Could not finish',
+    ])
+    expect(lenses.getByRole('link', { name: 'Looks wrong' })).toHaveAttribute(
+      'aria-current',
+      'true',
+    )
+    await waitFor(() =>
+      expect(getLibrary).toHaveBeenCalledWith(
+        expect.objectContaining({ lens: 'flagged' }),
+        expect.anything(),
+        expect.anything(),
+      ),
+    )
+  })
+
+  const worksCount = async () => {
+    const header = (await screen.findByRole('heading', { name: 'Works' })).parentElement
+    if (!header) throw new Error('the Works heading has a header')
+    return within(header).getByRole('status')
+  }
+
+  it('adds the works that look wrong to the Works count only when there is one', async () => {
+    renderRoute('/library?lens=all', { ...createHttp(), getLibrary: vi.fn(page([], 1234)) })
+    const status = await worksCount()
+    await waitFor(() =>
+      expect(status).toHaveTextContent(
+        /^2,026 works · 3 not matched · 9 could not finish · 1,234 look wrong$/u,
+      ),
+    )
+  })
+
+  it('leaves the Works count alone when nothing looks wrong', async () => {
+    renderRoute('/library?lens=all', { ...createHttp(), getLibrary: vi.fn(page([], 0)) })
+    const status = await worksCount()
+    await waitFor(() =>
+      expect(status).toHaveTextContent(/^2,026 works · 3 not matched · 9 could not finish$/u),
+    )
+  })
+
+  it('names each finding on its own line and in the row description', async () => {
+    renderRoute('/library?lens=all', { ...createHttp(), getLibrary: vi.fn(page([flaggedWork], 1)) })
+    const row = await screen.findByRole('button', { name: /^THE EXAMPLE STORY\./u })
+    const line = row.querySelector(`#value-flags-${flaggedWork.id}`)
+    expect([...(line?.children ?? [])].map((finding) => finding.textContent)).toEqual([
+      'Title is in capitals',
+      "A narrator's name starts with a credit label",
+    ])
+    expect(row.getAttribute('aria-describedby')?.split(' ')).toContain(
+      `value-flags-${flaggedWork.id}`,
+    )
+    expect(row).toHaveAccessibleDescription(
+      "Title is in capitalsA narrator's name starts with a credit label",
+    )
+  })
+
+  it('gives a row with no finding no line and no description for one', async () => {
+    renderRoute('/library?lens=all', { ...createHttp(), getLibrary: vi.fn(page([firstWork], 0)) })
+    const row = await screen.findByRole('button', { name: /^A Book\./u })
+    expect(row.querySelector('[id^="value-flags-"]')).toBeNull()
+    expect(row).not.toHaveAttribute('aria-describedby')
+  })
+
+  it('says No works here. for an empty Looks wrong lens', async () => {
+    renderRoute('/library?lens=flagged', { ...createHttp(), getLibrary: vi.fn(page([], 0)) })
+    expect(await screen.findByText('No works here.')).toBeVisible()
+  })
+
+  it('names the lens in the search status words', async () => {
+    renderRoute('/library?lens=flagged&q=example', {
+      ...createHttp(),
+      getLibrary: vi.fn(page([flaggedWork], 1)),
+    })
+    const status = await worksCount()
+    await waitFor(() => expect(status).toHaveTextContent(/^Found 1 of 1 work looking wrong$/u))
+  })
+
+  it('keeps Looks wrong through opening a work and going Back', async () => {
+    const user = userEvent.setup()
+    const { router } = renderRoute('/library?lens=flagged', {
+      ...createHttp(),
+      getLibrary: vi.fn(page([flaggedWork], 1)),
+    })
+    await user.click(await screen.findByRole('button', { name: /^THE EXAMPLE STORY\./u }))
+    await waitFor(() =>
+      expect(router.state.location.search).toMatchObject({ lens: 'flagged', preview: 'case-1' }),
+    )
+    await act(async () => router.history.back())
+    await waitFor(() => expect(router.state.location.search).toEqual({ lens: 'flagged' }))
+    expect(screen.getByRole('link', { name: 'Looks wrong' })).toHaveAttribute(
+      'aria-current',
+      'true',
+    )
   })
 })

@@ -4093,6 +4093,8 @@ def test_library_search_scopes_the_list_and_leaves_global_counts() -> None:
         )
         for lens, visible, announced in (
             ("Not matched", "Found 0 of 1 work", "Found 0 of 1 work not matched"),
+            # Nothing in this store looks wrong (#1334).
+            ("Looks wrong", "Found 0 of 0 works", "Found 0 of 0 works looking wrong"),
             # The retained work's latest preparation failed, so it is
             # counted where it could not finish, not as clear (#1413).
             (
@@ -14691,6 +14693,87 @@ def test_works_no_provider_matched_have_their_own_lens_and_reasons(
                         works.get_by_role("button", name=name, exact=True)
                     ).to_be_visible()
                 expect(works).not_to_contain_text("Prepared synthetic work 0000")
+            finally:
+                browser.close()
+
+
+def test_works_that_look_wrong_have_their_own_lens_second_after_all(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1334: over the real composed app and its stored findings, Looks wrong
+    sits second in the lens row, is counted beside the Works count, lists only
+    the works with a finding, names each finding on its row, and Back from a
+    work keeps the lens."""
+    from mechanical_librarian.interfaces.web import app as web_app
+    from tests.support.owner_responsiveness import running_owner_fixture
+    from tests.unit.test_flagged_lens import _publish, _work
+
+    monkeypatch.setattr(
+        web_app,
+        "ReactAssetLoader",
+        lambda: ReactAssetLoader(Path(os.environ["ML_REACT_ASSET_DIR"])),
+    )
+    with running_owner_fixture(tmp_path, 1) as (fixture, origin):
+        for report in (
+            _work(0, "THE EXAMPLE STORY"),
+            _work(
+                3,
+                "Example Story",
+                authors=("Example Author",),
+                narrators=("Narrated by Example Reader",),
+            ),
+            _work(7, "Ordinary Example"),
+        ):
+            _publish(fixture.repository, report)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            try:
+                page = browser.new_page(viewport={"width": 1440, "height": 1000})
+                page.goto(origin + "/login")
+                page.get_by_label("Password").fill("synthetic-owner")
+                page.get_by_role("button", name="Sign in").click()
+                page.get_by_role("heading", name="Works", exact=True).wait_for()
+                page.goto(origin + "/library?lens=all")
+                lenses = page.get_by_role("navigation", name="Library lenses")
+                expect(lenses.get_by_role("link")).to_have_text(
+                    [
+                        "All",
+                        "Looks wrong",
+                        "Needs attention",
+                        "No attention needed",
+                        "Not matched",
+                        "Could not finish",
+                    ]
+                )
+                expect(
+                    page.get_by_role("status").filter(has_text="look wrong")
+                ).to_have_text(re.compile(r"^4 works · .*· 2 look wrong$"))
+                lens = lenses.get_by_role("link", name="Looks wrong", exact=True)
+                with page.expect_response(_lens_read("flagged")):
+                    lens.click()
+                expect(page).to_have_url(re.compile(r"lens=flagged"))
+                expect(lens).to_have_attribute("aria-current", "true")
+                works = page.get_by_label("Works", exact=True)
+                listed = works.get_by_role("button").filter(has=page.locator("strong"))
+                expect(listed).to_have_count(2)
+                capitals = works.get_by_role(
+                    "button", name=re.compile(r"^THE EXAMPLE STORY\.")
+                )
+                expect(capitals).to_have_accessible_description(
+                    re.compile(r"Title is in capitals$")
+                )
+                expect(
+                    works.get_by_role("button", name=re.compile(r"^Example Story\."))
+                ).to_have_accessible_description(
+                    re.compile(r"A narrator's name starts with a credit label$")
+                )
+                expect(works).not_to_contain_text("Ordinary Example")
+                capitals.click()
+                expect(page).to_have_url(re.compile(r"lens=flagged&.*work="))
+                page.go_back()
+                expect(page).to_have_url(re.compile(r"lens=flagged$"))
+                expect(lens).to_have_attribute("aria-current", "true")
+                expect(listed).to_have_count(2)
             finally:
                 browser.close()
 
