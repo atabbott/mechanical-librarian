@@ -23,6 +23,10 @@ from typing import Any, Callable, TypeVar
 
 import httpx
 
+from mechanical_librarian.adapters.providers.response_reuse import (
+    ProviderResponseReuse,
+    epoch_microseconds,
+)
 from mechanical_librarian.adapters.providers.retry_safety import (
     ProviderFailure,
     ProviderRequestPacer,
@@ -142,6 +146,7 @@ class BoundedProviderSession:
         accept_content_types: tuple[str, ...] = ("application/json",),
         name_response_failures: bool = False,
         refuse_empty_success: bool = False,
+        responses: ProviderResponseReuse | None = None,
     ) -> None:
         if (
             type(accept_content_types) is not tuple
@@ -169,6 +174,10 @@ class BoundedProviderSession:
         # Whether an empty success body is an unavailable response, refused
         # before its encoding or media type is judged.
         self._refuse_empty_success = refuse_empty_success
+        # The held answers this observation may reuse instead of asking, and
+        # whether the latest dispatch was one of them (#1064).
+        self._responses = responses
+        self._dispatch_reused = False
         self.attempt_count = 0
         self.retry_count = 0
         self.remaining_response_bytes = bounds.aggregate_response_bytes
@@ -374,6 +383,19 @@ class BoundedProviderSession:
         retries = self._bounds.retries_per_observation
         if is_retry and retries is not None and self.retry_count >= retries:
             raise ProviderFailure(ProviderStatus.UNAVAILABLE)
+        digest = ""
+        if self._responses is not None:
+            digest = self._responses.digest(method, url, params, content)
+            held = self._responses.lookup(digest)
+            if held is not None:
+                return self._reuse_once(
+                    held,
+                    deadline=deadline,
+                    is_retry=is_retry,
+                    maximum_bytes=maximum_bytes,
+                    oversize_keeps_budget=oversize_keeps_budget,
+                    read=read,
+                )
         if self._pacer is not None and not self._pacer.wait(deadline):
             raise self._incomplete(ProviderIncompleteCause.DEADLINE)
         remaining = self._bounds.timeout_seconds
@@ -384,10 +406,22 @@ class BoundedProviderSession:
         try:
             if deadline is not None and self._clocks.clock() >= deadline:
                 raise self._incomplete(ProviderIncompleteCause.DEADLINE)
+            # The wall time is read again on later dispatches only to date an
+            # answer that may be kept, so a session without a store reads it
+            # exactly as before.
+            fetched_at = (
+                self._clocks.wall_clock()
+                if self._accessed_at is None or self._responses is not None
+                else 0.0
+            )
             if self._accessed_at is None:
-                self._accessed_at = provider_access_time(self._clocks.wall_clock())
+                self._accessed_at = provider_access_time(fetched_at)
+            fetched_at_us = (
+                0 if self._responses is None else epoch_microseconds(fetched_at)
+            )
             self._ledger.dispatch(retry=is_retry)
             self.attempt_count += 1
+            self._dispatch_reused = False
             if is_retry:
                 self.retry_count += 1
             with self._client.stream(
@@ -462,6 +496,49 @@ class BoundedProviderSession:
             raise ProviderFailure(ProviderStatus.UNAVAILABLE) from None
         except (OSError, ValueError):
             raise ProviderFailure(ProviderStatus.UNAVAILABLE) from None
+        value = read(payload)
+        if self._responses is not None:
+            self._responses.hold(self.attempt_count, digest, payload, fetched_at_us)
+        return value
+
+    def _reuse_once(
+        self,
+        held: tuple[bytes, int],
+        *,
+        deadline: float | None,
+        is_retry: bool,
+        maximum_bytes: int | None,
+        oversize_keeps_budget: bool,
+        read: Callable[[bytes], _Read],
+    ) -> _Read:
+        """Serve one held answer as the live dispatch it replaces.
+
+        Everything a received answer costs is charged -- the dispatch and
+        retry counts, the ledger and the byte budget -- and the current bounds
+        are applied again, so the observation reads exactly as it did live.
+        Only the pacer wait and the network are skipped.
+        """
+        payload, fetched_at_us = held
+        if deadline is not None and self._clocks.clock() >= deadline:
+            raise self._incomplete(ProviderIncompleteCause.DEADLINE)
+        if self._accessed_at is None:
+            self._accessed_at = provider_access_time(fetched_at_us / 1_000_000)
+        self._ledger.dispatch(retry=is_retry)
+        self.attempt_count += 1
+        self._dispatch_reused = True
+        if is_retry:
+            self.retry_count += 1
+        # A body over its bound is refused as a declared length is, before any
+        # of it is charged.
+        if len(payload) > min(
+            maximum_bytes or self._bounds.maximum_bytes, self.remaining_response_bytes
+        ):
+            if not oversize_keeps_budget:
+                self.remaining_response_bytes = 0
+            raise ProviderFailure(
+                ProviderStatus.OVERSIZED, category="response_oversized"
+            )
+        self._consume_response_bytes(len(payload))
         return read(payload)
 
     def _failure(
@@ -524,7 +601,11 @@ class BoundedProviderSession:
             delay_seconds=None,
             elapsed_seconds=prior.elapsed_seconds,
             outcome="terminal",
+            reused=prior.reused,
         )
+        # A refused answer is never kept, even when its lane still ends clean.
+        if self._responses is not None:
+            self._responses.drop(prior.ordinal)
 
     def _consume_response_bytes(self, amount: int) -> None:
         self.remaining_response_bytes -= amount
@@ -569,6 +650,7 @@ class BoundedProviderSession:
                 delay_seconds=delay,
                 elapsed_seconds=bounded_attempt_elapsed(started, self._clocks.clock()),
                 outcome=outcome,
+                reused=self._dispatch_reused,
             )
         )
 

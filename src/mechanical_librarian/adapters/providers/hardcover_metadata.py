@@ -16,6 +16,9 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from mechanical_librarian.adapters.providers.response_reuse import (
+    ProviderResponseReuse,
+)
 from mechanical_librarian.adapters.providers.retry_safety import (
     ProviderFailure,
     ProviderRequestPacer,
@@ -236,6 +239,7 @@ class HardcoverMetadataProvider:
         timeout_seconds: float = 5.0,
         *,
         pacer: HardcoverPacer | None = None,
+        responses: ProviderResponseReuse | None = None,
         clock: Callable[[], float] = time.monotonic,
         wall_clock: Callable[[], float] = time.time,
         sleep: Callable[[float], None] = time.sleep,
@@ -261,6 +265,7 @@ class HardcoverMetadataProvider:
             _DiscoveryRequestLedger("hardcover", HARDCOVER_SCHEMA_COMMIT),
             pacer=pacer,
             clocks=ProviderClocks(clock, wall_clock, sleep, jitter),
+            responses=responses,
             name_response_failures=True,
             refuse_empty_success=True,
         )

@@ -1086,8 +1086,43 @@ def test_observed_accounting_preserves_known_zero_and_bound(count: int) -> None:
         _provider("catalogue", "candidate", ()),
         request_accounting=ProviderRequestAccounting(count, count),
     )
-    assert observed_recovery_evidence(observation) == RecoveryAttemptEvidence(
+    assert observed_recovery_evidence(observation, None) == RecoveryAttemptEvidence(
         "terminal_failure", count, "observed"
+    )
+
+
+def test_reused_answers_are_not_physical_requests() -> None:
+    """A held answer served in place of a dispatch is no request (#1064)."""
+    from mechanical_librarian.application.provider_evidence import (
+        ProviderAttemptRecord,
+        ProviderOperationalEvidence,
+    )
+    from mechanical_librarian.application.provider_recovery_evidence import (
+        observed_recovery_evidence,
+        partial_recovery_evidence,
+    )
+    from mechanical_librarian.domain.provider_recovery import RecoveryAttemptEvidence
+
+    records = (
+        ProviderAttemptRecord(
+            "catalogue", 1, "none", None, 0.1, "response_received", reused=True
+        ),
+        ProviderAttemptRecord("catalogue", 2, "none", None, 0.1, "response_received"),
+        ProviderAttemptRecord(
+            "catalogue", 3, "http_429", None, 0.1, "terminal", reused=True
+        ),
+    )
+    evidence = ProviderOperationalEvidence(attempt_records=records)
+    observation = replace(
+        _provider("catalogue", "candidate", ()),
+        request_accounting=ProviderRequestAccounting(3, 3),
+    )
+    assert observed_recovery_evidence(observation, evidence) == (
+        RecoveryAttemptEvidence("terminal_failure", 1, "observed")
+    )
+    error = ProviderObservationFailure(ProviderFailureSnapshot(evidence=evidence))
+    assert partial_recovery_evidence(error, "catalogue") == RecoveryAttemptEvidence(
+        "terminal_failure", 1, "partial"
     )
 
 
@@ -1150,7 +1185,7 @@ def test_observed_accounting_missing_or_oversized_is_unknown(
 
     observation = _provider("catalogue", "candidate", ())
     object.__setattr__(observation, "request_accounting", accounting)
-    assert observed_recovery_evidence(observation) == RecoveryAttemptEvidence(
+    assert observed_recovery_evidence(observation, None) == RecoveryAttemptEvidence(
         "terminal_failure"
     )
 
@@ -1176,7 +1211,7 @@ def test_observed_accounting_revalidates_exact_numbers(
     object.__setattr__(accounting, field, value)
     observation = _provider("catalogue", "candidate", ())
     object.__setattr__(observation, "request_accounting", accounting)
-    assert observed_recovery_evidence(observation) == RecoveryAttemptEvidence(
+    assert observed_recovery_evidence(observation, None) == RecoveryAttemptEvidence(
         "terminal_failure"
     )
 

@@ -29,6 +29,9 @@ class ProviderAttemptRecord:
     delay_seconds: float | None
     elapsed_seconds: float
     outcome: str
+    # A held answer served in place of a dispatch (#1064): its outcome is the
+    # live one, but no request reached the provider.
+    reused: bool = False
 
 
 @dataclass(frozen=True, slots=True)

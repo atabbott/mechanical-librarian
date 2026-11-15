@@ -806,6 +806,38 @@ def test_an_unbounded_duration_names_no_milliseconds_and_keeps_the_event(
     assert (None, 86_400_000) == (event["elapsed_ms"], event["deadline_ms"])
 
 
+def test_a_reused_answer_names_no_diagnostic_and_no_event() -> None:
+    """A held answer served in place of a dispatch reads as received (#1064)."""
+    from mechanical_librarian.application.failure_diagnostics import (
+        provider_dispatch_events,
+    )
+    from mechanical_librarian.application.provider_evidence import (
+        ProviderAttemptRecord,
+    )
+
+    evidence = ProviderOperationalEvidence(
+        attempt_records=(
+            ProviderAttemptRecord(
+                "catalogue", 1, "none", None, 0.0, "response_received", reused=True
+            ),
+        )
+    )
+    assert () == provider_attempt_diagnostics(evidence.attempt_records or ())
+    assert () == provider_dispatch_events(
+        adapter="hardcover",
+        provider="catalogue",
+        item_ref="item-" + "0" * 16,
+        phase="discovery",
+        lanes=(),
+        observation=None,
+        evidence=evidence,
+        audio=False,
+        elapsed_seconds=0.0,
+        deadline_seconds=30,
+        deadline_kind="provider_share",
+    )
+
+
 def test_retained_refused_answers_leave_failure_diagnostics_unchanged() -> None:
     """Diagnostics carry counts only (#1355): a kept refused answer adds none."""
     plain = _no_match_observation(0, 3)

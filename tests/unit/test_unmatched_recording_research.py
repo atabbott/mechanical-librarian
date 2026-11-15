@@ -65,7 +65,12 @@ def application_path() -> Iterator[Path]:
 
 
 def _pipeline(
-    path: Path, report: MetadataReport, now: int, *, unmatched: bool
+    path: Path,
+    report: MetadataReport,
+    now: int,
+    *,
+    unmatched: bool,
+    researched: list[bool] | None = None,
 ) -> ReviewPreparationPipeline:
     proposal = evaluate_report(report)
     entry: CatalogueEntry = replace(
@@ -73,6 +78,8 @@ def _pipeline(
     )
 
     def extract(repository, action: PipelineAction, claim_next: bool):
+        if researched is not None:
+            researched.append(action.research)
         # As preparation does, the item's current report is the one replaced.
         current = repository.current_optional(
             "primary", "ebooks", "item-1", report.file.identity
@@ -158,7 +165,8 @@ def test_an_unchanged_research_keeps_the_open_case(application_path: Path) -> No
     new = _report("Searched again", "a", "c")
     assert old.file.identity == new.file.identity
 
-    _drain(_pipeline(application_path, old, 20, unmatched=True))
+    researched: list[bool] = []
+    _drain(_pipeline(application_path, old, 20, unmatched=True, researched=researched))
     work, current, _lineage, package = _state(application_path)
     case = work[4]
     assert work == ("complete", "complete", "case", old.report_id, case, 20 + _WEEK)
@@ -173,7 +181,12 @@ def test_an_unchanged_research_keeps_the_open_case(application_path: Path) -> No
     # new report is kept only as history: the case and its report stay
     # current, and the next search waits another interval.
     later = 20 + _WEEK
-    assert 2 == _drain(_pipeline(application_path, new, later, unmatched=True))
+    assert 2 == _drain(
+        _pipeline(application_path, new, later, unmatched=True, researched=researched)
+    )
+    # Only the re-search is claimed as one, so only it asks providers live
+    # instead of reusing a held answer (#1064).
+    assert researched == [False, True]
     work, current, lineage, package = _state(application_path)
     assert work == ("complete", "complete", "case", old.report_id, case, later + _WEEK)
     assert current == lineage == old.report_id

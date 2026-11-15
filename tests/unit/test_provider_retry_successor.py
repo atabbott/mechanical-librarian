@@ -2561,8 +2561,9 @@ def test_actual_successor_runner_retains_one_accounted_settlement(
     store.close()
 
 
+@pytest.mark.parametrize("reused", [False, True], ids=["live", "one_reused"])
 def test_real_publication_failure_retains_accounting_without_success_or_new_report(
-    retry: _Retry, tmp_path: Path
+    retry: _Retry, tmp_path: Path, reused: bool
 ) -> None:
     from mechanical_librarian.application.provider_recovery_evidence import (
         settled_recovery_evidence,
@@ -2579,9 +2580,20 @@ def test_real_publication_failure_retains_accounting_without_success_or_new_repo
             (ProviderLaneResult(retry.failed, ProviderStatus.NO_MATCH),),
             authority="open_library",
         ),
-        request_accounting=ProviderRequestAccounting(1, 1),
+        request_accounting=ProviderRequestAccounting(1 + reused, 1 + reused),
     )
-    provider = _Provider(observation)
+    # A held answer served in place of a dispatch is no physical request
+    # (#1064), so one reused answer beside one live one still counts one.
+    provider = _Provider(
+        observation,
+        (
+            ProviderAttemptRecord(
+                "catalogue", 1, "none", None, 0.0, "response_received", reused=True
+            ),
+        )
+        if reused
+        else (),
+    )
     successful: list[RecoveryAttemptEvidence] = []
 
     def fail_stage(*_args: object) -> None:

@@ -351,6 +351,49 @@ def test_stopping_the_supervisor_closes_the_taste_lane_repository() -> None:
             taste[0]._connection.execute("SELECT 1")
 
 
+def test_a_pipeline_opens_the_response_store_and_closes_it_on_stop() -> None:
+    """#1064: held answers live beside the recovery store, for this generation."""
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        database = root / "reports.sqlite"
+        private = root / "private"
+        private.mkdir(mode=0o700)
+        recovery = SQLiteProviderRecoveryStore.open(
+            private / "provider-recovery.sqlite"
+        )
+        open_repository(database).close()
+        configuration = _recovery_configuration()
+        composition.CoverArtifactStore(root / "artifacts", create=True)
+        opened: list[object] = []
+        real_open = composition.open_provider_response_store
+
+        def recording(path: Path) -> object:
+            store = real_open(path)
+            opened.append(store)
+            return store
+
+        with patch.object(
+            composition, "open_provider_response_store", side_effect=recording
+        ):
+            supervisor = composition.create_review_pipeline(
+                configuration,
+                database,
+                root / "catalogue.sqlite",
+                root / "artifacts",
+                _reviewer_access(database, configuration),
+                private_root=private,
+                provider_recovery=recovery,
+            )
+        (store,) = opened
+        assert (private / "provider-responses.sqlite").is_file()
+        store._connection.execute("SELECT 1")
+        supervisor.stop()
+        with pytest.raises(sqlite3.ProgrammingError):
+            store._connection.execute("SELECT 1")
+        with pytest.raises(sqlite3.ProgrammingError):
+            recovery._connection.execute("SELECT 1")
+
+
 def test_generation_rollback_rejects_before_cutover_delivery() -> None:
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
