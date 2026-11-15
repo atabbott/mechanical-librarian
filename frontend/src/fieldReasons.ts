@@ -33,10 +33,10 @@ export const dispositionReasons = {
   reject: 'The proposed change was set aside. Compare the values yourself.',
   propose_change: 'A change is proposed. Compare it with the current value.',
   acceptable_choice: 'More than one value would do. Choose the one this work should use.',
-  unresolved_choice: 'The sources do not settle on one value. Compare them yourself.',
+  unresolved_choice: 'The sources disagree.',
   keep: 'The current value is proposed to stay. Compare the other values.',
   defer: 'This field waits for your choice.',
-  ineligible: 'None of these values can be applied for you. Compare them yourself.',
+  ineligible: 'None of these values can be applied for you.',
 } satisfies Record<ProposalOutcome, string>
 export const fieldReason = (field: ReviewField) =>
   bounded(

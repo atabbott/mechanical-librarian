@@ -1472,8 +1472,10 @@ _COVER_TASTE_TABLES = {
     "cover_taste_builds": "CREATE TABLE cover_taste_builds (build_id TEXT PRIMARY KEY NOT NULL CHECK(typeof(build_id)='text' AND build_id GLOB 'taste_build_[0-9a-f]*' AND length(build_id)=44), trigger TEXT NOT NULL CHECK(trigger IN ('cadence','retry')), retry_of TEXT UNIQUE REFERENCES cover_taste_builds(build_id), state TEXT NOT NULL CHECK(state IN ('requested','running','succeeded','failed')), "
     f"failure TEXT CHECK(failure IN ({_COVER_TASTE_FAILURES})), "
     "model TEXT CHECK(model IS NULL OR length(model) BETWEEN 1 AND 256), day INTEGER NOT NULL CHECK(typeof(day)='integer' AND day>=0), selection_watermark INTEGER NOT NULL CHECK(typeof(selection_watermark)='integer' AND selection_watermark>=0), requested_at INTEGER NOT NULL CHECK(typeof(requested_at)='integer' AND requested_at>=0), updated_at INTEGER NOT NULL CHECK(typeof(updated_at)='integer' AND updated_at>=requested_at), CHECK((state='failed')=(failure IS NOT NULL)), CHECK(trigger='retry' OR retry_of IS NULL))",
-    "cover_taste_profile_versions": "CREATE TABLE cover_taste_profile_versions (version INTEGER PRIMARY KEY CHECK(typeof(version)='integer' AND version>=1), build_id TEXT NOT NULL UNIQUE REFERENCES cover_taste_builds(build_id), created_at INTEGER NOT NULL CHECK(typeof(created_at)='integer' AND created_at>=0), "
-    f"document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 65536 AND json_valid(document) AND json_extract(document,'$.schema_version')='{COVER_TASTE_PROFILE_SCHEMA}'))",
+    # An edit version has no build of its own (#1372 PR 2 S5).
+    "cover_taste_profile_versions": "CREATE TABLE cover_taste_profile_versions (version INTEGER PRIMARY KEY CHECK(typeof(version)='integer' AND version>=1), build_id TEXT UNIQUE REFERENCES cover_taste_builds(build_id), created_at INTEGER NOT NULL CHECK(typeof(created_at)='integer' AND created_at>=0), "
+    f"document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 262144 AND json_valid(document) AND json_extract(document,'$.schema_version')='{COVER_TASTE_PROFILE_SCHEMA}'), "
+    "CHECK((build_id IS NULL) = (json_extract(document,'$.source') IS 'edit')))",
 }
 _COVER_TASTE_TRIGGERS = {
     f"cover_taste_profile_versions_no_{operation}": f"CREATE TRIGGER cover_taste_profile_versions_no_{operation} BEFORE {operation.upper()} ON cover_taste_profile_versions BEGIN SELECT RAISE(ABORT, 'taste profile versions are append-only'); END"

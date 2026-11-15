@@ -52,12 +52,15 @@ _SANDBOX_INFO_FIELDS = (
 
 _BPF_LD_W_ABS = 0x20
 _BPF_JMP_JEQ_K = 0x15
+_BPF_JMP_JGE_K = 0x35
 _BPF_ALU_AND_K = 0x54
 _BPF_RET_K = 0x06
 _SECCOMP_RET_KILL_PROCESS = 0x80000000
 _SECCOMP_RET_ERRNO = 0x00050000
 _SECCOMP_RET_ALLOW = 0x7FFF0000
 _CLONE_THREAD = 0x00010000
+# x32 system calls carry this bit under the x86_64 audit architecture.
+_X32_SYSCALL_BIT = 0x40000000
 _SECCOMP_DATA_ARCH_OFFSET = 4
 _SECCOMP_DATA_ARGUMENT_0_OFFSET = 16
 _AUDIT_ARCH_X86_64 = 0xC000003E
@@ -115,6 +118,8 @@ def no_process_seccomp_program(machine: str) -> bytes:
             (_BPF_JMP_JEQ_K, 1, 0, arch),
             (_BPF_RET_K, 0, 0, _SECCOMP_RET_KILL_PROCESS),
             (_BPF_LD_W_ABS, 0, 0, 0),
+            (_BPF_JMP_JGE_K, 0, 1, _X32_SYSCALL_BIT),
+            (_BPF_RET_K, 0, 0, _SECCOMP_RET_KILL_PROCESS),
             (_BPF_JMP_JEQ_K, 6, 0, clone),
             (_BPF_JMP_JEQ_K, 8, 0, clone3),
             (_BPF_JMP_JEQ_K, 7, 0, fork),

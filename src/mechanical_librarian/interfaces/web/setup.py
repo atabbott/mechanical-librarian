@@ -321,8 +321,6 @@ def create_setup_app(
     app.add_middleware(
         BodyLimitMiddleware,
         hsts=canonical_origin.startswith("https://"),
-        maximum_bytes=2_048,
-        decision_maximum_bytes=16_384,
         path_limits=_SETUP_BODY_LIMITS,
     )
     app.state.setup_complete = False

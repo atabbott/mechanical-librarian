@@ -405,7 +405,7 @@ it('names a value offered for the book’s title and author beside its source', 
   await user.click(
     await screen.findByRole('button', { name: 'Evidence for proposed value: New title' }),
   )
-  const evidence = screen.getByRole('region', { name: 'evidence' })
+  const evidence = screen.getByRole('region', { name: 'Evidence for proposed value: New title' })
   expect(within(evidence).getByText('Hardcover · same title and author')).toBeVisible()
   // The card's own source line says it too, and the value is offered, not
   // confirmed: it counts toward no "sources confirm" line.
@@ -556,9 +556,8 @@ describe('a field Book matching substituted and made choosable', () => {
       getLibrary: vi.fn(async () => library),
     }
     renderRoute('/library?lens=all&preview=case-1&field=title', http)
-    expect(await questionLine()).toHaveTextContent(
-      'None of these values can be applied for you. Compare them yourself.',
-    )
+    expect(await questionLine()).toHaveTextContent('None of these values can be applied for you.')
+    expect(await questionLine()).not.toHaveTextContent('Compare them yourself.')
     expect(proposed()).toBeEnabled()
     expect(screen.queryByText('No source offered a value that can be used here.')).toBeNull()
   })

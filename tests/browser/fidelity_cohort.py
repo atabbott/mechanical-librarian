@@ -1300,6 +1300,110 @@ def _library_progress() -> dict[str, object]:
     }
 
 
+# Library progress states the cohort's screens are drawn in (#1335): the line
+# under a finished run's box and the Activity card. Each keeps its library rows
+# summing to its totals, as the server's do.
+LIBRARY_PROGRESS_LONG_LIBRARY = "Synthetic audiobooks read aloud by their authors"
+
+
+def _progress_counts(
+    all_works: int, needs: int, not_matched: int = 0, failed: int = 0
+) -> dict[str, int]:
+    return {
+        "all": all_works,
+        "needs_attention": needs,
+        "no_attention_needed": all_works - needs - not_matched - failed,
+        "not_matched": not_matched,
+        "preparation_failed": failed,
+    }
+
+
+def _progress(
+    libraries: list[tuple[str, dict[str, int]]], fields: list[tuple[str, int]]
+) -> dict[str, object]:
+    return {
+        "totals": {
+            key: sum(counts[key] for _name, counts in libraries)
+            for key in libraries[0][1]
+        },
+        "libraries": [
+            {
+                "connection": "primary",
+                "library": name.lower().replace(" ", "-"),
+                "library_display_name": name,
+                "counts": counts,
+            }
+            for name, counts in libraries
+        ],
+        "fields": [
+            {"destination": destination, "need_you": count}
+            for destination, count in fields
+        ],
+    }
+
+
+LIBRARY_PROGRESS_STATES: dict[str, dict[str, object]] = {
+    # One library, everything settled: no list of libraries or fields.
+    "one_library": _progress([("Household ebooks", _progress_counts(184, 0))], []),
+    # Two libraries, the second long-named, with fields needing the owner and
+    # both tails of the line.
+    "two_libraries": _progress(
+        [
+            ("Household ebooks", _progress_counts(26, 6)),
+            (LIBRARY_PROGRESS_LONG_LIBRARY, _progress_counts(2000, 168, 9, 3)),
+        ],
+        [("cover", 120), ("description", 31), ("authors", 14), ("isbn", 1)],
+    ),
+}
+
+
+def finished_preparation(state: str, *, failed: int = 0) -> dict[str, object]:
+    """`/api/v1/review-preparation` with a finished run in Library's box (#1335)."""
+    payload = cast(dict[str, object], rich_payload("/api/v1/review-preparation"))
+    return payload | {
+        "active": False,
+        "actionable": True,
+        "connections": [],
+        "presentation": {
+            "run_id": "preparation_run_" + "5" * 64,
+            "state": state,
+            "triggers": [
+                {
+                    "trigger": "manual_scan",
+                    "accepted_count": 1,
+                    "first_accepted_at": 100,
+                    "last_accepted_at": 100,
+                }
+            ],
+            "passage": {
+                "read": 20,
+                "searches_finished": 20,
+                "compared": 20,
+                "checked": 20,
+                "ready": 20 - failed,
+                "failed": failed,
+            },
+            "active_books": [],
+            "active_overflow": 0,
+            "recent_completions": [],
+            "throughput_per_minute": 4.0,
+            "started_at": 100,
+            "updated_at": 400,
+            "completed_at": 400,
+            "total": 20,
+            "dismissible": True,
+            "now": {
+                "ready": 20 - failed,
+                "recorded": 0,
+                "not_matched": 0,
+                "failed": failed,
+                "in_progress": 0,
+                "scan_ids": [],
+            },
+        },
+    }
+
+
 # The value shapes an Activity row has to survive: a scalar, a joined list, a
 # series membership with an index, an opaque cover identity, an unbounded
 # description, and a policy setting. Each carries the compact form the row

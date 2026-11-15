@@ -32,8 +32,9 @@ How the pipeline prepares each work, stage by stage:
 
 - [Scope and non-goals](product/scope.md)
 - [Roadmap](product/roadmap.md)
-- [Review experience](product/review-experience.md) and its
-  [taste profile](product/cover-taste-profile.md)
+- [Review experience](product/review-experience.md), its
+  [taste profile](product/cover-taste-profile.md) and
+  [Library progress](product/library-progress.md)
 - [Automation policy](product/automation-policy.md) and
   [qualification records](product/rich-metadata-qualification.md)
 - [Admission-rule ledger](product/admission-rule-ledger.md): every early
@@ -54,6 +55,7 @@ How the pipeline prepares each work, stage by stage:
 - [Application service contracts](architecture/service-port-contracts.md)
 - [SQLite topology](architecture/sqlite-topology.md)
 - [Security and threat model](architecture/security.md)
+- [Parser confinement](architecture/parser-confinement.md)
 - [Data privacy](architecture/data-privacy.md)
 - [AI trust boundary](architecture/ai-boundary.md)
 - [Architecture decisions (ADRs)](architecture/decisions/README.md)
@@ -73,6 +75,7 @@ How the pipeline prepares each work, stage by stage:
   [work-route measurement](operations/work-route-measurement.md),
   [Hardcover series sample](operations/hardcover-series-sample.md),
   [owner labels](operations/owner-labels.md),
+  [description advice qualification](operations/description-advice-qualification.md),
   [rebuild checks](operations/rebuild-checks.md),
   [cover observation smoke](operations/cover-observation-smoke.md),
   [provider evidence replay](development/provider-evidence-replay.md),

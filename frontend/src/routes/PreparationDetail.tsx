@@ -3,11 +3,16 @@
 import { Link } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
 
+import { BuildMismatchError } from '../api/http'
 import { BookMark } from '../components/BookMark'
 import { CountPhrases } from '../components/CountPhrases'
+import { LibraryProgressLine } from '../components/LibraryProgressLine'
 import { RecordedTime } from '../components/RecordedTime'
+import { retryInPlace } from '../focusAfterRetry'
 import { preparationOutcomes } from '../labels'
 import type { PreparationPresentation } from '../libraryPreparation'
+import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
+import { useReviewContext } from '../router'
 
 // The run's works as they stand now, in the masthead's words (#1366). The
 // latched passage is first-finish history and is labelled Prepared instead.
@@ -19,7 +24,7 @@ const runOutcomes = (presentation: PreparationPresentation) => preparationOutcom
 const preparationStateLine = (presentation: PreparationPresentation) => {
   switch (presentation.state) {
     case 'starting':
-      return 'Waiting for the first book to begin'
+      return 'Waiting for the first work to begin'
     case 'running':
       return 'Prepared works can be reviewed while the rest of the run finishes.'
     case 'blocked':
@@ -200,7 +205,7 @@ export const PreparationSummary = ({
     title = 'Preparation stopped'
     rest = ' · Service restart required'
   }
-  return (
+  const button = (
     <button
       type="button"
       className={`preparation-summary state-${presentation.state}${selected ? ' active' : ''}`}
@@ -222,6 +227,65 @@ export const PreparationSummary = ({
         </small>
       </span>
     </button>
+  )
+  // A finished run's box also says where Library stands now, until the owner
+  // dismisses the run (#1335). Its links sit beside the button, never in it.
+  const finished =
+    !recoveryRequired &&
+    (presentation.state === 'completed_clean' || presentation.state === 'completed_with_failures')
+  if (!finished) return button
+  return (
+    <div className="preparation-summary-box">
+      {button}
+      <RunLibraryProgress />
+    </div>
+  )
+}
+
+const RunLibraryProgress = () => {
+  const { http } = useReviewContext()
+  // Under Library's key, so it moves with Library's own counts.
+  const query = useQuery({
+    queryKey: ['library', 'progress'],
+    queryFn: (context) => http.getLibraryProgress(context.signal, queryWorkClass(context)),
+    retry: false,
+  })
+  const line = useRef<HTMLParagraphElement>(null)
+  const retry = useRef<HTMLButtonElement>(null)
+  // An earlier build's tab already offers Reload on the page's own reads.
+  if (query.error instanceof BuildMismatchError) return null
+  return (
+    <p className="preparation-summary-progress" ref={line} tabIndex={-1}>
+      {query.isError ? (
+        <>
+          Library counts could not be loaded.{' '}
+          <button
+            type="button"
+            ref={retry}
+            onClick={() => {
+              retryInPlace(
+                () => line.current,
+                () => query.refetch(),
+                (result) => (result.isSuccess ? line.current : retry.current),
+              )
+            }}
+          >
+            Try again
+          </button>
+        </>
+      ) : (
+        <>
+          <LibraryProgressLine counts={query.data?.totals} linked />{' '}
+          <Link
+            to="/activity"
+            search={{ eventType: 'all', rangeDays: 30, page: 1, pageSize: 25 }}
+            hash="activity-library-progress"
+          >
+            Open in Activity
+          </Link>
+        </>
+      )}
+    </p>
   )
 }
 
@@ -329,8 +393,8 @@ export const PreparationDetail = ({
           ) : (
             <p>
               {recoveryRequired
-                ? 'No book was in progress when preparation stopped.'
-                : 'No book is being prepared right now.'}
+                ? 'No work was in progress when preparation stopped.'
+                : 'No work is being prepared right now.'}
             </p>
           )}
           {presentation.active_overflow ? (

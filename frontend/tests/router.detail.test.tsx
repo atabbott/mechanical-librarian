@@ -124,12 +124,14 @@ describe('Library review ownership', () => {
       })),
     }
     renderRoute('/review/case-1?subview=evidence', http)
-    expect(await screen.findByText('Language: English (en)')).toBeVisible()
-    expect(screen.getByText('Language: Brazilian Portuguese (pt-BR)')).toBeVisible()
-    expect(screen.queryByText('Language: en')).toBeNull()
-    expect(screen.getByText('Language: French (fr). Not offered as a choice.')).toBeVisible()
+    // Under the Language heading each value drops its repeated "Language: " prefix.
+    expect(await screen.findByText('English (en)')).toBeVisible()
+    expect(screen.queryByText('Language: English (en)')).toBeNull()
+    expect(screen.getByText('Brazilian Portuguese (pt-BR)')).toBeVisible()
+    expect(screen.queryByText('en')).toBeNull()
+    expect(screen.getByText('French (fr). Not offered as a choice.')).toBeVisible()
     expect(
-      screen.getByText('Language: UND. Not offered as a choice. The language is not known.'),
+      screen.getByText('UND. Not offered as a choice. The language is not known.'),
     ).toBeVisible()
   })
 
@@ -307,7 +309,11 @@ describe('Library review ownership', () => {
     const { router } = renderRoute(
       '/review/case-1?lens=no_attention_needed&field=title&subview=evidence',
     )
-    await screen.findByRole('heading', { name: 'Evidence' })
+    // The section tabs name the view, so its h2 is read but not shown, and the
+    // old visible sheet header is gone (#1894).
+    const evidenceHeading = await screen.findByRole('heading', { level: 2, name: 'Evidence' })
+    expect(evidenceHeading).toHaveClass('sr-only')
+    expect(document.querySelector('.diagnostic-sheet > header')).toBeNull()
     await user.click(screen.getByRole('link', { name: 'History' }))
     await waitFor(() =>
       expect(router.state.location.search).toEqual({
@@ -316,7 +322,10 @@ describe('Library review ownership', () => {
         subview: 'history',
       }),
     )
-    expect(await screen.findByRole('heading', { name: 'History' })).toBeVisible()
+    const historyHeading = await screen.findByRole('heading', { level: 2, name: 'History' })
+    expect(historyHeading).toBeVisible()
+    expect(historyHeading).toHaveClass('sr-only')
+    expect(document.querySelector('.diagnostic-sheet > header')).toBeNull()
     expect(screen.queryByRole('button', { name: /Choose|Return|Resume/u })).toBeNull()
     expect(screen.queryByRole('radio')).toBeNull()
     router.history.back()
@@ -377,7 +386,9 @@ describe('Library review ownership', () => {
     )
     const user = userEvent.setup()
     renderRoute('/review/case-1?field=title&subview=evidence', { ...createHttp(), getEvidence })
-    expect(await screen.findByText('Title: A Book')).toBeVisible()
+    // Under the Title heading the value drops its repeated "Title: " prefix.
+    expect(await screen.findByText('A Book', { selector: '.evidence-values p' })).toBeVisible()
+    expect(screen.queryByText('Title: A Book')).toBeNull()
     expect(screen.getByText(/2 source answers are no longer available/u)).toBeVisible()
     // Fields with nothing from the sources are left out, not captioned.
     expect(screen.queryByText(/Nothing from the sources/u)).toBeNull()
@@ -389,7 +400,11 @@ describe('Library review ownership', () => {
     expect(document.querySelector('pre')).toBeNull()
     expect(document.body).not.toHaveTextContent('evidence_')
     await user.click(screen.getByRole('button', { name: 'Load more evidence' }))
-    expect(await screen.findByText('Title: <script>Second observation</script>')).toBeVisible()
+    expect(
+      await screen.findByText('<script>Second observation</script>', {
+        selector: '.evidence-values p',
+      }),
+    ).toBeVisible()
     expect(document.querySelector('script')).toBeNull()
     expect(getEvidence).toHaveBeenLastCalledWith(
       'case-1',
@@ -467,11 +482,13 @@ describe('Library review ownership', () => {
       getCaseDetail: vi.fn(async () => current),
       getEvidence: vi.fn(async () => evidence),
     })
-    expect(await screen.findByText(/ISBN: 9781250077004/u)).toBeVisible()
-    expect(screen.getByText(/ISBN: 9780593135204/u)).toBeVisible()
+    expect(await screen.findByText(/^9781250077004/u)).toBeVisible()
+    expect(screen.getByText(/^9780593135204/u)).toBeVisible()
+    expect(screen.queryByText(/ISBN: 9781250077004/u)).toBeNull()
     const observations = evidence.items.filter((item) => item.role === 'external_observation')
     for (const observation of new Set(observations.map((item) => item.observation))) {
-      const rendered = screen.getAllByText(observation)
+      // Each field's heading names it, so each value drops its "ISBN: " or "ASIN: " prefix.
+      const rendered = screen.getAllByText(observation.replace(/^(?:ISBN|ASIN): /u, ''))
       expect(rendered).toHaveLength(
         observations.filter((item) => item.observation === observation).length,
       )

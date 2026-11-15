@@ -1,7 +1,7 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { focusManager } from '@tanstack/react-query'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import {
   AmbiguousMutationError,
@@ -189,7 +189,7 @@ describe('Activity route', () => {
     await user.click(within(asked).getByRole('button', { name: /asked again/u }))
     expect(
       within(asked).getByText(
-        'This choice was made before the book came back for review, so the field asks you again.',
+        'This choice was made before the work came back for review, so the field asks you again.',
       ),
     ).toBeVisible()
     expect(
@@ -2891,6 +2891,76 @@ describe('Activity route', () => {
     },
   )
 
+  it.each([
+    ['hides', 1, 1, false],
+    ['shows', 1, 2, true],
+    ['shows', 2, 1, true],
+  ] as const)('%s the pager on page %i of %i', async (_verb, page, pageCount, shown) => {
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn((search: ActivitySearch) =>
+        Promise.resolve(
+          activity({
+            ledger: {
+              event_type: search.eventType,
+              page,
+              page_count: pageCount,
+              page_size: search.pageSize,
+              query: search.q ?? null,
+              range_days: search.rangeDays,
+              total: pageCount,
+            },
+          }),
+        ),
+      ),
+    }
+    renderRoute(`/activity?page=${String(page)}`, http)
+    await screen.findByRole('heading', { name: 'Activity' })
+    await waitFor(() => expect(http.getActivity).toHaveBeenCalled())
+    // One page needs no page controls; a later page keeps them to go back.
+    expect(await screen.findByText(`of ${String(pageCount)} events`)).toBeVisible()
+    const pager = screen.queryByRole('navigation', { name: 'Activity pages' })
+    if (shown) expect(pager).toBeVisible()
+    else expect(pager).toBeNull()
+  })
+
+  it('hands focus to the page size when a refetch leaves one page and the pager goes', async () => {
+    let pageCount = 2
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn((search: ActivitySearch) =>
+        Promise.resolve(
+          activity({
+            ledger: {
+              event_type: search.eventType,
+              page: 1,
+              page_count: pageCount,
+              page_size: search.pageSize,
+              query: search.q ?? null,
+              range_days: search.rangeDays,
+              total: pageCount,
+            },
+          }),
+        ),
+      ),
+    }
+    const { queryClient } = renderRoute('/activity', http)
+    const pager = await screen.findByRole('navigation', { name: 'Activity pages' })
+    const next = within(pager).getByRole('button', { name: 'Next' })
+    next.focus()
+    expect(next).toHaveFocus()
+
+    pageCount = 1
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ['activity'] })
+    })
+    await waitFor(() =>
+      expect(screen.queryByRole('navigation', { name: 'Activity pages' })).toBeNull(),
+    )
+    // Focus stays beside where it was, never on the document.
+    expect(screen.getByRole('combobox', { name: 'Events per activity page' })).toHaveFocus()
+  })
+
   it('preserves the next query debounce when the prior response is acknowledged', async () => {
     let resolveFirst!: (value: ActivityView) => void
     const view = (search: ActivitySearch) =>
@@ -5235,4 +5305,230 @@ describe('owner language in Activity (#1286)', () => {
       }
     },
   )
+})
+
+// Activity's Library progress card (#1335): after the status box and above the
+// Ledger, with its own states; ActivityPage only places it.
+describe('Library progress on Activity', () => {
+  const card = () => screen.findByRole('region', { name: 'Library progress' })
+
+  it('follows the status box and links its totals to their lenses', async () => {
+    const http = createHttp()
+    http.getLibraryProgress = vi.fn(async () => ({
+      totals: { all: 2026, attention: 174, clear: 1840, notMatched: 9, failed: 3 },
+      libraries: [
+        {
+          connection: 'primary',
+          library: 'fiction',
+          libraryDisplayName: 'Fiction',
+          counts: { all: 26, attention: 6, clear: 20, notMatched: 0, failed: 0 },
+        },
+        {
+          connection: 'primary',
+          library: 'audiobooks',
+          libraryDisplayName: 'audiobooks',
+          counts: { all: 2000, attention: 168, clear: 1820, notMatched: 9, failed: 3 },
+        },
+      ],
+      fields: [{ destination: 'cover' as const, needYou: 120 }],
+    }))
+    renderRoute('/activity', http)
+    await screen.findByRole('heading', { name: 'Activity' })
+    const region = await card()
+    // In the page's document order the card comes right after the status box;
+    // the stylesheet keeps it above the Ledger at every width.
+    expect(region.parentElement).toHaveClass('cm-activity-route')
+    expect(region.previousElementSibling).toHaveClass('cm-activity-status')
+    await waitFor(() =>
+      expect(region).toHaveTextContent(
+        '1,840 of 2,026 works settled · 174 need you · 3 could not finish · 9 not matched',
+      ),
+    )
+    const totals = region.querySelector<HTMLElement>('.library-progress-line')
+    if (!totals) throw new Error('no totals line')
+    expect(
+      within(totals)
+        .getAllByRole('link')
+        .map((link) => link.getAttribute('href')),
+    ).toEqual([
+      '/library?lens=no_attention_needed',
+      '/library?lens=all',
+      '/library?lens=needs_attention',
+      '/library?lens=preparation_failed',
+      '/library?lens=not_matched',
+    ])
+    expect(within(region).getByText('By library')).toBeVisible()
+    expect(within(region).getByText('Fields that need you')).toBeVisible()
+    // Only the totals link; the library and field rows are plain text.
+    expect(within(region).getAllByRole('link')).toHaveLength(5)
+  })
+
+  it('shows placeholders while counting, then a retry line after a failed read', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    let fail: (error: Error) => void = () => undefined
+    http.getLibraryProgress = vi
+      .fn<ReviewHttp['getLibraryProgress']>()
+      .mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            fail = reject
+          }),
+      )
+      .mockResolvedValue({
+        totals: { all: 1, attention: 0, clear: 1, notMatched: 0, failed: 0 },
+        libraries: [],
+        fields: [],
+      })
+    renderRoute('/activity', http)
+    const region = await card()
+    expect(within(region).getByRole('status')).toHaveTextContent('Counting works…')
+    expect(region).toHaveTextContent('… of … works settled · … need you')
+    expect(region).not.toHaveTextContent(/\d/u)
+    await act(async () => fail(new ApiError(503, 'unavailable')))
+    const alert = await within(region).findByRole('alert')
+    expect(alert).toHaveTextContent('Library progress could not be loaded.')
+    await user.click(within(alert).getByRole('button', { name: 'Try again' }))
+    await waitFor(() => expect(region).toHaveTextContent('1 of 1 work settled · 0 need you'))
+  })
+
+  it('is absent while Library has no works', async () => {
+    const http = createHttp()
+    http.getLibraryProgress = vi.fn(async () => ({
+      totals: { all: 0, attention: 0, clear: 0, notMatched: 0, failed: 0 },
+      libraries: [],
+      fields: [],
+    }))
+    renderRoute('/activity', http)
+    await screen.findByRole('heading', { name: 'Activity' })
+    await waitFor(() => expect(http.getLibraryProgress).toHaveBeenCalled())
+    await waitFor(() =>
+      expect(screen.queryByRole('region', { name: 'Library progress' })).toBeNull(),
+    )
+  })
+
+  it('takes focus when Activity opens at its hash, and keeps the route otherwise', async () => {
+    const { router } = renderRoute(
+      '/activity?eventType=all&rangeDays=30&page=1&pageSize=25#activity-library-progress',
+    )
+    const region = await card()
+    await waitFor(() => expect(region).toHaveTextContent('0 of 1 work settled'))
+    await waitFor(() => expect(region).toHaveFocus())
+    // Route-ready focus has run and does not take it back.
+    await new Promise((resolve) => window.setTimeout(resolve, 50))
+    expect(region).toHaveFocus()
+    expect(router.state.location.hash).toBe('activity-library-progress')
+  })
+
+  it('leaves focus to the route when Activity opens without the hash', async () => {
+    renderRoute('/activity')
+    const region = await card()
+    await waitFor(() => expect(region).toHaveTextContent('0 of 1 work settled'))
+    await waitFor(() =>
+      expect(document.querySelector('.cm-activity-route [data-route-focus]')).toHaveFocus(),
+    )
+    expect(region).not.toHaveFocus()
+  })
+})
+
+// On a phone the card keeps the Ledger's first row on the first screen: its
+// lists fold under their sub-headings, closed at first (#1335).
+describe('Library progress on a phone', () => {
+  const compact = (matches: boolean) => {
+    const original = Object.getOwnPropertyDescriptor(window, 'matchMedia')
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      writable: true,
+      value: (query: string) => ({
+        matches: matches && query === '(max-width: 760px)',
+        media: query,
+        onchange: null,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+        addListener: () => undefined,
+        removeListener: () => undefined,
+        dispatchEvent: () => false,
+      }),
+    })
+    onTestFinished(() => {
+      if (original) Object.defineProperty(window, 'matchMedia', original)
+      else Reflect.deleteProperty(window, 'matchMedia')
+    })
+  }
+  const twoLibraries = () => {
+    const http = createHttp()
+    http.getLibraryProgress = vi.fn(async () => ({
+      totals: { all: 2026, attention: 174, clear: 1840, notMatched: 9, failed: 3 },
+      libraries: [
+        {
+          connection: 'primary',
+          library: 'fiction',
+          libraryDisplayName: 'Fiction',
+          counts: { all: 26, attention: 6, clear: 20, notMatched: 0, failed: 0 },
+        },
+        {
+          connection: 'primary',
+          library: 'audiobooks',
+          libraryDisplayName: 'audiobooks',
+          counts: { all: 2000, attention: 168, clear: 1820, notMatched: 9, failed: 3 },
+        },
+      ],
+      fields: [{ destination: 'cover' as const, needYou: 120 }],
+    }))
+    return http
+  }
+
+  it('folds both lists under their sub-headings, closed, and opens one at a time', async () => {
+    compact(true)
+    const user = userEvent.setup()
+    renderRoute('/activity', twoLibraries())
+    const region = await screen.findByRole('region', { name: 'Library progress' })
+    await waitFor(() => expect(region).toHaveTextContent('1,840 of 2,026 works settled'))
+    const folds = Array.from(region.querySelectorAll('details'))
+    expect(folds.map((fold) => fold.querySelector('summary')?.textContent)).toEqual([
+      'By library',
+      'Fields that need you',
+    ])
+    for (const fold of folds) expect(fold).not.toHaveAttribute('open')
+    // No sub-heading besides the summaries, and the totals still link.
+    expect(within(region).queryAllByRole('heading', { level: 3 })).toEqual([])
+    expect(within(region).getAllByRole('link')).toHaveLength(5)
+    const [libraries, fields] = folds
+    if (!libraries || !fields) throw new Error('no folds')
+    const summary = libraries.querySelector('summary')
+    if (!summary) throw new Error('no summary')
+    // Keyboard activation of a summary is the browser's; the artifact test
+    // presses Enter on it in Chromium.
+    await user.click(summary)
+    await waitFor(() => expect(libraries).toHaveAttribute('open'))
+    expect(
+      within(libraries)
+        .getAllByRole('listitem')
+        .map((item) => item.textContent),
+    ).toEqual([
+      'Fiction 20 of 26 works settled · 6 need you',
+      'audiobooks 1,820 of 2,000 works settled · 168 need you · 3 could not finish · 9 not matched',
+    ])
+    expect(fields).not.toHaveAttribute('open')
+  })
+
+  it('shows both lists in full above the phone width', async () => {
+    compact(false)
+    renderRoute('/activity', twoLibraries())
+    const region = await screen.findByRole('region', { name: 'Library progress' })
+    await within(region).findByRole('heading', { name: 'By library' })
+    expect(within(region).getByRole('heading', { name: 'Fields that need you' })).toBeVisible()
+    expect(region.querySelector('details')).toBeNull()
+  })
+
+  it('still takes focus when Activity opens at its hash', async () => {
+    compact(true)
+    renderRoute(
+      '/activity?eventType=all&rangeDays=30&page=1&pageSize=25#activity-library-progress',
+      twoLibraries(),
+    )
+    const region = await screen.findByRole('region', { name: 'Library progress' })
+    await waitFor(() => expect(region).toHaveFocus())
+    expect(region.querySelectorAll('details:not([open])')).toHaveLength(2)
+  })
 })

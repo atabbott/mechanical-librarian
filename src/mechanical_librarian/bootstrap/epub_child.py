@@ -16,6 +16,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import cast
 
+from mechanical_librarian.adapters.child_confinement import confine_interpreter
 from mechanical_librarian.adapters.evidence_extractors import (
     epub_opening as opening_parser,
 )
@@ -630,6 +631,9 @@ def main(argv: list[str] | None = None) -> int:
     limits = EpubOpeningLimits()
     sys.dont_write_bytecode = True
     try:
+        # First, while this is the only thread: Landlock binds the calling
+        # thread and the threads it starts later, never one already running.
+        confine_interpreter()
         _install_parent_guard(control_descriptor, done, expected_parent)
         _apply_limits()
         signal.signal(signal.SIGXCPU, lambda *_arguments: os._exit(71))

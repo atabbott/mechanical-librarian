@@ -123,7 +123,7 @@ address while signed in goes straight to Library. Attention has no page of its
 own: an old `/attention` address opens Library with Attention open.
 
 The masthead holds still while the live-update and preparation status change.
-It stays at the top only while it takes at most a quarter of the window. When
+It stays at the top only while it takes at most a sixth of the window. When
 it is taller, it scrolls away, so it never covers content or focus. The
 masthead marks the current destination, and Library stays marked while a
 review or Attention is open.
@@ -154,7 +154,7 @@ A book that could not finish stops at its last stage. Bars glide to each new
 count unless reduced motion is set. The status line's wipe plays only when the
 run's state changes. Recent completions record each book's first finish, one
 row each: the title, linked into Library, then "Prepared" or "Couldn't
-finish". A rate in works a minute appears only while the run is running.
+finish". A rate in works a minute appears only while running.
 
 The masthead's background-work control shows each library's scan state and
 counts, and marks a library outside the current run. At idle it reads
@@ -202,6 +202,7 @@ or raw source response. Once the catalogue no longer matches, the row reads
 
 Library is the complete work list and the only place you make decisions. It
 opens with its write handoff in place, so the notice never moves the works.
+Finished runs show [Library progress](library-progress.md).
 
 ### Counts and lenses
 
@@ -264,8 +265,8 @@ loaded only when that read fails.
 ## Attention
 
 Attention is the queue of undecided fields inside Library. Each work appears
-once with its field count, and its fields follow. The current work, field and
-position (`Work g of G`) stay beside the canvas. The queue follows the search,
+once with its field count, and its fields follow. The open work shows its
+Needs you and Automatic counts. The queue follows the search,
 reading `Matching: f of a works needing a decision`, and keeps its own place.
 Load more attention moves focus to the first new row.
 
@@ -296,9 +297,9 @@ and their names. The heading counts any field waiting or unavailable
 separately, and each row gives its value and why nothing changed.
 
 The canvas shows the question, one line under it with the field's own reason,
-and current against proposed. The current value's card shows only its value. A
-proposed card shows its value and, when known, the sources it came from, but
-no `Alternative N` label. Each card's Evidence control sits directly under its
+and its choices under Keep current value and Choose a new value: one panel,
+or two boxes on a phone. The current value's card shows only its value. A
+proposed card shows its value and, when known, its sources. Each card's Evidence control sits directly under its
 value. `Recommended` and its reason appear only on the value your settings
 choose, and the canvas says nothing when they choose none. Other source values
 appear only when the field has some or they could not be read. The Writing to
@@ -431,7 +432,7 @@ an outdated comparison shows the current one.
 
 ### Covers view
 
-A control above each heading switches Library between Works and Covers. Covers
+Works and Covers, beside Library's title, switch between its two views. Covers
 groups every work with a case by what its cover asks of you, under four counted
 tabs. To decide lists suggested switches under Switch suggested, then open
 choices under Choose. Kept lists works keeping their current cover while you
