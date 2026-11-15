@@ -737,6 +737,9 @@ def test_a_step_reads_no_authority_composition_binds_later(
     accepts, yet a store stepped to completion without it consults it nowhere,
     stays admitted, and serves the pages of a bound reader without a store.
     """
+    from tests.support.description_advice import qualify_description_advice
+
+    qualify_description_advice(monkeypatch)
     repository, advice, binding, candidate, _ = _prepared(tmp_path)
     advice.admit(candidate.candidate_id, binding, "automatic_policy", "a" * 64, 11)
     (document,) = repository._connection.execute(

@@ -36,8 +36,9 @@ paths or credentials. The reply is one bounded description and `ready` or
 result by reference. Automatic application is off by default; when the owner
 turns it on, only a current `ready` result that passes the description floor,
 on a field that offers the owner a choice, can be admitted, through the normal
-policy and write rules
-([configuration](../reference/configuration.md#description-advice)).
+policy and write rules, and only from an adviser a shipped qualification record
+names ([configuration](../reference/configuration.md#description-advice),
+[ADR-0099](decisions/0099-qualify-automatic-description-advice.md)). No release names one yet.
 
 **Taste profile.** A vision model, Codex or OpenRouter, writes the owner's
 taste profile from up to 50 of their recorded cover choices: up to 100 cover images

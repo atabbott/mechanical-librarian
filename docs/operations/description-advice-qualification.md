@@ -1,9 +1,10 @@
 # Description advice qualification
 
-With **Automatically apply ready description advice** on, the app writes the
-adviser's text without asking and may replace a description you have.
-[ADR-0099](../architecture/decisions/0099-qualify-automatic-description-advice.md)
-uses it only once your decisions show the adviser is right often enough. This
+**Automatically apply ready description advice** writes the adviser's text
+without asking, and may replace a description you have, only once a release
+shows, from your decisions, that the adviser is right often enough
+([ADR-0099](../architecture/decisions/0099-qualify-automatic-description-advice.md)).
+Until then it only suggests. This
 tool lists the descriptions to decide and scores your decisions. It sends
 nothing to a model and writes nothing. Run it from the checkout you built the
 install from.
@@ -77,8 +78,10 @@ uv run python scripts/description_advice_labels.py score --database "$COPY" \
 For each adviser identity, the score shows your right and wrong labels, the
 Wilson 95% lower limit, and whether it meets your bar of 0.90: 35 labels with
 no error, 53 with one, 69 with two. The JSON holds counts, digests, engine and
-model only. Attach `description-advice-score.json` to #1886. Then delete the
-folder, which also holds the copy:
+model only. Attach `description-advice-score.json` to #1886. A release that
+records an identity meeting the bar lets the automatic switch write that
+adviser's text with those cleanup choices. Then delete the folder, which also
+holds the copy:
 
 ```
 rm -r ~/ml-labels

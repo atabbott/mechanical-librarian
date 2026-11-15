@@ -10851,7 +10851,12 @@ def test_provider_recovery_rail_explains_exact_automatic_withholding():
 @pytest.mark.parametrize(
     "state", ("ready", "needs_review", "failed", "automatic", "no_change")
 )
-def test_description_advice_displays_real_persisted_outcomes(state):
+def test_description_advice_displays_real_persisted_outcomes(state, monkeypatch):
+    if state in {"automatic", "no_change"}:
+        from tests.support.description_advice import qualify_description_advice
+
+        # The server runs in this process, so the record holds for its life.
+        qualify_description_advice(monkeypatch, "synthetic-contained-model")
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         root.chmod(0o700)

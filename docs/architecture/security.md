@@ -628,7 +628,9 @@ Replaced bytes are kept, decoded or not, or there is no switch; a 404 is
 written as known-empty. Any other automatic cover write
 needs a known-empty target. It replaces a populated ebook
 description only through
-description advice with `description_automatic_application` on. Evidence
+description advice with `description_automatic_application` on, from an
+adviser a shipped qualification record names; no release names one yet
+([ADR-0099](decisions/0099-qualify-automatic-description-advice.md)). Evidence
 never creates series, contributor, title or recording identity on its own;
 conflicts go to the owner, never to a write. The explicit flag is set only by
 an exact positive. A level admission under Book matching

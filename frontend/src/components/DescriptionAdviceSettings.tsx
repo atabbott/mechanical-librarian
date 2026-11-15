@@ -152,9 +152,11 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
   const saveHeld = mutation.isPending || reload.isPending || !changed || staleLead !== null
   return (
     <div>
+      {/* No release records a qualified adviser yet (ADR-0099 Decision 10); the
+          first record changes this line to name the advisers that write. */}
       <p>
-        When automatic applying is on, ready advice is written with your write permission, unless
-        you chose a description yourself.
+        Ready advice is only suggested until a release shows, from your decisions, that the adviser
+        is right often enough.
       </p>
       {locked ? <p>These preferences are set in the deployment configuration.</p> : null}
       <div className="description-advice-fields">
