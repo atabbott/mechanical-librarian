@@ -1486,8 +1486,8 @@ class ReviewApplication:
             raise KeyError("not_found")
         application = self._continuous_application()
         # Resume releases only a hold the case shows holding a decision, as its
-        # control does: with nothing to hold, an owner decision would remove
-        # the released row and let an older copy of the hold return (ADR-0085).
+        # control does: with nothing to hold, a withdrawal would remove the
+        # released row and let an older copy of the hold return (ADR-0085).
         if not self.serialized(lambda: self._shows_hold(review_case_id, destination)):
             raise GuardedApplicationError("manual_hold")
         application.return_to_automatic(review_case_id, destination)

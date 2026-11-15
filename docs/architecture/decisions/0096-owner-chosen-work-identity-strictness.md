@@ -410,7 +410,7 @@ The bullets below are A's; "Activation B" extends them.
   is refused with `offer_changed` (`unreconciled_case`), which also asks for
   that case's check, and owner work-scope effects wait. A non-cover choice
   whose bound digest no longer matches is refused with `offer_changed`
-  (`digest_mismatch`). Description advice selection is not gated; its effect
+  (`digest_mismatch`). Description advice selection is not level-gated; its effect
   waits. The check has no ordering promise, because every unreconciled case is
   gated. A field that gains level alternatives where live had none counts as
   needing the owner in the works list and Attention.

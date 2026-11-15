@@ -67,6 +67,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _REPORT_BROWSE_FACTS_JOIN_SQL,
     _REVIEW_SEARCH_SQL,
     _TERMINAL_LIBRARY_SEARCH_SQL,
+    _WORK_LATEST_MANUAL_HOLDS_SQL,
     _terminal_library_sql,
 )
 from mechanical_librarian.adapters.persistence.schema import (
@@ -522,15 +523,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
         # admitted again takes that latest state into its own row, so a
         # hold released or returning since never resurrects with it.
         for destination, active, document in self._connection.execute(
-            "SELECT destination,active,document FROM (SELECT hold.destination,"
-            "hold.active,hold.document,row_number() OVER (PARTITION BY "
-            "hold.destination ORDER BY hold.updated_at DESC,hold.rowid DESC) "
-            "position FROM field_effect_manual_holds hold WHERE "
-            "hold.review_case_id IN (SELECT to_review_case_id FROM "
-            "review_case_transitions WHERE connection_name=? AND "
-            "library_name=? AND item_id=? AND to_review_case_id IS NOT NULL)) "
-            "WHERE position=1",
-            lineage,
+            _WORK_LATEST_MANUAL_HOLDS_SQL, lineage
         ).fetchall():
             hold = json.loads(document)
             if hold["review_case_id"] == review_case_id:

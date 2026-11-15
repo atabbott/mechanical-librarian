@@ -850,3 +850,73 @@ def test_a_matching_check_reuses_description_advice_and_makes_no_model_request(
     assert attempts() == before
     assert len(calls) == 1
     repository.close()
+
+
+def test_an_owner_answer_without_an_authored_description_holds_later_advice(
+    tmp_path,
+):
+    """ADR-0085 Amendment 1: an owner's answer on the description holds the
+    field even where the case has no automatic or authored description, so a
+    later reading's automatic advice is recorded but never written until
+    Resume. Before the amendment the answer set no hold, and the later
+    reading's advice was admitted and written over the owner's choice."""
+    from mechanical_librarian.adapters.field_effect_authority import (
+        PersistedFieldEffectAuthority,
+    )
+    from mechanical_librarian.application.description_advice import (
+        DescriptionAdviceService,
+    )
+    from mechanical_librarian.domain.field_effect import FieldEffectError
+    from mechanical_librarian.domain.human_decision import HumanDecision
+    from mechanical_librarian.domain.review_case import ReviewCase
+    from tests.support.description_advice import _prepared
+
+    access = []
+    repository, store, binding, _, _ = _prepared(
+        tmp_path,
+        automatic_policy=("cover_order", "fixed_source_order"),
+        pipeline_probe=lambda *values: access.append(values[3]),
+    )
+    case = ReviewCase.create_from_data(
+        json.loads(repository.get_review_case(binding.review_case_id))["case"]
+    )
+    proposal = next(
+        value for value in case.proposals if value["destination"] == "description"
+    )
+    owner = HumanDecision.create(
+        case,
+        proposal_id=str(proposal["proposal_id"]),
+        target_fingerprint=case.target_fingerprint,
+        destination="description",
+        actor="owner",
+        outcome="keep_current",
+        selected_value=None,
+        idempotency_key="owner-keeps-description",
+        occurred_at=11,
+    )
+    repository.record_human_decision(owner)
+    assert repository._connection.execute(
+        "SELECT count(*) FROM current_description_decisions"
+    ).fetchone() == (0,)
+    assert (
+        repository.field_effect_manual_hold_token(binding.review_case_id, "description")
+        == owner.decision_id
+    )
+    report, fresh = _publish_successor(repository, binding)
+    assert (
+        repository.field_effect_manual_hold_token(fresh.review_case_id, "description")
+        == owner.decision_id
+    )
+    candidate = DescriptionAdviceService(
+        store, access[0], store.current_settings, lambda: 12
+    ).prepare(report, fresh, lambda: store.binding_is_current(fresh))
+    assert candidate is not None
+    decision = store.admit(
+        candidate.candidate_id, fresh, "automatic_policy", "a" * 64, 15
+    )
+    with pytest.raises(FieldEffectError):
+        PersistedFieldEffectAuthority(repository).resolve(decision)
+    assert decision.to_json() not in repository.pending_field_effect_decision_documents(
+        32
+    )
+    repository.close()
