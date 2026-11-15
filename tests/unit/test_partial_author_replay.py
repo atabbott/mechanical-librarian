@@ -42,12 +42,20 @@ _THIRD = "Tamsin Third"
 
 
 def _record(
-    identity: str, authors: tuple[str, ...], *, title: str = retained.TITLE
+    identity: str,
+    authors: tuple[str, ...],
+    *,
+    title: str = retained.TITLE,
+    role: str | None = "author",
 ) -> ProviderCandidate:
-    """A refused WORK answer stating one title and its author creators."""
+    """A refused WORK answer stating one title and its creators.
+
+    `role=None` gives neutral creators bound to no identity, so the record
+    states no classifier-complete claim set.
+    """
     specifications = (
         (ClaimKind.TITLE, title, None),
-        *((ClaimKind.CREATOR, author, "author") for author in authors),
+        *((ClaimKind.CREATOR, author, role) for author in authors),
     )
     return ProviderCandidate(
         identity,
@@ -107,6 +115,11 @@ def _reports() -> dict[str, MetadataReport]:
     return {
         # The file names the first author; the source names both.
         "nested": level_sets._report(_record("nested-1", (_FIRST, _SECOND))),
+        # The same, with neutral unbound creators: the classifier could not
+        # contradict it, so the level admitted it before the amendment too.
+        "nested_before": level_sets._report(
+            _record("nested-2", (_FIRST, _SECOND), role=None)
+        ),
         "overlap": level_sets._report(
             _record("overlap-1", (_FIRST, _THIRD)), authors=(_FIRST, _SECOND)
         ),
@@ -158,13 +171,13 @@ def test_the_replay_counts_each_relation_and_lists_the_nested_admissions(
     ]
     summary = json.loads(stdout)
     assert summary["reports"] == {
-        "read": 5,
-        "replayed": 5,
+        "read": 6,
+        "replayed": 6,
         "not_replayed": {"schema_unsupported": 0, "replay_failed": 0},
     }
     refused = summary["records"]["refused"]
     assert refused["nested"] == {
-        "admitted": 1,
+        "admitted": 2,
         "refused": 0,
         "ambiguous": 0,
         "truncated": 0,
@@ -200,6 +213,11 @@ def test_the_replay_counts_each_relation_and_lists_the_nested_admissions(
         "refused": {"records": 1, "books": 1},
         "books": 1,
     }
+    assert summary["nested_admitted_before"] == {
+        "live": {"records": 0, "books": 0},
+        "refused": {"records": 1, "books": 1},
+        "books": 1,
+    }
     assert summary["detail_written"] is True
     # The summary carries counts only: no title, author or item reaches stdout.
     for value in (_FIRST, _SECOND, _THIRD, retained.TITLE, "item-nested"):
@@ -207,7 +225,13 @@ def test_the_replay_counts_each_relation_and_lists_the_nested_admissions(
 
     document = json.loads(detail.read_text(encoding="utf-8"))
     assert detail.stat().st_mode & 0o777 == 0o600
-    assert document["nested_admitted"] == [
+    rows = {row["record"]["identity"]: row for row in document["nested_admitted"]}
+    assert set(rows) == {"nested-1", "nested-2"}
+    assert (rows["nested-2"]["book"]["item"], rows["nested-2"]["new"]) == (
+        "item-nested_before",
+        False,
+    )
+    assert [rows["nested-1"]] == [
         {
             "book": {
                 "library": "ebooks",
@@ -226,6 +250,7 @@ def test_the_replay_counts_each_relation_and_lists_the_nested_admissions(
             "fewer_authors": "book",
             "verdict": "admitted",
             "creator_comparison": "closed",
+            "new": True,
         }
     ]
     (overlap,) = document["overlap_refused"]
@@ -321,4 +346,16 @@ def test_one_report_gives_one_verdict_per_record() -> None:
         "nested",
         "admitted",
     )
-    assert verdict.already_admitted is False
+    assert (verdict.already_admitted, verdict.new) == (False, True)
+
+
+def test_a_nested_record_the_classifier_could_not_contradict_is_not_new() -> None:
+    """Neutral unbound creators: admitted today and before the amendment."""
+    (verdict,) = replay_script.replay_records(_reports()["nested_before"])
+    assert (verdict.source, verdict.relation, verdict.verdict, verdict.new) == (
+        "refused",
+        "nested",
+        "admitted",
+        False,
+    )
+    assert verdict.detail["new"] is False

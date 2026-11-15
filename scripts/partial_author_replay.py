@@ -22,13 +22,19 @@ It prints one JSON summary to stdout, counts only: reports read, replayed
 and not replayed; records per source (live, refused), author relation (same,
 nested, overlap, disjoint, or no_authors when either side names none) and
 verdict (admitted, refused, ambiguous, truncated); and the records newly
-admitted by the widening, which are the admitted records whose relation is
-nested, with the number of distinct books.
+admitted by the widening, with the number of distinct books. A record is new
+when its relation is nested, the level admits it, and the classifier's
+explicit-contradiction check without partial author lists, the check the
+level composed before the amendment, refuses it. A nested record that check
+does not refuse (for example one whose creators are neither labelled
+authors nor bound to an identity) was admitted before too; it is counted
+under ``nested_admitted_before``.
 
 Names leave the script only with ``--detail PATH``: a new owner-only JSON
-file (an existing path is refused) listing each newly admitted record for a
-by-hand check that it is the same book, and each overlapping record the
-level refuses, so a wrong refusal can be spotted. Keep that file private.
+file (an existing path is refused) listing each admitted nested record,
+marked ``new`` true or false, for a by-hand check that it is the same book,
+and each overlapping record the level refuses, so a wrong refusal can be
+spotted. Keep that file private.
 
 The application database is ``/data/application.sqlite3`` inside the
 container's ``/data`` volume (docs/operations/backups-and-recovery.md). Run
@@ -39,6 +45,8 @@ against a copy, taken while the service is stopped, from a checkout beside
     mkdir -p ~/ml-replay
     docker compose cp mechanical-librarian:/data/application.sqlite3 \\
         ~/ml-replay/application.sqlite3
+    # If an older Compose refuses to copy from a stopped service:
+    # docker cp "$(docker compose ps -aq mechanical-librarian)":/data/application.sqlite3 ~/ml-replay/
     docker compose start mechanical-librarian
     uv run python scripts/partial_author_replay.py \\
         --database ~/ml-replay/application.sqlite3 \\
@@ -67,8 +75,10 @@ from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ProviderCandidate,
     ProviderObservation,
+    WorkIdentityContradiction,
     creator_comparison_key,
     creator_list_relation,
+    provider_candidate_work_identity_contradiction,
 )
 from mechanical_librarian.domain.proposal_set import (
     LevelIdentityInputs,
@@ -109,6 +119,7 @@ class RecordVerdict:
     relation: str
     verdict: str
     already_admitted: bool
+    new: bool
     detail: dict[str, object]
 
 
@@ -124,6 +135,10 @@ class Replay:
         default_factory=lambda: {source: set() for source in SOURCES}
     )
     already_admitted: int = 0
+    nested_before: Counter[str] = field(default_factory=Counter)
+    nested_before_books: dict[str, set[Book]] = field(
+        default_factory=lambda: {source: set() for source in SOURCES}
+    )
     nested_admitted: list[dict[str, object]] = field(default_factory=list)
     overlap_refused: list[dict[str, object]] = field(default_factory=list)
 
@@ -218,6 +233,24 @@ def _detail(
     }
 
 
+def _refused_before(candidate: ProviderCandidate, inputs: LevelIdentityInputs) -> bool:
+    """Whether the level's composition before partial author lists refused it.
+
+    For a nested list the two compositions differ only in the classifier:
+    the overlap refusal never applies to nested lists and every other
+    contradiction is the same, so the old refusal is the classifier's
+    explicit contradiction read without ``partial_authors``.
+    """
+    return (
+        inputs.target_title is not None
+        and bool(inputs.target_authors)
+        and provider_candidate_work_identity_contradiction(
+            candidate, inputs.target_title, inputs.target_authors, fold_initials=True
+        )
+        is WorkIdentityContradiction.EXPLICIT
+    )
+
+
 def replay_records(report: MetadataReport) -> list[RecordVerdict]:
     """Every record's verdict at ``title_and_creator`` in one report."""
     verdicts: list[RecordVerdict] = []
@@ -233,15 +266,24 @@ def replay_records(report: MetadataReport) -> list[RecordVerdict]:
             verdict = "admitted"
             detail["creator_comparison"] = record.creator_comparison
         detail["verdict"] = verdict
+        relation = _relation(inputs)
+        new = (
+            relation == "nested"
+            and verdict == "admitted"
+            and _refused_before(candidate, inputs)
+        )
+        if relation == "nested" and verdict == "admitted":
+            detail["new"] = new
         verdicts.append(
             RecordVerdict(
                 source,
-                _relation(inputs),
+                relation,
                 verdict,
                 source == "live"
                 and provider_candidate_represents_target_work(
                     report, provider, candidate
                 ),
+                new,
                 detail,
             )
         )
@@ -268,9 +310,13 @@ def replay_document(text: str, replay: Replay) -> None:
     for value in verdicts:
         replay.records[(value.source, value.relation, value.verdict)] += 1
         if value.relation == "nested" and value.verdict == "admitted":
-            replay.newly_admitted[value.source] += 1
-            replay.newly_admitted_books[value.source].add(book)
-            replay.already_admitted += value.already_admitted
+            if value.new:
+                replay.newly_admitted[value.source] += 1
+                replay.newly_admitted_books[value.source].add(book)
+                replay.already_admitted += value.already_admitted
+            else:
+                replay.nested_before[value.source] += 1
+                replay.nested_before_books[value.source].add(book)
             replay.nested_admitted.append(value.detail)
         elif value.relation == "overlap" and value.verdict != "admitted":
             replay.overlap_refused.append(value.detail)
@@ -325,6 +371,19 @@ def summary(replay: Replay, *, detail_written: bool) -> dict[str, object]:
                 | replay.newly_admitted_books["refused"]
             ),
         },
+        "nested_admitted_before": {
+            **{
+                source: {
+                    "records": replay.nested_before[source],
+                    "books": len(replay.nested_before_books[source]),
+                }
+                for source in SOURCES
+            },
+            "books": len(
+                replay.nested_before_books["live"]
+                | replay.nested_before_books["refused"]
+            ),
+        },
         "detail_written": detail_written,
     }
 
@@ -371,8 +430,9 @@ def _parser() -> argparse.ArgumentParser:
         "--detail",
         type=Path,
         help=(
-            "also write a private JSON file naming each newly admitted record "
-            "and each overlapping record now refused, for a by-hand check; "
+            "also write a private JSON file naming each admitted record with "
+            "a nested author list, marked new or not, and each overlapping "
+            "record now refused, for a by-hand check; "
             "the file must not exist yet"
         ),
     )
