@@ -279,7 +279,8 @@ brackets are GitHub issues.
   descriptions where the adviser's text could be written automatically, and
   scores your decisions on them per adviser against your bar of a Wilson 95%
   lower limit of 0.90. ADR-0099 proposes using automatic description advice
-  only once an adviser passes (#1886).
+  only once an adviser passes (#1886). It also reads an install whose
+  settings come from `config.json`, given a copy of that file (#1898).
 - **Clean rebuild required.** Nothing is taken from Audiobookshelf's own
   `metadata.json` or `metadata.abs`. A sidecar is set aside if its folder holds
   another audio or ebook file, or it lacks the audiobook's title and an author

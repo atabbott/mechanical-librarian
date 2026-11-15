@@ -15,17 +15,30 @@ install from.
    app asks the adviser once for each work that has a source description.
 2. In Policy → Curation → Description advice, set the cleanup choices you
    would use and leave the automatic switch off. Labels count only for the
-   cleanup choices they were made under.
+   cleanup choices they were made under. If your settings come from
+   `config.json`, set them there instead, with the
+   [description fields](../reference/configuration.md#description-advice) of
+   its `review` section, and restart the service.
 3. Wait until the app shows "Preparation idle".
 
 ## List the descriptions
 
 Copy the database as [owner labels](owner-labels.md#copy-the-database)
-describes, then:
+describes. If your settings come from `config.json`, copy it too:
+
+```
+docker cp "$(docker compose ps -aq mechanical-librarian)":/data/config.json ~/ml-labels/
+CONFIG=~/ml-labels/config.json
+```
+
+Then:
 
 ```
 uv run python scripts/description_advice_labels.py sample --database "$COPY"
 ```
+
+With settings from `config.json`, add `--config "$CONFIG"` to this command and
+to both `score` commands below.
 
 It prints the adviser, then one count per line:
 
@@ -49,8 +62,9 @@ It prints the adviser, then one count per line:
 - The last two lines give your labels for this adviser and the labels the bar
   still needs.
 
-A copy whose settings are not saved in the app, made by another version, with
-no adviser chosen, or with the automatic switch on is refused with the reason.
+A copy made by another version, with no adviser chosen, or with the automatic
+switch on is refused with the reason, as is a copy whose settings are not saved
+in the app when `--config` is missing.
 
 ## Decide each description
 

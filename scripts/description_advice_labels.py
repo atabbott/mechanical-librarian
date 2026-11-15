@@ -18,12 +18,17 @@ The output holds links, counts, digests, engine and model only: never a title,
 description, item identifier, library name or path. A review case identifier
 is an opaque content hash.
 
+An install whose settings come from ``/data/config.json`` saves none in the
+database; pass a copy of that file with ``--config`` so the copy is read with
+the description choices the app binds from it at start.
+
 Usage:
     uv run python scripts/description_advice_labels.py sample \\
-        --database /copy/application.sqlite3 \\
+        --database /copy/application.sqlite3 [--config /copy/config.json] \\
         [--origin http://localhost:8080] [--limit 35]
     uv run python scripts/description_advice_labels.py score \\
-        --database /copy/application.sqlite3 [--format text|json]
+        --database /copy/application.sqlite3 [--config /copy/config.json] \\
+        [--format text|json]
 """
 
 from __future__ import annotations
@@ -56,6 +61,7 @@ from mechanical_librarian.domain.description_advice import (
     DescriptionAdviceBinding,
     DescriptionAdviceCandidate,
     DescriptionAdviceInput,
+    DescriptionAdviceSettings,
     DescriptionPreferences,
     automatic_description_floor_met,
     description_digest,
@@ -73,6 +79,7 @@ from mechanical_librarian.domain.reviewer_access import (
     OpenRouterTaskSelection,
     ReviewerAccessDocument,
 )
+from mechanical_librarian.infrastructure.configuration import load_configuration_file
 
 # Direct execution puts scripts/ on sys.path; the test import resolves the
 # scripts namespace package.
@@ -100,8 +107,16 @@ _DESCRIPTION = (
     "the application database and writes nothing."
 )
 _NO_SETTINGS = (
-    "The copy holds no settings saved in the app. "
-    "Copy an install whose settings are saved there."
+    "The copy holds no settings saved in the app, so the install reads them "
+    "from config.json. Copy that file too and pass it with --config."
+)
+_CONFIG_NOT_NEEDED = (
+    "The copy holds settings saved in the app, which the install uses instead "
+    "of a configuration file. Leave out --config."
+)
+_CONFIG_UNREADABLE = (
+    "The configuration file cannot be read. "
+    "Copy /data/config.json from the install again."
 )
 _NO_ADVISER = (
     "No description adviser is chosen. Choose one in Settings → Reviewer, "
@@ -111,6 +126,12 @@ _AUTOMATIC_ON = (
     "Automatically apply ready description advice is on, so the app decides "
     "these descriptions itself. Turn it off in Policy → Curation, then copy "
     "the database again."
+)
+_AUTOMATIC_ON_IN_FILE = (
+    "Automatically apply ready description advice is on in config.json, so "
+    "the app decides these descriptions itself. Set "
+    "description_automatic_application to false, restart the service, then "
+    "copy the database and the file again."
 )
 _ENGINES = {"codex": "Codex", "openrouter": "OpenRouter"}
 _CLEANUP = (
@@ -694,11 +715,6 @@ def _refuse_sample(copy: _Copy, reader: SQLiteMetadataReportRepository) -> Advis
     """Refuse a copy `sample` cannot list from, in the S8 order, and bind
     the adviser's identity check."""
     connection = copy.connection
-    if (
-        connection.execute("SELECT 1 FROM owner_settings WHERE singleton=1").fetchone()
-        is None
-    ):
-        raise SystemExit(_NO_SETTINGS)
     newest = max(
         copy.candidates.values(),
         key=lambda candidate: (candidate.created_at, candidate.candidate_id),
@@ -717,7 +733,7 @@ def _refuse_sample(copy: _Copy, reader: SQLiteMetadataReportRepository) -> Advis
         raise SystemExit(_NO_ADVISER)
     store = reader.description_advice_store()
     if store.current_settings().automatic_application:
-        raise SystemExit(_AUTOMATIC_ON)
+        raise SystemExit(_AUTOMATIC_ON if _saved(copy) else _AUTOMATIC_ON_IN_FILE)
     adviser = _adviser(copy, access)
 
     def identity(engine: str, model: str | None) -> tuple[str, str] | None:
@@ -880,6 +896,50 @@ def render_sample(sample: Sample, origin: str, limit: int | None) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _saved(copy: _Copy) -> bool:
+    """Whether the copy's settings are saved in the app (store mode)."""
+    return (
+        copy.connection.execute(
+            "SELECT 1 FROM owner_settings WHERE singleton=1"
+        ).fetchone()
+        is not None
+    )
+
+
+def _configured(path: Path) -> DescriptionAdviceSettings:
+    """The description choices the app binds from a configuration file at
+    start; the defaults when it has no review section."""
+    try:
+        review = load_configuration_file(path).review
+    except Exception as error:
+        raise SystemExit(_CONFIG_UNREADABLE) from error
+    if review is None:
+        return DescriptionAdviceSettings()
+    return DescriptionAdviceSettings(
+        remove_marketing=review.description_remove_marketing,
+        remove_sales_boasts=review.description_remove_sales_boasts,
+        remove_praise=review.description_remove_praise,
+        automatic_application=review.description_automatic_application,
+    )
+
+
+def _bind(
+    copy: _Copy,
+    reader: SQLiteMetadataReportRepository,
+    config: Path | None,
+    required: bool,
+) -> None:
+    """Read the copy under the settings its install uses: saved in the app,
+    or bound from the configuration file."""
+    if _saved(copy):
+        if config is not None:
+            raise SystemExit(_CONFIG_NOT_NEEDED)
+    elif config is not None:
+        reader.description_advice_store().bind_settings(_configured(config))
+    elif required:
+        raise SystemExit(_NO_SETTINGS)
+
+
 def _open(database: Path) -> SQLiteShadowPreviewRepository:
     if not database.is_file():
         raise SystemExit(series_sample._MISSING)
@@ -903,6 +963,12 @@ def _parser() -> argparse.ArgumentParser:
             required=True,
             type=Path,
             help="a copy of application.sqlite3",
+        )
+        command.add_argument(
+            "--config",
+            default=None,
+            type=Path,
+            help="a copy of config.json, for an install whose settings come from it",
         )
     sample.add_argument(
         "--origin",
@@ -934,6 +1000,9 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None) -> int:
     reader = _open(arguments.database)
     try:
         copy = _Copy(reader._reader._connection)
+        # Labels need no settings, so score runs without them; the count of
+        # undecided advice then assumes the default choices.
+        _bind(copy, reader._reader, arguments.config, arguments.command == "sample")
         if arguments.command == "sample":
             text = render_sample(
                 read_sample(copy, reader._reader), arguments.origin, arguments.limit
