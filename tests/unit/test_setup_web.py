@@ -310,6 +310,18 @@ class _Sessions:
         self.failures = []
         return ended
 
+    def end_other_review_sessions(
+        self, token: str, csrf: str, now: int
+    ) -> tuple[str, int]:
+        record = self.records.get(token)
+        if record is None or record[1] <= now:
+            return "unauthorized", 0
+        if record[0] != csrf:
+            return "csrf", 0
+        ended = len(self.records) - 1
+        self.records = {token: record}
+        return "ended", ended
+
 
 _CLAIM_TOKEN = "deployment-held-claim-token-0123456789abcdef"
 
@@ -618,6 +630,30 @@ def test_setup_app_does_not_change_the_owner_password() -> None:
     assert state.owner_verifier == verifier
     assert not any(
         isinstance(route, APIRoute) and route.path == "/api/v1/session/password"
+        for route in cast(Any, client.app).routes
+    )
+
+
+def test_setup_app_does_not_sign_out_other_browsers() -> None:
+    client, state, _connection = _client()
+    login = _claim(client)
+    sessions = state.sessions
+    assert sessions is not None
+    before = dict(sessions.records)
+
+    refused = client.post(
+        "/api/v1/session/logout-others",
+        headers={
+            "cookie": _session_cookie(login),
+            "origin": "https://setup.invalid",
+            "x-csrf-token": "x" * 32,
+        },
+    )
+
+    assert refused.status_code == 404
+    assert sessions.records == before
+    assert not any(
+        isinstance(route, APIRoute) and route.path == "/api/v1/session/logout-others"
         for route in cast(Any, client.app).routes
     )
 

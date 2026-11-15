@@ -110,3 +110,53 @@ def test_restart_keeps_the_new_password() -> None:
             replacement.session_token,
             (changer.session_token, other.session_token),
         )
+
+
+def test_signing_out_other_browsers_holds_across_a_cutover_and_a_restart() -> None:
+    with (
+        tempfile.TemporaryDirectory() as temporary,
+        quiet_store_runtime(Path(temporary), 1) as runtime,
+    ):
+        first = runtime.start()
+        assert runtime.activation is not None
+        kept = first.login(_CURRENT, "client:a")
+        ended = (
+            first.login(_CURRENT, "client:b").session_token,
+            first.login(_CURRENT, "client:c").session_token,
+        )
+
+        assert first.logout_others(kept.session_token, kept.csrf_token) == 2
+
+        def only_the_kept_session(application) -> None:
+            assert application.authenticate(kept.session_token, kept.csrf_token) == (
+                "owner"
+            )
+            for token in ended:
+                _refused(
+                    lambda token=token: application.authenticate(token),
+                    "unauthorized",
+                )
+
+        only_the_kept_session(first)
+        document, revision = _next_document(runtime)
+        runtime.activation.activate(
+            document,
+            revision,
+            (),
+            lambda: runtime.control.owner_settings_store().write(
+                document, revision, ()
+            ),
+        )
+        latest = runtime.applications[-1]
+        assert latest is not first
+        only_the_kept_session(latest)
+        runtime.stop()
+
+        restarted = runtime.start()
+
+        assert restarted is not first
+        only_the_kept_session(restarted)
+        restarted.login(_CURRENT, "client:after")
+        _refused(
+            lambda: restarted.login(_REPLACEMENT, "client:after"), "invalid_credentials"
+        )

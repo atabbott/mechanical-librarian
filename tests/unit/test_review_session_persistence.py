@@ -1375,3 +1375,139 @@ def test_ending_other_sessions_rolls_back_on_a_sqlite_fault() -> None:
     assert connection.execute(
         "SELECT count(*) FROM review_login_failures"
     ).fetchone() == (1,)
+
+
+def _session_rows(store: SQLiteReviewSessionRepository) -> list[tuple[Any, ...]]:
+    return store._connection.execute(
+        "SELECT session_digest,csrf_digest,actor,created_at,expires_at,revoked_at "
+        "FROM review_sessions ORDER BY session_digest"
+    ).fetchall()
+
+
+def _attempt_rows(store: SQLiteReviewSessionRepository) -> list[tuple[Any, ...]]:
+    return store._connection.execute(
+        "SELECT failure_id,client_digest,occurred_at FROM review_login_failures "
+        "ORDER BY failure_id"
+    ).fetchall()
+
+
+def _four_sessions() -> SQLiteReviewSessionRepository:
+    """Own live (1), other live (2), other revoked (3), other expired but kept (4)."""
+    store = SQLiteReviewSessionRepository.open_ephemeral()
+    for index in (1, 2, 3):
+        store.create_review_session(
+            _session_digest(index), "c" * 64, 10, 1_000, "a" * 64
+        )
+    store.create_review_session(_session_digest(4), "c" * 64, 10, 40, "a" * 64)
+    assert store.revoke_review_session(_session_digest(3), "c" * 64, 20) == "revoked"
+    return store
+
+
+def test_ending_other_sessions_for_a_session_keeps_it_and_deletes_every_other_row() -> (
+    None
+):
+    store = _four_sessions()
+    (own,) = (row for row in _session_rows(store) if row[0] == _session_digest(1))
+
+    assert store.end_other_review_sessions(_session_digest(1), "c" * 64, 50) == (
+        "ended",
+        3,
+    )
+
+    assert _session_rows(store) == [own]
+    assert own[1] == "c" * 64 and own[4] == 1_000 and own[5] is None
+    assert not store._connection.in_transaction
+
+
+def test_ending_other_sessions_for_a_session_keeps_every_sign_in_attempt() -> None:
+    store = _four_sessions()
+    for client in ("a", "b"):
+        assert store.begin_login(30, client * 64, 300, 5, 100) is True
+        assert store.begin_login(31, client * 64, 300, 5, 100) is True
+    attempts = _attempt_rows(store)
+    assert len(attempts) == 4
+
+    assert store.end_other_review_sessions(_session_digest(1), "c" * 64, 50)[0] == (
+        "ended"
+    )
+
+    assert _attempt_rows(store) == attempts
+
+
+def test_ending_other_sessions_refuses_a_wrong_csrf_digest_and_changes_nothing() -> (
+    None
+):
+    store = _four_sessions()
+    assert store.begin_login(30, "b" * 64, 300, 5, 100) is True
+    sessions, attempts = _session_rows(store), _attempt_rows(store)
+
+    assert store.end_other_review_sessions(_session_digest(1), "d" * 64, 50) == (
+        "csrf",
+        0,
+    )
+
+    assert _session_rows(store) == sessions
+    assert _attempt_rows(store) == attempts
+    assert not store._connection.in_transaction
+
+
+@pytest.mark.parametrize("own", ["revoked", "expired", "absent"])
+def test_ending_other_sessions_refuses_an_ended_own_session(own: str) -> None:
+    store = _four_sessions()
+    digest, now = {
+        "revoked": (_session_digest(3), 30),
+        # Expired means expires_at == now: the session ends at that second.
+        "expired": (_session_digest(4), 40),
+        "absent": (_session_digest(9), 30),
+    }[own]
+    sessions = _session_rows(store)
+
+    assert store.end_other_review_sessions(digest, "c" * 64, now) == (
+        "unauthorized",
+        0,
+    )
+
+    assert _session_rows(store) == sessions
+    assert not store._connection.in_transaction
+
+
+def test_ending_other_sessions_for_a_session_rolls_back_on_a_sqlite_fault() -> None:
+    store = _four_sessions()
+    sessions = _session_rows(store)
+    store._connection.execute(
+        "CREATE TRIGGER refuse_session_delete BEFORE DELETE ON review_sessions "
+        "BEGIN SELECT RAISE(ABORT,'synthetic'); END"
+    )
+
+    with pytest.raises(MetadataReportError, match="review session is unavailable"):
+        store.end_other_review_sessions(_session_digest(1), "c" * 64, 30)
+
+    assert _session_rows(store) == sessions
+    assert not store._connection.in_transaction
+
+
+def test_ending_other_sessions_for_a_session_is_durable_across_reopen(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "review-sessions.sqlite"
+    store = SQLiteReviewSessionRepository.open(path)
+    for index in (1, 2, 3):
+        store.create_review_session(
+            _session_digest(index), "c" * 64, 10, 1_000, "a" * 64
+        )
+    assert store.end_other_review_sessions(_session_digest(1), "c" * 64, 30) == (
+        "ended",
+        2,
+    )
+    store.close()
+
+    reopened = SQLiteReviewSessionRepository.open(path)
+    try:
+        assert [row[0] for row in _session_rows(reopened)] == [_session_digest(1)]
+        assert reopened.authenticate_review_session(_session_digest(1), 30) == (
+            "owner",
+            "c" * 64,
+            1_000,
+        )
+    finally:
+        reopened.close()

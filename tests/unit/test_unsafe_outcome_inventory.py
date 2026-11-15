@@ -237,6 +237,15 @@ INVENTORY: dict[tuple[str, str], Row] = {
         (500, "runtime"): "pre-commit",
         (503, "persistence"): "pre-commit",
     },
+    ("POST", "/api/v1/session/logout-others"): {
+        # `OwnerSessionService.logout_others` refuses inside the one
+        # `end_other_review_sessions` transaction, before anything is deleted;
+        # `unauthorized` is this session ended meanwhile. A fault can follow a
+        # raised COMMIT, as for logout.
+        (403, "csrf"): "pre-commit",
+        (401, "unauthorized"): "pre-commit",
+        (503, "persistence"): "post-commit",
+    },
     ("POST", "/api/v1/operations/support/export"): {
         (503, "support_unavailable"): "no-commit",
     },

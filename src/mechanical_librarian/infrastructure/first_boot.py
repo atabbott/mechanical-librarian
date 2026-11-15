@@ -67,7 +67,7 @@ def _reviewer_setup_entries(data_path: Path) -> bool:
         os.close(descriptor)
 
 
-def _private_token_file(path: Path) -> bool:
+def _private_file(path: Path) -> bool:
     try:
         information = path.lstat()
     except OSError:
@@ -76,6 +76,43 @@ def _private_token_file(path: Path) -> bool:
         stat.S_ISREG(information.st_mode)
         and stat.S_IMODE(information.st_mode) == 0o600
         and information.st_uid == os.geteuid()
+    )
+
+
+# The provider answers an owner may carry across a clean rebuild (ADR-0101).
+# The store is `journal_mode=DELETE`, so only a rollback journal can sit
+# beside it.
+_KEPT_ANSWERS = "provider-responses.sqlite"
+_KEPT_ANSWERS_JOURNAL = _KEPT_ANSWERS + "-journal"
+
+
+def _kept_answers(private: Path, names: set[str]) -> bool:
+    """Whether the kept provider answers among `names` are the owner's files.
+
+    First boot never opens the store. Its own admission at the first
+    preparation refuses a damaged or foreign file without changing it and asks
+    every source live, so a bad kept file cannot stop setup.
+    """
+    kept = names & {_KEPT_ANSWERS, _KEPT_ANSWERS_JOURNAL}
+    return (not kept or _KEPT_ANSWERS in kept) and all(
+        _private_file(private / name) for name in kept
+    )
+
+
+def _only_kept_answers(private: Path) -> bool:
+    """Whether `private/` is the owner's directory holding only kept answers."""
+    try:
+        information = private.lstat()
+        names = {entry.name for entry in private.iterdir()}
+    except OSError:
+        return False
+    return (
+        stat.S_ISDIR(information.st_mode)
+        and stat.S_IMODE(information.st_mode) == 0o700
+        and information.st_uid == os.geteuid()
+        and _KEPT_ANSWERS in names
+        and names <= {_KEPT_ANSWERS, _KEPT_ANSWERS_JOURNAL}
+        and _kept_answers(private, names)
     )
 
 
@@ -105,6 +142,13 @@ def select_first_boot_mode(
             raise FirstBootError("first boot state is unavailable") from error
     if not entries or (entries == {"reviewer"} and reviewer_empty):
         return FirstBootMode.INITIALIZE_SETUP
+    # A clean rebuild may keep the provider answers and nothing else.
+    if (
+        entries in ({"private"}, {"private", "reviewer"})
+        and ("reviewer" not in entries or reviewer_empty)
+        and _only_kept_answers(data_path / "private")
+    ):
+        return FirstBootMode.INITIALIZE_SETUP
     if database_name not in entries:
         raise FirstBootError("first boot state is unavailable")
     try:
@@ -117,8 +161,9 @@ def select_first_boot_mode(
         raise FirstBootError("first boot state is unavailable") from error
     # The private directory holds the dedicated session database (#912), which
     # setup's first sign-in legitimately creates before setup completes; it is
-    # not evidence of a completed runtime. Any other private content is
-    # runtime state and keeps the volume failing closed as before.
+    # not evidence of a completed runtime. Any other private content, apart
+    # from kept provider answers, is runtime state and keeps the volume
+    # failing closed as before.
     setup_entries = set(entries)
     setup_entries.discard("reviewer")
     if "private" in entries:
@@ -134,19 +179,23 @@ def select_first_boot_mode(
         # during setup into a boot that will not resume. Only `-journal` is
         # admitted, because this store is `journal_mode=DELETE` and no WAL is
         # adopted anywhere (ADR-0060).
-        # The setup claim token (ADR-0086) is admitted only as the owner's
-        # regular 0600 file; a link, directory or wider mode is not one.
+        # The setup claim token (ADR-0086) and the provider answers kept
+        # across a clean rebuild (ADR-0101) are admitted only as the owner's
+        # regular 0600 files; a link, directory or wider mode is not one.
         if private_entries <= {
             "review-sessions.sqlite",
             "review-sessions.sqlite-journal",
             SETUP_CLAIM_TOKEN_NAME,
+            _KEPT_ANSWERS,
+            _KEPT_ANSWERS_JOURNAL,
         } and (
             "review-sessions.sqlite-journal" not in private_entries
             or "review-sessions.sqlite" in private_entries
         ):
-            if SETUP_CLAIM_TOKEN_NAME not in private_entries or _private_token_file(
-                data_path / "private" / SETUP_CLAIM_TOKEN_NAME
-            ):
+            if (
+                SETUP_CLAIM_TOKEN_NAME not in private_entries
+                or _private_file(data_path / "private" / SETUP_CLAIM_TOKEN_NAME)
+            ) and _kept_answers(data_path / "private", private_entries):
                 setup_entries.discard("private")
     try:
         if (
