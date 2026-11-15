@@ -65,11 +65,11 @@ type PolicyMutation =
   | { action: 'activate'; body: PolicyActivationRequest }
   | { action: PolicyCommandPath; body?: PolicyCommandBody<PolicyCommandPath> }
 
-// "a, b or c": one comma list, never a chain of "or".
 // What a field with no qualified Automatic operation says on a medium. The
 // activation review reads it as written; a field card says "Not offered." instead.
 const noAutomaticEffect = 'No automatic effect. Needs you.'
 
+// "a, b or c": one comma list, never a chain of "or".
 const plainList = (items: readonly string[], last: 'or' | 'and') =>
   items.length < 2
     ? (items[0] ?? '')

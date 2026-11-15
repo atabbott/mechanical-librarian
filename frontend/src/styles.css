@@ -1419,7 +1419,7 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 .description-value { max-width:68ch; min-width:0; }
 .description-value p, .description-advice-text { margin:0; font:400 1rem/1.65 Inter,ui-sans-serif,system-ui,sans-serif; white-space:pre-wrap; overflow-wrap:anywhere; }
 .description-value button { margin-top:12px; min-height:44px; padding-inline:min(.85rem,3vw); overflow-wrap:normal; }
-.description-choice-content + .choice-select { padding-inline:clamp(12px,3vw,24px); }
+.description-choice-content + .choice-select { padding-right:clamp(12px,3vw,24px); }
 .recorded-field-observations { margin-block:24px; padding-block:16px; border-block:1px solid var(--line); }
 .recorded-field-observations { font-size:.82rem; }
 .recorded-field-observations .evidence-values li { padding-inline:0; background:none; }
@@ -1654,15 +1654,14 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
    proposed values as rows on the other, split by a line. */
 .protected-choice .direct-choice-grid { gap:0; }
 .protected-choice :is(.current-choice-list, .proposed-choice-list) { gap:0; }
-.protected-choice .current-choice-list > .metadata-choice { background:transparent; }
 .protected-choice .metadata-choice, .protected-choice .metadata-choice.is-current { min-height:0; border:0; border-radius:0; }
 .protected-choice .proposed-choice-list > .metadata-choice + .metadata-choice { border-top:1px solid var(--line); }
 /* Side by side, the panel keeps one frame and its two headings sit above it,
    one over each side. */
 @media (min-width:1025px) {
-  .protected-choice .direct-choice-grid { overflow:visible; border:0; border-radius:0; background:transparent; margin-top:14px; }
+  .protected-choice .direct-choice-grid { margin-top:14px; }
   .protected-choice :is(.current-choice-list, .proposed-choice-list) > header { padding:0 2px 8px; }
-  .protected-choice .current-choice-list { grid-template-rows:auto 1fr; border-right:0; background:transparent; }
+  .protected-choice .current-choice-list { grid-template-rows:auto 1fr; }
   .protected-choice .current-choice-list > .metadata-choice { border:1px solid var(--line-strong); border-right-color:var(--line); border-radius:12px 0 0 12px; background:color-mix(in srgb, var(--surface) 70%, var(--surface-strong)); }
   .protected-choice .direct-choice-grid:not(:has(> .proposed-choice-list)) .current-choice-list > .metadata-choice { border-right-color:var(--line-strong); border-radius:12px; }
   .protected-choice .proposed-choice-list > .metadata-choice { border-right:1px solid var(--line-strong); background:var(--surface-strong); }
@@ -1674,9 +1673,8 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 }
 /* Where the two sides stack, they become two boxes, each under its own heading. */
 @media (max-width:1024px) {
-  .protected-choice .direct-choice-grid { row-gap:20px; overflow:visible; border:0; border-radius:0; background:transparent; }
+  .protected-choice .direct-choice-grid { row-gap:20px; }
   .protected-choice :is(.current-choice-list, .proposed-choice-list) > header { padding:0 2px 8px; }
-  .protected-choice .current-choice-list { border:0; background:transparent; }
   .protected-choice :is(.current-choice-list, .proposed-choice-list) > .metadata-choice { border-inline:1px solid var(--line-strong); }
   .protected-choice :is(.current-choice-list, .proposed-choice-list) > header + .metadata-choice { border-top:1px solid var(--line-strong); border-radius:12px 12px 0 0; }
   .protected-choice :is(.current-choice-list, .proposed-choice-list) > .metadata-choice:last-child { border-bottom:1px solid var(--line-strong); border-bottom-left-radius:12px; border-bottom-right-radius:12px; }
