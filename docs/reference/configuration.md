@@ -622,6 +622,13 @@ below it. A field that offers no choice, such as one whose sources all repeat
 the current description, keeps its current value and shows the result for
 reference only.
 
+Automatic admission also needs a shipped qualification record that names the
+result's adviser: its engine, model, instruction and output schema digests and
+cleanup choices ([ADR-0099](../architecture/decisions/0099-qualify-automatic-description-advice.md)).
+No release has such a record yet, so with the setting on each result is only
+suggested, as with it off, and an automatic decision stored before this check
+is not written.
+
 - An owner's final choice wins, and in-flight effects are not raced.
 - Identical text records no change and sends no PATCH or Attention item.
 - Free replacement text is not accepted. Keep current reverses a choice.

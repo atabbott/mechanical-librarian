@@ -56,7 +56,11 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
-from tests.support.description_advice import _description_candidate, _prepared
+from tests.support.description_advice import (
+    _description_candidate,
+    _prepared,
+    qualify_description_advice,
+)
 from tests.support.proposal_evidence import (
     _report,
     _target_work_candidate,
@@ -1112,7 +1116,10 @@ def test_undecided_counts_current_eligible_advice(tmp_path: Path) -> None:
     }
 
 
-def test_automatic_decisions_are_not_labels(tmp_path: Path) -> None:
+def test_automatic_decisions_are_not_labels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    qualify_description_advice(monkeypatch)
     from mechanical_librarian.application.description_advice import (
         admit_staged_description,
     )

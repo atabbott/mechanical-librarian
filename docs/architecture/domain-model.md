@@ -217,8 +217,10 @@ one exact consideration
 A description advice attempt sends deduplicated provider descriptions to the
 selected reviewer and stores one authored candidate. An
 `AuthoredDescriptionDecision` (human or automatic) accepts a stored candidate
-by reference for guarded application. The model chooses nothing; see
-[AI trust boundary](ai-boundary.md).
+by reference for guarded application. An automatic one also needs a shipped
+qualification record naming the candidate's adviser
+([ADR-0099](decisions/0099-qualify-automatic-description-advice.md)). The
+model chooses nothing; see [AI trust boundary](ai-boundary.md).
 
 ## Guarded field effects
 

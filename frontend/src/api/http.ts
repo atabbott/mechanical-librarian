@@ -68,6 +68,7 @@ type DecisionAcknowledgementDto =
   | ResponseSchema<'_DescriptionSelectionAcknowledgement'>
 export type SettingsView = ResponseSchema<'SettingsView'>
 export type SettingsWrite = Schema<'_SettingsWriteRequest'>
+export type PasswordChange = Schema<'_PasswordChangeRequest'>
 export type AppearanceView = ResponseSchema<'_AppearanceResponse'>
 // The closed OpenRouter failures an owner may see, each with its own remedy.
 const reviewerFailureCodes = [
@@ -1392,6 +1393,7 @@ export interface ReviewHttp {
     signal?: AbortSignal,
   ): Promise<ActivityView | undefined>
   logout(signal?: AbortSignal): Promise<void>
+  changePassword(value: PasswordChange, signal?: AbortSignal): Promise<void>
 }
 
 export interface CsrfTokenStore {
@@ -1556,6 +1558,15 @@ export class ReviewApiClient implements ReviewHttp {
   private signingOut = false
   private signedOut = false
   private expiryWhileSigningOut = false
+  // Set while a password change is in flight: the change ends every other
+  // session, so a parallel request may answer 401 although this browser stays
+  // signed in on its new session. Unlike the sign-out mark it always clears:
+  // success discards a held expiry, and any failure replays it.
+  private changingPassword = false
+  private expiryWhileChangingPassword = false
+  // Moves when a password change gives this browser its new session. A 401
+  // for a request that left before then answers the replaced session.
+  private sessionGeneration = 0
   constructor(private readonly options: HttpClientOptions) {
     this.fetch = options.fetch ?? globalThis.fetch.bind(globalThis)
     this.onSessionExpired =
@@ -2161,6 +2172,28 @@ export class ReviewApiClient implements ReviewHttp {
     }
   }
 
+  // Never sent again after a CSRF challenge: the owner presses again. The new
+  // session's token is not in the answer, so the page token is renewed after
+  // the change; a failed renewal is left to the next unsafe request.
+  async changePassword(value: PasswordChange, signal?: AbortSignal) {
+    this.changingPassword = true
+    try {
+      await this.mutate('/api/v1/session/password', value, signal)
+    } catch (error) {
+      const held = this.expiryWhileChangingPassword
+      this.changingPassword = this.expiryWhileChangingPassword = false
+      if (held) this.reportSessionExpiry()
+      throw error
+    }
+    this.changingPassword = this.expiryWhileChangingPassword = false
+    this.sessionGeneration += 1
+    try {
+      await this.options.csrf.renew(signal)
+    } catch {
+      // The next unsafe request renews the token itself.
+    }
+  }
+
   private async read<P extends RoutablePath<'GET'>>(
     path: P,
     signal?: AbortSignal,
@@ -2255,6 +2288,7 @@ export class ReviewApiClient implements ReviewHttp {
         this.fetch(path, { ...init, headers, credentials: 'same-origin', cache: 'no-store' }),
       )
     }
+    const session = this.sessionGeneration
     let response = await send(unsafe ? this.options.csrf.current() : undefined)
     if (unsafe && response.status === 403 && (await challengeCode(response)) === 'csrf') {
       let token: string
@@ -2275,7 +2309,7 @@ export class ReviewApiClient implements ReviewHttp {
       throw new BuildMismatchError()
     }
     if (response.status === 401) {
-      this.reportSessionExpiry()
+      this.reportSessionExpiry(session)
       throw new SessionExpiredError()
     }
     if (!response.ok) {
@@ -2343,9 +2377,14 @@ export class ReviewApiClient implements ReviewHttp {
     }
   }
 
-  private reportSessionExpiry() {
+  private reportSessionExpiry(session = this.sessionGeneration) {
+    if (session !== this.sessionGeneration) return
     if (this.signingOut) {
       this.expiryWhileSigningOut = true
+      return
+    }
+    if (this.changingPassword) {
+      this.expiryWhileChangingPassword = true
       return
     }
     if (this.sessionExpiryReported) return

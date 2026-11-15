@@ -23,6 +23,11 @@ from typing import Any, Callable, TypeVar
 
 import httpx
 
+from mechanical_librarian.adapters.providers.response_reuse import (
+    ProviderResponseReuse,
+    epoch_microseconds,
+    stored_access_time,
+)
 from mechanical_librarian.adapters.providers.retry_safety import (
     ProviderFailure,
     ProviderRequestPacer,
@@ -142,6 +147,7 @@ class BoundedProviderSession:
         accept_content_types: tuple[str, ...] = ("application/json",),
         name_response_failures: bool = False,
         refuse_empty_success: bool = False,
+        responses: ProviderResponseReuse | None = None,
     ) -> None:
         if (
             type(accept_content_types) is not tuple
@@ -169,6 +175,11 @@ class BoundedProviderSession:
         # Whether an empty success body is an unavailable response, refused
         # before its encoding or media type is judged.
         self._refuse_empty_success = refuse_empty_success
+        # The held answers this observation may reuse instead of asking, and
+        # the wall time of its first live dispatch, which dates every answer
+        # it keeps (#1064).
+        self._responses = responses
+        self._live_at_us = -1
         self.attempt_count = 0
         self.retry_count = 0
         self.remaining_response_bytes = bounds.aggregate_response_bytes
@@ -258,6 +269,11 @@ class BoundedProviderSession:
             type(maximum_bytes) is not int or maximum_bytes < 1
         ):
             raise ValueError("provider bounds are invalid")
+        digest = (
+            ""
+            if self._responses is None
+            else self._responses.digest(method, url, params, content)
+        )
         for retry_index in range(self._bounds.attempts_per_request):
             started = self._clocks.clock()
             attempts_before_dispatch = self.attempt_count
@@ -268,6 +284,7 @@ class BoundedProviderSession:
                     params=params,
                     content=content,
                     headers=headers,
+                    digest=digest,
                     deadline=deadline,
                     is_retry=query_retry or retry_index > 0,
                     classify=classify,
@@ -287,6 +304,11 @@ class BoundedProviderSession:
             except ProviderFailure as error:
                 if self.attempt_count == attempts_before_dispatch:
                     raise
+                # This dispatch is part of what the observation reports. An
+                # answer kept for the same request would be served in its
+                # place next time, so none is kept.
+                if self._responses is not None:
+                    self._responses.failed(digest)
                 retries = self._bounds.retries_per_observation
                 can_retry = (
                     error.retryable
@@ -360,6 +382,7 @@ class BoundedProviderSession:
         params: dict[str, str] | httpx.QueryParams | None,
         content: bytes | None,
         headers: dict[str, str],
+        digest: str,
         deadline: float | None,
         is_retry: bool,
         classify: ProviderResponseClassifier,
@@ -374,6 +397,18 @@ class BoundedProviderSession:
         retries = self._bounds.retries_per_observation
         if is_retry and retries is not None and self.retry_count >= retries:
             raise ProviderFailure(ProviderStatus.UNAVAILABLE)
+        if self._responses is not None:
+            held = self._responses.lookup(digest)
+            if held is not None:
+                return self._reuse_once(
+                    held,
+                    digest,
+                    deadline=deadline,
+                    is_retry=is_retry,
+                    maximum_bytes=maximum_bytes,
+                    oversize_keeps_budget=oversize_keeps_budget,
+                    read=read,
+                )
         if self._pacer is not None and not self._pacer.wait(deadline):
             raise self._incomplete(ProviderIncompleteCause.DEADLINE)
         remaining = self._bounds.timeout_seconds
@@ -384,8 +419,19 @@ class BoundedProviderSession:
         try:
             if deadline is not None and self._clocks.clock() >= deadline:
                 raise self._incomplete(ProviderIncompleteCause.DEADLINE)
-            if self._accessed_at is None:
-                self._accessed_at = provider_access_time(self._clocks.wall_clock())
+            # A session without a store reads the wall time once, as before.
+            # One with a store reads it at its first live dispatch even after
+            # a held answer has been served, to date the answers it may keep.
+            # The access time is set once: every lane of the observation
+            # states it, and they must agree.
+            if self._accessed_at is None or (
+                self._responses is not None and self._live_at_us < 0
+            ):
+                wall = self._clocks.wall_clock()
+                if self._accessed_at is None:
+                    self._accessed_at = provider_access_time(wall)
+                if self._responses is not None:
+                    self._live_at_us = epoch_microseconds(wall)
             self._ledger.dispatch(retry=is_retry)
             self.attempt_count += 1
             if is_retry:
@@ -462,7 +508,58 @@ class BoundedProviderSession:
             raise ProviderFailure(ProviderStatus.UNAVAILABLE) from None
         except (OSError, ValueError):
             raise ProviderFailure(ProviderStatus.UNAVAILABLE) from None
-        return read(payload)
+        value = read(payload)
+        if self._responses is not None:
+            self._responses.hold(self.attempt_count, digest, payload, self._live_at_us)
+        return value
+
+    def _reuse_once(
+        self,
+        held: tuple[bytes, int],
+        digest: str,
+        *,
+        deadline: float | None,
+        is_retry: bool,
+        maximum_bytes: int | None,
+        oversize_keeps_budget: bool,
+        read: Callable[[bytes], _Read],
+    ) -> _Read:
+        """Serve one held answer as the live dispatch it replaces.
+
+        Everything a received answer costs is charged -- the dispatch and
+        retry counts, the ledger and the byte budget -- and the current bounds
+        are applied again, so the observation reads exactly as it did live.
+        Only the pacer wait and the network are skipped.
+        """
+        payload, fetched_at_us = held
+        if deadline is not None and self._clocks.clock() >= deadline:
+            raise self._incomplete(ProviderIncompleteCause.DEADLINE)
+        if self._accessed_at is None:
+            self._accessed_at = stored_access_time(fetched_at_us)
+        self._ledger.dispatch(retry=is_retry)
+        self.attempt_count += 1
+        if is_retry:
+            self.retry_count += 1
+        # A body over its bound is refused as a declared length is, before any
+        # of it is charged.
+        if len(payload) > min(
+            maximum_bytes or self._bounds.maximum_bytes, self.remaining_response_bytes
+        ):
+            if not oversize_keeps_budget:
+                self.remaining_response_bytes = 0
+            raise ProviderFailure(
+                ProviderStatus.OVERSIZED, category="response_oversized"
+            )
+        self._consume_response_bytes(len(payload))
+        assert self._responses is not None
+        self._responses.served(self.attempt_count, digest)
+        try:
+            return read(payload)
+        except Exception:
+            # A held body today's reader refuses is removed, so it is asked
+            # for live next time instead of failing the same way for ever.
+            self._responses.drop(self.attempt_count)
+            raise
 
     def _failure(
         self,
@@ -525,6 +622,22 @@ class BoundedProviderSession:
             elapsed_seconds=prior.elapsed_seconds,
             outcome="terminal",
         )
+        # A refused answer is never kept, even when its lane still ends clean,
+        # and a reused one that is refused is removed from the store.
+        if self._responses is not None:
+            self._responses.drop(prior.ordinal)
+
+    def refuse_answers_after(self, attempts: int) -> None:
+        """Keep none of the answers dispatched after attempt `attempts`.
+
+        For an adapter that reads each answer clean and then refuses them
+        together, as when two pages of one list disagree. No one attempt is at
+        fault, so the attempt records stay as they are. The answers are not
+        kept, and reused ones are removed, so the next observation asks again.
+        """
+        if self._responses is not None:
+            for ordinal in range(attempts + 1, self.attempt_count + 1):
+                self._responses.drop(ordinal)
 
     def _consume_response_bytes(self, amount: int) -> None:
         self.remaining_response_bytes -= amount

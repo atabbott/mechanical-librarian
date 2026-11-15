@@ -26,6 +26,7 @@ from mechanical_librarian.domain.description_advice import (
     DescriptionAdviceInput,
     DescriptionAdviceSettings,
     automatic_description_floor_met,
+    description_advice_qualified,
     description_digest,
     description_document,
     description_qualification_manifest,
@@ -312,6 +313,9 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                 ).fetchone()
                 if (
                     not self.current_settings().automatic_application
+                    # Until a shipped record names its adviser, automatic
+                    # advice only suggests (ADR-0099 Decision 10).
+                    or not description_advice_qualified(candidate)
                     or candidate.output.disposition != "ready"
                     or not automatic_description_floor_met(candidate.output.description)
                     or human is not None
@@ -450,6 +454,9 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
             ).fetchone()
             if (
                 not self.current_settings().automatic_application
+                # A stored automatic decision writes only while a shipped
+                # record names its adviser (ADR-0099 Decision 10).
+                or not description_advice_qualified(candidate)
                 or candidate.output.disposition != "ready"
                 or not automatic_description_floor_met(candidate.output.description)
                 or owner_final is not None

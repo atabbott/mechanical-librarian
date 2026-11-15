@@ -493,6 +493,7 @@ export const createHttp = (): ReviewHttp => ({
   getActivityTransitions: vi.fn(async () => ({ events: [], has_more: false })),
   activityCommand: vi.fn(async () => undefined),
   logout: vi.fn(async () => undefined),
+  changePassword: vi.fn(async () => undefined),
 })
 
 /**
