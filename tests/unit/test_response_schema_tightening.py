@@ -133,7 +133,7 @@ KEYWORDS: tuple[tuple[str, str, str, str, object], ...] = (
         ("S06", "_ActivityPrepared", f"/properties/{name}", "minimum", 0)
         for name in ("automatic", "human", "total")
     ),
-    ("S07", "_ActivityExample", "/properties/destination", "enum", TARGETS),
+    ("S07", "_WritePlanGroup", "/properties/destination", "enum", TARGETS),
     ("S08", "_ActivityWaiting", "/properties/destination", "enum", TARGETS),
     (
         "S09",
@@ -597,7 +597,7 @@ REFUSALS: tuple[tuple[type[BaseModel], str, object, str], ...] = (
     (app._ActivityCapability, "state", "partial", "literal_error"),
     (app._ActivitySuspension, "reason", "recovery", "literal_error"),
     (app._ActivityPrepared, "total", -1, "greater_than_equal"),
-    (app._ActivityExample, "destination", "publication_date", "literal_error"),
+    (app._WritePlanGroup, "destination", "publication_date", "literal_error"),
     (app._ActivityWaiting, "destination", "x", "literal_error"),
     (app._ActivityEvent, "event_type", "all", "literal_error"),
     (app._ActivityResponse, "counts", {"verified": -1}, "greater_than_equal"),

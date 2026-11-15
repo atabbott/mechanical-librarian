@@ -1215,20 +1215,96 @@ def test_activity_page_cache_declines_valid_reports_over_its_byte_budget(
     assert projection._activity_page_cache_bytes == first_bytes
 
 
-def test_activity_example_selector_returns_one_current_published_candidate(
+def test_plan_entries_list_the_current_published_candidate(
     effects: _EffectEnvironment,
 ) -> None:
     from tests.unit.test_activity_end_to_end import _automatic_candidate_decision
 
-    _automatic_candidate_decision(effects)
+    decision = _automatic_candidate_decision(effects)
 
-    document = effects.repository.pending_field_effect_activity_example_document()
-
-    assert document is not None
-    selected = AutomaticDecision.from_json(document)
+    entries = effects.repository.pending_field_effect_plan_entries(None, 100, ())
+    listed = [entry for entry in entries if entry[4] == decision.decision_id]
+    assert len(listed) == 1
+    assert listed[0][2:4] == ("automatic", "description")
+    documents = effects.repository.field_effect_plan_documents((decision.decision_id,))
+    selected = AutomaticDecision.from_json(documents[decision.decision_id])
     snapshot = PersistedFieldEffectAuthority(effects.repository).resolve(selected)
     assert snapshot.review_case_id == selected.review_case_id
     assert snapshot.destination == selected.destination
+    assert effects.repository.field_effect_plan_row(selected) == {
+        "work": "Real Tigers",
+        "authors": "Mick Herron",
+        "sources": ["Hardcover"],
+    }
+
+
+def _owner_accepted(effects: _EffectEnvironment) -> None:
+    from tests.unit.test_activity_end_to_end import _admitted_case
+
+    case, proposal = _admitted_case(effects)
+    effects.repository.record_human_decision(
+        HumanDecision.create(
+            case,
+            proposal_id=proposal["proposal_id"],
+            target_fingerprint=case.target_fingerprint,
+            destination=proposal["destination"],
+            actor="owner",
+            outcome="accept",
+            selected_value=proposal["result"]["alternatives"][0]["value"],
+            idempotency_key="activity-plan-reuse-0001",
+            occurred_at=1_000,
+        )
+    )
+
+
+def _automatic_prepared(effects: _EffectEnvironment) -> None:
+    from tests.unit.test_activity_end_to_end import _automatic_candidate_decision
+
+    _automatic_candidate_decision(effects)
+
+
+@pytest.mark.parametrize(
+    ("prepare", "origin"),
+    ((_owner_accepted, "human"), (_automatic_prepared, "automatic")),
+    ids=("owner", "automatic"),
+)
+def test_read_scoped_reuse_resolves_exactly_what_a_fresh_read_resolves(
+    effects: _EffectEnvironment,
+    prepare: Callable[[_EffectEnvironment], None],
+    origin: str,
+) -> None:
+    """Reuse inside one plan read changes nothing a resolve returns (#1336)."""
+    prepare(effects)
+    entries = effects.repository.pending_field_effect_plan_entries(None, 100, ())
+    assert {entry[2] for entry in entries} == {origin}
+    documents = effects.repository.field_effect_plan_documents(
+        tuple(entry[4] for entry in entries)
+    )
+    authority = PersistedFieldEffectAuthority(effects.repository)
+
+    def resolved() -> list[tuple[object, object]]:
+        values: list[tuple[object, object]] = []
+        for entry in entries:
+            source = ContinuousGuardedApplication._decision(documents[entry[4]])
+            values.append(
+                (
+                    authority.resolve(source),
+                    effects.repository.field_effect_plan_row(source),
+                )
+            )
+        return values
+
+    activity = effects.repository._field_effect_activity
+    fresh = resolved()
+    with activity._plan_documents():
+        assert activity._plan_reuse is not None
+        reused = resolved()
+        again = resolved()
+        # Every document parsed in the read is held, within its bound.
+        assert activity._plan_reuse.case.cache_info().currsize >= 1
+    assert activity._plan_reuse is None
+    assert fresh == reused == again
+    assert resolved() == fresh
 
 
 def test_activity_backup_readiness_rechecks_each_exact_database_revision(

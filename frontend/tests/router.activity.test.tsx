@@ -3707,6 +3707,62 @@ it('holds the ticks behind a connection condition and frees them on recovery', a
   expect(screen.getByRole('button', { name: 'Confirm write permissions' })).toBeEnabled()
 })
 
+it('keeps the ticks when a re-check finds a different write plan (#1336)', async () => {
+  const { http, user } = await renderDraft()
+  const review = screen.getByRole('region', { name: 'Write permissions' })
+  expect(
+    within(review).getByText(
+      '1 change is prepared so far. Permission also covers changes prepared after you allow writes.',
+    ),
+  ).toBeVisible()
+  vi.mocked(http.getActivityPermissionReadiness).mockResolvedValue({
+    ...permissionReadiness(permissionHistory),
+    plan: {
+      total: 3,
+      groups: [{ library: 'fiction', destination: 'title', kind: 'automatic', count: 3, rows: [] }],
+    },
+  })
+
+  await user.click(screen.getByRole('button', { name: 'Check again' }))
+
+  expect(
+    await within(review).findByText(
+      '3 changes are prepared so far. Permission also covers changes prepared after you allow writes.',
+    ),
+  ).toBeVisible()
+  expect(screen.getByRole('checkbox')).toBeChecked()
+  expect(screen.getByRole('button', { name: 'Confirm write permissions' })).toBeEnabled()
+})
+
+it('saves the write plan file from the permission review without granting anything (#1336)', async () => {
+  const { http, user } = await renderDraft()
+  const saved: string[] = []
+  const created = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:plan')
+  const revoked = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
+  const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
+    this: HTMLAnchorElement,
+  ) {
+    saved.push(this.download)
+  })
+  try {
+    await user.click(screen.getByRole('button', { name: 'Download CSV' }))
+
+    await waitFor(() => expect(saved).toEqual(['mechanical-librarian-write-plan.csv']))
+    expect(http.downloadActivityWritePlan).toHaveBeenCalledWith(
+      'csv',
+      expect.any(AbortSignal),
+      expect.any(Function),
+    )
+    expect(revoked).toHaveBeenCalledWith('blob:plan')
+    expect(http.activityCommand).not.toHaveBeenCalled()
+    expect(screen.getByRole('checkbox')).toBeChecked()
+  } finally {
+    created.mockRestore()
+    revoked.mockRestore()
+    click.mockRestore()
+  }
+})
+
 const basisChanged = 'Your library settings changed. Check write permissions again.'
 const grantedHistory: ActivityView = {
   ...permissionHistory,
@@ -3740,7 +3796,9 @@ it.each(['consent', 'policy'] as const)(
     // A new check starts a new draft; the discarded ticks are not carried over.
     await user.click(check)
     expect(await screen.findByRole('checkbox')).not.toBeChecked()
-    expect(within(review).getByRole('status')).not.toHaveTextContent(basisChanged)
+    // The check's line and the write plan's download line (#1336).
+    for (const line of within(review).getAllByRole('status'))
+      expect(line).not.toHaveTextContent(basisChanged)
   },
 )
 

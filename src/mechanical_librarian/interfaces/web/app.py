@@ -244,6 +244,27 @@ _Result = TypeVar("_Result")
 _SessionDependency: TypeAlias = Callable[[Request, str | None], str]
 
 
+class _ReleasingStreamingResponse(StreamingResponse):
+    """Release a streamed body's producer however the response ends (#1336)."""
+
+    def __init__(
+        self,
+        content: AsyncIterator[bytes],
+        release: Callable[[], None],
+        *,
+        media_type: str,
+        headers: dict[str, str],
+    ) -> None:
+        super().__init__(content, media_type=media_type, headers=headers)
+        self._release = release
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            await run_in_threadpool(self._release)
+
+
 class _LiveUpdateStreamingResponse(StreamingResponse):
     """Release a reserved reader even when the response never reaches its body."""
 
@@ -1922,12 +1943,28 @@ class _ActivitySuspension(_ClosedModel):
     updated_at: _Count
 
 
-class _ActivityExample(_ClosedModel):
-    after: object
-    before: object
+class _WritePlanRow(_ClosedModel):
+    """One prepared change in words: no work, item or decision identity (#1336)."""
+
+    work: str = Field(max_length=512)
+    authors: str = Field(max_length=512)
+    current: str = Field(max_length=512)
+    new: str = Field(max_length=512)
+    reason: str = Field(max_length=512)
+    sources: list[Annotated[str, Field(max_length=128)]] = Field(max_length=16)
+
+
+class _WritePlanGroup(_ClosedModel):
+    library: str = Field(max_length=512)
     destination: _TargetDestination
-    library: str
-    work_id: str
+    kind: Literal["human", "automatic"]
+    count: _Count
+    rows: list[_WritePlanRow] = Field(max_length=25)
+
+
+class _WritePlan(_ClosedModel):
+    total: _Count
+    groups: list[_WritePlanGroup] = Field(max_length=1024)
 
 
 class _ActivityLedger(_ClosedModel):
@@ -2004,7 +2041,7 @@ class _ActivityPermissionReadiness(_ClosedModel):
     capabilities: list[_ActivityCapability]
     configured_libraries: list[_ActivityLibrary]
     prepared: _ActivityPrepared
-    example: _ActivityExample | None
+    plan: _WritePlan
 
 
 class _ActivityConsentState(_ClosedModel):
@@ -3116,6 +3153,7 @@ def create_review_app(
     _register_settings_routes(app, application, authenticated_session_cookie)
     _register_reviewer_access_routes(app, application, authenticated_session_cookie)
     _register_policy_routes(app, application, authenticated_session_cookie)
+    _register_write_plan_route(app, application, authenticated_session_cookie)
     _register_case_and_effect_routes(
         app, application, session_cookie, authenticated_session_cookie
     )
@@ -3752,6 +3790,73 @@ def _register_session_and_operations_routes(
         )
         response.status_code = 204
         return response
+
+
+def _register_write_plan_route(
+    app: FastAPI,
+    application: ReviewApplication,
+    authenticated_session_cookie: _SessionDependency,
+) -> None:
+    @app.get(
+        "/api/v1/activity/write-plan",
+        responses={
+            200: {
+                "content": {
+                    "text/csv": {"schema": {"type": "string"}},
+                    "application/json": {},
+                }
+            },
+            **{status: {"model": _ErrorResponse} for status in (401, 422, 503)},
+        },
+    )
+    def activity_write_plan(
+        format: Literal["csv", "json"] = Query(),
+        ml_session: str = Depends(authenticated_session_cookie),
+    ) -> Response:
+        """Send every prepared change as it is made; computed, never stored.
+
+        A fault before the first byte answers with its status. After it, the
+        connection ends without completing the body, so a short file is never
+        received as a complete one.
+        """
+        _require_session(application, ml_session)
+        stream = None
+        try:
+            stream = application.activity_write_plan_file(format)
+            first = stream.next_chunk() or b""
+        except (
+            GuardedApplicationError,
+            FieldEffectError,
+            ReviewApplicationError,
+        ) as error:
+            if stream is not None:
+                stream.close()
+            raise HTTPException(
+                503, detail={"code": getattr(error, "code", "unavailable")}
+            ) from None
+        except BaseException:
+            if stream is not None:
+                stream.close()
+            raise
+        produced = stream
+
+        async def body() -> AsyncIterator[bytes]:
+            yield first
+            while (chunk := await run_in_threadpool(produced.next_chunk)) is not None:
+                yield chunk
+
+        return _ReleasingStreamingResponse(
+            body(),
+            produced.close,
+            media_type="text/csv; charset=utf-8"
+            if format == "csv"
+            else "application/json",
+            headers={
+                "Content-Disposition": "attachment; "
+                f'filename="mechanical-librarian-write-plan.{format}"',
+                "X-Accel-Buffering": "no",
+            },
+        )
 
 
 def _register_policy_routes(

@@ -1349,6 +1349,149 @@ def _cohort_category(destination: str, origin: str, failure: str | None) -> str:
     }[_cohort_event_type(destination, origin, failure)]
 
 
+def _plan_row(
+    work: str,
+    authors: str,
+    current: str,
+    new: str,
+    reason: str,
+    sources: tuple[str, ...] = (),
+) -> dict[str, object]:
+    return {
+        "work": work,
+        "authors": authors,
+        "current": current,
+        "new": new,
+        "reason": reason,
+        "sources": list(sources),
+    }
+
+
+# Every change listed (9 of at most 25), so the plan's rows and counts agree
+# with ``prepared``: a cover, an empty current value, a long description, an
+# owner-entered, put-back and automatic row, and a row with no sources (#1336).
+_COHORT_WRITE_PLAN: dict[str, object] = {
+    "total": 9,
+    "groups": [
+        {
+            "library": "Household ebooks",
+            "destination": "authors",
+            "kind": "human",
+            "count": 2,
+            "rows": [
+                _plan_row(
+                    "Paper Moons",
+                    "Jane Larkspur",
+                    "Jane Larkspur",
+                    "Jane Larkspur, Tom Reed",
+                    "You chose this value",
+                    ("Hardcover", "Open Library"),
+                ),
+                _plan_row(
+                    "The Long and Winding Account of a Very Particular Lighthouse "
+                    "Keeper's Final Year on the Northern Coast",
+                    "Annabel Featherstonehaugh-Wright, Bartholomew Quill and "
+                    "Constance Delacroix-Montgomery",
+                    "Not set",
+                    "Annabel Featherstonehaugh-Wright",
+                    "You entered this value",
+                ),
+            ],
+        },
+        {
+            "library": "Household ebooks",
+            "destination": "title",
+            "kind": "human",
+            "count": 2,
+            "rows": [
+                _plan_row(
+                    "Paper Moons: Larkspur",
+                    "Jane Larkspur",
+                    "Paper Moons: Larkspur",
+                    "Paper Moons",
+                    "You chose to restore the earlier value",
+                ),
+                _plan_row(
+                    "Harbour Lights",
+                    "Mina Ortiz",
+                    "Harbour Lights (Book 2)",
+                    "Harbour Lights",
+                    "You chose this value",
+                    ("Hardcover",),
+                ),
+            ],
+        },
+        {
+            "library": "Household ebooks",
+            "destination": "description",
+            "kind": "automatic",
+            "count": 2,
+            "rows": [
+                _plan_row(
+                    "Harbour Lights",
+                    "Mina Ortiz",
+                    "Not set",
+                    "A lighthouse keeper's daughter returns to the harbour town "
+                    "she left as a child and finds the lamp dark, the keeper "
+                    "gone and a ledger of ships that never arrived. Over one "
+                    "long winter she pieces together what happened, and why "
+                    "the town would rather forget.",
+                    "Description: Fill empty with safe plain text",
+                    ("Hardcover",),
+                ),
+                _plan_row(
+                    "Quiet Orbit",
+                    "Sam Okafor",
+                    "Not set",
+                    "A short novel about a radio operator on a lonely station.",
+                    "Description advice",
+                ),
+            ],
+        },
+        {
+            "library": "Spoken stories",
+            "destination": "cover",
+            "kind": "automatic",
+            "count": 1,
+            "rows": [
+                _plan_row(
+                    "The Night Ferry",
+                    "Ada Brennan",
+                    "Current cover",
+                    "Selected cover",
+                    "Cover: Fill from confirmed covers",
+                    ("Audible",),
+                ),
+            ],
+        },
+        {
+            "library": "Research shelf",
+            "destination": "title",
+            "kind": "human",
+            "count": 2,
+            "rows": [
+                _plan_row(
+                    "Field Notes on Moss",
+                    "R. Almeida",
+                    "field notes on moss",
+                    "Field Notes on Moss",
+                    "You chose this value",
+                    ("Open Library",),
+                ),
+                _plan_row(
+                    "Tidal Atlas",
+                    "K. Svensson",
+                    "Tidal atlas",
+                    "Tidal Atlas",
+                    "You chose this value",
+                    ("Local library record",),
+                ),
+            ],
+        },
+    ],
+}
+
+
 def _activity(query: dict[str, list[str]]) -> dict[str, object]:
     events = [
         (
@@ -2244,14 +2387,16 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
     if path == "/api/v1/activity/permission-readiness":
         value = _activity(query)
         return {
-            key: value[key]
-            for key in (
-                "backup_ready",
-                "configured_libraries",
-                "capabilities",
-                "prepared",
-                "example",
-            )
+            **{
+                key: value[key]
+                for key in (
+                    "backup_ready",
+                    "configured_libraries",
+                    "capabilities",
+                    "prepared",
+                )
+            },
+            "plan": _COHORT_WRITE_PLAN,
         }
     if path == "/api/v1/activity/consent-state":
         value = _activity(query)

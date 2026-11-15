@@ -8,11 +8,13 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import threading
 from collections.abc import Iterator
 from types import SimpleNamespace
 from typing import Any, cast, get_args
 from unittest.mock import Mock, patch
 
+import anyio
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
@@ -69,7 +71,6 @@ from mechanical_librarian.application.review_web import (
     _field_inventory_role,
     _library_item,
     _provider_comparison_notices,
-    _provider_label,
 )
 from mechanical_librarian.domain import audiobook_decision_qualification
 from mechanical_librarian.domain.activity_records import readable_activity_event
@@ -98,6 +99,7 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverSourceState,
     cover_source_id,
 )
+from mechanical_librarian.domain.field_effect import FieldEffectError
 from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
 from mechanical_librarian.domain.metadata_report import (
     AudioFacts,
@@ -116,7 +118,11 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
     default_target_fields,
 )
-from mechanical_librarian.domain.owner_settings import OWNER_SETTINGS_SCHEMA
+from mechanical_librarian.domain.owner_settings import (
+    OWNER_SETTINGS_SCHEMA,
+    provider_label,
+    provider_source_labels,
+)
 from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
 from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.review_browse import ReviewBrowseValueError
@@ -749,6 +755,204 @@ def test_shutdown_closes_both_admissions_before_one_shared_deadline(
     assert web.repository.closes == []
 
 
+def _write_plan_web(
+    web: ReviewWebContext[_CloseRecordingRepository],
+    application: FakeActivityApplication,
+) -> Any:
+    configuration = ReviewWebConfiguration(
+        tls_certificate_file="/synthetic/review.crt",
+        tls_private_key_file="/synthetic/review.key",
+        canonical_origin="https://review.test",
+        owner_password_hash_file=str(web.hash_path),
+        session_lifetime_seconds=600,
+    )
+    web.client.close()
+    app = create_transport_test_app(
+        web.repository,
+        configuration,
+        clock=lambda: web.now,
+        field_application=application,
+    )
+    web.client = TestClient(app, base_url="https://review.test")
+    return app
+
+
+@pytest.mark.parametrize(
+    ("format", "media_type", "head"),
+    (
+        ("csv", "text/csv; charset=utf-8", b"\xef\xbb\xbf"),
+        ("json", "application/json", b'{"changes":[\n'),
+    ),
+    ids=("csv", "json"),
+)
+def test_write_plan_file_is_an_owner_only_uncached_attachment(
+    web: ReviewWebContext[_CloseRecordingRepository],
+    format: str,
+    media_type: str,
+    head: bytes,
+) -> None:
+    _write_plan_web(web, FakeActivityApplication())
+    path = f"/api/v1/activity/write-plan?format={format}"
+    assert web.client.get(path).status_code == 401
+    web.login()
+
+    response = web.client.get(path)
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == media_type
+    assert response.headers["content-disposition"] == (
+        f'attachment; filename="mechanical-librarian-write-plan.{format}"'
+    )
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.headers["x-accel-buffering"] == "no"
+    assert response.content.startswith(head)
+    # One line feed per row plus the head's, in either format.
+    assert response.content.count(b"\n") == 1 + 1
+    if format == "json":
+        document = json.loads(response.content)
+        assert document["changes"][0]["current_value"] == "=Before"
+        assert (document["listed"], document["total"]) == (1, 1)
+    else:
+        assert b'"\'=Before"' in response.content
+
+
+@pytest.mark.parametrize(
+    "query", ("", "?format=xlsx", "?format=CSV"), ids=("missing", "xlsx", "upper")
+)
+def test_write_plan_file_refuses_an_unknown_format(
+    web: ReviewWebContext[_CloseRecordingRepository], query: str
+) -> None:
+    _write_plan_web(web, FakeActivityApplication())
+    web.login()
+
+    assert web.client.get(f"/api/v1/activity/write-plan{query}").status_code == 422
+
+
+@pytest.mark.parametrize(
+    "fault",
+    (
+        GuardedApplicationError("unavailable"),
+        FieldEffectError("persistence"),
+    ),
+    ids=("unavailable", "persistence"),
+)
+def test_write_plan_fault_before_the_first_byte_is_unavailable(
+    web: ReviewWebContext[_CloseRecordingRepository], fault: Exception
+) -> None:
+    application = FakeActivityApplication()
+
+    def failing(_format, _emit, _cancelled) -> None:
+        raise fault
+
+    application.plan_file = failing
+    _write_plan_web(web, application)
+    web.login()
+
+    response = web.client.get("/api/v1/activity/write-plan?format=csv")
+
+    assert response.status_code == 503
+    assert response.headers["cache-control"] == "no-store, private"
+    assert "content-disposition" not in response.headers
+
+
+def test_write_plan_fault_after_the_first_byte_never_completes_the_body(
+    web: ReviewWebContext[_CloseRecordingRepository],
+) -> None:
+    application = FakeActivityApplication()
+    finished: list[str] = []
+
+    def faulting(_format, emit, _cancelled) -> None:
+        try:
+            emit(b'{"changes":[\n')
+            emit(b'{"work":"Book One"}\n')
+            raise FieldEffectError("persistence")
+        finally:
+            finished.append("snapshot ended")
+
+    application.plan_file = faulting
+    _write_plan_web(web, application)
+    web.login()
+
+    received = b""
+    with pytest.raises(FieldEffectError, match="^persistence$"):
+        with web.client.stream(
+            "GET", "/api/v1/activity/write-plan?format=json"
+        ) as response:
+            assert response.status_code == 200
+            for chunk in response.iter_bytes():
+                received += chunk
+    # Whatever arrived is not a complete file: no closing summary.
+    assert b"]," not in received
+    assert finished == ["snapshot ended"]
+
+
+def test_write_plan_client_disconnect_stops_the_file_and_releases_its_reader(
+    web: ReviewWebContext[_CloseRecordingRepository],
+) -> None:
+    application = FakeActivityApplication()
+    events: list[str] = []
+
+    def endless(_format, emit, cancelled) -> None:
+        events.append("snapshot began")
+        try:
+            emit(b'\xef\xbb\xbf"Library"\r\n')
+            while not cancelled():
+                emit(b'"fiction"\r\n')
+        finally:
+            events.append("snapshot ended")
+
+    application.plan_file = endless
+    app = _write_plan_web(web, application)
+    web.login()
+    cookie = "; ".join(f"{name}={value}" for name, value in web.client.cookies.items())
+
+    async def drive() -> list[dict[str, object]]:
+        sent: list[dict[str, object]] = []
+        gone = anyio.Event()
+
+        async def receive() -> dict[str, object]:
+            await gone.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message: dict[str, object]) -> None:
+            sent.append(message)
+            if message["type"] == "http.response.body" and len(sent) >= 3:
+                gone.set()
+
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.3"},
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "https",
+            "path": "/api/v1/activity/write-plan",
+            "raw_path": b"/api/v1/activity/write-plan",
+            "query_string": b"format=csv",
+            "root_path": "",
+            "headers": [
+                (b"host", b"review.test"),
+                (b"cookie", cookie.encode()),
+                (b"x-ml-build-identity", TEST_REACT_BUILD_IDENTITY.encode()),
+            ],
+            "client": ("127.0.0.1", 50000),
+            "server": ("review.test", 443),
+        }
+        with anyio.fail_after(10):
+            await app(scope, receive, send)
+        return sent
+
+    sent = anyio.run(drive)
+
+    assert sent[0]["type"] == "http.response.start"
+    assert sent[0]["status"] == 200
+    # The producer saw the client go, ended its snapshot and was released.
+    assert events == ["snapshot began", "snapshot ended"]
+    assert not any(
+        thread.name == "write-plan-file" and thread.is_alive()
+        for thread in threading.enumerate()
+    )
+
+
 def test_activity_is_permanent_and_consent_is_csrf_bound(
     web: ReviewWebContext[_CloseRecordingRepository],
 ) -> None:
@@ -793,7 +997,9 @@ def test_activity_is_permanent_and_consent_is_csrf_bound(
     for invalid in (
         {"backup_ready": True},
         {"backup_ready": False},
-        {"example": readiness.json()["example"]},
+        # History keeps its empty example and never carries the plan (#1336).
+        {"example": {"after": "After", "before": "Before"}},
+        {"plan": readiness.json()["plan"]},
     ):
         with (
             patch.object(application, "activity", return_value={**history, **invalid}),
@@ -805,8 +1011,9 @@ def test_activity_is_permanent_and_consent_is_csrf_bound(
         "configured_libraries",
         "capabilities",
         "prepared",
-        "example",
+        "plan",
     }
+    assert readiness.json()["plan"]["total"] == history["prepared"]["total"]
     with patch.object(
         application, "activity_permission_readiness", side_effect=RuntimeError
     ):
@@ -2032,8 +2239,8 @@ def test_provider_comparison_notices_never_create_a_permanent_case_banner(
     assert _provider_comparison_notices(report) == projected["comparison_notices"]
     unaffected = InspectCurrentReviewCase(web.repository).run(web.case.review_case_id)
     assert [] == unaffected["comparison_notices"]
-    assert "Google Books" == _provider_label("google_books")
-    assert "Provider (name unavailable)" == _provider_label(None)
+    assert "Google Books" == provider_label("google_books")
+    assert "Provider (name unavailable)" == provider_label(None)
     for spoofed_name in (
         "google-books-private-instance",
         "open-library-owner-home",
@@ -4307,12 +4514,12 @@ def test_activity_history_defers_permission_fields(backup_ready: bool | None) ->
     permission["backup_ready"] = backup_ready
     checked = _ActivityPermissionReadiness.model_validate(permission)
     assert checked.backup_ready is backup_ready
-    assert checked.example is not None
+    assert checked.plan.total == 2
     if backup_ready is not None:
         with pytest.raises(ValidationError):
             _ActivityResponse.model_validate({**history, "backup_ready": backup_ready})
     with pytest.raises(ValidationError):
-        _ActivityResponse.model_validate({**history, "example": permission["example"]})
+        _ActivityResponse.model_validate({**history, "plan": permission["plan"]})
     for field in ("backup_ready", "example"):
         with pytest.raises(ValidationError):
             _ActivityResponse.model_validate(
@@ -4917,7 +5124,6 @@ def test_provider_recovery_retry_without_settings_is_unavailable(
 
 def test_an_edition_narrator_choice_names_the_audio_edition_it_came_from() -> None:
     """Edition references reach the packet and the owner's choice (#1642)."""
-    from mechanical_librarian.application.review_web import _provider_source_labels
     from mechanical_librarian.domain.proposal_set import evaluate_report
     from mechanical_librarian.domain.review_case import ReviewCase
     from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
@@ -4980,7 +5186,7 @@ def test_an_edition_narrator_choice_names_the_audio_edition_it_came_from() -> No
         },
     ]
     assert proposed["rationale"] == "Hardcover audio edition"
-    assert _provider_source_labels(report, list(alternative.evidence_references)) == [
+    assert provider_source_labels(report, list(alternative.evidence_references)) == [
         "Hardcover audio edition"
     ]
     assert set(alternative.evidence_references) <= set(_evidence_by_reference(report))

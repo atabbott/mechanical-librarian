@@ -6,19 +6,27 @@ import hashlib
 import json
 import sqlite3
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from unittest.mock import patch
 
 import httpx
 import pytest
 
+from mechanical_librarian.application.field_effects import GuardedApplicationError
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_web import (
     BrowseFetchingChanged,
     ReviewWebError,
 )
+from mechanical_librarian.domain.human_decision import (
+    HumanDecision,
+    HumanDecisionError,
+)
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from mechanical_librarian.domain.owner_settings import OWNER_SETTINGS_SCHEMA
+from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.infrastructure.settings_authority import (
     REVIEW_BOOTSTRAP_SCHEMA,
 )
@@ -1637,11 +1645,15 @@ def test_supported_fixture_activity_projects_real_owner_history(tmp_path: Path) 
         assert readiness["backup_ready"] is True
         assert set(readiness) == {
             "backup_ready",
-            "example",
+            "plan",
             "prepared",
             "configured_libraries",
             "capabilities",
         }
+        # The plan's counts are the prepared counts of the same snapshot.
+        plan = readiness["plan"]
+        assert plan["total"] == readiness["prepared"]["total"]
+        assert sum(group["count"] for group in plan["groups"]) == plan["total"]
         # The composed application's notice read states Activity's offer (#1236).
         keys = (
             "backup_ready",
@@ -1652,6 +1664,121 @@ def test_supported_fixture_activity_projects_real_owner_history(tmp_path: Path) 
         )
         consent = fixture.application.activity_consent()
         assert consent == {key: activity[key] for key in keys}
+    finally:
+        fixture.close()
+
+
+def _drain_plan(stream) -> bytes:
+    chunks = []
+    try:
+        while (chunk := stream.next_chunk()) is not None:
+            chunks.append(chunk)
+    finally:
+        stream.close()
+    return b"".join(chunks)
+
+
+def _accept_offered_values(fixture: OwnerResponsivenessFixture) -> int:
+    """Accept the first offered value of each case, as the owner would."""
+    accepted = 0
+    for index, listed in enumerate(fixture.cases):
+        case = ReviewCase.create_from_data(
+            json.loads(fixture.repository.get_review_case(listed.review_case_id))[
+                "case"
+            ]
+        )
+        proposal = next(
+            (
+                value
+                for value in case.proposals
+                if value["result"]["outcome"] == "unresolved_choice"
+            ),
+            None,
+        )
+        if proposal is None:
+            continue
+        try:
+            fixture.repository.record_human_decision(
+                HumanDecision.create(
+                    case,
+                    proposal_id=str(proposal["proposal_id"]),
+                    target_fingerprint=case.target_fingerprint,
+                    destination=str(proposal["destination"]),
+                    actor="owner",
+                    outcome="accept",
+                    selected_value=proposal["result"]["alternatives"][0]["value"],
+                    idempotency_key=f"write-plan-export-{index:04d}",
+                    occurred_at=1_000 + index,
+                )
+            )
+        except HumanDecisionError:
+            # A case whose offer moved on since the fixture listed it.
+            continue
+        accepted += 1
+    return accepted
+
+
+def test_write_plan_export_reads_its_own_query_only_snapshot(tmp_path: Path) -> None:
+    """The file is read on a third query-only reader, in one snapshot (#1336)."""
+    fixture = OwnerResponsivenessFixture(tmp_path, 20, mixed=True, prepare=True)
+    try:
+        assert _accept_offered_values(fixture) > 0
+        application = fixture.application
+        export = application._export_projection
+        assert export is not None
+        connection = export._repository._connection
+        assert application._permission_projection is not None
+        assert application._activity_projection is not None
+        assert connection not in (
+            application._permission_projection._repository._connection,
+            application._activity_projection._repository._connection,
+            fixture.repository._connection,
+        )
+        assert connection.execute("PRAGMA query_only").fetchone() == (1,)
+
+        document = json.loads(_drain_plan(application.activity_write_plan_file("json")))
+        prepared = application.activity_permission_readiness()["prepared"]["total"]
+        assert document["total"] == prepared > 0
+        assert document["listed"] + document["unreadable"] == prepared
+        assert document["truncated"] is False
+        assert not connection.in_transaction
+
+        # Hold an export open inside its snapshot: the owner's consent and
+        # ledger reads still answer, and a closing application ends the file.
+        repository = export._repository
+        read = repository.field_effect_plan_documents
+        entered, release = threading.Event(), threading.Event()
+
+        def held(decision_ids):
+            entered.set()
+            assert release.wait(10)
+            return read(decision_ids)
+
+        with patch.object(repository, "field_effect_plan_documents", held):
+            stream = application.activity_write_plan_file("csv")
+            try:
+                head = stream.next_chunk()
+                assert head is not None and head.startswith(b"\xef\xbb\xbf")
+                assert entered.wait(5)
+                assert connection.in_transaction
+                started = time.monotonic()
+                assert application.activity_consent()["capabilities"]
+                assert application.activity()["ledger"]["total"] > 0
+                assert time.monotonic() - started < 5
+                with application._browse_lifetime:
+                    application._browse_closed = True
+                release.set()
+                stopped = time.monotonic()
+                with pytest.raises(GuardedApplicationError, match="^unavailable$"):
+                    while stream.next_chunk() is not None:
+                        pass
+                assert time.monotonic() - stopped < 2
+            finally:
+                release.set()
+                stream.close()
+        # The snapshot ended and its accepted read was released.
+        assert not connection.in_transaction
+        assert application._active_browses == 0
     finally:
         fixture.close()
 

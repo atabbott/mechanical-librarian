@@ -912,10 +912,26 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             limit, after
         )
 
-    def pending_field_effect_activity_example_document(self) -> str | None:
-        return (
-            self._field_effect_activity.pending_field_effect_activity_example_document()
+    def pending_field_effect_plan_entries(
+        self, per_group: int | None, limit: int, library_order: tuple[str, ...]
+    ) -> tuple[tuple[str, str, str, str, str, str], ...]:
+        return self._field_effect_activity.pending_field_effect_plan_entries(
+            per_group, limit, library_order
         )
+
+    def field_effect_plan_documents(
+        self, decision_ids: tuple[str, ...]
+    ) -> dict[str, str]:
+        return self._field_effect_activity.field_effect_plan_documents(decision_ids)
+
+    def field_effect_plan_row(
+        self,
+        decision: HumanDecision
+        | AutomaticDecision
+        | CoverAutomaticDecision
+        | AuthoredDescriptionDecision,
+    ) -> dict[str, object]:
+        return self._field_effect_activity.field_effect_plan_row(decision)
 
     def field_effect_permission_readiness_snapshot(
         self, call: Callable[[bool | None], dict[str, object]]
@@ -933,6 +949,11 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         self, call: Callable[[], dict[str, object]]
     ) -> dict[str, object]:
         return self._field_effect_activity.field_effect_consent_snapshot(call)
+
+    def field_effect_write_plan_snapshot(
+        self, call: Callable[[], dict[str, object]]
+    ) -> dict[str, object]:
+        return self._field_effect_activity.field_effect_write_plan_snapshot(call)
 
     def pending_field_effect_decision_counts(self) -> tuple[dict[str, object], ...]:
         return self._field_effect_activity.pending_field_effect_decision_counts()

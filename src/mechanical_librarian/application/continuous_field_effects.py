@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+from collections.abc import Mapping
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from typing import Callable, Final, Literal, Protocol, cast
@@ -20,6 +21,20 @@ from mechanical_librarian.application.operation_admission import (
     WorkClass,
 )
 from mechanical_librarian.application.operations import StageTimer
+from mechanical_librarian.application.write_plan import (
+    CLOSING_CHECK_ROWS,
+    EXAMPLES_PER_GROUP,
+    FILE_ROWS,
+    INLINE_ALL,
+    INLINE_ROWS,
+    PlanFileEncoder,
+    PlanFormat,
+    PlanRow,
+    ProducedStream,
+    group_order,
+    inline_row,
+    plan_reason,
+)
 from mechanical_librarian.domain.activity_records import (
     ActivityProjectionError,
     ReadableActivityEvent,
@@ -125,7 +140,22 @@ class ContinuousFieldEffectRepository(Protocol):
     def pending_field_effect_decision_documents(
         self, limit: int, after: tuple[int, str] | None = None
     ) -> tuple[str, ...]: ...
-    def pending_field_effect_activity_example_document(self) -> str | None: ...
+    def pending_field_effect_plan_entries(
+        self, per_group: int | None, limit: int, library_order: tuple[str, ...]
+    ) -> tuple[tuple[str, str, str, str, str, str], ...]: ...
+    def field_effect_plan_documents(
+        self, decision_ids: tuple[str, ...]
+    ) -> dict[str, str]: ...
+    def field_effect_plan_row(
+        self,
+        decision: HumanDecision
+        | AutomaticDecision
+        | CoverAutomaticDecision
+        | AuthoredDescriptionDecision,
+    ) -> dict[str, object]: ...
+    def field_effect_write_plan_snapshot(
+        self, call: Callable[[], dict[str, object]]
+    ) -> dict[str, object]: ...
     def record_current_field_effect_no_change(
         self, decision: AutomaticDecision, occurred_at: int
     ) -> bool: ...
@@ -1282,28 +1312,171 @@ class ContinuousGuardedApplication:
         )
         permission.pop("enabled_libraries")
         permission.pop("lapsed_consents")
-        example_document = (
-            self._repository.pending_field_effect_activity_example_document()
+        return {
+            **permission,
+            "backup_ready": backup_ready,
+            "plan": self._inline_write_plan(),
+        }
+
+    def _inline_write_plan(self) -> dict[str, object]:
+        """Group every prepared change and resolve a bounded set of examples.
+
+        Counts are the counts statement's, so the total is ``prepared.total``
+        of the same snapshot. Up to ``INLINE_ALL`` every change is listed;
+        past it each group shows its first few, within ``INLINE_ROWS``, and a
+        later group carries its count only.
+        """
+        counts = {
+            (str(row["library"]), str(row["destination"]), str(row["origin"])): int(
+                cast(int, row["count"])
+            )
+            for row in self._repository.pending_field_effect_decision_counts()
+        }
+        total = sum(counts.values())
+        library_order = tuple(name for _, name in self._libraries)
+        order = sorted(counts, key=group_order(library_order))
+        entries = (
+            ()
+            if not total
+            else self._repository.pending_field_effect_plan_entries(
+                None, INLINE_ALL, library_order
+            )
+            if total <= INLINE_ALL
+            else self._repository.pending_field_effect_plan_entries(
+                EXAMPLES_PER_GROUP, EXAMPLES_PER_GROUP * len(order), library_order
+            )
         )
-        example: dict[str, object] | None = None
-        if example_document is not None:
-            try:
-                snapshot = self._authority.resolve(self._decision(example_document))
-                example = {
-                    "after": project_decision_value(
-                        snapshot.destination, snapshot.decision_value
-                    ),
-                    "before": snapshot.pre_value,
-                    "destination": snapshot.destination,
-                    "library": snapshot.library,
-                    "work_id": snapshot.work_id,
+        chosen: dict[tuple[str, str, str], list[str]] = {}
+        for _, library, origin, destination, decision_id, _ in entries:
+            chosen.setdefault((library, destination, origin), []).append(decision_id)
+        budget = INLINE_ROWS
+        for group in order:
+            chosen[group] = chosen.get(group, [])[: max(budget, 0)]
+            budget -= len(chosen[group])
+        documents = self._repository.field_effect_plan_documents(
+            tuple(value for ids in chosen.values() for value in ids)
+        )
+        groups = []
+        for group in order:
+            rows = [
+                inline_row(row)
+                for decision_id in chosen[group]
+                if (row := self._plan_row(documents.get(decision_id))) is not None
+            ]
+            library, destination, kind = group
+            groups.append(
+                {
+                    "library": library,
+                    "destination": destination,
+                    "kind": kind,
+                    "count": counts[group],
+                    "rows": rows,
                 }
-            except (FieldEffectError, GuardedApplicationError, ValueError) as error:
-                # A binding race removes the optional illustration. A storage
-                # fault cannot be represented as an absent prepared example.
-                if getattr(error, "code", None) == "persistence":
-                    raise
-        return {**permission, "backup_ready": backup_ready, "example": example}
+            )
+        return {"total": total, "groups": groups}
+
+    def _plan_row(self, document: str | None) -> PlanRow | None:
+        """Resolve one prepared decision, or ``None`` when it cannot be read.
+
+        A storage fault cannot be represented as an unreadable row, so it
+        propagates (the rule ``_capability_readiness`` follows).
+        """
+        if document is None:
+            return None
+        try:
+            decision = self._decision(document)
+            snapshot = self._authority.resolve(decision)
+            named = self._repository.field_effect_plan_row(decision)
+        except (FieldEffectError, GuardedApplicationError, ValueError) as error:
+            if getattr(error, "code", None) == "persistence":
+                raise
+            return None
+        return PlanRow(
+            library=snapshot.library,
+            work=str(named["work"]),
+            authors=str(named["authors"]),
+            destination=snapshot.destination,
+            kind="automatic"
+            if type(decision) is AutomaticDecision
+            or type(decision) is CoverAutomaticDecision
+            or (
+                type(decision) is AuthoredDescriptionDecision
+                and decision.origin != "human"
+            )
+            else "human",
+            current=snapshot.pre_value,
+            new=project_decision_value(snapshot.destination, snapshot.decision_value),
+            reason=plan_reason(decision),
+            sources=tuple(cast("list[str]", named["sources"])),
+        )
+
+    def activity_write_plan_file(
+        self,
+        format: PlanFormat,
+        closing: Callable[[], bool],
+        library_labels: Mapping[str, str],
+    ) -> ProducedStream:
+        """Make the complete write plan as one CSV or JSON file, sent as made.
+
+        Every row is read in one snapshot on this reader, with no Activity
+        catch-up. A work's rows are adjacent, so the read's bounded caches
+        reuse its case and documents. Nothing is stored, sent or granted.
+        """
+        if format not in {"csv", "json"}:
+            raise GuardedApplicationError("activity_query")
+
+        def produce(
+            emit: Callable[[bytes], None], cancelled: Callable[[], bool]
+        ) -> None:
+            def read() -> dict[str, object]:
+                self._write_plan_file(format, emit, cancelled, library_labels)
+                return {}
+
+            with self._activity_reader_lock:
+                self._repository.field_effect_write_plan_snapshot(read)
+
+        return ProducedStream(produce, closing)
+
+    def _write_plan_file(
+        self,
+        format: PlanFormat,
+        emit: Callable[[bytes], None],
+        cancelled: Callable[[], bool],
+        library_labels: Mapping[str, str],
+    ) -> None:
+        total = sum(
+            int(cast(int, row["count"]))
+            for row in self._repository.pending_field_effect_decision_counts()
+        )
+        entries = self._repository.pending_field_effect_plan_entries(
+            None, FILE_ROWS, tuple(name for _, name in self._libraries)
+        )
+        encoder = PlanFileEncoder(format, library_labels)
+        emit(encoder.head)
+        unreadable = 0
+        for start in range(0, len(entries), CLOSING_CHECK_ROWS):
+            if cancelled():
+                raise GuardedApplicationError("unavailable")
+            batch = entries[start : start + CLOSING_CHECK_ROWS]
+            documents = self._repository.field_effect_plan_documents(
+                tuple(entry[4] for entry in batch)
+            )
+            chunk = []
+            full = False
+            for entry in batch:
+                row = self._plan_row(documents.get(entry[4]))
+                if row is None:
+                    unreadable += 1
+                    continue
+                line = encoder.row(row)
+                if line is None:
+                    full = True
+                    break
+                chunk.append(line)
+            emit(b"".join(chunk))
+            if full:
+                break
+        emit(encoder.tail(total=total, unreadable=unreadable, made_at=self._clock()))
 
     def _permission_projection(
         self, data: dict[str, object]

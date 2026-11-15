@@ -86,6 +86,10 @@ brackets are GitHub issues.
 - Setup and Settings round the cover cost the same way and count in works
   (#1863).
 - The preparation detail fits a 320 px window at 200% text (#1864).
+- Checking write permissions now shows the write plan under each library's
+  fields: each prepared change's current and new value, who chose it and why.
+  Download CSV and Download JSON save the whole plan, up to 20,000 changes, as
+  it is made; nothing is stored or granted (#1336).
 
 ## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
 

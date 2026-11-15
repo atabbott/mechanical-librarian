@@ -341,9 +341,21 @@ authority and never feeds a write path. Its rules:
 The trigger classification it relies on is read from the live schema with
 `pragma_table_list`, which needs SQLite 3.37 or later.
 
-Activity also keeps its last prepared counts and permission-readiness example
-on that connection and serves them only while the revision and file identity
-are unchanged. A refusal is never kept; it is read again every time.
+Activity also keeps its last prepared counts and the permission check's plan
+examples (a read of at most 100 rows) on that connection and serves them only
+while the revision and file identity are unchanged. A refusal is never kept;
+it is read again every time.
+
+The write plan file has a third query-only reader of its own, beside the
+history and permission readers, so a download never waits for, or holds up,
+either of them. The export reader holds one deferred read transaction for the
+length of the download: the counts, the rows and every value are read in it,
+so the file is one consistent snapshot. Its length is bounded by the file's
+caps, 20,000 rows and 16 MiB, not by time. A writer can commit while it runs;
+the file reflects the state when the download began. The transaction always
+ends: when the file is complete, on a fault, when the browser goes away, or
+within 100 rows once the application starts closing. Parsed documents are
+reused only inside that read, in bounded caches cleared when it ends (#1336).
 
 ### Library and Attention
 

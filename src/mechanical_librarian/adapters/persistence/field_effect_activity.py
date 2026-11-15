@@ -44,10 +44,10 @@ import stat
 import sys
 import time
 from collections import deque
-from collections.abc import Callable
-from contextlib import closing, nullcontext
+from collections.abc import Callable, Iterator
+from contextlib import closing, contextmanager, nullcontext
 from copy import deepcopy
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 from threading import Event, Lock, RLock
@@ -96,6 +96,7 @@ from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
     local_operation,
 )
+from mechanical_librarian.application.cover_packets import cover_source_reference
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.operation_admission import AdmissionClosedError
 from mechanical_librarian.application.review_pipeline import (
@@ -104,6 +105,7 @@ from mechanical_librarian.application.review_pipeline import (
 from mechanical_librarian.domain.activity_records import (
     ReadableActivityEvent,
     activity_search_text,
+    report_work_labels,
 )
 from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecision,
@@ -115,6 +117,7 @@ from mechanical_librarian.domain.cover_automatic_decision import (
     CoverAutomaticDecision,
     parse_automatic_authority,
 )
+from mechanical_librarian.domain.cover_evidence import LOCAL_COVER_SOURCE_KINDS
 from mechanical_librarian.domain.cover_qualification_policy import (
     REPLACEMENT_TARGET_STATES,
 )
@@ -160,6 +163,11 @@ from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ProviderStatus,
     ReportValueError,
+    TargetDestination,
+)
+from mechanical_librarian.domain.owner_settings import (
+    provider_label,
+    provider_source_labels,
 )
 from mechanical_librarian.domain.proposal_set import (
     ProposalSet,
@@ -427,6 +435,107 @@ _ACTIVE_GENERATION_DESCRIPTION_SQL = (
 )
 
 
+_PENDING_PREPARED_SQL = (
+    "WITH pending AS ("
+    "SELECT human.decision_id,human.review_case_id,human.destination,'human' origin "
+    "FROM human_decisions human WHERE NOT EXISTS (SELECT 1 FROM current_description_decisions authored "
+    "WHERE authored.review_case_id=human.review_case_id AND human.destination='description') AND (human.outcome IN ('accept','owner_entered') OR ("
+    + _CORRECTIVE_KEEP_CURRENT_SQL
+    + ")) AND "
+    + _RECORDED_ONLY_EXCLUDED_SQL
+    + "CASE WHEN human.review_case_id IN (SELECT review_case_id FROM current_review_case_lineages) "
+    "THEN human.ordinal=(SELECT MAX(current.ordinal) FROM human_decisions current "
+    "WHERE current.review_case_id=human.review_case_id AND "
+    "current.destination=human.destination) END AND "
+    + _episode_decision_sql("human")
+    + " AND NOT EXISTS ("
+    "SELECT 1 FROM field_effect_manual_holds returned WHERE "
+    "returned.review_case_id=human.review_case_id AND "
+    "returned.destination=human.destination AND returned.active=0) UNION ALL "
+    "SELECT automatic.decision_id,automatic.review_case_id,automatic.destination,'automatic' origin "
+    "FROM automatic_decisions automatic WHERE NOT EXISTS (SELECT 1 FROM current_description_decisions authored WHERE authored.review_case_id=automatic.review_case_id AND automatic.destination='description') AND "
+    "json_extract(automatic.document,'$.outcome')='candidate' AND "
+    "+automatic.review_case_id IN (SELECT lineage.review_case_id FROM current_review_case_lineages lineage JOIN "
+    "current_review_packages package ON package.connection_name=lineage.connection_name "
+    "AND package.library_name=lineage.library_name AND package.item_id=lineage.item_id "
+    "AND package.proposal_set_id=lineage.proposal_set_id AND package.report_id=lineage.report_id "
+    "AND package.review_case_id=lineage.review_case_id AND package.checkpoint=lineage.checkpoint)"
+    " AND NOT EXISTS ("
+    "SELECT 1 FROM human_decisions human WHERE "
+    "human.review_case_id=automatic.review_case_id AND "
+    "human.destination=automatic.destination AND NOT EXISTS ("
+    "SELECT 1 FROM field_effect_manual_holds returned WHERE "
+    "returned.review_case_id=automatic.review_case_id AND "
+    "returned.destination=automatic.destination AND returned.active=0)) AND NOT EXISTS ("
+    "SELECT 1 FROM field_effect_manual_holds hold WHERE "
+    "hold.review_case_id=automatic.review_case_id AND "
+    "hold.destination=automatic.destination AND hold.active=1) AND "
+    # Only the active generation's decision is pending (#1573).
+    + _active_generation_automatic_sql("automatic")
+    + " AND "
+    + _AUTOMATIC_POSTURE_SQL
+    + " UNION ALL "
+    "SELECT selection.decision_id,consideration.review_case_id,'cover','automatic' "
+    "FROM current_cover_selection_authorities current "
+    "JOIN cover_selection_authorities selection "
+    "ON selection.selection_id=current.selection_id "
+    "JOIN cover_considerations consideration "
+    "ON consideration.consideration_id=selection.consideration_id "
+    "JOIN current_cover_considerations current_consideration "
+    "ON current_consideration.consideration_id=consideration.consideration_id "
+    "JOIN current_review_case_lineages lineage "
+    "ON lineage.review_case_id=consideration.review_case_id "
+    "WHERE selection.kind='automatic' AND "
+    + _AUTOMATIC_POSTURE_SQL
+    + " UNION ALL SELECT d.decision_id,d.review_case_id,'description',CASE json_extract(d.document,'$.origin') WHEN 'human' THEN 'human' ELSE 'automatic' END FROM current_description_decisions p JOIN description_decisions d ON d.decision_id=p.decision_id"
+    " WHERE (json_extract(d.document,'$.origin')='human' OR (NOT EXISTS ("
+    "SELECT 1 FROM field_effect_manual_holds hold WHERE "
+    "hold.review_case_id=d.review_case_id AND "
+    "hold.destination='description' AND hold.active=1) AND "
+    + _AUTOMATIC_POSTURE_SQL
+    + _ACTIVE_GENERATION_DESCRIPTION_SQL
+    + "))) "
+)
+
+# The plan lists fields in the order the owner reads them everywhere else.
+_PLAN_DESTINATION_ORDER = json.dumps(
+    [destination.value for destination in TargetDestination]
+)
+
+_PENDING_PREPARED_FROM_SQL = (
+    "FROM pending JOIN current_review_case_lineages lineage "
+    "ON lineage.review_case_id=pending.review_case_id JOIN current_review_packages package "
+    "ON package.connection_name=lineage.connection_name AND package.library_name=lineage.library_name "
+    "AND package.item_id=lineage.item_id AND package.proposal_set_id=lineage.proposal_set_id "
+    "AND package.report_id=lineage.report_id AND package.review_case_id=lineage.review_case_id "
+    "AND package.checkpoint=lineage.checkpoint "
+    "WHERE NOT EXISTS (SELECT 1 FROM field_effects WHERE decision_id=pending.decision_id "
+    "AND "
+    + _FIELD_EFFECT_HOLDS_DECISION_SQL
+    + ") AND NOT EXISTS (SELECT 1 FROM field_effects WHERE "
+    + _FIELD_EFFECT_COMPANION_DECISION_SQL
+    + "=pending.decision_id AND "
+    + _FIELD_EFFECT_HOLDS_DECISION_SQL
+    + ") AND NOT EXISTS (SELECT 1 FROM field_effect_no_changes no_change WHERE no_change.decision_id=pending.decision_id) "
+)
+
+
+# Entries each plan-read cache keeps. A plan file lists a work's rows together,
+# so this bounds memory at any plan size without losing reuse (#1336).
+_PLAN_REUSE = 256
+
+
+@dataclass(frozen=True, slots=True)
+class _PlanReuse:
+    """Read-scoped, bounded reuse of what one write-plan read validates."""
+
+    case: Callable[[str], ReviewCase]
+    report: Callable[[str], MetadataReport]
+    parse_report: Callable[[str], MetadataReport]
+    parse_proposal: Callable[[str], ProposalSet]
+    parse_outcome: Callable[[str], ShadowOutcomeSet]
+
+
 class SQLiteFieldEffectActivityRepository(ConnectionScoped):
     """Project field-effect activity, pending work and operational signals."""
 
@@ -515,6 +624,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         self._reused_report: Callable[[str], MetadataReport] | None = None
         self._reused_case: Callable[[str], ReviewCase] | None = None
         self._reused_outcome: Callable[[str], ShadowOutcomeSet] | None = None
+        # Within one write-plan read, the one snapshot it reads, each current
+        # case is validated once however many of its decisions are listed.
+        self._plan_reuse: _PlanReuse | None = None
         # Held by readiness from its fresh check to its snapshot; a background
         # projector takes no step inside it (#1231).
         self._readiness_window = Lock()
@@ -589,14 +701,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             ).fetchone()
         if row is None or row[0] != decision.to_json():
             raise FieldEffectError("authority_binding")
-        envelope = json.loads(self.get_review_case(decision.review_case_id))
-        if (
-            type(envelope) is not dict
-            or envelope.get("current") is not True
-            or type(envelope.get("case")) is not dict
-        ):
-            raise FieldEffectError("authority_binding")
-        case = ReviewCase.from_json(_canonical_json(envelope["case"]))
+        case = self._current_case(decision.review_case_id)
         # ``value`` carries either a human selection envelope or the projected
         # automatic envelope, so it is declared at the widest of the two.
         value: object
@@ -677,6 +782,186 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             "dependency_digests": dependency_digests,
         }
 
+    @local_operation
+    def field_effect_plan_row(
+        self,
+        decision: HumanDecision
+        | AutomaticDecision
+        | CoverAutomaticDecision
+        | AuthoredDescriptionDecision,
+    ) -> dict[str, object]:
+        """Name a resolved decision's work, authors and evidence sources.
+
+        Called after the decision resolved in the same snapshot, so its case is
+        current. Sources are provider names only: an owner's accepted value
+        names its alternative's evidence, an automatic one its outcome's
+        citations, a cover its candidate's citations. An entered or restored
+        value and description advice, which keeps digests only, name none.
+        """
+        try:
+            case = self._current_case(decision.review_case_id)
+            work, authors = report_work_labels(self._plan_report(case.report_id))
+            references: tuple[str, ...] = ()
+            report_id = case.report_id
+            if type(decision) is HumanDecision and decision.outcome == "accept":
+                references = next(
+                    (
+                        tuple(
+                            cast(
+                                "list[str]", alternative.get("evidence_references", [])
+                            )
+                        )
+                        for proposal in case.proposals
+                        if proposal.get("proposal_id") == decision.proposal_id
+                        for alternative in cast(
+                            "list[dict[str, object]]",
+                            cast("dict[str, object]", proposal["result"]).get(
+                                "alternatives", []
+                            ),
+                        )
+                        if alternative.get("value") == decision.selected_value
+                    ),
+                    (),
+                )
+            elif type(decision) is CoverAutomaticDecision:
+                references = decision.citation_ids
+                row = self._connection.execute(
+                    "SELECT report_id FROM cover_considerations WHERE consideration_id=?",
+                    (decision.consideration_id,),
+                ).fetchone()
+                report_id = report_id if row is None else row[0]
+            elif type(decision) is AutomaticDecision:
+                row = self._connection.execute(
+                    "SELECT document FROM shadow_decision_outcomes WHERE review_case_id=? "
+                    "AND report_id=? AND proposal_set_id=? AND resolved_policy_id=? "
+                    "ORDER BY json_extract(document,'$.policy_generation') DESC,"
+                    "evaluated_at DESC,outcome_set_id DESC LIMIT 1",
+                    (
+                        decision.review_case_id,
+                        decision.report_id,
+                        decision.proposal_set_id,
+                        decision.resolved_policy_id,
+                    ),
+                ).fetchone()
+                if row is not None:
+                    references = next(
+                        (
+                            outcome.citation_ids
+                            for outcome in self._parsed_outcome(row[0]).outcomes
+                            if outcome.outcome_id == decision.source_outcome_id
+                        ),
+                        (),
+                    )
+            return {
+                "work": work,
+                "authors": authors,
+                "sources": self._plan_source_labels(report_id, references),
+            }
+        except sqlite3.Error as error:
+            raise FieldEffectError("persistence") from error
+
+    def _plan_source_labels(
+        self, report_id: str, references: tuple[str, ...]
+    ) -> list[str]:
+        if not references:
+            return []
+        report = self._plan_report(report_id)
+        cited = set(references)
+        labels = set(provider_source_labels(report, list(references)))
+        for source in report.cover_sources:
+            if cover_source_reference(report.report_id, source.source_id) in cited:
+                labels.add(
+                    "Local library record"
+                    if source.kind in LOCAL_COVER_SOURCE_KINDS
+                    else provider_label(source.kind.value)
+                )
+        if any(claim.reference in cited for claim in report.local_claims):
+            labels.add("Local library record")
+        return sorted(labels)
+
+    def _plan_report(self, report_id: str) -> MetadataReport:
+        """Read and parse one report; reused inside a plan read."""
+        cached = self._plan_reuse
+        return (
+            self._read_plan_report(report_id)
+            if cached is None
+            else cached.report(report_id)
+        )
+
+    def _read_plan_report(self, report_id: str) -> MetadataReport:
+        row = self._connection.execute(
+            "SELECT document FROM metadata_reports WHERE report_id=?", (report_id,)
+        ).fetchone()
+        if row is None:
+            raise FieldEffectError("authority_binding")
+        return self._parsed_report(row[0])
+
+    def _parsed_report(self, document: str) -> MetadataReport:
+        cached = self._plan_reuse
+        return (
+            MetadataReport.from_json(document)
+            if cached is None
+            else cached.parse_report(document)
+        )
+
+    def _parsed_proposal(self, document: str) -> ProposalSet:
+        cached = self._plan_reuse
+        return (
+            ProposalSet.from_json(document)
+            if cached is None
+            else cached.parse_proposal(document)
+        )
+
+    def _parsed_outcome(self, document: str) -> ShadowOutcomeSet:
+        cached = self._plan_reuse
+        return (
+            ShadowOutcomeSet.from_json(document)
+            if cached is None
+            else cached.parse_outcome(document)
+        )
+
+    @contextmanager
+    def _plan_documents(self) -> Iterator[None]:
+        """Reuse what one write-plan read validates, for that read only.
+
+        Each cache is bounded and keyed by an exact identity or document, so a
+        work's rows, which a plan file lists together, read its case, report,
+        proposal set and outcome set once. Safe because the read is one fixed
+        snapshot; nothing outlives it, and nothing is shared with a writer.
+        """
+        self._plan_reuse = _PlanReuse(
+            case=lru_cache(maxsize=_PLAN_REUSE)(self._read_current_case),
+            report=lru_cache(maxsize=_PLAN_REUSE)(self._read_plan_report),
+            parse_report=lru_cache(maxsize=_PLAN_REUSE)(
+                self._reused_report or MetadataReport.from_json
+            ),
+            parse_proposal=lru_cache(maxsize=_PLAN_REUSE)(ProposalSet.from_json),
+            parse_outcome=lru_cache(maxsize=_PLAN_REUSE)(ShadowOutcomeSet.from_json),
+        )
+        try:
+            yield
+        finally:
+            self._plan_reuse = None
+
+    def _current_case(self, review_case_id: str) -> ReviewCase:
+        """Read one validated current case; reused inside a plan read."""
+        cached = self._plan_reuse
+        return (
+            self._read_current_case(review_case_id)
+            if cached is None
+            else cached.case(review_case_id)
+        )
+
+    def _read_current_case(self, review_case_id: str) -> ReviewCase:
+        envelope = json.loads(self.get_review_case(review_case_id))
+        if (
+            type(envelope) is not dict
+            or envelope.get("current") is not True
+            or type(envelope.get("case")) is not dict
+        ):
+            raise FieldEffectError("authority_binding")
+        return ReviewCase.from_json(_canonical_json(envelope["case"]))
+
     def _automatic_authority_value(
         self,
         automatic: AutomaticDecision | CoverAutomaticDecision,
@@ -711,8 +996,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     self._connection,
                     automatic,
                     case,
-                    MetadataReport.from_json(report_row[0]),
-                    ProposalSet.from_json(proposal_row[0]),
+                    self._parsed_report(report_row[0]),
+                    self._parsed_proposal(proposal_row[0]),
                     expand_cover_consideration(*consideration_row),
                 )
             else:
@@ -738,9 +1023,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 value = _automatic_decision_value(
                     cast(AutomaticDecision, automatic),
                     case,
-                    MetadataReport.from_json(report_row[0]),
-                    ProposalSet.from_json(proposal_row[0]),
-                    ShadowOutcomeSet.from_json(outcome_row[0]),
+                    self._parsed_report(report_row[0]),
+                    self._parsed_proposal(proposal_row[0]),
+                    self._parsed_outcome(outcome_row[0]),
                 )
                 from mechanical_librarian.domain.automatic_decision import (
                     audiobook_title_subtitle_bundle,
@@ -748,7 +1033,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
 
                 members = tuple(
                     field
-                    for field in ShadowOutcomeSet.from_json(outcome_row[0]).outcomes
+                    for field in self._parsed_outcome(outcome_row[0]).outcomes
                     if field.destination in {"title", "subtitle"}
                 )
                 if (
@@ -782,9 +1067,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     _automatic_decision_value(
                         sibling,
                         case,
-                        MetadataReport.from_json(report_row[0]),
-                        ProposalSet.from_json(proposal_row[0]),
-                        ShadowOutcomeSet.from_json(outcome_row[0]),
+                        self._parsed_report(report_row[0]),
+                        self._parsed_proposal(proposal_row[0]),
+                        self._parsed_outcome(outcome_row[0]),
                     )
                     paired_decision_id = sibling.decision_id
         except (
@@ -1322,19 +1607,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         limit: int,
         after: tuple[int, str] | None = None,
     ) -> tuple[str, ...]:
-        return self._pending_field_effect_decision_documents(limit, after, ordered=True)
-
-    @local_operation
-    def pending_field_effect_activity_example_document(self) -> str | None:
-        """Select one exact-current pending decision for illustration."""
-
-        def example() -> str | None:
-            documents = self._pending_field_effect_decision_documents(
-                1, None, ordered=False
-            )
-            return documents[0] if documents else None
-
-        return self._pending_read("example", example)
+        return self._pending_field_effect_decision_documents(limit, after)
 
     def _pending_read(
         self, kind: str, read: Callable[[], _ActivityRead]
@@ -1375,8 +1648,6 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         self,
         limit: int,
         after: tuple[int, str] | None,
-        *,
-        ordered: bool,
     ) -> tuple[str, ...]:
         if type(limit) is not int or not 1 <= limit <= 100:
             raise FieldEffectError("invalid_limit")
@@ -1403,8 +1674,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             # as an uncorrelated IN the lineage list is built once per
             # statement. A caseless lineage makes the IN NULL rather than false
             # for a case it lacks, which this never-negated WHERE treats alike.
-            # The unary plus keeps the automatic arm a scan in rowid order,
-            # which the unordered example's answer depends on. It also decides
+            # The unary plus keeps the automatic arm a scan, which decides
             # which rows reach the JSON functions: driven from the list, the
             # arm would never extract the outcome of a decision without a
             # current lineage, so a malformed one would no longer be refused.
@@ -1490,12 +1760,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 + _FIELD_EFFECT_HOLDS_DECISION_SQL
                 + ") AND NOT EXISTS (SELECT 1 FROM field_effect_no_changes no_change WHERE no_change.decision_id=pending.decision_id) "
                 + cursor
-                + (
-                    "ORDER BY pending.occurred_at,pending.decision_id "
-                    if ordered
-                    else ""
-                )
-                + "LIMIT ?",
+                + "ORDER BY pending.occurred_at,pending.decision_id LIMIT ?",
                 (*parameters, limit),
             ).fetchall()
             return tuple(row[0] for row in rows)
@@ -1525,82 +1790,11 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             # after that test, before the ordinal, and only as a test, never as
             # the arm's access path. NULL and false reject a row alike.
             statement = (
-                "WITH pending AS ("
-                "SELECT human.decision_id,human.review_case_id,human.destination,'human' origin "
-                "FROM human_decisions human WHERE NOT EXISTS (SELECT 1 FROM current_description_decisions authored "
-                "WHERE authored.review_case_id=human.review_case_id AND human.destination='description') AND (human.outcome IN ('accept','owner_entered') OR ("
-                + _CORRECTIVE_KEEP_CURRENT_SQL
-                + ")) AND "
-                + _RECORDED_ONLY_EXCLUDED_SQL
-                + "CASE WHEN human.review_case_id IN (SELECT review_case_id FROM current_review_case_lineages) "
-                "THEN human.ordinal=(SELECT MAX(current.ordinal) FROM human_decisions current "
-                "WHERE current.review_case_id=human.review_case_id AND "
-                "current.destination=human.destination) END AND "
-                + _episode_decision_sql("human")
-                + " AND NOT EXISTS ("
-                "SELECT 1 FROM field_effect_manual_holds returned WHERE "
-                "returned.review_case_id=human.review_case_id AND "
-                "returned.destination=human.destination AND returned.active=0) UNION ALL "
-                "SELECT automatic.decision_id,automatic.review_case_id,automatic.destination,'automatic' origin "
-                "FROM automatic_decisions automatic WHERE NOT EXISTS (SELECT 1 FROM current_description_decisions authored WHERE authored.review_case_id=automatic.review_case_id AND automatic.destination='description') AND "
-                "json_extract(automatic.document,'$.outcome')='candidate' AND "
-                "+automatic.review_case_id IN (SELECT lineage.review_case_id FROM current_review_case_lineages lineage JOIN "
-                "current_review_packages package ON package.connection_name=lineage.connection_name "
-                "AND package.library_name=lineage.library_name AND package.item_id=lineage.item_id "
-                "AND package.proposal_set_id=lineage.proposal_set_id AND package.report_id=lineage.report_id "
-                "AND package.review_case_id=lineage.review_case_id AND package.checkpoint=lineage.checkpoint)"
-                " AND NOT EXISTS ("
-                "SELECT 1 FROM human_decisions human WHERE "
-                "human.review_case_id=automatic.review_case_id AND "
-                "human.destination=automatic.destination AND NOT EXISTS ("
-                "SELECT 1 FROM field_effect_manual_holds returned WHERE "
-                "returned.review_case_id=automatic.review_case_id AND "
-                "returned.destination=automatic.destination AND returned.active=0)) AND NOT EXISTS ("
-                "SELECT 1 FROM field_effect_manual_holds hold WHERE "
-                "hold.review_case_id=automatic.review_case_id AND "
-                "hold.destination=automatic.destination AND hold.active=1) AND "
-                # Only the active generation's decision is pending (#1573).
-                + _active_generation_automatic_sql("automatic")
-                + " AND "
-                + _AUTOMATIC_POSTURE_SQL
-                + " UNION ALL "
-                "SELECT selection.decision_id,consideration.review_case_id,'cover','automatic' "
-                "FROM current_cover_selection_authorities current "
-                "JOIN cover_selection_authorities selection "
-                "ON selection.selection_id=current.selection_id "
-                "JOIN cover_considerations consideration "
-                "ON consideration.consideration_id=selection.consideration_id "
-                "JOIN current_cover_considerations current_consideration "
-                "ON current_consideration.consideration_id=consideration.consideration_id "
-                "JOIN current_review_case_lineages lineage "
-                "ON lineage.review_case_id=consideration.review_case_id "
-                "WHERE selection.kind='automatic' AND "
-                + _AUTOMATIC_POSTURE_SQL
-                + " UNION ALL SELECT d.decision_id,d.review_case_id,'description',CASE json_extract(d.document,'$.origin') WHEN 'human' THEN 'human' ELSE 'automatic' END FROM current_description_decisions p JOIN description_decisions d ON d.decision_id=p.decision_id"
-                " WHERE (json_extract(d.document,'$.origin')='human' OR (NOT EXISTS ("
-                "SELECT 1 FROM field_effect_manual_holds hold WHERE "
-                "hold.review_case_id=d.review_case_id AND "
-                "hold.destination='description' AND hold.active=1) AND "
-                + _AUTOMATIC_POSTURE_SQL
-                + _ACTIVE_GENERATION_DESCRIPTION_SQL
-                + "))) "
-                "SELECT lineage.connection_name,lineage.library_name,pending.origin,"
+                _PENDING_PREPARED_SQL
+                + "SELECT lineage.connection_name,lineage.library_name,pending.origin,"
                 "pending.destination,count(*) "
-                "FROM pending JOIN current_review_case_lineages lineage "
-                "ON lineage.review_case_id=pending.review_case_id JOIN current_review_packages package "
-                "ON package.connection_name=lineage.connection_name AND package.library_name=lineage.library_name "
-                "AND package.item_id=lineage.item_id AND package.proposal_set_id=lineage.proposal_set_id "
-                "AND package.report_id=lineage.report_id AND package.review_case_id=lineage.review_case_id "
-                "AND package.checkpoint=lineage.checkpoint "
-                "WHERE NOT EXISTS (SELECT 1 FROM field_effects WHERE decision_id=pending.decision_id "
-                "AND "
-                + _FIELD_EFFECT_HOLDS_DECISION_SQL
-                + ") AND NOT EXISTS (SELECT 1 FROM field_effects WHERE "
-                + _FIELD_EFFECT_COMPANION_DECISION_SQL
-                + "=pending.decision_id AND "
-                + _FIELD_EFFECT_HOLDS_DECISION_SQL
-                + ") AND NOT EXISTS (SELECT 1 FROM field_effect_no_changes no_change WHERE no_change.decision_id=pending.decision_id) "
-                "GROUP BY lineage.connection_name,lineage.library_name,pending.origin,"
+                + _PENDING_PREPARED_FROM_SQL
+                + "GROUP BY lineage.connection_name,lineage.library_name,pending.origin,"
                 "pending.destination ORDER BY lineage.connection_name,"
                 "lineage.library_name,pending.origin,pending.destination"
             )
@@ -1617,6 +1811,102 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     "count": count,
                 }
                 for connection, library, origin, destination, count in rows
+            )
+        except sqlite3.Error as error:
+            raise FieldEffectError("persistence") from error
+
+    @local_operation
+    def pending_field_effect_plan_entries(
+        self, per_group: int | None, limit: int, library_order: tuple[str, ...]
+    ) -> tuple[tuple[str, str, str, str, str, str], ...]:
+        """Return prepared decisions as the counts statement groups them.
+
+        Each row is (connection, library, origin, destination, decision id,
+        work id), in plan file order: libraries in ``library_order`` (any other
+        after them), then work, field in canonical order, and an owner's
+        choice before an automatic one. The relation and its filters are the
+        counts statement's own, so a group lists exactly the decisions its
+        count counts; ``per_group`` keeps the first of each group by decision id.
+        """
+        if (
+            (
+                per_group is not None
+                and (type(per_group) is not int or not 1 <= per_group <= 100)
+            )
+            or type(limit) is not int
+            or not 1 <= limit <= 100_000
+            or type(library_order) is not tuple
+            or any(type(library) is not str for library in library_order)
+        ):
+            raise FieldEffectError("invalid_limit")
+        statement = (
+            _PENDING_PREPARED_SQL
+            + ",ranked AS (SELECT lineage.connection_name,lineage.library_name,"
+            "pending.origin,pending.destination,pending.decision_id,lineage.item_id,"
+            "ROW_NUMBER() OVER (PARTITION BY lineage.connection_name,"
+            "lineage.library_name,pending.origin,pending.destination "
+            "ORDER BY pending.decision_id) ordinal "
+            + _PENDING_PREPARED_FROM_SQL
+            + ") SELECT connection_name,library_name,origin,destination,decision_id,"
+            "item_id FROM ranked WHERE ordinal<=? ORDER BY "
+            "coalesce((SELECT key FROM json_each(?) WHERE value=library_name),"
+            "1000000),library_name,connection_name,item_id,"
+            "coalesce((SELECT key FROM json_each(?) WHERE value=destination),"
+            "1000000),destination,origin DESC,decision_id LIMIT ?"
+        )
+        parameters = (
+            # Without ``per_group`` every group is whole; only ``limit`` bounds.
+            1_000_000 if per_group is None else per_group,
+            json.dumps(list(library_order)),
+            _PLAN_DESTINATION_ORDER,
+            limit,
+        )
+
+        def read() -> tuple[tuple[str, str, str, str, str, str], ...]:
+            return tuple(self._connection.execute(statement, parameters).fetchall())
+
+        try:
+            # Only a bounded inline plan is kept per stamp (#1223); a file's
+            # rows are read once and never held.
+            return (
+                self._pending_read(f"plan:{per_group}:{limit}:{parameters[1]}", read)
+                if limit <= 100
+                else read()
+            )
+        except sqlite3.Error as error:
+            raise FieldEffectError("persistence") from error
+
+    @local_operation
+    def field_effect_plan_documents(
+        self, decision_ids: tuple[str, ...]
+    ) -> dict[str, str]:
+        """Read the exact documents of up to 100 prepared decisions by id.
+
+        A cover's is its current automatic selection's decision document, as
+        the pending documents statement reads it.
+        """
+        if (
+            type(decision_ids) is not tuple
+            or len(decision_ids) > 100
+            or any(type(value) is not str for value in decision_ids)
+        ):
+            raise FieldEffectError("invalid_limit")
+        if not decision_ids:
+            return {}
+        marks = ",".join("?" * len(decision_ids))
+        try:
+            return dict(
+                self._connection.execute(
+                    f"SELECT decision_id,document FROM human_decisions WHERE decision_id IN ({marks}) "
+                    f"UNION ALL SELECT decision_id,document FROM automatic_decisions WHERE decision_id IN ({marks}) "
+                    f"UNION ALL SELECT decision_id,document FROM description_decisions WHERE decision_id IN ({marks}) "
+                    "UNION ALL SELECT selection.decision_id,json_extract(selection.document,"
+                    "'$.decision_document') FROM current_cover_selection_authorities current "
+                    "JOIN cover_selection_authorities selection "
+                    "ON selection.selection_id=current.selection_id "
+                    f"WHERE selection.kind='automatic' AND selection.decision_id IN ({marks})",
+                    decision_ids * 4,
+                ).fetchall()
             )
         except sqlite3.Error as error:
             raise FieldEffectError("persistence") from error
@@ -3116,7 +3406,18 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             # Readiness reads no Activity facts, so no catch-up widens the
             # window between the fresh check and this snapshot (#1225), and
             # no background step runs inside it (#1231).
-            return self._activity_snapshot(project)
+            with self._plan_documents():
+                return self._activity_snapshot(project)
+
+    def field_effect_write_plan_snapshot(
+        self, call: Callable[[], dict[str, object]]
+    ) -> dict[str, object]:
+        """Run one write-plan file read in one exact snapshot, catching up no facts.
+
+        Its inputs are canonical rows, as the consent read's are (#1236).
+        """
+        with self._activity_page_cache_lock, self._plan_documents():
+            return self._activity_snapshot(call)
 
     def field_effect_activity_snapshot(
         self, call: Callable[[], dict[str, object]]

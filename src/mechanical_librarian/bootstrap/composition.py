@@ -834,9 +834,12 @@ def open_field_effect_activity_readers(
     facts: ActivityFactStore | None = None,
     documents: ActivityDocuments | None = None,
 ) -> tuple[
-    ContinuousGuardedApplication, ContinuousGuardedApplication, Callable[[], None]
+    ContinuousGuardedApplication,
+    ContinuousGuardedApplication,
+    ContinuousGuardedApplication,
+    Callable[[], None],
 ]:
-    """Own both independent readers as one generation resource, including failure."""
+    """Own the three independent readers as one generation resource, including failure."""
     # Readiness holds this from its fresh check to its snapshot, and the
     # history reader's background steps wait outside it (#1231).
     window = threading.Lock()
@@ -862,7 +865,13 @@ def open_field_effect_activity_readers(
             documents=held,
         )
         activation.callback(close_permissions)
-        return history, permissions, activation.pop_all().close
+        # A write-plan file can take many seconds; on its own reader it holds
+        # neither the permission read nor the history read (#1336).
+        export, close_export = open_field_effect_activity_projection(
+            configuration, database_path, authority, provider_recovery, documents=held
+        )
+        activation.callback(close_export)
+        return history, permissions, export, activation.pop_all().close
 
 
 def run_metadata_report(
@@ -2270,6 +2279,7 @@ def compose_store_runtime_generation(
         )
         activity_projection = None
         permission_projection = None
+        export_projection = None
         close_activity_projection = None
         support_bundle = SupportBundle(
             (
@@ -2310,6 +2320,7 @@ def compose_store_runtime_generation(
                 (
                     activity_projection,
                     permission_projection,
+                    export_projection,
                     close_activity_projection,
                 ) = open_field_effect_activity_readers(
                     configuration,
@@ -2351,6 +2362,7 @@ def compose_store_runtime_generation(
                 field_application=field_application,
                 activity_projection=activity_projection,
                 permission_projection=permission_projection,
+                export_projection=export_projection,
                 close_activity_projection=close_activity_projection,
                 cover_considerations=cover_considerations,
                 settings=OwnerSettingsOperations(settings_store),
@@ -2826,6 +2838,7 @@ def run_review_server(
             )
             activity_projection = None
             permission_projection = None
+            export_projection = None
             close_activity_projection = None
             support_bundle = SupportBundle(
                 (
@@ -2865,6 +2878,7 @@ def run_review_server(
                     (
                         activity_projection,
                         permission_projection,
+                        export_projection,
                         close_activity_projection,
                     ) = open_field_effect_activity_readers(
                         configuration,
@@ -2900,6 +2914,7 @@ def run_review_server(
                     field_application=field_application,
                     activity_projection=activity_projection,
                     permission_projection=permission_projection,
+                    export_projection=export_projection,
                     close_activity_projection=close_activity_projection,
                     cover_considerations=cover_considerations,
                     settings=settings,
