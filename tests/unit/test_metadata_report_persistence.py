@@ -670,6 +670,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("metadata_report_browse_authors",),
             ("metadata_report_browse_facts",),
             ("metadata_report_cover_references",),
+            ("metadata_report_value_flags",),
             ("metadata_reports",),
             ("owner_setting_secrets",),
             ("owner_settings",),
@@ -940,6 +941,7 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
                 "DROP TABLE reviewer_task_requests;"
                 "DROP TRIGGER metadata_reports_project_browse_facts;"
                 "DROP TABLE metadata_report_browse_authors;"
+                "DROP TABLE metadata_report_value_flags;"
                 "DROP TABLE metadata_report_browse_facts;"
                 "DROP TRIGGER proposal_sets_project_browse_facts;"
                 "DROP TABLE proposal_set_browse_facts;"
@@ -2741,6 +2743,7 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
                     "DROP TABLE reviewer_task_requests;"
                     "DROP TRIGGER metadata_reports_project_browse_facts;"
                     "DROP TABLE metadata_report_browse_authors;"
+                    "DROP TABLE metadata_report_value_flags;"
                     "DROP TABLE metadata_report_browse_facts;"
                     "DROP TRIGGER proposal_sets_project_browse_facts;"
                     "DROP TABLE proposal_set_browse_facts;"
@@ -2765,8 +2768,10 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
             else:
                 # The v20 producer predates #1358's case episodes, #1310's
                 # resolution index led by the resolved id, #1363's retained
-                # cover tables and #1355's level storage.
+                # cover tables, #1355's level storage and #1334's value flags.
                 repository._connection.executescript(
+                    "DROP TABLE metadata_report_value_flags;"
+                    "ALTER TABLE browse_fact_identity DROP COLUMN value_flag_rules;"
                     "DROP TABLE retained_cover_listings;"
                     "DROP TABLE retained_cover_removals;"
                     "DROP TABLE retained_cover_bindings;"

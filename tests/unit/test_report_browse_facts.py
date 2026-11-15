@@ -124,6 +124,7 @@ _LENSES: tuple[LibraryLensFilter | None, ...] = (
     "no_attention_needed",
     "not_matched",
     "preparation_failed",
+    "flagged",
 )
 _ORACLE_LENS_CONDITIONS = {
     None: "1",
@@ -131,7 +132,14 @@ _ORACLE_LENS_CONDITIONS = {
     "no_attention_needed": "attention=0 AND match_reason IS NULL AND failed=0",
     "not_matched": "attention=0 AND match_reason IS NOT NULL",
     "preparation_failed": "attention=0 AND failed=1",
+    "flagged": "flagged=1",
 }
+# Whether the report's own document gives a value flag, derived here rather
+# than read from the stored flag rows (#1334).
+_ORACLE_FLAGGED_SQL = (
+    "CASE WHEN json_array_length(ml_value_flags(json_extract(mr.document,"
+    "'$.target'),json_extract(mr.document,'$.providers')))>0 THEN 1 ELSE 0 END"
+)
 # Whether the work's latest preparation failed for good (#1413).
 _ORACLE_FAILED_SQL = (
     "CASE WHEN (SELECT w.state='failed' AND w.failure_code IS NOT NULL "
@@ -144,7 +152,7 @@ _ORACLE_FAILED_SQL = (
 def _oracle_library_sql(attached: bool, condition: str) -> str:
     terminal_union = (
         " UNION ALL SELECT NULL,NULL,NULL,connection_name,library_name,"
-        "item_id,NULL,0,0,NULL,1,ml_casefold(display_title),'',work_id,attempt,"
+        "item_id,NULL,0,0,NULL,1,0,ml_casefold(display_title),'',work_id,attempt,"
         "stage,failure_root,recovery_attempt,failure_code,"
         "display_title,display_authors,display_format FROM terminal"
         + _TERMINAL_LIBRARY_SEARCH_SQL
@@ -178,6 +186,8 @@ def _oracle_library_sql(attached: bool, condition: str) -> str:
         + " AS match_reason,"
         + _ORACLE_FAILED_SQL
         + " AS failed,"
+        + _ORACLE_FLAGGED_SQL
+        + " AS flagged,"
         "ml_casefold(COALESCE(scalars.title,'')) AS title_order,"
         "COALESCE(rc.review_case_id,'') AS case_order,"
         "NULL AS work_id,NULL AS attempt,NULL AS stage,NULL AS failure_root,"
@@ -192,7 +202,7 @@ def _oracle_library_sql(attached: bool, condition: str) -> str:
         "AS attention_total,COALESCE(sum(CASE WHEN attention=0 AND match_reason "
         "IS NOT NULL THEN 1 ELSE 0 END),0) AS not_matched_total,"
         "COALESCE(sum(CASE WHEN attention=0 AND failed=1 THEN 1 ELSE 0 END),0) "
-        "AS failed_total FROM candidates),"
+        "AS failed_total,COALESCE(sum(flagged),0) AS flagged_total FROM candidates),"
         "page AS MATERIALIZED (SELECT "
         "1 AS present,case_id,report_id,proposal_set_id,"
         "connection_name,library_name,item_id,outcome,"
@@ -215,7 +225,8 @@ def _oracle_library_sql(attached: bool, condition: str) -> str:
         "'media_kind',page.display_format) ELSE mr.document END,page.proposal_set_id,"
         "page.connection_name,page.library_name,page.item_id,page.outcome, "
         "COALESCE(page.present,0),totals.total,totals.attention_total,"
-        "page.match_reason,totals.not_matched_total,totals.failed_total "
+        "page.match_reason,totals.not_matched_total,totals.failed_total,"
+        "totals.flagged_total "
         "FROM totals LEFT JOIN page ON 1 LEFT JOIN review_cases rc ON rc.review_case_id=page.case_id "
         "LEFT JOIN metadata_reports mr ON mr.report_id=page.report_id "
         "ORDER BY page.attention_order,page.provider_order,page.match_order,"
@@ -322,7 +333,7 @@ def _oracle_library(
     lens: LibraryLensFilter | None,
     labels: tuple[tuple[str, str, str], ...],
 ) -> tuple[
-    tuple[tuple[str | None, str], ...], int, int, int, tuple[str | None, ...], int
+    tuple[tuple[str | None, str], ...], int, int, int, tuple[str | None, ...], int, int
 ]:
     condition = _ORACLE_LENS_CONDITIONS[lens]
     catalogue = _catalogue_parameters(repository)
@@ -356,6 +367,7 @@ def _oracle_library(
         rows[0][11],
         tuple(reasons),
         rows[0][12],
+        rows[0][13],
     )
 
 
@@ -436,6 +448,7 @@ def _assert_equal_to_oracle(
                     page.not_matched_total,
                     page.match_reasons,
                     page.preparation_failed_total,
+                    page.flagged_total,
                 ) == _oracle_library(repository, search, limit, offset, lens, labels), (
                     search,
                     limit,
@@ -699,7 +712,7 @@ def test_edge_library_pages_counts_and_searches_equal_the_document_statements(
             _assert_equal_to_oracle(repository, _EDGE_SEARCHES, _EDGE_PAGES, labels)
             for labels in ((), _LABELS)
         )
-        assert compared == 4 * len(_EDGE_SEARCHES) * len(_EDGE_PAGES) * 6
+        assert compared == 4 * len(_EDGE_SEARCHES) * len(_EDGE_PAGES) * 7
     finally:
         repository.close()
 
@@ -754,9 +767,22 @@ def test_candidate_statements_read_no_report_or_proposal_document(
             )
             for search in searches
         }
+        # Looks wrong reads its stored flags, never a document (#1334).
+        flagged = {
+            search: repository.read_current_library_page(
+                search, 1, 0, "flagged", _LABELS
+            )
+            for search in searches
+        }
+        assert flagged[None].flagged_total > 0 and flagged[None].rows
         rendered = {
             report_id
-            for page in (*library.values(), *attention.values(), *settled.values())
+            for page in (
+                *library.values(),
+                *attention.values(),
+                *settled.values(),
+                *flagged.values(),
+            )
             for row in page.rows
             for report_id in [json.loads(row[1]).get("report_id")]
             if report_id is not None
@@ -782,6 +808,10 @@ def test_candidate_statements_read_no_report_or_proposal_document(
             assert (
                 repository.read_current_attention_page(search, 1, 0, _LABELS)
                 == attention[search]
+            )
+            assert (
+                repository.read_current_library_page(search, 1, 0, "flagged", _LABELS)
+                == flagged[search]
             )
         # Only a few fields reach the policy-ask clause, and attention pages
         # render exactly those; render only settled rows so every proposal the
@@ -1170,6 +1200,7 @@ def test_readmitting_a_proposal_with_tampered_facts_refuses_and_commits_nothing(
 _DROP_BROWSE_FACTS_SQL = (
     "DROP TRIGGER metadata_reports_project_browse_facts;"
     "DROP TABLE metadata_report_browse_authors;"
+    "DROP TABLE metadata_report_value_flags;"
     "DROP TABLE metadata_report_browse_facts;"
     "DROP TRIGGER proposal_sets_project_browse_facts;"
     "DROP TABLE proposal_set_browse_facts;"
@@ -1211,6 +1242,41 @@ def test_startup_refuses_the_browse_fact_trigger_that_read_cover_only_lanes(
     connection = sqlite3.connect(database)
     connection.executescript(
         "DROP TRIGGER metadata_reports_project_browse_facts;" + prior + ";"
+    )
+    connection.commit()
+    connection.close()
+    before = database.read_bytes()
+    with pytest.raises(
+        MetadataReportError, match="database is unavailable or incompatible"
+    ):
+        open_repository(database, create=False)
+    assert database.read_bytes() == before
+
+
+def test_startup_refuses_the_predecessor_store_without_value_flags(
+    tmp_path: Path,
+) -> None:
+    """#1334: a store the previous build wrote has no flags and is rebuilt."""
+    database = tmp_path / "application.sqlite3"
+    repository = open_repository(database)
+    _publish(repository, _edge_report(1, "quiet harbour tales"), propose=False)
+    repository.close()
+    flags_insert = (
+        "; INSERT INTO metadata_report_value_flags(report_id,destination,rule) "
+        "SELECT NEW.report_id,"
+        + schema._report_value_flag_values_sql("", "NEW.document")
+    )
+    prior = schema._REPORT_BROWSE_FACTS_INSERT_SQL.replace(flags_insert, "")
+    assert prior != schema._REPORT_BROWSE_FACTS_INSERT_SQL
+    connection = sqlite3.connect(database)
+    assert connection.execute(
+        "SELECT destination,rule FROM metadata_report_value_flags"
+    ).fetchall() == [("title", "title_all_lower_case")]
+    connection.executescript(
+        "DROP TRIGGER metadata_reports_project_browse_facts;"
+        + prior
+        + ";DROP TABLE metadata_report_value_flags;"
+        "ALTER TABLE browse_fact_identity DROP COLUMN value_flag_rules;"
     )
     connection.commit()
     connection.close()

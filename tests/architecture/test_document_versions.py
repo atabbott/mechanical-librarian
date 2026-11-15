@@ -115,7 +115,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.application.review_web",
         "REVIEW_LIBRARY_SCHEMA",
-        "review-library-v5",
+        "review-library-v6",
     ),
     (
         "mechanical_librarian.application.review_web",

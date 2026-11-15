@@ -96,6 +96,7 @@ from mechanical_librarian.domain.metadata_report import (
     REPORT_SCHEMA,
     MetadataReport,
     ReportValueError,
+    TargetFacts,
 )
 from mechanical_librarian.domain.owner_settings import OwnerSettingsError
 from mechanical_librarian.domain.proposal_set import (
@@ -110,6 +111,12 @@ from mechanical_librarian.domain.shadow_decision import (
     DECISION_POLICY_VERSION,
 )
 from mechanical_librarian.domain.shadow_outcome import SHADOW_OUTCOME_SCHEMA
+from mechanical_librarian.domain.value_flags import (
+    VALUE_FLAG_RULES,
+    VALUE_FLAG_RULES_VERSION,
+    report_source_titles,
+    value_flags,
+)
 
 if sys.platform.startswith("linux"):
     import fcntl
@@ -148,6 +155,18 @@ _REPORT_BROWSE_AUTHORS_SQL = (
     "CREATE TABLE metadata_report_browse_authors ("
     "report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
     "author_key TEXT NOT NULL, PRIMARY KEY(report_id,author_key)) WITHOUT ROWID"
+)
+# #1334: each rule a report's current values meet, one row per destination and
+# rule, derived at insert by `value_flags` so the Looks wrong lens filters and
+# counts in SQL. Only a contributor list carries a credit label.
+_REPORT_VALUE_FLAGS_SQL = (
+    "CREATE TABLE metadata_report_value_flags ("
+    "report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
+    "destination TEXT NOT NULL CHECK(destination IN ('title','authors','narrators')), "
+    "rule TEXT NOT NULL CHECK(rule IN ("
+    + ",".join(f"'{rule}'" for rule in VALUE_FLAG_RULES)
+    + ")), CHECK((rule='credit_label')=(destination<>'title')), "
+    "PRIMARY KEY(report_id,destination,rule)) WITHOUT ROWID"
 )
 
 
@@ -269,6 +288,24 @@ def _report_browse_author_values_sql(source: str, document: str) -> str:
     )
 
 
+def _report_value_flag_values_sql(source: str, document: str) -> str:
+    """A report's flags, from its target and its candidates' title claims.
+
+    The SQL function receives the report's own target and provider list and
+    reads both through `value_flags` and `report_source_titles`, the same
+    domain rules the Library row applies (#1334).
+    """
+    return (
+        "json_extract(flag.value,'$[0]'),json_extract(flag.value,'$[1]') FROM "
+        + source
+        + "json_each(ml_value_flags(json_extract("
+        + document
+        + ",'$.target'),json_extract("
+        + document
+        + ",'$.providers'))) flag"
+    )
+
+
 _REPORT_BROWSE_FACTS_INSERT_SQL = (
     "CREATE TRIGGER metadata_reports_project_browse_facts AFTER INSERT ON metadata_reports "
     "BEGIN INSERT INTO metadata_report_browse_facts("
@@ -278,17 +315,22 @@ _REPORT_BROWSE_FACTS_INSERT_SQL = (
     + "; INSERT INTO metadata_report_browse_authors(report_id,author_key) "
     "SELECT DISTINCT NEW.report_id,"
     + _report_browse_author_values_sql("", "NEW.document")
+    + "; INSERT INTO metadata_report_value_flags(report_id,destination,rule) "
+    "SELECT NEW.report_id,"
+    + _report_value_flag_values_sql("", "NEW.document")
     + "; END"
 )
 
 
 # The fold is `str.casefold`, whose mapping is the interpreter's Unicode
 # database, so the facts are bound to the version they were folded under. Open
-# refuses any other version: a clean rebuild re-derives them (#1199).
+# refuses any other version: a clean rebuild re-derives them (#1199). The value
+# flags are bound the same way to the rule list they were derived by (#1334).
 _BROWSE_FACT_IDENTITY_SQL = (
     "CREATE TABLE browse_fact_identity (singleton INTEGER PRIMARY KEY NOT NULL "
     "CHECK(singleton=1), unicode_version TEXT NOT NULL "
-    "CHECK(length(unicode_version) BETWEEN 1 AND 32))"
+    "CHECK(length(unicode_version) BETWEEN 1 AND 32), value_flag_rules TEXT NOT NULL "
+    "CHECK(length(value_flag_rules) BETWEEN 1 AND 64))"
 )
 
 
@@ -298,15 +340,31 @@ def _review_casefold(value: object) -> str:
     return value.casefold()
 
 
+def _review_value_flags(target: object, providers: object) -> str:
+    """A report's value flags as a JSON list of [destination, rule] pairs."""
+    if type(target) is not str or type(providers) is not str:
+        raise ValueError("review value flag input is invalid")
+    fields = TargetFacts.from_data(json.loads(target)).fields
+    return json.dumps(
+        [
+            list(flag)
+            for flag in value_flags(fields, report_source_titles(json.loads(providers)))
+        ]
+    )
+
+
 def _register_casefold(connection: sqlite3.Connection) -> None:
-    """Give a connection the one deterministic fold its facts were derived by.
+    """Give a connection the deterministic functions its facts were derived by.
 
     Every connection that inserts a report fires the browse-fact trigger, and
-    every connection that validates facts recomputes them, through this
-    function. One that lacks it fails with `no such function` and writes or
-    accepts nothing.
+    every connection that validates facts recomputes them, through the fold
+    and the value flags (#1334). One that lacks them fails with `no such
+    function` and writes or accepts nothing.
     """
     connection.create_function("ml_casefold", 1, _review_casefold, deterministic=True)
+    connection.create_function(
+        "ml_value_flags", 2, _review_value_flags, deterministic=True
+    )
 
 
 _CURRENT_SQL = (
@@ -1386,7 +1444,11 @@ _SETUP_POLICY_TRANSITION_ROW = (
 _SETUP_REVIEW_CONTROL_ROW = (1, 0, 0, 0, None, 0, 0, 0)
 _SETUP_AUTOMATIC_SAFETY_ROW = (1, 0, None, "[]", 0)
 _SETUP_FIELD_EFFECT_CONTROL_ROW = (1, 0, 0)
-_SETUP_BROWSE_FACT_IDENTITY_ROW = (1, unicodedata.unidata_version)
+_SETUP_BROWSE_FACT_IDENTITY_ROW = (
+    1,
+    unicodedata.unidata_version,
+    VALUE_FLAG_RULES_VERSION,
+)
 
 
 _DESCRIPTION_ADVICE_TABLES = {
@@ -1684,6 +1746,7 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_REPORTS_SQL)
     connection.execute(_REPORT_BROWSE_FACTS_SQL)
     connection.execute(_REPORT_BROWSE_AUTHORS_SQL)
+    connection.execute(_REPORT_VALUE_FLAGS_SQL)
     connection.execute(_REPORT_BROWSE_FACTS_INSERT_SQL)
     connection.execute(_CURRENT_SQL)
     connection.execute(_CURRENT_LINEAGE_SQL)
@@ -1695,7 +1758,8 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_PROPOSAL_BROWSE_FACTS_INSERT_SQL)
     connection.execute(_BROWSE_FACT_IDENTITY_SQL)
     connection.execute(
-        "INSERT INTO browse_fact_identity(singleton,unicode_version) VALUES(?,?)",
+        "INSERT INTO browse_fact_identity(singleton,unicode_version,"
+        "value_flag_rules) VALUES(?,?,?)",
         _SETUP_BROWSE_FACT_IDENTITY_ROW,
     )
     connection.execute(_METADATA_POLICY_DRAFTS_SQL)
@@ -2118,6 +2182,7 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
             ("table", "metadata_reports", _REPORTS_SQL),
             ("table", "metadata_report_browse_facts", _REPORT_BROWSE_FACTS_SQL),
             ("table", "metadata_report_browse_authors", _REPORT_BROWSE_AUTHORS_SQL),
+            ("table", "metadata_report_value_flags", _REPORT_VALUE_FLAGS_SQL),
             ("table", "metadata_policy_drafts", _METADATA_POLICY_DRAFTS_SQL),
             ("table", "metadata_policy_resolutions", _METADATA_POLICY_RESOLUTIONS_SQL),
             ("table", "metadata_policy_state", _METADATA_POLICY_STATE_SQL),
@@ -2786,13 +2851,18 @@ def _owner_selection_facts(
 def _validate_review_field_facts(connection: sqlite3.Connection) -> None:
     """Require every reconstructible browse fact to equal its canonical JSON."""
     identity = connection.execute(
-        "SELECT unicode_version FROM browse_fact_identity"
+        "SELECT unicode_version,value_flag_rules FROM browse_fact_identity"
     ).fetchall()
     if len(identity) != 1:
         raise MetadataReportError("database is unavailable or incompatible")
     if identity[0][0] != unicodedata.unidata_version:
         raise MetadataReportError(
             "database browse facts were folded under a different Unicode version; "
+            "a clean rebuild is required"
+        )
+    if identity[0][1] != VALUE_FLAG_RULES_VERSION:
+        raise MetadataReportError(
+            "database value flags were derived under a different rule list; "
             "a clean rebuild is required"
         )
     review_expected = (
@@ -2853,7 +2923,7 @@ def _validate_review_field_facts(connection: sqlite3.Connection) -> None:
 
 
 def _report_browse_fact_pairs(key: str) -> tuple[tuple[str, str], ...]:
-    """A report's fact and author pairs, both sides restricted by `key`."""
+    """A report's fact, author and flag pairs, both sides restricted by `key`."""
     return (
         (
             "SELECT mr.report_id,"
@@ -2870,6 +2940,14 @@ def _report_browse_fact_pairs(key: str) -> tuple[tuple[str, str], ...]:
             + " AND mr.report_id"
             + key,
             "SELECT report_id,author_key FROM metadata_report_browse_authors "
+            "WHERE report_id" + key,
+        ),
+        (
+            "SELECT mr.report_id,"
+            + _report_value_flag_values_sql("metadata_reports mr,", "mr.document")
+            + " WHERE mr.report_id"
+            + key,
+            "SELECT report_id,destination,rule FROM metadata_report_value_flags "
             "WHERE report_id" + key,
         ),
     )

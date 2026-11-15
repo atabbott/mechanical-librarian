@@ -223,7 +223,7 @@ it.each([
       getLibrary: vi.fn(async (search: LibrarySearch) => ({
         ...library,
         lens: search.lens,
-        counts: { attention: 0, all: 0, clear: 0, notMatched: 0, failed: 0 },
+        counts: { attention: 0, all: 0, clear: 0, notMatched: 0, failed: 0, flagged: 0 },
         works: [],
       })),
     })
@@ -243,7 +243,7 @@ it('names Settings as the way to fill Works when no library is connected (#1765)
     getLibrary: vi.fn(async (search: LibrarySearch) => ({
       ...library,
       lens: search.lens,
-      counts: { attention: 0, all: 0, clear: 0, notMatched: 0, failed: 0 },
+      counts: { attention: 0, all: 0, clear: 0, notMatched: 0, failed: 0, flagged: 0 },
       works: [],
     })),
   })
@@ -2692,7 +2692,7 @@ describe('Library route', () => {
       getLibrary: vi.fn(async (search: LibrarySearch) => ({
         lens: search.lens,
         page: 1,
-        counts: { attention: 0, all: 1, clear: 0, notMatched: 0, failed: 1 },
+        counts: { attention: 0, all: 1, clear: 0, notMatched: 0, failed: 1, flagged: 0 },
         works: [failed],
       })),
     }
@@ -2861,7 +2861,7 @@ describe('Library route', () => {
         getLibrary: vi.fn(async () => ({
           lens: 'all' as const,
           page: 1,
-          counts: { attention: 0, all: 1, clear: 1, notMatched: 0, failed: 0 },
+          counts: { attention: 0, all: 1, clear: 1, notMatched: 0, failed: 0, flagged: 0 },
           works: [...library.works, recorded],
         })),
       }
@@ -3147,7 +3147,7 @@ describe('Library route', () => {
       getLibrary: vi.fn(async () => ({
         lens: 'all' as const,
         page: 1,
-        counts: { attention: 0, all: 1, clear: 1, notMatched: 0, failed: 0 },
+        counts: { attention: 0, all: 1, clear: 1, notMatched: 0, failed: 0, flagged: 0 },
         works: [masked],
       })),
     }
@@ -3202,7 +3202,7 @@ describe('Library route', () => {
     const getLibrary = vi.fn(async (search: LibrarySearch) => ({
       lens: search.lens,
       page: 1,
-      counts: { attention: 0, all: 5, clear: 0, notMatched: 5, failed: 0 },
+      counts: { attention: 0, all: 5, clear: 0, notMatched: 5, failed: 0, flagged: 0 },
       works,
     }))
     renderRoute('/library?lens=all', { ...createHttp(), getLibrary })
@@ -3261,7 +3261,14 @@ describe('Library route', () => {
     const page = (search: LibrarySearch, notMatched: number, failed = 0) => ({
       lens: search.lens,
       page: 1,
-      counts: { attention: 0, all: 2, clear: 2 - notMatched - failed, notMatched, failed },
+      counts: {
+        attention: 0,
+        all: 2,
+        clear: 2 - notMatched - failed,
+        notMatched,
+        failed,
+        flagged: 0,
+      },
       works: [],
     })
     const counted = async (getLibrary: ReviewHttp['getLibrary']) => {
@@ -3353,7 +3360,7 @@ describe('Library route', () => {
       getLibrary: vi.fn(async () => ({
         lens: 'all' as const,
         page: 1,
-        counts: { attention: 0, all: 1, clear: 1, notMatched: 0, failed: 0 },
+        counts: { attention: 0, all: 1, clear: 1, notMatched: 0, failed: 0, flagged: 0 },
         works: [retained],
       })),
     }
@@ -3394,7 +3401,7 @@ describe('Library route', () => {
       getLibrary: vi.fn(async () => ({
         lens: 'all' as const,
         page: 1,
-        counts: { attention: 1, all: 1, clear: 0, notMatched: 0, failed: 0 },
+        counts: { attention: 1, all: 1, clear: 0, notMatched: 0, failed: 0, flagged: 0 },
         works: [current],
       })),
     }
@@ -3439,7 +3446,7 @@ describe('Library route', () => {
     const getLibrary = vi.fn(async (search: { q?: string }) => ({
       lens: 'all' as const,
       page: 1,
-      counts: { attention: 0, all: 1, clear: 1, notMatched: 0, failed: 0 },
+      counts: { attention: 0, all: 1, clear: 1, notMatched: 0, failed: 0, flagged: 0 },
       works: search.q ? [] : [listed],
     }))
     renderRoute('/library?lens=all', { ...createHttp(), getLibrary })
@@ -3487,7 +3494,7 @@ describe('Library route', () => {
     const getLibrary = vi.fn(async (search: { q?: string }) => ({
       lens: 'all' as const,
       page: 1,
-      counts: { attention: 0, all: 2, clear: 2, notMatched: 0, failed: 0 },
+      counts: { attention: 0, all: 2, clear: 2, notMatched: 0, failed: 0, flagged: 0 },
       works: search.q ? [] : [first, second],
     }))
     const { router } = renderRoute('/library?lens=all', { ...createHttp(), getLibrary })
@@ -8085,11 +8092,11 @@ describe('Library route', () => {
     }
     const initialLibrary = {
       ...library,
-      counts: { all: 1, attention: 1, clear: 0, notMatched: 0, failed: 0 },
+      counts: { all: 1, attention: 1, clear: 0, notMatched: 0, failed: 0, flagged: 0 },
     }
     const settledLibrary = {
       ...initialLibrary,
-      counts: { all: 1, attention: 0, clear: 1, notMatched: 0, failed: 0 },
+      counts: { all: 1, attention: 0, clear: 1, notMatched: 0, failed: 0, flagged: 0 },
       works: [{ ...work, attention: 'no_attention_needed' as const, attentionCount: 0 }],
     }
     let currentDetail: CaseDetailView = { ...detail, fields: [series] }
@@ -8645,7 +8652,7 @@ describe('Library route', () => {
       ...createHttp(),
       getLibrary: vi.fn(async () => ({
         ...library,
-        counts: { all: 1, attention: 0, clear: 1, notMatched: 0, failed: 0 },
+        counts: { all: 1, attention: 0, clear: 1, notMatched: 0, failed: 0, flagged: 0 },
         works: library.works.map((work) => ({
           ...work,
           workAttentionCount: 0,
@@ -10917,7 +10924,7 @@ describe('Library route', () => {
             : {
                 ...library,
                 lens: 'needs_attention' as const,
-                counts: { attention: 1, all: 1, clear: 0, notMatched: 0, failed: 0 },
+                counts: { attention: 1, all: 1, clear: 0, notMatched: 0, failed: 0, flagged: 0 },
                 works: [],
               },
       ),
@@ -11121,7 +11128,7 @@ describe('Library route', () => {
             : {
                 ...library,
                 lens: 'needs_attention' as const,
-                counts: { attention: 0, all: 1, clear: 1, notMatched: 0, failed: 0 },
+                counts: { attention: 0, all: 1, clear: 1, notMatched: 0, failed: 0, flagged: 0 },
                 works: [],
               },
       ),
@@ -13093,7 +13100,7 @@ describe('Library route', () => {
           settle?.({
             ...library,
             works: [],
-            counts: { attention: 0, all: 0, clear: 0, notMatched: 0, failed: 0 },
+            counts: { attention: 0, all: 0, clear: 0, notMatched: 0, failed: 0, flagged: 0 },
           })
         else reject?.(new Error('Collection unavailable'))
       })
@@ -13335,7 +13342,7 @@ describe('Library route', () => {
     const emptyLibrary: LibraryView = {
       lens: 'all',
       page: 1,
-      counts: { attention: 0, all: 0, clear: 0, notMatched: 0, failed: 0 },
+      counts: { attention: 0, all: 0, clear: 0, notMatched: 0, failed: 0, flagged: 0 },
       works: [],
     }
     const http: ReviewHttp = {
@@ -13924,7 +13931,7 @@ describe('Provider evidence rail', () => {
     const http = Object.assign(createHttp(), {
       getLibrary: vi.fn(async () => ({
         ...library,
-        counts: { attention: 0, all: 1, clear: 0, notMatched: 1, failed: 0 },
+        counts: { attention: 0, all: 1, clear: 0, notMatched: 1, failed: 0, flagged: 0 },
         works: [work],
       })),
     })
@@ -15638,7 +15645,7 @@ describe('library provider throttling notice (#1282)', () => {
 describe('Library counts, search scope and grouped Attention (#1284)', () => {
   const counted = (attention: number, all: number): LibraryView => ({
     ...library,
-    counts: { attention, all, clear: all - attention, notMatched: 0, failed: 0 },
+    counts: { attention, all, clear: all - attention, notMatched: 0, failed: 0, flagged: 0 },
   })
   const badge = () => document.querySelector('.attention-toggle strong')
   const worksStatus = () => document.querySelector('.library-works-heading [role="status"]')
@@ -15740,8 +15747,8 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
         ...library,
         lens: search.lens,
         counts: search.q
-          ? { attention: 1, all: 4, clear: 2, notMatched: 1, failed: 0 }
-          : { attention: 3, all: 10, clear: 5, notMatched: 2, failed: 0 },
+          ? { attention: 1, all: 4, clear: 2, notMatched: 1, failed: 0, flagged: 0 }
+          : { attention: 3, all: 10, clear: 5, notMatched: 2, failed: 0, flagged: 0 },
       }))
       renderRoute(`/library?lens=${lens}&q=needle`, http)
       await waitFor(() =>

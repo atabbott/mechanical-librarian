@@ -151,7 +151,27 @@ export const attentionStates = [
 ] as const
 lits<Schema<'_LibraryWork'>['attention_state']>()(attentionStates)
 export type AttentionState = (typeof attentionStates)[number]
-export type LibraryLens = 'all' | AttentionState
+// Looks wrong cuts across the four lenses above (#1334).
+export type LibraryLens = 'all' | AttentionState | 'flagged'
+// The closed rule list a Library row's findings name, in its order (#1334).
+export const valueFlagRules = [
+  'title_part_number',
+  'title_disc_number',
+  'title_is_author',
+  'title_has_author',
+  'title_all_capitals',
+  'title_all_lower_case',
+  'title_announcement',
+  'credit_label',
+] as const
+lits<Schema<'_LibraryValueFlag'>['rule']>()(valueFlagRules)
+export type ValueFlagRule = (typeof valueFlagRules)[number]
+export type TitleFlagRule = Exclude<ValueFlagRule, 'credit_label'>
+// Only a contributor list carries a credit label; every other rule reads the
+// title. The schema cannot state the pairing, so `mapLibrary` checks it.
+export type ValueFlagView =
+  | { destination: 'title'; rule: TitleFlagRule }
+  | { destination: 'authors' | 'narrators'; rule: 'credit_label' }
 // Why a work with no case reads as it does: nothing to decide, a preparation
 // that could not finish, or the reason no provider matched it (#1407).
 export const workSummaryStates = [
@@ -622,6 +642,8 @@ export interface LibraryWorkView {
   preparationOutcomes: readonly ProviderOutcomeView[]
   summary: WorkSummaryView | null
   cover?: LibraryCoverView
+  /** What looks wrong with the current values, one finding per rule (#1334). */
+  valueFlags: readonly ValueFlagView[]
 }
 export interface LibraryCounts {
   attention: number
@@ -629,6 +651,7 @@ export interface LibraryCounts {
   clear: number
   notMatched: number
   failed: number
+  flagged: number
 }
 export interface LibraryView {
   lens: LibraryLens
@@ -2742,6 +2765,7 @@ const mapLibraryCounts = (value: LibraryCountsDto): LibraryCounts => ({
   clear: value.no_attention_needed,
   notMatched: value.not_matched,
   failed: value.preparation_failed,
+  flagged: value.flagged,
 })
 
 const mapLibraryProgress = (value: LibraryProgressDto): LibraryProgressView => ({
@@ -2810,9 +2834,19 @@ export const mapLibrary = (value: LibraryDto): LibraryView => ({
               state: summary.state,
             },
       ...(item.cover === null ? {} : { cover: mapLibraryCover(item.cover) }),
+      valueFlags: item.value_flags.map(mapValueFlag),
     }
   }),
 })
+
+// The pairing the value-flag schema cannot state (ADR-0091): a credit label
+// names a contributor list, and every other rule the title (#1334).
+const mapValueFlag = (value: ResponseSchema<'_LibraryValueFlag'>): ValueFlagView => {
+  const { destination, rule } = value
+  if (destination === 'title' && rule !== 'credit_label') return { destination, rule }
+  if (destination !== 'title' && rule === 'credit_label') return { destination, rule }
+  throw new ApiError(502, 'invalid_value_flag')
+}
 
 // A cover is shown only from the route that serves the preview its report
 // binds, named by that same digest, so a row cannot point the image elsewhere.

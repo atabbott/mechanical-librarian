@@ -128,13 +128,16 @@ from mechanical_librarian.domain.review_field_classification import ReviewFieldC
 # as that failure, so it is counted as one, and the four lenses partition All.
 # A decision still open on a retained case keeps it in Needs attention (#1413).
 _PREPARATION_FAILED_SQL = "attention=0 AND preparation_failed=1"
-_LIBRARY_LENS_CONDITIONS = {
+_LIBRARY_PARTITION_CONDITIONS = {
     "needs_attention": "attention=1",
     "no_attention_needed": "attention=0 AND match_reason IS NULL "
     "AND preparation_failed=0",
     "not_matched": "attention=0 AND match_reason IS NOT NULL",
     "preparation_failed": _PREPARATION_FAILED_SQL,
 }
+# Looks wrong cuts across the partition: a work whose current report holds a
+# stored value flag, in whatever lens it otherwise sits (#1334).
+_LIBRARY_LENS_CONDITIONS = {**_LIBRARY_PARTITION_CONDITIONS, "flagged": "flagged=1"}
 _MATCH_REASONS = frozenset(
     {None, "refused", "unavailable", "adapter_fault", "no_match"}
 )
@@ -158,6 +161,8 @@ class ReviewLibraryPage:
     match_reasons: tuple[str | None, ...]
     # #1413: the works with nothing open whose latest preparation failed.
     preparation_failed_total: int
+    # #1334: the works whose current report holds a value flag.
+    flagged_total: int
     # Each row's case (with its identity) and report as this read validated
     # them, None for a terminal row, so a projection of the same read uses them
     # rather than parsing the same bytes again (#1202).
@@ -808,7 +813,8 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 "match_reason IS NOT NULL THEN 1 ELSE 0 END),0) AS not_matched_total,"
                 "COALESCE(sum(CASE WHEN "
                 + _PREPARATION_FAILED_SQL
-                + " THEN 1 ELSE 0 END),0) AS preparation_failed_total "
+                + " THEN 1 ELSE 0 END),0) AS preparation_failed_total,"
+                "COALESCE(sum(flagged),0) AS flagged_total "
                 "FROM candidates),page AS MATERIALIZED (SELECT "
                 "1 AS present,case_id,report_id,proposal_set_id,"
                 "connection_name,library_name,item_id,outcome,"
@@ -837,7 +843,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 "page.connection_name,page.library_name,page.item_id,page.outcome, "
                 "page.match_reason,COALESCE(page.present,0),totals.total,"
                 "totals.attention_total,totals.not_matched_total,"
-                "totals.preparation_failed_total "
+                "totals.preparation_failed_total,totals.flagged_total "
                 "FROM totals LEFT JOIN page ON 1 LEFT JOIN review_cases rc ON rc.review_case_id=page.case_id "
                 "LEFT JOIN metadata_reports mr ON mr.report_id=page.report_id "
                 "ORDER BY page.attention_order,page.provider_order,page.match_order,"
@@ -847,8 +853,10 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             ).fetchall()
             if not rows:
                 raise MetadataReportError("review library count is invalid")
-            totals = rows[0][-4:]
-            total, attention_total, not_matched_total, failed_total = totals
+            totals = rows[0][-5:]
+            total, attention_total, not_matched_total, failed_total, flagged_total = (
+                totals
+            )
             if (
                 type(total) is not int
                 or total < 0
@@ -858,6 +866,8 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 or type(failed_total) is not int
                 or not 0 <= not_matched_total <= total - attention_total
                 or not 0 <= failed_total <= total - attention_total - not_matched_total
+                or type(flagged_total) is not int
+                or not 0 <= flagged_total <= total
             ):
                 raise MetadataReportError("review library count is invalid")
             values: list[tuple[str | None, str]] = []
@@ -867,7 +877,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             ] = []
             for row in rows:
                 if (
-                    len(row) != 13
+                    len(row) != 14
                     or type(row[8]) is not int
                     or row[8] not in (0, 1)
                     or row[9:] != totals
@@ -940,6 +950,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 not_matched_total,
                 tuple(reasons),
                 failed_total,
+                flagged_total,
                 tuple(envelopes),
             )
         except (
@@ -1073,22 +1084,26 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                     pattern,
                 ),
             ).fetchall()
-            libraries: list[tuple[str, str, int, int, int, int]] = []
+            libraries: list[tuple[str, str, int, int, int, int, int]] = []
             needs_attention: dict[tuple[str, str], int] = {}
             for row in library_rows:
-                # The lenses partition All, as Library's page counts them.
+                # The four lenses partition All, as Library's page counts them;
+                # Looks wrong cuts across them (#1334).
                 if (
-                    len(row) != 7
+                    len(row) != 8
                     or type(row[0]) is not str
                     or type(row[1]) is not str
                     or any(type(value) is not int or value < 0 for value in row[2:])
                     or row[2] < 1
-                    or sum(row[3:]) != row[2]
+                    or sum(row[3:7]) != row[2]
+                    or row[7] > row[2]
                     or (row[0], row[1]) in needs_attention
                 ):
                     raise MetadataReportError("review library progress is invalid")
                 needs_attention[(row[0], row[1])] = row[3]
-                libraries.append((row[0], row[1], row[2], row[3], row[5], row[6]))
+                libraries.append(
+                    (row[0], row[1], row[2], row[3], row[5], row[6], row[7])
+                )
             fields: list[tuple[str, str, str, int]] = []
             for row in field_rows:
                 # A field needs the owner only on a work that does.
@@ -1545,6 +1560,8 @@ def _library_candidates_sql(attached: bool) -> str:
         + " AS match_reason,"
         + _LATEST_PREPARATION_FAILED_SQL
         + " AS preparation_failed,"
+        "EXISTS(SELECT 1 FROM metadata_report_value_flags vf "
+        "WHERE vf.report_id=mr.report_id) AS flagged,"
         "facts.title_key AS title_order,"
         "COALESCE(rc.review_case_id,'') AS case_order,"
         "NULL AS work_id,NULL AS attempt,NULL AS stage,NULL AS failure_root,"
@@ -1555,7 +1572,7 @@ def _library_candidates_sql(attached: bool) -> str:
         + "WHERE COALESCE(c.outcome,'')<>'tombstoned'"
         + _REVIEW_SEARCH_SQL
         + " UNION ALL SELECT NULL,NULL,NULL,connection_name,library_name,"
-        "item_id,NULL,0,0,NULL,1,ml_casefold(display_title),'',work_id,"
+        "item_id,NULL,0,0,NULL,1,0,ml_casefold(display_title),'',work_id,"
         "attempt,stage,failure_root,recovery_attempt,failure_code,"
         "display_title,display_authors,display_format FROM terminal"
         + _TERMINAL_LIBRARY_SEARCH_SQL

@@ -1791,6 +1791,7 @@ describe('ReviewApiClient', () => {
             no_attention_needed: 1,
             not_matched: 0,
             preparation_failed: 0,
+            flagged: 0,
           },
           items: [
             libraryWork({
@@ -1872,6 +1873,7 @@ describe('ReviewApiClient', () => {
       detailKind: 'case',
       preparation: null,
       preparationOutcomes: [],
+      valueFlags: [],
     })
     expect(view.works[1]).toEqual({
       id: 'library_work_2',
@@ -1907,6 +1909,7 @@ describe('ReviewApiClient', () => {
           { destination: 'subtitle', state: 'missing', value: 'Not set in Audiobookshelf' },
         ],
       },
+      valueFlags: [],
     })
     expect(JSON.stringify(view)).not.toContain('internal-item-2')
     expect(fetchMock).toHaveBeenCalledWith(
@@ -3208,7 +3211,7 @@ describe('ReviewApiClient', () => {
       csrf,
       fetch: vi.fn(async () =>
         Response.json(
-          { schema_version: 'review-library-v5', error: { code: 'busy' } },
+          { schema_version: 'review-library-v6', error: { code: 'busy' } },
           { status: 503 },
         ),
       ),
@@ -3229,6 +3232,7 @@ describe('ReviewApiClient', () => {
         no_attention_needed: 1,
         not_matched: 0,
         preparation_failed: 0,
+        flagged: 0,
       },
     })
     await expect(readLibrary(page)).rejects.toMatchObject(refused('enum@/items/0/detail_kind'))
@@ -3287,9 +3291,72 @@ describe('ReviewApiClient', () => {
     await expect(
       readLibrary({ ...page, schema_version: 'review-library-v4' }),
     ).rejects.toMatchObject(refused('const@/schema_version'))
+    // v6 added the Looks wrong count, lens and each work's findings (#1334);
+    // a v5 document lacks them.
     await expect(
       readLibrary({ ...page, schema_version: 'review-library-v5' }),
+    ).rejects.toMatchObject(refused('const@/schema_version'))
+    await expect(
+      readLibrary({ ...page, schema_version: 'review-library-v6' }),
     ).resolves.toBeDefined()
+  })
+
+  it('reads the Looks wrong lens, its count and each finding in rule order (#1334)', async () => {
+    const flagged = library({
+      lens: 'flagged',
+      counts: {
+        all: 2,
+        flagged: 1,
+        needs_attention: 0,
+        no_attention_needed: 2,
+        not_matched: 0,
+        preparation_failed: 0,
+      },
+      items: [
+        libraryWork({
+          title: 'THE EXAMPLE STORY',
+          value_flags: [
+            { destination: 'title', rule: 'title_all_capitals' },
+            { destination: 'narrators', rule: 'credit_label' },
+          ],
+        }),
+      ],
+    })
+    const mapped = await readLibrary(flagged)
+    expect(mapped.lens).toBe('flagged')
+    expect(mapped.counts.flagged).toBe(1)
+    expect(mapped.works[0]?.valueFlags).toEqual([
+      { destination: 'title', rule: 'title_all_capitals' },
+      { destination: 'narrators', rule: 'credit_label' },
+    ])
+    const finding = (flag: Record<string, unknown>) => ({
+      ...flagged,
+      items: [libraryWork({ value_flags: [flag] })],
+    })
+    await expect(
+      readLibrary(finding({ destination: 'title', rule: 'title_in_capitals' })),
+    ).rejects.toMatchObject(refused('enum@/items/0/value_flags/0/rule'))
+    await expect(
+      readLibrary(finding({ destination: 'subtitle', rule: 'title_all_capitals' })),
+    ).rejects.toMatchObject(refused('enum@/items/0/value_flags/0/destination'))
+    // The schema cannot pair a credit label with a contributor list, so the
+    // mapper refuses either crossing.
+    await expect(
+      readLibrary(finding({ destination: 'title', rule: 'credit_label' })),
+    ).rejects.toMatchObject({ status: 502, code: 'invalid_value_flag' })
+    await expect(
+      readLibrary(finding({ destination: 'authors', rule: 'title_all_capitals' })),
+    ).rejects.toMatchObject({ status: 502, code: 'invalid_value_flag' })
+    const counts: Record<string, number> = { ...flagged.counts }
+    delete counts.flagged
+    await expect(readLibrary({ ...flagged, counts })).rejects.toMatchObject(
+      refused('required@/counts/flagged'),
+    )
+    const items = [libraryWork()]
+    delete (items[0] as Record<string, unknown>).value_flags
+    await expect(readLibrary({ ...flagged, items })).rejects.toMatchObject(
+      refused('required@/items/0/value_flags'),
+    )
   })
 
   it('maps a library work cover and refuses a malformed one', async () => {
@@ -3316,6 +3383,7 @@ describe('ReviewApiClient', () => {
           no_attention_needed: 1,
           not_matched: 0,
           preparation_failed: 0,
+          flagged: 0,
         },
       })
     }
@@ -3370,12 +3438,20 @@ describe('ReviewApiClient', () => {
           no_attention_needed: 1,
           not_matched: 2,
           preparation_failed: 0,
+          flagged: 0,
         },
         lens: 'not_matched',
       })
     const mapped = await readLibrary(page('not_matched_unavailable_scheduled'))
     expect(mapped.lens).toBe('not_matched')
-    expect(mapped.counts).toEqual({ attention: 0, all: 3, clear: 1, notMatched: 2, failed: 0 })
+    expect(mapped.counts).toEqual({
+      attention: 0,
+      all: 3,
+      clear: 1,
+      notMatched: 2,
+      failed: 0,
+      flagged: 0,
+    })
     expect(mapped.works[0]?.summary?.state).toBe('not_matched_unavailable_scheduled')
     await expect(readLibrary(page('not_matched_somehow'))).rejects.toMatchObject(
       refused('enum@/items/0/summary/state'),
@@ -6504,19 +6580,19 @@ describe('Library progress (#1335)', () => {
     const view = await new ReviewApiClient({ csrf, fetch: fetchMock }).getLibraryProgress()
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/library/progress')
     expect(view).toEqual({
-      totals: { all: 2, attention: 1, clear: 0, notMatched: 1, failed: 0 },
+      totals: { all: 2, attention: 1, clear: 0, notMatched: 1, failed: 0, flagged: 0 },
       libraries: [
         {
           connection: 'primary',
           library: 'audiobooks',
           libraryDisplayName: 'audiobooks',
-          counts: { all: 1, attention: 0, clear: 0, notMatched: 1, failed: 0 },
+          counts: { all: 1, attention: 0, clear: 0, notMatched: 1, failed: 0, flagged: 0 },
         },
         {
           connection: 'primary',
           library: 'ebooks',
           libraryDisplayName: 'ebooks',
-          counts: { all: 1, attention: 1, clear: 0, notMatched: 0, failed: 0 },
+          counts: { all: 1, attention: 1, clear: 0, notMatched: 0, failed: 0, flagged: 0 },
         },
       ],
       fields: [{ destination: 'title', needYou: 1 }],

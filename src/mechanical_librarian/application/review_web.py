@@ -122,6 +122,7 @@ from mechanical_librarian.domain.shadow_outcome import (
     ShadowFieldOutcome,
     ShadowOutcomeSet,
 )
+from mechanical_librarian.domain.value_flags import value_flags
 
 ReviewCaseDetailSchemaVersion = Literal["review-case-detail-v8"]
 REVIEW_CASE_DETAIL_SCHEMA: Final[ReviewCaseDetailSchemaVersion] = (
@@ -141,8 +142,8 @@ REVIEW_CASE_HISTORY_SCHEMA: Final[ReviewCaseHistorySchemaVersion] = (
     "review-case-history-v4"
 )
 
-ReviewLibrarySchemaVersion = Literal["review-library-v5"]
-REVIEW_LIBRARY_SCHEMA: Final[ReviewLibrarySchemaVersion] = "review-library-v5"
+ReviewLibrarySchemaVersion = Literal["review-library-v6"]
+REVIEW_LIBRARY_SCHEMA: Final[ReviewLibrarySchemaVersion] = "review-library-v6"
 
 ReviewReportDetailSchemaVersion = Literal["review-report-detail-v6"]
 REVIEW_REPORT_DETAIL_SCHEMA: Final[ReviewReportDetailSchemaVersion] = (
@@ -357,6 +358,8 @@ class ReviewLibrarySnapshot:
     match_reasons: tuple[str | None, ...]
     # #1413: the works with nothing open whose latest preparation failed.
     preparation_failed_total: int
+    # #1334: the works whose current report holds a value flag.
+    flagged_total: int
     # The scope each row's human decisions were validated in, when the store
     # projected one, so the row projection need not project the case again.
     decision_scopes: tuple[DecisionScope | None, ...] = dataclass_field(
@@ -382,8 +385,8 @@ class ReviewLibraryProgress:
     """
 
     # (connection, library, all, needs_attention, not_matched,
-    # preparation_failed), one row per library that has works.
-    libraries: tuple[tuple[str, str, int, int, int, int], ...]
+    # preparation_failed, flagged), one row per library that has works.
+    libraries: tuple[tuple[str, str, int, int, int, int, int], ...]
     # (connection, library, destination, works whose field needs the owner),
     # one row per field with at least one such work.
     fields: tuple[tuple[str, str, str, int], ...]
@@ -432,12 +435,18 @@ LibraryLabels = tuple[tuple[str, str, str], ...]
 # The Library lenses a store filters by; None reads every work, the `all` lens.
 # A work no provider matched is neither needing attention nor needing none, so
 # it has a lens of its own (#1407), and so has a work with nothing open whose
-# latest preparation failed (#1413).
+# latest preparation failed (#1413). Looks wrong cuts across all four: a work
+# whose current values have a shape that is usually a mistake (#1334).
 LibraryLensFilter = Literal[
-    "needs_attention", "no_attention_needed", "not_matched", "preparation_failed"
+    "needs_attention",
+    "no_attention_needed",
+    "not_matched",
+    "preparation_failed",
+    "flagged",
 ]
 _LIBRARY_LENSES: dict[str, LibraryLensFilter | None] = {
     "all": None,
+    "flagged": "flagged",
     "needs_attention": "needs_attention",
     "no_attention_needed": "no_attention_needed",
     "not_matched": "not_matched",
@@ -448,11 +457,19 @@ _Validated = TypeVar("_Validated")
 
 
 def _library_counts(
-    total: int, needs_attention: int, not_matched: int, preparation_failed: int
+    total: int,
+    needs_attention: int,
+    not_matched: int,
+    preparation_failed: int,
+    flagged: int,
 ) -> dict[str, int]:
-    """Library's lens counts: what is left of All is the no-attention lens."""
+    """Library's lens counts: what is left of All is the no-attention lens.
+
+    Looks wrong is counted on its own, across the four that partition All.
+    """
     return {
         "all": total,
+        "flagged": flagged,
         "needs_attention": needs_attention,
         "no_attention_needed": total
         - needs_attention
@@ -2245,6 +2262,7 @@ class BrowseReviewLibrary:
                 snapshot.attention_total,
                 snapshot.not_matched_total,
                 snapshot.preparation_failed_total,
+                snapshot.flagged_total,
             ),
             "items": items,
             "lens": lens,
@@ -2300,6 +2318,7 @@ class BrowseReviewLibrary:
                 sum(row[3] for row in libraries),
                 sum(row[4] for row in libraries),
                 sum(row[5] for row in libraries),
+                sum(row[6] for row in libraries),
             ),
             "libraries": [
                 {
@@ -4169,6 +4188,8 @@ def _library_item(
                         "reason": reason,
                         "state": "preparation_failed",
                     },
+                    # A work with no report has no current value to flag.
+                    "value_flags": [],
                 }
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
             raise ReviewWebError("unavailable") from error
@@ -4364,6 +4385,14 @@ def _library_item(
             if match_state is None
             else "not_matched_" + match_state,
         },
+        # The rule the stored flags were derived by, over the same report, so
+        # Looks wrong and the row name the same findings (#1334).
+        "value_flags": [
+            {"destination": destination, "rule": rule}
+            for destination, rule in value_flags(
+                report.target.fields, report.source_titles
+            )
+        ],
     }
     return value
 

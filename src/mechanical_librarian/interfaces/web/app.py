@@ -149,6 +149,7 @@ from mechanical_librarian.domain.reviewer_access import (
     DescriptionModelMetadata,
     OpenRouterModelId,
 )
+from mechanical_librarian.domain.value_flags import ValueFlagDestination, ValueFlagRule
 from mechanical_librarian.interfaces.web import live_stream, review_frontend
 from mechanical_librarian.interfaces.web.react_assets import (
     ReactAssetBundle,
@@ -1274,6 +1275,8 @@ class _ErrorResponse(_ClosedModel):
 
 class _ReviewCounts(_ClosedModel):
     all: _Count
+    # Looks wrong, counted across the four lenses that partition All (#1334).
+    flagged: _Count
     needs_attention: _Count
     no_attention_needed: _Count
     not_matched: _Count
@@ -1593,6 +1596,19 @@ class _CoversResponse(_ClosedModel):
     view: Literal["decide", "kept", "switched", "all"]
 
 
+class _LibraryValueFlag(_ClosedModel):
+    """One Looks wrong finding: the rule and the field it names, never a value."""
+
+    destination: ValueFlagDestination
+    rule: ValueFlagRule
+
+    @model_validator(mode="after")
+    def _credit_label_names_a_contributor(self) -> Self:
+        if (self.rule == "credit_label") is (self.destination == "title"):
+            raise ValueError("value flag destination is inconsistent")
+        return self
+
+
 class _LibraryWork(_ClosedModel):
     authors: list[str]
     attention_count: _Count
@@ -1616,6 +1632,8 @@ class _LibraryWork(_ClosedModel):
     work_id: str
     preparation: _PreparationFailure | None = None
     preparation_outcomes: list[_ProviderOutcome]
+    # In rule-list order, at most one per destination and rule (#1334).
+    value_flags: list[_LibraryValueFlag] = Field(max_length=9)
 
 
 class _ReportChapter(_ClosedModel):
@@ -1764,6 +1782,7 @@ class _LibraryResponse(_ClosedModel):
     items: list[_LibraryWork]
     lens: Literal[
         "all",
+        "flagged",
         "needs_attention",
         "no_attention_needed",
         "not_matched",

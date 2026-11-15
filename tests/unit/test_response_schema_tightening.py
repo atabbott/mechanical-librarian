@@ -42,6 +42,7 @@ from mechanical_librarian.domain import (
     human_decision,
     review_case,
     shadow_outcome,
+    value_flags,
 )
 from mechanical_librarian.domain.audio_inspection import AudioEvidenceSurface
 from mechanical_librarian.domain.cover_evidence import CoverSourceKind
@@ -176,6 +177,7 @@ KEYWORDS: tuple[tuple[str, str, str, str, object], ...] = (
         ("S16", "_ReviewCounts", f"/properties/{name}", "minimum", 0)
         for name in (
             "all",
+            "flagged",
             "needs_attention",
             "no_attention_needed",
             "not_matched",
@@ -504,6 +506,22 @@ KEYWORDS: tuple[tuple[str, str, str, str, object], ...] = (
     ("S91", "_LibraryProgressField", "/properties/need_you", "minimum", 1),
     ("S92", "_LibraryProgressResponse", "/properties/fields", "maxItems", 16),
     ("S93", "_LibraryProgressResponse", "/properties/libraries", "maxItems", 256),
+    # Looks wrong: a closed rule list over three fields, at most nine (#1334).
+    (
+        "S94",
+        "_LibraryValueFlag",
+        "/properties/rule",
+        "enum",
+        set(value_flags.VALUE_FLAG_RULES),
+    ),
+    (
+        "S95",
+        "_LibraryValueFlag",
+        "/properties/destination",
+        "enum",
+        {"title", "authors", "narrators"},
+    ),
+    ("S96", "_LibraryWork", "/properties/value_flags", "maxItems", 9),
 )
 
 
@@ -619,6 +637,8 @@ REFUSALS: tuple[tuple[type[BaseModel], str, object, str], ...] = (
         "value_error",
     ),
     (app._LibraryResponse, "lens", "unmatched", "literal_error"),
+    (app._LibraryValueFlag, "rule", "title_in_capitals", "literal_error"),
+    (app._LibraryValueFlag, "destination", "subtitle", "literal_error"),
     (app._ReviewCounts, "all", -1, "greater_than_equal"),
     (app._LibraryProgressField, "destination", "shelf", "literal_error"),
     (app._LibraryProgressField, "need_you", 0, "greater_than_equal"),

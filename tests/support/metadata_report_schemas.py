@@ -539,7 +539,15 @@ PRIOR_REPORT_BROWSE_FACTS_INSERT_SQL = (
     )
     .replace(_FAULT_EXCLUSION_SQL, "")
     .replace(_cover_only_exclusion_sql("NEW.document"), "")
+    # Nor did they derive #1334's value flags.
+    .replace(
+        "; INSERT INTO metadata_report_value_flags(report_id,destination,rule) "
+        "SELECT NEW.report_id,"
+        + persistence_schema._report_value_flag_values_sql("", "NEW.document"),
+        "",
+    )
 )
+assert "metadata_report_value_flags" not in PRIOR_REPORT_BROWSE_FACTS_INSERT_SQL
 
 
 _CURRENT_REPORT_BROWSE_FACT_PAIRS = persistence_schema._report_browse_fact_pairs
@@ -547,7 +555,7 @@ _CURRENT_REPORT_BROWSE_FACT_PAIRS = persistence_schema._report_browse_fact_pairs
 
 def prior_report_browse_fact_pairs(key: str) -> tuple[tuple[str, str], ...]:
     """The open-time fact comparison those producers' stores answer."""
-    (derived, stored), authors = _CURRENT_REPORT_BROWSE_FACT_PAIRS(key)
+    (derived, stored), *unchanged = _CURRENT_REPORT_BROWSE_FACT_PAIRS(key)
     return (
         (
             _without_match_state(derived, "mr.document")
@@ -555,7 +563,7 @@ def prior_report_browse_fact_pairs(key: str) -> tuple[tuple[str, str], ...]:
             .replace(_cover_only_exclusion_sql("mr.document"), ""),
             stored.replace(",provider_match_state FROM", " FROM"),
         ),
-        authors,
+        *unchanged,
     )
 
 
