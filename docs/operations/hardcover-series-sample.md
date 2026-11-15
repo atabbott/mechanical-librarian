@@ -9,18 +9,16 @@ series you choose is one label; the
 often Hardcover was right. It is a workbench tool, not part of the installed
 product.
 
-Stop the container and copy `/data/application.sqlite3` as
-[backups and recovery](backups-and-recovery.md) describes, then start it again.
-That copy keeps the container's owner (UID 65532) and mode 0600, so you may
-not be able to read it. Make a second copy you can read, for example with
-`sudo cp` and then `sudo chown "$USER"`, and keep it owner-only. Run the script
-from the checkout you built the install from:
+Take a copy of the database as [owner labels](owner-labels.md#copy-the-database)
+describes, then run the script from the checkout you built the install from:
 
 ```
-uv run python scripts/hardcover_series_sample.py \
-    --database /copy/application.sqlite3 \
-    [--origin http://localhost:8080] [--limit 50]
+uv run python scripts/hardcover_series_sample.py --database "$COPY"
 ```
+
+Add `--origin https://host:port` if you open Mechanical Librarian at another
+address than http://localhost:8080, and `--limit N` (1 to 500) for more than
+50 links.
 
 It opens the copy read-only, writes nothing and prints one Library link per
 field, oldest first, up to `--limit`. Opening a link selects the work's Series

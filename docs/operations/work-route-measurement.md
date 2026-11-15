@@ -10,10 +10,12 @@ Run it from the checkout that prepared the library, against a copy of the
 application database:
 
 ```
-uv run python scripts/work_route_measurement.py \
-    --database /copy/application.sqlite3 \
-    [--mark 15:0.9] [--provenance]
+uv run python scripts/work_route_measurement.py --database "$COPY"
 ```
+
+`$COPY` is a copy of the database, taken as
+[owner labels](owner-labels.md#copy-the-database) describes. Add
+`--mark 15:0.9` to set your own pass mark.
 
 It opens the copy read-only, writes nothing and prints one
 `work-route-measurement-v1` JSON document. A database that is missing, or that
@@ -24,9 +26,10 @@ records.
 ## Before running it
 
 Description, genres and narrators are measured from your own decisions, so
-first review the work route's offers on audiobooks whose field is empty. For
-each of those fields, accept the proposed value where it is right and enter or
-keep your own where it is not. Only the latest decision per book and field
+first review the work route's offers on audiobooks whose field is empty.
+[Owner labels](owner-labels.md#work-route-offers) lists them. For each of
+those fields, accept the proposed value where it is right and enter or keep
+your own where it is not. Only the latest decision per book and field
 counts, chosen among decisions on a work-route offer into an empty field, and
 a withdrawn one is left out. A provider without an exact match is not compared
 (`no_exact_source`). Series and the publication date need

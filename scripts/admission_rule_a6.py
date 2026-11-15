@@ -28,6 +28,14 @@ parent then:
   whether it only preserves the current value, and by value agreement with
   an identifier-accepted record the candidate does not cite.
 
+Where a snapshot stores owner decisions, each admitted field the owner's
+latest decision labels is counted by relaxation, outcome and whether the owner
+chose the admitted value (ADR-0092 Decision 5). A decided case that is no
+longer current, which the child also replays, adds its labels and nothing
+else. The reading applies no pass mark: that is the owner's to set.
+``scripts/relaxation_label_sample.py`` lists the admitted fields the owner has
+not decided yet, from the same generators.
+
 Everything leaves this module as counts in the ledger's closed vocabulary;
 values and identifiers stay in memory.
 """
@@ -40,7 +48,7 @@ import sqlite3
 import subprocess
 import sys
 from collections import Counter
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, cast
@@ -258,13 +266,21 @@ led = getattr(P, "EVIDENCE_LED_TITLE_REASON", None)
 path = quote(os.path.abspath(sys.argv[2]), safe="/")
 connection = sqlite3.connect(f"file:{path}?mode=ro&immutable=1", uri=True)
 connection.execute("PRAGMA query_only=ON")
+# Every current case, and every decided case where owner decisions are stored:
+# a decided case that is no longer current still carries owner labels.
+scope = ("rc.review_case_id IN (SELECT review_case_id FROM current_review_packages "
+         "WHERE review_case_id IS NOT NULL)")
+tables = {row[0] for row in connection.execute(
+    "SELECT name FROM sqlite_master WHERE type='table'")}
+if "human_decisions" in tables:
+    scope = ("(" + scope + ") OR rc.review_case_id IN "
+             "(SELECT review_case_id FROM human_decisions)")
 statement = (
     "SELECT rc.review_case_id,rc.document,ps.document,mr.document "
     "FROM review_cases rc JOIN proposal_sets ps "
     "ON ps.proposal_set_id=json_extract(rc.document,'$.proposal_set_id') "
     "JOIN metadata_reports mr ON mr.report_id=rc.report_id "
-    "WHERE rc.review_case_id IN (SELECT review_case_id FROM current_review_packages "
-    "WHERE review_case_id IS NOT NULL) ORDER BY rc.review_case_id")
+    "WHERE " + scope + " ORDER BY rc.review_case_id")
 cases = {}
 failed = 0
 for case_id, case_text, proposal_text, report_text in connection.execute(statement):
@@ -439,7 +455,12 @@ def parse_probe(text: str) -> A6Probe:
 
 
 def child_a6(source_root: Path, database: Path) -> A6Probe:
-    """Replay every current case's decision under its source in a child."""
+    """Replay each case's decision under its source in a child.
+
+    Every current case is replayed, and every decided case where owner
+    decisions are stored. ``failed`` counts every replayed case that would not
+    rebuild.
+    """
     if not (source_root / "src" / "mechanical_librarian").is_dir():
         raise ledger.Refusal("source root is not an exported source tree")
     try:
@@ -822,6 +843,25 @@ class A6Tally:
     replay_disagreements: int = 0
     mirror_compared: int = 0
     mirror_disagreements: int = 0
+    # Owner labels on admitted fields, by (population, rule), and whether the
+    # snapshot stores owner decisions at all. Only the owner counts of a Split
+    # are used.
+    owner: dict[tuple[str, str], ledger.Split] = field(default_factory=dict)
+    owner_recorded: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class AbstainedField:
+    """One scalar field in an A6 population, with its replayed proposal.
+
+    ``proposal`` is None when the replay does not hold exactly one proposal
+    for the destination.
+    """
+
+    population: str
+    destination: str
+    reason: str
+    proposal: Proposal | None
 
 
 def _alternatives(case: ledger.Case, destination: str) -> str:
@@ -881,16 +921,81 @@ def _screen(
         tally.agreement += agreement
 
 
-def measure_a6(
-    connection: sqlite3.Connection, probe: A6Probe
-) -> tuple[A6Tally, Counter[str]]:
-    """Stream the current cases once and tally the A6 analysis."""
-    tally = A6Tally()
-    media: Counter[str] = Counter()
-    table = table_for(probe.version)
-    try:
-        rows = connection.execute(ledger._CASES_SQL)
+def abstained_fields(
+    case: ledger.Case,
+    shadow: Mapping[str, object],
+    scalar: frozenset[str],
+    replayed: tuple[Proposal, ...] | None,
+) -> Iterator[AbstainedField]:
+    """Each stored abstention of the case that falls in a population."""
+    for destination in sorted(case.applicable(scalar)):
+        for outcome in _stored(shadow, destination):
+            population = _population(case, destination, outcome)
+            if population is None:
+                continue
+            matches = [
+                item for item in replayed or () if item.destination == destination
+            ]
+            yield AbstainedField(
+                population,
+                destination,
+                cast("str", outcome["reason_code"]),
+                matches[0] if len(matches) == 1 else None,
+            )
+
+
+def relaxation_verdict(item: AbstainedField) -> tuple[str, Candidate | None] | None:
+    """The field's relaxation outcome, or None where no relaxation is tried."""
+    if not _relaxed(item.destination, item.reason):
+        return None
+    if item.proposal is None:
+        return "not_replayed", None
+    return relax(item.proposal)
+
+
+def admitted_fields(
+    case: ledger.Case,
+    shadow: Mapping[str, object],
+    scalar: frozenset[str],
+    replayed: tuple[Proposal, ...] | None,
+) -> Iterator[tuple[AbstainedField, Relaxation, Candidate]]:
+    """Each field a relaxation admits, with the relaxation and its candidate."""
+    for item in abstained_fields(case, shadow, scalar, replayed):
+        verdict = relaxation_verdict(item)
+        if verdict is not None and verdict[1] is not None:
+            yield item, RELAXATION_BY_DESTINATION[item.destination], verdict[1]
+
+
+def owner_label(
+    case: ledger.Case, destination: str, candidate: Candidate
+) -> tuple[str, bool] | None:
+    """The owner decision's outcome on the field and whether it chose the
+    admitted value, or None where no owner decision labels the field."""
+    if destination not in case.owner:
+        return None
+    named = ledger._named(case, destination)
+    return (
+        case.owner[destination][0],
+        named is not None and named.get("alternative_id") == candidate.candidate_id,
+    )
+
+
+def owner_cases(
+    connection: sqlite3.Connection, owner: ledger.OwnerDecisions | None
+) -> Iterator[tuple[str, bool, ledger.Case, dict[str, object]]]:
+    """Each current case, then each decided case that is no longer current.
+
+    A decided case is read only where an owner decision still labels one of
+    its fields, as the ledger reads it (#1748). Each case carries those labels.
+    """
+    queries = [(ledger._CASES_SQL, True)]
+    if owner:
+        queries.append((ledger._DECIDED_CASES_SQL, False))
+    for query, current in queries:
+        rows = connection.execute(query)
         for case_id, case_text, report_text, shadow_text, consideration_text in rows:
+            if not current and case_id not in (owner or {}):
+                continue
             shadow = ledger._document(shadow_text)
             case = ledger._build_case(
                 ledger._document(case_text),
@@ -898,8 +1003,30 @@ def measure_a6(
                 shadow,
                 ledger._document(consideration_text),
             )
-            media[case.medium] += 1
-            _measure_case(tally, case, shadow, probe, table, probe.cases.get(case_id))
+            case.owner = (owner or {}).get(case_id, {})
+            yield case_id, current, case, shadow
+
+
+def measure_a6(
+    connection: sqlite3.Connection, probe: A6Probe
+) -> tuple[A6Tally, Counter[str]]:
+    """Stream the cases once and tally the A6 analysis.
+
+    A decided case that is no longer current adds only its owner labels: the
+    populations, checks, relaxations and replay counts are current cases'.
+    """
+    tally = A6Tally()
+    media: Counter[str] = Counter()
+    table = table_for(probe.version)
+    try:
+        owner = ledger._owner_decisions(connection)
+        tally.owner_recorded = owner is not None
+        for case_id, current, case, shadow in owner_cases(connection, owner):
+            replayed = probe.cases.get(case_id)
+            if current:
+                media[case.medium] += 1
+                _measure_case(tally, case, shadow, probe, table, replayed)
+            _count_labels(tally, case, shadow, probe.scalar, replayed)
     except sqlite3.Error:
         raise ledger.Refusal("snapshot schema unrecognised") from None
     return tally, media
@@ -928,42 +1055,61 @@ def _measure_case(
                 and case.blocked(destination)
             ):
                 tally.echo[(destination, case.medium)] += 1
-            population = _population(case, destination, outcome)
-            if population is None:
-                continue
-            reason = cast("str", outcome["reason_code"])
-            tally.populations[
-                (
-                    population,
-                    destination,
-                    reason,
-                    case.medium,
-                    _alternatives(case, destination),
-                )
-            ] += 1
-            matches = [
-                item for item in replayed or () if item.destination == destination
-            ]
-            if len(matches) != 1:
-                tally.checks[(population, reason, "not_replayed")] += 1
-                if _relaxed(destination, reason):
-                    _relaxation(tally, population, destination).outcomes[
-                        "not_replayed"
-                    ] += 1
-                continue
-            proposal = matches[0]
-            tally.replay_disagreements += proposal.reason != reason
+    for item in abstained_fields(case, shadow, probe.scalar, replayed):
+        tally.populations[
+            (
+                item.population,
+                item.destination,
+                item.reason,
+                case.medium,
+                _alternatives(case, item.destination),
+            )
+        ] += 1
+        proposal = item.proposal
+        if proposal is None:
+            tally.checks[(item.population, item.reason, "not_replayed")] += 1
+        else:
+            tally.replay_disagreements += proposal.reason != item.reason
             states, compared, disagreed = attribute(proposal, table)
             tally.mirror_compared += compared
             tally.mirror_disagreements += disagreed
             for state in states:
-                tally.checks[(population, reason, state)] += 1
-            if _relaxed(destination, reason):
-                result = _relaxation(tally, population, destination)
-                verdict, admitted = relax(proposal)
-                result.outcomes[verdict] += 1
-                if admitted is not None:
-                    _screen(case, proposal, admitted, result)
+                tally.checks[(item.population, item.reason, state)] += 1
+        verdict = relaxation_verdict(item)
+        if verdict is None:
+            continue
+        result = _relaxation(tally, item.population, item.destination)
+        result.outcomes[verdict[0]] += 1
+        if verdict[1] is not None and proposal is not None:
+            _screen(case, proposal, verdict[1], result)
+
+
+def _count_labels(
+    tally: A6Tally,
+    case: ledger.Case,
+    shadow: Mapping[str, object],
+    scalar: frozenset[str],
+    replayed: tuple[Proposal, ...] | None,
+) -> None:
+    """Count each admitted field an owner decision labels; nothing else."""
+    if not case.owner:
+        return
+    for item, rule, candidate in admitted_fields(case, shadow, scalar, replayed):
+        label = owner_label(case, item.destination, candidate)
+        if label is None:
+            continue
+        outcome, chose_admitted = label
+        counts = tally.owner.setdefault((item.population, rule.rule), ledger.Split())
+        counts.owner_labelled += 1
+        if outcome == "accept":
+            counts.owner_accept += 1
+        elif outcome == "owner_entered":
+            counts.owner_entered += 1
+        elif outcome == "keep_current":
+            counts.owner_keep_current += 1
+        else:
+            counts.owner_reject += 1
+        counts.owner_agrees += chose_admitted
 
 
 def _relaxed(destination: str, reason: str) -> bool:
@@ -1055,13 +1201,23 @@ def snapshot_entry(
     relaxations = [
         {"population": population, "rule": rule, **_relaxation_entry(result)}
         for (population, rule), result in sorted(
-            tally.relaxations.items(),
-            key=lambda item: (
-                POPULATIONS.index(item[0][0]),
-                [value.rule for value in RELAXATIONS].index(item[0][1]),
-            ),
+            tally.relaxations.items(), key=_relaxation_order
         )
     ]
+    owner_labels = (
+        [
+            {
+                "population": population,
+                "rule": rule,
+                "owner": ledger._owner_entry(counts, True),
+            }
+            for (population, rule), counts in sorted(
+                tally.owner.items(), key=_relaxation_order
+            )
+        ]
+        if tally.owner_recorded
+        else None
+    )
     return {
         "label": label,
         "engine": probe.version,
@@ -1082,7 +1238,17 @@ def snapshot_entry(
         else None,
         "sub_checks": checks,
         "relaxations": relaxations,
+        "owner_labels": owner_labels,
     }
+
+
+def _relaxation_order(item: tuple[tuple[str, str], object]) -> tuple[int, int]:
+    """Population first, then the catalogue order of the relaxations."""
+    (population, rule), _value = item
+    return (
+        POPULATIONS.index(population),
+        [value.rule for value in RELAXATIONS].index(rule),
+    )
 
 
 def pooled_relaxations(
@@ -1104,6 +1270,32 @@ def pooled_relaxations(
             }
         )
     return pooled
+
+
+def pooled_owner_labels(tallies: Sequence[A6Tally]) -> dict[str, object]:
+    """Owner labels pooled per relaxation, and over every relaxation.
+
+    Each is pooled over snapshots and populations, and is None where no
+    snapshot stores owner decisions. No pass mark is applied: that is the
+    owner's to set (ADR-0092 Decision 5).
+    """
+    recorded = any(tally.owner_recorded for tally in tallies)
+    every = ledger.Split()
+    pooled: list[dict[str, object]] = []
+    for rule in RELAXATIONS:
+        merged = ledger.Split()
+        for tally in tallies:
+            for (_population, name), counts in tally.owner.items():
+                if name == rule.rule:
+                    merged.add(counts)
+        every.add(merged)
+        pooled.append(
+            {"rule": rule.rule, "owner": ledger._owner_entry(merged, recorded)}
+        )
+    return {
+        "pooled_owner_labels": pooled,
+        "all_owner_labels": {"owner": ledger._owner_entry(every, recorded)},
+    }
 
 
 def human_decisions(connection: sqlite3.Connection) -> int:
@@ -1143,6 +1335,9 @@ VOCABULARY = frozenset(
         "value_agreement",
         "value_agreement_n",
         "pooled_relaxations",
+        "owner_labels",
+        "pooled_owner_labels",
+        "all_owner_labels",
         *POPULATIONS,
         *ALTERNATIVE_CLASSES,
         *CHECKS,
@@ -1313,6 +1508,60 @@ def render(section: Mapping[str, object]) -> list[str]:
         lines.append(
             f"| {row['rule']} | pooled | both | "
             + " | ".join(_relaxation_cells(row))
+            + " |"
+        )
+    return lines + _owner_lines(snapshots, section)
+
+
+def _owner_cells(owner: object) -> list[str]:
+    """The four count cells of an owner-labels row; never a pass or fail."""
+    if not isinstance(owner, dict):
+        return ["not recorded"] * 4
+    entry = cast("dict[str, object]", owner)
+    outcomes = cast("dict[str, int]", entry["by_outcome"])
+    rate = entry["rate"]
+    bound = entry["wilson_lower_bound"]
+    return [
+        _n(entry["labelled"]),
+        f"{_n(outcomes['accept'])} / {_n(outcomes['owner_entered'])} / "
+        f"{_n(outcomes['keep_current'])} / {_n(outcomes['reject'])}",
+        _n(entry["pick_agrees"]),
+        "not estimable"
+        if rate is None or bound is None
+        else f"{cast('float', rate):.3f} ({cast('float', bound):.3f})",
+    ]
+
+
+def _owner_lines(
+    snapshots: list[dict[str, object]], section: Mapping[str, object]
+) -> list[str]:
+    lines = [
+        "",
+        "### Owner labels",
+        "",
+        "| Relaxation | Snapshot | Population | Owner-labelled fields | "
+        "Accepted / entered / kept current / rejected | Chose the admitted value | "
+        "Rate (Wilson 95% lower limit) |",
+        "|" + "---|" * 7,
+    ]
+    for entry in snapshots:
+        for row in ledger._dicts(entry.get("owner_labels")):
+            lines.append(
+                f"| {row['rule']} | {entry['label']} | {row['population']} | "
+                + " | ".join(_owner_cells(row["owner"]))
+                + " |"
+            )
+    for row in ledger._dicts(section.get("pooled_owner_labels")):
+        lines.append(
+            f"| {row['rule']} | pooled | both | "
+            + " | ".join(_owner_cells(row["owner"]))
+            + " |"
+        )
+    every = section.get("all_owner_labels")
+    if isinstance(every, dict):
+        lines.append(
+            "| all relaxations | pooled | both | "
+            + " | ".join(_owner_cells(cast("dict[str, object]", every)["owner"]))
             + " |"
         )
     return lines

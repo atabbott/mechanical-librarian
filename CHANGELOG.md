@@ -257,6 +257,11 @@ brackets are GitHub issues.
 - Tooling: a read-only workbench script lists Library links to the ebook
   series fields where only Hardcover names a series and it differs from yours,
   so you can label them in the qualification run (#1811).
+- Tooling: two more read-only workbench scripts list Library links to fields
+  you can label. One lists the fields each ADR-0092 relaxation would fill. The
+  other lists empty description, genres and narrators fields that Hardcover or
+  Open Library offers a value for. The admission-rule ledger's A6 analysis now
+  counts your decisions on each relaxation's fields (#1876).
 - **Clean rebuild required.** Nothing is taken from Audiobookshelf's own
   `metadata.json` or `metadata.abs`. A sidecar is set aside if its folder holds
   another audio or ebook file, or it lacks the audiobook's title and an author
