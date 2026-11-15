@@ -336,6 +336,13 @@ def test_ffmpeg_release_tags_read_as_versions() -> None:
         match = re.fullmatch(extract, tag)
         assert match is not None and match["version"] == version
     assert re.fullmatch(extract, "n8.1-dev") is None
+    # Every version the tags yield is found again once it is the pin, or the
+    # next release would never reach the dashboard.
+    (pattern,) = cast("list[str]", manager["matchStrings"])
+    pin = pattern.replace("(?<", "(?P<")
+    for version in ("7.1.6", "8.0"):
+        found = re.fullmatch(pin, f"ARG FFMPEG_VERSION={version}\n")
+        assert found is not None and found["currentValue"] == version
 
 
 @pytest.mark.parametrize("index", range(7))
