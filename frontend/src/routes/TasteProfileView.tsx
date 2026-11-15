@@ -8,7 +8,6 @@ import {
   normalizeTasteRule,
   refusalCopy,
   tasteCodePoints,
-  tasteRuleMaximum,
   tasteRuleRefusal,
   uncertainWriteOutcome,
 } from '../api/http'
@@ -295,7 +294,6 @@ function RuleForm({
         ref={input}
         id={id}
         value={draft}
-        maxLength={tasteRuleMaximum}
         autoComplete="off"
         aria-describedby={`${id}-count`}
         onChange={(event) => {
@@ -711,18 +709,21 @@ export default function TasteProfileView() {
     retry: false,
   })
   if (read.isPending) return <p role="status">Loading taste profile…</p>
-  if (read.isError)
-    return (
-      <div className="covers-failure" role="alert">
-        <p>{routeFailureCopy(read.error).message}</p>
-        <button type="button" onClick={() => void read.refetch()}>
-          Reload
-        </button>
-      </div>
-    )
+  const failure = read.isError ? (
+    <div className="covers-failure" role="alert">
+      <p>{routeFailureCopy(read.error).message}</p>
+      <button type="button" onClick={() => void read.refetch()}>
+        Reload
+      </button>
+    </div>
+  ) : null
+  // A failed re-read keeps the profile it already shows, so an open editor
+  // and its draft survive a re-read that fails after an uncertain save.
+  if (read.data === undefined) return failure
   const view = read.data
   return (
     <div className="taste-profile">
+      {failure}
       <BuildState view={view} />
       <Profile view={view} />
     </div>

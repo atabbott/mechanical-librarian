@@ -1831,7 +1831,8 @@ describe('Covers → Taste profile edits (#1372 PR 2)', () => {
     const input = screen.getByRole('textbox', { name: 'Rule 2' })
     expect(input).toHaveFocus()
     expect(input).toHaveValue('Busy type!')
-    expect(input).toHaveAttribute('maxlength', '400')
+    // No native maxLength: it counts UTF-16 units, the limit counts code points.
+    expect(input).not.toHaveAttribute('maxlength')
     expect((input as HTMLInputElement).selectionStart).toBe('Busy type!'.length)
     expect(screen.getByText('10 of 400 characters')).toBeVisible()
     // The counter counts code points, not UTF-16 units.
@@ -1856,7 +1857,6 @@ describe('Covers → Taste profile edits (#1372 PR 2)', () => {
     renderRoute(tasteRoute, http)
     await user.click(await screen.findByRole('button', { name: 'Edit rule 1' }))
     const input = screen.getByRole('textbox', { name: 'Rule 1' })
-    // maxLength stops typing, so a long value is set directly.
     fireEvent.change(input, { target: { value: typed } })
     await user.click(screen.getByRole('button', { name: 'Save rule' }))
     expect(screen.getByRole('alert')).toHaveTextContent(copy)
@@ -2096,6 +2096,46 @@ describe('Covers → Taste profile edits (#1372 PR 2)', () => {
     expect(http.editTasteRule).toHaveBeenCalledTimes(1)
     expect(await screen.findByText('Rule 2 saved.')).toBe(statusLine())
     await waitFor(() => expect(screen.getByRole('button', { name: 'Edit rule 2' })).toHaveFocus())
+  })
+
+  it('keeps the editor and its draft when the re-read after a lost answer fails', async () => {
+    const user = userEvent.setup()
+    let reads = 0
+    const http = {
+      ...editHttp(owned, async () => {
+        throw new UncertainMutationError({
+          operation: 'POST /api/v1/covers/taste/rules',
+          responseStatus: 200,
+          at: '',
+          reason: 'synthetic',
+        })
+      }),
+      getTasteProfile: vi.fn(async () => {
+        reads += 1
+        if (reads > 1) throw new TypeError('Failed to fetch')
+        return owned
+      }),
+    }
+    renderRoute(tasteRoute, http)
+    await user.click(await screen.findByRole('button', { name: 'Edit rule 2' }))
+    await user.type(screen.getByRole('textbox', { name: 'Rule 2' }), ' now')
+    await user.click(screen.getByRole('button', { name: 'Save rule' }))
+    await waitFor(() => expect(http.getTasteProfile).toHaveBeenCalledTimes(2))
+    await screen.findByRole('button', { name: 'Reload' })
+    expect(screen.getByRole('textbox', { name: 'Rule 2' })).toHaveValue('Busy type! now')
+    expect(screen.getByText('No answer came back. Check whether the rule was saved.')).toBeVisible()
+  })
+
+  it('takes a 400-character rule whose characters need two UTF-16 units', async () => {
+    const user = userEvent.setup()
+    const text = 'x'.repeat(399) + '😀'
+    const http = editHttp(owned, async () => owned)
+    renderRoute(tasteRoute, http)
+    await user.click(await screen.findByRole('button', { name: 'Edit rule 1' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Rule 1' }), { target: { value: text } })
+    expect(screen.getByText('400 of 400 characters')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Save rule' }))
+    expect(http.editTasteRule).toHaveBeenCalledWith(3, { action: 'edit', number: 1, text })
   })
 
   it('cancels with Escape back to the pencil, or to Add rule for a new rule', async () => {
