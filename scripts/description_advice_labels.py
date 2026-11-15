@@ -44,6 +44,7 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     open_shadow_preview_repository,
 )
 from mechanical_librarian.application.contained_reviewer_contract import (
+    ContainedReviewRequest,
     canonical_json,
 )
 from mechanical_librarian.application.review_web import InspectCurrentReviewCase
@@ -58,6 +59,7 @@ from mechanical_librarian.domain.description_advice import (
     DescriptionPreferences,
     automatic_description_floor_met,
     description_digest,
+    description_document,
     description_qualification_manifest,
 )
 from mechanical_librarian.domain.field_value_comparison import values_match
@@ -162,14 +164,20 @@ def _identity(candidate: DescriptionAdviceCandidate) -> Identity:
     )
 
 
+# The eight cleanup combinations a candidate can have been made under.
+_PREFERENCES = tuple(
+    DescriptionPreferences(
+        remove_marketing=values[0],
+        remove_sales_boasts=values[1],
+        remove_praise=values[2],
+    )
+    for values in itertools.product((False, True), repeat=3)
+)
+
+
 def _preferences(digest: str) -> DescriptionPreferences | None:
     """The one cleanup combination whose digest a candidate records."""
-    for values in itertools.product((False, True), repeat=3):
-        preferences = DescriptionPreferences(
-            remove_marketing=values[0],
-            remove_sales_boasts=values[1],
-            remove_praise=values[2],
-        )
+    for preferences in _PREFERENCES:
         if description_digest(preferences.model_dump()) == digest:
             return preferences
     return None
@@ -286,6 +294,30 @@ class _Copy:
             self._fields[case_id] = _description_field(self.report(case_id))
         return self._fields[case_id]
 
+    def requests(self, case_id: str) -> set[str]:
+        """The request digests this checkout would send for the case's own
+        report, under each cleanup combination.
+
+        Advice reused from another case is linked to this case only through
+        its current pointer, which a later preparation overwrites; the report
+        is history that cannot be.
+        """
+        report = self.report(case_id)
+        digests = set()
+        for preferences in _PREFERENCES:
+            try:
+                inputs = DescriptionAdviceInput.from_report(report, preferences)
+            except ValueError:
+                continue
+            digests.add(
+                ContainedReviewRequest(
+                    DESCRIPTION_INSTRUCTION,
+                    description_document(inputs.model_dump()),
+                    DESCRIPTION_OUTPUT_SCHEMA,
+                ).digest
+            )
+        return digests
+
     def offered(self, case_id: str) -> set[str]:
         """The request identities whose advice the case could have shown."""
         return {
@@ -336,10 +368,14 @@ def _displayed(copy: _Copy, decision: _Decision) -> DescriptionAdviceCandidate |
     if decision.candidate_id is not None:
         return copy.candidates[decision.candidate_id]
     offered = copy.offered(decision.case_id)
+    requests = copy.requests(decision.case_id)
     shown = [
         candidate
         for candidate in copy.candidates.values()
-        if candidate.request_identity in offered
+        if (
+            candidate.request_identity in offered
+            or candidate.request_digest in requests
+        )
         and candidate.created_at <= decision.occurred_at
     ]
     return max(

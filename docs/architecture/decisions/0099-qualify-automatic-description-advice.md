@@ -73,8 +73,12 @@ destination nor the decision actions.
    not a label and is counted as decided by Automatic.
 3. **The advice judged.** The displayed advice D is the chosen advice for an
    adviser choice. Otherwise it is the newest advice created at or before the
-   decision whose request identity the decided case X offered: the identity
-   bound to X, or that of any attempt bound to X. With no such advice the
+   decision that the decided case X could have shown. That advice is found
+   from X's own report, not only from X's current advice pointer, which a
+   later preparation overwrites when X reused another case's advice: any
+   advice whose request this checkout would send for X's report under one of
+   the eight cleanup combinations, besides the request bound to X now and
+   every attempt bound to X. With no such advice the
    decision is counted as decided before any advice. L, the answer Automatic
    would have acted on, is the earliest advice with D's request identity
    created at or before the decision, eligible or not. When L is not eligible

@@ -1096,3 +1096,31 @@ def test_score_without_labels(tmp_path: Path) -> None:
         "",
         "Also not counted: 0 withdrawn, 1 decided before any advice.",
     ]
+
+
+def test_a_decision_on_reused_advice_survives_new_cleanup_choices(
+    tmp_path: Path,
+) -> None:
+    """A case that reused another case's advice links to it only through its
+    current pointer; preparing it again under new cleanup choices overwrites
+    that pointer, and the decision still judges the advice it was made on."""
+    prepared = _store(tmp_path)
+    other = _admit(prepared, _other_work())
+    binding = _advise(prepared, other)
+    assert prepared.store.read(other.review_case_id)["candidate"]["candidate_id"] == (
+        prepared.candidate.candidate_id
+    )
+    prepared.decide("keep_current", case=other.review_case_id, binding=binding)
+    prepared.settings(remove_praise=False)
+    _advise(prepared, other)
+    assert prepared.store.read(other.review_case_id)["candidate"]["candidate_id"] != (
+        prepared.candidate.candidate_id
+    )
+    document = _score(prepared.copy())
+    assert document["not_counted"]["decided_without_advice"] == 0
+    (judged,) = [
+        group
+        for group in document["identities"]
+        if group["preferences"] == DescriptionPreferences().model_dump()
+    ]
+    assert (judged["labels"], judged["wrong"]) == (1, _wrong(kept_current=1))
