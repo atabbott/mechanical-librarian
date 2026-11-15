@@ -13024,6 +13024,35 @@ def test_packaged_description_cost_in_settings_and_cover_only_setup(width: int) 
                     assert page.evaluate(
                         "document.documentElement.scrollWidth <= innerWidth"
                     )
+                    # The closed model pickers name the chosen model in full,
+                    # wrapping at 390 px with 200% text rather than ending in an
+                    # ellipsis, and staying one line on a desktop (#1372 S4).
+                    if width == 390:
+                        set_root_text(page, "200%")
+                    labels = page.locator(
+                        ".settings-model-picker .cm-dropdown-trigger > span"
+                    )
+                    expect(labels.first).to_contain_text("openai/gpt-6-luna")
+                    fit = cast(
+                        "list[dict[str, Any]]",
+                        labels.evaluate_all(
+                            """spans => spans.map(span => ({
+                              text: span.textContent,
+                              clipped: span.scrollWidth > span.clientWidth + 1,
+                              lines: Math.round(span.getBoundingClientRect().height /
+                                parseFloat(getComputedStyle(span).lineHeight)),
+                            }))"""
+                        ),
+                    )
+                    assert fit, fit
+                    assert not any(label["clipped"] for label in fit), fit
+                    if width == 1440:
+                        assert all(label["lines"] == 1 for label in fit), fit
+                    else:
+                        assert page.evaluate(
+                            "document.documentElement.scrollWidth <= innerWidth"
+                        )
+                        set_root_text(page, "")
                     output = os.environ.get("ML_BROWSER_SCREENSHOT_DIR")
                     if output:
                         page.screenshot(
@@ -14084,6 +14113,94 @@ def test_works_no_provider_matched_have_their_own_lens_and_reasons(
 _KEPT_COVER_LEAD = "Your current cover is kept, so no review is needed."
 
 
+# A tab is in its sideways row with room for its focus ring: 3 px with a 3 px
+# offset, except where the row's own end leaves no room (#1372 S6).
+_COVER_TAB_IN_VIEW = """selector => {
+  const nav = document.querySelector('.covers-tabs')
+  const tab = selector === ':focus' ? document.activeElement : nav.querySelector(selector)
+  if (!tab || !nav.contains(tab)) return false
+  const row = nav.getBoundingClientRect()
+  const box = tab.getBoundingClientRect()
+  const atStart = nav.scrollLeft <= 0
+  const atEnd = nav.scrollLeft >= nav.scrollWidth - nav.clientWidth - 1
+  return (box.left >= row.left + 5.5 || (atStart && box.left >= row.left)) &&
+    (box.right <= row.right - 5.5 || (atEnd && box.right <= row.right))
+}"""
+
+
+def _swipe_cover_tabs(page: Page, to: str) -> None:
+    """Scroll the tab row to its start or end, as a swipe would, and let the
+    scroll event reach the router before the next step."""
+    page.evaluate(
+        """async to => {
+          const nav = document.querySelector('.covers-tabs')
+          nav.scrollLeft = to === 'end' ? nav.scrollWidth : 0
+          await new Promise(resolve =>
+            requestAnimationFrame(() => requestAnimationFrame(resolve)))
+        }""",
+        to,
+    )
+
+
+def _tap_cover_tab(page: Page, index: int) -> None:
+    """Choose a tab without scrolling the row first, as a tap on a partly
+    visible tab does. A Playwright click would scroll it into view itself."""
+    page.evaluate(
+        "index => document.querySelectorAll('.covers-tabs button')[index].click()",
+        index,
+    )
+
+
+def _check_cover_tabs_after_swipe_back_and_tab(page: Page, origin: str) -> None:
+    """#1372 S6 at 390 px with 200% text: the selected tab stays in view after
+    a swipe and a tap and after Back, and a tab reached with Tab is shown
+    whole with its focus ring."""
+    page.set_viewport_size({"width": 390, "height": 900})
+    page.goto(f"{origin}/library?lens=all&view=covers&tab=decide")
+    tabs = page.get_by_role("navigation", name="Cover views")
+    buttons = tabs.get_by_role("button")
+    expect(buttons.nth(0)).to_have_attribute("aria-pressed", "true")
+    set_root_text(page, "200%")
+    selected = '[aria-pressed="true"]'
+    # A swipe to the end hides Kept; tapping it brings it back into view.
+    _swipe_cover_tabs(page, "end")
+    assert not page.evaluate(_COVER_TAB_IN_VIEW, ".covers-tabs button:nth-child(2)"), (
+        "the swipe must hide Kept for the tap to prove anything"
+    )
+    _tap_cover_tab(page, 1)
+    expect(buttons.nth(1)).to_have_attribute("aria-pressed", "true")
+    page.wait_for_function(_COVER_TAB_IN_VIEW, arg=selected, timeout=5_000)
+    # Taste profile, then a swipe back to the start and To decide; Back
+    # returns to Taste profile and brings it into view again.
+    _tap_cover_tab(page, 4)
+    expect(buttons.nth(4)).to_have_attribute("aria-pressed", "true")
+    page.wait_for_function(_COVER_TAB_IN_VIEW, arg=selected, timeout=5_000)
+    _swipe_cover_tabs(page, "start")
+    _tap_cover_tab(page, 0)
+    expect(buttons.nth(0)).to_have_attribute("aria-pressed", "true")
+    page.wait_for_function(_COVER_TAB_IN_VIEW, arg=selected, timeout=5_000)
+    assert not page.evaluate(_COVER_TAB_IN_VIEW, ".covers-tabs button:nth-child(5)"), (
+        "To decide at the start must hide Taste profile for Back to prove anything"
+    )
+    page.go_back()
+    expect(page).to_have_url(re.compile(r"tab=taste"))
+    expect(buttons.nth(4)).to_have_attribute("aria-pressed", "true")
+    page.wait_for_function(_COVER_TAB_IN_VIEW, arg=selected, timeout=5_000)
+    # Tab through the row from To decide: each tab is shown whole with its
+    # ring, although Chromium would leave a partly visible one clipped.
+    _tap_cover_tab(page, 0)
+    expect(buttons.nth(0)).to_have_attribute("aria-pressed", "true")
+    _swipe_cover_tabs(page, "start")
+    buttons.nth(0).focus()
+    assert not page.evaluate(_COVER_TAB_IN_VIEW, ".covers-tabs button:nth-child(2)"), (
+        "Kept must start partly hidden for Tab to prove anything"
+    )
+    for index in range(1, 5):
+        page.keyboard.press("Tab")
+        expect(buttons.nth(index)).to_be_focused()
+        page.wait_for_function(_COVER_TAB_IN_VIEW, arg=":focus", timeout=5_000)
+
+
 @pytest.mark.parametrize(
     ("journey", "incumbent"),
     (
@@ -14250,6 +14367,7 @@ def test_measured_cover_rules_keep_or_suggest_through_covers(
                           return box.left >= row.left - 1 && box.right <= row.right + 1
                         }"""
                     )
+                    _check_cover_tabs_after_swipe_back_and_tab(page, origin)
                     set_root_text(page, "")
                     page.set_viewport_size({"width": 1280, "height": 900})
                     page.goto(f"{origin}/library?lens=all&view=covers&tab={tab}")

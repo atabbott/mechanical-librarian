@@ -762,6 +762,18 @@ const withRetained = (listed: CoverWorkView[], retained: readonly Retained[]) =>
   return merged
 }
 
+// Brings a tab fully into its sideways row, with room for its focus ring
+// (3 px with a 3 px offset), except where the row's own ends prevent it.
+const tabRingRoom = 6
+function revealTab(row: HTMLElement, tab: Element) {
+  if (row.scrollWidth <= row.clientWidth || tab === row) return
+  const bounds = row.getBoundingClientRect()
+  const box = tab.getBoundingClientRect()
+  if (box.left - tabRingRoom < bounds.left) row.scrollLeft -= bounds.left - box.left + tabRingRoom
+  else if (box.right + tabRingRoom > bounds.right)
+    row.scrollLeft += box.right + tabRingRoom - bounds.right
+}
+
 export default function CoversView() {
   const search = libraryRoute.useSearch()
   const navigate = useNavigate({ from: '/library' })
@@ -771,17 +783,18 @@ export default function CoversView() {
   const taste = search.tab === 'taste'
   const tab: CoverTab = search.tab === undefined || search.tab === 'taste' ? 'decide' : search.tab
   // On a phone the tabs are one row that scrolls sideways; the selected tab
-  // is brought into that row's view without scrolling the page.
+  // is brought into that row's view without scrolling the page. The router
+  // restores the row's old scroll position once a navigation has rendered,
+  // after this view's effects, so the selected tab is brought back after it.
   const tabsRef = useRef<HTMLElement>(null)
-  useEffect(() => {
+  const revealSelectedTab = () => {
     const row = tabsRef.current
-    const selectedTab = row?.querySelector<HTMLElement>('[aria-pressed="true"]')
-    if (!row || !selectedTab || row.scrollWidth <= row.clientWidth) return
-    const bounds = row.getBoundingClientRect()
-    const box = selectedTab.getBoundingClientRect()
-    if (box.left < bounds.left) row.scrollLeft -= bounds.left - box.left
-    else if (box.right > bounds.right) row.scrollLeft += box.right - bounds.right
-  }, [tab, taste])
+    const selectedTab = row?.querySelector('[aria-pressed="true"]')
+    if (row && selectedTab) revealTab(row, selectedTab)
+  }
+  useEffect(revealSelectedTab, [tab, taste])
+  const router = useRouter()
+  useEffect(() => router.subscribe('onRendered', revealSelectedTab), [router])
   // As Works says it: only a confirmed snapshot with no library names the
   // way to fill the list.
   const noLibraryConnected = usePreparation().data?.libraries.length === 0
@@ -905,7 +918,6 @@ export default function CoversView() {
   // An acknowledgement can arrive after the owner has opened another book
   // or tab: the outcome is still recorded, but only the book still open
   // moves on, so a slow answer never takes over the comparison in use.
-  const router = useRouter()
   const stillShown = (work: CoverWorkView) => {
     const current = router.state.location.search as { tab?: CoverTab; cover?: string }
     return (current.tab ?? 'decide') === tab && current.cover === work.review_case_id
@@ -990,7 +1002,14 @@ export default function CoversView() {
           Covers
         </h1>
       </header>
-      <nav ref={tabsRef} className="covers-tabs" aria-label="Cover views">
+      <nav
+        ref={tabsRef}
+        className="covers-tabs"
+        aria-label="Cover views"
+        // Chromium scrolls a focused tab into the row only when it is fully
+        // hidden, so a partly hidden tab reached with Tab is brought in here.
+        onFocus={(event) => revealTab(event.currentTarget, event.target)}
+      >
         {(Object.keys(tabLabels) as CoverTab[]).map((value) => (
           <button
             key={value}

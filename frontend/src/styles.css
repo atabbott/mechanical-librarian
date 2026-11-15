@@ -729,6 +729,8 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
 .settings-number { display:grid; grid-template-columns:minmax(0,1fr); gap:.2rem; }
 .settings-number small,.settings-model-picker small { color:var(--soft); font-size:.75rem; }
 .settings-model-picker { display:grid; gap:.35rem; min-width:0; }
+/* The chosen model is read in full: its name wraps rather than ending in an ellipsis. */
+.settings-model-picker .cm-dropdown-trigger > span { overflow:visible; text-overflow:clip; white-space:normal; overflow-wrap:anywhere; }
 .settings-model-picker > strong, .settings-model-picker label { font-size:.75rem; font-weight:700; }
 .settings-lock { color:var(--soft); font-size:.75rem; font-weight:700; text-transform:uppercase; }
 .settings-secret-state,.settings-secret-editor { display:grid; gap:.45rem; min-width:0; }
@@ -1575,7 +1577,9 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 .taste-meta { display:flex; flex-wrap:wrap; gap:.75rem 1.5rem; margin:0; padding-bottom:1rem; border-bottom:1px solid var(--line); }
 .taste-meta div { display:grid; gap:2px; }
 .taste-meta dt { color:var(--soft); font-size:.75rem; }
-.taste-meta dd { margin:0; font-family:Georgia,serif; font-size:1.2rem; font-weight:700; font-variant-numeric:tabular-nums; }
+.taste-meta dd { margin:0; font-family:Georgia,serif; font-size:1.2rem; font-weight:700; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+/* Phones: the four values in two columns, so the rules start sooner. */
+@media (max-width:760px) { .taste-meta { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); align-items:start; gap:.5rem 1rem; } }
 .taste-body, .taste-rules { display:grid; gap:1.25rem; min-width:0; }
 /* As the prototype's cr-taste-grid: Versions beside the rules on wide screens. */
 @media (min-width:1025px) { .taste-body { grid-template-columns:minmax(0, 1.6fr) minmax(min(18rem, 38%), 1fr); gap:1.25rem 2rem; align-items:start; } .taste-meta { justify-content:flex-end; } }
