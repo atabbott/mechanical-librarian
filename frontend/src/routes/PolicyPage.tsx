@@ -726,6 +726,8 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
               const qualified = automaticQualified(field, option, qualification)
               const automaticAvailable = qualified && automaticAllowed
               const changed = fieldChanged(field)
+              const notOfferedNoted =
+                !field.unsupported && !qualified && destination !== 'automatic'
               return [
                 <section
                   key={field.key}
@@ -739,14 +741,19 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                     </span>
                     <p>{field.meaning}</p>
                     {/* The setting beside it says what is chosen; this says
-                        what Automatic does, for each kind of book. */}
-                    <p className="cm-policy-media-scope">
-                      <strong>Automatic on ebooks:</strong>{' '}
-                      {automaticEffect(field, option, 'ebook')}
-                      <br />
-                      <strong>Automatic on audiobooks:</strong>{' '}
-                      {automaticEffect(field, option, 'audiobook')}
-                    </p>
+                        what Automatic does, for each kind of book. Where neither
+                        offers it, the setting's own note says so once. */}
+                    {notOfferedNoted &&
+                    automaticEffect(field, option, 'ebook') === 'Not offered.' &&
+                    automaticEffect(field, option, 'audiobook') === 'Not offered.' ? null : (
+                      <p className="cm-policy-media-scope">
+                        <strong>Automatic on ebooks:</strong>{' '}
+                        {automaticEffect(field, option, 'ebook')}
+                        <br />
+                        <strong>Automatic on audiobooks:</strong>{' '}
+                        {automaticEffect(field, option, 'audiobook')}
+                      </p>
+                    )}
                     <div className="cm-policy-disclosures">
                       {data.state.audiobook_qualification.some(
                         (entry) => entry.field === field.key && entry.option === option,
@@ -804,9 +811,9 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                       <div className="cm-policy-mode-control">
                         <span className="cm-policy-control-heading">
                           <strong>Setting</strong>
-                          {/* The mode is said once, by the Mode disclosure; the note
-                              under the option says it while Automatic is chosen. */}
-                          {!qualified && destination !== 'automatic' ? (
+                          {/* While Automatic is chosen, the note under the option
+                              says it is not offered instead. */}
+                          {notOfferedNoted ? (
                             <small>Automatic not offered</small>
                           ) : null}
                         </span>

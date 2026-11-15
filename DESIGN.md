@@ -519,7 +519,8 @@ decision. Activity uses a denser ruled ledger: state and owner authority appear
 before filterable event rows, and expanded evidence stays attached to its
 event. At compact widths both surfaces preserve document order rather than
 compressing their desktop columns. A Policy field says what Automatic does on
-ebooks and on audiobooks ("Not offered." when nothing applies), and its
+ebooks and on audiobooks ("Not offered." for one that has nothing), unless
+neither does, when the setting's "Automatic not offered" says it once; its
 disclosures sit side by side as underlined links. Activity's six counts sit in
 two rows of three beside its status (fewer a row when enlarged text leaves no
 room), its status pill is level with the title, the ledger heading shares a row

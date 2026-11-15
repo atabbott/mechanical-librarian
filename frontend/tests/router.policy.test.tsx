@@ -584,9 +584,11 @@ describe('Policy route', () => {
     await user.click(screen.getByRole('button', { name: 'Identity' }))
     const title = await screen.findByRole('region', { name: 'Title and subtitle' })
     expect(within(title).getByRole('button', { name: 'Automatic' })).toBeDisabled()
-    expect(title.querySelector('.cm-policy-media-scope')).toHaveTextContent(
-      'Automatic on ebooks: Not offered.',
-    )
+    // Neither kind of book offers Automatic, so the setting's note says it
+    // once and the card adds no "Not offered." lines.
+    expect(within(title).getAllByText(/not offered/iu)).toHaveLength(1)
+    expect(within(title).getByText('Automatic not offered')).toBeVisible()
+    expect(title.querySelector('.cm-policy-media-scope')).toBeNull()
   })
 
   it('says Language fills and respells the same language on both media (#1496)', async () => {
