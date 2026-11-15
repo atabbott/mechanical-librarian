@@ -159,8 +159,11 @@ h2 { margin-bottom:.35rem; }
 .provider-throttle-refusal:not(:empty) { color:var(--danger); }
 .provider-throttle-refusal:not(:empty)::before { content:'\26A0'; content:'\26A0' / ''; }
 .preparation-popover > small { display:block; margin:.35rem 0 .7rem; }
-/* A running command looks disabled; retained busy rows keep their contrast. */
-.provider-throttle-notice button[aria-disabled='true'], .preparation-popover button[aria-disabled='true'], .preparation-detail button[aria-disabled='true'], .cm-policy-route button[aria-disabled='true'], .settings-reviewer button[aria-disabled='true'], .description-advice-preparation button[aria-disabled='true'] { cursor:not-allowed; opacity:.55; }
+/* A running command looks disabled; retained busy rows keep their contrast.
+   It keeps focus, so it mixes its own colours toward the surface rather than
+   fading, and its focus outline stays unmixed (#1698). */
+:is(.provider-throttle-notice, .preparation-popover, .preparation-detail, .cm-policy-route, .settings-reviewer, .description-advice-preparation) button[aria-disabled='true'] { cursor:not-allowed; color:color-mix(in srgb,var(--ink) 55%,var(--surface)); border-color:color-mix(in srgb,var(--line) 55%,var(--surface)); }
+:is(.provider-throttle-notice, .preparation-popover, .preparation-detail, .cm-policy-route, .settings-reviewer, .description-advice-preparation) .button-primary[aria-disabled='true'] { color:var(--surface); background:color-mix(in srgb,var(--accent-strong) 55%,var(--surface)); border-color:color-mix(in srgb,var(--accent-strong) 55%,var(--surface)); }
 .provider-throttle-notice button[aria-busy='true'], .preparation-popover button[aria-busy='true'] { cursor:progress; }
 @media (max-width:760px) { .provider-throttle-command button { min-height:44px; width:100%; } }
 main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outline:none; }
@@ -870,7 +873,8 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .owner-notice { color:var(--danger); font-weight:650; }
 .owner-trigger, .owner-actions button, .owner-suggestions button { justify-self:start; max-width:100%; min-height:44px; padding:.55rem .8rem; border:1px solid var(--line-strong); border-radius:.5rem; background:var(--surface); color:var(--ink); font-weight:650; text-align:left; overflow-wrap:break-word; }
 .owner-actions button[type='submit'] { color:var(--accent-strong); }
-.owner-trigger[aria-disabled='true'], .owner-actions button[aria-disabled='true'] { cursor:not-allowed; opacity:.7; }
+.owner-trigger[aria-disabled='true'], .owner-actions button[aria-disabled='true'] { cursor:not-allowed; color:color-mix(in srgb,var(--ink) 70%,var(--surface)); border-color:color-mix(in srgb,var(--line-strong) 70%,var(--surface)); }
+.owner-actions button[type='submit'][aria-disabled='true'] { color:color-mix(in srgb,var(--accent-strong) 70%,var(--surface)); }
 .owner-entry { display:grid; gap:.5rem; min-width:0; padding:.9rem; border:1px solid var(--line); border-radius:.7rem; background:var(--surface); }
 .owner-entry label { font-weight:650; }
 .owner-entry input[type='text'] { box-sizing:border-box; width:100%; min-height:44px; padding:.5rem .65rem; border:1px solid var(--field-line); border-radius:.5rem; background:var(--page); color:var(--ink); font:inherit; }
@@ -1473,7 +1477,9 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 
 /* One review entry beside the status copy, and the requirement beside Confirm (#1279). */
 .cm-activity-status-copy > button { margin-top:.7rem; }.cm-activity-status-copy > a { display:inline-block; margin:.7rem 1.25rem 0 0; }
-#activity-consent button[aria-disabled='true'] { cursor:progress; opacity:.55; }
+/* Its own rules: the id would outrank every variant inside a shared :is(). */
+#activity-consent button[aria-disabled='true'] { cursor:progress; color:color-mix(in srgb,var(--ink) 55%,var(--surface)); border-color:color-mix(in srgb,var(--line) 55%,var(--surface)); }
+#activity-consent .button-primary[aria-disabled='true'] { color:var(--surface); background:color-mix(in srgb,var(--accent-strong) 55%,var(--surface)); border-color:color-mix(in srgb,var(--accent-strong) 55%,var(--surface)); }
 /* The section stays mounted; with nothing to say it takes no space. */
 .cm-activity-status:empty { display:none; }
 .activity-consent-actions { display:flex; flex-wrap:wrap; align-items:center; gap:.6rem 1rem; }

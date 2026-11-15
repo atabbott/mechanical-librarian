@@ -259,6 +259,11 @@ brackets are GitHub issues.
 - Tooling: a read-only workbench script lists Library links to the ebook
   series fields where only Hardcover names a series and it differs from yours,
   so you can label them in the qualification run (#1811).
+- Tooling: two more read-only workbench scripts list Library links to fields
+  you can label. One lists the fields each ADR-0092 relaxation would fill. The
+  other lists empty description, genres and narrators fields that Hardcover or
+  Open Library offers a value for. The admission-rule ledger's A6 analysis now
+  counts your decisions on each relaxation's fields (#1876).
 - **Clean rebuild required.** Nothing is taken from Audiobookshelf's own
   `metadata.json` or `metadata.abs`. A sidecar is set aside if its folder holds
   another audio or ebook file, or it lacks the audiobook's title and an author
@@ -614,6 +619,18 @@ brackets are GitHub issues.
   longer reads as having no other value: the case shows that earlier choice
   beside the current value and says Automatic doesn’t write in Preview and
   decides the field again when you turn it on (#1575).
+- Remote cover downloads now refuse a host whose IPv6 answer carries a
+  private, loopback or link-local IPv4 address, such as a NAT64 address, or
+  lies outside public unicast space (#1758).
+- On an ebook, a field set to Ask me with a proposed value the queue does not
+  ask about, such as an ASIN or a tag list for empty Tags, is now an optional
+  choice you can take, as on an audiobook, instead of reading "Nothing to
+  decide for this field." (#1707).
+- Setup now dims a button while its step runs without fading its focus
+  outline, and tells screen readers "Selecting Codex…", "Starting sign-in…" or
+  "Cancelling sign-in…" while the reviewer step's Codex buttons work. Pending
+  buttons in Settings, Policy, a field's own value and Activity keep a
+  full-strength focus outline too (#1698).
 
 ## 0.29.2 — Delivery reliability and hygiene
 

@@ -585,9 +585,11 @@ describe('shipped first-run setup script', () => {
     // refusal is shown on the password's own rule, not on the claim token.
     await waitFor(() => expect(password).toHaveAttribute('aria-invalid', 'true'))
     expect(screen.queryByRole('alert')).toBeNull()
-    // The refused rule is also announced in the status region on the next
-    // frame, so it is read inside the form, where the rule itself is.
-    expect(within(form).getByText('At least 12 characters.')).toHaveClass('rule-refused')
+    // The refusal is also announced in #setup-status on the next frame, so
+    // read the rule itself, not whichever copy of the words is present.
+    expect(screen.getByText('At least 12 characters.', { selector: 'li' })).toHaveClass(
+      'rule-refused',
+    )
     expect(password).toHaveAttribute('aria-describedby', 'setup-password-rules')
     expect(claimToken).not.toHaveAttribute('aria-invalid')
     expect(password).toHaveFocus()
@@ -2311,7 +2313,7 @@ describe('shipped first-run setup script', () => {
     const fetch = vi.fn(async (request: RequestInfo | URL) => {
       if (requestUrl(request) === '/api/setup/reviewer-access')
         return response({
-          schema_version: 'reviewer-access-view-v5',
+          schema_version: 'reviewer-access-view-v4',
           taste_mapping: null,
           taste_metadata: null,
           taste_daily_requests: 8,
@@ -2564,7 +2566,7 @@ describe('shipped first-run setup script', () => {
 })
 
 const reviewerAccess = (state: string, reason: string | null = null) => ({
-  schema_version: 'reviewer-access-view-v5',
+  schema_version: 'reviewer-access-view-v4',
   taste_mapping: null,
   taste_metadata: null,
   taste_daily_requests: 8,

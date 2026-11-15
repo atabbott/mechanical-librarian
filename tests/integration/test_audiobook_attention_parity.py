@@ -206,15 +206,15 @@ def _ebook_asin_report() -> MetadataReport:
     )
 
 
-@pytest.mark.parametrize("medium", ("m4b", "epub"))
+@pytest.mark.parametrize("medium", ("m4b", "epub"), ids=("m4b", "epub"))
 def test_a_settled_asin_fill_leaves_the_queue_and_stays_choosable(
     tmp_path: Path, medium: str
 ) -> None:
     """Under all-Ask a single-candidate ASIN fill asks for nothing.
 
-    The queue reads alike on both media, and the case page agrees with it: a
-    recording's fill is an optional choice it still offers the owner, not a
-    field needing review (#1249).
+    The queue reads alike on both media, and the case page agrees with it: the
+    fill is an optional choice it still offers the owner, not a field needing
+    review, with the same reason on a recording and an ebook (#1249, #1707).
     """
     report = admitted_audiobook_report() if medium == "m4b" else _ebook_asin_report()
     with closing(open_repository(tmp_path / "application.sqlite3")) as repository:
@@ -241,13 +241,12 @@ def test_a_settled_asin_fill_leaves_the_queue_and_stays_choosable(
         assert asin["deterministic_disposition"] == "propose_change"
         assert asin["decision_actions"] == ["keep_current", "accept"]
         assert attention["total"] == len(asking)
-        # A recording's fill stays choosable without asking; an ebook's waits
-        # for its policy exactly as before.
-        assert asin["classification"] == (
-            "owner_choosable" if medium == "m4b" else "unsupported"
-        )
+        # The fill stays choosable without asking on either medium: the
+        # ebook's field is set to Ask me (#1707).
+        assert asin["classification"] == "owner_choosable"
+        assert asin["classification_reason"] == _OWNER_CHOOSABLE
         assert asin["needs_attention"] is False
-        assert asin["editable"] is (medium == "m4b")
+        assert asin["editable"] is True
         if medium == "m4b":
             narrators = next(
                 f for f in detail["fields"] if f["destination"] == "narrators"
@@ -307,6 +306,10 @@ def test_a_recordings_narrators_ask_only_under_authors_and_narrators_ask(
     assert "asin" not in destinations
 
 
+_OWNER_CHOOSABLE = (
+    "No review is needed. You can still keep the current value or choose a "
+    "proposed one."
+)
 _INCUMBENT = "A voyage reveals a hidden city. The crew must choose who returns home."
 _IMMATERIAL = (
     "The proposed values only shorten or extend the current one, so no review is "

@@ -41,11 +41,12 @@ records the decision they support: keep the gate.
   eligible action" on a field outside the scalar engine, over all fields. It
   can be separated only where the source records each rich-preview refusal's
   own reason.
-- For every current case, a separate process imports only the snapshot's own
-  source tree. It rebuilds the decision's input from the stored review case,
-  proposal set and report, using that source's `ShadowReviewPacket.create`, and
-  replays that source's decision. The replay table counts cases that would not
-  rebuild, and replayed reasons that differ from the stored ones.
+- For every current case, and every case the owner decided, a separate
+  process imports only the snapshot's own source tree. It rebuilds the
+  decision's input from the stored review case, proposal set and report, using
+  that source's `ShadowReviewPacket.create`, and replays that source's
+  decision. The replay table counts cases that would not rebuild, and replayed
+  reasons that differ from the stored ones.
 - For each candidate value of an abstained field, the script names the first
   eligibility check it fails. The checks are those of the source's
   `_candidate_is_eligible`, mirrored clause by clause, in this order: degraded
@@ -93,8 +94,18 @@ records the decision they support: keep the gate.
     such record gives the field.
 
   These screens are necessary, but they do not show that a value is right.
-  Neither snapshot holds an owner decision, so owner-labelled value precision
-  (#1418) cannot be measured here.
+- Only the owner's decisions show that. The owner-labels table counts each
+  admitted field that the owner has decided, by the latest decision on that
+  book's field. It shows the outcomes (accepted, entered, kept current or
+  rejected), how often the owner chose the admitted value, and that rate with
+  its Wilson 95% lower limit. A
+  withdrawn decision, or one older than the case's latest episode, labels
+  nothing. A decision on a case a rescan has since replaced still labels its
+  field, and adds nothing else to the tables. Rows are per snapshot and
+  population, then pooled per relaxation and over all five. The table applies
+  no pass mark. Neither snapshot holds an owner decision, so every pooled row
+  reads 0. [Owner labels](../operations/owner-labels.md#relaxations) lists the
+  fields on an owner's own library and reads them.
 
 ## Tables
 
@@ -152,6 +163,17 @@ records the decision they support: keep the gate.
 | language_two_correlations_without_local | pooled | both | 9 | 0 | 5 / 0 / 0 / 3 | 1 | 2/0/0 | 1.000 (0.342) | 0 / 1 (1 right-work) / 0 | 0 | not estimable (0 comparable) |
 | published_date_day_one_correlation | pooled | both | 0 | 0 | 0 / 0 / 0 / 0 | 0 | 0/0/0 | not estimable | 0 / 0 (0 right-work) / 0 | 0 | not estimable (0 comparable) |
 
+### Owner labels
+
+| Relaxation | Snapshot | Population | Owner-labelled fields | Accepted / entered / kept current / rejected | Chose the admitted value | Rate (Wilson 95% lower limit) |
+|---|---|---|---|---|---|---|
+| authors_one_correlation | pooled | both | 0 | 0 / 0 / 0 / 0 | 0 | not estimable |
+| title_two_correlations_without_local | pooled | both | 0 | 0 / 0 / 0 / 0 | 0 | not estimable |
+| publisher_two_correlations_without_local | pooled | both | 0 | 0 / 0 / 0 / 0 | 0 | not estimable |
+| language_two_correlations_without_local | pooled | both | 0 | 0 / 0 / 0 / 0 | 0 | not estimable |
+| published_date_day_one_correlation | pooled | both | 0 | 0 / 0 / 0 / 0 | 0 | not estimable |
+| all relaxations | pooled | both | 0 | 0 / 0 / 0 / 0 | 0 | not estimable |
+
 ## Reading the analysis
 
 The old A6 row counted three different things. On ebook-744 its 5,481
@@ -196,4 +218,5 @@ Run the [ledger's Reproduce command](admission-rule-ledger.md#reproduce)
 with `--a6-abstention` added. It prints these tables instead of the
 ledger's, and the JSON document carries them under `a6_abstention`. The
 analysis rebuilds every current case's decision input under its own source,
-which takes about forty seconds for both snapshots.
+which takes about forty seconds for both snapshots. To read an owner's labels
+on their own library, follow [owner labels](../operations/owner-labels.md#relaxations).
