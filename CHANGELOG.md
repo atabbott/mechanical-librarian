@@ -10,6 +10,21 @@ existing `/data` volume must be rebuilt; [upgrades](docs/operations/upgrades.md)
 says how. Sections marked "in progress" are still open. The numbers in
 brackets are GitHub issues.
 
+## 0.39.0 — Owner trust (in progress)
+
+- In store mode, Settings can change the owner password. It asks for the
+  current password, keeps this browser signed in and signs out every other
+  browser (#1385).
+
+## 0.37.0 — Provider economy (in progress)
+
+- Mechanical Librarian keeps each source's answers and reuses them when it asks
+  the same question again, so preparing a book again sends far fewer requests.
+  A failed lookup keeps nothing and is asked again, and the weekly search for
+  an unmatched audiobook always asks live. The answers are kept in
+  `/data/private/provider-responses.sqlite`; losing it only means asking again
+  (#1064).
+
 ## 0.36.1 — Persistence health (in progress)
 
 - Your decision on a field now keeps Automatic off that field on every later

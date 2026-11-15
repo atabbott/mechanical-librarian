@@ -222,6 +222,21 @@ INVENTORY: dict[tuple[str, str], Row] = {
         (401, "unauthorized"): "pre-commit",
         (503, "persistence"): "post-commit",
     },
+    ("POST", "/api/v1/session/password"): {
+        # `OwnerSessionService.change_password`: the missing change port, the
+        # snapshot re-authentication and the rule check all precede the
+        # throttle; `_replace_password` refuses before `adopt` commits, and a
+        # lost or failed compare-and-set revokes its own new session. The
+        # swap and the purge after the commit cannot raise into the caller.
+        (409, "settings_managed_by_file"): "pre-commit",
+        (401, "unauthorized"): "pre-commit",
+        (403, "csrf"): "pre-commit",
+        (422, "invalid_password"): "pre-commit",
+        (429, "throttled"): "pre-commit",
+        (403, "current_password_invalid"): "pre-commit",
+        (500, "runtime"): "pre-commit",
+        (503, "persistence"): "pre-commit",
+    },
     ("POST", "/api/v1/operations/support/export"): {
         (503, "support_unavailable"): "no-commit",
     },

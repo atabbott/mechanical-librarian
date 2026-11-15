@@ -5,7 +5,7 @@ import json
 import sqlite3
 import tempfile
 import time
-from contextlib import contextmanager, nullcontext
+from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
 from threading import Lock
@@ -95,12 +95,8 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     audio_set_content_digest,
 )
-from mechanical_librarian.domain.owner_settings import OWNER_SETTINGS_SCHEMA
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.provider_recovery import ProviderRecoveryJob
-from mechanical_librarian.infrastructure.settings_authority import (
-    REVIEW_BOOTSTRAP_SCHEMA,
-)
 from tests.support.audiobook_providers import target_title_claim
 from tests.support.audiobook_reports import (
     audio_local_claims,
@@ -109,6 +105,7 @@ from tests.support.audiobook_reports import (
 )
 from tests.support.metadata_report_doubles import single_track_audio_facts
 from tests.support.proposal_evidence import _claim, _provider
+from tests.support.store_runtime import quiet_store_runtime
 from tests.unit.review_app_fixture import create_transport_test_app
 
 
@@ -349,6 +346,49 @@ def test_stopping_the_supervisor_closes_the_taste_lane_repository() -> None:
             supervisor.stop()
         with pytest.raises(sqlite3.ProgrammingError):
             taste[0]._connection.execute("SELECT 1")
+
+
+def test_a_pipeline_opens_the_response_store_and_closes_it_on_stop() -> None:
+    """#1064: held answers live beside the recovery store, for this generation."""
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        database = root / "reports.sqlite"
+        private = root / "private"
+        private.mkdir(mode=0o700)
+        recovery = SQLiteProviderRecoveryStore.open(
+            private / "provider-recovery.sqlite"
+        )
+        open_repository(database).close()
+        configuration = _recovery_configuration()
+        composition.CoverArtifactStore(root / "artifacts", create=True)
+        opened: list[object] = []
+        real_open = composition.open_provider_response_store
+
+        def recording(path: Path) -> object:
+            store = real_open(path)
+            opened.append(store)
+            return store
+
+        with patch.object(
+            composition, "open_provider_response_store", side_effect=recording
+        ):
+            supervisor = composition.create_review_pipeline(
+                configuration,
+                database,
+                root / "catalogue.sqlite",
+                root / "artifacts",
+                _reviewer_access(database, configuration),
+                private_root=private,
+                provider_recovery=recovery,
+            )
+        (store,) = opened
+        assert (private / "provider-responses.sqlite").is_file()
+        store._connection.execute("SELECT 1")
+        supervisor.stop()
+        with pytest.raises(sqlite3.ProgrammingError):
+            store._connection.execute("SELECT 1")
+        with pytest.raises(sqlite3.ProgrammingError):
+            recovery._connection.execute("SELECT 1")
 
 
 def test_generation_rollback_rejects_before_cutover_delivery() -> None:
@@ -1699,216 +1739,6 @@ def test_composed_audio_recovery_currentness_and_staged_cutover(
             supervisor.stop()
 
 
-class _StoreRuntime:
-    """One real store-authority runtime whose activations reach reconcile."""
-
-    def __init__(self, root: Path, generation: int) -> None:
-        from argon2 import PasswordHasher
-
-        from mechanical_librarian.adapters.persistence.documents import _canonical_json
-        from mechanical_librarian.application.operation_admission import (
-            OperationAdmission,
-        )
-        from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
-        from mechanical_librarian.infrastructure.settings_authority import (
-            ReviewBootstrap,
-        )
-        from mechanical_librarian.interfaces.web.runtime_dispatch import (
-            MutableRuntimeDispatcher,
-        )
-
-        self.root = root
-        self.database = root / "reports.sqlite"
-        self.admission = OperationAdmission()
-        self.control = open_repository(
-            self.database, create=True, cross_thread=True, admission=self.admission
-        )
-        document = OwnerSettingsDocument.model_validate(
-            {
-                "schema_version": OWNER_SETTINGS_SCHEMA,
-                "revision": 1,
-                "connections": [
-                    {"name": "primary", "endpoint": "https://library.example.invalid"}
-                ],
-                "providers": [
-                    {"name": "google", "adapter": "google_books", "enabled": True}
-                ],
-                "libraries": [
-                    {
-                        "name": "books",
-                        "connection": "primary",
-                        "library_id": "library-1",
-                        "media_kind": "ebook",
-                        "provider_connections": ["google"],
-                    }
-                ],
-                "provider_recovery_generation": generation,
-            }
-        )
-        self.control._connection.execute(
-            "INSERT INTO owner_settings(singleton,revision,document) VALUES(1,1,?)",
-            (_canonical_json(document.model_dump()),),
-        )
-        self.control._connection.executemany(
-            "INSERT INTO owner_setting_secrets(field_id,value) VALUES(?,?)",
-            (
-                ("connection.primary.key", "synthetic-target-key"),
-                ("owner.password.verifier", PasswordHasher().hash("synthetic-owner")),
-            ),
-        )
-        self.control._connection.commit()
-        self.bootstrap = ReviewBootstrap(
-            schema_version=REVIEW_BOOTSTRAP_SCHEMA,
-            canonical_origin="https://review.example.invalid",
-            tls_certificate_file="/synthetic/certificate",
-            tls_private_key_file="/synthetic/key",
-        )
-        composition.CoverArtifactStore(root / "artifacts", create=True)
-        self.recovery_path = composition._private_root(self.database) / (
-            "provider-recovery.sqlite"
-        )
-        self.applications: list[object] = []
-        self.dispatcher: MutableRuntimeDispatcher | None = None
-
-    def seed(self) -> None:
-        """Waiting rate-limited health with queued jobs at the current generation."""
-        store = SQLiteProviderRecoveryStore.open(self.recovery_path)
-        generation = self.generation()
-        store.observe_failure(
-            connection="google",
-            adapter="google_books",
-            scope="books",
-            generation=generation,
-            failure="rate_limited",
-            now=100,
-            retry_after=3_600,
-        )
-        store.enqueue_jobs(
-            tuple(
-                ProviderRecoveryJob(
-                    "google",
-                    "google_books",
-                    "books",
-                    generation,
-                    f"member-{index}",
-                    "primary",
-                    "books",
-                    f"item-{index}",
-                    "f" * 64,
-                    "report-" + "2" * 64,
-                    None,
-                    "report-" + "2" * 64,
-                    None,
-                    None,
-                    "report_only",
-                    "[]",
-                )
-                for index in range(3)
-            ),
-            enqueued_at=100,
-        )
-        store.close()
-
-    def generation(self) -> int:
-        return int(
-            json.loads(
-                self.control._connection.execute(
-                    "SELECT document FROM owner_settings WHERE singleton=1"
-                ).fetchone()[0]
-            )["provider_recovery_generation"]
-        )
-
-    def start(self):
-        from mechanical_librarian.interfaces.web.runtime_dispatch import (
-            MutableRuntimeDispatcher,
-        )
-
-        activation = composition._StoreRuntimeActivation(
-            self.bootstrap,
-            self.database,
-            self.root / "catalogue.sqlite",
-            self.root / "artifacts",
-            self.control.owner_settings_store(),
-            self.control.authority,
-            operation_admission=self.admission,
-        )
-        runtime, _ = composition.compose_store_runtime_generation(
-            self.bootstrap,
-            self.database,
-            self.root / "catalogue.sqlite",
-            self.root / "artifacts",
-            repository_authority=self.control.authority,
-            operation_admission=self.admission,
-            activation=activation,
-        )
-        self.dispatcher = MutableRuntimeDispatcher(runtime)
-        activation.bind(self.dispatcher)
-        self.dispatcher.start()
-        return self.applications[-1]
-
-    def stop(self) -> None:
-        if self.dispatcher is not None:
-            current = self.dispatcher.current()
-            current.stop_admission()
-            current.begin_drain()
-            current.close()
-            self.dispatcher = None
-
-    def recovery_state(self) -> dict[str, list[list[object]]]:
-        check = sqlite3.connect(self.recovery_path)
-        try:
-            return json.loads(
-                json.dumps(
-                    {
-                        table: [
-                            list(row)
-                            for row in check.execute(
-                                f"SELECT * FROM {table} ORDER BY 1,2,3,4,5"
-                            )
-                        ]
-                        for table in (
-                            "provider_recovery_health",
-                            "provider_recovery_jobs",
-                            "provider_recovery_events",
-                        )
-                    }
-                )
-            )
-        finally:
-            check.close()
-
-    def close(self) -> None:
-        self.stop()
-        self.control.close()
-
-
-@contextmanager
-def _quiet_store_runtime(root: Path, generation: int):
-    """Hold every background lane closed so only owner actions touch the store."""
-    runtime = _StoreRuntime(root, generation)
-    compose = composition.compose_review_application
-
-    def capture(**kwargs):
-        application = compose(**kwargs)
-        runtime.applications.append(application)
-        return application
-
-    with (
-        patch.object(composition.time, "time", return_value=50_000),
-        patch.object(composition, "compose_review_application", side_effect=capture),
-        patch.object(
-            composition.ReviewPreparationSupervisor, "admit", return_value=None
-        ),
-        patch.object(
-            composition.ContinuousGuardedApplication, "admit", return_value=None
-        ),
-    ):
-        try:
-            yield runtime
-        finally:
-            runtime.close()
-
-
 def _raised_generation(application, generation: int, via: str) -> None:
     from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
 
@@ -1938,7 +1768,7 @@ def test_retry_now_has_exactly_the_effect_of_raising_the_generation_field() -> N
     for via in ("settings", "retry"):
         with (
             tempfile.TemporaryDirectory() as temporary,
-            _quiet_store_runtime(Path(temporary), 2) as runtime,
+            quiet_store_runtime(Path(temporary), 2) as runtime,
         ):
             runtime.seed()
             application = runtime.start()
@@ -1979,7 +1809,7 @@ def test_retry_now_leaves_an_already_recovered_scope_recovered() -> None:
 
     with (
         tempfile.TemporaryDirectory() as temporary,
-        _quiet_store_runtime(Path(temporary), 1) as runtime,
+        quiet_store_runtime(Path(temporary), 1) as runtime,
     ):
         runtime.seed()
         store = SQLiteProviderRecoveryStore.open(runtime.recovery_path)
@@ -2270,7 +2100,7 @@ def test_the_first_throttle_names_its_reason_and_remedy_through_its_retry() -> N
     """The reason and the key link hold after the throttle's own retry (#1367)."""
     with (
         tempfile.TemporaryDirectory() as temporary,
-        _quiet_store_runtime(Path(temporary), 1) as runtime,
+        quiet_store_runtime(Path(temporary), 1) as runtime,
     ):
         runtime.seed()
         application = runtime.start()
@@ -2332,7 +2162,7 @@ def test_a_failed_settings_commit_never_moves_recovery_past_a_restart(
 
     with (
         tempfile.TemporaryDirectory() as temporary,
-        _quiet_store_runtime(Path(temporary), 1) as runtime,
+        quiet_store_runtime(Path(temporary), 1) as runtime,
     ):
         runtime.seed()
         application = runtime.start()
@@ -2394,7 +2224,7 @@ def test_a_failed_cutover_after_the_commit_fails_closed_until_a_restart(
 
     with (
         tempfile.TemporaryDirectory() as temporary,
-        _quiet_store_runtime(Path(temporary), 1) as runtime,
+        quiet_store_runtime(Path(temporary), 1) as runtime,
     ):
         runtime.seed()
         application = runtime.start()

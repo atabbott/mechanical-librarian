@@ -95,6 +95,7 @@ from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.review_field_classification import (
     ReviewFieldCause,
 )
+from mechanical_librarian.interfaces.web import StoreOwnerPassword
 from tests.support.activity_seed import seed_activity  # noqa: E402
 from tests.support.review_cases import _report
 from tests.unit.review_app_fixture import (
@@ -456,6 +457,16 @@ class FakeReviewRepository:
             return "csrf"
         self.sessions[session_digest] = (actor, csrf, expires, now)
         return "revoked"
+
+    def end_review_sessions_except(self, session_digest: str) -> int:
+        ended = len(self.sessions) - (session_digest in self.sessions)
+        self.sessions = {
+            digest: session
+            for digest, session in self.sessions.items()
+            if digest == session_digest
+        }
+        self.failures = []
+        return ended
 
     def review_case_exists(self, review_case_id: str) -> bool:
         if self.existence_failure:
@@ -1363,6 +1374,22 @@ class FakeActivityApplication(ContinuousGuardedApplication):
 RepositoryT = TypeVar("RepositoryT", bound=FakeReviewRepository)
 
 
+class MemoryOwnerVerifierStore:
+    """The stored owner verifier behind a store-mode transport application."""
+
+    def __init__(self, value: str) -> None:
+        self.value = value
+        self.replace_failure = False
+
+    def replace_owner_verifier(self, expected: str, replacement: str) -> bool:
+        if self.replace_failure:
+            raise RuntimeError("synthetic verifier write failure")
+        if expected != self.value:
+            return False
+        self.value = replacement
+        return True
+
+
 @dataclass
 class ReviewWebContext(Generic[RepositoryT]):
     """One authenticated transport-test application over the fake repository.
@@ -1384,6 +1411,8 @@ class ReviewWebContext(Generic[RepositoryT]):
     client: TestClient
     origin: dict[str, str]
     cleanup: ExitStack
+    # Present only in store mode, where Settings can change the password.
+    verifier_store: MemoryOwnerVerifierStore | None = None
 
     def login(self) -> dict[str, object]:
         response = self.client.post(
@@ -1407,8 +1436,13 @@ def review_web_context(
     repository_factory: Callable[[ReviewCase, MetadataReport], RepositoryT],
     *,
     mode: str = "direct",
+    store_mode: bool = False,
 ) -> Iterator[ReviewWebContext[RepositoryT]]:
-    """Yield one signed-out transport application over `repository_factory`."""
+    """Yield one signed-out transport application over `repository_factory`.
+
+    ``store_mode`` serves the owner verifier from an in-memory store, as a
+    store deployment does, instead of from the hash file.
+    """
 
     temporary = tempfile.TemporaryDirectory()
     hash_path = Path(temporary.name) / "owner.hash"
@@ -1426,11 +1460,21 @@ def review_web_context(
         owner_password_hash_file=str(hash_path),
         session_lifetime_seconds=600,
     )
+    verifier_store = owner_password = None
+    if store_mode:
+        verifier_store = MemoryOwnerVerifierStore(hash_path.read_text("utf-8"))
+        owner_password = StoreOwnerPassword(verifier_store)
+        owner_password.seed(verifier_store.value)
     # The clock reads `context.now` when it is called, not when it is built,
     # so a test that advances the field is seen by the running application.
     context: ReviewWebContext[RepositoryT]
     client = TestClient(
-        create_transport_test_app(repository, configuration, clock=lambda: context.now),
+        create_transport_test_app(
+            repository,
+            configuration,
+            clock=lambda: context.now,
+            owner_password=owner_password,
+        ),
         base_url="http://review.test" if mode == "proxy" else origin,
         client=("127.0.0.1", 12345),
         headers={"x-forwarded-host": "review.test", "x-forwarded-proto": "https"}
@@ -1446,6 +1490,7 @@ def review_web_context(
         client=client,
         origin={"Origin": origin},
         cleanup=ExitStack(),
+        verifier_store=verifier_store,
     )
     yield context
     context.close()

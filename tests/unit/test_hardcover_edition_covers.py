@@ -12,15 +12,22 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from dataclasses import replace
+from pathlib import Path
 
 import httpx
 import pytest
 
 import mechanical_librarian.adapters.providers.hardcover_metadata as hardcover_metadata
+from mechanical_librarian.adapters.persistence.provider_responses import (
+    SQLiteProviderResponseStore,
+)
 from mechanical_librarian.adapters.providers.hardcover_metadata import (
     HARDCOVER_URL,
     HardcoverMetadataProvider,
     HardcoverPacer,
+)
+from mechanical_librarian.adapters.providers.response_reuse import (
+    ProviderResponseReuse,
 )
 from mechanical_librarian.application.metadata_report import (
     CoverRedirects,
@@ -152,6 +159,7 @@ def _observe(
     pacer: HardcoverPacer | None = None,
     clock: Callable[[], float] = lambda: 0.0,
     deadline: float | None = None,
+    responses: ProviderResponseReuse | None = None,
 ) -> tuple[ProviderResult, list[dict[str, object]]]:
     sent: list[dict[str, object]] = []
 
@@ -178,6 +186,7 @@ def _observe(
         wall_clock=lambda: 1_700_000_000.0,
         sleep=lambda _seconds: None,
         jitter=lambda: 0.0,
+        responses=responses,
     ).observe(plan or _plan(), deadline=deadline)
     return result, sent
 
@@ -380,6 +389,28 @@ def test_a_failed_or_malformed_page_ends_the_fan_out_as_incomplete(
     ]
     assert {CoverTruncationReason.EDITION_FETCH_INCOMPLETE} == _truncations(result)
     assert 12 not in [value["book"] for value in _edition_requests(sent)]
+
+
+def test_pages_that_disagree_are_not_kept_for_reuse(tmp_path: Path) -> None:
+    """Each page read clean, so the lane stays clean; kept, the pair would
+    fail the fan-out on every later preparation (#1064)."""
+    store = SQLiteProviderResponseStore.open(tmp_path / "provider-responses.sqlite")
+    reuse = ProviderResponseReuse(store, "hardcover", False)
+    result, sent = _observe(_duplicate_across_pages, responses=reuse)
+    reuse.settle(result.observation.status is ProviderStatus.CANDIDATES)
+    assert {CoverTruncationReason.EDITION_FETCH_INCOMPLETE} == _truncations(result)
+    assert len(sent) == 3
+    # Only the book search is kept.
+    (kept,) = store._connection.execute(
+        "SELECT count(*) FROM provider_responses"
+    ).fetchone()
+    assert kept == 1
+
+    reuse = ProviderResponseReuse(store, "hardcover", False)
+    result, sent = _observe(_short, responses=reuse)
+    assert [body["operationName"] for body in sent] == ["EditionCovers"]
+    assert _listed(result) and not _truncations(result)
+    store.close()
 
 
 def test_a_deadline_stop_ends_the_fan_out_as_incomplete() -> None:
