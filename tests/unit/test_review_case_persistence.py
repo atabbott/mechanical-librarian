@@ -874,6 +874,60 @@ def test_transition_failure_rolls_back_case_and_pointer() -> None:
         repository.close()
 
 
+def test_undecodable_carried_hold_rolls_back_and_releases_the_admission() -> None:
+    from mechanical_librarian.application.operation_admission import (
+        OperationAdmission,
+    )
+
+    with tempfile.TemporaryDirectory() as directory:
+        repository = open_repository(Path(directory) / "reports.sqlite")
+        first = _report()
+        repository.publish(first, lambda: True)
+        first_set = _actionable(first)
+        repository.publish_proposal(first_set)
+        first_case = json.loads(repository.admit_review_case(first_set))[
+            "review_case_id"
+        ]
+        # The successor carries the item's holds forward by decoding each
+        # one; a hold document that is not JSON escapes the mapped errors.
+        connection = repository._connection
+        connection.execute(
+            "INSERT INTO field_effect_manual_holds(review_case_id,destination,"
+            "active,updated_at,document) VALUES(?,?,1,1,?)",
+            (first_case, "title", "{not json"),
+        )
+        connection.commit()
+        successor = _report("Changed", "c", "d")
+        repository.publish(successor, lambda: True)
+        successor_set = _actionable(successor)
+        repository.publish_proposal(successor_set)
+        admission = OperationAdmission()
+        lock = threading.RLock()
+        repository.bind_operation_admission(admission, lock)
+
+        with pytest.raises(json.JSONDecodeError):
+            repository.admit_review_case(successor_set)
+
+        # The scope unwound: nothing it wrote survives, and no transaction,
+        # serialization lock or admission is left held.
+        assert not connection.in_transaction
+        assert not lock._is_owned()
+        assert not admission.held
+        assert (1,) == connection.execute(
+            "SELECT COUNT(*) FROM review_cases"
+        ).fetchone()
+        assert (first_case,) == connection.execute(
+            "SELECT review_case_id FROM current_review_case_lineages"
+        ).fetchone()
+        connection.execute("DELETE FROM field_effect_manual_holds")
+        connection.commit()
+        assert (
+            "superseded"
+            == json.loads(repository.admit_review_case(successor_set))["status"]
+        )
+        repository.close()
+
+
 def test_exact_current_schema_restarts_and_prior_schema_is_rejected() -> None:
     with tempfile.TemporaryDirectory() as directory:
         database = Path(directory) / "reports.sqlite"

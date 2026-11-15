@@ -215,71 +215,9 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             transaction.begin()
             if self._binding is not None:
                 self._binding.require_current()
-            proposal_row = self._connection.execute(
-                "SELECT proposal_set_id,report_id,policy_version,document FROM proposal_sets WHERE proposal_set_id=?",
-                (proposal_set.proposal_set_id,),
-            ).fetchone()
-            if (
-                proposal_row is None
-                or _validate_proposal_row(proposal_row) != proposal_set.to_json()
-            ):
-                raise MetadataReportError("review proposal is unavailable")
-            # Admission can bind a stored proposal again, making its browse
-            # facts readable, so they are checked as open checks them (#1199).
-            _require_equal_facts(
-                self._connection,
-                (_proposal_browse_fact_pair("=:key"),),
-                parameters={"key": proposal_set.proposal_set_id},
+            report, lineage, current_policy = self._verified_admission_sources(
+                proposal_set
             )
-            report_row = self._connection.execute(
-                "SELECT report_id,connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document FROM metadata_reports WHERE report_id=?",
-                (proposal_set.report_id,),
-            ).fetchone()
-            if report_row is None:
-                raise MetadataReportError("review report is unavailable")
-            report = MetadataReport.from_json(_validate_report_row(report_row))
-            lineage = (
-                report.target.connection,
-                report.target.library,
-                report.target.item,
-            )
-            generation = self._connection.execute(
-                "SELECT generation FROM metadata_policy_state WHERE singleton=1"
-            ).fetchone()
-            current_policy = self.current_resolved_metadata_policy(
-                report.target.library
-            )
-            if (
-                proposal_set.report_id != report.report_id
-                or proposal_set.target_fingerprint != report.target.fingerprint
-                or proposal_set.to_json()
-                != evaluate_report(
-                    report,
-                    proposal_set.resolved_policy_id,
-                    None
-                    if current_policy is None
-                    else human_review_destinations(current_policy),
-                ).to_json()
-            ):
-                raise ReviewAdmissionIncompatibleError
-            if (
-                current_policy is not None
-                or (generation is not None and generation[0] > 1)
-            ) and (
-                current_policy is None
-                or proposal_set.resolved_policy_id != current_policy.resolved_id
-            ):
-                raise ReviewAdmissionStaleError
-            if self._connection.execute(
-                "SELECT report_id FROM current_metadata_report_lineages WHERE connection_name=? AND library_name=? AND item_id=?",
-                lineage,
-            ).fetchone() != (report.report_id,):
-                raise ReviewAdmissionStaleError
-            if self._connection.execute(
-                "SELECT report_id FROM current_metadata_reports WHERE connection_name=? AND library_name=? AND item_id=? AND file_identity=?",
-                (*lineage, report.file.identity),
-            ).fetchone() != (report.report_id,):
-                raise ReviewAdmissionStaleError
             validated = self._validated_review_pointer(lineage)
             prior = (
                 None
@@ -323,110 +261,21 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                     replay_status, cast(_ReviewPointer, validated)[2]
                 )
             if not is_actionable(proposal_set):
-                outcome = "retired" if prior_case_id is not None else "no_case"
-                transition = ReviewTransition(
-                    *lineage,
+                outcome = self._record_nonactionable_admission(
+                    proposal_set,
+                    report,
+                    lineage,
                     checkpoint,
-                    proposal_set.proposal_set_id,
-                    report.report_id,
-                    outcome,
                     prior_case_id,
-                    None,
-                    "nonactionable",
+                    owns_transaction,
                 )
-                self._connection.execute(
-                    "INSERT INTO review_case_transitions(transition_id,connection_name,library_name,item_id,checkpoint,actor,from_review_case_id,to_review_case_id,proposal_set_id,report_id,kind,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (
-                        transition.transition_id,
-                        *lineage,
-                        checkpoint,
-                        transition.actor,
-                        transition.from_review_case_id,
-                        None,
-                        proposal_set.proposal_set_id,
-                        report.report_id,
-                        outcome,
-                        "nonactionable",
-                    ),
-                )
-                self._connection.execute(
-                    "INSERT INTO current_review_case_lineages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,transition_id,checkpoint,outcome) VALUES(?,?,?,?,?,?,?, ?,?) ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET proposal_set_id=excluded.proposal_set_id,report_id=excluded.report_id,review_case_id=NULL,transition_id=excluded.transition_id,checkpoint=excluded.checkpoint,outcome=excluded.outcome",
-                    (
-                        *lineage,
-                        proposal_set.proposal_set_id,
-                        report.report_id,
-                        None,
-                        transition.transition_id,
-                        checkpoint,
-                        outcome,
-                    ),
-                )
-                if owns_transaction:
-                    self._connection.execute(
-                        "INSERT INTO current_review_packages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,checkpoint,outcome) VALUES(?,?,?,?,?,?,?,?) "
-                        "ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET proposal_set_id=excluded.proposal_set_id,report_id=excluded.report_id,review_case_id=excluded.review_case_id,checkpoint=excluded.checkpoint,outcome=excluded.outcome",
-                        (
-                            *lineage,
-                            proposal_set.proposal_set_id,
-                            report.report_id,
-                            None,
-                            checkpoint,
-                            outcome,
-                        ),
-                    )
                 if self._binding is not None:
                     self._binding.require_current()
                 transaction.commit()
                 return _admission_json(outcome, None)
-            case = ReviewCase.create(proposal_set, report)
-            existing = self._connection.execute(
-                "SELECT document FROM review_cases WHERE review_case_id=?",
-                (case.review_case_id,),
-            ).fetchone()
-            if existing is not None and existing != (case.to_json(),):
-                raise MetadataReportError("review case identity conflicts")
-            if existing is None:
-                self._connection.execute(
-                    "INSERT INTO review_cases(review_case_id,proposal_set_id,report_id,document) VALUES(?,?,?,?)",
-                    (
-                        case.review_case_id,
-                        case.proposal_set_id,
-                        case.report_id,
-                        case.to_json(),
-                    ),
-                )
-            # Reactivating an unchanged policy, as leaving Automatic does,
-            # retires a case only for it to return as itself. It continues its
-            # episode, so the owner's answers on it stay current (#1568). Only
-            # when the active generation is that reactivation and retired this
-            # case: a retirement left by an earlier change of policy, whose
-            # successor never arrived, still starts a new episode.
-            elif not (
-                validated is not None
-                and self._connection.execute(
-                    "SELECT actor,from_review_case_id FROM review_case_transitions "
-                    "WHERE transition_id=?",
-                    (validated[3],),
-                ).fetchone()
-                == ("policy-activation-v1", case.review_case_id)
-                and self._connection.execute(
-                    "SELECT " + _same_policy_retirement_sql("?", "?", "?"),
-                    lineage,
-                ).fetchone()
-                == (1,)
-            ):
-                # The work returned to this case's content, so the case starts
-                # a new episode: the owner decisions recorded on it so far are
-                # history and word, settle and hold nothing now (#1358).
-                self._connection.execute(
-                    "INSERT INTO review_case_episodes(review_case_id,decision_floor,"
-                    "effect_floor) VALUES(?,COALESCE((SELECT MAX(ordinal) FROM "
-                    "human_decisions WHERE review_case_id=?),0),COALESCE((SELECT "
-                    "MAX(rowid) FROM field_effects),0)) ON CONFLICT(review_case_id) "
-                    "DO UPDATE SET decision_floor=excluded.decision_floor,"
-                    "effect_floor=excluded.effect_floor",
-                    (case.review_case_id, case.review_case_id),
-                )
+            case, case_existed = self._store_admitted_case(
+                proposal_set, report, lineage, validated
+            )
             reconcile_case_level_in_transaction(
                 self._connection,
                 case,
@@ -436,104 +285,17 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 self._revoke_matching_changed,
             )
             outcome = "superseded" if prior_case_id is not None else "admitted"
-            # The owner's hold follows the work, not the case (ADR-0085): the
-            # latest hold per destination across the item's cases carries
-            # forward while it is active and no return is pending, keeping
-            # its decision as the token "Return to automatic" names. A case
-            # admitted again takes that latest state into its own row, so a
-            # hold released or returning since never resurrects with it.
-            for destination, active, document in self._connection.execute(
-                "SELECT destination,active,document FROM (SELECT hold.destination,"
-                "hold.active,hold.document,row_number() OVER (PARTITION BY "
-                "hold.destination ORDER BY hold.updated_at DESC,hold.rowid DESC) "
-                "position FROM field_effect_manual_holds hold WHERE "
-                "hold.review_case_id IN (SELECT to_review_case_id FROM "
-                "review_case_transitions WHERE connection_name=? AND "
-                "library_name=? AND item_id=? AND to_review_case_id IS NOT NULL)) "
-                "WHERE position=1",
+            self._carry_manual_holds_forward(case.review_case_id, lineage, case_existed)
+            self._record_actionable_admission(
+                proposal_set,
+                report,
                 lineage,
-            ).fetchall():
-                hold = json.loads(document)
-                if hold["review_case_id"] == case.review_case_id:
-                    continue
-                hold["review_case_id"] = case.review_case_id
-                if not active or hold["pending_return"] is not None:
-                    if existing is not None:
-                        self._connection.execute(
-                            "UPDATE field_effect_manual_holds SET active=?,"
-                            "updated_at=?,document=? WHERE review_case_id=? "
-                            "AND destination=?",
-                            (
-                                active,
-                                hold["updated_at"],
-                                canonical_effect_json(hold),
-                                case.review_case_id,
-                                destination,
-                            ),
-                        )
-                    continue
-                self._connection.execute(
-                    "INSERT INTO field_effect_manual_holds(review_case_id,destination,"
-                    "active,updated_at,document) VALUES(?,?,1,?,?) "
-                    "ON CONFLICT(review_case_id,destination) DO UPDATE SET active=1,"
-                    "updated_at=excluded.updated_at,document=excluded.document",
-                    (
-                        case.review_case_id,
-                        destination,
-                        hold["updated_at"],
-                        canonical_effect_json(hold),
-                    ),
-                )
-            transition = ReviewTransition(
-                *lineage,
                 checkpoint,
-                proposal_set.proposal_set_id,
-                report.report_id,
-                outcome,
                 prior_case_id,
                 case.review_case_id,
-                "actionable",
+                outcome,
+                owns_transaction,
             )
-            self._connection.execute(
-                "INSERT INTO review_case_transitions(transition_id,connection_name,library_name,item_id,checkpoint,actor,from_review_case_id,to_review_case_id,proposal_set_id,report_id,kind,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    transition.transition_id,
-                    *lineage,
-                    checkpoint,
-                    transition.actor,
-                    transition.from_review_case_id,
-                    case.review_case_id,
-                    proposal_set.proposal_set_id,
-                    report.report_id,
-                    outcome,
-                    "actionable",
-                ),
-            )
-            self._connection.execute(
-                "INSERT INTO current_review_case_lineages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,transition_id,checkpoint,outcome) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET proposal_set_id=excluded.proposal_set_id,report_id=excluded.report_id,review_case_id=excluded.review_case_id,transition_id=excluded.transition_id,checkpoint=excluded.checkpoint,outcome=excluded.outcome",
-                (
-                    *lineage,
-                    proposal_set.proposal_set_id,
-                    report.report_id,
-                    case.review_case_id,
-                    transition.transition_id,
-                    checkpoint,
-                    outcome,
-                ),
-            )
-            if owns_transaction:
-                self._connection.execute(
-                    "INSERT INTO current_review_packages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,checkpoint,outcome) VALUES(?,?,?,?,?,?,?,?) "
-                    "ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET proposal_set_id=excluded.proposal_set_id,report_id=excluded.report_id,review_case_id=excluded.review_case_id,checkpoint=excluded.checkpoint,outcome=excluded.outcome",
-                    (
-                        *lineage,
-                        proposal_set.proposal_set_id,
-                        report.report_id,
-                        case.review_case_id,
-                        checkpoint,
-                        outcome,
-                    ),
-                )
             if self._binding is not None:
                 self._binding.require_current()
             transaction.commit()
@@ -553,6 +315,317 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
         ) as error:
             transaction.rollback()
             raise MetadataReportError("review admission failed") from error
+        except BaseException:
+            transaction.rollback()
+            raise
+
+    def _verified_admission_sources(
+        self, proposal_set: ProposalSet
+    ) -> tuple[MetadataReport, tuple[str, str, str], ResolvedMetadataPolicy | None]:
+        """Prove the stored proposal and report current under the governing policy."""
+        proposal_row = self._connection.execute(
+            "SELECT proposal_set_id,report_id,policy_version,document FROM proposal_sets WHERE proposal_set_id=?",
+            (proposal_set.proposal_set_id,),
+        ).fetchone()
+        if (
+            proposal_row is None
+            or _validate_proposal_row(proposal_row) != proposal_set.to_json()
+        ):
+            raise MetadataReportError("review proposal is unavailable")
+        # Admission can bind a stored proposal again, making its browse
+        # facts readable, so they are checked as open checks them (#1199).
+        _require_equal_facts(
+            self._connection,
+            (_proposal_browse_fact_pair("=:key"),),
+            parameters={"key": proposal_set.proposal_set_id},
+        )
+        report_row = self._connection.execute(
+            "SELECT report_id,connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document FROM metadata_reports WHERE report_id=?",
+            (proposal_set.report_id,),
+        ).fetchone()
+        if report_row is None:
+            raise MetadataReportError("review report is unavailable")
+        report = MetadataReport.from_json(_validate_report_row(report_row))
+        lineage = (
+            report.target.connection,
+            report.target.library,
+            report.target.item,
+        )
+        generation = self._connection.execute(
+            "SELECT generation FROM metadata_policy_state WHERE singleton=1"
+        ).fetchone()
+        current_policy = self.current_resolved_metadata_policy(report.target.library)
+        if (
+            proposal_set.report_id != report.report_id
+            or proposal_set.target_fingerprint != report.target.fingerprint
+            or proposal_set.to_json()
+            != evaluate_report(
+                report,
+                proposal_set.resolved_policy_id,
+                None
+                if current_policy is None
+                else human_review_destinations(current_policy),
+            ).to_json()
+        ):
+            raise ReviewAdmissionIncompatibleError
+        if (
+            current_policy is not None or (generation is not None and generation[0] > 1)
+        ) and (
+            current_policy is None
+            or proposal_set.resolved_policy_id != current_policy.resolved_id
+        ):
+            raise ReviewAdmissionStaleError
+        if self._connection.execute(
+            "SELECT report_id FROM current_metadata_report_lineages WHERE connection_name=? AND library_name=? AND item_id=?",
+            lineage,
+        ).fetchone() != (report.report_id,):
+            raise ReviewAdmissionStaleError
+        if self._connection.execute(
+            "SELECT report_id FROM current_metadata_reports WHERE connection_name=? AND library_name=? AND item_id=? AND file_identity=?",
+            (*lineage, report.file.identity),
+        ).fetchone() != (report.report_id,):
+            raise ReviewAdmissionStaleError
+        return report, lineage, current_policy
+
+    def _record_nonactionable_admission(
+        self,
+        proposal_set: ProposalSet,
+        report: MetadataReport,
+        lineage: tuple[str, str, str],
+        checkpoint: int,
+        prior_case_id: str | None,
+        owns_transaction: bool,
+    ) -> str:
+        """Write the no-case or retired transition and its pointers."""
+        outcome = "retired" if prior_case_id is not None else "no_case"
+        transition = ReviewTransition(
+            *lineage,
+            checkpoint,
+            proposal_set.proposal_set_id,
+            report.report_id,
+            outcome,
+            prior_case_id,
+            None,
+            "nonactionable",
+        )
+        self._connection.execute(
+            "INSERT INTO review_case_transitions(transition_id,connection_name,library_name,item_id,checkpoint,actor,from_review_case_id,to_review_case_id,proposal_set_id,report_id,kind,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                transition.transition_id,
+                *lineage,
+                checkpoint,
+                transition.actor,
+                transition.from_review_case_id,
+                None,
+                proposal_set.proposal_set_id,
+                report.report_id,
+                outcome,
+                "nonactionable",
+            ),
+        )
+        self._connection.execute(
+            "INSERT INTO current_review_case_lineages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,transition_id,checkpoint,outcome) VALUES(?,?,?,?,?,?,?, ?,?) ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET proposal_set_id=excluded.proposal_set_id,report_id=excluded.report_id,review_case_id=NULL,transition_id=excluded.transition_id,checkpoint=excluded.checkpoint,outcome=excluded.outcome",
+            (
+                *lineage,
+                proposal_set.proposal_set_id,
+                report.report_id,
+                None,
+                transition.transition_id,
+                checkpoint,
+                outcome,
+            ),
+        )
+        if owns_transaction:
+            self._connection.execute(
+                "INSERT INTO current_review_packages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,checkpoint,outcome) VALUES(?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET proposal_set_id=excluded.proposal_set_id,report_id=excluded.report_id,review_case_id=excluded.review_case_id,checkpoint=excluded.checkpoint,outcome=excluded.outcome",
+                (
+                    *lineage,
+                    proposal_set.proposal_set_id,
+                    report.report_id,
+                    None,
+                    checkpoint,
+                    outcome,
+                ),
+            )
+        return outcome
+
+    def _store_admitted_case(
+        self,
+        proposal_set: ProposalSet,
+        report: MetadataReport,
+        lineage: tuple[str, str, str],
+        validated: _ReviewPointer | None,
+    ) -> tuple[ReviewCase, bool]:
+        """Store the case or prove its identity, opening a new episode unless reactivated."""
+        case = ReviewCase.create(proposal_set, report)
+        existing = self._connection.execute(
+            "SELECT document FROM review_cases WHERE review_case_id=?",
+            (case.review_case_id,),
+        ).fetchone()
+        if existing is not None and existing != (case.to_json(),):
+            raise MetadataReportError("review case identity conflicts")
+        if existing is None:
+            self._connection.execute(
+                "INSERT INTO review_cases(review_case_id,proposal_set_id,report_id,document) VALUES(?,?,?,?)",
+                (
+                    case.review_case_id,
+                    case.proposal_set_id,
+                    case.report_id,
+                    case.to_json(),
+                ),
+            )
+        # Reactivating an unchanged policy, as leaving Automatic does,
+        # retires a case only for it to return as itself. It continues its
+        # episode, so the owner's answers on it stay current (#1568). Only
+        # when the active generation is that reactivation and retired this
+        # case: a retirement left by an earlier change of policy, whose
+        # successor never arrived, still starts a new episode.
+        elif not (
+            validated is not None
+            and self._connection.execute(
+                "SELECT actor,from_review_case_id FROM review_case_transitions "
+                "WHERE transition_id=?",
+                (validated[3],),
+            ).fetchone()
+            == ("policy-activation-v1", case.review_case_id)
+            and self._connection.execute(
+                "SELECT " + _same_policy_retirement_sql("?", "?", "?"),
+                lineage,
+            ).fetchone()
+            == (1,)
+        ):
+            # The work returned to this case's content, so the case starts
+            # a new episode: the owner decisions recorded on it so far are
+            # history and word, settle and hold nothing now (#1358).
+            self._connection.execute(
+                "INSERT INTO review_case_episodes(review_case_id,decision_floor,"
+                "effect_floor) VALUES(?,COALESCE((SELECT MAX(ordinal) FROM "
+                "human_decisions WHERE review_case_id=?),0),COALESCE((SELECT "
+                "MAX(rowid) FROM field_effects),0)) ON CONFLICT(review_case_id) "
+                "DO UPDATE SET decision_floor=excluded.decision_floor,"
+                "effect_floor=excluded.effect_floor",
+                (case.review_case_id, case.review_case_id),
+            )
+        return case, existing is not None
+
+    def _carry_manual_holds_forward(
+        self,
+        review_case_id: str,
+        lineage: tuple[str, str, str],
+        case_existed: bool,
+    ) -> None:
+        # The owner's hold follows the work, not the case (ADR-0085): the
+        # latest hold per destination across the item's cases carries
+        # forward while it is active and no return is pending, keeping
+        # its decision as the token "Return to automatic" names. A case
+        # admitted again takes that latest state into its own row, so a
+        # hold released or returning since never resurrects with it.
+        for destination, active, document in self._connection.execute(
+            "SELECT destination,active,document FROM (SELECT hold.destination,"
+            "hold.active,hold.document,row_number() OVER (PARTITION BY "
+            "hold.destination ORDER BY hold.updated_at DESC,hold.rowid DESC) "
+            "position FROM field_effect_manual_holds hold WHERE "
+            "hold.review_case_id IN (SELECT to_review_case_id FROM "
+            "review_case_transitions WHERE connection_name=? AND "
+            "library_name=? AND item_id=? AND to_review_case_id IS NOT NULL)) "
+            "WHERE position=1",
+            lineage,
+        ).fetchall():
+            hold = json.loads(document)
+            if hold["review_case_id"] == review_case_id:
+                continue
+            hold["review_case_id"] = review_case_id
+            if not active or hold["pending_return"] is not None:
+                if case_existed:
+                    self._connection.execute(
+                        "UPDATE field_effect_manual_holds SET active=?,"
+                        "updated_at=?,document=? WHERE review_case_id=? "
+                        "AND destination=?",
+                        (
+                            active,
+                            hold["updated_at"],
+                            canonical_effect_json(hold),
+                            review_case_id,
+                            destination,
+                        ),
+                    )
+                continue
+            self._connection.execute(
+                "INSERT INTO field_effect_manual_holds(review_case_id,destination,"
+                "active,updated_at,document) VALUES(?,?,1,?,?) "
+                "ON CONFLICT(review_case_id,destination) DO UPDATE SET active=1,"
+                "updated_at=excluded.updated_at,document=excluded.document",
+                (
+                    review_case_id,
+                    destination,
+                    hold["updated_at"],
+                    canonical_effect_json(hold),
+                ),
+            )
+
+    def _record_actionable_admission(
+        self,
+        proposal_set: ProposalSet,
+        report: MetadataReport,
+        lineage: tuple[str, str, str],
+        checkpoint: int,
+        prior_case_id: str | None,
+        review_case_id: str,
+        outcome: str,
+        owns_transaction: bool,
+    ) -> None:
+        """Write the admitted or superseded transition and its pointers."""
+        transition = ReviewTransition(
+            *lineage,
+            checkpoint,
+            proposal_set.proposal_set_id,
+            report.report_id,
+            outcome,
+            prior_case_id,
+            review_case_id,
+            "actionable",
+        )
+        self._connection.execute(
+            "INSERT INTO review_case_transitions(transition_id,connection_name,library_name,item_id,checkpoint,actor,from_review_case_id,to_review_case_id,proposal_set_id,report_id,kind,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                transition.transition_id,
+                *lineage,
+                checkpoint,
+                transition.actor,
+                transition.from_review_case_id,
+                review_case_id,
+                proposal_set.proposal_set_id,
+                report.report_id,
+                outcome,
+                "actionable",
+            ),
+        )
+        self._connection.execute(
+            "INSERT INTO current_review_case_lineages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,transition_id,checkpoint,outcome) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET proposal_set_id=excluded.proposal_set_id,report_id=excluded.report_id,review_case_id=excluded.review_case_id,transition_id=excluded.transition_id,checkpoint=excluded.checkpoint,outcome=excluded.outcome",
+            (
+                *lineage,
+                proposal_set.proposal_set_id,
+                report.report_id,
+                review_case_id,
+                transition.transition_id,
+                checkpoint,
+                outcome,
+            ),
+        )
+        if owns_transaction:
+            self._connection.execute(
+                "INSERT INTO current_review_packages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,checkpoint,outcome) VALUES(?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET proposal_set_id=excluded.proposal_set_id,report_id=excluded.report_id,review_case_id=excluded.review_case_id,checkpoint=excluded.checkpoint,outcome=excluded.outcome",
+                (
+                    *lineage,
+                    proposal_set.proposal_set_id,
+                    report.report_id,
+                    review_case_id,
+                    checkpoint,
+                    outcome,
+                ),
+            )
 
     @local_operation
     def review_case_exists(self, review_case_id: str) -> bool:

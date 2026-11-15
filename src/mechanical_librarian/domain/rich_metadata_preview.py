@@ -511,6 +511,130 @@ def _project_at(
         and proposal.media_kind == "audiobook"
         and audiobook_format_only_genres(current)
     )
+    preview = _unprojectable_preview(
+        field, option, destination, target, result, proposal, current, format_only_genres
+    )
+    if preview is not None:
+        return preview
+    automatic_work = None
+    taxonomy_candidate = None
+    if destination == "automatic":
+        if field in {"genres", "tags"}:
+            taxonomy_candidate, automatic_work = select_automatic_taxonomy_candidate(
+                report, result, field, option, level
+            )
+        elif field == "description_fill":
+            automatic_work = _automatic_work_evidence(
+                report, result, retained_claims, level
+            )
+    if (
+        automatic_work is not None
+        and result.alternatives
+        and not automatic_work.alternatives
+    ):
+        return _abstain(
+            field,
+            option,
+            target,
+            current,
+            (
+                "candidate_language_differs"
+                if automatic_work.language_withheld
+                else "target_work_contradicted"
+                if field == "genres"
+                else "target_work_applicability_unproved"
+            ),
+        )
+    if field == "subtitle" and option == "corroborated_split":
+        return _subtitle_bundle(field, option, target, result, proposal, report)
+    if field == "description_fill":
+        return _description_fill_preview(
+            field, option, target, result, proposal, retained_claims, automatic_work, current
+        )
+    if field == "explicit":
+        return _explicit_preview(field, option, target, result, proposal, current)
+    if field == "isbn_form":
+        return _isbn(field, option, target, result, report)
+    if field == "asin":
+        return _asin(field, option, target, result, retained_claims)
+    candidate = (
+        _combination_member(proposal, TargetDestination.SERIES)
+        if field == "series" and option == "primary_narrative"
+        else _series_candidate(
+            result,
+            audiobook=proposal.media_kind == "audiobook",
+            current=current,
+            option=option,
+            destination=destination,
+        )
+        if field == "series"
+        else taxonomy_candidate
+        if field in {"genres", "tags"} and destination == "automatic"
+        else _one_list_candidate(result)
+        if field in {"genres", "tags"}
+        else _descriptive_audiobook_subtitle(result, report)
+        if field == "subtitle" and proposal.media_kind == "audiobook"
+        else _candidate(result)
+    )
+    if field == "series" and destination == "automatic":
+        reason = _automatic_series_abstention(
+            report, result, candidate, retained_claims
+        )
+        if reason is not None:
+            return _abstain(field, option, target, current, reason)
+    if field == "subtitle" and destination == "automatic":
+        reason = _automatic_subtitle_abstention(report, candidate)
+        # A value that only restates the series is never written for the
+        # owner, filled or replaced; it stays a choice (#1616).
+        if (
+            reason is None
+            and candidate is not None
+            and subtitle_restates_series(
+                candidate.value.value, case_series_names(report, proposal)
+            )
+        ):
+            reason = "subtitle_restates_series"
+        if reason is not None:
+            return _abstain(field, option, target, current, reason)
+    if candidate is None:
+        reason = _no_candidate_reason(field, destination, result, proposal, automatic_work)
+        return RichFieldPreview(
+            field, option, target.state.value, current, "abstain", None, reason
+        )
+    references = (
+        candidate.evidence_references
+        if automatic_work is None
+        else automatic_work.references.get(
+            candidate.alternative_id, candidate.evidence_references
+        )
+    )
+    if field == "subtitle" and destination == "automatic":
+        # The corroborating local claim is the decisive eligibility evidence;
+        # the durable record cites it alongside the provider claim.
+        references = tuple(
+            sorted(
+                {
+                    *references,
+                    *_corroborating_subtitle_references(report, candidate),
+                }
+            )
+        )
+    return _candidate_preview(
+        field, option, destination, target, proposal, candidate, references, current, format_only_genres
+    )
+
+
+def _unprojectable_preview(
+    field: str,
+    option: str,
+    destination: str,
+    target: TargetField,
+    result: ProposalResult,
+    proposal: ProposalSet,
+    current: object,
+    format_only_genres: bool,
+) -> RichFieldPreview | None:
+    """The abstain or preserved preview for a field that never projects; None goes on."""
     if field == "explicit" and option == "unsupported":
         return RichFieldPreview(
             field,
@@ -600,192 +724,143 @@ def _project_at(
         )
     ):
         return _preserved(field, option, target, current)
-    automatic_work = None
-    taxonomy_candidate = None
-    if destination == "automatic":
-        if field in {"genres", "tags"}:
-            taxonomy_candidate, automatic_work = select_automatic_taxonomy_candidate(
-                report, result, field, option, level
-            )
-        elif field == "description_fill":
-            automatic_work = _automatic_work_evidence(
-                report, result, retained_claims, level
-            )
+    return None
+
+
+def _description_fill_preview(
+    field: str,
+    option: str,
+    target: TargetField,
+    result: ProposalResult,
+    proposal: ProposalSet,
+    retained_claims: dict[str, _RetainedClaim],
+    automatic_work: _AutomaticWorkEvidence | None,
+    current: object,
+) -> RichFieldPreview:
+    """The whole description-fill decision, the #1317 rules included."""
+    if proposal.media_kind != "audiobook" or target.state is not TargetFieldState.VALUE:
+        return _description(
+            field, option, target, result, retained_claims, automatic_work
+        )
+    cut_off = cut_off_synopsis(current)
     if (
-        automatic_work is not None
-        and result.alternatives
-        and not automatic_work.alternatives
+        not plain_audiobook_synopsis(current)
+        and not _markup_only_synopsis(current)
+        and not cut_off
     ):
-        return _abstain(
-            field,
-            option,
-            target,
-            current,
-            (
-                "candidate_language_differs"
-                if automatic_work.language_withheld
-                else "target_work_contradicted"
-                if field == "genres"
-                else "target_work_applicability_unproved"
-            ),
+        return _abstain(field, option, target, current, "target_state_unusable")
+    if automatic_work is not None:
+        refusal = _description_source_refusal(automatic_work, retained_claims)
+        if refusal is not None:
+            return _abstain(field, option, target, current, refusal)
+    # A placeholder incumbent is missing knowledge under either option
+    # (#1317).
+    if recognized_synopsis_placeholder(current):
+        return _description(
+            field, option, target, result, retained_claims, automatic_work
         )
-    if field == "subtitle" and option == "corroborated_split":
-        return _subtitle_bundle(field, option, target, result, proposal, report)
-    if field == "description_fill":
-        if proposal.media_kind != "audiobook" or target.state is not TargetFieldState.VALUE:
-            return _description(
-                field, option, target, result, retained_claims, automatic_work
-            )
-        cut_off = cut_off_synopsis(current)
-        if (
-            not plain_audiobook_synopsis(current)
-            and not _markup_only_synopsis(current)
-            and not cut_off
+    # A cut-off incumbent gives way only to the synopsis it opens (#1317).
+    if cut_off:
+        projection = _description(
+            field, option, target, result, retained_claims, automatic_work
+        )
+        if projection.outcome == "projected" and description_extends(
+            current, projection.desired_value
         ):
-            return _abstain(field, option, target, current, "target_state_unusable")
-        if automatic_work is not None:
-            refusal = _description_source_refusal(automatic_work, retained_claims)
-            if refusal is not None:
-                return _abstain(field, option, target, current, refusal)
-        # A placeholder incumbent is missing knowledge under either option
-        # (#1317).
-        if recognized_synopsis_placeholder(current):
-            return _description(
-                field, option, target, result, retained_claims, automatic_work
-            )
-        # A cut-off incumbent gives way only to the synopsis it opens (#1317).
-        if cut_off:
-            projection = _description(
-                field, option, target, result, retained_claims, automatic_work
-            )
-            if projection.outcome == "projected" and description_extends(
-                current, projection.desired_value
-            ):
-                return projection
-            return _abstain(field, option, target, current, "target_state_unusable")
-        # "Replace safe plain text" drops a boilerplate header the same
-        # synopsis follows; comparison already reads past it (#1317).
-        if option == "replace_safe_plain_text" and synopsis_header(current):
-            projection = _description(
-                field, option, target, result, retained_claims, automatic_work
-            )
-            if projection.outcome == "projected" and values_match(
-                TargetDestination.DESCRIPTION, current, projection.desired_value
-            ):
-                return projection
+            return projection
+        return _abstain(field, option, target, current, "target_state_unusable")
+    # "Replace safe plain text" drops a boilerplate header the same
+    # synopsis follows; comparison already reads past it (#1317).
+    if option == "replace_safe_plain_text" and synopsis_header(current):
+        projection = _description(
+            field, option, target, result, retained_claims, automatic_work
+        )
+        if projection.outcome == "projected" and values_match(
+            TargetDestination.DESCRIPTION, current, projection.desired_value
+        ):
+            return projection
+    return _preserved(field, option, target, current)
+
+
+def _explicit_preview(
+    field: str,
+    option: str,
+    target: TargetField,
+    result: ProposalResult,
+    proposal: ProposalSet,
+    current: object,
+) -> RichFieldPreview:
+    if proposal.media_kind != "audiobook" or option != "adult_product":
+        return _abstain(field, option, target, current, "explicit_unsupported")
+    candidates = tuple(
+        a
+        for a in result.alternatives
+        if a.value.kind is ProposalValueKind.BOOLEAN and a.value.value is True
+    )
+    if len(candidates) != 1:
         return _preserved(field, option, target, current)
-    if field == "explicit":
-        if proposal.media_kind != "audiobook" or option != "adult_product":
-            return _abstain(field, option, target, current, "explicit_unsupported")
-        candidates = tuple(
-            a
-            for a in result.alternatives
-            if a.value.kind is ProposalValueKind.BOOLEAN and a.value.value is True
-        )
-        if len(candidates) != 1:
-            return _preserved(field, option, target, current)
-        candidate = candidates[0]
-        if current is True:
-            return _preserved(field, option, target, current)
-        if current is not None and type(current) is not bool:
-            return _abstain(field, option, target, current, "target_state_unusable")
-        return RichFieldPreview(
-            field,
-            option,
-            target.state.value,
-            current,
-            "projected",
-            True,
-            "adult_product",
-            False,
-            None,
-            candidate.alternative_id,
-            candidate.evidence_references,
-        )
-    if field == "isbn_form":
-        return _isbn(field, option, target, result, report)
-    if field == "asin":
-        return _asin(field, option, target, result, retained_claims)
-    candidate = (
-        _combination_member(proposal, TargetDestination.SERIES)
-        if field == "series" and option == "primary_narrative"
-        else _series_candidate(
-            result,
-            audiobook=proposal.media_kind == "audiobook",
-            current=current,
-            option=option,
-            destination=destination,
-        )
-        if field == "series"
-        else taxonomy_candidate
-        if field in {"genres", "tags"} and destination == "automatic"
-        else _one_list_candidate(result)
-        if field in {"genres", "tags"}
-        else _descriptive_audiobook_subtitle(result, report)
-        if field == "subtitle" and proposal.media_kind == "audiobook"
-        else _candidate(result)
+    candidate = candidates[0]
+    if current is True:
+        return _preserved(field, option, target, current)
+    if current is not None and type(current) is not bool:
+        return _abstain(field, option, target, current, "target_state_unusable")
+    return RichFieldPreview(
+        field,
+        option,
+        target.state.value,
+        current,
+        "projected",
+        True,
+        "adult_product",
+        False,
+        None,
+        candidate.alternative_id,
+        candidate.evidence_references,
     )
-    if field == "series" and destination == "automatic":
-        reason = _automatic_series_abstention(
-            report, result, candidate, retained_claims
-        )
-        if reason is not None:
-            return _abstain(field, option, target, current, reason)
-    if field == "subtitle" and destination == "automatic":
-        reason = _automatic_subtitle_abstention(report, candidate)
-        # A value that only restates the series is never written for the
-        # owner, filled or replaced; it stays a choice (#1616).
-        if (
-            reason is None
-            and candidate is not None
-            and subtitle_restates_series(
-                candidate.value.value, case_series_names(report, proposal)
-            )
-        ):
-            reason = "subtitle_restates_series"
-        if reason is not None:
-            return _abstain(field, option, target, current, reason)
-    if candidate is None:
-        lists = (
-            ()
-            if automatic_work is None
-            else tuple(
-                alternative.value.value
-                for alternative in automatic_work.alternatives
-                if alternative.value.kind is ProposalValueKind.LIST
-            )
-        )
-        # Only format-only audiobook genre lists: each is no candidate (#1250).
-        reason = (
-            "no_candidate"
-            if field == "genres"
-            and destination == "automatic"
-            and proposal.media_kind == "audiobook"
-            and lists
-            and all(audiobook_format_only_genres(value) for value in lists)
-            else _candidate_reason(result)
-        )
-        return RichFieldPreview(
-            field, option, target.state.value, current, "abstain", None, reason
-        )
-    references = (
-        candidate.evidence_references
+
+
+def _no_candidate_reason(
+    field: str,
+    destination: str,
+    result: ProposalResult,
+    proposal: ProposalSet,
+    automatic_work: _AutomaticWorkEvidence | None,
+) -> str:
+    """The abstention reason when no candidate exists (#1250)."""
+    lists = (
+        ()
         if automatic_work is None
-        else automatic_work.references.get(
-            candidate.alternative_id, candidate.evidence_references
+        else tuple(
+            alternative.value.value
+            for alternative in automatic_work.alternatives
+            if alternative.value.kind is ProposalValueKind.LIST
         )
     )
-    if field == "subtitle" and destination == "automatic":
-        # The corroborating local claim is the decisive eligibility evidence;
-        # the durable record cites it alongside the provider claim.
-        references = tuple(
-            sorted(
-                {
-                    *references,
-                    *_corroborating_subtitle_references(report, candidate),
-                }
-            )
-        )
+    # Only format-only audiobook genre lists: each is no candidate (#1250).
+    reason = (
+        "no_candidate"
+        if field == "genres"
+        and destination == "automatic"
+        and proposal.media_kind == "audiobook"
+        and lists
+        and all(audiobook_format_only_genres(value) for value in lists)
+        else _candidate_reason(result)
+    )
+    return reason
+
+
+def _candidate_preview(
+    field: str,
+    option: str,
+    destination: str,
+    target: TargetField,
+    proposal: ProposalSet,
+    candidate: ProposalAlternative,
+    references: tuple[str, ...],
+    current: object,
+    format_only_genres: bool,
+) -> RichFieldPreview:
+    """The chosen candidate as the projected, no-op or abstain preview."""
     desired = _data_value(candidate.value.value)
     if field in {"genres", "tags"}:
         if candidate.value.kind is not ProposalValueKind.LIST or (

@@ -54,6 +54,7 @@ from mechanical_librarian.domain.rich_metadata_qualification import (
 from mechanical_librarian.domain.shadow_decision import (
     DECISION_POLICY_SHA256,
     DECISION_POLICY_VERSION,
+    ShadowDecision,
     ShadowDecisionSet,
 )
 from mechanical_librarian.domain.shadow_review import MAX_CITATIONS
@@ -589,6 +590,420 @@ def _rich_field_outcome(
 
 
 @dataclass(frozen=True, slots=True)
+class _ReasonRoutedProposals:
+    """Proposals a single title or contributor reason re-routes."""
+
+    independent_title: frozenset[str]
+    provider_consensus_title: frozenset[str]
+    decoration_tidy_title: frozenset[str]
+    provider_consensus_contributor_display: frozenset[str]
+
+
+def _reason_routed_proposals(case: ReviewCase) -> _ReasonRoutedProposals:
+    """Which proposals a single reason routes to a non-default category."""
+    provider_consensus_contributor_display_proposals: set[str] = set()
+    provider_consensus_title_proposals: set[str] = set()
+    decoration_tidy_title_proposals: set[str] = set()
+    independent_title_proposals: set[str] = set()
+    for value in case.proposals:
+        result = cast("dict[str, object]", value["result"])
+        reasons = result["reasons"]
+        if value["destination"] == "title" and reasons == [EVIDENCE_LED_TITLE_REASON]:
+            independent_title_proposals.add(cast("str", value["proposal_id"]))
+        if (
+            value["destination"] == "title"
+            and type(reasons) is list
+            and len(reasons) == 1
+            and reasons[0] in PROVIDER_CONSENSUS_TITLE_REASONS
+        ):
+            provider_consensus_title_proposals.add(cast("str", value["proposal_id"]))
+        if (
+            value["destination"] == "title"
+            and type(reasons) is list
+            and len(reasons) == 1
+            and reasons[0] in DECORATION_TIDY_TITLE_REASONS
+        ):
+            decoration_tidy_title_proposals.add(cast("str", value["proposal_id"]))
+        if (
+            value["destination"] in {"authors", "narrators"}
+            and type(reasons) is list
+            and reasons == [PROVIDER_CONSENSUS_CONTRIBUTOR_DISPLAY_REASON]
+        ):
+            provider_consensus_contributor_display_proposals.add(
+                cast("str", value["proposal_id"])
+            )
+    return _ReasonRoutedProposals(
+        independent_title=frozenset(independent_title_proposals),
+        provider_consensus_title=frozenset(provider_consensus_title_proposals),
+        decoration_tidy_title=frozenset(decoration_tidy_title_proposals),
+        provider_consensus_contributor_display=frozenset(
+            provider_consensus_contributor_display_proposals
+        ),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _RichRouting:
+    """The rich routing settled before any decision is projected (#1252)."""
+
+    rich_destinations: set[str]
+    rich: dict[str, RichFieldPreview]
+    rich_fields: tuple[tuple[str, str], ...]
+    rich_routes: dict[str, tuple[str, str | None]]
+    series_preserved: bool
+    subtitle_identity: str | None
+    carried_subtitle: object
+
+
+def _rich_routing(
+    policy: ResolvedMetadataPolicy,
+    report: MetadataReport,
+    proposal: ProposalSet,
+    *,
+    destinations: dict[str, str],
+    options: dict[str, str],
+    current_values: dict[str, object],
+    media_kind: str,
+    work_identity_level: WorkIdentityLevel,
+) -> _RichRouting:
+    # The rich projection owns these destinations end to end, so the
+    # deterministic decision policy's answer for them is not read at all.
+    # A recording's ASIN joins them: its tranche is projected from the
+    # retained gate-corroborated alternative, never from a decision policy
+    # that does not support the destination (#967).
+    rich_destinations = {"series", "genres", "tags", "description", "isbn"}
+    if media_kind == "audiobook":
+        rich_destinations = rich_destinations | {"asin", "explicit"}
+    rich = {
+        value.field: value
+        for value in (
+            # The live projection's call is exactly as it was.
+            compile_rich_metadata_preview(policy, report, proposal)
+            if work_identity_level is WorkIdentityLevel.IDENTIFIER
+            else compile_rich_metadata_preview(
+                policy, report, proposal, work_identity_level=work_identity_level
+            )
+        ).fields
+    }
+    # Each rich destination's routing is settled before any decision is
+    # projected, because a recording's title strip reads whether the same
+    # outcome set elects a series fill (#1252).
+    rich_fields = (
+        ("series", "series"),
+        ("genres", "genres"),
+        ("tags", "tags"),
+        ("description_fill", "description"),
+        ("isbn_form", "isbn"),
+        *(
+            (("asin", "asin"), ("explicit", "explicit"))
+            if media_kind == "audiobook"
+            else ()
+        ),
+    )
+    rich_routes: dict[str, tuple[str, str | None]] = {}
+    for rich_category, rich_field in rich_fields:
+        rich_destination = destinations[rich_category]
+        rich_option: str | None = None
+        if media_kind == "audiobook":
+            identity = _audiobook_policy_identity(
+                rich_field,
+                rich_category,
+                options[rich_category],
+                current_values[rich_field],
+                rich[rich_category].desired_value,
+            )
+            rich_destination = _audiobook_destination(
+                identity if admitted_audiobook_identity(report) else None,
+                rich_destination,
+            )
+            rich_option = None if identity is None else identity.split(":", 1)[1]
+        rich_routes[rich_category] = (rich_destination, rich_option)
+    series_preserved = bool(current_values["series"]) or (
+        rich_routes["series"][0] == "automatic"
+        and rich["series"].outcome == "projected"
+        and rich["series"].source_candidate_id is not None
+    )
+    # A paired layout moves a stripped title segment into the subtitle fill
+    # the same outcome set elects, so that segment is carried, not deleted.
+    split_subtitle = (
+        rich["subtitle"].desired_value.get("subtitle")
+        if options["subtitle"] == "corroborated_split"
+        and type(rich["subtitle"].desired_value) is dict
+        else rich["subtitle"].desired_value
+    )
+    subtitle_identity = (
+        _audiobook_policy_identity(
+            "subtitle",
+            "subtitle",
+            options["subtitle"],
+            current_values["subtitle"],
+            split_subtitle,
+        )
+        if media_kind == "audiobook"
+        else None
+    )
+    carried_subtitle = (
+        split_subtitle
+        if options["subtitle"] == "corroborated_split"
+        and rich["subtitle"].outcome == "projected"
+        and _audiobook_destination(subtitle_identity, destinations["subtitle"])
+        == "automatic"
+        else None
+    )
+    return _RichRouting(
+        rich_destinations=rich_destinations,
+        rich=rich,
+        rich_fields=rich_fields,
+        rich_routes=rich_routes,
+        series_preserved=series_preserved,
+        subtitle_identity=subtitle_identity,
+        carried_subtitle=carried_subtitle,
+    )
+
+
+def _decision_policy_route(
+    decision: ShadowDecision,
+    *,
+    routed: _ReasonRoutedProposals,
+    routing: _RichRouting,
+    destinations: dict[str, str],
+    options: dict[str, str],
+    current_values: dict[str, object],
+    report: MetadataReport,
+    proposal: ProposalSet,
+    media_kind: str,
+) -> tuple[str | None, str | None, str]:
+    """The governing policy category, option and destination for a decision."""
+    category: str | None = _POLICY_CATEGORY_BY_DESTINATION.get(decision.destination)
+    policy_option: str | None
+    if decision.proposal_id in routed.independent_title:
+        category = "title"
+        policy_destination = destinations["title_layout"]
+        policy_option = "replace_target:isbn_creator_supported"
+    elif decision.proposal_id in routed.provider_consensus_title:
+        category = _PROVIDER_CONSENSUS_TITLE_POLICY_CATEGORY
+        policy_destination = destinations["title_layout"]
+        policy_option = _PROVIDER_CONSENSUS_TITLE_POLICY_OPTION
+    elif decision.proposal_id in routed.decoration_tidy_title:
+        category = _PROVIDER_CONSENSUS_TITLE_POLICY_CATEGORY
+        policy_destination = destinations["title_layout"]
+        policy_option = _DECORATION_TIDY_TITLE_POLICY_OPTION
+    elif decision.proposal_id in routed.provider_consensus_contributor_display:
+        policy_destination = destinations["contributor_names"]
+        policy_option = options["contributor_names"]
+        if policy_option == "canonical":
+            category = F38_CONTRIBUTOR_DISPLAY_POLICY_CATEGORY
+            policy_option = F38_CONTRIBUTOR_DISPLAY_POLICY_OPTION
+        else:
+            policy_destination = "ask"
+    else:
+        policy_destination = (
+            "unsupported" if category is None else destinations[category]
+        )
+        policy_option = None if category is None else options[category]
+    if media_kind == "audiobook":
+        category = _POLICY_CATEGORY_BY_DESTINATION.get(decision.destination)
+        policy_option = None if category is None else options[category]
+        current = current_values[decision.destination]
+        selected = next(
+            (
+                alternative
+                for result in proposal.results
+                if result.destination.value == decision.destination
+                for alternative in result.alternatives
+                if alternative.alternative_id == decision.candidate_id
+            ),
+            None,
+        )
+        desired = (
+            current
+            if decision.recommendation == "recommend_keep_current"
+            else (None if selected is None else selected.value.to_data()["value"])
+        )
+        if (
+            decision.destination == "language"
+            and selected is not None
+            and decision.recommendation == "recommend_candidate"
+            and type(policy_option) is str
+        ):
+            desired = select_language_representation(report, selected, policy_option)
+        identity = _audiobook_policy_identity(
+            decision.destination, category, policy_option, current, desired
+        )
+        if policy_destination == "automatic" and _withdrawn_audiobook_identity(
+            identity,
+            routing.carried_subtitle,
+            current,
+            desired,
+            report,
+            proposal,
+            series_preserved=routing.series_preserved,
+        ):
+            identity = None
+        if identity is not None:
+            category, policy_option = identity.split(":", 1)
+        else:
+            identity = None
+        policy_destination = _audiobook_destination(
+            identity if admitted_audiobook_identity(report) else None,
+            policy_destination,
+        )
+    return category, policy_option, policy_destination
+
+
+def _decision_field_outcome(
+    decision: ShadowDecision,
+    *,
+    catalogue_sha256: str,
+    category: str | None,
+    policy_option: str | None,
+    policy_destination: str,
+) -> ShadowFieldOutcome:
+    """The disposition and identity of one decision's outcome."""
+    if policy_destination == "ignore":
+        disposition = "ignore"
+    elif policy_destination == "ask":
+        disposition = "manual"
+    elif policy_destination == "unsupported" or category is None:
+        disposition = "unsupported"
+    elif decision.recommendation == "recommend_candidate":
+        disposition = "candidate"
+    elif decision.recommendation == "recommend_keep_current":
+        disposition = "keep_current"
+    elif decision.reason_code in _CONFLICT_REASONS:
+        disposition = "conflict"
+    elif decision.reason_code == "unsupported_destination":
+        disposition = "unsupported"
+    else:
+        disposition = "abstention"
+    rule_data = {
+        "category": category,
+        "decision_policy_sha256": DECISION_POLICY_SHA256,
+        "decision_policy_version": DECISION_POLICY_VERSION,
+        "destination": policy_destination,
+        "option": policy_option,
+    }
+    rule_id = "shadow_rule_" + _digest(rule_data)
+    qualification_candidate_id = "qualification_candidate_" + _digest(
+        {
+            "action_id": decision.action_id,
+            "candidate_id": decision.candidate_id,
+            "catalogue_sha256": catalogue_sha256,
+            "citation_ids": list(decision.citation_ids),
+            "combination_ids": list(decision.combination_ids),
+            "rule_id": rule_id,
+        }
+    )
+    field_data = {
+        "action_id": decision.action_id,
+        "candidate_id": decision.candidate_id,
+        "citation_ids": list(decision.citation_ids),
+        "combination_ids": list(decision.combination_ids),
+        "destination": decision.destination,
+        "disposition": disposition,
+        "policy_category": category,
+        "policy_destination": policy_destination,
+        "policy_option": policy_option,
+        "proposal_id": decision.proposal_id,
+        "qualification_candidate_id": qualification_candidate_id,
+        "reason_code": decision.reason_code,
+        "rule_id": rule_id,
+    }
+    field_outcome = ShadowFieldOutcome(
+        "shadow_outcome_" + _digest(field_data),
+        decision.proposal_id,
+        decision.destination,
+        category,
+        policy_option,
+        policy_destination,
+        disposition,
+        decision.action_id,
+        decision.candidate_id,
+        decision.citation_ids,
+        decision.combination_ids,
+        decision.reason_code,
+        rule_id,
+        qualification_candidate_id,
+    )
+    return field_outcome
+
+
+def _rich_and_subtitle_outcomes(
+    case: ReviewCase,
+    routing: _RichRouting,
+    *,
+    destinations: dict[str, str],
+    options: dict[str, str],
+    catalogue_sha256: str,
+    media_kind: str,
+    title_layout_subtitle: ShadowFieldOutcome | None,
+) -> list[ShadowFieldOutcome]:
+    """The rich-field outcomes, then the subtitle's governing outcome."""
+    rich, rich_fields, rich_routes = (
+        routing.rich,
+        routing.rich_fields,
+        routing.rich_routes,
+    )
+    subtitle_identity = routing.subtitle_identity
+    fields: list[ShadowFieldOutcome] = []
+    # `ReviewCase.proposals` builds every entry itself, so "proposal_id" is
+    # always the `"review_proposal_" + sha256` string it composed.
+    proposals = {
+        value["destination"]: cast("str", value["proposal_id"])
+        for value in case.proposals
+    }
+    for category, destination in rich_fields:
+        rich_destination, rich_option = rich_routes[category]
+        fields.append(
+            _rich_field_outcome(
+                rich[category],
+                category=category,
+                destination=destination,
+                policy_destination=rich_destination,
+                requested_destination=destinations[category],
+                proposal_id=proposals[destination],
+                catalogue_sha256=catalogue_sha256,
+                policy_option=rich_option,
+            )
+        )
+    # The subtitle destination has two governing categories. An acting
+    # title_layout combination (a candidate on the subtitle witness) keeps
+    # the destination: the bundled identity authority already covers it.
+    # Otherwise, when the owner routed the subtitle category to Automatic,
+    # the independently qualified subtitle fill owns the destination.
+    if (media_kind == "audiobook" and options["subtitle"] == "corroborated_split") or (
+        destinations["subtitle"] == "automatic"
+        and (
+            title_layout_subtitle is None
+            or title_layout_subtitle.disposition != "candidate"
+        )
+    ):
+        fields.append(
+            _rich_field_outcome(
+                rich["subtitle"],
+                category="subtitle",
+                destination="subtitle",
+                requested_destination=destinations["subtitle"],
+                policy_destination=_audiobook_destination(
+                    subtitle_identity, destinations["subtitle"]
+                )
+                if media_kind == "audiobook"
+                else destinations["subtitle"],
+                proposal_id=proposals["subtitle"],
+                catalogue_sha256=catalogue_sha256,
+                policy_option=(
+                    None
+                    if subtitle_identity is None
+                    else subtitle_identity.split(":", 1)[1]
+                ),
+            )
+        )
+    elif title_layout_subtitle is not None:
+        fields.append(title_layout_subtitle)
+    return fields
+
+
+@dataclass(frozen=True, slots=True)
 class ShadowOutcomeSet:
     outcome_set_id: str
     review_case_id: str
@@ -661,335 +1076,53 @@ class ShadowOutcomeSet:
         }
         fields: list[ShadowFieldOutcome] = []
         title_layout_subtitle: ShadowFieldOutcome | None = None
-        provider_consensus_contributor_display_proposals: set[str] = set()
-        provider_consensus_title_proposals: set[str] = set()
-        decoration_tidy_title_proposals: set[str] = set()
-        independent_title_proposals: set[str] = set()
-        for value in case.proposals:
-            result = cast("dict[str, object]", value["result"])
-            reasons = result["reasons"]
-            if value["destination"] == "title" and reasons == [
-                EVIDENCE_LED_TITLE_REASON
-            ]:
-                independent_title_proposals.add(cast("str", value["proposal_id"]))
-            if (
-                value["destination"] == "title"
-                and type(reasons) is list
-                and len(reasons) == 1
-                and reasons[0] in PROVIDER_CONSENSUS_TITLE_REASONS
-            ):
-                provider_consensus_title_proposals.add(
-                    cast("str", value["proposal_id"])
-                )
-            if (
-                value["destination"] == "title"
-                and type(reasons) is list
-                and len(reasons) == 1
-                and reasons[0] in DECORATION_TIDY_TITLE_REASONS
-            ):
-                decoration_tidy_title_proposals.add(cast("str", value["proposal_id"]))
-            if (
-                value["destination"] in {"authors", "narrators"}
-                and type(reasons) is list
-                and reasons == [PROVIDER_CONSENSUS_CONTRIBUTOR_DISPLAY_REASON]
-            ):
-                provider_consensus_contributor_display_proposals.add(
-                    cast("str", value["proposal_id"])
-                )
-        # The rich projection owns these destinations end to end, so the
-        # deterministic decision policy's answer for them is not read at all.
-        # A recording's ASIN joins them: its tranche is projected from the
-        # retained gate-corroborated alternative, never from a decision policy
-        # that does not support the destination (#967).
-        rich_destinations = {"series", "genres", "tags", "description", "isbn"}
-        if media_kind == "audiobook":
-            rich_destinations = rich_destinations | {"asin", "explicit"}
-        rich = {
-            value.field: value
-            for value in (
-                # The live projection's call is exactly as it was.
-                compile_rich_metadata_preview(policy, report, proposal)
-                if work_identity_level is WorkIdentityLevel.IDENTIFIER
-                else compile_rich_metadata_preview(
-                    policy, report, proposal, work_identity_level=work_identity_level
-                )
-            ).fields
-        }
-        # Each rich destination's routing is settled before any decision is
-        # projected, because a recording's title strip reads whether the same
-        # outcome set elects a series fill (#1252).
-        rich_fields = (
-            ("series", "series"),
-            ("genres", "genres"),
-            ("tags", "tags"),
-            ("description_fill", "description"),
-            ("isbn_form", "isbn"),
-            *(
-                (("asin", "asin"), ("explicit", "explicit"))
-                if media_kind == "audiobook"
-                else ()
-            ),
-        )
-        rich_routes: dict[str, tuple[str, str | None]] = {}
-        for rich_category, rich_field in rich_fields:
-            rich_destination = destinations[rich_category]
-            rich_option: str | None = None
-            if media_kind == "audiobook":
-                identity = _audiobook_policy_identity(
-                    rich_field,
-                    rich_category,
-                    options[rich_category],
-                    current_values[rich_field],
-                    rich[rich_category].desired_value,
-                )
-                rich_destination = _audiobook_destination(
-                    identity if admitted_audiobook_identity(report) else None,
-                    rich_destination,
-                )
-                rich_option = None if identity is None else identity.split(":", 1)[1]
-            rich_routes[rich_category] = (rich_destination, rich_option)
-        series_preserved = bool(current_values["series"]) or (
-            rich_routes["series"][0] == "automatic"
-            and rich["series"].outcome == "projected"
-            and rich["series"].source_candidate_id is not None
-        )
-        # A paired layout moves a stripped title segment into the subtitle fill
-        # the same outcome set elects, so that segment is carried, not deleted.
-        split_subtitle = (
-            rich["subtitle"].desired_value.get("subtitle")
-            if options["subtitle"] == "corroborated_split"
-            and type(rich["subtitle"].desired_value) is dict
-            else rich["subtitle"].desired_value
-        )
-        subtitle_identity = (
-            _audiobook_policy_identity(
-                "subtitle",
-                "subtitle",
-                options["subtitle"],
-                current_values["subtitle"],
-                split_subtitle,
-            )
-            if media_kind == "audiobook"
-            else None
-        )
-        carried_subtitle = (
-            split_subtitle
-            if options["subtitle"] == "corroborated_split"
-            and rich["subtitle"].outcome == "projected"
-            and _audiobook_destination(subtitle_identity, destinations["subtitle"])
-            == "automatic"
-            else None
+        routed = _reason_routed_proposals(case)
+        routing = _rich_routing(
+            policy,
+            report,
+            proposal,
+            destinations=destinations,
+            options=options,
+            current_values=current_values,
+            media_kind=media_kind,
+            work_identity_level=work_identity_level,
         )
         for decision in decisions.decisions:
-            if decision.destination in rich_destinations:
+            if decision.destination in routing.rich_destinations:
                 continue
-            category: str | None = _POLICY_CATEGORY_BY_DESTINATION.get(
-                decision.destination
+            category, policy_option, policy_destination = _decision_policy_route(
+                decision,
+                routed=routed,
+                routing=routing,
+                destinations=destinations,
+                options=options,
+                current_values=current_values,
+                report=report,
+                proposal=proposal,
+                media_kind=media_kind,
             )
-            policy_option: str | None
-            if decision.proposal_id in independent_title_proposals:
-                category = "title"
-                policy_destination = destinations["title_layout"]
-                policy_option = "replace_target:isbn_creator_supported"
-            elif decision.proposal_id in provider_consensus_title_proposals:
-                category = _PROVIDER_CONSENSUS_TITLE_POLICY_CATEGORY
-                policy_destination = destinations["title_layout"]
-                policy_option = _PROVIDER_CONSENSUS_TITLE_POLICY_OPTION
-            elif decision.proposal_id in decoration_tidy_title_proposals:
-                category = _PROVIDER_CONSENSUS_TITLE_POLICY_CATEGORY
-                policy_destination = destinations["title_layout"]
-                policy_option = _DECORATION_TIDY_TITLE_POLICY_OPTION
-            elif (
-                decision.proposal_id in provider_consensus_contributor_display_proposals
-            ):
-                policy_destination = destinations["contributor_names"]
-                policy_option = options["contributor_names"]
-                if policy_option == "canonical":
-                    category = F38_CONTRIBUTOR_DISPLAY_POLICY_CATEGORY
-                    policy_option = F38_CONTRIBUTOR_DISPLAY_POLICY_OPTION
-                else:
-                    policy_destination = "ask"
-            else:
-                policy_destination = (
-                    "unsupported" if category is None else destinations[category]
-                )
-                policy_option = None if category is None else options[category]
-            if media_kind == "audiobook":
-                category = _POLICY_CATEGORY_BY_DESTINATION.get(decision.destination)
-                policy_option = None if category is None else options[category]
-                current = current_values[decision.destination]
-                selected = next(
-                    (
-                        alternative
-                        for result in proposal.results
-                        if result.destination.value == decision.destination
-                        for alternative in result.alternatives
-                        if alternative.alternative_id == decision.candidate_id
-                    ),
-                    None,
-                )
-                desired = (
-                    current
-                    if decision.recommendation == "recommend_keep_current"
-                    else (
-                        None if selected is None else selected.value.to_data()["value"]
-                    )
-                )
-                if (
-                    decision.destination == "language"
-                    and selected is not None
-                    and decision.recommendation == "recommend_candidate"
-                    and type(policy_option) is str
-                ):
-                    desired = select_language_representation(
-                        report, selected, policy_option
-                    )
-                identity = _audiobook_policy_identity(
-                    decision.destination, category, policy_option, current, desired
-                )
-                if policy_destination == "automatic" and _withdrawn_audiobook_identity(
-                    identity,
-                    carried_subtitle,
-                    current,
-                    desired,
-                    report,
-                    proposal,
-                    series_preserved=series_preserved,
-                ):
-                    identity = None
-                if identity is not None:
-                    category, policy_option = identity.split(":", 1)
-                else:
-                    identity = None
-                policy_destination = _audiobook_destination(
-                    identity if admitted_audiobook_identity(report) else None,
-                    policy_destination,
-                )
-            if policy_destination == "ignore":
-                disposition = "ignore"
-            elif policy_destination == "ask":
-                disposition = "manual"
-            elif policy_destination == "unsupported" or category is None:
-                disposition = "unsupported"
-            elif decision.recommendation == "recommend_candidate":
-                disposition = "candidate"
-            elif decision.recommendation == "recommend_keep_current":
-                disposition = "keep_current"
-            elif decision.reason_code in _CONFLICT_REASONS:
-                disposition = "conflict"
-            elif decision.reason_code == "unsupported_destination":
-                disposition = "unsupported"
-            else:
-                disposition = "abstention"
-            rule_data = {
-                "category": category,
-                "decision_policy_sha256": DECISION_POLICY_SHA256,
-                "decision_policy_version": DECISION_POLICY_VERSION,
-                "destination": policy_destination,
-                "option": policy_option,
-            }
-            rule_id = "shadow_rule_" + _digest(rule_data)
-            qualification_candidate_id = "qualification_candidate_" + _digest(
-                {
-                    "action_id": decision.action_id,
-                    "candidate_id": decision.candidate_id,
-                    "catalogue_sha256": decisions.catalogue_sha256,
-                    "citation_ids": list(decision.citation_ids),
-                    "combination_ids": list(decision.combination_ids),
-                    "rule_id": rule_id,
-                }
-            )
-            field_data = {
-                "action_id": decision.action_id,
-                "candidate_id": decision.candidate_id,
-                "citation_ids": list(decision.citation_ids),
-                "combination_ids": list(decision.combination_ids),
-                "destination": decision.destination,
-                "disposition": disposition,
-                "policy_category": category,
-                "policy_destination": policy_destination,
-                "policy_option": policy_option,
-                "proposal_id": decision.proposal_id,
-                "qualification_candidate_id": qualification_candidate_id,
-                "reason_code": decision.reason_code,
-                "rule_id": rule_id,
-            }
-            field_outcome = ShadowFieldOutcome(
-                "shadow_outcome_" + _digest(field_data),
-                decision.proposal_id,
-                decision.destination,
-                category,
-                policy_option,
-                policy_destination,
-                disposition,
-                decision.action_id,
-                decision.candidate_id,
-                decision.citation_ids,
-                decision.combination_ids,
-                decision.reason_code,
-                rule_id,
-                qualification_candidate_id,
+            field_outcome = _decision_field_outcome(
+                decision,
+                catalogue_sha256=decisions.catalogue_sha256,
+                category=category,
+                policy_option=policy_option,
+                policy_destination=policy_destination,
             )
             if decision.destination == "subtitle":
                 title_layout_subtitle = field_outcome
             else:
                 fields.append(field_outcome)
-        # `ReviewCase.proposals` builds every entry itself, so "proposal_id" is
-        # always the `"review_proposal_" + sha256` string it composed.
-        proposals = {
-            value["destination"]: cast("str", value["proposal_id"])
-            for value in case.proposals
-        }
-        for category, destination in rich_fields:
-            rich_destination, rich_option = rich_routes[category]
-            fields.append(
-                _rich_field_outcome(
-                    rich[category],
-                    category=category,
-                    destination=destination,
-                    policy_destination=rich_destination,
-                    requested_destination=destinations[category],
-                    proposal_id=proposals[destination],
-                    catalogue_sha256=decisions.catalogue_sha256,
-                    policy_option=rich_option,
-                )
+        fields.extend(
+            _rich_and_subtitle_outcomes(
+                case,
+                routing,
+                destinations=destinations,
+                options=options,
+                catalogue_sha256=decisions.catalogue_sha256,
+                media_kind=media_kind,
+                title_layout_subtitle=title_layout_subtitle,
             )
-        # The subtitle destination has two governing categories. An acting
-        # title_layout combination (a candidate on the subtitle witness) keeps
-        # the destination: the bundled identity authority already covers it.
-        # Otherwise, when the owner routed the subtitle category to Automatic,
-        # the independently qualified subtitle fill owns the destination.
-        if (
-            media_kind == "audiobook" and options["subtitle"] == "corroborated_split"
-        ) or (
-            destinations["subtitle"] == "automatic"
-            and (
-                title_layout_subtitle is None
-                or title_layout_subtitle.disposition != "candidate"
-            )
-        ):
-            fields.append(
-                _rich_field_outcome(
-                    rich["subtitle"],
-                    category="subtitle",
-                    destination="subtitle",
-                    requested_destination=destinations["subtitle"],
-                    policy_destination=_audiobook_destination(
-                        subtitle_identity, destinations["subtitle"]
-                    )
-                    if media_kind == "audiobook"
-                    else destinations["subtitle"],
-                    proposal_id=proposals["subtitle"],
-                    catalogue_sha256=decisions.catalogue_sha256,
-                    policy_option=(
-                        None
-                        if subtitle_identity is None
-                        else subtitle_identity.split(":", 1)[1]
-                    ),
-                )
-            )
-        elif title_layout_subtitle is not None:
-            fields.append(title_layout_subtitle)
+        )
         core = {
             "authority": "none",
             "catalogue_sha256": decisions.catalogue_sha256,

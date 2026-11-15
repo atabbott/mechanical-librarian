@@ -1067,6 +1067,26 @@ def _classify_field(
     )
 
 
+def _authored_description_selection(
+    snapshot: CurrentReviewCaseSnapshot, destination: str
+) -> object:
+    """The current authored description selection, which displaces automatic."""
+    selected_advice = (
+        snapshot.description_advice.get("selected_advice")
+        if snapshot.description_advice is not None
+        else None
+    )
+    authored_selection = (
+        snapshot.description_advice.get("selection")
+        if destination == "description"
+        and snapshot.description_advice is not None
+        and isinstance(selected_advice, dict)
+        and selected_advice.get("current") is True
+        else None
+    )
+    return authored_selection
+
+
 class InspectCurrentReviewCase:
     def __init__(
         self,
@@ -1263,7 +1283,6 @@ class InspectCurrentReviewCase:
         self, context: _ReviewCaseReadContext, proposal: dict[str, object]
     ) -> dict[str, object] | None:
         """Project one proposal into its review field, or None when omitted."""
-        case = context.case
         report = context.report
         snapshot = context.snapshot
         decisions = context.decisions
@@ -1271,7 +1290,6 @@ class InspectCurrentReviewCase:
         evidence = context.evidence
         proposals = context.proposals
         publication_date_present = context.publication_date_present
-        current_cover_consideration = context.current_cover_consideration
         result = proposal["result"]
         assert type(result) is dict
         destination = cast(str, proposal["destination"])
@@ -1315,19 +1333,7 @@ class InspectCurrentReviewCase:
             evidence,
             cast("dict[str, object]", proposal.get("lineage", {})),
         )
-        selected_advice = (
-            snapshot.description_advice.get("selected_advice")
-            if snapshot.description_advice is not None
-            else None
-        )
-        authored_selection = (
-            snapshot.description_advice.get("selection")
-            if destination == "description"
-            and snapshot.description_advice is not None
-            and isinstance(selected_advice, dict)
-            and selected_advice.get("current") is True
-            else None
-        )
+        authored_selection = _authored_description_selection(snapshot, destination)
         if authored_selection is not None:
             automatic_decision = None
         cover_admits, cover_preparation_available = _cover_admission(
@@ -1394,6 +1400,56 @@ class InspectCurrentReviewCase:
         manual_hold = destination in snapshot.held_destinations and (
             carried_hold or (decision is not None and automatic_decision is not None)
         )
+        return self._field_document(
+            context,
+            proposal,
+            destination=destination,
+            result=result,
+            reasons=reasons,
+            references=references,
+            eligible_alternatives=eligible_alternatives,
+            choice_contexts=choice_contexts,
+            decision=decision,
+            automatic_decision=automatic_decision,
+            automatic_selection_sources=automatic_selection_sources,
+            classification=classification,
+            actions=actions,
+            owner_control=owner_control,
+            inventory_role=inventory_role,
+            manual_hold=manual_hold,
+            has_owner_action=has_owner_action,
+            needs_attention=needs_attention,
+        )
+
+    def _field_document(
+        self,
+        context: _ReviewCaseReadContext,
+        proposal: dict[str, object],
+        *,
+        destination: str,
+        result: dict[Any, Any],
+        reasons: list[Any],
+        references: list[Any],
+        eligible_alternatives: list[Any],
+        choice_contexts: list[dict[str, object]],
+        decision: HumanDecision | None,
+        automatic_decision: dict[str, object] | None,
+        automatic_selection_sources: list[str],
+        classification: ReviewFieldClassification,
+        actions: tuple[HumanDecisionAction, ...],
+        owner_control: dict[str, object] | None,
+        inventory_role: str,
+        manual_hold: bool,
+        has_owner_action: bool,
+        needs_attention: bool,
+    ) -> dict[str, object]:
+        """The field's wire document, kept apart from the decisions above it."""
+        case = context.case
+        report = context.report
+        snapshot = context.snapshot
+        target_fields = context.target_fields
+        proposals = context.proposals
+        current_cover_consideration = context.current_cover_consideration
         field = {
             "current": target_fields[destination],
             "deterministic_disposition": result["outcome"],
