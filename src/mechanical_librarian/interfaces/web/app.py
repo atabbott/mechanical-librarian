@@ -245,7 +245,12 @@ _SessionDependency: TypeAlias = Callable[[Request, str | None], str]
 
 
 class _ReleasingStreamingResponse(StreamingResponse):
-    """Release a streamed body's producer however the response ends (#1336)."""
+    """Stop a streamed body's producer however the response ends (#1336).
+
+    ``stop`` only sets a flag, so it runs even when an enclosing cancel scope
+    skips every await; the producer then ends its read and releases its reader
+    from its own thread.
+    """
 
     def __init__(
         self,
@@ -256,13 +261,13 @@ class _ReleasingStreamingResponse(StreamingResponse):
         headers: dict[str, str],
     ) -> None:
         super().__init__(content, media_type=media_type, headers=headers)
-        self._release = release
+        self._stop = release
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         try:
             await super().__call__(scope, receive, send)
         finally:
-            await run_in_threadpool(self._release)
+            self._stop()
 
 
 class _LiveUpdateStreamingResponse(StreamingResponse):
@@ -3855,7 +3860,7 @@ def _register_write_plan_route(
 
         return _ReleasingStreamingResponse(
             body(),
-            produced.close,
+            produced.stop,
             media_type="text/csv; charset=utf-8"
             if format == "csv"
             else "application/json",

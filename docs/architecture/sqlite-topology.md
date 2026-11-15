@@ -354,7 +354,9 @@ so the file is one consistent snapshot. Its length is bounded by the file's
 caps, 20,000 rows and 16 MiB, not by time. A writer can commit while it runs;
 the file reflects the state when the download began. The transaction always
 ends: when the file is complete, on a fault, when the browser goes away, or
-within 100 rows once the application starts closing. Parsed documents are
+within 100 rows once the application starts closing. A download nobody is
+reading is stopped after a minute, and the page then says the file was not
+downloaded; a second download waits for the first to end. Parsed documents are
 reused only inside that read, in bounded caches cleared when it ends (#1336).
 
 ### Library and Attention

@@ -13,9 +13,10 @@ import json
 import queue
 import sys
 import threading
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Final, Literal, cast
+from typing import Final, Literal
 
 from mechanical_librarian.application.field_effects import GuardedApplicationError
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
@@ -70,6 +71,9 @@ _NOTE_RESERVE: Final = 1_024
 # Chunks a producer may run ahead of a slow client: bounded memory.
 _QUEUED_CHUNKS: Final = 8
 _QUEUE_WAIT_SECONDS: Final = 0.25
+# A producer whose chunks nobody has taken for this long gives the file up and
+# releases its reader: a suspended tab must not hold a read open (#1336).
+STALLED_CONSUMER_SECONDS: Final = 60.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -297,27 +301,37 @@ class PlanFileEncoder:
         return notes
 
 
-_END: Final = object()
-
-
 class ProducedStream:
     """Bytes one producer thread makes and the response sends as they arrive.
 
-    The producer owns its reader for the whole read. A consumer that goes
-    away, or a closing application, stops it within one bounded step; a fault
-    reaches the consumer as the exception, after any bytes already sent, so a
-    short file never ends as a complete one.
+    The producer owns its reader for the whole read and ends by itself: when
+    the file is made, on a fault, when the application is closing, when the
+    consumer stops it, or when no chunk has been taken for
+    ``STALLED_CONSUMER_SECONDS`` (a download nobody is reading). Giving up is
+    an abort, not a truncation: the consumer then gets the fault, so a short
+    file never ends as a complete one. The ``when_closed`` releases run once,
+    from the producer's own exit, after its read has ended.
     """
 
     def __init__(
         self,
         produce: Callable[[Callable[[bytes], None], Callable[[], bool]], None],
         closing: Callable[[], bool],
+        *,
+        stalled_seconds: float | None = None,
     ) -> None:
-        self._chunks: queue.Queue[object] = queue.Queue(maxsize=_QUEUED_CHUNKS)
+        self._chunks: queue.Queue[bytes] = queue.Queue(maxsize=_QUEUED_CHUNKS)
         self._stop = threading.Event()
+        self._finished = threading.Event()
         self._closing = closing
-        self._released: list[Callable[[], None]] = []
+        self._stalled_seconds = (
+            STALLED_CONSUMER_SECONDS if stalled_seconds is None else stalled_seconds
+        )
+        self._taken_at = time.monotonic()
+        # Only a producer that returned normally ends the body normally.
+        self._outcome: BaseException | None = GuardedApplicationError("unavailable")
+        self._lock = threading.Lock()
+        self._released: list[Callable[[], None]] | None = []
         self._thread = threading.Thread(
             target=self._run, args=(produce,), name="write-plan-file", daemon=True
         )
@@ -326,56 +340,75 @@ class ProducedStream:
     def cancelled(self) -> bool:
         return self._stop.is_set() or self._closing()
 
-    def _put(self, item: object) -> bool:
-        while not self._stop.is_set():
+    def _put(self, chunk: bytes) -> bool:
+        while not self.cancelled():
             try:
-                self._chunks.put(item, timeout=_QUEUE_WAIT_SECONDS)
+                self._chunks.put(chunk, timeout=_QUEUE_WAIT_SECONDS)
                 return True
             except queue.Full:
-                continue
+                if time.monotonic() - self._taken_at > self._stalled_seconds:
+                    return False
         return False
 
     def _emit(self, chunk: bytes) -> None:
-        if self.cancelled() or not self._put(chunk):
+        if not self._put(chunk):
             raise GuardedApplicationError("unavailable")
 
     def _run(
         self, produce: Callable[[Callable[[bytes], None], Callable[[], bool]], None]
     ) -> None:
-        outcome: object = _END
         try:
             produce(self._emit, self.cancelled)
+            # A producer that noticed a stop and returned did not finish.
+            if not self.cancelled():
+                self._outcome = None
         except BaseException as error:  # noqa: BLE001 - handed to the consumer
-            outcome = error
-        self._put(outcome)
+            self._outcome = error
+        finally:
+            self._finished.set()
+            with self._lock:
+                released, self._released = self._released or [], None
+            for release in released:
+                release()
 
     def next_chunk(self) -> bytes | None:
-        """Wait for the next chunk; ``None`` at the end; a fault raises."""
+        """Wait for the next chunk; ``None`` only at a complete end.
+
+        A producer that stopped short, for any reason, raises its fault here,
+        so a consumer that resumes late never sees a normal end of body.
+        """
         while True:
             try:
-                item = self._chunks.get(timeout=_QUEUE_WAIT_SECONDS)
-                break
+                chunk = self._chunks.get(timeout=_QUEUE_WAIT_SECONDS)
             except queue.Empty:
-                if self._stop.is_set():
-                    return None
-        if item is _END:
-            return None
-        if isinstance(item, BaseException):
-            raise item
-        return cast("bytes", item)
+                if self._finished.is_set():
+                    # Every chunk was queued before the producer finished.
+                    try:
+                        chunk = self._chunks.get_nowait()
+                    except queue.Empty:
+                        if self._outcome is None:
+                            return None
+                        raise self._outcome from None
+                elif self._stop.is_set():
+                    raise GuardedApplicationError("unavailable") from None
+                else:
+                    continue
+            self._taken_at = time.monotonic()
+            return chunk
 
     def when_closed(self, release: Callable[[], None]) -> None:
-        """Run ``release`` once, after ``close`` has stopped the producer."""
-        self._released.append(release)
+        """Run ``release`` once, when the producer has ended its read."""
+        with self._lock:
+            if self._released is not None:
+                self._released.append(release)
+                return
+        release()
+
+    def stop(self) -> None:
+        """Ask the producer to stop; it releases its reader on its own exit."""
+        self._stop.set()
 
     def close(self) -> None:
         """Stop the producer and wait until its reader is released."""
         self._stop.set()
-        while self._thread.is_alive():
-            try:
-                self._chunks.get(timeout=_QUEUE_WAIT_SECONDS)
-            except queue.Empty:
-                continue
         self._thread.join()
-        while self._released:
-            self._released.pop()()

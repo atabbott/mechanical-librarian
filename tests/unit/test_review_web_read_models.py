@@ -9,6 +9,7 @@ import hashlib
 import json
 import re
 import threading
+import time
 from collections.abc import Iterator
 from types import SimpleNamespace
 from typing import Any, cast, get_args
@@ -44,6 +45,7 @@ from mechanical_librarian.application.metadata_policy import (
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_application import (
     REVIEW_PREPARATION_SCHEMA,
+    ReviewApplication,
 )
 from mechanical_librarian.application.review_pipeline import (
     ReviewPipelineError,
@@ -886,25 +888,91 @@ def test_write_plan_fault_after_the_first_byte_never_completes_the_body(
     assert finished == ["snapshot ended"]
 
 
-def test_write_plan_client_disconnect_stops_the_file_and_releases_its_reader(
-    web: ReviewWebContext[_CloseRecordingRepository],
-) -> None:
-    application = FakeActivityApplication()
-    events: list[str] = []
+class _EndlessPlan:
+    """A file that never ends by itself, recording its snapshot's life."""
 
-    def endless(_format, emit, cancelled) -> None:
-        events.append("snapshot began")
+    def __init__(self) -> None:
+        self.events: list[str] = []
+        self.ended = threading.Event()
+
+    def __call__(self, _format, emit, cancelled) -> None:
+        self.events.append("snapshot began")
         try:
             emit(b'\xef\xbb\xbf"Library"\r\n')
             while not cancelled():
                 emit(b'"fiction"\r\n')
         finally:
-            events.append("snapshot ended")
+            self.events.append("snapshot ended")
+            self.ended.set()
 
-    application.plan_file = endless
+
+def _write_plan_asgi(
+    web: ReviewWebContext[_CloseRecordingRepository],
+    plan: _EndlessPlan,
+) -> tuple[Any, dict[str, object], list[ReviewApplication]]:
+    """The app, an authenticated CSV request scope, and its application."""
+    application = FakeActivityApplication()
+    application.plan_file = plan
     app = _write_plan_web(web, application)
     web.login()
     cookie = "; ".join(f"{name}={value}" for name, value in web.client.cookies.items())
+    scope: dict[str, object] = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "https",
+        "path": "/api/v1/activity/write-plan",
+        "raw_path": b"/api/v1/activity/write-plan",
+        "query_string": b"format=csv",
+        "root_path": "",
+        "headers": [
+            (b"host", b"review.test"),
+            (b"cookie", cookie.encode()),
+            (b"x-ml-build-identity", TEST_REACT_BUILD_IDENTITY.encode()),
+        ],
+        "client": ("127.0.0.1", 50000),
+        "server": ("review.test", 443),
+    }
+    # The review application that counted the file as an accepted read.
+    started: list[ReviewApplication] = []
+    original = ReviewApplication.activity_write_plan_file
+
+    def recording(self: ReviewApplication, format: Any) -> Any:
+        started.append(self)
+        return original(self, format)
+
+    patcher = patch.object(ReviewApplication, "activity_write_plan_file", recording)
+    patcher.start()
+    web.cleanup.callback(patcher.stop)
+    return app, scope, started
+
+
+def _released(plan: _EndlessPlan, started: list[ReviewApplication]) -> None:
+    """The producer left its snapshot and gave back its accepted read."""
+    assert plan.ended.wait(5)
+    assert plan.events == ["snapshot began", "snapshot ended"]
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and (
+        started[0]._active_browses
+        or any(
+            thread.name == "write-plan-file" and thread.is_alive()
+            for thread in threading.enumerate()
+        )
+    ):
+        time.sleep(0.02)
+    assert started[0]._active_browses == 0
+    assert not any(
+        thread.name == "write-plan-file" and thread.is_alive()
+        for thread in threading.enumerate()
+    )
+
+
+def test_write_plan_client_disconnect_stops_the_file_and_releases_its_reader(
+    web: ReviewWebContext[_CloseRecordingRepository],
+) -> None:
+    plan = _EndlessPlan()
+    app, scope, started = _write_plan_asgi(web, plan)
 
     async def drive() -> list[dict[str, object]]:
         sent: list[dict[str, object]] = []
@@ -919,24 +987,6 @@ def test_write_plan_client_disconnect_stops_the_file_and_releases_its_reader(
             if message["type"] == "http.response.body" and len(sent) >= 3:
                 gone.set()
 
-        scope = {
-            "type": "http",
-            "asgi": {"version": "3.0", "spec_version": "2.3"},
-            "http_version": "1.1",
-            "method": "GET",
-            "scheme": "https",
-            "path": "/api/v1/activity/write-plan",
-            "raw_path": b"/api/v1/activity/write-plan",
-            "query_string": b"format=csv",
-            "root_path": "",
-            "headers": [
-                (b"host", b"review.test"),
-                (b"cookie", cookie.encode()),
-                (b"x-ml-build-identity", TEST_REACT_BUILD_IDENTITY.encode()),
-            ],
-            "client": ("127.0.0.1", 50000),
-            "server": ("review.test", 443),
-        }
         with anyio.fail_after(10):
             await app(scope, receive, send)
         return sent
@@ -946,11 +996,37 @@ def test_write_plan_client_disconnect_stops_the_file_and_releases_its_reader(
     assert sent[0]["type"] == "http.response.start"
     assert sent[0]["status"] == 200
     # The producer saw the client go, ended its snapshot and was released.
-    assert events == ["snapshot began", "snapshot ended"]
-    assert not any(
-        thread.name == "write-plan-file" and thread.is_alive()
-        for thread in threading.enumerate()
-    )
+    _released(plan, started)
+
+
+def test_write_plan_cancelled_by_an_enclosing_scope_still_releases_its_reader(
+    web: ReviewWebContext[_CloseRecordingRepository],
+) -> None:
+    """A cancel scope skips every await in cleanup; the release must not need one."""
+    plan = _EndlessPlan()
+    app, scope, started = _write_plan_asgi(web, plan)
+
+    async def drive() -> int:
+        bodies = 0
+        with anyio.CancelScope() as cancelled:
+
+            async def receive() -> dict[str, object]:
+                await anyio.sleep_forever()
+                raise AssertionError("unreachable")
+
+            async def send(message: dict[str, object]) -> None:
+                nonlocal bodies
+                if message["type"] == "http.response.body":
+                    bodies += 1
+                    if bodies == 2:
+                        cancelled.cancel()
+
+            with anyio.fail_after(10):
+                await app(scope, receive, send)
+        return bodies
+
+    assert anyio.run(drive) >= 2
+    _released(plan, started)
 
 
 def test_activity_is_permanent_and_consent_is_csrf_bound(

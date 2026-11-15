@@ -73,6 +73,10 @@ CONTINUOUS_FIELD_ACTIVITY_SCHEMA: Final[ContinuousFieldActivitySchemaVersion] = 
 )
 
 
+# How often a write plan file waiting for its reader checks it is still wanted.
+_READER_WAIT_SECONDS = 0.25
+
+
 @dataclass(frozen=True, slots=True)
 class _CapabilityProbe:
     work_id: str
@@ -1432,8 +1436,15 @@ class ContinuousGuardedApplication:
                 self._write_plan_file(format, emit, cancelled, library_labels)
                 return {}
 
-            with self._activity_reader_lock:
+            # A second download waits for the first to end, which it does by
+            # itself, and gives up at once when it is stopped or closing.
+            while not self._activity_reader_lock.acquire(timeout=_READER_WAIT_SECONDS):
+                if cancelled():
+                    raise GuardedApplicationError("unavailable")
+            try:
                 self._repository.field_effect_write_plan_snapshot(read)
+            finally:
+                self._activity_reader_lock.release()
 
         return ProducedStream(produce, closing)
 

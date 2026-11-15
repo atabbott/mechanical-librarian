@@ -242,3 +242,50 @@ def test_incomplete_headers_are_still_closed(short_deadlines: None) -> None:
         received, waited = _read_until_closed(client)
     assert received == b""
     assert waited < _PATIENCE
+
+
+async def _stream_slowly(scope: Scope, receive: Receive, send: Send) -> None:
+    """Answer a bodiless GET with a body sent over several deadlines (#1336)."""
+    if scope["type"] != "http":
+        return
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 200,
+            "headers": [(b"content-type", b"text/csv")],
+        }
+    )
+    for index in range(8):
+        await asyncio.sleep(_DEADLINE / 2)
+        await send(
+            {
+                "type": "http.response.body",
+                "body": f"row-{index}\n".encode(),
+                "more_body": True,
+            }
+        )
+    await send({"type": "http.response.body", "body": b""})
+
+
+def test_a_streamed_answer_to_a_complete_get_outlives_both_deadlines(
+    short_deadlines: None,
+) -> None:
+    """Neither deadline runs while the server, not the client, is sending.
+
+    The write plan file streams for as long as it takes to make (#1336); the
+    body deadline covers only a request body still owed by the client.
+    """
+    with _Edge(_stream_slowly) as edge, edge.connect() as client:
+        client.sendall(
+            b"GET /api/v1/activity/write-plan?format=csv HTTP/1.1\r\nHost: edge\r\n\r\n"
+        )
+        received = b""
+        started = time.monotonic()
+        while not received.endswith(b"0\r\n\r\n"):
+            chunk = client.recv(65_536)
+            assert chunk, "the edge closed mid-stream"
+            received += chunk
+        elapsed = time.monotonic() - started
+    assert elapsed > 2 * _DEADLINE
+    assert received.startswith(b"HTTP/1.1 200 ")
+    assert all(f"row-{index}\n".encode() in received for index in range(8))

@@ -36,7 +36,9 @@ an apostrophe so it reads as text.
 A large file takes time in proportion to its size and arrives as it is made;
 the panel counts the changes received so far. A file that stops short, because
 the connection or the application ended, is never saved as a complete one: the
-panel says it was not downloaded. The page fetches the file rather than
+panel says it was not downloaded. A download nobody is reading, such as one in
+a suspended tab, is stopped after a minute, and the panel then says the file
+was not downloaded. The page fetches the file rather than
 linking to it, so an expired session or a tab on an earlier build is refused
 as any read is, and the response is a `private, no-store` attachment.
 

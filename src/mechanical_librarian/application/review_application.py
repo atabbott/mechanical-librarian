@@ -1437,8 +1437,9 @@ class ReviewApplication:
 
         A file can take minutes, so neither the permission reader nor the
         Activity history reader waits for it. It counts as an accepted read
-        until the stream is closed, so shutdown waits for its reader, and it
-        stops within a bounded step once the application is closing.
+        until its producer has ended its read, so shutdown waits for its
+        reader; the producer ends by itself once the application is closing
+        or nobody has read for a minute, whatever the response does.
         """
         with self._browse_lifetime:
             if self._browse_closed:

@@ -16,6 +16,7 @@ from mechanical_librarian.application import write_plan
 from mechanical_librarian.application.field_effects import GuardedApplicationError
 from mechanical_librarian.application.write_plan import (
     FILE_BYTES,
+    STALLED_CONSUMER_SECONDS,
     PlanFileEncoder,
     PlanFormat,
     PlanRow,
@@ -324,3 +325,89 @@ def test_a_fault_reaches_the_consumer_after_the_bytes_already_made() -> None:
             stream.next_chunk()
     finally:
         stream.close()
+
+
+class _Reader:
+    """A reader held for the length of one file, as the export reader is."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.inside = threading.Event()
+        self.left = threading.Event()
+
+    def endless(self, emit, cancelled) -> None:
+        with self.lock:
+            self.inside.set()
+            self.left.clear()
+            try:
+                emit(b"head\n")
+                while not cancelled():
+                    emit(b"row\n")
+            finally:
+                self.inside.clear()
+                self.left.set()
+
+
+def _resume(stream: ProducedStream) -> None:
+    """A consumer back after the producer gave up: the fault, never an end."""
+    with pytest.raises(GuardedApplicationError, match="^unavailable$"):
+        for _ in range(100):
+            assert stream.next_chunk() is not None
+
+
+def test_a_stalled_consumer_is_released_when_the_application_closes() -> None:
+    reader, closing, released = _Reader(), threading.Event(), threading.Event()
+    stream = ProducedStream(reader.endless, closing.is_set)
+    stream.when_closed(released.set)
+    assert stream.next_chunk() == b"head\n"
+    assert reader.inside.wait(5)
+
+    # The consumer stops reading; nothing closes the stream.
+    closing.set()
+
+    assert reader.left.wait(5)
+    assert released.wait(5)
+    _resume(stream)
+    stream.close()
+
+
+def test_a_consumer_nobody_reads_is_released_after_the_stall_bound() -> None:
+    reader, released = _Reader(), threading.Event()
+    stream = ProducedStream(reader.endless, lambda: False, stalled_seconds=0.3)
+    stream.when_closed(released.set)
+    assert stream.next_chunk() == b"head\n"
+
+    assert reader.left.wait(5)
+    assert released.wait(5)
+    _resume(stream)
+    # The reader is free: a second file on it proceeds and completes.
+    second = ProducedStream(lambda emit, _cancelled: emit(b"next\n"), lambda: False)
+    try:
+        assert reader.lock.acquire(timeout=1)
+        reader.lock.release()
+        assert second.next_chunk() == b"next\n"
+        assert second.next_chunk() is None
+    finally:
+        second.close()
+    assert STALLED_CONSUMER_SECONDS == 60.0
+
+
+def test_a_release_registered_after_the_producer_ended_runs_at_once() -> None:
+    stream = ProducedStream(lambda emit, _cancelled: emit(b"only\n"), lambda: False)
+    assert stream.next_chunk() == b"only\n"
+    assert stream.next_chunk() is None
+    released: list[str] = []
+    stream.when_closed(lambda: released.append("released"))
+    stream.close()
+    stream.close()
+    assert released == ["released"]
+
+
+def test_a_stopped_stream_never_ends_its_body_normally() -> None:
+    reader = _Reader()
+    stream = ProducedStream(reader.endless, lambda: False)
+    assert stream.next_chunk() == b"head\n"
+    stream.stop()
+    assert reader.left.wait(5)
+    _resume(stream)
+    stream.close()
