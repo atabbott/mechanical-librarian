@@ -83,7 +83,7 @@ const lineText = async () => {
 }
 
 describe('LibraryProgressLine', () => {
-  it('groups each number and links every nonzero one to its lens', async () => {
+  it('groups each number and links every nonzero count phrase to its lens', async () => {
     mount('/line', {
       line: {
         counts: counts({ all: 2026, clear: 1840, attention: 174, failed: 3, notMatched: 9 }),
@@ -96,12 +96,24 @@ describe('LibraryProgressLine', () => {
     )
     const links = within(line).getAllByRole('link')
     expect(links.map((link) => [link.textContent, link.getAttribute('href')])).toEqual([
-      ['1,840', '/library?lens=no_attention_needed'],
-      ['2,026', '/library?lens=all'],
-      ['174', '/library?lens=needs_attention'],
-      ['3', '/library?lens=preparation_failed'],
-      ['9', '/library?lens=not_matched'],
+      ['1,840 of 2,026 works settled', '/library?lens=no_attention_needed'],
+      ['174 need you', '/library?lens=needs_attention'],
+      ['3 could not finish', '/library?lens=preparation_failed'],
+      ['9 not matched', '/library?lens=not_matched'],
     ])
+  })
+
+  it('leaves the settled phrase plain when nothing is settled yet', async () => {
+    mount('/line', {
+      line: { counts: counts({ all: 4, attention: 4 }), linked: true },
+    })
+    const line = await lineText()
+    expect(line).toHaveTextContent(/^0 of 4 works settled · 4 need you$/u)
+    expect(
+      within(line)
+        .getAllByRole('link')
+        .map((link) => link.textContent),
+    ).toEqual(['4 need you'])
   })
 
   it('reads a single work in the singular and leaves a zero unlinked', async () => {
@@ -113,7 +125,7 @@ describe('LibraryProgressLine', () => {
       within(line)
         .getAllByRole('link')
         .map((link) => link.textContent),
-    ).toEqual(['1', '1'])
+    ).toEqual(['1 of 1 work settled'])
   })
 
   it('says "needs" for one work needing you', async () => {
@@ -180,7 +192,7 @@ describe('ActivityLibraryProgress', () => {
     expect(totals).toHaveTextContent(
       '1,840 of 2,026 works settled · 174 need you · 3 could not finish · 9 not matched',
     )
-    expect(within(totals).getAllByRole('link')).toHaveLength(5)
+    expect(within(totals).getAllByRole('link')).toHaveLength(4)
     // Each library's line, in the order the server gave, with no links.
     const [libraries, fields] = within(region).getAllByRole('list')
     if (libraries === undefined || fields === undefined) throw new Error('no lists')

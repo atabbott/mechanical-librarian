@@ -17171,11 +17171,10 @@ describe('Library progress in the finished run box', () => {
           .getAllByRole('link')
           .map((link) => [link.textContent, link.getAttribute('href')]),
       ).toEqual([
-        ['1,840', '/library?lens=no_attention_needed'],
-        ['2,026', '/library?lens=all'],
-        ['174', '/library?lens=needs_attention'],
-        ['3', '/library?lens=preparation_failed'],
-        ['9', '/library?lens=not_matched'],
+        ['1,840 of 2,026 works settled', '/library?lens=no_attention_needed'],
+        ['174 need you', '/library?lens=needs_attention'],
+        ['3 could not finish', '/library?lens=preparation_failed'],
+        ['9 not matched', '/library?lens=not_matched'],
         [
           'Open in Activity',
           '/activity?eventType=all&rangeDays=30&page=1&pageSize=25#activity-library-progress',
@@ -17186,7 +17185,7 @@ describe('Library progress in the finished run box', () => {
       expect(summary).toHaveAttribute('aria-current', 'true')
       expect(router.state.location.search).toMatchObject({ preparation: runId })
       // A lens link lands on its lens.
-      await user.click(within(line).getByRole('link', { name: '174' }))
+      await user.click(within(line).getByRole('link', { name: '174 need you' }))
       await waitFor(() =>
         expect(router.state.location.search).toMatchObject({ lens: 'needs_attention' }),
       )

@@ -5599,11 +5599,11 @@ def test_library_handoff_arrives_with_the_works() -> None:
             assert moved == 0, (where, moved)
 
 
-def test_library_progress_sits_above_the_ledger_and_beside_the_run_box() -> None:
-    """The Activity card follows the status box on a wide screen and comes
-    first above the Ledger on a phone, its lists folded so the Ledger's first
-    row stays on the first screen; a finished run's line sits beside its
-    button, never in it, and no width scrolls sideways (#1335)."""
+def test_library_progress_card_and_run_box_line_keep_their_places() -> None:
+    """The Activity card follows the status box above the Ledger on a wide
+    screen and, on a phone where the Ledger comes first, follows the Ledger
+    and the status box in full; a finished run's line sits in its box beside
+    its button, never in it, and no width scrolls sideways (#1335)."""
 
     def progress(page: Page, state: str) -> None:
         def fulfill(route: Route) -> None:
@@ -5651,42 +5651,27 @@ def test_library_progress_sits_above_the_ledger_and_beside_the_run_box() -> None
             page.goto(activity)
             card = page.get_by_role("region", name="Library progress")
             expect(card).to_contain_text("1,840 of 2,026 works settled")
-            folds = card.locator("details")
             ledger = page.locator(".cm-activity-ledger")
-            if width <= 760:
-                expect(folds).to_have_count(2)
-                expect(folds.locator("summary")).to_have_text(
-                    ["By library", "Fields that need you"]
-                )
-                for index in range(2):
-                    expect(folds.nth(index)).not_to_have_attribute("open", "")
-                first_row = ledger.locator("article").first
-                expect(first_row).to_be_visible()
-                row = first_row.bounding_box()
-                assert row is not None and row["y"] + 24 <= 844, (width, row)
-            else:
-                expect(folds).to_have_count(0)
-                expect(card.get_by_role("heading", name="By library")).to_be_visible()
+            # Both lists are shown in full at every width.
+            expect(card.locator("details")).to_have_count(0)
+            expect(card.get_by_role("heading", name="By library")).to_be_visible()
+            expect(
+                card.get_by_role("heading", name="Fields that need you")
+            ).to_be_visible()
+            expect(card.get_by_role("listitem")).to_have_count(6)
             mine = card.bounding_box()
             ledger_box = ledger.bounding_box()
             status = page.locator(".cm-activity-status").bounding_box()
             assert mine is not None and ledger_box is not None and status is not None
-            assert mine["y"] + mine["height"] <= ledger_box["y"] + 1, (width, mine)
+            assert mine["y"] >= status["y"] + status["height"] - 1, (width, mine)
             if width > 760:
-                assert mine["y"] >= status["y"] + status["height"] - 1, (width, mine)
+                assert mine["y"] + mine["height"] <= ledger_box["y"] + 1, (width, mine)
             else:
-                # The phone puts the Ledger before the status box; the card
-                # is directly above the Ledger.
-                assert status["y"] >= ledger_box["y"], (width, status, ledger_box)
-                # Each summary is a 44 px target that the keyboard opens.
-                for index in range(2):
-                    summary = folds.nth(index).locator("summary")
-                    box = summary.bounding_box()
-                    assert box is not None and box["height"] >= 44, (width, box)
-                    summary.focus()
-                    page.keyboard.press("Enter")
-                    expect(folds.nth(index)).to_have_attribute("open", "")
-                expect(card.get_by_role("listitem")).to_have_count(6)
+                # The phone puts the Ledger first; the card follows it.
+                assert mine["y"] >= ledger_box["y"] + ledger_box["height"] - 1, (
+                    width,
+                    mine,
+                )
             _fits_its_container(page, ".activity-library-progress", width)
             no_sideways_scroll(page, width)
             page.close()
@@ -5734,6 +5719,14 @@ def test_library_progress_sits_above_the_ledger_and_beside_the_run_box() -> None
             expect(
                 page.get_by_role("button", name=re.compile("^Preparation completed"))
             ).to_be_visible()
+            # Open in Activity sits on its own line, below the counts.
+            counts_box = line.locator(".library-progress-line").bounding_box()
+            onward = line.get_by_role("link", name="Open in Activity").bounding_box()
+            assert counts_box is not None and onward is not None
+            assert onward["y"] >= counts_box["y"] + counts_box["height"] - 1, (
+                width,
+                onward,
+            )
             _fits_its_container(page, ".preparation-summary-box", width)
             no_sideways_scroll(page, width)
             page.close()
