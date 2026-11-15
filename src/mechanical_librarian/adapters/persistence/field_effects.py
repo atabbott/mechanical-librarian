@@ -837,7 +837,10 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 return False
             active_document = row[0]
             raw = json.loads(active_document)
-            if raw.get("decision_id") != hold_token:
+            # A pin is released only by Unpin, so a pin recorded after the
+            # caller read the hold is refused here, in this write's own
+            # transaction (ADR-0085, Amendment 2).
+            if raw.get("decision_id") != hold_token or raw.get("pin") is not None:
                 transaction.rollback()
                 return False
             scan = self._connection.execute(

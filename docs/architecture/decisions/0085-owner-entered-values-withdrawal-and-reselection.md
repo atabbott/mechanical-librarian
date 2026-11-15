@@ -257,7 +257,7 @@ instruction that one field of one work is finished.
   pin decision as its token, as every answer does, and the hold document
   (`field-effect-manual-hold-v3`) gains a `pin` key: null, or the
   fingerprint of the pinned value and whether the pin is in force on this
-  case. The fingerprint hashes the destination, the value and its state,
+  case. A pin stands only on an active hold with no Resume asked of it. The fingerprint hashes the destination, the value and its state,
   with missing, null and empty read as one empty state, so a field pinned
   empty stays pinned however the library stores nothing. The pinned value is
   read from the pin decision's own case, so nothing larger than a digest is

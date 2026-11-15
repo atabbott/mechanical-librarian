@@ -563,6 +563,65 @@ def test_the_hold_document_refuses_a_malformed_pin(
     assert cause.args[0] == "invalid_manual_hold"
 
 
+# AC9: a pin stands only on an active hold with no Resume asked of it.
+@pytest.mark.parametrize("state", ["released", "returning"])
+def test_the_hold_document_refuses_a_pin_on_a_released_or_returning_hold(
+    genres: OwnerStore, state: str
+) -> None:
+    genres.decide("pin")
+    connection = genres.repository._connection
+    document = _hold_document(genres)
+    assert document is not None
+    if state == "released":
+        document["active"] = False
+    else:
+        document["pending_return"] = {"requested_at": 1, "scan_id": "scan-1"}
+    connection.execute("BEGIN")
+    try:
+        connection.execute(
+            "UPDATE field_effect_manual_holds SET active=?,document=? "
+            "WHERE review_case_id=? AND destination='title'",
+            (
+                int(document["active"] is True),
+                canonical_effect_json(document),
+                genres.case.review_case_id,
+            ),
+        )
+        with pytest.raises(MetadataReportError) as refused:
+            _validate_field_effect_state(connection)
+    finally:
+        connection.execute("ROLLBACK")
+    cause = refused.value.__cause__
+    assert isinstance(cause, FieldEffectError)
+    assert cause.args[0] == "invalid_manual_hold"
+    _validate_field_effect_state(connection)
+
+
+# AC9: a Resume that read the hold before a pin was recorded on it is refused
+# in its own write, so the pin is never released with the hold.
+def test_a_return_request_never_releases_a_pinned_hold(tmp_path: Path) -> None:
+    store, report, _ = _store(tmp_path, title="ask")
+    store.publish(report)
+    pin = store.decide("pin")
+    before = _hold_document(store)
+    scan = store.repository.request_review_scan(
+        report.target.connection,
+        report.target.library,
+        "library-ebooks",
+        "a" * 64,
+        store.clock(),
+    )
+    at = store.clock()
+    assert (
+        store.repository.request_field_effect_manual_return(
+            store.case.review_case_id, "title", pin.decision_id, scan.scan_id, at, at
+        )
+        is False
+    )
+    assert _hold_document(store) == before
+    store.close()
+
+
 # AC9 and AC16.
 def test_a_pinned_field_reads_pinned_and_offers_unpin(genres: OwnerStore) -> None:
     assert _field(genres, "title")["pin_control"] == {"pin": True, "unpin": False}

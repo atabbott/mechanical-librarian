@@ -890,21 +890,15 @@ def test_undecodable_carried_hold_rolls_back_and_releases_the_admission() -> Non
         ]
         # The successor carries the item's holds forward by decoding each
         # one; a hold document that is not JSON escapes the mapped errors.
-        # The hold's attention trigger reads the document's pin (#1346), so
-        # the corrupt row is written with it set aside and then restored.
+        # The attention refresh a hold's trigger queues reads the document's
+        # pin (#1346) only for a destination the case offers, so the corrupt
+        # row is written under one it does not, with every trigger in place.
         connection = repository._connection
-        trigger = "field_effect_manual_holds_refresh_attention_insert"
-        (statement,) = connection.execute(
-            "SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?",
-            (trigger,),
-        ).fetchone()
-        connection.execute(f"DROP TRIGGER {trigger}")
         connection.execute(
             "INSERT INTO field_effect_manual_holds(review_case_id,destination,"
             "active,updated_at,document) VALUES(?,?,1,1,?)",
-            (first_case, "title", "{not json"),
+            (first_case, "zz_absent", "{not json"),
         )
-        connection.execute(statement)
         connection.commit()
         successor = _report("Changed", "c", "d")
         repository.publish(successor, lambda: True)

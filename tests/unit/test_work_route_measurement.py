@@ -532,6 +532,29 @@ def test_unmatched_fill_and_owner_labels_count_work_route_offers(
         assert _counts(_provider(report, field, "hardcover"))[:4] == (0, 0, 0, {})
 
 
+@pytest.mark.parametrize("outcomes", [("pin",), ("pin", "unpin")], ids=["pin", "unpin"])
+def test_a_pin_or_unpin_labels_nothing(
+    tmp_path: Path, outcomes: tuple[str, ...]
+) -> None:
+    """A pin or unpin is a standing instruction, not a label on an offered
+    value: it is neither labelled nor counted as withdrawn."""
+    database = tmp_path / "application.sqlite3"
+    repository = open_repository(database)
+    pinned = _publish(repository, _unmatched("u1"))
+    for outcome in outcomes:
+        _decide(repository, pinned, outcome, outcome, destination="genres")
+    repository.close()
+
+    report = _measure(database)
+
+    assert _fields(report)["genres"]["labels"] == {
+        "labelled": 0,
+        "outside_work_route_fill": 0,
+        "withdrawn": 0,
+    }
+    assert _counts(_provider(report, "genres", "hardcover"))[:4] == (0, 0, 0, {})
+
+
 @pytest.mark.parametrize(
     "recording",
     [

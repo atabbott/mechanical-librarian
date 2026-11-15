@@ -1218,6 +1218,11 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
                     raw["pending_return"] is not None
                     and (not raw["active"] or not pending_return(raw["pending_return"]))
                 )
+                # A pin stands only on an active hold with no Resume asked.
+                or (
+                    raw["pin"] is not None
+                    and (not raw["active"] or raw["pending_return"] is not None)
+                )
                 or canonical_effect_json(raw) != document
             ):
                 raise FieldEffectError("invalid_manual_hold")

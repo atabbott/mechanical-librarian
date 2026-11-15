@@ -159,13 +159,22 @@ def test_deciding_every_listed_field_adds_that_many_labels(tmp_path: Path) -> No
     ]
 
 
-def test_a_withdrawn_decision_lists_the_field_again(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "outcomes",
+    [("accept", "withdraw"), ("pin",), ("pin", "unpin")],
+    ids=["withdraw", "pin", "unpin"],
+)
+def test_a_withdrawn_or_pinned_decision_lists_the_field_again(
+    tmp_path: Path, outcomes: tuple[str, ...]
+) -> None:
+    """A withdrawal labels nothing, and neither does a pin or an unpin: they
+    are standing instructions, not labels on an offered value."""
     database = tmp_path / "application.sqlite3"
 
     def build(repository: SQLiteMetadataReportRepository) -> dict[str, str]:
         case_id = _publish(repository, _unmatched("u1"))
-        _decide(repository, case_id, "accept", "accept", destination="genres")
-        _decide(repository, case_id, "withdraw", "withdraw", destination="genres")
+        for outcome in outcomes:
+            _decide(repository, case_id, outcome, outcome, destination="genres")
         return {"case": case_id}
 
     cases = _store(database, build)

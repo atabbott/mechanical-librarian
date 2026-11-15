@@ -11,8 +11,9 @@ audiobook with a review case and no admitted recording, the work route offers
 a value for it while it is strictly empty (the measurement's ``_qualifies``),
 and Hardcover or Open Library, through an exact work source naming one work,
 offers that value (``offered_fields``). A field whose latest qualifying owner
-decision (``latest_labels``) is anything but a withdrawal is left out and
-counted as already decided, which is the measurement's ``labels.labelled``.
+decision (``latest_labels``) is anything but a withdrawal, a pin or an unpin
+is left out and counted as already decided, which is the measurement's
+``labels.labelled``.
 Each link names the providers that offer the value. Links are listed in the
 measurement's item order, and every count is read inside one read
 transaction.
@@ -78,7 +79,11 @@ def read_offers(
         latest, _outside = measurement.latest_labels(connection)
     finally:
         connection.execute("ROLLBACK")
-    settled = {key for key, value in latest.items() if value[0] != "withdraw"}
+    settled = {
+        key
+        for key, value in latest.items()
+        if value[0] != "withdraw" and value[0] not in measurement.STANDING_OUTCOMES
+    }
     decided = Counter(cast("str", key[3]) for key in settled)
     offers: dict[str, list[Offer]] = {
         name: [] for name in measurement.OWNER_LABELLED_FIELDS
