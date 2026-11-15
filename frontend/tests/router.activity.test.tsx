@@ -2924,6 +2924,43 @@ describe('Activity route', () => {
     else expect(pager).toBeNull()
   })
 
+  it('hands focus to the page size when a refetch leaves one page and the pager goes', async () => {
+    let pageCount = 2
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn((search: ActivitySearch) =>
+        Promise.resolve(
+          activity({
+            ledger: {
+              event_type: search.eventType,
+              page: 1,
+              page_count: pageCount,
+              page_size: search.pageSize,
+              query: search.q ?? null,
+              range_days: search.rangeDays,
+              total: pageCount,
+            },
+          }),
+        ),
+      ),
+    }
+    const { queryClient } = renderRoute('/activity', http)
+    const pager = await screen.findByRole('navigation', { name: 'Activity pages' })
+    const next = within(pager).getByRole('button', { name: 'Next' })
+    next.focus()
+    expect(next).toHaveFocus()
+
+    pageCount = 1
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ['activity'] })
+    })
+    await waitFor(() =>
+      expect(screen.queryByRole('navigation', { name: 'Activity pages' })).toBeNull(),
+    )
+    // Focus stays beside where it was, never on the document.
+    expect(screen.getByRole('combobox', { name: 'Events per activity page' })).toHaveFocus()
+  })
+
   it('preserves the next query debounce when the prior response is acknowledged', async () => {
     let resolveFirst!: (value: ActivityView) => void
     const view = (search: ActivitySearch) =>
