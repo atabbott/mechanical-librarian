@@ -34,8 +34,9 @@ It never receives owner decisions, target-only text, titles, identifiers,
 paths or credentials. The reply is one bounded description and `ready` or
 `needs_review`, stored as authored content. The owner can select a stored
 result by reference. Automatic application is off by default; when the owner
-turns it on, only a current `ready` result that passes the description floor
-can be admitted, through the normal policy and write rules
+turns it on, only a current `ready` result that passes the description floor,
+on a field that offers the owner a choice, can be admitted, through the normal
+policy and write rules
 ([configuration](../reference/configuration.md#description-advice)).
 
 **Taste profile.** A vision model, Codex or OpenRouter, writes the owner's
