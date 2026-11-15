@@ -301,6 +301,28 @@ request. For urgent containment, a repository administrator may suspend or
 uninstall the App and record that action. Close unwanted Renovate pull requests
 unmerged; revert a merged one as a defect.
 
+## Automated scanning
+
+`dependency-audit`, a required public-gate job, scans `uv.lock` with a
+digest-pinned OSV-Scanner on every pull request and push to `main`, failing
+on any known advisory in runtime or development dependencies;
+`.github/workflows/public-gate.yml` has the command, and
+`.github/workflows/scheduled-audit.yml` reruns it weekly on `main`. Frontend checks are in
+[what merging proves](../../CONTRIBUTING.md#what-merging-proves).
+
+The only way to hold a failure open is an `osv-scanner.toml` entry naming one
+advisory, a reason and an expiry at most 90 days out; there is no severity
+floor or package exclusion.
+`tests/unit/test_security_scanning_contract.py` enforces the register and
+checks that every workflow has `contents: read`, pins actions to commits and
+sets `persist-credentials: false`.
+
+CodeQL's default setup analyses Python, TypeScript and workflows on every
+pull request and push.
+
+Not covered: triage and fixes, pull-request dependency review, extra secret
+scanning, SBOMs and container image scanning.
+
 ## Automation security review
 
 Renovate reads manifests, lockfiles, Dockerfiles, workflows, release metadata
