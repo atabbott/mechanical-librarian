@@ -6,6 +6,10 @@ Each ADR records one durable decision and why it was made. Status is
 [the template](template.md). Never rewrite an accepted ADR to match a later
 preference; supersede or amend it.
 
+Only the owner accepts an ADR. The pull request that implements a decision
+leaves it `proposed`; the owner's acceptance is recorded afterwards, with a
+status line that says who accepted it and when.
+
 | ADR | Status | Decision |
 | --- | --- | --- |
 | [0001](0001-single-container.md) | accepted | Ship one self-contained container |
@@ -97,11 +101,11 @@ preference; supersede or amend it.
 | [0088](0088-carried-recording-admission.md) | accepted | Carry an admitted audiobook edition into the next preparation |
 | [0089](0089-unmatched-audiobook-research.md) | accepted | Search an unmatched audiobook again |
 | [0090](0090-hardcover-audio-edition-witness.md) | accepted | Hardcover audio editions witness which recording an audiobook is |
-| [0091](0091-decode-browser-responses-and-report-uncertain-writes.md) | proposed | Decode every browser response and report uncertain writes truthfully |
-| [0092](0092-keep-the-automatic-decision-abstention-gate.md) | proposed | Keep the automatic-decision abstention gate and define the would-admit note |
+| [0091](0091-decode-browser-responses-and-report-uncertain-writes.md) | accepted | Decode every browser response and report uncertain writes truthfully |
+| [0092](0092-keep-the-automatic-decision-abstention-gate.md) | accepted | Keep the automatic-decision abstention gate and define the would-admit note |
 | [0093](0093-measured-cover-rules-and-current-cover-protection.md) | accepted | Choose covers by measured rules, protect fault-free current covers, and keep replaced covers for revert |
 | [0094](0094-unconfirmed-current-covers-take-part.md) | accepted | Let an unconfirmed current cover take part in cover election |
 | [0095](0095-learned-cover-taste-profile.md) | proposed | Learn the owner's cover taste as a readable profile and let a closed judge verdict choose covers |
 | [0096](0096-owner-chosen-work-identity-strictness.md) | proposed | Let the owner choose how strictly title and creator agreement establishes work identity |
-| [0097](0097-keep-the-bibliographic-combination-gate.md) | proposed | Keep the bibliographic combination gate and extend the would-admit note to rich-preview fields |
+| [0097](0097-keep-the-bibliographic-combination-gate.md) | accepted | Keep the bibliographic combination gate and extend the would-admit note to rich-preview fields |
 | [0098](0098-revised-cover-observation-vocabulary.md) | proposed | Revise the cover observation vocabulary and keep observations advisory |
