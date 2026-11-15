@@ -1,4 +1,4 @@
-import { invalidateForegroundQueries } from './queryWork'
+import { invalidateBackgroundQueries, invalidateForegroundQueries } from './queryWork'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 
@@ -52,6 +52,10 @@ export function useCoverChoiceData(reviewCaseId: string, record: RecordCoverPrep
       },
       onSuccess: async (_data, _action, recordVisit) => {
         recordVisit(null)
+        // A prepared comparison can change what the work asks, so Library,
+        // Attention and Covers count again, as after a decision (#1866).
+        for (const queryKey of [['library'], ['attention'], ['covers']])
+          void invalidateBackgroundQueries(queryClient, { queryKey })
         await invalidateForegroundQueries(queryClient, { queryKey: ['review-case', reviewCaseId] })
       },
       onError: (error, action, recordVisit) => {

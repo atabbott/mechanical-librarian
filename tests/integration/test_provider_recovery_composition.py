@@ -19,6 +19,7 @@ from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
 
 from mechanical_librarian.adapters.persistence.metadata_reports import (
+    SQLiteMetadataReportRepository,
     _provider_recovery_outbox_id,
     open_repository,
 )
@@ -119,6 +120,9 @@ class _ReviewerAccess:
         return None
 
     def current_description_rewrite_identity(self):
+        return None
+
+    def current_taste_build_model(self):
         return None
 
     def revision_is_current(self, _revision: int) -> bool:
@@ -303,6 +307,48 @@ def test_recovery_drain_reports_an_adapter_failure_as_a_closed_pipeline_code() -
             with pytest.raises(ReviewPipelineError, match="persistence"):
                 supervisor.recover_provider_once()
         supervisor.stop()
+
+
+def test_stopping_the_supervisor_closes_the_taste_lane_repository() -> None:
+    """#1372: each generation's taste lane opens one repository on its first
+    wake; stopping that generation's supervisor closes it."""
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        database = root / "reports.sqlite"
+        recovery = SQLiteProviderRecoveryStore.open(root / "recovery.sqlite")
+        open_repository(database).close()
+        configuration = _recovery_configuration()
+        composition.CoverArtifactStore(root / "artifacts", create=True)
+        opened: list[SQLiteMetadataReportRepository] = []
+        real_open = composition.open_repository
+
+        def recording(
+            *args: object, **kwargs: object
+        ) -> SQLiteMetadataReportRepository:
+            repository = real_open(*args, **kwargs)  # type: ignore[arg-type]  # reason: forwards the composition's own call
+            opened.append(repository)
+            return repository
+
+        with patch.object(composition, "open_repository", side_effect=recording):
+            supervisor = composition.create_review_pipeline(
+                configuration,
+                database,
+                root / "catalogue.sqlite",
+                root / "artifacts",
+                _reviewer_access(database, configuration),
+                provider_recovery=recovery,
+            )
+            before = len(opened)
+            wake = supervisor._background_wake
+            assert wake is not None
+            wake(7_200, lambda: None)
+            wake(7_201, lambda: None)
+            taste = opened[before:]
+            assert len(taste) == 1
+            taste[0]._connection.execute("SELECT 1")
+            supervisor.stop()
+        with pytest.raises(sqlite3.ProgrammingError):
+            taste[0]._connection.execute("SELECT 1")
 
 
 def test_generation_rollback_rejects_before_cutover_delivery() -> None:

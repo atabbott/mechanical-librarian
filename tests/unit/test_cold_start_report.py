@@ -11,6 +11,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import sqlite3
 import tempfile
 from collections import Counter
@@ -24,6 +25,7 @@ import scripts.cold_start_report as cold_start
 import scripts.persistence_census as persistence_census
 
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
+from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
     open_repository,
@@ -46,7 +48,11 @@ from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     TargetFacts,
 )
+from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
 from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.infrastructure.settings_authority import (
+    REVIEW_BOOTSTRAP_SCHEMA,
+)
 from tests.support.review_cases import _report as _plain_report
 from tests.unit.test_bibliographic_bundles import (
     _bibliographic_report,
@@ -54,6 +60,7 @@ from tests.unit.test_bibliographic_bundles import (
 from tests.unit.test_bibliographic_bundles import (
     _source as _bibliographic_source,
 )
+from tests.unit.test_owner_settings_store import _seed_full_store
 from tests.unit.test_shadow_outcome_persistence import _qualified_cover_report
 
 
@@ -918,8 +925,289 @@ def test_mount_census_is_unavailable_when_a_directory_cannot_be_read(
     assert cold_start._count_mount_files(tmp_path) is None
 
 
+_STORE_SECRETS = (
+    "target-secret-1234",
+    "provider-secret-1234",
+    "$argon2id$synthetic",
+    "owner@example.invalid",
+    "https://library.example.invalid",
+)
+
+
+def _write_bootstrap(path: Path, mounts: list[dict[str, object]] | None = None) -> Path:
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": REVIEW_BOOTSTRAP_SCHEMA,
+                "canonical_origin": "http://localhost:8080",
+                "mounts": (
+                    [
+                        {
+                            "name": "books",
+                            "container_path": "/media/books",
+                            "service_path": "/library/books",
+                            "read_only": True,
+                        }
+                    ]
+                    if mounts is None
+                    else mounts
+                ),
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def _seed_store_with_one_work(database: Path) -> None:
+    repository, _ = _seed_full_store(database)
+    store = cast(SQLiteMetadataReportRepository, repository)
+    work = _plain_report("Runner work", "5", "6", actionable=False)
+    store.publish(work, lambda: True)
+    proposal = evaluate_report(work)
+    store.publish_proposal(proposal)
+    store.admit_review_case(proposal)
+    store.close()
+
+
+def test_main_reads_saved_settings_and_bootstrap_mounts(tmp_path: Path) -> None:
+    database = tmp_path / "application.sqlite3"
+    _seed_store_with_one_work(database)
+    before = database.read_bytes()
+    bootstrap = _write_bootstrap(tmp_path / "review-bootstrap.json")
+    bootstrap_before = bootstrap.read_bytes()
+    from mechanical_librarian.adapters.persistence.provider_recovery import (
+        SQLiteProviderRecoveryStore,
+    )
+
+    recovery = tmp_path / "provider-recovery.sqlite"
+    SQLiteProviderRecoveryStore.open(recovery).close()
+    recovery_before = recovery.read_bytes()
+    mount_root = tmp_path / "books"
+    mount_root.mkdir()
+    (mount_root / "one.epub").write_bytes(b"a")
+    (mount_root / "two.EPUB").write_bytes(b"b")
+    (mount_root / "notes.txt").write_bytes(b"c")
+    entries_before = sorted(path.name for path in tmp_path.iterdir())
+
+    output = io.StringIO()
+    code = cold_start.main(
+        [
+            "--bootstrap",
+            str(bootstrap),
+            "--database",
+            str(database),
+            "--catalogue",
+            str(tmp_path / "missing-catalogue"),
+            "--mount-root",
+            f"books={mount_root}",
+            "--recovery-database",
+            str(recovery),
+        ],
+        stdout=output,
+    )
+
+    assert code == 0
+    assert before == database.read_bytes()
+    assert bootstrap_before == bootstrap.read_bytes()
+    assert recovery_before == recovery.read_bytes()
+    assert entries_before == sorted(path.name for path in tmp_path.iterdir())
+    report = json.loads(output.getvalue())
+    assert report["schema_version"] == cold_start.COLD_START_REPORT_SCHEMA
+    assert report["totals"]["works"] == 1
+    (library,) = report["libraries"]
+    assert (library["connection"], library["library"]) == ("primary", "ebooks")
+    assert library["scan_fidelity"]["mount_files_by_extension"] == {
+        "epub": 2,
+        "txt": 1,
+    }
+    assert sorted(provider["provider"] for provider in library["providers"]) == [
+        "books",
+        "open",
+    ]
+    text = output.getvalue()
+    assert "Runner work" not in text
+    for secret in _STORE_SECRETS:
+        assert secret not in text
+
+
+def test_store_configuration_is_the_runtime_projection(tmp_path: Path) -> None:
+    database = tmp_path / "application.sqlite3"
+    repository, _ = _seed_full_store(database)
+    cast(SQLiteMetadataReportRepository, repository).close()
+    before = database.read_bytes()
+    bootstrap = cold_start._review_bootstrap(
+        _write_bootstrap(tmp_path / "review-bootstrap.json")
+    )
+    connection = cold_start._open_read_only(database)
+    try:
+        configuration = cold_start._store_configuration(connection, bootstrap)
+        assert not connection.in_transaction
+    finally:
+        connection.close()
+
+    assert before == database.read_bytes()
+    assert sorted(path.name for path in tmp_path.iterdir()) == [
+        "application.sqlite3",
+        "review-bootstrap.json",
+    ]
+    (library,) = configuration.libraries
+    assert (
+        library.connection,
+        library.name,
+        library.mount,
+        library.provider_connections,
+    ) == ("primary", "ebooks", "books", ("books", "open"))
+    assert [mount.name for mount in configuration.mounts] == ["books"]
+    assert all(item.secret_file is None for item in configuration.connections)
+    assert all(item.secret_file is None for item in configuration.providers)
+    assert configuration.review is not None
+    assert configuration.review.canonical_origin == "http://localhost:8080"
+
+
+def test_store_configuration_accepts_a_library_without_a_mount(
+    tmp_path: Path,
+) -> None:
+    """A saved library may name no mount; the runtime accepts it, so must the report."""
+    database = tmp_path / "application.sqlite3"
+    repository, _ = _seed_full_store(database)
+    connection = cast(SQLiteMetadataReportRepository, repository)._connection
+    (encoded,) = connection.execute("SELECT document FROM owner_settings").fetchone()
+    document = json.loads(encoded)
+    document["libraries"][0]["mount"] = None
+    connection.execute(
+        "UPDATE owner_settings SET document=?",
+        (_canonical_json(OwnerSettingsDocument.model_validate(document).model_dump()),),
+    )
+    connection.commit()
+    cast(SQLiteMetadataReportRepository, repository).close()
+    bootstrap = cold_start._review_bootstrap(
+        _write_bootstrap(tmp_path / "review-bootstrap.json", mounts=[])
+    )
+    read_only = cold_start._open_read_only(database)
+    try:
+        configuration = cold_start._store_configuration(read_only, bootstrap)
+    finally:
+        read_only.close()
+
+    (library,) = configuration.libraries
+    assert library.mount is None
+    assert configuration.mounts == ()
+
+
+def _refusal_arguments(case: str, root: Path) -> list[str]:
+    database = root / "application.sqlite3"
+    catalogue = ["--catalogue", str(root / "catalogue.sqlite3")]
+    if case in {"C8", "C9", "C10"}:
+        if case == "C8":
+            open_repository(database).close()
+        else:
+            repository, _ = _seed_full_store(database)
+            cast(SQLiteMetadataReportRepository, repository).close()
+        mounts = {
+            "C8": None,
+            "C9": [],
+            "C10": [
+                {
+                    "name": "books",
+                    "container_path": "media/books",
+                    "service_path": "/library/books",
+                    "read_only": True,
+                }
+            ],
+        }[case]
+        bootstrap = _write_bootstrap(root / "review-bootstrap.json", mounts)
+        return ["--bootstrap", str(bootstrap), "--database", str(database), *catalogue]
+    if case != "C3":
+        database.write_bytes(b"")
+    config = root / "config.json"
+    bootstrap_path = root / "review-bootstrap.json"
+    if case in {"C5", "C7"}:
+        config.write_text("{", encoding="utf-8")
+        bootstrap_path.write_text("{", encoding="utf-8")
+    settings = {
+        "C1": ["--config", str(config), "--bootstrap", str(bootstrap_path)],
+        "C2": [],
+        "C3": ["--config", str(config)],
+        "C4": ["--config", str(config)],
+        "C5": ["--config", str(config)],
+        "C6": ["--bootstrap", str(bootstrap_path)],
+        "C7": ["--bootstrap", str(bootstrap_path)],
+    }[case]
+    return [*settings, "--database", str(database), *catalogue]
+
+
+@pytest.mark.parametrize(
+    ("case", "message"),
+    (
+        (
+            "C1",
+            "Give --config or --bootstrap, not both. An install with config.json "
+            "reads its settings from that file alone.",
+        ),
+        (
+            "C2",
+            "Give --config a copy of config.json or, if settings are saved in "
+            "the app, --bootstrap a copy of review-bootstrap.json.",
+        ),
+        (
+            "C3",
+            "No file at the --database path. Give it a copy of application.sqlite3.",
+        ),
+        ("C4", "No file at the --config path. Give it a copy of config.json."),
+        (
+            "C5",
+            "This checkout cannot read the --config file. Give it a copy of the "
+            "config.json this install starts with.",
+        ),
+        (
+            "C6",
+            "No file at the --bootstrap path. Give it a copy of review-bootstrap.json.",
+        ),
+        (
+            "C7",
+            "This checkout cannot read the --bootstrap file. Give it a copy of "
+            "the review-bootstrap.json this install starts with.",
+        ),
+        (
+            "C8",
+            "The --database copy holds no saved settings. Finish setup in the "
+            "app first, or give --config if the install uses config.json.",
+        ),
+        (
+            "C9",
+            "A library uses a media mount that the --bootstrap file does not "
+            "list. Give it the review-bootstrap.json this install starts with.",
+        ),
+        (
+            "C10",
+            "This checkout cannot combine the settings saved in the --database "
+            "copy with the --bootstrap file. Copy both from an install built from "
+            "this checkout.",
+        ),
+    ),
+)
+def test_main_refuses_settings_it_cannot_use(
+    tmp_path: Path, case: str, message: str
+) -> None:
+    arguments = _refusal_arguments(case, tmp_path)
+    database = tmp_path / "application.sqlite3"
+    before = database.read_bytes() if database.exists() else None
+    output = io.StringIO()
+
+    with pytest.raises(SystemExit, match=f"^{re.escape(message)}$") as raised:
+        cold_start.main(arguments, stdout=output)
+
+    assert raised.value.code == message
+    assert output.getvalue() == ""
+    assert (database.read_bytes() if database.exists() else None) == before
+    text = str(raised.value.code)
+    for secret in _STORE_SECRETS:
+        assert secret not in text
+
+
 def test_main_rejects_a_malformed_mount_root() -> None:
-    with pytest.raises(SystemExit):
+    with pytest.raises(SystemExit, match="invalid --mount-root"):
         cold_start.main(
             [
                 "--config",

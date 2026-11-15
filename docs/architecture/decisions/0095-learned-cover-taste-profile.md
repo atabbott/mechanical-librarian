@@ -321,3 +321,23 @@ They cost more at this size and scored 3.6 points lower than a full rebuild.
 - The owner-run qualification held by #1418 before Automatic can decide.
 - Live switch precision per medium, from confirmations and reviewed automatic
   decisions, is shown to the owner.
+
+## Note (builder, #1372 PR 1)
+
+The status stays proposed. The first slice writes and shows the profile and
+nothing reads it. Three decisions made while building it amend the text above:
+
+- **Transport (R1).** The builder receives each normalised 320×480 preview as
+  a deterministic JPEG at quality 90, flattened on white, derived inside the
+  sealed packet and re-derived and compared byte for byte before sending. A
+  build request is at most 24 MB and 100 images. The judge keeps PNG, as the
+  cover observer does.
+- **OpenRouter only (R3).** In 0.31.0 both taste tasks run on OpenRouter, so
+  the builder is one new OpenRouter task mapping, not one per transport. The
+  contained Codex reviewer may serve them later.
+- **Closed facts (S5).** Per image: the original's decoded width and height,
+  shape `fits` or `wrong_shape` against the medium, an opaque same-art group
+  letter, role `chosen` or `passed_over` and the current marker; per decision,
+  its medium, `ebook` or `audiobook`. The medium is the one closed value this
+  adds to what a model may receive
+  ([AI trust boundary](../ai-boundary.md#taste-profile-builder)).

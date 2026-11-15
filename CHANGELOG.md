@@ -78,6 +78,9 @@ brackets are GitHub issues.
   minute (#1516).
 - Settings → Reviewer counts its example costs and cover requests in works, as
   setup does (#1852).
+- Setup and Settings round the cover cost the same way and count in works
+  (#1863).
+- The preparation detail fits a 320 px window at 200% text (#1864).
 
 ## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
 
@@ -85,6 +88,11 @@ brackets are GitHub issues.
   author", a source record that lists only some of the book's authors, or all
   of them and others, now counts as the same book. One that leaves out one of
   the book's authors and names another still does not (#1355).
+- **Clean rebuild required.** Covers has a Taste profile tab. Once you have
+  chosen 25 covers, an OpenRouter vision model you pick in Settings → Reviewer
+  writes rules about the covers you choose and pass over. The profile is shown
+  read-only and changes nothing yet. `review.cover_taste_build_daily_requests`
+  (default 8) caps its requests a day (#1372).
 - **Clean rebuild required.** Choosing, putting back or automatically
   switching a cover over one Audiobookshelf already holds no longer fails
   before it writes. The write binds the current cover's exact bytes, even when
@@ -94,6 +102,10 @@ brackets are GitHub issues.
   confirmed, or has no readable image, is suggested for replacement when it
   has a fault. One whose source names another book is held for you, and one
   Audiobookshelf did not return is kept until the next scan (#1362).
+- Keeping a current cover Mechanical Librarian could not read is recorded, and
+  like any kept cover it is never switched automatically (#1865).
+- Covers lists a cover you chose but not yet written under All as Your choice,
+  and its wording, thumbnails and counts match the book page (#1866).
 - **Clean rebuild required.** A book Hardcover finds now offers its editions'
   covers in review. Only editions in the library's languages, with at least
   300 px on the short side, are fetched, so a library with no languages gets
@@ -354,6 +366,11 @@ brackets are GitHub issues.
   often Hardcover's and Open Library's exact book matches agree with admitted
   recordings and owner decisions, the evidence for letting the work route fill
   empty fields without asking (#1642).
+- Tooling: the cold-start report also reads an install whose settings are
+  saved in the app, given a copy of its `review-bootstrap.json`, and a new
+  read-only workbench script runs the cold-start report, the work-route
+  measurement and the Hardcover series sample over one folder of copies,
+  saving each result in a new owner-only folder (#1875).
 - **Clean rebuild required.** An audiobook asks AudioSilo only when neither
   Audible nor Audnexus has already matched its recording by running time;
   otherwise Sources shows AudioSilo as **Not needed**. Open Library gets one

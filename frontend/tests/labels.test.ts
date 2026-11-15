@@ -48,6 +48,7 @@ import {
   transitionLabels,
   writeHoldReasons,
   writeStateLabels,
+  coverReasonLine,
 } from '../src/labels'
 
 // Each closed code family beside the map that names it for the owner.
@@ -227,5 +228,20 @@ describe('optional choice conditions (#1557)', () => {
       /yourself|needs you/u.test(materialReasonLabel(code) ?? ''),
     )
     expect([...choiceRequestReasons].sort()).toEqual([...asking].sort())
+  })
+})
+
+describe('cover reason lines (#1866)', () => {
+  const base = { audiobook: false, before: null, after: null, language: null }
+  it.each([
+    [true, 'Audiobookshelf had no image for the cover.'],
+    [false, 'Mechanical Librarian could not read the previous cover.'],
+  ])('says why an unreadable cover was switched when filled is %j', (filled, line) => {
+    expect(coverReasonLine('unreadable', { ...base, filled })).toBe(line)
+  })
+  it('leaves a fill out of every other reason', () => {
+    expect(coverReasonLine('edition_preference', { ...base, filled: true })).toBe(
+      "A cover from this book's edition.",
+    )
   })
 })

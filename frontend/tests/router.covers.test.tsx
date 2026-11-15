@@ -3,13 +3,14 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiError, UncertainMutationError } from '../src/api/http'
-import { coalesceMilliseconds } from '../src/liveInvalidation'
+import { coalesceMilliseconds, ownerIdleMilliseconds } from '../src/liveInvalidation'
 import type {
   CaseDetailView,
   CoverTab,
   CoversView,
   CoverWorkView,
   ReviewHttp,
+  TasteProfileView,
 } from '../src/api/http'
 import {
   createHttp,
@@ -196,7 +197,7 @@ const library0 = {
 }
 const decide = page('decide', [work('case-1', 'proposal'), work('case-2', 'choice')])
 const chooseOther = async (user: ReturnType<typeof userEvent.setup>) => {
-  const group = await screen.findByRole('radiogroup', { name: 'Which cover should this book use?' })
+  const group = await screen.findByRole('radiogroup', { name: 'Which cover should this work use?' })
   await user.click(within(group).getByRole('radio', { name: /Open Library cover/u }))
 }
 // A wide screen, where an open book sits beside the list.
@@ -294,7 +295,7 @@ describe('Covers view (#1633)', () => {
     })
     renderRoute('/library?lens=all&view=covers&tab=decide&cover=case-1', http)
     const group = await screen.findByRole('radiogroup', {
-      name: 'Which cover should this book use?',
+      name: 'Which cover should this work use?',
     })
     const card = within(group).getByRole('radio', { name: /Hardcover cover/u })
     expect(card.querySelector('strong')).toHaveTextContent(/^Contradicts this book$/u)
@@ -382,7 +383,7 @@ describe('Covers view (#1633)', () => {
     await chooseOther(user)
     expect(
       await screen.findByText(
-        "This book's covers changed since the page loaded. Nothing was changed.",
+        "This work's covers changed since the page loaded. Nothing was changed.",
       ),
     ).toBeVisible()
     await waitFor(() => expect(screen.getByRole('button', { name: 'Reload' })).toHaveFocus())
@@ -423,9 +424,146 @@ describe('Covers view (#1633)', () => {
     await chooseOther(user)
     expect(
       await screen.findByText(
-        'No answer came back. Check whether the cover was changed before choosing again.',
+        'No answer came back. Check whether your choice was recorded before choosing again.',
       ),
     ).toBeVisible()
+  })
+
+  it('says a refused choice was not recorded (#1866)', async () => {
+    const user = userEvent.setup()
+    const http = coversHttp({ decide })
+    http.recordDecision.mockRejectedValueOnce(new ApiError(422, 'invalid_choice'))
+    renderRoute('/library?lens=all&view=covers&cover=case-1', http)
+    await chooseOther(user)
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      /^Your choice was not recorded\. Choose again\.$/u,
+    )
+    expect(screen.queryByText(/No answer came back/u)).toBeNull()
+  })
+
+  // Covers keeps an unread current cover as the book page does (#1865).
+  it.each([
+    ['a transient read', []],
+    ['a missing image', [{ reason: 'source_absent' }]],
+    ['refused bytes', [{ reason: 'source_decode_failed', original_digest: 'd'.repeat(64) }]],
+  ])('keeps an unread current cover after %s', async (_case, omissions) => {
+    const user = userEvent.setup()
+    const unread = (id: string): CaseDetailView => {
+      const value = coverDetail(id, titles[id] ?? id)
+      return {
+        ...value,
+        fields: value.fields.map((field) =>
+          field.coverConsideration
+            ? {
+                ...field,
+                coverConsideration: {
+                  ...field.coverConsideration,
+                  candidates: [candidate('2', false)],
+                  incumbent: { reference: null, state: 'unavailable' as const },
+                  omissions,
+                },
+              }
+            : field,
+        ),
+      }
+    }
+    let recorded: CaseDetailView | null = null
+    const http = coversHttp({ all: page('all', [work('case-1', 'choice')]) })
+    http.getCaseDetail.mockImplementation(async (id) => recorded ?? unread(id))
+    http.recordDecision.mockImplementation(async (caseId, command) => {
+      const acknowledgement = recordedAcknowledgement(unread(caseId), {
+        actor: 'owner',
+        application: 'apply' as const,
+        application_reason: null,
+        decision_id: 'decision-1',
+        destination: command.destination,
+        invalidation_sequences: [],
+        schema_version: 'review-decision-v1',
+        occurred_at: 1,
+        outcome: command.outcome,
+        proposal_id: command.proposalId,
+        review_case_id: caseId,
+        selected_value: command.selectedValue ?? null,
+        target_fingerprint: command.targetFingerprint,
+      })
+      if (acknowledgement.confirmation.status === 'confirmed')
+        recorded = acknowledgement.confirmation.case
+      return acknowledgement
+    })
+    renderRoute('/library?lens=all&view=covers&tab=all&cover=case-1', http)
+    await user.click(await screen.findByRole('radio', { name: 'Keep current cover' }))
+    await waitFor(() => expect(http.recordDecision).toHaveBeenCalledOnce())
+    expect(http.recordDecision.mock.calls[0]?.[1]).toMatchObject({
+      destination: 'cover',
+      outcome: 'keep_current',
+      selectedValue: null,
+    })
+    expect(await screen.findByText('Kept First Book.')).toBeVisible()
+    cleanup()
+    renderRoute('/library?lens=all&view=covers&tab=all&cover=case-1', http)
+    const kept = await screen.findByRole('radio', { name: 'Keep current cover' })
+    expect(kept).toHaveTextContent('Your choice')
+    expect(kept).toHaveAttribute('aria-checked', 'true')
+  })
+
+  it('names a Before or Now frame with no preview for what is missing (#1866)', async () => {
+    const at = Math.floor(Date.now() / 1000) - 7200
+    const switchedRow = (id: string, extra: Partial<CoverWorkView>) =>
+      work(id, 'auto', {
+        switched: {
+          at,
+          before: null,
+          filled: false,
+          put_back: null,
+          put_back_offered: false,
+          language: null,
+          reason: null,
+        },
+        ...extra,
+      })
+    const switched = page('switched', [
+      switchedRow('case-1', { cover: null, unreadable_cover: true }),
+      switchedRow('case-2', { cover: null }),
+    ])
+    renderRoute('/library?lens=all&view=covers&tab=switched', coversHttp({ switched }))
+    const [unreadable, empty] = await screen.findAllByRole('listitem')
+    if (!unreadable || !empty) throw new Error('two switched rows are required')
+    expect(
+      within(unreadable).getByRole('img', { name: 'Previous cover unavailable' }),
+    ).toBeVisible()
+    expect(within(unreadable).getByRole('img', { name: 'Current cover unavailable' })).toBeVisible()
+    expect(within(unreadable).queryByRole('img', { name: 'Cover now' })).toBeNull()
+    expect(within(empty).getByRole('img', { name: 'No cover' })).toHaveTextContent('No cover')
+  })
+
+  it('names the current card of a switched comparison as changed automatically (#1866)', async () => {
+    const user = userEvent.setup()
+    const at = Math.floor(Date.now() / 1000) - 7200
+    const switched = page('switched', [
+      work('case-1', 'auto', {
+        switched: {
+          at,
+          before: preview('b', 500, 500),
+          filled: false,
+          put_back: null,
+          put_back_offered: false,
+          language: null,
+          reason: null,
+        },
+      }),
+    ])
+    renderRoute('/library?lens=all&view=covers&tab=switched', coversHttp({ switched }))
+    const [row] = await screen.findAllByRole('listitem')
+    if (!row) throw new Error('a switched row is required')
+    await user.click(within(row).getByRole('button', { name: 'Others' }))
+    const group = await screen.findByRole('radiogroup', {
+      name: 'Which cover should this work use?',
+    })
+    // The name says what the visible label says, as the book page's does.
+    expect(
+      within(group).getByRole('radio', { name: 'Keep current cover · changed automatically' }),
+    ).toHaveTextContent('Current cover · changed automatically')
+    expect(within(group).queryByRole('radio', { name: 'Keep current cover' })).toBeNull()
   })
 
   it('lists automatic switches with Before and Now, and Keep lands on Change', async () => {
@@ -519,6 +657,9 @@ describe('Covers view (#1633)', () => {
     if (!row) throw new Error('a switched row is required')
     expect(within(row).getByText('Image unavailable')).toBeVisible()
     expect(within(row).queryByText('No cover')).toBeNull()
+    // The frame is named for what is missing, not as the picture (#1866).
+    expect(within(row).getByRole('img', { name: 'Previous cover unavailable' })).toBeVisible()
+    expect(within(row).queryByRole('img', { name: 'Previous cover' })).toBeNull()
   })
 
   it('reads Covers again on a library update and keeps the decided book in place', async () => {
@@ -635,14 +776,18 @@ describe('Covers view (#1633)', () => {
       ]),
     })
     renderRoute('/library?lens=all&view=covers', http)
-    // The thumbnail shows the state; a screen reader hears it after the title.
+    // The state is written under the title, read after it (#1866).
     const unreadable = await screen.findByRole('button', {
       name: /^First Book.*Image unavailable/u,
     })
     // The 3rem thumbnail is too small for the words: it shows the frame only.
     expect(within(unreadable).getAllByText('Image unavailable')).toHaveLength(1)
+    expect(within(unreadable).getByText('Image unavailable')).toBeVisible()
+    expect(within(unreadable).getByText('Image unavailable')).not.toHaveClass('sr-only')
     expect(unreadable.querySelector('.covers-image-missing')).toBeEmptyDOMElement()
-    expect(screen.getByRole('button', { name: /^Second Book.*No cover/u })).toBeVisible()
+    const missing = screen.getByRole('button', { name: /^Second Book.*No cover/u })
+    expect(within(missing).getByText('No cover')).toBeVisible()
+    expect(within(missing).getByText('No cover').tagName).toBe('SMALL')
   })
 
   it.each([
@@ -723,13 +868,27 @@ describe('Covers view (#1633)', () => {
     expect(within(tile).getByText('An Author')).toBeVisible()
     await user.click(tile)
     const panel = (
-      await screen.findByRole('radiogroup', { name: 'Which cover should this book use?' })
+      await screen.findByRole('radiogroup', { name: 'Which cover should this work use?' })
     ).closest('li')
     // Every tile of the row comes before the panel.
     expect(panel?.previousElementSibling).toHaveTextContent('Third Book')
     expect(screen.queryByRole('link', { name: 'Covers' })).toBeNull()
     await user.click(screen.getByRole('button', { name: 'Close' }))
     await waitFor(() => expect(screen.getByRole('button', { name: /First Book/u })).toHaveFocus())
+  })
+
+  it('lists a chosen cover not yet written under All as Your choice (#1866)', async () => {
+    const http = coversHttp({
+      all: page('all', [work('case-1', 'chosen'), work('case-2', 'kept')]),
+    })
+    renderRoute('/library?lens=all&view=covers&tab=all', http)
+    const chosen = await screen.findByRole('button', { name: /First Book/u })
+    const pill = within(chosen).getByText('Your choice')
+    expect(pill).toHaveClass('status-pill', 'is-neutral')
+    expect(within(chosen).queryByText('Kept')).toBeNull()
+    expect(
+      within(screen.getByRole('button', { name: /Second Book/u })).getByText('Kept'),
+    ).toBeVisible()
   })
 
   it('places the open book after the last tile of its row, measured without the panel', async () => {
@@ -756,7 +915,7 @@ describe('Covers view (#1633)', () => {
       renderRoute('/library?lens=all&view=covers&tab=all', http)
       await user.click(await screen.findByRole('button', { name: /First Book/u }))
       const panel = (
-        await screen.findByRole('radiogroup', { name: 'Which cover should this book use?' })
+        await screen.findByRole('radiogroup', { name: 'Which cover should this work use?' })
       ).closest('li')
       await waitFor(() => expect(panel?.previousElementSibling).toHaveTextContent('Second Book'))
       expect(panel?.nextElementSibling).toHaveTextContent('Third Book')
@@ -857,11 +1016,11 @@ describe('Covers view (#1633)', () => {
     await waitFor(() => expect(router.state.location.search.cover).toBeUndefined())
   })
 
-  it('shows Back to books for the open book', async () => {
+  it('shows Back to works for the open book', async () => {
     const user = userEvent.setup()
     const http = coversHttp({ decide })
     const { router } = renderRoute('/library?lens=all&view=covers&cover=case-1', http)
-    await user.click(await screen.findByRole('button', { name: 'Back to books' }))
+    await user.click(await screen.findByRole('button', { name: 'Back to works' }))
     await waitFor(() => expect(router.state.location.search.cover).toBeUndefined())
   })
 
@@ -958,7 +1117,7 @@ describe('Put back (#1363)', () => {
     renderRoute('/library?lens=all&view=covers&tab=switched', http)
     const [row] = await screen.findAllByRole('listitem')
     if (!row) throw new Error('a switched row is required')
-    expect(within(row).getByRole('img', { name: 'Previous cover' })).toHaveTextContent(
+    expect(within(row).getByRole('img', { name: 'Previous cover unavailable' })).toHaveTextContent(
       'Image unavailable',
     )
     expect(within(row).queryByText('No cover')).toBeNull()
@@ -984,7 +1143,7 @@ describe('Put back (#1363)', () => {
     await user.click(within(row).getByRole('button', { name: 'Put back' }))
     expect(
       await within(row).findByText(
-        "This book's covers changed since the page loaded. Nothing was changed.",
+        "This work's covers changed since the page loaded. Nothing was changed.",
       ),
     ).toBeVisible()
     expect(http.recordDecision).not.toHaveBeenCalled()
@@ -1074,7 +1233,7 @@ describe('Put back (#1363)', () => {
     if (!row) throw new Error('a switched row is required')
     await user.click(within(row).getByRole('button', { name: 'Others' }))
     const group = await screen.findByRole('radiogroup', {
-      name: 'Which cover should this book use?',
+      name: 'Which cover should this work use?',
     })
     const card = within(group).getByRole('radio', { name: 'Choose Replaced cover' })
     expect(within(card).getByText('Replaced cover')).toBeVisible()
@@ -1178,6 +1337,11 @@ describe('Measured cover rules (#1363)', () => {
     const [row] = await screen.findAllByRole('listitem')
     if (!row) throw new Error('a hold row is required')
     expect(within(row).getByText("Cover's source names another book")).toBeVisible()
+    // The pill is its own row of the item, under the title and status, so it
+    // is not squeezed into the title column (#1866).
+    const pill = within(row).getByText("Cover's source names another book")
+    expect(pill).toHaveClass('covers-queue-hold')
+    expect(pill.parentElement).toHaveClass('covers-queue-item')
   })
 
   it('says why an unreadable cover was switched and lists it under Show (#1362)', async () => {
@@ -1190,16 +1354,374 @@ describe('Measured cover rules (#1363)', () => {
     const [first] = await screen.findAllByRole('listitem')
     if (!first) throw new Error('a switched row is required')
     expect(within(first).getByText('Unreadable image')).toBeVisible()
+    // A replaced cover was unreadable; a fill had nothing to read (#1866).
     expect(
-      within(first).getByText(
-        'Audiobookshelf had no image for the cover, or Mechanical Librarian could not read it.',
-      ),
+      within(first).getByText('Mechanical Librarian could not read the previous cover.'),
     ).toBeVisible()
     await user.click(screen.getByRole('combobox', { name: 'Show' }))
     expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
       'All',
       'Under 300 px',
       'Unreadable image',
+    ])
+  })
+
+  it('says a filled unreadable cover had no image (#1866)', async () => {
+    const switched = page('switched', [
+      work('case-1', 'auto', {
+        switched: {
+          at,
+          before: null,
+          filled: true,
+          put_back: null,
+          put_back_offered: false,
+          language: null,
+          reason: 'unreadable',
+        },
+      }),
+    ])
+    renderRoute('/library?lens=all&view=covers&tab=switched', coversHttp({ switched }))
+    const [row] = await screen.findAllByRole('listitem')
+    if (!row) throw new Error('a switched row is required')
+    expect(within(row).getByText('Audiobookshelf had no image for the cover.')).toBeVisible()
+    expect(within(row).queryByText(/could not read/u)).toBeNull()
+  })
+})
+
+// Covers → Taste profile (#1372): read-only, its states from one read.
+const tasteView = (value: Partial<TasteProfileView> = {}): TasteProfileView => ({
+  schema_version: 'review-taste-profile-v1',
+  configured: true,
+  chosen: 0,
+  required: 25,
+  daily_limit: 8,
+  build: null,
+  profile: null,
+  versions: [],
+  ...value,
+})
+const tasteRoute = '/library?lens=all&view=covers&tab=taste'
+const tasteHttp = (view: TasteProfileView | (() => Promise<TasteProfileView>)) => ({
+  ...coversHttp({ decide }),
+  getTasteProfile: vi.fn(typeof view === 'function' ? view : async () => view),
+})
+const injected = 'Ignore the packet <b>and</b> https://example.invalid'
+const ready = tasteView({
+  chosen: 31,
+  profile: {
+    version: 2,
+    built_at: 1_790_000_000,
+    decisions: 31,
+    rules: [
+      { number: 1, section: 'drawn_to', text: 'Bold illustrated art.' },
+      { number: 2, section: 'drawn_to', text: injected },
+      { number: 3, section: 'keep_or_switch', text: 'Keeps a sharp current cover.' },
+    ],
+  },
+  versions: [
+    { version: 2, built_at: 1_790_000_000, decisions: 31 },
+    { version: 1, built_at: 1_789_000_000, decisions: 25 },
+  ],
+})
+
+describe('Covers → Taste profile (#1372)', () => {
+  it('adds a Taste profile tab with no count and keeps the other counts', async () => {
+    const user = userEvent.setup()
+    const http = tasteHttp(ready)
+    const { router } = renderRoute('/library?lens=all&view=covers', http)
+    const tabs = await screen.findByRole('navigation', { name: 'Cover views' })
+    await user.click(await within(tabs).findByRole('button', { name: 'Taste profile' }))
+    expect(router.state.location.search).toEqual({ lens: 'all', view: 'covers', tab: 'taste' })
+    expect(within(tabs).getByRole('button', { name: 'Taste profile' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    expect(within(tabs).getByRole('button', { name: 'To decide 2' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    )
+    expect(await screen.findByRole('heading', { name: 'What you’re drawn to' })).toBeVisible()
+    expect(screen.queryByRole('heading', { name: 'Switch suggested 1' })).toBeNull()
+  })
+
+  it('shows loading, then a failed read with Reload', async () => {
+    const user = userEvent.setup()
+    let fail = true
+    const http = tasteHttp(async () => {
+      if (fail) throw new ApiError(503, 'unavailable')
+      return tasteView()
+    })
+    renderRoute(tasteRoute, http)
+    expect(await screen.findByText('Loading taste profile…')).toBeVisible()
+    const reload = await screen.findByRole('button', { name: 'Reload' })
+    fail = false
+    await user.click(reload)
+    expect(await screen.findByRole('heading', { name: 'No taste profile yet' })).toBeVisible()
+  })
+
+  it('names Settings when no taste profile model is chosen', async () => {
+    renderRoute(tasteRoute, tasteHttp(tasteView({ configured: false })))
+    const empty = (await screen.findByRole('heading', { name: 'No taste profile yet' })).closest(
+      'section',
+    )
+    if (!empty) throw new Error('the empty state is required')
+    expect(within(empty).getByRole('link', { name: 'Settings' })).toHaveAttribute(
+      'href',
+      '/settings?group=reviewer',
+    )
+    expect(screen.getByText(/Choose a taste profile model in/u)).toBeVisible()
+  })
+
+  it.each([0, 1, 24])('says how many covers are chosen, %i of 25', async (chosen) => {
+    renderRoute(tasteRoute, tasteHttp(tasteView({ chosen })))
+    const line = await screen.findByText(/Mechanical Librarian writes it once you have chosen 25/u)
+    expect(line).toHaveTextContent(
+      `Mechanical Librarian writes it once you have chosen 25 covers in To decide. You have chosen ${String(chosen)}.`,
+    )
+    expect(within(line).getByRole('link', { name: 'To decide' })).toBeVisible()
+  })
+
+  it('makes a first build the heading while it is written', async () => {
+    renderRoute(
+      tasteRoute,
+      tasteHttp(
+        tasteView({
+          chosen: 25,
+          build: {
+            build_id: `taste_build_${'a'.repeat(32)}`,
+            state: 'building',
+            failure: null,
+            retry_after: null,
+          },
+        }),
+      ),
+    )
+    expect(await screen.findByRole('heading', { name: 'Writing your taste profile' })).toBeVisible()
+    expect(screen.queryByRole('heading', { name: 'No taste profile yet' })).toBeNull()
+  })
+
+  // K1 with an idle owner: after 10 seconds without input a library notice
+  // waits for the next input (#1224), and then the scheduled build appears.
+  it('shows a build scheduled while the owner is idle on their next input', async () => {
+    const updates = createLiveStream()
+    let view = tasteView({ chosen: 25 })
+    const http = tasteHttp(async () => view)
+    renderRoute(tasteRoute, http, updates)
+    expect(await screen.findByText(/You have chosen 25\./u)).toBeVisible()
+    const reads = http.getTasteProfile.mock.calls.length
+    const realNow = performance.now.bind(performance)
+    const clock = vi
+      .spyOn(performance, 'now')
+      .mockImplementation(() => realNow() + ownerIdleMilliseconds)
+    try {
+      view = tasteView({
+        chosen: 25,
+        build: {
+          build_id: `taste_build_${'a'.repeat(32)}`,
+          state: 'building',
+          failure: null,
+          retry_after: null,
+        },
+      })
+      await act(async () => {
+        updates.announce({ sequence: 5, subject: null, topic: 'library' })
+        await new Promise((resolve) => setTimeout(resolve, coalesceMilliseconds + 20))
+      })
+      expect(http.getTasteProfile).toHaveBeenCalledTimes(reads)
+      expect(screen.getByText(/You have chosen 25\./u)).toBeVisible()
+      fireEvent.wheel(document)
+      expect(
+        await screen.findByRole('heading', { name: 'Writing your taste profile' }),
+      ).toBeVisible()
+      expect(http.getTasteProfile.mock.calls.length).toBeGreaterThan(reads)
+    } finally {
+      clock.mockRestore()
+    }
+  })
+
+  it('puts a first failure and Try again under the empty heading', async () => {
+    renderRoute(
+      tasteRoute,
+      tasteHttp(
+        tasteView({
+          chosen: 25,
+          build: {
+            build_id: `taste_build_${'d'.repeat(32)}`,
+            state: 'failed',
+            failure: 'unavailable',
+            retry_after: null,
+          },
+        }),
+      ),
+    )
+    const heading = await screen.findByRole('heading', { name: 'No taste profile yet' })
+    const region = heading.closest('section')
+    if (!region) throw new Error('the empty region is required')
+    const line = within(region).getByText('The taste profile could not be written.')
+    const retry = within(region).getByRole('button', { name: 'Try again' })
+    // Heading, then the line, then Try again, in reading order.
+    expect(heading.compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(line.compareDocumentPosition(retry) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('says an update failed, not that no profile exists, beside a profile', async () => {
+    renderRoute(
+      tasteRoute,
+      tasteHttp({
+        ...ready,
+        build: {
+          build_id: `taste_build_${'e'.repeat(32)}`,
+          state: 'failed',
+          failure: 'unavailable',
+          retry_after: null,
+        },
+      }),
+    )
+    expect(await screen.findByText('The taste profile could not be updated.')).toBeVisible()
+    expect(screen.queryByText('The taste profile could not be written.')).toBeNull()
+    expect(screen.getByRole('heading', { name: 'What you’re drawn to' })).toBeVisible()
+  })
+
+  it.each(['ceiling', 'unknown_charge'] as const)(
+    'hides Try again until the reset time after %s',
+    async (failure) => {
+      renderRoute(
+        tasteRoute,
+        tasteHttp(
+          tasteView({
+            chosen: 25,
+            build: {
+              build_id: `taste_build_${'f'.repeat(32)}`,
+              state: 'failed',
+              failure,
+              retry_after: Math.floor(Date.now() / 1000) + 3_600,
+            },
+          }),
+        ),
+      )
+      expect(await screen.findByRole('heading', { name: 'No taste profile yet' })).toBeVisible()
+      expect(screen.getByRole('alert')).toHaveTextContent(/\S+\.$/u)
+      expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+    },
+  )
+
+  it('shows the Settings line, not an old failure, once no model is chosen', async () => {
+    renderRoute(
+      tasteRoute,
+      tasteHttp({
+        ...ready,
+        configured: false,
+        build: {
+          build_id: `taste_build_${'9'.repeat(32)}`,
+          state: 'failed',
+          failure: 'unavailable',
+          retry_after: null,
+        },
+      }),
+    )
+    expect(await screen.findByText(/Choose a taste profile model in/u)).toBeVisible()
+    expect(screen.queryByText('The taste profile could not be updated.')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+  })
+
+  it.each([
+    ['with no profile', tasteView({ chosen: 25 }), 'The taste profile could not be written.'],
+    ['beside a profile', ready, 'The taste profile could not be updated.'],
+  ] as const)(
+    'offers Try again for a build that failed while no model was chosen, once one is chosen, %s',
+    async (_case, base, copy) => {
+      renderRoute(
+        tasteRoute,
+        tasteHttp({
+          ...base,
+          configured: true,
+          build: {
+            build_id: `taste_build_${'8'.repeat(32)}`,
+            state: 'failed',
+            failure: 'unconfigured',
+            retry_after: null,
+          },
+        }),
+      )
+      expect(await screen.findByText(copy)).toBeVisible()
+      expect(screen.getByRole('button', { name: 'Try again' })).toBeVisible()
+      expect(screen.queryByText(/Choose a taste profile model in/u)).toBeNull()
+    },
+  )
+
+  it.each([
+    ['unavailable', null, 'The taste profile could not be written.'],
+    [
+      'invalid_output',
+      null,
+      'The model returned a profile that was too long or incomplete, so it was not kept.',
+    ],
+    [
+      'ceiling',
+      86_400,
+      /^Mechanical Librarian has asked for 8 taste profiles today, the daily limit\. Try again after \S+\.$/u,
+    ],
+    [
+      'unknown_charge',
+      86_400,
+      /^OpenRouter did not confirm what the last request cost, so taste profiles wait until \S+\.$/u,
+    ],
+    ['interrupted', null, 'Writing the taste profile stopped when Mechanical Librarian restarted.'],
+  ] as const)('says why %s failed and offers Try again', async (failure, retryAfter, copy) => {
+    const user = userEvent.setup()
+    const failed = tasteView({
+      chosen: 25,
+      build: {
+        build_id: `taste_build_${'b'.repeat(32)}`,
+        state: 'failed',
+        failure,
+        retry_after: retryAfter,
+      },
+    })
+    const building = tasteView({
+      chosen: 25,
+      build: {
+        build_id: `taste_build_${'c'.repeat(32)}`,
+        state: 'building',
+        failure: null,
+        retry_after: null,
+      },
+    })
+    const http = {
+      ...tasteHttp(failed),
+      retryTasteBuild: vi.fn(async () => building),
+    }
+    renderRoute(tasteRoute, http)
+    expect(await screen.findByText(copy)).toBeVisible()
+    // The route's own focus move is deferred a frame. Under load it can land
+    // after the click and take focus from the region, so it is waited for.
+    const heading = screen.getByRole('heading', { level: 1, name: 'Covers' })
+    await waitFor(() => expect(heading).toHaveFocus())
+    await user.click(screen.getByRole('button', { name: 'Try again' }))
+    expect(http.retryTasteBuild).toHaveBeenCalledWith(`taste_build_${'b'.repeat(32)}`)
+    const status = await screen.findByText('Writing your taste profile')
+    await waitFor(() => expect(status.closest('.taste-build')).toHaveFocus())
+  })
+
+  it('shows the profile in use, hides empty sections and renders rule text literally', async () => {
+    renderRoute(tasteRoute, tasteHttp(ready))
+    expect(await screen.findByRole('heading', { name: 'What you’re drawn to' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'When to keep or switch' })).toBeVisible()
+    expect(screen.queryByRole('heading', { name: 'What you avoid' })).toBeNull()
+    expect(screen.queryByRole('heading', { name: 'How you trade them off' })).toBeNull()
+    const rule = screen.getByText(injected)
+    expect(rule.closest('li')).toHaveAttribute('value', '2')
+    expect(rule.children).toHaveLength(0)
+    expect(rule.querySelector('b')).toBeNull()
+    expect(screen.queryByRole('link', { name: /example/u })).toBeNull()
+    const meta = screen.getByText('Rules').closest('div')
+    expect(meta).toHaveTextContent('Rules3 of 40')
+    const versions = screen.getByRole('heading', { name: 'Versions' }).closest('section')
+    if (!versions) throw new Error('the Versions section is required')
+    const rows = within(versions).getAllByRole('listitem')
+    expect(rows.map((row) => row.textContent)).toEqual([
+      expect.stringMatching(/^Version 2 \(in use\) Built .+ from 31 decisions$/u),
+      expect.stringMatching(/^Version 1 Built .+ from 25 decisions$/u),
     ])
   })
 })

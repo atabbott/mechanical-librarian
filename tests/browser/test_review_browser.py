@@ -5284,7 +5284,7 @@ def test_cover_choice_records_in_one_tap(width: int, mode: str) -> None:
                           const edge = track.getBoundingClientRect().right
                           const cards = [...track.querySelectorAll(
                             '.library-cover-card:not(:disabled)')].filter(card =>
-                            !card.getAttribute('aria-label').startsWith('Choose Current'))
+                            card.getAttribute('aria-label') !== 'Keep current cover')
                           const cut = cards.find(card => {
                             const box = card.getBoundingClientRect()
                             return box.left < edge - 24 && box.right > edge
@@ -12626,6 +12626,152 @@ def test_review_complete_comes_into_view_and_fits_its_card() -> None:
         browser.close()
 
 
+_PREPARATION_DETAIL_GEOMETRY = """() => {
+  const detail = document.querySelector('.preparation-detail')
+  const bounds = detail.getBoundingClientRect()
+  const page = document.scrollingElement
+  const escaped = []
+  for (const node of detail.querySelectorAll('h2, h3, p, strong, span, small, dt, dd, a, button')) {
+    const box = node.getBoundingClientRect()
+    if (!box.width || !box.height) continue
+    if (box.left < bounds.left - 0.5 || box.right > bounds.right + 0.5)
+      escaped.push(`${node.tagName.toLowerCase()} "${node.textContent.trim().slice(0, 40)}"`
+        + ` spans ${Math.round(box.left)}..${Math.round(box.right)}`)
+    else if (node.scrollWidth > node.clientWidth + 1 && getComputedStyle(node).overflowX !== 'visible'
+        && getComputedStyle(node).textOverflow !== 'ellipsis')
+      escaped.push(`${node.tagName.toLowerCase()} "${node.textContent.trim().slice(0, 40)}" is clipped`)
+  }
+  // A heading and its count share a line when the count sits beside the
+  // heading, inside its height, rather than under it.
+  const headings = [...detail.querySelectorAll('.preparation-section-heading')].map(heading => {
+    const [first, ...rest] = [...heading.children].map(child => child.getBoundingClientRect())
+    const beside = rest.every(box => box.top < first.bottom && box.left >= first.right)
+    return { text: heading.textContent.trim().slice(0, 40), lines: beside ? 1 : 2 }
+  })
+  const card = detail.querySelector('.preparation-active-books li')
+  const badge = card.firstElementChild.getBoundingClientRect()
+  const words = card.lastElementChild.getBoundingClientRect()
+  return {
+    badgeBeside: badge.right <= words.left && badge.bottom > words.top,
+    overflow: page.scrollWidth - page.clientWidth,
+    detail: [Math.round(bounds.left), Math.round(bounds.right)],
+    viewport: innerWidth,
+    escaped,
+    headings,
+  }
+}"""
+
+
+_BROKEN_WORDS = """selector => {
+  const broken = []
+  for (const root of document.querySelectorAll(selector)) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      for (const match of node.textContent.matchAll(/\\S+/gu)) {
+        const range = document.createRange()
+        range.setStart(node, match.index)
+        range.setEnd(node, match.index + match[0].length)
+        const tops = new Set([...range.getClientRects()].map(rect => Math.round(rect.top)))
+        if (tops.size > 1) broken.push(match[0])
+      }
+    }
+  }
+  return broken
+}"""
+
+
+def test_preparation_detail_fits_a_phone_at_enlarged_text() -> None:
+    """The preparation detail fits a 320 px window at 200% text in both
+    themes, with no box past the detail's edges and no sideways scroll; at
+    390 and 1440 with default text each section heading keeps its count on
+    its own line (#1864)."""
+    with tempfile.TemporaryDirectory() as directory, sync_playwright() as playwright:
+        root = Path(directory)
+        root.chmod(0o700)
+        password = root / "owner.hash"
+        password.write_text(PasswordHasher().hash(_PASSWORD))
+        password.chmod(0o600)
+        browser = playwright.chromium.launch(headless=True)
+        failures: list[str] = []
+        for theme in ("light", "dark"):
+            context = browser.new_context(
+                viewport={"width": 1440, "height": 900},
+                color_scheme=theme,
+                reduced_motion="reduce",
+            )
+            page = context.new_page()
+            with (
+                closing(ReservedPort()) as port,
+                _server(
+                    database=root / f"preparation-{theme}.sqlite",
+                    hash_path=password,
+                    certificate=root / "unused",
+                    key=root / "unused",
+                    port=port,
+                    transport_mode="http",
+                    preparation=True,
+                ) as (origin, _case_id),
+                _closing_context(context),
+            ):
+                _login(page, origin)
+
+                # A long word in the work being prepared, as titles have.
+                def long_word(route: Any) -> None:
+                    document = route.fetch().json()
+                    active = document["presentation"]["active_books"]
+                    active[0]["name"] = "Extraordinary Preparation"
+                    route.fulfill(json=document)
+
+                page.route("**/api/v1/review-preparation", long_word)
+                page.goto(f"{origin}/library?lens=all")
+                page.locator(".preparation-summary").click()
+                detail = page.locator(".preparation-detail")
+                expect(detail).to_be_visible()
+                expect(
+                    detail.locator(".preparation-section-heading").first
+                ).to_be_visible()
+                for width, height, text in (
+                    (1440, 900, ""),
+                    (390, 844, ""),
+                    (320, 640, "200%"),
+                ):
+                    where = f"{theme} {width}x{height} {text or '100%'}"
+                    page.set_viewport_size({"width": width, "height": height})
+                    set_root_text(page, text)
+                    page.evaluate(_TWO_FRAMES)
+                    found = cast(
+                        "dict[str, Any]", page.evaluate(_PREPARATION_DETAIL_GEOMETRY)
+                    )
+                    if found["overflow"] > 0:
+                        failures.append(f"{where}: the page scrolls sideways {found}")
+                    if found["detail"][1] > found["viewport"]:
+                        failures.append(f"{where}: the detail spans {found['detail']}")
+                    failures += [f"{where}: {item}" for item in found["escaped"]]
+                    if not text:
+                        failures += [
+                            f"{where}: {heading['text']} takes {heading['lines']} lines"
+                            for heading in found["headings"]
+                            if heading["lines"] != 1
+                        ]
+                        # The initials sit beside the text, as before.
+                        if not found["badgeBeside"]:
+                            failures.append(
+                                f"{where}: the initials left the text's side"
+                            )
+                    else:
+                        # A narrow active-work card wraps between words and
+                        # never splits one across lines.
+                        broken = page.evaluate(
+                            _BROKEN_WORDS, ".preparation-active-books"
+                        )
+                        failures += [
+                            f"{where}: {word} breaks mid-word" for word in broken
+                        ]
+                    set_root_text(page, "")
+        browser.close()
+        assert failures == [], "\n".join(failures)
+
+
 @pytest.mark.parametrize("destination", ("automatic", "ask", "ignore"))
 def test_ebook_isbn_owner_journey(destination):
     with tempfile.TemporaryDirectory() as directory, sync_playwright() as playwright:
@@ -13024,6 +13170,35 @@ def test_packaged_description_cost_in_settings_and_cover_only_setup(width: int) 
                     assert page.evaluate(
                         "document.documentElement.scrollWidth <= innerWidth"
                     )
+                    # The closed model pickers name the chosen model in full,
+                    # wrapping at 390 px with 200% text rather than ending in an
+                    # ellipsis, and staying one line on a desktop (#1372 S4).
+                    if width == 390:
+                        set_root_text(page, "200%")
+                    labels = page.locator(
+                        ".settings-model-picker .cm-dropdown-trigger > span"
+                    )
+                    expect(labels.first).to_contain_text("openai/gpt-6-luna")
+                    fit = cast(
+                        "list[dict[str, Any]]",
+                        labels.evaluate_all(
+                            """spans => spans.map(span => ({
+                              text: span.textContent,
+                              clipped: span.scrollWidth > span.clientWidth + 1,
+                              lines: Math.round(span.getBoundingClientRect().height /
+                                parseFloat(getComputedStyle(span).lineHeight)),
+                            }))"""
+                        ),
+                    )
+                    assert fit, fit
+                    assert not any(label["clipped"] for label in fit), fit
+                    if width == 1440:
+                        assert all(label["lines"] == 1 for label in fit), fit
+                    else:
+                        assert page.evaluate(
+                            "document.documentElement.scrollWidth <= innerWidth"
+                        )
+                        set_root_text(page, "")
                     output = os.environ.get("ML_BROWSER_SCREENSHOT_DIR")
                     if output:
                         page.screenshot(
@@ -13033,9 +13208,13 @@ def test_packaged_description_cost_in_settings_and_cover_only_setup(width: int) 
                             full_page=True,
                         )
 
+                # The setup read's access, which a later step makes measure the
+                # same model under a cent (#1863).
+                setup_access = access.model_dump(mode="json")
+
                 def setup_read(route: Any) -> None:
                     if urlparse(route.request.url).path.endswith("reviewer-access"):
-                        route.fulfill(json=access.model_dump(mode="json"))
+                        route.fulfill(json=setup_access)
                     else:
                         route.fulfill(
                             json={
@@ -13066,10 +13245,12 @@ def test_packaged_description_cost_in_settings_and_cover_only_setup(width: int) 
                     _setup_asset_server(certificate, key, port) as origin,
                 ):
                     page.goto(origin)
-                    # The recommended model's cover cost, counted in works.
+                    # The recommended model's cover cost, counted in works and
+                    # rounded to the cent as Settings rounds it (#1863).
                     expect(
-                        page.get_by_text("about $0.6364 per 1,000 works.", exact=False)
+                        page.get_by_text("about $0.64 per 1,000 works.", exact=False)
                     ).to_be_visible()
+                    expect(page.get_by_text("$0.6364", exact=False)).to_have_count(0)
                     expect(
                         page.get_by_text("Optional description advice", exact=False)
                     ).to_have_count(0)
@@ -13082,6 +13263,16 @@ def test_packaged_description_cost_in_settings_and_cover_only_setup(width: int) 
                             path=str(Path(output) / f"reviewer-cost-setup-{width}.png"),
                             full_page=True,
                         )
+                    # A cost under a cent says so rather than "about $0.00".
+                    for row in setup_access["cost_evidence"]["models"]:
+                        if row["task"] == "cover":
+                            row["total_cost_usd"] = "0.000400000"
+                            row["per_1000_usd"] = "0.004000000"
+                    page.reload()
+                    expect(
+                        page.get_by_text("under $0.01 per 1,000 works.", exact=False)
+                    ).to_be_visible()
+                    expect(page.get_by_text("about $0.0", exact=False)).to_have_count(0)
             browser.close()
 
 
@@ -14084,6 +14275,94 @@ def test_works_no_provider_matched_have_their_own_lens_and_reasons(
 _KEPT_COVER_LEAD = "Your current cover is kept, so no review is needed."
 
 
+# A tab is in its sideways row with room for its focus ring: 3 px with a 3 px
+# offset, except where the row's own end leaves no room (#1372 S6).
+_COVER_TAB_IN_VIEW = """selector => {
+  const nav = document.querySelector('.covers-tabs')
+  const tab = selector === ':focus' ? document.activeElement : nav.querySelector(selector)
+  if (!tab || !nav.contains(tab)) return false
+  const row = nav.getBoundingClientRect()
+  const box = tab.getBoundingClientRect()
+  const atStart = nav.scrollLeft <= 0
+  const atEnd = nav.scrollLeft >= nav.scrollWidth - nav.clientWidth - 1
+  return (box.left >= row.left + 5.5 || (atStart && box.left >= row.left)) &&
+    (box.right <= row.right - 5.5 || (atEnd && box.right <= row.right))
+}"""
+
+
+def _swipe_cover_tabs(page: Page, to: str) -> None:
+    """Scroll the tab row to its start or end, as a swipe would, and let the
+    scroll event reach the router before the next step."""
+    page.evaluate(
+        """async to => {
+          const nav = document.querySelector('.covers-tabs')
+          nav.scrollLeft = to === 'end' ? nav.scrollWidth : 0
+          await new Promise(resolve =>
+            requestAnimationFrame(() => requestAnimationFrame(resolve)))
+        }""",
+        to,
+    )
+
+
+def _tap_cover_tab(page: Page, index: int) -> None:
+    """Choose a tab without scrolling the row first, as a tap on a partly
+    visible tab does. A Playwright click would scroll it into view itself."""
+    page.evaluate(
+        "index => document.querySelectorAll('.covers-tabs button')[index].click()",
+        index,
+    )
+
+
+def _check_cover_tabs_after_swipe_back_and_tab(page: Page, origin: str) -> None:
+    """#1372 S6 at 390 px with 200% text: the selected tab stays in view after
+    a swipe and a tap and after Back, and a tab reached with Tab is shown
+    whole with its focus ring."""
+    page.set_viewport_size({"width": 390, "height": 900})
+    page.goto(f"{origin}/library?lens=all&view=covers&tab=decide")
+    tabs = page.get_by_role("navigation", name="Cover views")
+    buttons = tabs.get_by_role("button")
+    expect(buttons.nth(0)).to_have_attribute("aria-pressed", "true")
+    set_root_text(page, "200%")
+    selected = '[aria-pressed="true"]'
+    # A swipe to the end hides Kept; tapping it brings it back into view.
+    _swipe_cover_tabs(page, "end")
+    assert not page.evaluate(_COVER_TAB_IN_VIEW, ".covers-tabs button:nth-child(2)"), (
+        "the swipe must hide Kept for the tap to prove anything"
+    )
+    _tap_cover_tab(page, 1)
+    expect(buttons.nth(1)).to_have_attribute("aria-pressed", "true")
+    page.wait_for_function(_COVER_TAB_IN_VIEW, arg=selected, timeout=5_000)
+    # Taste profile, then a swipe back to the start and To decide; Back
+    # returns to Taste profile and brings it into view again.
+    _tap_cover_tab(page, 4)
+    expect(buttons.nth(4)).to_have_attribute("aria-pressed", "true")
+    page.wait_for_function(_COVER_TAB_IN_VIEW, arg=selected, timeout=5_000)
+    _swipe_cover_tabs(page, "start")
+    _tap_cover_tab(page, 0)
+    expect(buttons.nth(0)).to_have_attribute("aria-pressed", "true")
+    page.wait_for_function(_COVER_TAB_IN_VIEW, arg=selected, timeout=5_000)
+    assert not page.evaluate(_COVER_TAB_IN_VIEW, ".covers-tabs button:nth-child(5)"), (
+        "To decide at the start must hide Taste profile for Back to prove anything"
+    )
+    page.go_back()
+    expect(page).to_have_url(re.compile(r"tab=taste"))
+    expect(buttons.nth(4)).to_have_attribute("aria-pressed", "true")
+    page.wait_for_function(_COVER_TAB_IN_VIEW, arg=selected, timeout=5_000)
+    # Tab through the row from To decide: each tab is shown whole with its
+    # ring, although Chromium would leave a partly visible one clipped.
+    _tap_cover_tab(page, 0)
+    expect(buttons.nth(0)).to_have_attribute("aria-pressed", "true")
+    _swipe_cover_tabs(page, "start")
+    buttons.nth(0).focus()
+    assert not page.evaluate(_COVER_TAB_IN_VIEW, ".covers-tabs button:nth-child(2)"), (
+        "Kept must start partly hidden for Tab to prove anything"
+    )
+    for index in range(1, 5):
+        page.keyboard.press("Tab")
+        expect(buttons.nth(index)).to_be_focused()
+        page.wait_for_function(_COVER_TAB_IN_VIEW, arg=":focus", timeout=5_000)
+
+
 @pytest.mark.parametrize(
     ("journey", "incumbent"),
     (
@@ -14213,18 +14492,136 @@ def test_measured_cover_rules_keep_or_suggest_through_covers(
                     assert layout["pills"] == 2, layout
                     assert layout["right"] <= layout["viewport"], layout
                     assert layout["overlap"] == 0, layout
+                    # The five Covers tabs stay one row that scrolls sideways
+                    # rather than a stack of rows before the list (#1372).
+                    tabs_row = cast(
+                        "dict[str, float]",
+                        tabs.evaluate(
+                            """nav => {
+                              const buttons = [...nav.querySelectorAll('button')]
+                              const tops = new Set(buttons.map(b => Math.round(b.getBoundingClientRect().top)))
+                              const page = document.scrollingElement
+                              return {
+                                rows: tops.size,
+                                height: nav.getBoundingClientRect().height,
+                                button: buttons[0].getBoundingClientRect().height,
+                                overflow: page.scrollWidth - page.clientWidth,
+                              }
+                            }"""
+                        ),
+                    )
+                    assert tabs_row["rows"] == 1, tabs_row
+                    assert tabs_row["height"] < 2 * tabs_row["button"], tabs_row
+                    assert tabs_row["overflow"] <= 0, tabs_row
+                    # Choosing the last tab brings it into the row's view.
+                    tabs.evaluate(
+                        "nav => [...nav.querySelectorAll('button')].at(-1).click()"
+                    )
+                    expect(
+                        tabs.get_by_role("button", name="Taste profile", pressed=True)
+                    ).to_be_visible()
+                    page.wait_for_function(
+                        """() => {
+                          const nav = document.querySelector('.covers-tabs')
+                          const tab = nav.querySelector('[aria-pressed="true"]')
+                          const row = nav.getBoundingClientRect()
+                          const box = tab.getBoundingClientRect()
+                          return box.left >= row.left - 1 && box.right <= row.right + 1
+                        }"""
+                    )
+                    _check_cover_tabs_after_swipe_back_and_tab(page, origin)
                     set_root_text(page, "")
+
+                    # #1866: a held row with an unreadable cover, read from the
+                    # real list with the hold and state set on its first row.
+                    # At 1440 the hold's pill takes one line of its own row, and
+                    # the state is written beside the empty 48 px frame.
+                    def held_unreadable(route: Any) -> None:
+                        listed = route.fetch().json()
+                        first = listed["items"][0]
+                        first.update(
+                            group="choice",
+                            suggestion=None,
+                            hold={"reason": "current_contradicted"},
+                            cover=None,
+                            unreadable_cover=True,
+                        )
+                        route.fulfill(json=listed)
+
+                    page.route("**/api/v1/covers?*", held_unreadable)
+                    page.set_viewport_size({"width": 1440, "height": 900})
+                    page.goto(f"{origin}/library?lens=all&view=covers&tab=decide")
+                    item = page.locator(".covers-queue-item").first
+                    hold = item.locator(".covers-queue-hold")
+                    expect(hold).to_have_text("Cover's source names another book")
+                    state = item.get_by_text("Image unavailable", exact=True)
+                    expect(state).to_be_visible()
+                    held = cast(
+                        "dict[str, float]",
+                        item.evaluate(
+                            """item => {
+                              const hold = item.querySelector('.covers-queue-hold')
+                              const range = document.createRange()
+                              range.selectNodeContents(hold)
+                              const lines = new Set(
+                                [...range.getClientRects()].map(rect => Math.round(rect.top)))
+                              const frame = item.querySelector('.covers-image-missing')
+                              const state = [...item.querySelectorAll('small')].find(
+                                node => node.textContent === 'Image unavailable')
+                              return {
+                                lines: lines.size,
+                                parent: hold.parentElement === item ? 1 : 0,
+                                frame: frame.textContent.length,
+                                stateWidth: state.getBoundingClientRect().width,
+                                // The pill sits just under the text, not
+                                // under the taller thumbnail.
+                                gap: hold.getBoundingClientRect().top
+                                  - item.querySelector(':scope > span:not(.status-pill, .covers-image-missing)').getBoundingClientRect().bottom,
+                                radius: parseFloat(getComputedStyle(hold).borderTopLeftRadius),
+                                height: hold.getBoundingClientRect().height,
+                              }
+                            }"""
+                        ),
+                    )
+                    assert held["lines"] == 1, held
+                    assert held["parent"] == 1, held
+                    assert held["frame"] == 0, held
+                    assert held["stateWidth"] > 1, held
+                    assert held["gap"] <= 16, held
+                    # One line keeps its round ends.
+                    assert held["radius"] * 2 >= held["height"], held
+                    # Wrapped on a phone at 200% text, the pill keeps a
+                    # readable shape instead of an oval.
+                    page.set_viewport_size({"width": 390, "height": 900})
+                    page.goto(f"{origin}/library?lens=all&view=covers&tab=decide")
+                    expect(hold).to_be_visible()
+                    set_root_text(page, "200%")
+                    wrapped = cast(
+                        "dict[str, float]",
+                        hold.evaluate(
+                            """hold => ({
+                              radius: parseFloat(getComputedStyle(hold).borderTopLeftRadius),
+                              height: hold.getBoundingClientRect().height,
+                              lineHeight: parseFloat(getComputedStyle(hold).lineHeight)
+                                || parseFloat(getComputedStyle(hold).fontSize) * 1.5,
+                            })"""
+                        ),
+                    )
+                    assert wrapped["height"] > 2 * wrapped["lineHeight"], wrapped
+                    assert wrapped["radius"] * 2 < wrapped["height"], wrapped
+                    set_root_text(page, "")
+                    page.unroute("**/api/v1/covers?*")
                     page.set_viewport_size({"width": 1280, "height": 900})
                     page.goto(f"{origin}/library?lens=all&view=covers&tab={tab}")
                 group = page.get_by_role(
-                    "radiogroup", name="Which cover should this book use?"
+                    "radiogroup", name="Which cover should this work use?"
                 )
                 cards = group.get_by_role("radio")
                 expect(cards).to_have_count(5)
                 for card in cards.all():
                     expect(card).to_be_enabled()
                 choice = (
-                    group.get_by_role("radio", name=re.compile(r"^Choose Current"))
+                    group.get_by_role("radio", name="Keep current cover", exact=True)
                     if journey == "J4"
                     else group.get_by_role("radio", name=re.compile(r"EPUB file"))
                 )
@@ -14239,6 +14636,19 @@ def test_measured_cover_rules_keep_or_suggest_through_covers(
                 else:
                     assert decision["outcome"] == "accept", decision
                     assert decision["selected_value"]["kind"] == "cover", decision
+                # Once answered, the field no longer heads itself as a pending
+                # suggestion (#1866).
+                expect(page.locator(".covers-notice")).to_have_text(
+                    re.compile(r"^(Kept|Switched) ")
+                )
+                page.goto(f"{origin}/library?lens=all&preview={case_id}&field=cover")
+                answered = page.get_by_role("region", name="Choose a cover")
+                expect(answered.locator(":scope > header > strong")).to_have_text(
+                    "Cover choices ready"
+                )
+                expect(
+                    answered.get_by_text("Switch suggested", exact=True)
+                ).to_have_count(0)
             browser.close()
 
 

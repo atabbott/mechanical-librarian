@@ -8,6 +8,9 @@ under a tab. A work's group is decided by the store from persisted facts:
 - ``auto``: its current cover is an automatic write that the owner has not
   answered since, listed while the replaced original is still retained
   (ADR-0093, Amendment 6) or when the write filled an empty cover;
+- ``chosen``: the owner chose a proposed cover over the current comparison
+  and its write has not verified yet; listed only under All, its thumbnail is
+  still the cover Audiobookshelf holds (#1866);
 - ``kept``: the current cover stays and other covers can still be chosen;
 - ``none``: there is only the one cover.
 
@@ -33,9 +36,16 @@ from mechanical_librarian.application.review_web import (
 )
 
 CoverView = Literal["decide", "kept", "switched", "all"]
-CoverGroup = Literal["proposal", "choice", "kept", "auto", "none"]
+CoverGroup = Literal["proposal", "choice", "kept", "chosen", "auto", "none"]
 COVER_VIEWS: tuple[CoverView, ...] = ("decide", "kept", "switched", "all")
-COVER_GROUPS: tuple[CoverGroup, ...] = ("proposal", "choice", "kept", "auto", "none")
+COVER_GROUPS: tuple[CoverGroup, ...] = (
+    "proposal",
+    "choice",
+    "kept",
+    "chosen",
+    "auto",
+    "none",
+)
 # Pages of 50 books, with "Show more covers" for the next (#1363 Q9).
 COVER_PAGE_SIZE = 50
 # A row's place in its tab's order, as the store sorts it: decide by

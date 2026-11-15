@@ -612,6 +612,8 @@ def test_currentness_facts_derive_from_complete_producer(case: _Case) -> None:
         "manual_ready": True,
         "replay_reference": case.service.replay_reference,
         "cover_stage": {
+            # The current cover and the candidate show different art.
+            "arts": 2,
             "outcome": json.loads(json.loads(document)["policy_report_document"])[
                 "stage"
             ]["outcome"],
@@ -867,7 +869,7 @@ def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
         clock=lambda: case.now + 1,
     )
     assert model_free.replay_reference == (
-        "cover_replay_4dc6ac2326143d9257522e4c97fd29c1ffc9f913ff05f51f585a50bab13e6412"
+        "cover_replay_e0f35cf652875ea8546c99a5ce3a97d0925dded7fe72c391c734c43eae48f37f"
     )
     assert (
         model_free.ensure(case_id, case.report.to_json(), case.proposal)[
@@ -910,7 +912,7 @@ def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
     assert len(dispatches) == 1
     replayed_qualified = qualified()
     assert replayed_qualified.replay_reference == (
-        "cover_replay_4c7ef3f9c7c2a005babcc847aaf9866048136dee437b8318301fed2163480b0b"
+        "cover_replay_0e4076a69cdc1e7fa30fca5526e3972071cba9af9211d2cf4c587d28f029e60d"
     )
     assert (
         replayed_qualified.ensure(
@@ -1370,6 +1372,13 @@ def test_an_audiobook_consideration_dispatches_no_observer(
     assert persisted["observation_document"] is None
     assert (persisted["identity_document"] is not None) is recording
     assert (persisted["policy_report_document"] is not None) is recording
+    # With no stage the currentness `arts` is absent with it (#1372 S10).
+    facts = json.loads(
+        cover_consideration_currentness_document(
+            cast("_Store", service._store).current["review_case_" + "e" * 64]
+        )
+    )
+    assert (facts["cover_stage"] is None) is not recording
     # The same evidence on the ebook path still packets and still observes.
     assert case.service.ensure(
         "review_case_" + "f" * 64, case.report.to_json(), case.proposal
@@ -2492,10 +2501,60 @@ def test_an_undecodable_retained_original_with_nothing_to_review_is_no_omission(
     stored = json.loads(case.store.current[case_id])
     assert stored["packet_document"] is None
     assert [item["candidate_kind"] for item in stored["candidates"]] == ["retained"]
-    assert [omission["reference"] for omission in projected["omissions"]] == [
+    # The unread current cover has its own card, so its source is stored as
+    # an omission but not counted as a cover not shown (#1866).
+    assert [omission["reference"] for omission in stored["omissions"]] == [
         cover_source_reference(report.report_id, current.source_id)
     ]
-    service.project_historical(case.store.current[case_id])
+    assert projected["omissions"] == []
+    assert service.project_historical(case.store.current[case_id])["omissions"] == []
+
+
+def test_a_current_cover_not_returned_is_not_counted_as_a_cover_not_shown(
+    case: _Case,
+) -> None:
+    """#1866: a transient read of the current cover is not a cover not shown.
+
+    Another source the read missed is still counted, and the stored and
+    packet omissions keep both.
+    """
+    current = CoverSource(
+        cover_source_id(CoverSourceKind.ABS, "current"),
+        CoverSourceKind.ABS,
+        CoverSourceState.TIMEOUT,
+        timeout_scope="attempted",
+    )
+    missed = CoverSource(
+        cover_source_id(CoverSourceKind.HARDCOVER, "missed"),
+        CoverSourceKind.HARDCOVER,
+        CoverSourceState.TIMEOUT,
+        provenance=CoverProvenance(
+            "hardcover", CoverDesignation.WORK, "work-missed", None
+        ),
+        timeout_scope="attempted",
+    )
+    sources = (current, case.sources[1], missed)
+    report = _with_cover(_report(sources), TargetFieldState.VALUE, sources)
+    case_id = "review_case_" + "q" * 64
+
+    projected = case.service.ensure(case_id, report.to_json(), case.proposal)
+
+    stored = json.loads(case.store.current[case_id])
+    assert stored["incumbent"]["state"] == "unavailable"
+    current_reference = cover_source_reference(report.report_id, current.source_id)
+    missed_reference = cover_source_reference(report.report_id, missed.source_id)
+    assert {omission["reference"] for omission in stored["omissions"]} >= {
+        current_reference,
+        missed_reference,
+    }
+    packet = json.loads(stored["packet_document"])
+    assert {omission["reference"] for omission in packet["omissions"]} >= {
+        current_reference,
+        missed_reference,
+    }
+    references = [omission["reference"] for omission in projected["omissions"]]
+    assert current_reference not in references
+    assert missed_reference in references
 
 
 @pytest.mark.parametrize(
@@ -2627,6 +2686,53 @@ def test_a_held_cover_that_could_not_be_read_is_an_unavailable_current_cover(
         None,
         None,
     )
+
+
+def _arts_of(root, **report_options) -> object:
+    """The currentness `arts` of a real consideration (#1372 S10)."""
+    from mechanical_librarian.adapters.persistence.cover_artifacts import (
+        CoverArtifactStore,
+    )
+    from tests.support.cover_producers import _qualified_cover_report
+
+    report, _ = _qualified_cover_report(root, **report_options)
+    artifacts = CoverArtifactStore(root / "artifacts")
+    digests = {
+        source.artifact.artifact_id: source.artifact.preview_digest
+        for source in report.cover_sources
+        if source.artifact is not None
+    }
+    store = _Store()
+    service = CoverConsiderationService(
+        store,
+        read_preview=lambda artifact_id, _variant: artifacts.read_preview_digest(
+            digests[artifact_id]
+        ),
+        read_preview_digest=artifacts.read_preview_digest,
+        clock=lambda: 10,
+    )
+    case_id = "review_case_" + "e" * 64
+    service.ensure(
+        case_id, report.to_json(), {"proposal_id": "review_proposal_" + "f" * 64}
+    )
+    stage = json.loads(
+        cover_consideration_currentness_document(store.current[case_id])
+    )["cover_stage"]
+    return None if stage is None else stage["arts"]
+
+
+def test_arts_counts_distinct_art_after_same_art_collapse(tmp_path) -> None:
+    from mechanical_librarian.domain.cover_rules import (
+        COLOUR_BINS,
+        LAYOUT_VALUES,
+        CoverMeasures,
+    )
+
+    (tmp_path / "two").mkdir()
+    (tmp_path / "same").mkdir()
+    assert _arts_of(tmp_path / "two") == 2
+    shared = CoverMeasures("0" * 16, "0" * 16, (1,) * COLOUR_BINS, (0,) * LAYOUT_VALUES)
+    assert _arts_of(tmp_path / "same", shared_measures=shared) == 1
 
 
 def _policy_over(tmp_path, policy: CoverPolicy = CoverPolicy(), **options: Any):

@@ -48,6 +48,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     default_target_fields,
 )
+from mechanical_librarian.domain.reviewer_access import REVIEWER_ACCESS_SCHEMA
 from tests.support.metadata_report_schemas import (
     PRIOR_ATTENTION_FACT_OBJECTS,
     PRIOR_ATTENTION_FACT_SOURCE_SQL,
@@ -633,6 +634,8 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("cover_consideration_events",),
             ("cover_considerations",),
             ("cover_selection_authorities",),
+            ("cover_taste_builds",),
+            ("cover_taste_profile_versions",),
             ("current_cover_considerations",),
             ("current_cover_selection_authorities",),
             ("current_description_advice",),
@@ -691,6 +694,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("review_preparation_work",),
             ("reviewer_access",),
             ("reviewer_access_secrets",),
+            ("reviewer_task_requests",),
             ("shadow_decision_outcomes",),
             ("shadow_outcome_field_facts",),
         ]
@@ -931,6 +935,9 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
                 + "DROP TABLE retained_cover_listings;"
                 "DROP TABLE retained_cover_removals;"
                 "DROP TABLE retained_cover_bindings;"
+                "DROP TABLE cover_taste_profile_versions;"
+                "DROP TABLE cover_taste_builds;"
+                "DROP TABLE reviewer_task_requests;"
                 "DROP TRIGGER metadata_reports_project_browse_facts;"
                 "DROP TABLE metadata_report_browse_authors;"
                 "DROP TABLE metadata_report_browse_facts;"
@@ -2655,6 +2662,14 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
             "_ATTENTION_FACT_OBJECTS",
             PRIOR_ATTENTION_FACT_OBJECTS,
         )
+        # The frozen producer's reviewer access CHECK names v3 (#1372 moved it).
+        old.setattr(
+            persistence_schema,
+            "_REVIEWER_ACCESS_SQL",
+            persistence_schema._REVIEWER_ACCESS_SQL.replace(
+                f"'{REVIEWER_ACCESS_SCHEMA}'", "'reviewer-access-v3'"
+            ),
+        )
         old.setattr(
             persistence_schema,
             "_REPORT_BROWSE_FACTS_SQL",
@@ -2721,6 +2736,9 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
                     + "DROP TABLE retained_cover_listings;"
                     "DROP TABLE retained_cover_removals;"
                     "DROP TABLE retained_cover_bindings;"
+                    "DROP TABLE cover_taste_profile_versions;"
+                    "DROP TABLE cover_taste_builds;"
+                    "DROP TABLE reviewer_task_requests;"
                     "DROP TRIGGER metadata_reports_project_browse_facts;"
                     "DROP TABLE metadata_report_browse_authors;"
                     "DROP TABLE metadata_report_browse_facts;"
@@ -2752,6 +2770,9 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
                     "DROP TABLE retained_cover_listings;"
                     "DROP TABLE retained_cover_removals;"
                     "DROP TABLE retained_cover_bindings;"
+                    "DROP TABLE cover_taste_profile_versions;"
+                    "DROP TABLE cover_taste_builds;"
+                    "DROP TABLE reviewer_task_requests;"
                     "DROP TABLE review_case_episodes;"
                     "DROP TABLE review_case_level_offers;"
                     "DROP TABLE level_decision_notes;"

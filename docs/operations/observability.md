@@ -43,7 +43,9 @@ cached, searched or filtered (#1711):
 
 - **Asked again**: an owner choice made before the book last came back for
   review (its content returned, or a policy change brought the case back), so
-  it no longer counts and the field is asking again.
+  it no longer counts and the field is asking again. When Book matching asked
+  again over a choice already written and verified, Details adds that
+  Audiobookshelf keeps the value already written.
 - **Held back**: a planned automatic write while the posture is not Automatic;
   it will not be written unless Automatic is turned back on.
 
