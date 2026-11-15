@@ -66,6 +66,7 @@ export type ActivityNote = NonNullable<ActivityEventView['note']>
 export const noteLabel: Record<ActivityNote, string> = {
   asked_again: 'Asked again',
   asked_again_matching: 'Asked again',
+  asked_again_matching_written: 'Asked again',
   held_back: 'Held back',
   waiting_for_check: 'Waiting for check',
 }
@@ -74,17 +75,17 @@ export const noteSentence: Record<ActivityNote, string> = {
     'This choice was made before the book came back for review, so the field asks you again.',
   asked_again_matching:
     'Book matching changed what this field offers, so this choice no longer counts and the field is asking you again.',
+  // The server names a choice it had already written and verified (#1355).
+  asked_again_matching_written:
+    'Book matching changed what this field offers, so this choice no longer counts and the field is asking you again. Audiobookshelf keeps the value already written.',
   held_back: 'Automatic is off, so this is not written until you turn it on again.',
   waiting_for_check:
     'Book matching changed, so this change waits until this work is checked again.',
 }
-// Details' sentence for a row's note. A choice Book matching no longer counts
-// that was already written and verified stays in Audiobookshelf, so Details
-// says so (#1355).
-export const noteDetail = (note: ActivityNote, state: string) =>
-  note === 'asked_again_matching' && state === 'verified'
-    ? `${noteSentence[note]} Audiobookshelf keeps the value already written.`
-    : noteSentence[note]
+// Details' sentence for a row's note. The row is the decision's own event, so
+// its state is the decision's outcome; whether the choice was written and
+// verified comes from the server as its own note (#1355).
+export const noteDetail = (note: ActivityNote) => noteSentence[note]
 // A ledger day heading; each row under it states only its time.
 export const dayHeading = (value: number | null) =>
   value === null ? 'Date not recorded' : formatDay(value)

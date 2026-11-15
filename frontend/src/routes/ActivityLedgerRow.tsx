@@ -337,9 +337,7 @@ export function ActivityEventRow({
           }`}
           id={`activity-evidence-${event.event_id}`}
         >
-          {event.note ? (
-            <p className="cm-activity-note-detail">{noteDetail(event.note, event.state)}</p>
-          ) : null}
+          {event.note ? <p className="cm-activity-note-detail">{noteDetail(event.note)}</p> : null}
           {event.policy_changes.length ? (
             <section
               className="cm-activity-policy-changes"

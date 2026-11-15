@@ -440,6 +440,12 @@ it('says in History that Book matching asked the field again, not that the owner
 })
 
 it('labels Book matching’s Activity notes and gives only their sentences in Details', async () => {
+  // A decision row has no write of its own to confirm.
+  const decisionEvidence = [
+    { label: 'Previous value', value: 'Not set' },
+    { label: 'New value', value: '9780060512750' },
+    { label: 'Chosen by', value: 'Library owner' },
+  ]
   const user = userEvent.setup()
   const http = createHttp()
   vi.mocked(http.getActivity).mockResolvedValue(
@@ -451,15 +457,19 @@ it('labels Book matching’s Activity notes and gives only their sentences in De
           note: 'waiting_for_check',
           work_label: 'Waiting Work',
         },
+        // The decision's own event carries its outcome as its state; the
+        // server says whether the choice was written and verified.
         {
-          event_id: 'owner-asked-matching',
-          state: 'verified',
-          note: 'asked_again_matching',
+          event_id: 'human_decision_event_written',
+          state: 'accept',
+          evidence: decisionEvidence,
+          note: 'asked_again_matching_written',
           work_label: 'Matching Work',
         },
         {
-          event_id: 'owner-asked-matching-unwritten',
+          event_id: 'human_decision_event_unwritten',
           state: 'accept',
+          evidence: decisionEvidence,
           note: 'asked_again_matching',
           work_label: 'Unwritten Work',
         },

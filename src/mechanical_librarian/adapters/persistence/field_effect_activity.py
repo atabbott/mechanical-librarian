@@ -3265,8 +3265,13 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             # The choice right before a valueless `matching_changed` row is
             # the one Book matching asked again (#1355, amendment 3). The
             # floor's note, below, wins over it.
+            # A choice already written and verified stays in Audiobookshelf,
+            # which its note says; the row's own state is the decision's
+            # outcome, so the store decides it (#1355, amendment A1.1).
             rows = self._connection.execute(
-                "SELECT event.event_id FROM human_decision_events event "
+                "SELECT event.event_id,EXISTS (SELECT 1 FROM field_effects effect "
+                "WHERE effect.decision_id=decision.decision_id "
+                "AND effect.state='verified') FROM human_decision_events event "
                 "JOIN human_decisions decision ON decision.decision_id=event.decision_id "
                 "JOIN current_review_packages current "
                 "ON current.review_case_id=decision.review_case_id "
@@ -3280,7 +3285,15 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "ORDER BY later.ordinal LIMIT 1)='matching_changed'",
                 decisions,
             ).fetchall()
-            notes.update((row[0], "asked_again_matching") for row in rows)
+            notes.update(
+                (
+                    row[0],
+                    "asked_again_matching_written"
+                    if row[1] == 1
+                    else "asked_again_matching",
+                )
+                for row in rows
+            )
             rows = self._connection.execute(
                 "SELECT event.event_id FROM human_decision_events event "
                 "JOIN human_decisions decision ON decision.decision_id=event.decision_id "
