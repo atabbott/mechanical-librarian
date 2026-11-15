@@ -2874,6 +2874,7 @@ describe('ReviewApiClient', () => {
       deferred: 214,
       next_retry_at: 1_800_000_000,
       remedy: 'add_api_key',
+      notice_at: 1_800_086_400,
     }
     const throttling = { generation: 3, retry: 'available', entries: [entry] }
     // An absent block was once read as none (T5); the schema requires it.
@@ -2888,6 +2889,15 @@ describe('ReviewApiClient', () => {
     expect(
       (await readPreparation({ ...base, provider_throttling: throttling })).provider_throttling,
     ).toEqual(throttling)
+    const unannounced = { ...throttling, entries: [{ ...entry, notice_at: null }] }
+    expect(
+      (await readPreparation({ ...base, provider_throttling: unannounced })).provider_throttling,
+    ).toEqual(unannounced)
+    const missing: Record<string, unknown> = { ...entry }
+    delete missing.notice_at
+    await expect(
+      readPreparation({ ...base, provider_throttling: { ...throttling, entries: [missing] } }),
+    ).rejects.toMatchObject(refused('required@/provider_throttling/entries/0/notice_at'))
     const maximal = { ...throttling, entries: Array.from({ length: 256 }, () => entry) }
     expect(
       (await readPreparation({ ...base, provider_throttling: maximal })).provider_throttling
@@ -2916,6 +2926,11 @@ describe('ReviewApiClient', () => {
       [
         { ...throttling, entries: [{ ...entry, remedy: 'buy_more' }] },
         `enum@${at}/entries/0/remedy`,
+      ],
+      [{ ...throttling, entries: [{ ...entry, notice_at: -1 }] }, `min@${at}/entries/0/notice_at`],
+      [
+        { ...throttling, entries: [{ ...entry, notice_at: 8_640_000_000_001 }] },
+        `max@${at}/entries/0/notice_at`,
       ],
       [
         { ...throttling, entries: [{ ...entry, library: '' }] },

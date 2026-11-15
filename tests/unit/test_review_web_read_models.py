@@ -4518,6 +4518,7 @@ def _throttle_row(
     reason: str | None,
     deferred: int,
     next_eligible_at: int | None = None,
+    waiting_since: int | None = None,
 ) -> dict[str, object]:
     return {
         "connection": connection,
@@ -4527,6 +4528,7 @@ def _throttle_row(
         "next_eligible_at": next_eligible_at,
         "reason": reason,
         "deferred": deferred,
+        "waiting_since": waiting_since,
     }
 
 
@@ -4690,9 +4692,49 @@ def test_provider_throttling_view_totals_each_library_and_source(
             "deferred",
             "next_retry_at",
             "remedy",
+            "notice_at",
         }
         for entry in cast("list[dict[str, object]]", view["entries"])
     )
+
+
+@pytest.mark.parametrize(
+    ("waiting_since", "notice_at"),
+    (
+        pytest.param((500, 200), 86_600, id="earliest-member-wait"),
+        pytest.param((None, 300), 86_700, id="member-in-a-quota-wait-is-skipped"),
+        pytest.param((None, None), None, id="every-member-in-a-quota-wait"),
+        pytest.param(
+            (8_640_000_000_000, None),
+            8_640_000_000_000,
+            id="capped-at-the-largest-timestamp",
+        ),
+    ),
+)
+def test_provider_throttling_notice_is_a_day_after_the_longest_wait(
+    waiting_since: tuple[int | None, int | None], notice_at: int | None
+) -> None:
+    from mechanical_librarian.application.review_application import (
+        provider_throttling_view,
+    )
+
+    rows = tuple(
+        _throttle_row(
+            name,
+            "google_books",
+            "books",
+            "waiting",
+            "quota_exhausted" if since is None else "burst_throttled",
+            1,
+            90,
+            since,
+        )
+        for name, since in zip(("google-a", "google-b"), waiting_since, strict=True)
+    )
+    view = provider_throttling_view(rows, {}, 1, "available")
+    assert [notice_at] == [
+        entry["notice_at"] for entry in cast("list[dict[str, object]]", view["entries"])
+    ]
 
 
 def test_preparation_read_carries_value_free_provider_throttling(
@@ -4717,6 +4759,7 @@ def test_preparation_read_carries_value_free_provider_throttling(
             "burst_throttled",
             214,
             90,
+            100,
         ),
     )
     web.client = TestClient(
@@ -4747,6 +4790,7 @@ def test_preparation_read_carries_value_free_provider_throttling(
                 "deferred": 214,
                 "next_retry_at": 90,
                 "remedy": "add_api_key",
+                "notice_at": 86_500,
             }
         ],
     }

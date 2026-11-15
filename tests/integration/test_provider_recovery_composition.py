@@ -1028,7 +1028,11 @@ def test_three_work_shared_failure_then_real_f22_cutover(
                 _reviewer_access(database, configuration),
                 provider_recovery=recovery,
             )
+            topics: list[str] = []
+            supervisor._announce = lambda topic, _subject: topics.append(topic)
             supervisor.recover_provider_once()
+            # The claim and its failure refresh the preparation read (#1494).
+            assert ["preparation"] == topics
             check = open_repository(database)
             assert predecessor_packages == {
                 item: check.current_review_package("primary", "ebooks", item)
@@ -2251,6 +2255,8 @@ def test_a_real_first_throttle_names_its_reason_and_remedy(
             "deferred": 2,
             "next_retry_at": 17_200,
             "remedy": "add_api_key",
+            # The first enrolment at 10,000 starts the day-long wait.
+            "notice_at": 96_400,
         }
     ]
     assert expected["statuses"] == statuses
@@ -2312,6 +2318,8 @@ def test_the_first_throttle_names_its_reason_and_remedy_through_its_retry() -> N
         "deferred": 3,
         "next_retry_at": 7_300,
         "remedy": "add_api_key",
+        # The retry keeps the episode, so the wait still began at the seed.
+        "notice_at": 86_500,
     }
 
 
@@ -2378,6 +2386,7 @@ def test_a_failed_settings_commit_never_moves_recovery_past_a_restart(
                     "deferred": 3,
                     "next_retry_at": 3_700,
                     "remedy": "add_api_key",
+                    "notice_at": 86_500,
                 }
             ],
         }

@@ -1414,8 +1414,11 @@ class SQLiteProviderRecoveryStore:
         Most transitions record no outcome, so the reason a throttle recorded
         holds until the scope recovers or its generation changes (#1367).
         ``deferred`` counts only queued or running jobs of that row's exact scope
-        and generation. This is one read under the store lock and never begins
-        a transaction.
+        and generation. ``waiting_since`` is when the episode's current wait
+        began: the first scope event after the later of its last recovery and
+        its last daily quota deferral, so time in a quota wait never counts. It
+        is ``None`` while that quota wait lasts. This is one read under the
+        store lock and never begins a transaction.
         """
         try:
             with self._lock:
@@ -1428,7 +1431,17 @@ class SQLiteProviderRecoveryStore:
                     "AND (outcome IS NOT NULL OR state='recovered') ORDER BY sequence DESC LIMIT 1),"
                     "(SELECT count(*) FROM provider_recovery_jobs j WHERE j.connection=h.connection "
                     "AND j.adapter=h.adapter AND j.scope=h.scope AND j.generation=h.generation "
-                    "AND j.state IN ('queued','running')) "
+                    "AND j.state IN ('queued','running')),("
+                    "SELECT e.occurred_at FROM provider_recovery_events e "
+                    "INDEXED BY provider_recovery_events_scope_latest "
+                    "WHERE e.connection=h.connection AND e.adapter=h.adapter AND e.scope=h.scope "
+                    "AND e.generation=h.generation AND e.job_attempt IS NULL AND e.sequence>coalesce(("
+                    "SELECT f.sequence FROM provider_recovery_events f "
+                    "INDEXED BY provider_recovery_events_scope_latest "
+                    "WHERE f.connection=h.connection AND f.adapter=h.adapter AND f.scope=h.scope "
+                    "AND f.generation=h.generation AND f.job_attempt IS NULL "
+                    "AND (f.state='recovered' OR f.outcome='quota_exhausted') "
+                    "ORDER BY f.sequence DESC LIMIT 1),0) ORDER BY e.sequence ASC LIMIT 1) "
                     "FROM provider_recovery_health h "
                     "WHERE h.state!='recovered' ORDER BY h.scope,h.adapter,h.connection LIMIT 4096"
                 ).fetchall()
@@ -1436,6 +1449,11 @@ class SQLiteProviderRecoveryStore:
             raise ProviderRecoveryStoreError(
                 "provider recovery persistence is unavailable"
             ) from error
+        if any(
+            row[7] is not None and not bounded_integer(0, MAX_TIMESTAMP)(row[7])
+            for row in rows
+        ):
+            raise ProviderRecoveryStoreError("provider recovery history is invalid")
         return tuple(
             {
                 "connection": row[0],
@@ -1445,6 +1463,7 @@ class SQLiteProviderRecoveryStore:
                 "next_eligible_at": row[4],
                 "reason": row[5],
                 "deferred": row[6],
+                "waiting_since": row[7],
             }
             for row in rows
         )

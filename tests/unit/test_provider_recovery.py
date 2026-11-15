@@ -5373,6 +5373,7 @@ def test_throttling_snapshot_counts_each_unrecovered_row_and_its_reason(
             "next_eligible_at": 7_210,
             "reason": "transient",
             "deferred": 0,
+            "waiting_since": 10,
         },
         {
             "connection": "google",
@@ -5382,6 +5383,7 @@ def test_throttling_snapshot_counts_each_unrecovered_row_and_its_reason(
             "next_eligible_at": 70,
             "reason": "burst_throttled",
             "deferred": 3,
+            "waiting_since": 10,
         },
         {
             "connection": "hardcover",
@@ -5391,6 +5393,7 @@ def test_throttling_snapshot_counts_each_unrecovered_row_and_its_reason(
             "next_eligible_at": None,
             "reason": "authentication",
             "deferred": 2,
+            "waiting_since": 10,
         },
     ] == list(snapshot)
     # A completed job is no longer deferred.
@@ -5427,6 +5430,281 @@ def test_throttling_reason_is_the_latest_outcome_of_the_current_episode(
     ((row),) = store.throttling_snapshot()
     assert row["reason"] == "rate_limited"
     store.close()
+
+
+_DAY = 86_400
+
+
+def _fail(
+    store: SQLiteProviderRecoveryStore,
+    failure: str,
+    now: int,
+    retry_after: int | None = None,
+) -> None:
+    store.observe_failure(
+        connection="google",
+        adapter="google_books",
+        scope="books",
+        generation=1,
+        failure=failure,
+        now=now,
+        retry_after=retry_after,
+    )
+
+
+def _waiting_since(store: SQLiteProviderRecoveryStore) -> list[object]:
+    return [row["waiting_since"] for row in store.throttling_snapshot()]
+
+
+def _recover(store: SQLiteProviderRecoveryStore, now: int) -> None:
+    store.enqueue_jobs((_job(f"r{now}"),), enqueued_at=now)
+    claimed = store.claim_one(generation=1, now=now + _DAY, token="owner")
+    assert claimed is not None
+    canary = store.claim_job(recovery=claimed, token="owner", now=now + _DAY)
+    assert canary is not None
+    store.complete_job(
+        recovery=claimed, job=canary, token="owner", now=now + _DAY, success=True
+    )
+    store.complete_success(token="owner", recovery=claimed, now=now + _DAY)
+    assert () == store.throttling_snapshot()
+
+
+def test_waiting_since_is_the_first_event_of_the_current_wait(tmp_path: Path) -> None:
+    store = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
+    _fail(store, "transient", 1_000)
+    assert [1_000] == _waiting_since(store)
+    # A later failure in the same episode keeps the clock.
+    _fail(store, "transient", 5_000)
+    assert [1_000] == _waiting_since(store)
+    # A recovery closes the episode; the next failure starts the clock again.
+    _recover(store, 6_000)
+    _fail(store, "transient", 100_000)
+    assert [100_000] == _waiting_since(store)
+    store.close()
+
+
+def test_waiting_since_ignores_a_daily_quota_wait(tmp_path: Path) -> None:
+    store = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
+    _fail(store, "burst_throttled", 1_000, retry_after=60)
+    _fail(store, "quota_exhausted", 1_100, retry_after=3_600)
+    assert [None] == _waiting_since(store)
+    claimed = store.claim_one(generation=1, now=4_800, token="owner")
+    assert claimed is not None
+    # A claim appends no scope event: the quota wait has not been followed yet.
+    assert [None] == _waiting_since(store)
+    store.complete(
+        token="owner",
+        recovery=claimed,
+        now=4_800,
+        failure="burst_throttled",
+        retry_after=60,
+    )
+    # The first attempt after the wait settles and starts the clock.
+    assert [4_800] == _waiting_since(store)
+    store.close()
+
+
+def test_waiting_since_restarts_with_retry_now_and_survives_a_restart(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
+    _fail(store, "transient", 1_000)
+    assert 1 == store.reconcile_generation(generation=2, now=9_000)
+    assert [9_000] == _waiting_since(store)
+    assert 0 == store.reconcile_generation(generation=2, now=10_000)
+    store.close()
+    reopened = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
+    assert 0 == reopened.reconcile_generation(generation=2, now=11_000)
+    assert [9_000] == _waiting_since(reopened)
+    reopened.close()
+
+
+def test_waiting_since_without_the_recovery_floor_would_keep_the_old_episode(
+    tmp_path: Path,
+) -> None:
+    """Negative control: the recovery floor is what resets the clock."""
+    store = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
+    _fail(store, "transient", 1_000)
+    _recover(store, 6_000)
+    _fail(store, "transient", 100_000)
+    floor = "(f.state='recovered' OR f.outcome='quota_exhausted')"
+    calls: list[str] = []
+    connection = store._connection
+
+    class _NoRecoveryFloor:
+        def execute(self, sql: str, *args: object) -> sqlite3.Cursor:
+            calls.append(sql)
+            return connection.execute(
+                sql.replace(floor, "(f.outcome='quota_exhausted')"), *args
+            )
+
+    store._connection = cast("sqlite3.Connection", _NoRecoveryFloor())
+    try:
+        assert [1_000] == _waiting_since(store)
+    finally:
+        store._connection = connection
+    assert floor in calls[-1]
+    assert [100_000] == _waiting_since(store)
+    store.close()
+
+
+def test_waiting_since_rejects_a_value_outside_the_timestamp_range(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
+    _fail(store, "transient", 1_000)
+    connection = store._connection
+
+    class _Corrupt:
+        def execute(self, sql: str, *args: object) -> object:
+            rows = connection.execute(sql, *args).fetchall()
+            return SimpleNamespace(fetchall=lambda: [(*rows[0][:7], -1)])
+
+    store._connection = cast("sqlite3.Connection", _Corrupt())
+    try:
+        with pytest.raises(ProviderRecoveryStoreError):
+            store.throttling_snapshot()
+    finally:
+        store._connection = connection
+    store.close()
+
+
+_BASE_THROTTLING_READ = (
+    "SELECT h.connection,h.adapter,h.scope,h.state,h.next_eligible_at,("
+    "SELECT CASE WHEN state='recovered' THEN NULL ELSE outcome END "
+    "FROM provider_recovery_events INDEXED BY provider_recovery_events_scope_latest "
+    "WHERE connection=h.connection AND adapter=h.adapter AND scope=h.scope "
+    "AND generation=h.generation AND job_attempt IS NULL "
+    "AND (outcome IS NOT NULL OR state='recovered') ORDER BY sequence DESC LIMIT 1),"
+    "(SELECT count(*) FROM provider_recovery_jobs j WHERE j.connection=h.connection "
+    "AND j.adapter=h.adapter AND j.scope=h.scope AND j.generation=h.generation "
+    "AND j.state IN ('queued','running')) "
+    "FROM provider_recovery_health h "
+    "WHERE h.state!='recovered' ORDER BY h.scope,h.adapter,h.connection LIMIT 4096"
+)
+
+
+def _episode_events(shape: str, count: int) -> list[tuple[str, int | None, str | None]]:
+    events: list[tuple[str, int | None, str | None]] = []
+    for n in range(count):
+        if shape == "outcome_each_failure":
+            events.append(
+                ("checking", None, None)
+                if n % 2 == 0
+                else ("waiting", 9_999, "burst_throttled")
+            )
+        elif shape == "outcome_first_only":
+            events.append(
+                ("waiting", 9_999, "burst_throttled")
+                if n == 0
+                else ("checking", None, None)
+                if n % 2
+                else ("waiting", 9_999, None)
+            )
+        elif shape == "no_outcome":
+            events.append(("waiting", 9_999, None))
+        else:
+            events.append(
+                ("recovered", None, None)
+                if n % 20 == 0
+                else ("checking", None, None)
+                if n % 2
+                else ("waiting", 9_999, "burst_throttled")
+            )
+    return events
+
+
+def _throttled_store(
+    path: Path, shape: str, scopes: int = 32, events: int = 3_000
+) -> SQLiteProviderRecoveryStore:
+    store = SQLiteProviderRecoveryStore.open(path)
+    connection = store._connection
+    connection.execute("BEGIN")
+    for index in range(scopes):
+        scope = f"s{index:03d}"
+        connection.execute(
+            "INSERT INTO provider_recovery_members VALUES('google','google_books',?)",
+            (scope,),
+        )
+        connection.execute(
+            "INSERT INTO provider_recovery_health(connection,adapter,scope,generation,"
+            "state,attempt,next_eligible_at) VALUES('google','google_books',?,1,"
+            "'waiting',1,99999)",
+            (scope,),
+        )
+        connection.executemany(
+            "INSERT INTO provider_recovery_events(connection,adapter,scope,generation,"
+            "state,attempt,next_eligible_at,occurred_at,outcome) "
+            "VALUES('google','google_books',?,1,?,?,?,?,?)",
+            [
+                (scope, state, 0 if state == "recovered" else 1, due, at, outcome)
+                for at, (state, due, outcome) in enumerate(
+                    _episode_events(shape, events)
+                )
+            ],
+        )
+    connection.execute("COMMIT")
+    return store
+
+
+def _throttling_statement(store: SQLiteProviderRecoveryStore) -> str:
+    seen: list[str] = []
+    connection = store._connection
+
+    class _Recording:
+        def execute(self, sql: str, *args: object) -> sqlite3.Cursor:
+            seen.append(sql)
+            return connection.execute(sql, *args)
+
+    store._connection = cast("sqlite3.Connection", _Recording())
+    try:
+        store.throttling_snapshot()
+    finally:
+        store._connection = connection
+    return seen[-1]
+
+
+def _vm_steps(connection: sqlite3.Connection, sql: str) -> int:
+    steps = [0]
+
+    def tick() -> int:
+        steps[0] += 1
+        return 0
+
+    connection.set_progress_handler(tick, 1)
+    try:
+        connection.execute(sql).fetchall()
+    finally:
+        connection.set_progress_handler(None, 1)
+    return steps[0]
+
+
+def test_throttling_read_walks_each_episode_through_its_index_at_bounded_cost(
+    tmp_path: Path,
+) -> None:
+    """Dry proof 2' (Amendment 2): 32 scopes of 3,000 scope events each."""
+    worst = _throttled_store(tmp_path / "worst.sqlite", "outcome_first_only")
+    base_worst = _vm_steps(worst._connection, _BASE_THROTTLING_READ)
+    worst.close()
+    for shape in (
+        "outcome_each_failure",
+        "outcome_first_only",
+        "no_outcome",
+        "recovering",
+    ):
+        store = _throttled_store(tmp_path / f"{shape}.sqlite", shape)
+        statement = _throttling_statement(store)
+        plan = [
+            row[3]
+            for row in store._connection.execute(
+                "EXPLAIN QUERY PLAN " + statement
+            ).fetchall()
+        ]
+        index = "USING INDEX provider_recovery_events_scope_latest"
+        assert any(line.startswith("SEARCH e ") and index in line for line in plan)
+        assert any(line.startswith("SEARCH f ") and index in line for line in plan)
+        assert _vm_steps(store._connection, statement) <= 2.1 * base_worst, shape
+        store.close()
 
 
 def _throttle_reasons(

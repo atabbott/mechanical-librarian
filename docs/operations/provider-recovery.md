@@ -58,8 +58,14 @@ only when an item is prepared.
 ## Retry now
 
 After fixing a dormant cause (a key, a permission, a setting), press
-**Retry now** on Library or Settings. It raises `provider_recovery_generation`
-by exactly one through an ordinary Settings save:
+**Retry now** in the popover of the status icon in the workspace header, which
+lists every source and library with lookups waiting. Library and Settings show
+the same command in a notice only when a source needs you: nothing will retry
+it unless you act, its key is missing or refused, or its lookups have waited
+24 hours without recovering. Time spent waiting for a daily quota does not
+count toward the 24 hours, and Retry now starts them again. Retry now raises
+`provider_recovery_generation` by exactly one through an ordinary Settings
+save:
 
 - The request carries the generation you saw. A second press, another tab or a
   changed settings revision is refused with `provider_recovery_stale` or
@@ -80,8 +86,8 @@ Nothing else wakes dormant recovery: no environment variable, file watcher or
 configuration hash. A dormant authentication or authorisation scope wakes only
 through Retry now, and counts as recovered only once a job proves the fix.
 
-The preparation control in the workspace header offers **Scan now**, and
-**Retry** after a run with failures. Both start a new preparation cycle for a
+The same popover offers **Scan now**, and **Retry** after a run with
+failures. Both start a new preparation cycle for a
 library. They do not change the recovery schedule.
 
 ## What recovery does

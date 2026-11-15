@@ -3886,6 +3886,7 @@ describe('settings provider throttling (#1282)', () => {
           deferred: 5,
           next_retry_at: null,
           remedy: 'add_api_key',
+          notice_at: null,
         },
       ],
     },

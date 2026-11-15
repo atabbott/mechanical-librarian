@@ -10813,6 +10813,71 @@ def test_lane_zero_wakes_recovery_with_the_supervisor_clock() -> None:
     assert [41] == woken
 
 
+@pytest.mark.parametrize(
+    ("states", "announced"),
+    (
+        pytest.param(("idle", "idle", "idle"), 0, id="idle"),
+        pytest.param(("target_held",) * 3, 0, id="target-held"),
+        pytest.param(("idle", "waiting", "idle"), 1, id="one-waiting-run"),
+        pytest.param(("fanout", "recovered", "dormant"), 3, id="every-change"),
+    ),
+)
+def test_lane_zero_announces_preparation_when_a_recovery_run_changes_state(
+    states: tuple[str, ...], announced: int
+) -> None:
+    from mechanical_librarian.application.provider_recovery_runner import RecoveryRun
+
+    pipeline = _ScheduledPipeline()
+    runs = iter(states)
+    wakes = 0
+    topics: list[tuple[str, str | None]] = []
+    supervisor = ReviewPreparationSupervisor(
+        pipeline,
+        clock=lambda: 41,
+        recovery_wake=lambda _now: RecoveryRun(next(runs)),
+    )
+    supervisor._announce = lambda topic, subject: topics.append((topic, subject))
+
+    def run_next(maximum_actions: int = 64) -> bool:
+        nonlocal wakes
+        wakes += 1
+        if wakes == len(states):
+            supervisor._stop.set()
+        else:
+            supervisor._wake.set()
+        return False
+
+    pipeline.run_next = run_next
+    supervisor._wake.set()
+    supervisor._run(0)
+    assert len(states) == wakes
+    assert [("preparation", None)] * announced == topics
+
+
+@pytest.mark.parametrize(
+    ("run", "announced"),
+    (
+        pytest.param("waiting", 1, id="a-retry-that-waits-again"),
+        pytest.param("idle", 0, id="nothing-due"),
+        pytest.param(None, 0, id="a-double-without-a-run"),
+    ),
+)
+def test_explicit_recovery_announces_preparation_only_for_a_changed_run(
+    run: str | None, announced: int
+) -> None:
+    from mechanical_librarian.application.provider_recovery_runner import RecoveryRun
+
+    topics: list[str] = []
+    supervisor = ReviewPreparationSupervisor(
+        _ScheduledPipeline(),
+        clock=lambda: 41,
+        recovery_wake=lambda _now: None if run is None else RecoveryRun(run),
+    )
+    supervisor._announce = lambda topic, _subject: topics.append(topic)
+    supervisor.recover_provider_once()
+    assert ["preparation"] * announced == topics
+
+
 def test_lane_zero_contains_recovery_store_failure_and_continues() -> None:
     pipeline = _ScheduledPipeline()
     wakes: list[int] = []

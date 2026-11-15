@@ -15279,6 +15279,7 @@ describe('library provider throttling notice (#1282)', () => {
     deferred: 214,
     next_retry_at: null,
     remedy: null,
+    notice_at: null,
     ...overrides,
   })
   const throttled = (

@@ -9617,6 +9617,19 @@
             ],
             "title": "Next Retry At"
           },
+          "notice_at": {
+            "anyOf": [
+              {
+                "maximum": 8640000000000.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notice At"
+          },
           "reasons": {
             "items": {
               "enum": [
@@ -9667,7 +9680,8 @@
           "reasons",
           "deferred",
           "next_retry_at",
-          "remedy"
+          "remedy",
+          "notice_at"
         ],
         "title": "_PreparationThrottleEntry",
         "type": "object"

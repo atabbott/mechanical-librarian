@@ -5037,6 +5037,7 @@ describe('owner language in Activity (#1286)', () => {
       reasons: ['burst_throttled'],
       deferred: 3,
       next_retry_at: null,
+      notice_at: null,
       ...overrides,
     }
     const http: ReviewHttp = {

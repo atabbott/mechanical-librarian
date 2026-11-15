@@ -296,6 +296,7 @@ const throttleEntry = {
   deferred: 214,
   next_retry_at: 1_800_000_000,
   remedy: 'add_api_key',
+  notice_at: 1_800_086_400,
 }
 const throttled = builder('Preparation', 'preparation.throttling', PREPARATION, () =>
   preparation({

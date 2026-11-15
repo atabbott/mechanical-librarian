@@ -1471,7 +1471,7 @@ class ReviewPreparationSupervisor:
         polling_interval_seconds: int | None = None,
         graceful_shutdown_seconds: int = 30,
         clock: Callable[[], int] = lambda: int(time.time()),
-        recovery_wake: Callable[[int], None] | None = None,
+        recovery_wake: Callable[[int], object] | None = None,
         recovery_drain: Callable[[], None] | None = None,
         recovery_resume: Callable[[], None] | None = None,
         on_stop: Callable[[], None] | None = None,
@@ -1759,7 +1759,24 @@ class ReviewPreparationSupervisor:
         """Use the same durable claim path for an explicit owner invocation."""
         if self._recovery_wake is None:
             raise ReviewPipelineError("recovery")
-        self._recovery_wake(self._clock())
+        self._recover(self._recovery_wake)
+
+    def _recover(self, wake: Callable[[int], object]) -> None:
+        """Run recovery once and say when its run changed what preparation shows.
+
+        A run that found nothing due or was held by its target changed nothing
+        durable and can repeat every second, so only another run state refreshes
+        the preparation read (#1494).
+        """
+        # Imported here: the recovery runner's evidence module imports this
+        # module's error type, so a module-level import would be a cycle.
+        from mechanical_librarian.application.provider_recovery_runner import (
+            RecoveryRun,
+        )
+
+        run = wake(self._clock())
+        if type(run) is RecoveryRun and run.state not in {"idle", "target_held"}:
+            self._announce("preparation", None)
 
     def _schedule_due(self) -> None:
         with self._schedule_lock:
@@ -1838,7 +1855,7 @@ class ReviewPreparationSupervisor:
                         # its runner, so it must not prevent ordinary preparation.
                         if self._recovery_wake is not None:
                             try:
-                                self._recovery_wake(self._clock())
+                                self._recover(self._recovery_wake)
                             except Exception:
                                 # Explicit owner recovery reports its closed
                                 # failure. The background lane instead preserves

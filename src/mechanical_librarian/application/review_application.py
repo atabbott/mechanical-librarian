@@ -97,6 +97,7 @@ from mechanical_librarian.domain.preparation_presentation import (
     PreparationTrigger,
 )
 from mechanical_librarian.domain.proposal_set import work_route_cover_offered
+from mechanical_librarian.domain.provider_recovery import MAX_TIMESTAMP
 from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 
 if TYPE_CHECKING:
@@ -335,6 +336,9 @@ _KEY_REASONS = frozenset({"authentication", "authorization"})
 # Reported state, in the precedence one library and source takes: a check in
 # flight first, then a scheduled retry, then a wait on the owner, then nothing.
 _THROTTLE_STATES = ("checking", "waiting", "dormant", "exhausted")
+# A source whose lookups have waited this long without recovering is raised as
+# a notice to the owner even though automatic retries still run.
+_PROLONGED_WAIT = 86_400
 
 
 def provider_throttling_view(
@@ -347,6 +351,8 @@ def provider_throttling_view(
 
     ``providers`` maps each configured provider instance to whether it holds an
     API key; it is read only to choose a remedy, and no instance name leaves.
+    ``notice_at`` is when the entry's longest current wait reaches a day; the
+    browser compares it with its own clock, so no clock is read here.
     """
     groups: dict[tuple[str, str], list[Mapping[str, object]]] = {}
     for row in rows:
@@ -366,6 +372,11 @@ def provider_throttling_view(
             cast("int", item["next_eligible_at"])
             for item in members
             if item["state"] == "waiting"
+        ]
+        started = [
+            cast("int", item["waiting_since"])
+            for item in members
+            if item["waiting_since"] is not None
         ]
         remedy = (
             "add_api_key"
@@ -389,6 +400,9 @@ def provider_throttling_view(
                 "deferred": sum(cast("int", item["deferred"]) for item in members),
                 "next_retry_at": min(due) if due else None,
                 "remedy": remedy,
+                "notice_at": min(min(started) + _PROLONGED_WAIT, MAX_TIMESTAMP)
+                if started
+                else None,
             }
         )
     return {"generation": generation, "retry": retry, "entries": entries}
