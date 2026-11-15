@@ -28,6 +28,7 @@ export function ValueFlags({ id, flags }: { id: string; flags: readonly ValueFla
       {flags.map((flag) => (
         <span key={`${flag.destination}:${flag.rule}`} className="library-provider-summary">
           {valueFlagLabel(flag)}
+          <span className="sr-only">.</span>
         </span>
       ))}
     </span>

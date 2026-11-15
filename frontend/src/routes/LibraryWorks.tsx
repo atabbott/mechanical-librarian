@@ -233,16 +233,19 @@ const WorksCount = ({
           (summaryNotMatched === undefined || summaryFailed === undefined
             ? summaryUnavailable
               ? ''
-              : ' · …'
+              : '\u00a0· …'
             : (
                 [
                   [summaryNotMatched, 'not matched'],
                   [summaryFailed, 'could not finish'],
-                  [summaryCounts?.flagged ?? 0, 'look wrong'],
+                  [
+                    summaryCounts?.flagged ?? 0,
+                    summaryCounts?.flagged === 1 ? 'looks wrong' : 'look wrong',
+                  ],
                 ] as const
               )
                 .map(([count, words]) =>
-                  count === 0 ? '' : ` · ${count.toLocaleString('en-US')} ${words}`,
+                  count === 0 ? '' : `\u00a0· ${count.toLocaleString('en-US')} ${words}`,
                 )
                 .join(''))
         )
@@ -334,6 +337,7 @@ const LibraryWorkRow = ({
         {summary ? (
           <span id={summaryId} className="library-provider-summary">
             {summary}
+            <span className="sr-only">.</span>
           </span>
         ) : null}
         <ValueFlags id={`value-flags-${work.id}`} flags={work.valueFlags} />

@@ -3786,6 +3786,48 @@ _ROWS_AGAINST_SPINE_COLUMN = """(column) => [...document.querySelectorAll('.libr
     })"""
 
 
+# The first visible character of each line box a text node's characters lay
+# out on, read through one Range per character.
+_LINE_STARTS = """element => {
+  const starts = new Map()
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    for (let index = 0; index < node.data.length; index += 1) {
+      if (/\\s/u.test(node.data[index])) continue
+      const range = document.createRange()
+      range.setStart(node, index)
+      range.setEnd(node, index + 1)
+      const [box] = range.getClientRects()
+      if (!box) continue
+      const top = Math.round(box.top)
+      const seen = starts.get(top)
+      if (!seen || box.left < seen.left) starts.set(top, {left: box.left, text: node.data[index]})
+    }
+  }
+  return [...starts.entries()].sort((a, b) => a[0] - b[0]).map(([, start]) => start.text)
+}"""
+
+
+def test_the_works_count_never_starts_a_wrapped_line_with_a_dot() -> None:
+    """#1334: at 1280 px the cohort's Works count wraps, and every part is held
+    to its dot, so each line the count lays out on starts with a word or a
+    number, never with "·"."""
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1280, "height": 900}, locale="en-US")
+        _serve_cohort(page)
+        page.goto("https://react-platform.invalid/library?lens=all")
+        status = page.locator(".library-works-heading [role='status']")
+        expect(status).to_have_text(
+            "20 works · 1 not matched · 1 could not finish · 6 look wrong"
+        )
+        starts = status.evaluate(_LINE_STARTS)
+        assert len(starts) > 1, starts
+        assert "·" not in starts, starts
+
+
 def test_works_rows_show_a_retained_cover_without_growing() -> None:
     """A work's retained cover is its mark: whole, fitted to the spine's own
     column (48 by 72 px, 42 by 63 on phones) and centred like the spine, so

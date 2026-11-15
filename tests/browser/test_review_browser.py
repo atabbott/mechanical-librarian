@@ -14715,7 +14715,7 @@ def test_works_that_look_wrong_have_their_own_lens_second_after_all(
     )
     with running_owner_fixture(tmp_path, 1) as (fixture, origin):
         for report in (
-            _work(0, "THE EXAMPLE STORY"),
+            _work(0, "THE EXAMPLE STORY", narrators=("Narrated by Example Reader",)),
             _work(
                 3,
                 "Example Story",
@@ -14747,7 +14747,7 @@ def test_works_that_look_wrong_have_their_own_lens_second_after_all(
                 )
                 expect(
                     page.get_by_role("status").filter(has_text="look wrong")
-                ).to_have_text(re.compile(r"^4 works · .*· 2 look wrong$"))
+                ).to_have_text(re.compile(r"^4 works\s·\s.*\s·\s2 look wrong$"))
                 lens = lenses.get_by_role("link", name="Looks wrong", exact=True)
                 with page.expect_response(_lens_read("flagged")):
                     lens.click()
@@ -14759,13 +14759,19 @@ def test_works_that_look_wrong_have_their_own_lens_second_after_all(
                 capitals = works.get_by_role(
                     "button", name=re.compile(r"^THE EXAMPLE STORY\.")
                 )
+                # Chromium reads both findings, each ending with the full
+                # stop only assistive technology reads, after the row's
+                # source summary and its own stop. The stop's own box puts a
+                # space before it in the computed text; it still ends each
+                # finding as a sentence.
                 expect(capitals).to_have_accessible_description(
-                    re.compile(r"Title is in capitals$")
+                    "No match . Title is in capitals . "
+                    "A narrator's name starts with a credit label ."
                 )
                 expect(
                     works.get_by_role("button", name=re.compile(r"^Example Story\."))
                 ).to_have_accessible_description(
-                    re.compile(r"A narrator's name starts with a credit label$")
+                    "No match . A narrator's name starts with a credit label ."
                 )
                 expect(works).not_to_contain_text("Ordinary Example")
                 capitals.click()

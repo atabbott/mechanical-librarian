@@ -13822,10 +13822,10 @@ describe('Provider evidence rail', () => {
         complete.compareDocumentPosition(limited) & Node.DOCUMENT_POSITION_FOLLOWING,
       ).toBeTruthy()
       expect(screen.getByRole('button', { name: /Zulu complete/ })).toHaveAccessibleDescription(
-        'No match',
+        'No match.',
       )
       expect(screen.getByRole('button', { name: /Alpha limited/ })).toHaveAccessibleDescription(
-        'Unavailable',
+        'Unavailable.',
       )
       expect(screen.queryByText('Retry scheduled')).toBeNull()
       if (lens === 'all')
@@ -13874,7 +13874,7 @@ describe('Provider evidence rail', () => {
       })
       renderRoute('/library?lens=all', http)
       const row = await screen.findByRole('button', { name: /A Book\./ })
-      expect(row).toHaveAccessibleDescription(label)
+      expect(row).toHaveAccessibleDescription(`${label}.`)
       expect(within(row).getByText(label)).toBeVisible()
       expect(
         screen.getByRole('heading', {
@@ -13941,7 +13941,7 @@ describe('Provider evidence rail', () => {
       complete.compareDocumentPosition(limited as Node) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy()
     const row = screen.getByRole('button', { name: /Alpha store down/ })
-    expect(row).toHaveAccessibleDescription('No match')
+    expect(row).toHaveAccessibleDescription('No match.')
     expect(row).not.toHaveTextContent('Unavailable')
     expect(
       row.compareDocumentPosition(limited as Node) & Node.DOCUMENT_POSITION_FOLLOWING,
@@ -13978,7 +13978,7 @@ describe('Provider evidence rail', () => {
     renderRoute('/library?lens=all', http)
     const row = await screen.findByRole('button', { name: /^Store only\./u })
     expect(row).toHaveTextContent('No source matched')
-    expect(row).toHaveAccessibleDescription('No match')
+    expect(row).toHaveAccessibleDescription('No match.')
     expect(row).not.toHaveTextContent('Matches found')
     expect(row).not.toHaveTextContent('Cover found')
   })
@@ -14040,7 +14040,7 @@ it('keeps clear and empty lenses free of provider headers and bounds many lane h
   }))
   renderRoute('/library?lens=no_attention_needed', http)
   const row = await screen.findByRole('button', { name: /A Book\./ })
-  expect(row).toHaveAccessibleDescription('40 sources: No match')
+  expect(row).toHaveAccessibleDescription('40 sources: No match.')
   expect(screen.queryByRole('heading', { name: /Provider evidence/ })).toBeNull()
 })
 
@@ -17472,19 +17472,37 @@ describe('Looks wrong (#1334)', () => {
     )
   })
 
+  it('says "1 looks wrong" for one work, and never lets a dot start a wrapped line', async () => {
+    renderRoute('/library?lens=all', { ...createHttp(), getLibrary: vi.fn(page([], 1)) })
+    const status = await worksCount()
+    await waitFor(() =>
+      expect(status).toHaveTextContent(
+        /^2,026 works · 3 not matched · 9 could not finish · 1 looks wrong$/u,
+      ),
+    )
+    // Each dot is held to the part before it by a no-break space, so a narrow
+    // column breaks after the dot, never before it.
+    expect(status.textContent).not.toMatch(/ ·/u)
+    expect(status.textContent.match(/\u00a0· /gu)).toHaveLength(3)
+  })
+
   it('names each finding on its own line and in the row description', async () => {
     renderRoute('/library?lens=all', { ...createHttp(), getLibrary: vi.fn(page([flaggedWork], 1)) })
     const row = await screen.findByRole('button', { name: /^THE EXAMPLE STORY\./u })
     const line = row.querySelector(`#value-flags-${flaggedWork.id}`)
+    // Each line ends with a full stop only assistive technology reads, so
+    // the findings are heard one at a time rather than run together.
     expect([...(line?.children ?? [])].map((finding) => finding.textContent)).toEqual([
-      'Title is in capitals',
-      "A narrator's name starts with a credit label",
+      'Title is in capitals.',
+      "A narrator's name starts with a credit label.",
     ])
+    for (const finding of line?.children ?? [])
+      expect(finding.lastElementChild).toHaveClass('sr-only')
     expect(row.getAttribute('aria-describedby')?.split(' ')).toContain(
       `value-flags-${flaggedWork.id}`,
     )
     expect(row).toHaveAccessibleDescription(
-      "Title is in capitalsA narrator's name starts with a credit label",
+      "Title is in capitals.A narrator's name starts with a credit label.",
     )
   })
 

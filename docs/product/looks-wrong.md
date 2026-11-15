@@ -15,10 +15,11 @@ changed for you. These works also appear in the other lenses.
 Looks wrong is the second lens in Library, straight after All, and keeps All's
 order and headings. Its count follows the others beside Works, only when it is
 not zero, for example "2,026 works · 3 not matched · 9 could not finish · 37
-look wrong". Under a search the status reads "Found 1 of 1 work looking
+look wrong", or "1 looks wrong" for one work. Under a search inside the lens
+the status reads "Found 1 of 1 work"; a screen reader also hears "looking
 wrong". Every row with a finding, in any lens, names each finding on its own
-line, and the row's button carries them as its description. A work that could
-not finish before it had a report has no current values and no findings.
+line, and a screen reader reads them with the row. A work that could not
+finish before it had a report has no current values and no findings.
 
 ## The rules
 

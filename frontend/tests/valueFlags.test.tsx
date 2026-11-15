@@ -23,15 +23,15 @@ describe('ValueFlags (#1334)', () => {
     const { container } = render(<ValueFlags id="value-flags-every" flags={everyFlag} />)
     const line = container.querySelector('#value-flags-every')
     expect([...(line?.children ?? [])].map((finding) => finding.textContent)).toEqual([
-      'Title is only a disc or part number',
-      'Title ends with a disc number',
-      "Title is the author's name",
-      "Title includes the author's name",
-      'Title is in capitals',
-      'Title is all lower case',
-      'Title includes an announcement',
-      "An author's name starts with a credit label",
-      "A narrator's name starts with a credit label",
+      'Title is only a disc or part number.',
+      'Title ends with a disc number.',
+      "Title is the author's name.",
+      "Title includes the author's name.",
+      'Title is in capitals.',
+      'Title is all lower case.',
+      'Title includes an announcement.',
+      "An author's name starts with a credit label.",
+      "A narrator's name starts with a credit label.",
     ])
     expect([...new Set(everyFlag.map((flag) => flag.rule))]).toEqual([...valueFlagRules])
   })
@@ -49,11 +49,15 @@ describe('ValueFlags (#1334)', () => {
     const line = container.querySelector('#value-flags-work')
     expect(line).not.toBeNull()
     expect([...(line?.children ?? [])].map((finding) => finding.textContent)).toEqual([
-      'Title is in capitals',
-      "A narrator's name starts with a credit label",
+      'Title is in capitals.',
+      "A narrator's name starts with a credit label.",
     ])
-    for (const finding of line?.children ?? [])
+    for (const finding of line?.children ?? []) {
       expect(finding).toHaveClass('library-provider-summary')
+      // The stop is heard, not seen (#1334).
+      expect(finding.lastElementChild).toHaveClass('sr-only')
+      expect(finding.lastElementChild).toHaveTextContent(/^\.$/u)
+    }
     expect(screen.getByText('Title is in capitals')).toBeInTheDocument()
   })
 
