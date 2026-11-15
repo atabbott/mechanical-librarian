@@ -1471,6 +1471,10 @@ describe('Covers → Taste profile (#1372)', () => {
     }
     renderRoute(tasteRoute, http)
     expect(await screen.findByText(copy)).toBeVisible()
+    // The route's own focus move is deferred a frame. Under load it can land
+    // after the click and take focus from the region, so it is waited for.
+    const heading = screen.getByRole('heading', { level: 1, name: 'Covers' })
+    await waitFor(() => expect(heading).toHaveFocus())
     await user.click(screen.getByRole('button', { name: 'Try again' }))
     expect(http.retryTasteBuild).toHaveBeenCalledWith(`taste_build_${'b'.repeat(32)}`)
     const status = await screen.findByText('Writing your taste profile')
