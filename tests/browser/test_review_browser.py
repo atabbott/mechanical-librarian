@@ -8864,7 +8864,10 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
             # Library here is the synthetic server's 404, which cannot take
             # part in the handoff motion: Chromium would skip the transition
             # and reject its `ready` in that script-free page, where nothing can
-            # handle it. The motion is served empty; it has its own tests.
+            # handle it. The motion is served empty here; the real Library's
+            # motion is covered by
+            # test_setup_to_library_preparation_handoff_focuses_and_announces_destination
+            # and test_a_skipped_setup_handoff_transition_raises_no_page_error.
             page.route(
                 "**/assets/setup-handoff.css",
                 lambda route: route.fulfill(content_type="text/css", body=""),
