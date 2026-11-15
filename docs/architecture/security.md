@@ -84,8 +84,10 @@ visitor who reaches the port first cannot take the workspace
   `409`. The token file is then removed. Later steps need a session, and
   kickoff closes setup for good.
 
-Startup admits only the exact seeded predecessor or valid current incomplete
-setup; any other non-empty, malformed or store-mode state fails closed.
+Startup admits only the exact seeded predecessor, valid current incomplete
+setup, or
+[kept provider answers](decisions/0101-reuse-stored-provider-answers.md)
+alone; any other non-empty, malformed or store-mode state fails closed.
 Connection setup stores endpoint and key only after one bounded
 `GET /api/libraries` under the [egress rules](#credentials-and-egress)
 succeeds, and failures echo no key or userinfo. Service folder paths are kept
@@ -246,9 +248,7 @@ which enabling never restores.
 - Clean observations' success bodies are kept owner-only for reuse, never
   request text or credentials; each is verified when read, not at open, and
   decoded and bounded as live
-  ([ADR-0101](decisions/0101-reuse-stored-provider-answers.md)). First-run
-  setup admits that file and its rollback journal on an otherwise empty
-  volume, each the owner's regular `0600` file.
+  ([ADR-0101](decisions/0101-reuse-stored-provider-answers.md)).
 - Retained refused WORK answers serve only Book matching, never a live
   reader, support bundle or diagnostic, and fetch no cover
   ([refused work answers](../operations/metadata-report.md#refused-work-answers)).
