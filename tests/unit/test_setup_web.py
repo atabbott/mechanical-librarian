@@ -1728,11 +1728,12 @@ def test_setup_reviewer_codex_buttons_say_what_they_are_doing() -> None:
     # After a cancel the redrawn card's own line is spoken, so it stays true
     # if the sign-in finished first.
     assert (
-        "await render();"
-        "announce(main.querySelector('[data-codex-status]')?.textContent||'')"
-        in SETUP_JS
+        "await render();const status=main.querySelector('[data-codex-status]');"
+        "announce(status?.textContent||'');" in SETUP_JS
     )
     assert "line.dataset.codexStatus='';" in SETUP_JS
+    # Focus is on Cancel after a press, so the device code is spoken there.
+    assert "if(focus)announce(`${lead.textContent} ${device.user_code}`)" in SETUP_JS
     assert "await render();announce('Codex selected.')" in SETUP_JS
 
 

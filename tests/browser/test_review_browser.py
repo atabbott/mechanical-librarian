@@ -9517,6 +9517,11 @@ def test_setup_reviewer_buttons_dim_and_announce_while_pending(
                 )
                 cancel = page.get_by_role("button", name="Cancel sign-in")
                 expect(cancel).to_be_focused()
+                # Focus stays on Cancel, so the code is spoken there.
+                expect(status).to_have_text(
+                    "Open the device sign-in page in a new tab and enter this "
+                    "code: ABCD-1234"
+                )
                 idle = cancel.evaluate(_PENDING_STYLE)
                 cancel.press("Enter")
                 expect(status).to_have_text("Cancelling sign-in…")
@@ -9527,9 +9532,11 @@ def test_setup_reviewer_buttons_dim_and_announce_while_pending(
                     "/api/setup/reviewer/codex/device/cancel",
                     {"engine": "codex", "state": "cancelled"},
                 )
-                # The redrawn card's own line is spoken after a cancel.
+                # The redrawn card's own line is spoken after a cancel, and
+                # focus returns to its command rather than the step heading.
                 expect(status).to_have_text("Not signed in")
                 expect(sign_in).to_be_enabled()
+                expect(sign_in).to_be_focused()
 
                 codex["state"] = "usable"
                 page.goto(origin)

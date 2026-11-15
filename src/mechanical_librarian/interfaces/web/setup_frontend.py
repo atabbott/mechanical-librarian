@@ -944,9 +944,13 @@ const followCodexSignIn=async(codex,form,failed,focus)=>{
     announce('Cancelling sign-in…');
     try{
       codexTerminal=await api('/api/setup/reviewer/codex/device/cancel',{method:'POST',body:'{}',mutation:true});
-      // Say the redrawn line, which stays true if the sign-in finished first.
+      // Say the redrawn line, which stays true if the sign-in finished first,
+      // and return focus to that card's command rather than the step heading.
       await render();
-      announce(main.querySelector('[data-codex-status]')?.textContent||'')
+      const status=main.querySelector('[data-codex-status]');
+      announce(status?.textContent||'');
+      const next=status?.closest('.reviewer-option')?.querySelector('button:not(:disabled)');
+      if(next)requestAnimationFrame(()=>{if(next.isConnected)next.focus({preventScroll:true})})
     }catch(e){
       cancel.removeAttribute('aria-disabled');
       failed(e,null,cancel)
@@ -997,7 +1001,9 @@ const followCodexSignIn=async(codex,form,failed,focus)=>{
           }
         });
         row.append(code,copy,copied);
-        prompt.replaceChildren(lead,row)
+        prompt.replaceChildren(lead,row);
+        // Focus sits on Cancel after a press, so the code is said there too.
+        if(focus)announce(`${lead.textContent} ${device.user_code}`)
       }
       if(codexActive(device.state))await new Promise(resolve=>setTimeout(resolve,1000))
     }while(form.isConnected&&codexActive(device.state));

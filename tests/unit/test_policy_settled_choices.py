@@ -6,14 +6,19 @@ import json
 from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.review_web import (
     BrowseReviewLibrary,
+    CurrentReviewCaseSnapshot,
     InspectCurrentReviewCase,
     RecordHumanDecision,
+    ReviewWebError,
+    _ask_destinations,
 )
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyProfile,
@@ -305,3 +310,27 @@ def test_a_single_proposed_tag_list_under_off_is_kept_and_still_choosable(
             "You decided this field. You can change it here."
         )
         assert _tags_fact(repository, case_id) == 0
+
+
+@pytest.mark.parametrize(
+    "document", ("not json", '{"destinations": 7}'), ids=("not_json", "wrong_shape")
+)
+def test_an_unreadable_live_policy_makes_the_case_read_unavailable(
+    document: str,
+) -> None:
+    """The Ask set comes from the live policy; an unreadable one is refused (#1707).
+
+    It is read the way the automatic-withheld note reads it, so the case page
+    reports unavailable rather than guessing which fields are set to Ask me.
+    """
+    snapshot = cast(
+        CurrentReviewCaseSnapshot,
+        SimpleNamespace(resolved_policy_document=document),
+    )
+    proposal = {"destination": "tags"}
+    with pytest.raises(ReviewWebError, match="^unavailable$"):
+        _ask_destinations(snapshot, (proposal,))
+    absent = cast(
+        CurrentReviewCaseSnapshot, SimpleNamespace(resolved_policy_document=None)
+    )
+    assert _ask_destinations(absent, (proposal,)) == frozenset()

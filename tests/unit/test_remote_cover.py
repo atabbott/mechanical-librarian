@@ -151,6 +151,8 @@ def _answer(address: str) -> tuple[object, ...]:
         ("::ffff:0:7f00:1",),
         ("::ffff:127.0.0.1",),
         ("5f00::1",),
+        ("2002:7f00:1::1",),
+        ("2001::7f00:1",),
         ("8.8.8.8", "64:ff9b::a00:1"),
     ),
     ids=(
@@ -164,6 +166,8 @@ def _answer(address: str) -> tuple[object, ...]:
         "siit_loopback",
         "mapped_loopback",
         "reserved_5f00",
+        "six_to_four_loopback",
+        "teredo",
         "mixed_nat64_private",
     ),
 )
