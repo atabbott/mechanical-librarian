@@ -50,6 +50,9 @@ Usage:
 
 ``--provenance`` prints instead the value-free fragment a future
 ``current_audiobook_work_route_measurement`` provenance section records.
+
+``scripts/work_route_offer_sample.py`` lists the offers the owner has not
+decided yet, from ``exact_sources``, ``offered_fields`` and ``latest_labels``.
 """
 
 from __future__ import annotations
@@ -114,8 +117,11 @@ OWNER_LABELLED_FIELDS = ("description", "genres", "narrators")
 FILL_FIELDS = (*RECORDING_FIELDS, *OWNER_LABELLED_FIELDS, "cover")
 _Z_95 = 1.959963984540054
 
+# Each current audiobook's item, review case, report and proposals, in item
+# order. ``scripts/work_route_offer_sample.py`` lists offers in the same order.
 _REPORTS_SQL = (
-    "SELECT mr.document,ps.document FROM current_review_packages ml "
+    "SELECT ml.connection_name,ml.library_name,ml.item_id,ml.review_case_id,"
+    "mr.document,ps.document FROM current_review_packages ml "
     "JOIN metadata_reports mr ON mr.report_id=ml.report_id "
     "LEFT JOIN proposal_sets ps ON ps.proposal_set_id=ml.proposal_set_id "
     "WHERE json_extract(mr.document,'$.audio') IS NOT NULL "
@@ -611,12 +617,13 @@ def _measure_recording(
         _record(measurement.fields[name], measurement.pooled[name], outcomes)
 
 
-def _measure_unmatched(
-    measurement: Measurement,
+def offered_fields(
     report: MetadataReport,
     proposal: object,
     sources: dict[str, tuple[ProviderCandidate, ...]],
-) -> None:
+) -> dict[str, tuple[str, ...]]:
+    """Per provider with exact sources, the empty fields the work route offers
+    that provider's value for, in ``FILL_FIELDS`` order."""
     targets = canonical_target_fields(report.target.fields)
     offers = _work_route_offers(report, targets)
     covers = work_route_cover_sources(report)
@@ -625,8 +632,10 @@ def _measure_unmatched(
         for provider in report.providers
         if provider.authority is not None
     }
+    offered: dict[str, tuple[str, ...]] = {}
     for authority in sources:
         correlation = _provider_correlation(authority)
+        found: list[str] = []
         for name in FILL_FIELDS:
             destination = TargetDestination(name)
             if destination not in offers or not _target_explicitly_empty(
@@ -634,18 +643,49 @@ def _measure_unmatched(
             ):
                 continue
             if destination is TargetDestination.COVER:
-                offered = any(
+                offer = any(
                     source.provenance is not None
                     and names.get(source.provenance.provider) == authority
                     for source in covers
                 )
             else:
-                offered = any(
+                offer = any(
                     correlation in _correlations(alternative)
                     for alternative in _alternatives(_proposal_result(proposal, name))
                 )
-            if offered:
-                measurement.fill[authority][name] += 1
+            if offer:
+                found.append(name)
+        offered[authority] = tuple(found)
+    return offered
+
+
+def _measure_unmatched(
+    measurement: Measurement,
+    report: MetadataReport,
+    proposal: object,
+    sources: dict[str, tuple[ProviderCandidate, ...]],
+) -> None:
+    for authority, names in offered_fields(report, proposal, sources).items():
+        for name in names:
+            measurement.fill[authority][name] += 1
+
+
+def exact_sources(
+    report: MetadataReport,
+) -> tuple[dict[str, tuple[ProviderCandidate, ...]], tuple[str, ...]]:
+    """Each provider's exact work sources when they name one work, and the
+    providers whose exact sources name several different works."""
+    sources: dict[str, tuple[ProviderCandidate, ...]] = {}
+    duplicates: list[str] = []
+    for authority in PROVIDERS:
+        found = _authority_sources(report, authority)
+        if not found:
+            continue
+        if len({candidate.work_identity for candidate in found}) > 1:
+            duplicates.append(authority)
+        else:
+            sources[authority] = found
+    return sources, tuple(duplicates)
 
 
 def _classify(
@@ -654,16 +694,11 @@ def _classify(
     measurement.audiobooks += 1
     admitted = admitted_audiobook_identity(report)
     population = "recording" if admitted else "unmatched"
-    sources: dict[str, tuple[ProviderCandidate, ...]] = {}
-    for authority in PROVIDERS:
-        found = _authority_sources(report, authority)
-        if not found:
-            continue
-        if len({candidate.work_identity for candidate in found}) > 1:
-            measurement.populations[authority]["duplicate_" + population] += 1
-            continue
+    sources, duplicates = exact_sources(report)
+    for authority in duplicates:
+        measurement.populations[authority]["duplicate_" + population] += 1
+    for authority in sources:
         measurement.populations[authority][population] += 1
-        sources[authority] = found
     if admitted:
         _measure_recording(measurement, report, proposal, sources)
     else:
@@ -732,6 +767,36 @@ def _load_json(document: object) -> object:
     return json.loads(document) if isinstance(document, str) else None
 
 
+LatestLabels = dict[tuple[object, ...], tuple[str, object, MetadataReport, object]]
+
+
+def latest_labels(connection: sqlite3.Connection) -> tuple[LatestLabels, Counter[str]]:
+    """The latest qualifying owner decision per item and field, and per field
+    the decisions set aside because they were not on a work-route offer into
+    an empty field.
+
+    Each key is (connection, library, item, field); each value the outcome,
+    the selected value and the report and proposals decided on. The latest
+    decision is chosen only among those that qualify, so a later decision
+    elsewhere cannot hide a label.
+    """
+    latest: LatestLabels = {}
+    outside: Counter[str] = Counter()
+    for row in connection.execute(_DECISIONS_SQL):
+        destination = cast("str", row[3])
+        report = _load_report(row[6])
+        if not _qualifies(destination, report):
+            outside[destination] += 1
+            continue
+        latest[tuple(row[:4])] = (
+            cast("str", row[4]),
+            _load_json(row[5]),
+            report,
+            _load_json(row[7]),
+        )
+    return latest, outside
+
+
 def measure(connection: sqlite3.Connection) -> Measurement:
     """Read every closed outcome inside one deferred read transaction."""
     connection.execute("BEGIN")
@@ -739,29 +804,17 @@ def measure(connection: sqlite3.Connection) -> Measurement:
         measurement = Measurement(
             written=frozenset(tuple(row) for row in connection.execute(_WRITTEN_SQL))
         )
-        for report_document, proposal_document in connection.execute(_REPORTS_SQL):
+        for *_item, report_document, proposal_document in connection.execute(
+            _REPORTS_SQL
+        ):
             _classify(
                 measurement,
                 _load_report(report_document),
                 _load_json(proposal_document),
             )
-        # The latest decision per item and field is chosen only among those
-        # that qualify, so a later decision elsewhere cannot hide a label.
-        latest: dict[
-            tuple[object, ...], tuple[str, object, MetadataReport, object]
-        ] = {}
-        for row in connection.execute(_DECISIONS_SQL):
-            destination = cast("str", row[3])
-            report = _load_report(row[6])
-            if not _qualifies(destination, report):
-                measurement.owner_labels[destination]["outside_work_route_fill"] += 1
-                continue
-            latest[tuple(row[:4])] = (
-                cast("str", row[4]),
-                _load_json(row[5]),
-                report,
-                _load_json(row[7]),
-            )
+        latest, outside = latest_labels(connection)
+        for destination, count in outside.items():
+            measurement.owner_labels[destination]["outside_work_route_fill"] += count
         for key, (outcome, selected, report, proposal) in latest.items():
             _label(
                 measurement, cast("str", key[3]), outcome, selected, report, proposal

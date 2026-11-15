@@ -1145,7 +1145,9 @@ const renderOpenRouterOption=(form,access,failed)=>{
   const showCost=()=>{
     const label=reviewerLabel(model.value);
     const measured=access.cost_evidence.models.find(row=>row.model===model.value&&row.task==='cover');
-    cost.textContent=!model.value?'':measured?`${label}: about $${Number(measured.per_1000_usd).toLocaleString('en-US',{maximumSignificantDigits:4})} per 1,000 works.`:`${label}: cost not measured.`;
+    const perThousand=measured?Number(measured.per_1000_usd):0;
+    // Rounded as Settings → Reviewer rounds it (ReviewerCost.tsx, #1863).
+    cost.textContent=!model.value?'':measured?`${label}: ${perThousand<0.01?'under $0.01':`about $${perThousand.toFixed(2)}`} per 1,000 works.`:`${label}: cost not measured.`;
     const observed=access.cover_metadata?.model===model.value?access.cover_metadata:null;
     prices.textContent=observed?`Prices in USD: ${observed.prompt_price??'Unavailable'} per input token, ${observed.completion_price??'Unavailable'} per output token, ${observed.image_price??'Unavailable'} per image, ${observed.request_price??'Unavailable'} per request.`:'Check the key to see this model’s prices.'
   };

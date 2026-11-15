@@ -476,11 +476,14 @@ export const coverReasonLine = (
     before,
     after,
     language,
+    filled,
   }: {
     audiobook: boolean
     before: CoverSize | null
     after: CoverSize | null
     language: string | null
+    /** The switch filled an empty cover rather than replacing a picture. */
+    filled: boolean
   },
 ): string | null => {
   if (code === 'wrong_shape')
@@ -502,7 +505,9 @@ export const coverReasonLine = (
     return language ? `The cover was from an edition in ${language}.` : null
   if (code === 'edition_preference') return "A cover from this book's edition."
   if (code === 'unreadable')
-    return 'Audiobookshelf had no image for the cover, or Mechanical Librarian could not read it.'
+    return filled
+      ? 'Audiobookshelf had no image for the cover.'
+      : 'Mechanical Librarian could not read the previous cover.'
   return null
 }
 
@@ -651,6 +656,7 @@ const coverReviewerNames: Record<string, string> = {
   'mistralai/ministral-3b-2512': 'Ministral 3B',
   'openai/gpt-5.6-luna': 'GPT-5.6 Luna',
   'mistralai/mistral-small-2603': 'Mistral Small 4',
+  'anthropic/claude-sonnet-5.5': 'Claude Sonnet 5.5',
 }
 
 export const coverReviewerLabel = (model: string) =>

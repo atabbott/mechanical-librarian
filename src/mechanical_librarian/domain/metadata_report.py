@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Any, Callable, Mapping, Self, TypedDict, cast
+from typing import Any, Callable, Literal, Mapping, Self, TypedDict, cast
 
 from mechanical_librarian.domain.audio_inspection import (
     MAX_AUDIO_TRACKS,
@@ -94,6 +94,7 @@ from mechanical_librarian.domain.work_identity import (
     WorkIdentityAdmission,
     WorkTitleTransformationFamily,
     WorkTitleTransformationLineage,
+    _creator_display_pair_possible,
     admit_provider_work_identity,
     closed_creator_display_possibility,
     direct_work_title_election_matches,
@@ -4488,15 +4489,21 @@ def provider_candidate_work_identity_contradiction(
     target_authors: tuple[str, ...],
     *,
     fold_initials: bool = False,
+    partial_authors: bool = False,
 ) -> WorkIdentityContradiction:
     """Classify only explicit contradiction from one complete work identity.
 
     `fold_initials` is ADR-0096's level path only (#1355, #1780): a pair whose
     title queries intersect and whose creator sets agree once dotted initials
-    are folded is then `UNAVAILABLE`, never `NOT_CONTRADICTED`. Every live
-    caller keeps the default, so its verdicts are unchanged.
+    are folded is then `UNAVAILABLE`, never `NOT_CONTRADICTED`.
+    `partial_authors` is the `title_and_creator` level path only (#1355): when
+    one author list contains the other (`creator_list_relation` gives
+    `nested`), the record is compared against its own author list, so its
+    title and work identity checks still run, and the verdict is `EXPLICIT`
+    or `UNAVAILABLE`, never `NOT_CONTRADICTED`. Every live caller keeps both
+    defaults, so its verdicts are unchanged.
     """
-    if type(fold_initials) is not bool:
+    if type(fold_initials) is not bool or type(partial_authors) is not bool:
         raise ReportValueError("work identity contradiction input is invalid")
     claims = _provider_candidate_work_identity_claims(candidate)
     if (
@@ -4516,19 +4523,31 @@ def provider_candidate_work_identity_contradiction(
         {normalize_title(value).casefold() for value in authors}
     ) != len(authors):
         return WorkIdentityContradiction.UNAVAILABLE
+    # A nested author list is compared against itself: only the title, the
+    # provider work identity and the variant checks can still contradict.
+    nested = (
+        partial_authors
+        and creator_list_relation(target_authors, authors, fold_initials=fold_initials)
+        == "nested"
+    )
+    compared_authors = authors if nested else target_authors
     admission = admit_provider_work_identity(
         local_title=target_title,
-        local_authors=target_authors,
+        local_authors=compared_authors,
         provider_title=title,
         provider_authors=authors,
         provider_work_identity=work_identity,
         allow_reordered_authors=True,
     )
     if admission.admitted:
-        return WorkIdentityContradiction.NOT_CONTRADICTED
+        return (
+            WorkIdentityContradiction.UNAVAILABLE
+            if nested
+            else WorkIdentityContradiction.NOT_CONTRADICTED
+        )
     target_queries = {
         query.title.casefold()
-        for query in work_query_ladder(target_title, target_authors)
+        for query in work_query_ladder(target_title, compared_authors)
     }
     candidate_queries = {
         query.title.casefold() for query in work_query_ladder(title, authors)
@@ -4537,11 +4556,11 @@ def provider_candidate_work_identity_contradiction(
         WorkIdentityContradiction.UNAVAILABLE
         if target_queries & candidate_queries
         and (
-            creator_sequence_methods(authors, target_authors)
-            or closed_creator_display_possibility(target_authors, authors)
+            creator_sequence_methods(authors, compared_authors)
+            or closed_creator_display_possibility(compared_authors, authors)
             or (
                 fold_initials
-                and _creators_agree_by_initials_fold(authors, target_authors)
+                and _creators_agree_by_initials_fold(authors, compared_authors)
             )
         )
         else WorkIdentityContradiction.EXPLICIT
@@ -4565,6 +4584,78 @@ def _creators_agree_by_initials_fold(
         and len(right_keys) == len(right)
         and left_keys == right_keys
     )
+
+
+def creator_list_relation(
+    target: tuple[str, ...], record: tuple[str, ...], *, fold_initials: bool
+) -> Literal["same", "nested", "overlap", "disjoint"]:
+    """How a record's author list relates to a target's, creator by creator (#1355).
+
+    Each side is deduplicated by `creator_comparison_key`, first occurrence
+    kept. Two creators agree when their keys are equal, when the closed
+    creator comparison (without comma inversion) or a middle name or initial
+    stated on one side only makes them one, or, with `fold_initials`, when
+    their names agree once dotted initials fold; a fold that merges two
+    creators on either side is not tried for the pair of lists (the collapse
+    guard of `work_identity_levels`). A maximum one-to-one matching of
+    agreeing creators decides: `same` when the lists are equally long and
+    every creator is matched, `nested` when they differ in length and every
+    creator of the shorter one is matched, `overlap` when at least one pair
+    matches otherwise, and `disjoint` when none does.
+    """
+    if type(fold_initials) is not bool or any(
+        type(side) is not tuple
+        or not side
+        or any(type(value) is not str or not value for value in side)
+        for side in (target, record)
+    ):
+        raise ReportValueError("creator list relation input is invalid")
+
+    def unique(side: tuple[str, ...]) -> tuple[str, ...]:
+        kept: dict[str, str] = {}
+        for value in side:
+            kept.setdefault(creator_comparison_key(value), value)
+        return tuple(kept.values())
+
+    left, right = unique(target), unique(record)
+    folded = tuple(
+        tuple(
+            initials_folded_name(key) or key
+            for key in (creator_comparison_key(value) for value in side)
+        )
+        for side in (left, right)
+    )
+    fold = fold_initials and all(len(set(keys)) == len(keys) for keys in folded)
+
+    def agree(left_index: int, right_index: int) -> bool:
+        target_value, record_value = left[left_index], right[right_index]
+        return (
+            creator_comparison_key(target_value) == creator_comparison_key(record_value)
+            or _comparison_method(ClaimKind.CREATOR, record_value, target_value)
+            is not ComparisonMethod.NONE
+            or _creator_display_pair_possible(target_value, record_value)
+            or (fold and folded[0][left_index] == folded[1][right_index])
+        )
+
+    matched: dict[int, int] = {}
+
+    def assign(left_index: int, seen: set[int]) -> bool:
+        for right_index in range(len(right)):
+            if right_index in seen or not agree(left_index, right_index):
+                continue
+            seen.add(right_index)
+            previous = matched.get(right_index)
+            if previous is None or assign(previous, seen):
+                matched[right_index] = left_index
+                return True
+        return False
+
+    pairs = sum(assign(index, set()) for index in range(len(left)))
+    if pairs == len(left) == len(right):
+        return "same"
+    if len(left) != len(right) and pairs == min(len(left), len(right)):
+        return "nested"
+    return "overlap" if pairs else "disjoint"
 
 
 def provider_candidate_series_identity_matches(
@@ -9119,6 +9210,7 @@ __all__ = [
     "comparison_links",
     "complete_creator_identity_bindings",
     "creator_comparison_key",
+    "creator_list_relation",
     "finalize_candidate_comparisons",
     "manifestation_publication_compatible",
     "publication_date_relation",

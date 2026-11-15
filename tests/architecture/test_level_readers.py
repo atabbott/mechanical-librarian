@@ -54,6 +54,10 @@ _READERS: dict[str, str] = {
     # prints aggregates only; it is not installed (amendment 13).
     "scripts/admission_rule_levels.py::_count_records": "offline_ledger",
     "scripts/admission_rule_levels.py::replay_report": "offline_ledger",
+    # The offline partial-author replay (#1355) asks the seam for each
+    # record's verdict; counts go to stdout, names only to an owner-chosen
+    # private file. It is not installed.
+    "scripts/partial_author_replay.py::_records": "offline_replay",
 }
 
 

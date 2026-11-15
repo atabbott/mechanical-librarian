@@ -1135,6 +1135,13 @@
           "default": null,
           "title": "Cover Reviewer Profile File"
         },
+        "cover_taste_build_daily_requests": {
+          "default": 8,
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Cover Taste Build Daily Requests",
+          "type": "integer"
+        },
         "description_automatic_application": {
           "default": false,
           "title": "Description Automatic Application",
@@ -1311,7 +1318,7 @@
       "default": null
     },
     "schema_version": {
-      "const": "config-v11",
+      "const": "config-v12",
       "title": "Schema Version",
       "type": "string"
     }

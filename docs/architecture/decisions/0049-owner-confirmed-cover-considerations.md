@@ -26,7 +26,12 @@ attempt record.
 
 The observer and policy are advisory only. The owner explicitly keeps the
 incumbent, selects one displayed identity-admitted non-incumbent original, or
-takes no action. Observation failure retains a fully supported model-free
+takes no action. When Mechanical Librarian could not read the current cover
+(a transient read, a 404 or bytes the decoder refused), the comparison holds
+no incumbent candidate and its incumbent reads `unavailable`; the keep then
+names no candidate and is bound by the consideration digest, the target and
+the decision's target fingerprint, and protects the stated cover like any
+keep (#1865). Observation failure retains a fully supported model-free
 manual path. Decisions and consideration/supersession/outcome events are
 append-only. A selected original enters the existing human-decision and guarded
 field-effect machinery; immediately before application that path revalidates

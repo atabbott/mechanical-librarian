@@ -560,3 +560,25 @@ offer and each case's reconciled level (`level_proposal_sets`,
 `review_case_level_reconciliation`), and `review_preparation_control` gains
 `work_identity_level`. Every earlier application database is rejected before
 mutation and needs a clean rebuild; no adoption is supplied.
+
+Issue #1372's taste profile (PR 1) takes the clean-rebuild branch.
+`reviewer-access-v4` adds the `cover_taste_build` OpenRouter task and its
+prices, so a v3 document is refused, and `reviewer-access-view-v4` carries
+them to the browser. `config-v12` adds
+`review.cover_taste_build_daily_requests`; a `config-v11` file must be
+rewritten by hand. `cover-consideration-v10` records in each currentness
+document how many distinct pictures the stage kept (`arts`). Three new tables
+hold the builds, the append-only `cover-taste-profile-v1` versions and the
+daily request count. Every earlier application database is rejected before
+mutation and needs a clean rebuild; no adoption is supplied.
+
+Issue #1355 also takes the clean-rebuild branch. At `title_and_creator` a
+provider record whose author list contains the book's, or is contained in it,
+now counts, so `level-proposal-set-v2` and `review-case-level-offer-v2` may
+hold alternatives a v1 set or offer never held, and both carry forward while
+their report and case are unchanged. The cover classifier reference rotates,
+because the level facts of a cover bound to such a record change at every
+level. The metadata report, proposal policy, shadow decision policy and
+decision-set versions do not move: live decisions are unchanged at every
+level. Every earlier application database is rejected before mutation and
+needs a clean rebuild; no adoption is supplied.
