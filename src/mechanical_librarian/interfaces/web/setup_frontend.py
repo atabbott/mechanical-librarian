@@ -1276,7 +1276,11 @@ const handoffMotion=()=>{
   };
   motion.disabled=false;
   addEventListener('pageshow',disable,{once:true});
-  addEventListener('pageswap',handoff=>{if(handoff.viewTransition)void handoff.viewTransition.finished.then(disable,disable);else disable()},{once:true});
+  // Chromium skips the transition when it cannot draw it in time, most often
+  // under load, and rejects `ready` with "Transition was skipped". Handling it
+  // keeps the skip from surfacing as an uncaught page error; `finished` still
+  // settles.
+  addEventListener('pageswap',handoff=>{if(handoff.viewTransition){handoff.viewTransition.ready.catch(()=>{});void handoff.viewTransition.finished.then(disable,disable)}else disable()},{once:true});
   fallback=setTimeout(disable,2000)
 };
 // Start opens Library with the owner's existing session. The run is read for
