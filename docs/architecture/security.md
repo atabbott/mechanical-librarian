@@ -246,7 +246,9 @@ which enabling never restores.
 - Clean observations' success bodies are kept owner-only for reuse, never
   request text or credentials; each is verified when read, not at open, and
   decoded and bounded as live
-  ([ADR-0101](decisions/0101-reuse-stored-provider-answers.md)).
+  ([ADR-0101](decisions/0101-reuse-stored-provider-answers.md)). First-run
+  setup admits that one file on an otherwise empty volume, as the owner's
+  regular `0600` file, and trusts its answers no further than live ones.
 - Retained refused WORK answers serve only Book matching, never a live
   reader, support bundle or diagnostic, and fetch no cover
   ([refused work answers](../operations/metadata-report.md#refused-work-answers)).

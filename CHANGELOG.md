@@ -24,6 +24,10 @@ brackets are GitHub issues.
   an unmatched audiobook always asks live. The answers are kept in
   `/data/private/provider-responses.sqlite`; losing it only means asking again
   (#1064).
+- A clean rebuild can keep those answers, so a rebuilt library does not ask
+  every source again for every book.
+  [Upgrades](docs/operations/upgrades.md#keeping-provider-answers) says how
+  (#1064).
 
 ## 0.36.1 — Persistence health (in progress)
 

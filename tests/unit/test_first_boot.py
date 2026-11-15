@@ -5,6 +5,10 @@ from pathlib import Path
 
 import pytest
 
+from mechanical_librarian.adapters.persistence.provider_responses import (
+    SQLiteProviderResponseStore,
+)
+from mechanical_librarian.bootstrap.composition import _open_review_session_store
 from mechanical_librarian.infrastructure.first_boot import (
     FirstBootError,
     FirstBootMode,
@@ -157,10 +161,158 @@ def test_other_private_runtime_state_still_fails_closed(tmp_path: Path) -> None:
     (private / "provider-recovery.sqlite").touch()
     with pytest.raises(FirstBootError):
         _select(tmp_path, resume=True)
-    (private / "provider-recovery.sqlite").unlink()
-    (private / "provider-responses.sqlite").touch()
+
+
+def _kept_answers(root: Path, *, journal: bool = False) -> Path:
+    """Leave the provider answers a clean rebuild may keep (ADR-0101)."""
+    private = root / "private"
+    private.mkdir(mode=0o700)
+    kept = private / "provider-responses.sqlite"
+    kept.write_bytes(b"synthetic")
+    kept.chmod(0o600)
+    if journal:
+        beside = private / "provider-responses.sqlite-journal"
+        beside.write_bytes(b"synthetic")
+        beside.chmod(0o600)
+    return kept
+
+
+@pytest.mark.parametrize("reviewer", [False, True])
+@pytest.mark.parametrize("journal", [False, True])
+def test_kept_provider_answers_do_not_block_first_run_setup(
+    tmp_path: Path, reviewer: bool, journal: bool
+) -> None:
+    kept = _kept_answers(tmp_path, journal=journal)
+    if reviewer:
+        (tmp_path / "reviewer").mkdir(mode=0o700)
+        (tmp_path / "reviewer" / "auth").mkdir(mode=0o700)
+    assert _select(tmp_path) is FirstBootMode.INITIALIZE_SETUP
+    # First boot never opens or changes the kept file.
+    assert kept.read_bytes() == b"synthetic"
+
+
+def test_kept_provider_answers_do_not_block_setup_resume(tmp_path: Path) -> None:
+    kept = _kept_answers(tmp_path, journal=True)
+    (tmp_path / "application.sqlite3").touch()
+    (kept.parent / "review-sessions.sqlite").touch()
+    token = kept.parent / "setup-claim-token"
+    token.write_text("token\n", encoding="ascii")
+    token.chmod(0o600)
+    assert _select(tmp_path, resume=True) is FirstBootMode.RESUME_SETUP
+    assert (
+        select_first_boot_mode(
+            tmp_path,
+            complete_store=lambda: False,
+            resumable_setup=lambda: False,
+            uninitialized_setup=lambda: True,
+        )
+        is FirstBootMode.INITIALIZE_SETUP
+    )
+
+
+def test_a_real_kept_store_is_still_readable_after_setup_starts(
+    tmp_path: Path,
+) -> None:
+    """The file an earlier build wrote passes first boot, sits beside the
+    session database setup creates, and still serves its answer."""
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    digest = "a" * 64
+    store = SQLiteProviderResponseStore.open(private / "provider-responses.sqlite")
+    store.commit("open_library", ((digest, 1, b"kept"),))
+    store.close()
+
+    assert _select(tmp_path) is FirstBootMode.INITIALIZE_SETUP
+    database = tmp_path / "application.sqlite3"
+    _open_review_session_store(database).close()
+    database.touch()
+    assert _select(tmp_path, resume=True) is FirstBootMode.RESUME_SETUP
+
+    store = SQLiteProviderResponseStore.open(private / "provider-responses.sqlite")
+    assert store.get("open_library", digest) == (b"kept", 1)
+    store.close()
+
+
+@pytest.mark.parametrize(
+    "unsafe",
+    (
+        "0644",
+        "0400",
+        "symlink",
+        "directory",
+        "fifo",
+        "journal_alone",
+        "journal_0644",
+        "beside_recovery_store",
+        "beside_write_ahead_log",
+    ),
+)
+@pytest.mark.parametrize("resume", [False, True], ids=["first_run", "setup_resume"])
+def test_kept_provider_answers_other_than_owner_files_fail_closed(
+    tmp_path: Path, unsafe: str, resume: bool
+) -> None:
+    root = tmp_path / "data"
+    root.mkdir()
+    private = root / "private"
+    kept = private / "provider-responses.sqlite"
+    journal = private / "provider-responses.sqlite-journal"
+    if unsafe in {"symlink", "directory", "fifo", "journal_alone"}:
+        private.mkdir(mode=0o700)
+    else:
+        _kept_answers(root, journal=unsafe == "journal_0644")
+    if unsafe == "symlink":
+        target = tmp_path / "elsewhere"
+        target.write_bytes(b"synthetic")
+        target.chmod(0o600)
+        kept.symlink_to(target)
+    elif unsafe == "directory":
+        kept.mkdir(mode=0o700)
+    elif unsafe == "fifo":
+        os.mkfifo(kept, 0o600)
+    elif unsafe == "journal_alone":
+        journal.write_bytes(b"synthetic")
+        journal.chmod(0o600)
+    elif unsafe == "journal_0644":
+        journal.chmod(0o644)
+    elif unsafe == "beside_recovery_store":
+        (private / "provider-recovery.sqlite").touch(mode=0o600)
+    elif unsafe == "beside_write_ahead_log":
+        (private / "provider-responses.sqlite-wal").touch(mode=0o600)
+    else:
+        kept.chmod(int(unsafe, 8))
+    if resume:
+        (root / "application.sqlite3").touch()
     with pytest.raises(FirstBootError):
-        _select(tmp_path, resume=True)
+        _select(root, resume=resume)
+
+
+@pytest.mark.parametrize(
+    "unsafe", ("mode_0755", "symlink", "empty", "reviewer_holds_a_credential")
+)
+def test_first_run_refuses_kept_answers_in_an_unsafe_volume(
+    tmp_path: Path, unsafe: str
+) -> None:
+    """The directory is judged before setup creates anything inside it."""
+    root = tmp_path / "data"
+    root.mkdir()
+    if unsafe == "symlink":
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        _kept_answers(elsewhere)
+        (root / "private").symlink_to(elsewhere / "private")
+    elif unsafe == "empty":
+        (root / "private").mkdir(mode=0o700)
+    else:
+        _kept_answers(root)
+    if unsafe == "mode_0755":
+        (root / "private").chmod(0o755)
+    elif unsafe == "reviewer_holds_a_credential":
+        auth = root / "reviewer" / "auth"
+        auth.parent.mkdir(mode=0o700)
+        auth.mkdir(mode=0o700)
+        (auth / "auth.json").write_bytes(b'{"synthetic":true}')
+    with pytest.raises(FirstBootError):
+        _select(root)
 
 
 @pytest.mark.parametrize(
