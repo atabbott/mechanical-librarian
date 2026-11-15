@@ -1,6 +1,6 @@
 # ADR-0093: Choose covers by measured rules, protect fault-free current covers, and keep replaced covers for revert
 
-- Status: accepted
+- Status: accepted (confirmed by the owner on 2026-11-15)
 - Date: 2026-11-07
 - Owners: project maintainers
 - Issues: #1363
