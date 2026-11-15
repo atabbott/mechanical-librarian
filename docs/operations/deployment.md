@@ -371,7 +371,11 @@ but keeps its history.
 
 1. Open Policy → Curation → Description advice. Review the three cleanup
    choices (all on by default) and press **Save description preferences**.
-   Automatic application is off by default and has its own switch. Saving a
+   Automatic application is off by default and has its own switch; it only
+   suggests until a release shows, from your decisions, that the adviser is
+   right often enough
+   ([description advice qualification](description-advice-qualification.md)).
+   Saving a
    policy draft does not save these preferences. In file mode, set the
    `review.description_*` fields instead.
 2. In Settings → Reviewer, test the description model and its prices, then

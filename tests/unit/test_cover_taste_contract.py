@@ -7,9 +7,15 @@ import json
 
 import pytest
 
-from mechanical_librarian.application.contained_reviewer_contract import canonical_json
+from mechanical_librarian.application.contained_reviewer_contract import (
+    MAX_INPUT_BYTES,
+    ContainedReviewerError,
+    ContainedReviewRequest,
+    canonical_json,
+)
 from mechanical_librarian.application.cover_taste_contract import (
     COVER_TASTE_BUILD_PACKET_SCHEMA,
+    TASTE_CODEX_OUTPUT_SCHEMA,
     TASTE_INSTRUCTION,
     TASTE_INSTRUCTION_SHA256,
     TASTE_OUTPUT_SCHEMA,
@@ -22,14 +28,20 @@ from mechanical_librarian.application.cover_taste_contract import (
     taste_transport_jpeg,
 )
 from mechanical_librarian.domain.cover_taste import (
+    MAX_TASTE_PROFILE_CODE_POINTS,
+    MAX_TASTE_REMOVED,
+    MAX_TASTE_REMOVED_CODE_POINTS,
+    MAX_TASTE_RULES,
     TASTE_MAX_IMAGES,
     TASTE_MAX_REQUEST_BYTES,
+    TASTE_SECTIONS,
+    taste_budget,
 )
 from tests.support.cover_taste import canonical, noise_preview, stored_preview
 
 # Pinned: a changed instruction is a reviewed contract change.
 PINNED_INSTRUCTION_SHA256 = (
-    "6916c80c9c3ecac493239fb57c6f4c9b3e25f03d04475bc04ed9c1aede08077d"
+    "22a8b0893fa8d1ad1655a6a0c12ef8b107d0467578d51636ea150c7165e3c713"
 )
 
 
@@ -44,7 +56,18 @@ def _image(index: int, payload: bytes | None = None) -> TasteBuildImage:
     )
 
 
-def _packet(images: list[TasteBuildImage], per_decision: int = 2) -> str:
+_NO_OWNER: dict[str, object] = {
+    "budget": taste_budget(()),
+    "kept": [],
+    "left_out": [],
+}
+
+
+def _packet(
+    images: list[TasteBuildImage],
+    per_decision: int = 2,
+    owner: dict[str, object] = _NO_OWNER,
+) -> str:
     decisions = []
     for start in range(0, len(images), per_decision):
         group = images[start : start + per_decision]
@@ -66,7 +89,11 @@ def _packet(images: list[TasteBuildImage], per_decision: int = 2) -> str:
             }
         )
     return canonical_json(
-        {"decisions": decisions, "schema_version": COVER_TASTE_BUILD_PACKET_SCHEMA}
+        {
+            **owner,
+            "decisions": decisions,
+            "schema_version": COVER_TASTE_BUILD_PACKET_SCHEMA,
+        }
     )
 
 
@@ -269,3 +296,127 @@ def test_byte_budget_is_enforced(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     with pytest.raises(TasteContractError):
         admit_taste_build_request(packet, tuple(images))
+
+
+def _astral(count: int, start: int) -> str:
+    """One word of `count` four-byte code points (CJK Extension B, all
+    assigned), distinct per `start`."""
+    return "".join(
+        chr(0x20000 + (start * 401 + index) % 42_720) for index in range(count)
+    )
+
+
+def _worst_owner() -> dict[str, object]:
+    """40 kept rules of 8,192 four-byte code points and 100 removed texts of
+    16,384, the most a packet v2 can carry beside its decisions (S4, S8)."""
+    sizes = [400] * 20 + [10] * 19 + [MAX_TASTE_PROFILE_CODE_POINTS - 8_190]
+    kept = [
+        {"section": TASTE_SECTIONS[index // 10], "text": _astral(size, index)}
+        for index, size in enumerate(sizes)
+    ]
+    removed_sizes = [163] * 16 + [164] * 84
+    left_out = [_astral(size, 100 + index) for index, size in enumerate(removed_sizes)]
+    assert sum(len(rule["text"]) for rule in kept) == MAX_TASTE_PROFILE_CODE_POINTS
+    assert len(kept) == MAX_TASTE_RULES
+    assert sum(map(len, left_out)) == MAX_TASTE_REMOVED_CODE_POINTS
+    assert len(left_out) == MAX_TASTE_REMOVED
+    return {
+        "budget": taste_budget(tuple(rule["text"] for rule in kept)),
+        "kept": kept,
+        "left_out": left_out,
+    }
+
+
+def test_the_worst_packet_v2_fits_both_engines_and_the_request_budget() -> None:
+    """Dry proof a: 50 decisions, the worst kept rules and removed list."""
+    images = [_image(index, noise_preview(index)) for index in range(100)]
+    packet = _packet(images, per_decision=2, owner=_worst_owner())
+    assert len(json.loads(packet)["decisions"]) == 50
+    request = admit_taste_build_request(packet, tuple(images))
+    assert len(TASTE_INSTRUCTION.encode()) <= 4_096
+    assert len(packet.encode()) <= MAX_INPUT_BYTES
+    ContainedReviewRequest(TASTE_INSTRUCTION, packet, TASTE_CODEX_OUTPUT_SCHEMA)
+    body = taste_request_frame_bytes(packet) + sum(
+        taste_image_request_bytes(jpeg) for _reference, jpeg in request.images
+    )
+    assert body <= TASTE_MAX_REQUEST_BYTES
+    # Negative control: an instruction one byte over Codex's limit is refused.
+    with pytest.raises(ContainedReviewerError):
+        ContainedReviewRequest("x" * 4_097, packet, TASTE_CODEX_OUTPUT_SCHEMA)
+
+
+def test_kept_rules_removed_texts_and_budget_are_admitted() -> None:
+    images = [_image(index) for index in range(2)]
+    kept = [
+        {"section": "drawn_to", "text": "Bold art."},
+        {"section": "avoid", "text": "Busy type."},
+    ]
+    owner: dict[str, object] = {
+        "budget": {"characters": 8_173, "rules": 38, "words": 1_196},
+        "kept": kept,
+        "left_out": ["Glossy finish."],
+    }
+    packet = _packet(images, owner=owner)
+    assert admit_taste_build_request(packet, tuple(images)).packet_document == packet
+
+
+def _owner_change(change: str) -> dict[str, object]:
+    kept = [{"section": "avoid", "text": "Busy type."}]
+    owner: dict[str, object] = {
+        "budget": taste_budget(("Busy type.",)),
+        "kept": kept,
+        "left_out": [],
+    }
+    if change == "budget":
+        owner["budget"] = {**taste_budget(("Busy type.",)), "words": 1_200}
+    elif change == "budget-bool":
+        owner["budget"] = {**taste_budget(()), "rules": 40, "words": True}
+    elif change == "section":
+        owner["kept"] = [{"section": "style", "text": "Busy type."}]
+    elif change == "grouping":
+        owner["kept"] = [*kept, {"section": "drawn_to", "text": "Bold art."}]
+        owner["budget"] = taste_budget(("Busy type.", "Bold art."))
+    elif change == "text":
+        owner["kept"] = [{"section": "avoid", "text": "See https://example.invalid"}]
+        owner["budget"] = taste_budget(("See https://example.invalid",))
+    elif change == "kept-member":
+        owner["kept"] = [{**kept[0], "number": 1}]
+    elif change == "left-out-101":
+        owner["left_out"] = [f"Rule {index}." for index in range(101)]
+    elif change == "left-out-repeat":
+        owner["left_out"] = ["Bold art.", "bold art"]
+    elif change == "left-out-text":
+        owner["left_out"] = ["Two\nlines."]
+    elif change == "budget-member":
+        owner["budget"] = {**taste_budget(("Busy type.",)), "images": 1}
+    return owner
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "budget",
+        "budget-bool",
+        "section",
+        "grouping",
+        "text",
+        "kept-member",
+        "left-out-101",
+        "left-out-repeat",
+        "left-out-text",
+        "budget-member",
+    ],
+)
+def test_kept_rules_outside_their_contract_are_refused(change: str) -> None:
+    images = [_image(index) for index in range(2)]
+    packet = _packet(images, owner=_owner_change(change))
+    with pytest.raises(TasteContractError):
+        admit_taste_build_request(packet, tuple(images))
+
+
+def test_a_packet_without_the_owner_members_is_refused() -> None:
+    images = [_image(index) for index in range(2)]
+    packet = json.loads(_packet(images))
+    del packet["kept"]
+    with pytest.raises(TasteContractError):
+        admit_taste_build_request(canonical_json(packet), tuple(images))

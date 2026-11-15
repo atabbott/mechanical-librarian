@@ -23,7 +23,7 @@ import {
   destinationLabel,
   evidenceRoleLabel,
   languageName,
-  observationText,
+  fieldObservationText,
   sourceLookupLabel,
   mediaKindLabels,
   previewDispositionLabels,
@@ -331,9 +331,8 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
       </nav>
       {search.subview === 'evidence' ? (
         <section className="diagnostic-sheet evidence-sheet" aria-label="Evidence">
-          <header>
-            <h2>Evidence</h2>
-          </header>
+          {/* The tab above names this view, so its heading is for assistive technology only. */}
+          <h2 className="sr-only">Evidence</h2>
           {evidence.isPending ? (
             <p role="status">Loading evidence…</p>
           ) : evidence.error instanceof BuildMismatchError ? (
@@ -373,7 +372,7 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
                         <ul className="evidence-values">
                           {fieldObservations.map((item, index) => (
                             <li key={`${item.source}-${String(index)}-${item.observation}`}>
-                              <p>{observationText(item)}</p>
+                              <p>{fieldObservationText(item, field.destination)}</p>
                               <small>
                                 {item.source} · {evidenceRoleLabel(item.role)}
                               </small>
@@ -426,9 +425,8 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
         </section>
       ) : (
         <section className="diagnostic-sheet" aria-label="History">
-          <header>
-            <h2>History</h2>
-          </header>
+          {/* The tab above names this view, so its heading is for assistive technology only. */}
+          <h2 className="sr-only">History</h2>
           {history.isPending ? (
             <p role="status">Loading history…</p>
           ) : history.error instanceof BuildMismatchError ? (

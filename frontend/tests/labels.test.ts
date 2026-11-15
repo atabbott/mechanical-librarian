@@ -33,6 +33,7 @@ import {
   destinationLabel,
   destinationPhrase,
   fieldStateLabels,
+  fieldObservationText,
   languageName,
   observationText,
   lookupLabels,
@@ -219,6 +220,31 @@ describe('owner labels (#1286)', () => {
     ['Language: often', 'en', 'Language: often'],
   ])('reads the observation %j stating %j as %j', (observation, language, shown) => {
     expect(observationText({ observation, language })).toBe(shown)
+  })
+})
+
+describe('field observation text (#1894)', () => {
+  it.each([
+    // Its own field's prefix goes: the heading above already names the field.
+    ['Title: A Book', null, 'title', 'A Book'],
+    [
+      'ISBN: 9781250077004. Not offered as a choice. It belongs to one edition.',
+      null,
+      'isbn',
+      '9781250077004. Not offered as a choice. It belongs to one edition.',
+    ],
+    // The language is named first, then the prefix goes.
+    ['Language: en', 'en', 'language', 'English (en)'],
+    // Negative control: a prefix naming another field stays.
+    ['Subtitle: A Story', null, 'title', 'Subtitle: A Story'],
+    ['Title: en', null, 'language', 'Title: en'],
+    // Text without a prefix, or with the label only mid-sentence, is left alone.
+    ['A Book', null, 'title', 'A Book'],
+    ['The Title: A Book', null, 'title', 'The Title: A Book'],
+  ] as const)('reads %j stating %j under %j as %j', (observation, language, destination, shown) => {
+    expect(fieldObservationText({ observation, language }, destination as TargetDestination)).toBe(
+      shown,
+    )
   })
 })
 

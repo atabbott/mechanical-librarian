@@ -298,6 +298,11 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 )
                 return
             payload = rich_payload(route.request.url)
+            if path == "/api/v1/activity":
+                # One page shows no pager, so the ledger reads as three pages
+                # and the target-size sweep below has a pager to measure.
+                ledger = cast("dict[str, Any]", payload)["ledger"]
+                ledger |= {"page_count": 3, "total": 3 * ledger["page_size"]}
             if genres_reappeared and path == "/api/v1/review-cases/case-1":
                 detail = cast("dict[str, object]", payload)
                 fields = cast("list[dict[str, object]]", detail["fields"])
@@ -1232,6 +1237,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                             page.evaluate("() => document.documentElement.scrollWidth")
                             <= width
                         )
+                        expect(
+                            page.locator(".cm-activity-pagination-nav")
+                        ).to_be_visible()
                         for control in page.locator(
                             ".cm-activity-filters button, .cm-activity-pagination button"
                         ).all():
@@ -1975,7 +1983,16 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             )
             == "fixed"
         )
-        page.locator(".masthead").evaluate("node => { node.style.minHeight = '220px' }")
+        # A masthead grown to 140 px is under a sixth of this 900 px window,
+        # so it still sticks and the rail must clear its new height.
+        page.locator(".masthead").evaluate("node => { node.style.minHeight = '140px' }")
+        expect(page.locator("html")).not_to_have_attribute("data-masthead", "static")
+        assert (
+            page.locator(".masthead").evaluate(
+                "node => getComputedStyle(node).position"
+            )
+            == "sticky"
+        )
         attention_rail_clears_masthead()
         assert page.evaluate("() => document.documentElement.scrollWidth") <= 900
         page.locator(".attention-rail header button").click()
@@ -2104,8 +2121,15 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         expect(page.locator(".field-apply-context")).to_have_count(0)
         assert page.get_by_role("button", name="Previous").count() == 0
         assert page.get_by_role("button", name="Next").count() == 0
-        # One toolbar in both states; Back to works leads the workspace (#1284).
-        expect(page.locator(".library-header button")).to_have_count(1)
+        # One toolbar in both states, the Library title's Works and Covers
+        # switch beside the Attention toggle; Back to works leads the
+        # workspace (#1284).
+        expect(page.locator(".library-header button")).to_have_count(3)
+        expect(
+            page.locator(".library-header .library-title").get_by_role(
+                "heading", level=1, name="Library", exact=True
+            )
+        ).to_be_visible()
         expect(
             page.locator(".library-workspace > .compact-workspace-back:first-child")
         ).to_be_visible()
@@ -2386,16 +2410,10 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         )
         expect(single_proposal).to_have_count(1)
         current_choice = page.locator(".metadata-choice.is-current")
+        # The current value starts level with the first proposed value.
         assert (
             abs(
-                (
-                    single_proposal.bounding_box()["y"]
-                    + single_proposal.bounding_box()["height"] / 2
-                )
-                - (
-                    current_choice.bounding_box()["y"]
-                    + current_choice.bounding_box()["height"] / 2
-                )
+                single_proposal.bounding_box()["y"] - current_choice.bounding_box()["y"]
             )
             <= 1
         )
@@ -2792,6 +2810,11 @@ def test_activity_gathers_a_preparations_checks_and_names_an_unknown_filter() ->
             route.fulfill(content_type="image/png", body=synthetic_preview(preview))
         elif path.startswith("/api/v1/"):
             payload = rich_payload(route.request.url)
+            if path == "/api/v1/activity":
+                # One page shows no pager, so the ledger reads as three pages
+                # for the pagination checks below.
+                ledger = cast("dict[str, Any]", payload)["ledger"]
+                ledger |= {"page_count": 3, "total": 3 * ledger["page_size"]}
             if checks_gone and path == "/api/v1/activity":
                 activity = cast("dict[str, list[dict[str, object]]]", payload)
                 activity["events"] = [
@@ -4702,7 +4725,7 @@ _MASTHEAD_COVER = """() => {
 
 
 def test_compact_and_enlarged_masthead_never_covers_content() -> None:
-    """The masthead sticks only while it takes at most a quarter of the
+    """The masthead sticks only while it takes at most a sixth of the
     viewport, and otherwise scrolls with the page; whichever it is, no focused
     control and no sticky region lies beneath it, and the preparation popover
     opens inside the viewport. Enlarged text is root font-size 200%, which rem
@@ -4738,7 +4761,7 @@ def test_compact_and_enlarged_masthead_never_covers_content() -> None:
                     page.locator(".masthead .preparation-activity > button").wait_for()
                     page.evaluate(_TWO_FRAMES)
                     cover = page.evaluate(_MASTHEAD_COVER)
-                    assert cover["static"] == (cover["share"] > 0.25), (
+                    assert cover["static"] == (cover["share"] > 1 / 6), (
                         f"{where}: {cover}"
                     )
                     assert cover["position"] == (
@@ -5010,12 +5033,23 @@ def test_activity_ledger_rows_fit_at_every_width_and_text_size() -> None:
         page = browser.new_page(viewport={"width": 1440, "height": 900}, locale="en-US")
         page.add_init_script(_LIVE_UPDATE_STREAM)
         _serve_cohort(page, stylesheet=lambda: styles[text])
+
+        # One page shows no pager, so the ledger reads as three pages and the
+        # pager's rows and targets are measured.
+        def three_pages(route: Route) -> None:
+            payload = cast("dict[str, Any]", rich_payload(route.request.url))
+            ledger = payload["ledger"]
+            ledger |= {"page_count": 3, "total": 3 * ledger["page_size"]}
+            route.fulfill(content_type="application/json", body=json.dumps(payload))
+
+        page.route("**/api/v1/activity?*", three_pages)
         for text in styles:
             page.set_viewport_size({"width": 1440, "height": 900})
             page.goto(
                 "https://react-platform.invalid/activity"
                 "?eventType=all&rangeDays=30&page=1&pageSize=25"
             )
+            expect(page.locator(".cm-activity-pagination-nav")).to_be_visible()
             page.locator("article.is-checks").get_by_role("button").click()
             expect(page.locator(".cm-activity-checks > li").first).to_be_visible()
             for width in (1440, 1100, 884, 761, 760, 430, 390, 375, 320):

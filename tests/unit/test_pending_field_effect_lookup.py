@@ -1088,8 +1088,11 @@ def test_consent_revocation_supersedes_in_its_original_order(
 
 
 def test_description_application_history_breaks_tied_times_as_displayed(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from tests.support.description_advice import qualify_description_advice
+
+    qualify_description_advice(monkeypatch)
     from mechanical_librarian.adapters.field_effect_authority import (
         PersistedFieldEffectAuthority,
     )
@@ -1254,8 +1257,11 @@ def test_description_advice_history_breaks_tied_times_by_attempt_id(
 
 
 def test_description_decision_history_breaks_tied_times_by_decision_id(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from tests.support.description_advice import qualify_description_advice
+
+    qualify_description_advice(monkeypatch)
     from mechanical_librarian.domain.description_advice import (
         AuthoredDescriptionDecision,
     )

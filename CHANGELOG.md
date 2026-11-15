@@ -69,6 +69,12 @@ brackets are GitHub issues.
   its headers closes the connection. The Google Books key now travels in a
   header instead of the address, and the dependency audit also runs weekly on
   `main` (#1887).
+- Library, Policy and Activity share one page header and heading scale. A
+  field's choices sit in one panel under Keep current value and Choose a new
+  value, without queue position, choice count or the one-tap hint. Covers adds
+  Open in Works, Policy says what Automatic does on ebooks and audiobooks, and
+  Activity hides a one-page pager. Phones get a 16 px margin, and the masthead
+  scrolls away when taller than a sixth of the window (#1894).
 
 ## 0.33.0 — First library (in progress)
 
@@ -105,11 +111,14 @@ brackets are GitHub issues.
   the book's authors and names another still does not (#1355).
 - **Clean rebuild required.** Covers has a Taste profile tab. Once you have
   chosen 25 covers, an OpenRouter vision model you pick in Settings → Reviewer
-  writes rules about the covers you choose and pass over. The profile is shown
-  read-only and changes nothing yet. `review.cover_taste_build_daily_requests`
-  (default 8) caps its requests a day (#1372).
+  writes rules about the covers you choose and pass over. The profile changes
+  nothing yet. `review.cover_taste_build_daily_requests` (default 8) caps its
+  requests a day (#1372).
 - **Clean rebuild required.** Codex can write the taste profile too: choose it
   or an OpenRouter model in Settings → Reviewer › Taste profile (#1372).
+- **Clean rebuild required.** You can edit, add and remove taste profile
+  rules. Your rules stay as you wrote them through rebuilds, and rules you
+  removed are not written again (#1372).
 - **Clean rebuild required.** Choosing, putting back or automatically
   switching a cover over one Audiobookshelf already holds no longer fails
   before it writes. The write binds the current cover's exact bytes, even when
@@ -340,6 +349,11 @@ brackets are GitHub issues.
   repeat the current text is no longer replaced by the adviser's result,
   which you could not have chosen or reversed there. The result stays shown
   for reference, and the review API refuses choosing it directly too (#1892).
+- Automatically apply ready description advice now only suggests until a
+  release shows, from your decisions, that the adviser is right often enough
+  with those cleanup choices. No release does yet, so the adviser's text is
+  offered on the work's page as with the switch off, and an automatic choice
+  stored before this change is not written (ADR-0099, #1886).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
