@@ -226,8 +226,11 @@ class OwnerResponsivenessFixture:
                     local_claims=(*base.local_claims, title_claim),
                     local_reasons=(*base.local_reasons, "opening_matter_title"),
                     providers=providers,
-                    # A readable current cover is kept without asking (#1310),
-                    # so most of a mixed store's works lack one and ask.
+                    # A readable current cover is kept without asking (#1310)
+                    # unless the title names another book, and one
+                    # Audiobookshelf did not return is kept until the next
+                    # scan (#1362). So a mixed store's works ask about their
+                    # cover only where it is readable and the title asks too.
                     cover_sources=tuple(
                         source
                         for source in base.cover_sources
