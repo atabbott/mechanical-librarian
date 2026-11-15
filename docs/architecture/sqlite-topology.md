@@ -456,7 +456,7 @@ read-only. How recovery runs is in
 `/data/private/provider-responses.sqlite` holds one `STRICT`, `WITHOUT ROWID`
 table, `provider_responses`, keyed by adapter kind and the SHA-256 of a
 request's method, URL, sorted query, body and adapter revision
-([ADR-0099](decisions/0099-reuse-stored-provider-answers.md)). Each row is one
+([ADR-0101](decisions/0101-reuse-stored-provider-answers.md)). Each row is one
 success body a clean observation accepted, compressed, with its SHA-256,
 length and fetch time in microseconds; no request text, header or credential.
 

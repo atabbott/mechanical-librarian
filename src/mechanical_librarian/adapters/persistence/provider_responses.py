@@ -1,7 +1,7 @@
 """Provider answers kept for reuse, on their own private SQLite database.
 
 A metadata adapter asks this store before it asks a provider (#1064,
-ADR-0099). Each row is one success body a provider returned and a clean
+ADR-0101). Each row is one success body a provider returned and a clean
 observation accepted, keyed by the adapter kind and a digest of the request
 that produced it. The store holds no request text, header or credential:
 only the compressed body, its SHA-256 and length, and the time it was fetched.

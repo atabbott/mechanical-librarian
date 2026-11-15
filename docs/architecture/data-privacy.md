@@ -39,7 +39,7 @@ Cover originals and previews are stored once per digest in the artifact store.
 **Provider answers.** `/data/private/provider-responses.sqlite` keeps each
 success body a provider returned for an observation that ended clean, so a
 later preparation reuses it instead of asking again
-([ADR-0099](decisions/0099-reuse-stored-provider-answers.md)). A body is kept
+([ADR-0101](decisions/0101-reuse-stored-provider-answers.md)). A body is kept
 with a digest of its request and when it was fetched, never the request text,
 a header or a credential. The bodies name the owner's books, and a request
 digest can be confirmed by guessing the title it asked for, so the file is

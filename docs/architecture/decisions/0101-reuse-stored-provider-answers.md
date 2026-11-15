@@ -1,4 +1,4 @@
-# ADR-0099: Reuse stored provider answers, with live fallback
+# ADR-0101: Reuse stored provider answers, with live fallback
 
 - Status: proposed
 - Date: 2026-11-15

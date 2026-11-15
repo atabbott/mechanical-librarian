@@ -2,7 +2,7 @@
 
 It follows the private stores' admission rules (absent or exact, owner-only,
 refused without mutation) except that open reads no payload: each row proves
-its integrity when it is read (#1064, ADR-0099).
+its integrity when it is read (#1064, ADR-0101).
 """
 
 from __future__ import annotations

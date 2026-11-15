@@ -463,7 +463,7 @@ stderr lines ([observability](observability.md)).
 Every provider asks the
 [provider-response store](../architecture/sqlite-topology.md#provider-response-database)
 before it sends a request
-([ADR-0099](../architecture/decisions/0099-reuse-stored-provider-answers.md)).
+([ADR-0101](../architecture/decisions/0101-reuse-stored-provider-answers.md)).
 An answer held for the same request is read exactly as a live one: it counts
 against the same attempt, retry and byte ceilings, passes the same decoder and
 parser, and dates the provider's `accessed_at` to when it was fetched. Only the

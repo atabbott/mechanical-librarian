@@ -558,15 +558,18 @@ class GoogleBooksMetadataProvider:
             "q": query,
             "startIndex": "0",
         }
+        headers = {
+            "Accept": "application/json",
+            "Accept-Encoding": "identity",
+        }
+        # The key travels in Google's API-key header, never the URL, so no
+        # request line, proxy log or error that echoes a URL can carry it.
         if self._api_key is not None:
-            params["key"] = self._api_key
+            headers["X-Goog-Api-Key"] = self._api_key
         return self._session.request_json(
             GOOGLE_BOOKS_URL,
             params=params,
-            headers={
-                "Accept": "application/json",
-                "Accept-Encoding": "identity",
-            },
+            headers=headers,
             deadline=deadline,
             query_retry=query_retry,
             classify=self._classify,

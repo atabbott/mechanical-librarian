@@ -109,4 +109,6 @@ status line that says who accepted it and when.
 | [0096](0096-owner-chosen-work-identity-strictness.md) | accepted | Let the owner choose how strictly title and creator agreement establishes work identity |
 | [0097](0097-keep-the-bibliographic-combination-gate.md) | accepted | Keep the bibliographic combination gate and extend the would-admit note to rich-preview fields |
 | [0098](0098-revised-cover-observation-vocabulary.md) | proposed | Revise the cover observation vocabulary and keep observations advisory |
-| [0099](0099-reuse-stored-provider-answers.md) | proposed | Reuse stored provider answers, with live fallback |
+| [0099](0099-qualify-automatic-description-advice.md) | proposed | Qualify automatic description advice on the owner's decisions before it writes without asking |
+| [0100](0100-confine-parser-helpers.md) | proposed | Confine parser helpers, and keep parsing where Landlock is missing |
+| [0101](0101-reuse-stored-provider-answers.md) | proposed | Reuse stored provider answers, with live fallback |
