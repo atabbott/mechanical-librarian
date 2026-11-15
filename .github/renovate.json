@@ -185,6 +185,18 @@
       ],
       "automerge": false,
       "dependencyDashboardApproval": true
+    },
+    {
+      "description": "Hold Playwright out of the Python packages batch until its newer Chromium is checked against the browser tests; approval opens its own pull request",
+      "matchManagers": [
+        "pep621"
+      ],
+      "matchPackageNames": [
+        "playwright"
+      ],
+      "groupName": "Playwright",
+      "automerge": false,
+      "dependencyDashboardApproval": true
     }
   ],
   "updateNotScheduled": true,

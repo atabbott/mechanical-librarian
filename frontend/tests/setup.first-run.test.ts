@@ -2309,7 +2309,11 @@ describe('shipped first-run setup script', () => {
     const fetch = vi.fn(async (request: RequestInfo | URL) => {
       if (requestUrl(request) === '/api/setup/reviewer-access')
         return response({
-          schema_version: 'reviewer-access-view-v3',
+          schema_version: 'reviewer-access-view-v4',
+          taste_mapping: null,
+          taste_metadata: null,
+          taste_daily_requests: 8,
+          taste_recommendations: ['anthropic/claude-sonnet-5.5'],
           cover_metadata: null,
           cost_evidence: {
             models: [{ model: 'openai/gpt-6-luna', task: 'cover', per_1000_usd: '4.2' }],
@@ -2558,7 +2562,11 @@ describe('shipped first-run setup script', () => {
 })
 
 const reviewerAccess = (state: string, reason: string | null = null) => ({
-  schema_version: 'reviewer-access-view-v3',
+  schema_version: 'reviewer-access-view-v4',
+  taste_mapping: null,
+  taste_metadata: null,
+  taste_daily_requests: 8,
+  taste_recommendations: ['anthropic/claude-sonnet-5.5'],
   cover_metadata: null,
   cost_evidence: { models: [] },
   revision: 3,

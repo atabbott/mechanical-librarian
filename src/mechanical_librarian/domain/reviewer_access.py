@@ -16,10 +16,10 @@ from pydantic import (
     model_validator,
 )
 
-ReviewerAccessSchemaVersion = Literal["reviewer-access-v3"]
-REVIEWER_ACCESS_SCHEMA: Final[ReviewerAccessSchemaVersion] = "reviewer-access-v3"
+ReviewerAccessSchemaVersion = Literal["reviewer-access-v4"]
+REVIEWER_ACCESS_SCHEMA: Final[ReviewerAccessSchemaVersion] = "reviewer-access-v4"
 
-ReviewerTask = Literal["cover_observation", "description_rewrite"]
+ReviewerTask = Literal["cover_observation", "description_rewrite", "cover_taste_build"]
 ReviewerEngine = Literal["codex", "openrouter"]
 _OPENROUTER_MODEL_ID = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}/"
@@ -107,6 +107,9 @@ class ReviewerAccessDocument(_Closed):
     description_rewrite: ReviewerTaskSelection | None = None
     description_metadata: DescriptionModelMetadata | None = None
     cover_metadata: CoverModelMetadata | None = None
+    # The taste profile builder runs on OpenRouter only in 0.31.0 (#1372 R3).
+    cover_taste_build: OpenRouterTaskSelection | None = None
+    taste_metadata: CoverModelMetadata | None = None
 
     @model_validator(mode="after")
     def bound_cover_prices(self) -> ReviewerAccessDocument:
@@ -115,6 +118,11 @@ class ReviewerAccessDocument(_Closed):
             or self.cover_metadata.model != self.cover_observation.model
         ):
             raise ValueError("cover prices do not match selection")
+        if self.taste_metadata is not None and (
+            self.cover_taste_build is None
+            or self.taste_metadata.model != self.cover_taste_build.model
+        ):
+            raise ValueError("taste prices do not match selection")
         return self
 
 

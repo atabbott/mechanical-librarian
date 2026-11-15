@@ -83,7 +83,7 @@ Some refusals affect one store only. Fix only that store.
 | --- | --- |
 | Session database (`/data/private/review-sessions.sqlite`) | Follow [Session database refused](backups-and-recovery.md#session-database-refused). |
 | Incomplete first-run setup state | Start setup again on an empty `/data` volume. |
-| Configuration document | Replace it with the current version (`config-v11` or `review-bootstrap-v2`). No conversion is provided. |
+| Configuration document | Replace it with the current version (`config-v12` or `review-bootstrap-v2`). No conversion is provided. |
 | Catalogue (`/data/catalogue.sqlite3`) or provider-recovery database (`/data/private/provider-recovery.sqlite`) | Stop the container, move the file aside, restart. A fresh store is created; the next refresh rebuilds the catalogue. Pending provider recovery jobs, retry backoff and their history are lost. |
 
 ## Changes that need owner action without a rebuild
