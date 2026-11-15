@@ -15,6 +15,8 @@ brackets are GitHub issues.
 - In store mode, Settings can change the owner password. It asks for the
   current password, keeps this browser signed in and signs out every other
   browser (#1385).
+- Settings can sign out every other browser from Access and diagnostics, in
+  store and file mode, and keeps this browser signed in (#1385).
 
 ## 0.37.0 — Provider economy (in progress)
 
