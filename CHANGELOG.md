@@ -81,6 +81,10 @@ brackets are GitHub issues.
 
 ## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
 
+- **Clean rebuild required.** With Book matching set to "Same title and any
+  author", a source record that lists only some of the book's authors, or all
+  of them and others, now counts as the same book. One that leaves out one of
+  the book's authors and names another still does not (#1355).
 - **Clean rebuild required.** Choosing, putting back or automatically
   switching a cover over one Audiobookshelf already holds no longer fails
   before it writes. The write binds the current cover's exact bytes, even when
