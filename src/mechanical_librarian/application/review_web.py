@@ -872,8 +872,9 @@ class OwnerSessionService:
         now = self._clock()
         credential = change.current()
         try:
+            own_session_digest = credential.session_digest(session_token)
             _, expected_csrf, _ = self._repository.authenticate_review_session(
-                credential.session_digest(session_token), now
+                own_session_digest, now
             )
         except Exception as error:
             # Fail closed, as ``authenticate`` does.
@@ -890,7 +891,13 @@ class OwnerSessionService:
             raise ReviewWebError("invalid_password")
         try:
             tokens, ended = self._replace_password(
-                change, credential, current_password, new_password, client, now
+                change,
+                credential,
+                own_session_digest,
+                current_password,
+                new_password,
+                client,
+                now,
             )
         except ReviewWebError as error:
             _owner_password_change_event(error.code, None)
@@ -902,6 +909,7 @@ class OwnerSessionService:
         self,
         change: OwnerPasswordChange,
         credential: OwnerCredential,
+        own_session_digest: str,
         current_password: str,
         new_password: str,
         client: str,
@@ -946,6 +954,13 @@ class OwnerSessionService:
         # Held from the new session through the swap, so a sign-out of other
         # browsers cannot delete the session this change has just issued.
         with change.exclusive():
+            # The passwords were checked outside the hold. A browser signed out
+            # meanwhile changes nothing: its session is read again before
+            # anything is written.
+            try:
+                self._repository.authenticate_review_session(own_session_digest, now)
+            except Exception as error:
+                raise ReviewWebError("unauthorized") from error
             try:
                 self._repository.create_review_session(
                     session_digest, _digest(csrf_token), now, expires_at, client_key

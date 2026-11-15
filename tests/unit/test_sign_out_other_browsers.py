@@ -292,3 +292,72 @@ def test_signing_out_other_browsers_waits_for_a_password_change_in_flight(
     assert service.authenticate(tokens.session_token) == "owner"
     (refused,) = signed_out
     assert isinstance(refused, ReviewWebError) and refused.code == "unauthorized"
+
+
+def test_a_password_change_stops_when_its_own_session_was_signed_out(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    service, store, sessions = _store_service()
+    changer = service.login(_CURRENT, _CLIENT)
+    other = service.login(_CURRENT, _OTHER_CLIENT)
+    stored = store.value
+    entered, release = threading.Event(), threading.Event()
+    hash_successor = StoreOwnerPassword.successor
+
+    def held_successor(holder: StoreOwnerPassword, password: str) -> object:
+        entered.set()
+        assert release.wait(5)
+        return hash_successor(holder, password)
+
+    monkeypatch.setattr(StoreOwnerPassword, "successor", held_successor)
+    changed: list[object] = []
+
+    def change() -> None:
+        try:
+            changed.append(
+                service.change_password(
+                    changer.session_token,
+                    changer.csrf_token,
+                    _CURRENT,
+                    _NEW,
+                    _NEW,
+                    _CLIENT,
+                )
+            )
+        except Exception as error:
+            changed.append(error)
+
+    changer_thread = threading.Thread(target=change)
+    changer_thread.start()
+    try:
+        # The change has checked its session and the current password and is
+        # hashing the new one when the other browser signs it out.
+        assert entered.wait(5)
+        assert service.logout_others(other.session_token, other.csrf_token) == 1
+        capsys.readouterr()
+    finally:
+        release.set()
+        changer_thread.join(5)
+
+    assert not changer_thread.is_alive()
+    (refused,) = changed
+    assert isinstance(refused, ReviewWebError) and refused.code == "unauthorized"
+    # Nothing was written: the password stands, and the browser that signed
+    # the others out is the only one signed in.
+    assert store.value == stored
+    assert service.authenticate(other.session_token, other.csrf_token) == "owner"
+    assert _session_rows(sessions) == 1
+    event = json.loads(capsys.readouterr().err.strip())
+    assert event == {
+        "event": "owner_password_change",
+        "level": "info",
+        "outcome": "unauthorized",
+        "sessions_ended": None,
+    }
+
+
+def _session_rows(sessions: _Sessions) -> int:
+    (count,) = sessions.inner._connection.execute(
+        "SELECT COUNT(*) FROM review_sessions"
+    ).fetchone()
+    return cast("int", count)
