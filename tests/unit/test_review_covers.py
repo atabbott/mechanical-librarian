@@ -725,6 +725,61 @@ def test_keeping_a_switched_cover_releases_its_original_and_leaves_switched(
             assert switched["items"] == []
 
 
+def _keep_current(
+    client: TestClient, headers: dict[str, str], case_id: str, key: str
+) -> Any:
+    """POST the owner's keep of the current cover, as the book page does."""
+    detail = client.get(f"/api/v1/review-cases/{case_id}")
+    assert detail.status_code == 200, detail.text
+    field = next(
+        value for value in detail.json()["fields"] if value["destination"] == "cover"
+    )
+    return client.post(
+        f"/api/v1/review-cases/{case_id}/decisions",
+        headers={**headers, "Idempotency-Key": key},
+        json={
+            "destination": "cover",
+            "outcome": "keep_current",
+            "proposal_id": field["proposal_id"],
+            "selected_value": None,
+            "target_fingerprint": field["target_fingerprint"],
+            "offered_alternatives_digest": field["offer_digest"],
+            "consideration_id": field["cover_consideration"]["consideration_id"],
+            "cover_confirmation": {
+                "expected_selection_id": field["current_cover_selection_id"],
+                "confirm_unverified_match": False,
+            },
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    ("abs_state", "abs_digest"),
+    (
+        (CoverSourceState.TIMEOUT, None),
+        (CoverSourceState.ABSENT, None),
+        (CoverSourceState.DECODE_FAILED, "d" * 64),
+    ),
+    ids=("transient", "404", "decoder_refused"),
+)
+def test_keeping_a_current_cover_that_could_not_be_read_is_recorded_and_kept(
+    tmp_path: Path, abs_state: CoverSourceState, abs_digest: str | None
+) -> None:
+    """#1865 (a): the page's Keep current cover records in all three states."""
+    with _library(
+        tmp_path, readable_current=False, abs_state=abs_state, abs_digest=abs_digest
+    ) as library:
+        case_id = library.cases["item-1"]
+        with _client(library) as (client, headers):
+            response = _keep_current(client, headers, case_id, "keep-unread-cover-01")
+            assert response.status_code == 200, response.text
+            kept = client.get("/api/v1/covers?view=kept").json()
+            assert [item["review_case_id"] for item in kept["items"]] == [case_id]
+            assert kept["items"][0]["group"] == "kept"
+            assert kept["items"][0]["unreadable_cover"] is True
+            assert client.get("/api/v1/covers?view=decide").json()["items"] == []
+
+
 def test_a_cursor_carries_the_longest_accepted_title_and_item(
     tmp_path: Path,
 ) -> None:

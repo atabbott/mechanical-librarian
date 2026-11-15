@@ -27,7 +27,7 @@ import unicodedata
 from collections.abc import Callable
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote
 
 from mechanical_librarian.adapters.persistence.activity_documents import (
@@ -77,6 +77,7 @@ from mechanical_librarian.domain.human_decision import (
     COVER_SELECTION_AUTHORITY_SCHEMA,
     HumanDecision,
     HumanDecisionError,
+    keeps_unread_cover,
     manual_cover_eligible,
     owner_cover_selection_kind,
     validate_cover_confirmation,
@@ -2551,6 +2552,7 @@ def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> Non
             target = case.target
             expected_artifact = None
             expected_rank = None
+            owner_facts: dict[str, object] = {}
             if row[4] == "automatic":
                 automatic_decision = CoverAutomaticDecision.from_json(decision_document)
                 candidate = next(
@@ -2578,43 +2580,15 @@ def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> Non
                 expected_artifact = automatic_decision.artifact_id
                 expected_rank = list(automatic_decision.rank_key)
             else:
-                human_decision = HumanDecision.from_json(decision_document)
-                human = connection.execute(
-                    "SELECT document FROM human_decisions WHERE decision_id=?",
-                    (row[5],),
-                ).fetchone()
-                if (
-                    human_decision.decision_id != row[5]
-                    or human_decision.destination != "cover"
-                    or human_decision.review_case_id != consideration_row[1]
-                    or human_decision.occurred_at != row[8]
-                    or human != (decision_document,)
-                ):
-                    raise ValueError
-                candidate = next(
-                    (
-                        value
-                        for value in consideration["candidates"]
-                        if (
-                            human_decision.outcome == "accept"
-                            and human_decision.selected_value
-                            == {"kind": "cover", "value": value.get("artifact_id")}
-                        )
-                        or (
-                            human_decision.outcome == "keep_current"
-                            and value.get("incumbent") is True
-                        )
-                    ),
-                    None,
+                candidate, owner_facts = _owner_selection_facts(
+                    connection,
+                    row,
+                    document,
+                    consideration,
+                    cast(str, consideration_row[1]),
+                    expanded_document,
+                    case,
                 )
-                if human_decision.outcome == "reject":
-                    if (
-                        human_decision.selected_value is not None
-                        or candidate is not None
-                    ):
-                        raise ValueError
-                elif candidate is None:
-                    raise ValueError
                 if candidate is not None:
                     expected_artifact = candidate.get("artifact_id")
                     expected_rank = candidate.get("deterministic_rank_key")
@@ -2622,44 +2596,6 @@ def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> Non
                 "cover_selection_"
                 + hashlib.sha256(decision_document.encode("utf-8")).hexdigest()
             )
-            owner_facts = {}
-            if row[4] == "owner":
-                confirmation = validate_cover_confirmation(document.get("confirmation"))
-                if confirmation["expected_selection_id"] != row[7]:
-                    raise ValueError
-                if human_decision.outcome == "accept" and (
-                    candidate is None
-                    or not manual_cover_eligible(candidate)
-                    or (
-                        candidate["match_state"] == "match_not_confirmed"
-                        and confirmation["confirm_unverified_match"] is not True
-                    )
-                ):
-                    raise ValueError
-                candidate_kind, retained_plan_id = owner_cover_selection_kind(
-                    human_decision.outcome, candidate
-                )
-                owner_facts = {
-                    "candidate_kind": candidate_kind,
-                    "retained_plan_id": retained_plan_id,
-                    "confirmation": confirmation,
-                    "observed_identity": None
-                    if candidate is None
-                    else candidate["identity"],
-                    "candidate_reference": None
-                    if candidate is None
-                    else candidate["reference"],
-                    "original_sha256": None
-                    if candidate is None
-                    else candidate["original_sha256"],
-                    "preview_sha256": None
-                    if candidate is None
-                    else candidate["preview_sha256"],
-                    "consideration_digest": hashlib.sha256(
-                        expanded_document.encode()
-                    ).hexdigest(),
-                    "target": dict(case.target),
-                }
             expected_document = _canonical_json(
                 {
                     **owner_facts,
@@ -2727,6 +2663,86 @@ def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> Non
         json.JSONDecodeError,
     ) as error:
         raise MetadataReportError("database is unavailable or incompatible") from error
+
+
+def _owner_selection_facts(
+    connection: sqlite3.Connection,
+    row: tuple[Any, ...],
+    document: dict[str, object],
+    consideration: dict[str, Any],
+    review_case_id: str,
+    expanded_document: str,
+    case: ReviewCase,
+) -> tuple[dict[str, Any] | None, dict[str, object]]:
+    """The candidate one owner selection row names, and its owner facts.
+
+    Accept names one manually eligible candidate; keep names the current
+    cover, or nothing when the comparison could not read it (#1865); reject
+    names nothing. Raise ``ValueError`` for any other row.
+    """
+    decision_document = cast(str, document["decision_document"])
+    human_decision = HumanDecision.from_json(decision_document)
+    human = connection.execute(
+        "SELECT document FROM human_decisions WHERE decision_id=?",
+        (row[5],),
+    ).fetchone()
+    if (
+        human_decision.decision_id != row[5]
+        or human_decision.destination != "cover"
+        or human_decision.review_case_id != review_case_id
+        or human_decision.occurred_at != row[8]
+        or human != (decision_document,)
+    ):
+        raise ValueError
+    candidate = next(
+        (
+            value
+            for value in consideration["candidates"]
+            if (
+                human_decision.outcome == "accept"
+                and human_decision.selected_value
+                == {"kind": "cover", "value": value.get("artifact_id")}
+            )
+            or (
+                human_decision.outcome == "keep_current"
+                and value.get("incumbent") is True
+            )
+        ),
+        None,
+    )
+    if human_decision.outcome == "reject":
+        if human_decision.selected_value is not None or candidate is not None:
+            raise ValueError
+    elif candidate is None and not (
+        human_decision.outcome == "keep_current" and keeps_unread_cover(consideration)
+    ):
+        raise ValueError
+    confirmation = validate_cover_confirmation(document.get("confirmation"))
+    if confirmation["expected_selection_id"] != row[7]:
+        raise ValueError
+    if human_decision.outcome == "accept" and (
+        candidate is None
+        or not manual_cover_eligible(candidate)
+        or (
+            candidate["match_state"] == "match_not_confirmed"
+            and confirmation["confirm_unverified_match"] is not True
+        )
+    ):
+        raise ValueError
+    candidate_kind, retained_plan_id = owner_cover_selection_kind(
+        human_decision.outcome, candidate
+    )
+    return candidate, {
+        "candidate_kind": candidate_kind,
+        "retained_plan_id": retained_plan_id,
+        "confirmation": confirmation,
+        "observed_identity": None if candidate is None else candidate["identity"],
+        "candidate_reference": None if candidate is None else candidate["reference"],
+        "original_sha256": None if candidate is None else candidate["original_sha256"],
+        "preview_sha256": None if candidate is None else candidate["preview_sha256"],
+        "consideration_digest": hashlib.sha256(expanded_document.encode()).hexdigest(),
+        "target": dict(case.target),
+    }
 
 
 def _validate_review_field_facts(connection: sqlite3.Connection) -> None:
