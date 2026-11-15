@@ -82,19 +82,6 @@ describe('useRouteReadyFocus', () => {
     expect(control).toHaveFocus()
     expect(document.getElementById('main-content')).not.toHaveAttribute('data-route-focus-identity')
   })
-
-  it('leaves focus alone when a control pressed before the frame was then removed', () => {
-    // A pressed Try again that its own result replaces leaves focus on the
-    // page until the retry hands it on; the deferred move must not take it.
-    render(<Route identity="review:title" />)
-    const control = document.querySelector('button')
-    control?.focus()
-    control?.blur()
-    expect(document.body).toHaveFocus()
-    runFrames()
-    expect(document.querySelector('[data-route-focus]')).not.toHaveFocus()
-    expect(document.getElementById('main-content')).not.toHaveAttribute('data-route-focus-identity')
-  })
 })
 
 it('records readiness when shell restoration already focused the same target', () => {

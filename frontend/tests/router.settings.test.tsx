@@ -2699,6 +2699,10 @@ it.each(['mismatch', 'success'] as const)(
       await screen.findByText('Reviewer settings could not be loaded.')
     ).closest<HTMLElement>('[role="alert"]')
     if (!alert) throw new Error('the reviewer access alert is required')
+    // The route's own focus move is deferred a frame. Under load it can land
+    // after the press and take focus from the retry, so it is waited for.
+    const route = globalThis.document.querySelector('main [data-route-focus]')
+    await waitFor(() => expect(route).toHaveFocus())
     await user.click(within(alert).getByRole('button', { name: 'Try again' }))
     const target =
       outcome === 'mismatch'

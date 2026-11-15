@@ -1162,16 +1162,8 @@ const Shell = () => {
     previousPath.current = path
     const held = document.activeElement
     const focusAlreadyInsideRoute = held !== null && main.current?.contains(held) === true
-    // Focus that moved anywhere before the frame (a control pressed, then
-    // removed, leaves focus back on the page) was the reader's: keep it.
-    let moved = false
-    const onFocus = () => {
-      moved = true
-    }
-    document.addEventListener('focusin', onFocus)
     const frame = requestAnimationFrame(() => {
-      document.removeEventListener('focusin', onFocus)
-      if (changed && !focusAlreadyInsideRoute && !moved && document.activeElement === held) {
+      if (changed && !focusAlreadyInsideRoute && document.activeElement === held) {
         const target =
           main.current?.querySelector<HTMLElement>('[data-route-focus]') ?? main.current
         target?.focus({ preventScroll: true })
@@ -1181,10 +1173,7 @@ const Shell = () => {
       main.current?.setAttribute('data-restored-path', path)
       dispatchEvent(new Event('ml:route-restored'))
     })
-    return () => {
-      cancelAnimationFrame(frame)
-      document.removeEventListener('focusin', onFocus)
-    }
+    return () => cancelAnimationFrame(frame)
   }, [navigation.status, path, title])
   const signOut = async () => {
     setShellError('')
