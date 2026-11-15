@@ -41,17 +41,21 @@ daily limit: as many as needed to search everything every 90 days.
    - a terminal provider failure: none; a transient one leaves the mark as it
      was.
    A provider-retry successor takes its mark by the same rule. A changed file,
-   a stale report, a requested refresh or a failed provider stage still starts
-   the work afresh and clears the mark. A work finished before this decision
+   a stale report, a requested refresh, a failed provider stage or a scan
+   reset by `recover_review_pipeline` after its library id or producer
+   changed still starts the work afresh and clears the mark. A work finished before this decision
    has no mark; the next scan that keeps it complete gives it its slot after
    the scan plus seven days, with no backfill.
-4. **Live ask.** A due work returns to extraction and is claimed holding the
-   mark, so every provider asks live and replaces what is held, as ADR-0101
+4. **Live ask.** A due work returns to extraction and is claimed holding a
+   mark that has passed, so every provider asks live and replaces what is held, as ADR-0101
    already does for ADR-0089's search. Pacing, quotas and provider recovery
    are unchanged.
-5. **What a search may replace.** Only a claim that holds a fired mark is
-   considered, and only while the item's current package and case lineage
-   agree on a report of the same file that the publication just replaced.
+5. **What a search may replace.** Only a claim whose mark had passed by its
+   publication is considered, and only while the item's current package names
+   a report of the same file that the publication just replaced. A package
+   that names a proposal set or case must also agree with the item's case
+   lineage; an evidence-only package names neither, so a lineage row left
+   beside it does not matter.
    Everything stays — the case, its decisions, both report pointers and the
    work's outcome — and the new report is history only, when any of these
    holds:
@@ -60,12 +64,17 @@ daily limit: as many as needed to search everything every 90 days.
      the built-in policy), addresses the same proposal set when addressed over
      the prior report. The report id and access times never take part. An
      evaluation that cannot be made counts as a change.
-   - **Failed search.** The new report has a provider or lane status other than
-     `candidates`, `no_match`, `insufficient_input`, `not_needed` or `disabled`,
-     and the prior report had none, whatever the failure.
-   - **Weekly search.** A search fired by a weekly mark (one that is not the
-     work's slot) of an audiobook that again admits no recording, while a case
-     is open: ADR-0089's rule, unchanged.
+   - **Failed search.** In the new report a provider could not answer: a
+     provider or lane status is one provider recovery retries
+     (`PROVIDER_RECOVERY_ELIGIBLE_STATUSES`: a later ask may answer
+     differently), and the prior report had none. Any other status, such as a
+     candidate limit, is an answer, and the other rules decide.
+   - **Weekly search.** A weekly search, one before which no slot time has
+     passed since the previous publication (`next_research_slot(work_id,
+     mark - week) > completed_at`), of an audiobook that again admits no
+     recording, while a case is open: ADR-0089's rule, unchanged. Once a slot
+     time has passed, the search is that period's slot search even if a weekly
+     mark fired it.
    - **Nothing identified.** A search that now identifies nothing (its report
      admits no work identity) never takes a case away, whatever fired it. A
      search that stops listing a book is a more likely cause than the book
@@ -101,6 +110,9 @@ daily limit: as many as needed to search everything every 90 days.
   proposals, that book gets a new case every 90 days.
 - Comparing proposals evaluates the new report inside the publication
   transaction, about 4 to 12 ms on 10 to 23 KB test reports, once per due work.
+- A kept work that had a pending policy-transition item has that item closed
+  as stale, as the ordinary path does when the work's report changes; the
+  transition does not wait for a preparation that will not come.
 
 ### Neutral or deferred
 
@@ -140,8 +152,11 @@ waiting.
   legacy mark at the next scan; a search with the same proposals, with
   different ones, that failed over a complete or an incomplete report, and
   that identifies nothing over a case or over no case; an unmatched
-  audiobook's weekly and slot searches; the policy seam, unbound and
-  unreadable; the backlog after downtime; provider-retry successors.
+  audiobook's weekly and slot searches, including a weekly mark that fires
+  after the slot; a failed search over complete evidence, with or without a
+  leftover lineage; a candidate limit counted as an answer; a recovery reset
+  and an unfired mark that take the ordinary path; the policy seam, unbound
+  and unreadable; the backlog after downtime; provider-retry successors.
 - `tests/integration/test_preparation_waiting_writes.py`: under a bound policy
   with destinations, a search with the same proposals keeps the owner's
   decision, Automatic's decisions and a waiting write, which is still written

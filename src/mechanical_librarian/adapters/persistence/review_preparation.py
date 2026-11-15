@@ -85,7 +85,10 @@ from mechanical_librarian.domain.metadata_policy import (
     ResolvedMetadataPolicy,
     human_review_destinations,
 )
-from mechanical_librarian.domain.metadata_report import MetadataReport, ProviderStatus
+from mechanical_librarian.domain.metadata_report import (
+    PROVIDER_RECOVERY_ELIGIBLE_STATUSES,
+    MetadataReport,
+)
 from mechanical_librarian.domain.preparation_presentation import (
     PreparationTrigger,
 )
@@ -334,18 +337,6 @@ RESEARCH_INTERVAL_SECONDS = 7 * 86_400
 # fixed by its work id, so about a ninetieth of a library comes due each day
 # whatever its size (ADR-0102).
 REFRESH_INTERVAL_SECONDS = 90 * 86_400
-# The provider and lane statuses of an observation that ran to its end. A
-# report whose every status is one of these is complete; any other status is a
-# failure that a later ask may answer differently.
-_COMPLETE_STATUSES = frozenset(
-    (
-        ProviderStatus.CANDIDATES,
-        ProviderStatus.NO_MATCH,
-        ProviderStatus.INSUFFICIENT_INPUT,
-        ProviderStatus.NOT_NEEDED,
-        ProviderStatus.DISABLED,
-    )
-)
 
 
 def next_research_slot(work_id: str, after: int) -> int:
@@ -374,11 +365,18 @@ def _research_mark(work_id: str, completed_at: int, recording_unmatched: bool) -
     return next_research_slot(work_id, completed_at + RESEARCH_INTERVAL_SECONDS)
 
 
-def _report_complete(report: MetadataReport) -> bool:
-    """Whether every provider and lane of this report ran to its end."""
-    return all(
-        provider.status in _COMPLETE_STATUSES
-        and all(lane.status in _COMPLETE_STATUSES for lane in provider.lanes)
+def _report_failed(report: MetadataReport) -> bool:
+    """Whether a provider or lane of this report could not answer.
+
+    These are the statuses provider recovery retries, because a later ask may
+    answer differently; any other status is an answer.
+    """
+    return any(
+        provider.status in PROVIDER_RECOVERY_ELIGIBLE_STATUSES
+        or any(
+            lane.status in PROVIDER_RECOVERY_ELIGIBLE_STATUSES
+            for lane in provider.lanes
+        )
         for provider in report.providers
     )
 
@@ -632,7 +630,10 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                     "AND lineage.report_id=review_preparation_work.report_id "
                     "AND lineage.review_case_id=review_preparation_work.review_case_id) "
                     ",(SELECT generation FROM metadata_policy_state WHERE singleton=1),recovery_attempt,"
+                    # Only a mark that has fired makes the claim a scheduled
+                    # search, which asks live (ADR-0102).
                     "stage='extraction' AND research_not_before IS NOT NULL "
+                    "AND research_not_before<=? "
                     "FROM review_preparation_work WHERE state='queued' AND library_name=? "
                     "AND NOT EXISTS(SELECT 1 FROM review_preparation_connection_conditions c "
                     "WHERE c.connection_name=review_preparation_work.connection_name "
@@ -641,7 +642,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                     "WHERE s.scan_id=review_preparation_work.scan_id "
                     "AND s.state='processing') "
                     f"ORDER BY {ordering} LIMIT 1",
-                    (library[0],),
+                    (claimed_at, library[0]),
                 ).fetchone()
             )
             if work is not None:
@@ -808,10 +809,11 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 "AND lineage.review_case_id=review_preparation_work.review_case_id),"
                 "(SELECT generation FROM metadata_policy_state WHERE singleton=1),recovery_attempt,"
                 "stage='extraction' AND research_not_before IS NOT NULL "
+                "AND research_not_before<=? "
                 "FROM review_preparation_work WHERE work_id=? AND state='queued' "
                 "AND EXISTS(SELECT 1 FROM review_preparation_scans s "
                 "WHERE s.scan_id=review_preparation_work.scan_id AND s.state='processing')",
-                (work_id,),
+                (claimed_at, work_id),
             ).fetchone()
             if work is None:
                 transaction.commit()
@@ -1875,7 +1877,8 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             "WHERE work_id=? AND stage='extraction' AND state='running' AND attempt=?",
             (action.action_id, action.attempt),
         ).fetchone()
-        if marked is None or marked[0] is None:
+        # Only a mark that has fired makes this a scheduled search.
+        if marked is None or marked[0] is None or marked[0] > completed_at:
             return False
         package = self._connection.execute(
             "SELECT p.proposal_set_id,p.report_id,p.review_case_id,p.outcome,"
@@ -1896,26 +1899,29 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         if package is None:
             return False
         proposal_set_id, kept_report_id, review_case_id, outcome = package[:4]
-        if outcome == "evidence_only":
-            if package[4:] != (None, None, None, None):
-                return False
-        elif outcome not in {"admitted", "superseded", "no_case", "retired"} or (
-            package[4:] != package[:4]
+        # An evidence-only package names no proposal set or case, so a lineage
+        # row left beside it from an earlier preparation has nothing to agree
+        # with; any other package must agree with its lineage.
+        if outcome != "evidence_only" and (
+            outcome not in {"admitted", "superseded", "no_case", "retired"}
+            or package[4:] != package[:4]
         ):
             return False
         new_report = self._stored_report(report_id)
-        failed = not _report_complete(new_report) and _report_complete(
+        failed = _report_failed(new_report) and not _report_failed(
             self._stored_report(kept_report_id)
+        )
+        # A slot search is one where a slot time has passed since the previous
+        # publication; any other is a weekly search.
+        slot_search = (
+            next_research_slot(action.action_id, marked[0] - RESEARCH_INTERVAL_SECONDS)
+            <= completed_at
         )
         # A weekly search of an audiobook that still admits no recording keeps
         # its case (ADR-0089), and a search of any kind that now identifies
         # nothing never takes a case away (ADR-0102).
         case_kept = review_case_id is not None and (
-            evidence_only
-            or (
-                recording_unmatched
-                and next_research_slot(action.action_id, marked[0] - 1) != marked[0]
-            )
+            evidence_only or (recording_unmatched and not slot_search)
         )
         if not (
             failed
@@ -2009,7 +2015,9 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 None if policy is None else policy.resolved_id,
                 None if policy is None else human_review_destinations(policy),
             )
-        except (MetadataReportError, ValueError):
+        except Exception:
+            # As the proposal stage does, any failure to read the policy or
+            # evaluate the report is a change: the ordinary path then decides.
             return False
         data = evaluated.to_data()
         data["report"] = {

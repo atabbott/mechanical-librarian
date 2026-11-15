@@ -97,8 +97,11 @@ def _restamped(report: MetadataReport, accessed: int) -> MetadataReport:
     )
 
 
-def _failed(report: MetadataReport) -> MetadataReport:
-    """The same search with one more provider that could not be reached."""
+def _failed(
+    report: MetadataReport, status: ProviderStatus = ProviderStatus.UNAVAILABLE
+) -> MetadataReport:
+    """The same search with one more provider that ended on `status`: by
+    default one that could not be reached."""
     return MetadataReport.create(
         target=report.target,
         file=report.file,
@@ -107,9 +110,7 @@ def _failed(report: MetadataReport) -> MetadataReport:
         providers=(
             *report.providers,
             ProviderObservation(
-                "open_library_primary",
-                ProviderStatus.UNAVAILABLE,
-                authority="open_library",
+                "open_library_primary", status, authority="open_library"
             ),
         ),
     )
@@ -864,3 +865,190 @@ def test_a_search_that_identifies_nothing_over_no_case_names_no_case(
         ).fetchall() == [("evidence_only",)]
     finally:
         repository.close()
+
+
+@pytest.mark.parametrize("disposition", [None, "evidence_only"])
+@pytest.mark.parametrize("leftover", [False, True], ids=["no-lineage", "leftover"])
+def test_a_failed_search_over_complete_evidence_replaces_nothing(
+    application_path: Path, leftover: bool, disposition: str | None
+) -> None:
+    """A complete evidence-only report stays current through a failed search,
+    whether or not an earlier preparation left a caseless lineage beside it."""
+    report = _report("Nothing to ask", "a", "b", actionable=False)
+    if leftover:
+        # Prepared to no case, then a search that identified nothing.
+        _drain(_pipeline(application_path, report, 20, unmatched=False))
+        due = _state(application_path)[0][5]
+        assert type(due) is int
+        report = _report("Identified as nothing", "a", "b", actionable=False)
+        _drain(
+            _pipeline(
+                application_path,
+                report,
+                due,
+                unmatched=False,
+                disposition="evidence_only",
+            )
+        )
+    else:
+        _drain(
+            _pipeline(
+                application_path,
+                report,
+                20,
+                unmatched=False,
+                disposition="evidence_only",
+            )
+        )
+    work, current, lineage, package = _state(application_path)
+    assert work[2] == "evidence_only" and current == report.report_id
+    before = _case_rows(application_path)
+    assert bool(before[0]) is leftover
+    due = work[5]
+    assert type(due) is int
+
+    failed = _failed(_report("Titled differently", "a", "b", actionable=False))
+    assert 2 == _drain(
+        _pipeline(
+            application_path, failed, due, unmatched=False, disposition=disposition
+        )
+    )
+    assert _case_rows(application_path) == before
+    assert _state(application_path) == (
+        (*work[:5], due + _WEEK),
+        current,
+        lineage,
+        package,
+    )
+
+
+def test_a_deterministic_provider_status_is_an_answer_not_a_failure(
+    application_path: Path,
+) -> None:
+    """A status a later ask would repeat is not a failed search: the content
+    rule decides, and the work keeps its slot."""
+    report = _report("Prepared once", "a", "b")
+    _drain(_pipeline(application_path, report, 20, unmatched=False))
+    work, current, lineage, package = _state(application_path)
+    due = work[5]
+    assert type(due) is int
+
+    limited = _failed(report, ProviderStatus.CANDIDATE_LIMIT_EXCEEDED)
+    assert 2 == _drain(_pipeline(application_path, limited, due, unmatched=False))
+    assert _state(application_path) == (
+        (*work[:5], next_research_slot(_WORK, due + _WEEK)),
+        current,
+        lineage,
+        package,
+    )
+
+
+def test_a_slot_passed_since_a_weekly_mark_makes_a_slot_search(
+    application_path: Path,
+) -> None:
+    """A weekly mark that fires late, after the work's slot has gone by since
+    its last preparation, is that period's slot search (ADR-0102)."""
+    phase = int(_WORK[-16:], 16) % _PERIOD
+    prepared = phase - _WEEK - 86_400
+    report = _report("Prepared once", "a", "b")
+    _drain(_pipeline(application_path, report, prepared, unmatched=True))
+    work = _state(application_path)[0]
+    # Its weekly mark comes a day before its slot.
+    assert work[5] == phase - 86_400
+
+    # The search runs a day after the slot: proposals that differ replace
+    # the case, though the audiobook again admits no recording.
+    changed = _report("Titled differently", "a", "b")
+    late = phase + 86_400
+    assert 5 == _drain(_pipeline(application_path, changed, late, unmatched=True))
+    after = _state(application_path)[0]
+    assert after[:4] == ("complete", "complete", "case", changed.report_id)
+    assert after[4] != work[4]
+    assert after[5] == late + _WEEK
+
+
+def test_a_recovery_reset_is_a_fresh_start_not_a_scheduled_search(
+    application_path: Path,
+) -> None:
+    """A changed producer resets a scan's work and its marks, so the work is
+    claimed to reuse held answers and its publication takes the ordinary path."""
+    report = _report("Prepared once", "a", "b")
+    _drain(_pipeline(application_path, report, 20, unmatched=False))
+    entry = replace(_entry("item-1", report.file.identity), library="ebooks")
+    repository = open_repository(application_path)
+    try:
+        # The scan that prepared it is still processing other work when the
+        # library's producer changes.
+        repository._connection.execute(
+            "UPDATE review_preparation_scans SET state='processing'"
+        )
+        assert repository._connection.execute(
+            "SELECT state FROM review_preparation_work"
+        ).fetchone() == ("complete",)
+        repository.recover_review_pipeline((("primary", "ebooks", "lib-1", "e" * 64),))
+        assert repository._connection.execute(
+            "SELECT stage,research_not_before FROM review_preparation_work"
+        ).fetchone() == ("extraction", None)
+        discovery = repository.claim_review_pipeline_action(40)
+        assert discovery is not None and discovery.stage == "discovery"
+        repository.complete_review_discovery(discovery, 1, "a" * 64, (entry,), 41)
+        action = repository.claim_review_pipeline_action(42)
+        assert action is not None and action.stage == "extraction"
+        assert action.research is False
+        _publish_receipt(repository, action, _restamped(report, 1), 43)
+        assert repository._connection.execute(
+            "SELECT stage,state FROM review_preparation_work"
+        ).fetchone() == ("proposal", "queued")
+    finally:
+        repository.close()
+
+
+def test_only_a_fired_mark_makes_a_scheduled_search(application_path: Path) -> None:
+    """A work back at extraction while its mark is still ahead is claimed to
+    reuse held answers, and its publication takes the ordinary path."""
+    report = _report("Prepared once", "a", "b")
+    _drain(_pipeline(application_path, report, 20, unmatched=False))
+    due = _state(application_path)[0][5]
+    assert type(due) is int
+    entry = replace(_entry("item-1", report.file.identity), library="ebooks")
+    repository = open_repository(application_path)
+    try:
+        repository.request_review_scan("primary", "ebooks", "lib-1", _PRODUCER, 30)
+        discovery = repository.claim_review_pipeline_action(31)
+        assert discovery is not None
+        repository.complete_review_discovery(discovery, 1, "a" * 64, (entry,), 32)
+        repository._connection.execute(
+            "UPDATE review_preparation_work SET stage='extraction',state='queued',"
+            "outcome=NULL"
+        )
+        action = repository.claim_review_pipeline_action(33)
+        assert action is not None and action.stage == "extraction"
+        assert action.research is False
+        assert due > 34
+        _publish_receipt(repository, action, _restamped(report, 1), 34)
+        assert repository._connection.execute(
+            "SELECT stage,state FROM review_preparation_work"
+        ).fetchone() == ("proposal", "queued")
+    finally:
+        repository.close()
+
+
+def _publish_receipt(
+    repository: SQLiteMetadataReportRepository,
+    action: PipelineAction,
+    report: MetadataReport,
+    at: int,
+) -> None:
+    current = repository.current_optional(
+        "primary", "ebooks", "item-1", report.file.identity
+    )
+    repository.publish(
+        report,
+        lambda: True,
+        None if current is None else MetadataReport.from_json(current).report_id,
+        after_publication=lambda bound, value: (
+            bound.complete_review_extraction_publication(
+                action, value.report_id, at, 0, None, False, None, False
+            )
+        ),
+    )
