@@ -55,7 +55,7 @@ def generate(root: Path) -> None:
         copy_src_dir,
         create_mutants,
     )
-    from mutmut.configuration import Config
+    from mutmut.configuration import config
 
     mutants = root / "mutants"
     shutil.rmtree(mutants, ignore_errors=True)
@@ -73,7 +73,7 @@ def generate(root: Path) -> None:
     importlib.invalidate_caches()
     shutil.copytree(root / "src", mutants / "src", dirs_exist_ok=True)
 
-    Config.ensure_loaded()
+    config()
     copy_src_dir()
     create_mutants(4)
     copy_also_copy_files()
@@ -93,11 +93,11 @@ def collect_stats(root: Path) -> int:
     os.chdir(mutants)
 
     import pytest
-    from mutmut.__main__ import strip_prefix
-    from mutmut.configuration import Config
+    from mutmut.configuration import config
     from mutmut.state import state
+    from mutmut.utils.format_utils import strip_prefix
 
-    Config.ensure_loaded()
+    config()
     mutmut_state = state()
     failures: list[str] = []
 

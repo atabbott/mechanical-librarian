@@ -296,15 +296,6 @@ module = "mechanical_librarian.adapters.library_services.audiobookshelf_field_ef
 disable_error_code = ["attr-defined"]
 
 [[tool.mypy.overrides]]
-module = ["mutmut.*"]
-# reason: mutmut ships no `py.typed`, so its mutation engine and stats
-# collector are untyped to mypy. Only the three `scripts/` entry points for
-# #737's one-off audit import it; nothing under `src/` does, and nothing the
-# gate runs loads it. Narrowed to the distribution rather than relaxing the
-# importing modules, so every other symbol in them stays checked.
-ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
 module = ["tests.*", "scripts.*"]
 # reason: `tests/` and `scripts/` are checked, but not held to strict mode's
 # annotation requirements. #652 scopes strict to `src/`, which is what ships

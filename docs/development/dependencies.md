@@ -267,16 +267,15 @@ The Mend-hosted Renovate GitHub App proposes updates within
   Python packages, npm packages and GitHub Actions. One pull request per
   package overran the hourly limit in the weekly window. Each of Node, Python,
   uv and npm keeps its own group across all its declarations, and parity tests
-  refuse a partial update.
+  refuse a partial update. Playwright has its own group too (below).
 - **Auto-merge.** Every managed update class, including lockfile maintenance,
   requests squash auto-merge, except any major update, a new Python minor, a
   replacement, or Playwright. Those need Dependency Dashboard approval and do
   not auto-merge.
-- **Playwright.** A Playwright update brings a newer Chromium, so it stays out
-  of the Python packages batch and waits for approval. Approve it only with
-  that Chromium installed to check the browser tests: 1.64.1 failed the
-  direct-route document count in
-  `test_exact_built_shell_supports_every_direct_route_and_client_navigation`.
+- **Playwright.** A Playwright update brings a newer Chromium, so it gets its
+  own pull request and waits for approval. Approve it when someone can look
+  into a browser-test failure: 1.64.1 failed the direct-route document count
+  in `test_exact_built_shell_supports_every_direct_route_and_client_navigation`.
 
 [Delivery and merging](slice-delivery.md#renovate-platform-auto-merge-exception)
 says what an auto-merge must still pass, and
