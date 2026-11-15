@@ -42,7 +42,7 @@ RUN ./configure \
     && strip ffprobe \
     && install -m 0755 ffprobe /usr/local/bin/ffprobe
 
-FROM node:24.22.1-bookworm-slim@sha256:be8204d4bd327363357f532187b752ff62759c31bedf98e9e18fc08c9cbd605c AS frontend-build
+FROM node:26.13.0-bookworm-slim@sha256:add5c17c14752c54d2f3d519ec46a3815684d41c33f198bcb09fb998f7dcbf68 AS frontend-build
 WORKDIR /build
 COPY frontend/package.json frontend/package-lock.json ./frontend/
 RUN cd frontend \
@@ -58,7 +58,7 @@ RUN cd frontend \
     && npm run typecheck \
     && npm run build
 
-FROM node:24.22.1-bookworm-slim@sha256:be8204d4bd327363357f532187b752ff62759c31bedf98e9e18fc08c9cbd605c AS reviewer-build
+FROM node:26.13.0-bookworm-slim@sha256:add5c17c14752c54d2f3d519ec46a3815684d41c33f198bcb09fb998f7dcbf68 AS reviewer-build
 ARG TARGETARCH
 RUN set -eu; \
     case "$TARGETARCH" in \

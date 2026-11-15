@@ -31,10 +31,16 @@ from mechanical_librarian.application.review_covers import (
 )
 from mechanical_librarian.application.review_web import ReviewWebError
 from mechanical_librarian.domain import field_effect
-from mechanical_librarian.domain.cover_evidence import CoverArtifact
+from mechanical_librarian.domain.cover_evidence import (
+    CoverArtifact,
+    CoverSource,
+    CoverSourceKind,
+    CoverSourceState,
+    cover_source_id,
+)
+from mechanical_librarian.domain.human_decision import COVER_SELECTION_AUTHORITY_SCHEMA
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
-    TargetDestination,
     report_content_address,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
@@ -97,22 +103,31 @@ def _library(
     readable_current: bool = True,
     title: str | None = None,
     put_back: bool = False,
+    undecodable: bool = False,
+    abs_state: CoverSourceState | None = None,
+    abs_digest: str | None = None,
+    fetching: bool = False,
 ) -> Iterator[_Library]:
-    """With ``put_back``, item-1's current cover is a verified automatic switch
-    whose original is listed, and its report offers that original (#1363)."""
+    """With ``fetching``, every report still waits on a provider lookup.
+    With ``put_back``, item-1's current cover is a verified automatic switch
+    whose original is listed, and its report offers that original (#1363).
+    With ``undecodable`` too, the decoder refused that original, so the
+    report offers it by its digest with no preview (#1362)."""
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
-    base, _ = _qualified_cover_report(root, readable_current=readable_current)
+    base, _ = _qualified_cover_report(
+        root,
+        readable_current=readable_current,
+        abs_state=abs_state,
+        abs_digest=abs_digest,
+    )
     artifacts = CoverArtifactStore(root / "artifacts")
     repository = open_repository(root / "application.sqlite3", cross_thread=True)
     switch = None
     if put_back:
-        current = next(
-            field.value
-            for field in base.target.fields
-            if field.destination is TargetDestination.COVER
-        )
+        # The switch wrote the bytes Audiobookshelf now serves, whatever the
+        # target value names (#1853).
         switch = automatic_switch(
-            base.target, _ORIGINAL.artifact_id, cast(str, current)
+            base.target, _ORIGINAL.artifact_id, "cover_" + _abs_digest(base)
         )
         base = MetadataReport.create(
             target=base.target,
@@ -122,10 +137,18 @@ def _library(
             providers=base.providers,
             cover_sources=(
                 *base.cover_sources,
-                retained_source(switch.plan.plan_id, _ORIGINAL),
+                CoverSource(
+                    cover_source_id(CoverSourceKind.RETAINED, switch.plan.plan_id),
+                    CoverSourceKind.RETAINED,
+                    CoverSourceState.DECODE_FAILED,
+                    original_digest=_ORIGINAL.original_digest,
+                )
+                if undecodable
+                else retained_source(switch.plan.plan_id, _ORIGINAL),
             ),
         )
-        artifacts.stage_preview(_ORIGINAL, _ORIGINAL_PREVIEW)
+        if not undecodable:
+            artifacts.stage_preview(_ORIGINAL, _ORIGINAL_PREVIEW)
         list_switch(
             repository._connection,
             switch,
@@ -148,6 +171,7 @@ def _library(
         retained_original=repository.retained_cover_original,
         # The copy itself is checked in test_cover_retention.py.
         require_retained=lambda _digest: None,
+        provider_fetching=lambda _report: fetching,
     )
     # The live reads composition binds: cover currentness for attention, and
     # the owner cover recheck for a decision.
@@ -275,25 +299,75 @@ def test_a_readable_current_cover_with_choices_is_kept(tmp_path: Path) -> None:
     assert str(item["cover"]["url"]).startswith("/api/v1/library/cover?")
 
 
-def test_an_unreadable_current_cover_asks_for_a_choice(tmp_path: Path) -> None:
-    with _library(tmp_path, readable_current=False) as library:
+def test_an_unreadable_current_cover_with_a_candidate_is_suggested(
+    tmp_path: Path,
+) -> None:
+    # The decoder refused bytes whose digest was not recorded, so the switch
+    # cannot keep them and is only suggested (#1362 S4).
+    with _library(
+        tmp_path, readable_current=False, abs_state=CoverSourceState.DECODE_FAILED
+    ) as library:
         decide = _page(library.repository, "decide", None)
         kept = _page(library.repository, "kept", None)
-        # The same work Library's Needs attention lens counts.
+        # A suggestion is To decide, never Library's Needs attention (#1363, S9).
         assert (
             library.repository.read_review_library(
                 None, 25, 0, "needs_attention"
             ).attention_total
-            == 1
+            == 0
         )
 
     assert decide["counts"]["decide"] == 1
-    assert [item["group"] for item in decide["items"]] == ["choice"]
+    assert [item["group"] for item in decide["items"]] == ["proposal"]
+    assert decide["items"][0]["suggestion"] == {"reason": "unreadable"}
+    assert decide["items"][0]["hold"] is None
     # The library holds a cover it could not read, which is not "No cover".
     (item,) = decide["items"]
     assert item["cover"] is None
     assert item["unreadable_cover"] is True
     assert kept["items"] == []
+
+
+def test_a_suggestion_the_owner_cannot_choose_is_not_to_decide(tmp_path: Path) -> None:
+    """With no decision to record, a suggestion is listed only under All (M4)."""
+    with _library(tmp_path, readable_current=False) as library:
+        library.repository._connection.execute(
+            "UPDATE review_case_field_facts SET has_owner_decision_actions=0 "
+            "WHERE destination='cover'"
+        )
+        library.repository._connection.commit()
+        decide = _page(library.repository, "decide", None)
+        everything = _page(library.repository, "all", None)
+
+    assert decide["items"] == []
+    assert everything["counts"] == {"decide": 0, "kept": 0, "switched": 0, "all": 1}
+    (item,) = everything["items"]
+    assert (item["group"], item["choosable"], item["suggestion"]) == (
+        "none",
+        False,
+        None,
+    )
+
+
+def test_a_held_switch_carries_its_reason(tmp_path: Path) -> None:
+    """A hold's reason reaches its row's pill, never as a suggestion (M7)."""
+    with _library(tmp_path, readable_current=False) as library:
+        # A synthetic hold over the stored stage the page reads.
+        library.repository._connection.execute(
+            "DROP TRIGGER cover_considerations_no_update"
+        )
+        library.repository._connection.execute(
+            "UPDATE cover_considerations SET currentness_document=json_set("
+            "currentness_document,'$.cover_stage.outcome','hold',"
+            "'$.cover_stage.reason','title_names_other_work')"
+        )
+        library.repository._connection.commit()
+        everything = _page(library.repository, "all", None)
+
+    (item,) = everything["items"]
+    assert item["hold"] == {"reason": "title_names_other_work"}
+    assert item["suggestion"] is None
+    assert item["group"] != "proposal"
 
 
 def test_switched_lists_listed_switches_newest_first_and_never_a_released_one(
@@ -331,8 +405,10 @@ def test_switched_lists_listed_switches_newest_first_and_never_a_released_one(
             "at": 50,
             "before": None,
             "filled": True,
+            "language": None,
             "put_back": None,
             "put_back_offered": False,
+            "reason": None,
         }
         assert (
             replaced_cover_preview(library.repository, older, before["preview_sha256"])
@@ -631,6 +707,7 @@ def test_keeping_a_switched_cover_releases_its_original_and_leaves_switched(
                     "proposal_id": field["proposal_id"],
                     "selected_value": None,
                     "target_fingerprint": field["target_fingerprint"],
+                    "offered_alternatives_digest": field["offer_digest"],
                     "consideration_id": field["cover_consideration"][
                         "consideration_id"
                     ],
@@ -690,7 +767,7 @@ def _owner_answer(
     document = {
         "candidate_kind": "candidate" if retained_plan is None else "retained",
         "retained_plan_id": retained_plan,
-        "schema_version": "cover-selection-authority-v3",
+        "schema_version": COVER_SELECTION_AUTHORITY_SCHEMA,
     }
     connection = library.repository._connection
     connection.commit()
@@ -829,6 +906,7 @@ def test_put_back_records_the_original_only_while_its_copy_is_listed(
                         "value": original["artifact_id"],
                     },
                     "target_fingerprint": field["target_fingerprint"],
+                    "offered_alternatives_digest": field["offer_digest"],
                     "consideration_id": consideration["consideration_id"],
                     "cover_confirmation": {
                         "expected_selection_id": field["current_cover_selection_id"],
@@ -855,3 +933,214 @@ def test_put_back_records_the_original_only_while_its_copy_is_listed(
             assert row["switched"]["put_back"] == {"state": "planned", "failure": None}
             # The recorded Put back's comparison still offers the original.
             assert row["switched"]["put_back_offered"] is True
+
+
+def test_an_original_that_does_not_decode_shows_no_preview_and_can_be_put_back(
+    tmp_path: Path,
+) -> None:
+    """The kept original the decoder refused (#1362, S11): its card and the
+    Switched row's Before have no image, and Put back still records."""
+    with _library(tmp_path, put_back=True, undecodable=True) as library:
+        case_id = library.cases["item-1"]
+        with _client(library) as (client, headers):
+            detail = client.get(f"/api/v1/review-cases/{case_id}")
+            assert detail.status_code == 200, detail.text
+            field = next(
+                value
+                for value in detail.json()["fields"]
+                if value["destination"] == "cover"
+            )
+            consideration = field["cover_consideration"]
+            (original,) = (
+                candidate
+                for candidate in consideration["candidates"]
+                if candidate["candidate_kind"] == "retained"
+            )
+            assert original["artifact_id"] == _ORIGINAL.artifact_id
+            assert original["original_sha256"] == _ORIGINAL.original_digest
+            assert (
+                original["height"],
+                original["width"],
+                original["preview_sha256"],
+                original["transport_sha256"],
+            ) == (None, None, None, None)
+            assert (original["selectable"], original["manual_eligible"]) == (
+                True,
+                True,
+            )
+            # Never also listed as a cover not shown (#1362).
+            assert original["reference"] not in {
+                omission["reference"] for omission in consideration["omissions"]
+            }
+            image = client.get(
+                f"/api/v1/review-cases/{case_id}/cover-considerations/"
+                f"{consideration['consideration_id']}/images/{original['reference']}"
+            )
+            assert image.status_code == 404, image.text
+
+            (listed,) = client.get("/api/v1/covers?view=switched").json()["items"]
+            assert listed["switched"]["before"] is None
+            assert listed["switched"]["filled"] is False
+            assert listed["switched"]["put_back_offered"] is True
+
+            response = client.post(
+                f"/api/v1/review-cases/{case_id}/decisions",
+                headers={**headers, "Idempotency-Key": "put-back-undecodable-0001"},
+                json={
+                    "destination": "cover",
+                    "outcome": "accept",
+                    "proposal_id": field["proposal_id"],
+                    "selected_value": {
+                        "kind": "cover",
+                        "value": original["artifact_id"],
+                    },
+                    "target_fingerprint": field["target_fingerprint"],
+                    "offered_alternatives_digest": field["offer_digest"],
+                    "consideration_id": consideration["consideration_id"],
+                    "cover_confirmation": {
+                        "expected_selection_id": field["current_cover_selection_id"],
+                        "confirm_unverified_match": True,
+                    },
+                },
+            )
+            assert response.status_code == 200, response.text
+            plan_id = library.repository._connection.execute(
+                "SELECT plan_id FROM retained_cover_listings"
+            ).fetchone()[0]
+            owner = library.repository._connection.execute(
+                "SELECT json_extract(document,'$.candidate_kind'),"
+                "json_extract(document,'$.retained_plan_id'),"
+                "json_extract(document,'$.candidate_artifact_id') "
+                "FROM cover_selection_authorities WHERE kind='owner'"
+            ).fetchall()
+            assert owner == [("retained", plan_id, _ORIGINAL.artifact_id)]
+            (row,) = client.get("/api/v1/covers?view=switched").json()["items"]
+            assert row["switched"]["before"] is None
+            assert row["switched"]["put_back"] == {"state": "planned", "failure": None}
+
+
+def _attention_mirrors(library: _Library) -> tuple[bool, bool]:
+    """The cover's attention as SQL counts it, and as the book page reads it."""
+    from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+
+    case_id = library.cases["item-1"]
+    counted = (
+        library.repository.read_review_library(
+            None, 25, 0, "needs_attention"
+        ).attention_total
+        == 1
+    )
+    detail = InspectCurrentReviewCase(library.repository, library.service).run(case_id)
+    cover = next(field for field in detail["fields"] if field["destination"] == "cover")
+    return counted, cover["needs_attention"]
+
+
+@pytest.mark.parametrize(
+    ("case", "attention"),
+    (
+        ("contradicted_with_choices", True),
+        ("contradicted_while_fetching", False),
+        ("contradicted_without_actions", False),
+        ("title_hold_without_actions", False),
+        ("kept_unconfirmed", False),
+        ("transient_with_choices", False),
+    ),
+    ids=(
+        "contradicted_with_choices",
+        "contradicted_while_fetching",
+        "contradicted_without_actions",
+        "title_hold_without_actions",
+        "kept_unconfirmed",
+        "transient_with_choices",
+    ),
+)
+def test_python_and_sql_attention_agree_on_holds_and_kept_covers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str, attention: bool
+) -> None:
+    """#1362 S13, R1, R2: a hold asks only while the owner has a choice to make.
+
+    A hold with nothing to choose shows on the book page but is not counted; a
+    kept unconfirmed cover is not counted; a read that settled nothing keeps
+    the cover with no fault, so even with covers to choose from it does not
+    ask (R1 as amended: the owner has no keep to record for it). Each case
+    runs both mirrors over the same stored facts.
+    """
+    from contextlib import nullcontext
+
+    from mechanical_librarian.application import review_web
+    from tests.support.cover_producers import incumbent_identity
+
+    identity = (
+        incumbent_identity("conflict", ("edition_work_contradiction",))
+        if case.startswith("contradicted")
+        else incumbent_identity("plausible_match")
+        if case == "kept_unconfirmed"
+        else nullcontext()
+    )
+    options: dict[str, Any] = (
+        {"readable_current": False, "abs_state": CoverSourceState.TIMEOUT}
+        if case == "transient_with_choices"
+        # A hold with choices waits while a provider lookup runs: neither
+        # mirror counts it until the comparison is ready.
+        else {"fetching": True}
+        if case == "contradicted_while_fetching"
+        else {}
+    )
+    with identity, _library(tmp_path, **options) as library:
+        connection = library.repository._connection
+        stage = json.loads(
+            connection.execute(
+                "SELECT currentness_document FROM cover_considerations"
+            ).fetchone()[0]
+        )["cover_stage"]
+        if case == "title_hold_without_actions":
+            # A synthetic title hold over the stored stage both mirrors read.
+            connection.execute("DROP TRIGGER cover_considerations_no_update")
+            connection.execute(
+                "UPDATE cover_considerations SET currentness_document=json_set("
+                "currentness_document,'$.cover_stage.outcome','hold',"
+                "'$.cover_stage.reason','title_names_other_work')"
+            )
+            stage = {"outcome": "hold", "reason": "title_names_other_work"}
+        if case.endswith("without_actions"):
+            # The same proposal with no decision to take, as each mirror reads it.
+            connection.execute(
+                "UPDATE review_case_field_facts SET has_owner_decision_actions=0 "
+                "WHERE destination='cover'"
+            )
+            monkeypatch.setattr(review_web, "decision_actions", lambda _proposal: ())
+        connection.commit()
+
+        mirrors = _attention_mirrors(library)
+        listed = _page(library.repository, "all", None)["items"][0]
+        held = listed["hold"]
+        if case == "transient_with_choices":
+            # Not asked, yet its covers stay the owner's optional choice (A1).
+            from mechanical_librarian.application.review_web import (
+                InspectCurrentReviewCase,
+            )
+
+            detail = InspectCurrentReviewCase(library.repository, library.service).run(
+                library.cases["item-1"]
+            )
+            field = next(f for f in detail["fields"] if f["destination"] == "cover")
+            assert field["classification"] == "owner_choosable"
+            assert listed["group"] == "kept"
+
+    expected_stage = {
+        "contradicted_with_choices": ("hold", "current_contradicted"),
+        "contradicted_while_fetching": ("hold", "current_contradicted"),
+        "contradicted_without_actions": ("hold", "current_contradicted"),
+        "title_hold_without_actions": ("hold", "title_names_other_work"),
+        "kept_unconfirmed": ("keep", None),
+        "transient_with_choices": ("keep", None),
+    }[case]
+    assert (stage["outcome"], stage["reason"]) == expected_stage
+    assert mirrors == (attention, attention)
+    # The hold pill names its reason whether or not it is counted, once the
+    # comparison is ready; Covers shows no hold while a lookup runs.
+    assert held == (
+        {"reason": expected_stage[1]}
+        if expected_stage[0] == "hold" and case != "contradicted_while_fetching"
+        else None
+    )

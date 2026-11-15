@@ -6,8 +6,10 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from ipaddress import ip_address
+from typing import Final, Literal
 from urllib.parse import urlsplit
 
+from mechanical_librarian.domain.cover_rules import CoverProtection
 from mechanical_librarian.domain.field_outcomes import (
     language_identity,
     library_languages_valid,
@@ -27,6 +29,10 @@ from mechanical_librarian.domain.validation import (
     http_origin,
     owner_session_lifetime,
 )
+from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
+
+ConfigSchemaVersion = Literal["config-v11"]
+CONFIG_SCHEMA: Final[ConfigSchemaVersion] = "config-v11"
 
 _NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 _CONTACT_EMAIL = re.compile(
@@ -123,10 +129,15 @@ class ReviewWebConfiguration:
     cover_avoid_promotional_text: bool = False
     cover_avoid_tie_in_branding: bool = False
     cover_prefer_minimal_composition: bool = False
+    cover_current_protection: str = "protected"
+    cover_prefer_edition: bool = False
     description_remove_marketing: bool = True
     description_remove_sales_boasts: bool = True
     description_remove_praise: bool = True
     description_automatic_application: bool = False
+    # ADR-0096's Book matching level (#1355): which provider records count as
+    # the same book when the owner reviews. Review-only until #1418.
+    work_identity: WorkIdentityLevel = WorkIdentityLevel.IDENTIFIER
 
     def __post_init__(self) -> None:
         if (
@@ -164,18 +175,23 @@ class ReviewWebConfiguration:
             or type(self.graceful_shutdown_seconds) is not int
             or not 1 <= self.graceful_shutdown_seconds <= 300
             or type(self.diagnostic_timings_enabled) is not bool
+            or type(self.cover_current_protection) is not str
+            or self.cover_current_protection
+            not in {item.value for item in CoverProtection}
             or any(
                 type(value) is not bool
                 for value in (
                     self.cover_avoid_promotional_text,
                     self.cover_avoid_tie_in_branding,
                     self.cover_prefer_minimal_composition,
+                    self.cover_prefer_edition,
                     self.description_remove_marketing,
                     self.description_remove_sales_boasts,
                     self.description_remove_praise,
                     self.description_automatic_application,
                 )
             )
+            or type(self.work_identity) is not WorkIdentityLevel
         ):
             raise ConfigurationError("review web configuration is invalid")
         try:
@@ -406,12 +422,12 @@ class ApplicationConfiguration:
     mounts: tuple[MediaMountConfiguration, ...]
     providers: tuple[ProviderConnectionConfiguration, ...]
     limits: ReportLimits = ReportLimits()
-    schema_version: str = "config-v9"
+    schema_version: str = CONFIG_SCHEMA
     provider_recovery_generation: int = 1
     review: ReviewWebConfiguration | None = None
 
     def __post_init__(self) -> None:
-        if self.schema_version != "config-v9":
+        if self.schema_version != CONFIG_SCHEMA:
             raise ConfigurationError("configuration schema is unsupported")
         # Recovery is deliberately tied to an operator-visible configuration
         # generation.  There is no file watcher, hash, or environment override:

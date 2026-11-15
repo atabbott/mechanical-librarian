@@ -461,8 +461,14 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
         case_current: Callable[[], bool],
         *,
         retry: bool = False,
+        reuse_only: bool = False,
     ) -> tuple[str, DescriptionAdviceCandidate | None] | None:
-        """Persist before dispatch; an ambiguous predecessor never implies retry."""
+        """Persist before dispatch; an ambiguous predecessor never implies retry.
+
+        With `reuse_only` an earlier attempt or candidate is bound as usual,
+        but no attempt is created, no retry is taken and a pending request is
+        left in place (#1355).
+        """
         transaction = self._transaction("description_attempt")
         try:
             transaction.begin()
@@ -471,8 +477,11 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
             ):
                 transaction.commit()
                 return None
-            retry = retry or self.pending_retry(binding.review_case_id)
-            self.consume_pending(binding.review_case_id)
+            if reuse_only:
+                retry = False
+            else:
+                retry = retry or self.pending_retry(binding.review_case_id)
+                self.consume_pending(binding.review_case_id)
             prior = self._connection.execute(
                 "SELECT attempt_id,state,binding_document FROM description_advice_attempts WHERE request_identity=? ORDER BY rowid DESC LIMIT 1",
                 (request_identity,),
@@ -485,8 +494,10 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                 if prior[1] in {"requested", "running"} and prior[
                     2
                 ] != description_document(binding.model_dump()):
+                    # A reuse-only preparation left any pending request.
                     self._connection.execute(
-                        "INSERT INTO description_preparation_pending VALUES(?,0,?)",
+                        "INSERT OR IGNORE INTO description_preparation_pending "
+                        "VALUES(?,0,?)",
                         (binding.review_case_id, now),
                     )
                 transaction.commit()
@@ -502,6 +513,9 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                 self._bind(binding, candidate_row[0], candidate.candidate_id)
                 transaction.commit()
                 return candidate_row[0], candidate
+            if reuse_only:
+                transaction.commit()
+                return None
             attempt_id = "description_attempt_" + uuid.uuid4().hex
             self._connection.execute(
                 "INSERT INTO description_advice_attempts VALUES(?,?,?,?,?,'requested',NULL,?,?)",

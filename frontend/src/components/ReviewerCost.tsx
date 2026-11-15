@@ -27,20 +27,17 @@ export const ReviewerCost = ({
   }))
   return (
     <div>
-      <dt>Example cost per 1,000 books</dt>
+      <dt>Example cost per 1,000 works</dt>
       {rows.map(({ kind, row }) => (
         <dd key={kind}>
           {kind === 'cover' ? 'Cover review' : 'Description advice'}:{' '}
           {row
-            ? `${perThousandBooks(row)}${kind === 'cover' ? `, including about ${(row.distinct_images / row.works).toFixed(1)} cover images per book` : ''}.`
+            ? `${perThousandBooks(row)}${kind === 'cover' ? `, including about ${(row.distinct_images / row.works).toFixed(1)} cover images per work` : ''}.`
             : 'not measured for this model.'}
         </dd>
       ))}
       {rows.some(({ row }) => row) ? (
-        <dd>
-          Estimated from a measured run. Your library and current prices will differ; this is an
-          example, not a quote.
-        </dd>
+        <dd>Estimated from a measured run. Your library and current prices will differ.</dd>
       ) : null}
     </div>
   )

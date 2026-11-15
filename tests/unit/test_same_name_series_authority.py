@@ -14,7 +14,7 @@ from mechanical_librarian.application.review_web import InspectCurrentReviewCase
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 from mechanical_librarian.domain.metadata_policy import human_review_destinations
 from mechanical_librarian.domain.metadata_report import TargetFieldState, TargetSeries
-from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.proposal_set import POLICY_VERSION, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
 from tests.support.audiobook_reports import publish_audiobook_preview
@@ -220,7 +220,7 @@ def test_actual_base_proposal_and_store_refuse_without_mutation(media, kind):
     report = retained_report_as_current(
         canonical_json(json.loads((root / f"{media}-{kind}-report.json").read_text()))
     )
-    assert evaluate_report(report).policy_version == "fixed-conservative-v46"
+    assert evaluate_report(report).policy_version == POLICY_VERSION
     with pytest.raises(ProposalValueError):
         ProposalSet.from_json(
             canonical_json(

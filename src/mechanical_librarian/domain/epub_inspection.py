@@ -13,7 +13,7 @@ from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from enum import StrEnum
 from types import MappingProxyType
-from typing import TYPE_CHECKING, ClassVar, Mapping, cast
+from typing import TYPE_CHECKING, ClassVar, Final, Mapping, cast
 
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
@@ -24,6 +24,9 @@ from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
 
 if TYPE_CHECKING:
     from mechanical_librarian.domain.epub_opening import EpubOpeningReport
+
+
+EPUB_INSPECTION_SCHEMA: Final = "epub-inspection-v3"
 
 
 _CHECKSUMS = frozenset({"valid_isbn_10", "valid_isbn_13", "invalid", "not_applicable"})
@@ -594,7 +597,7 @@ class EpubInspection:
                 ],
                 "outcome": self.outcome.value,
                 "rear_resource_limit": self.rear_resource_limit,
-                "schema": "epub-inspection-v3",
+                "schema": EPUB_INSPECTION_SCHEMA,
                 "source": None
                 if self.source is None
                 else {
@@ -621,7 +624,7 @@ class EpubInspection:
                 type(value) is not dict
                 or set(value)
                 != {"facts", "outcome", "rear_resource_limit", "schema", "source"}
-                or value["schema"] != "epub-inspection-v3"
+                or value["schema"] != EPUB_INSPECTION_SCHEMA
             ):
                 raise ValueError
             source_data = value["source"]

@@ -27,6 +27,7 @@ from mechanical_librarian.adapters.field_effect_authority import (
 )
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
 from mechanical_librarian.application.continuous_field_effects import (
+    CONTINUOUS_FIELD_ACTIVITY_SCHEMA,
     ContinuousGuardedApplication,
 )
 from mechanical_librarian.application.metadata_policy import (
@@ -495,6 +496,16 @@ class FakeReviewRepository:
         self, review_case_id: str, now: int
     ) -> tuple[str, str]:
         raise ValueError("description preparation is not configured")
+
+    def review_case_level_offer(self, review_case_id: str) -> str | None:
+        """The double stores no Book matching offers: every field is live."""
+        return None
+
+    def require_reconciled_case(self, review_case_id: str, refused_at: int) -> None:
+        """The double is always at identifier: no case waits for a check."""
+
+    def review_case_checking(self, review_case_id: str) -> bool:
+        return False
 
     def find_human_decision(self, idempotency_digest: str) -> str | None:
         return next(
@@ -1224,7 +1235,7 @@ class FakeActivityApplication(ContinuousGuardedApplication):
             "current_waiting": None,
             "owner_action_required": projected["owner_action_required"],
             "prepared": {"automatic": 1, "human": 1, "total": 2},
-            "schema_version": "continuous-field-activity-v3",
+            "schema_version": CONTINUOUS_FIELD_ACTIVITY_SCHEMA,
             "suspensions": [],
             "waiting": {
                 "applying": 0,

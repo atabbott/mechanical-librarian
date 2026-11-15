@@ -1823,6 +1823,7 @@ describe('Activity route', () => {
     ['connection', 'Waiting to retry'],
     ['connection_exhausted', 'Closed'],
     ['target_changed', 'Closed because the item changed'],
+    ['matching_changed', 'Closed because Book matching changed'],
   ])('labels each lifecycle stale from its own %s failure', async (failure, latest) => {
     const user = userEvent.setup()
     const http: ReviewHttp = {

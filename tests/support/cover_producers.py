@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
+import json
 import struct
 import zlib
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 from PIL import Image
 
@@ -21,6 +26,7 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverSourceState,
     cover_source_id,
 )
+from mechanical_librarian.domain.cover_rules import CoverMeasures
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -144,6 +150,16 @@ def _source(
     )
 
 
+def adapter_cover_value(item: str = "item-1") -> str:
+    """The target cover value the Audiobookshelf adapter states for a cover.
+
+    It is the digest of the cover's path, never of its bytes, so a write that
+    took it for the bytes' identity would bind nothing real (#1853).
+    """
+    path = f"/metadata/items/{item}/cover.jpg"
+    return hashlib.sha256(path.encode()).hexdigest()
+
+
 def _qualified_cover_report(
     root: Path,
     *,
@@ -155,10 +171,20 @@ def _qualified_cover_report(
     candidate_designation: CoverDesignation = CoverDesignation.EXACT_EDITION,
     typed_timeout: bool = False,
     readable_current: bool = True,
+    shared_measures: CoverMeasures | None = None,
+    abs_state: CoverSourceState | None = None,
+    abs_digest: str | None = None,
+    target_state: TargetFieldState = TargetFieldState.VALUE,
 ) -> tuple[MetadataReport, object]:
     """`readable_current=False` leaves the current cover unread, so it asks.
 
-    A readable current cover is kept without asking (#1310).
+    A readable current cover is kept without asking (#1310). `shared_measures`
+    gives every image the same same-art measures, so the candidate shows the
+    current cover's picture too. With `readable_current=False`, `abs_state`
+    is the state Audiobookshelf's read ended in, with `abs_digest` the bytes'
+    digest a decoder refusal records; without it there is no read at all
+    (#1362). `target_state` is the cover's target state, whose value is the
+    adapter's path digest only when it is a value.
     """
     incumbent_payload = _preview(incumbent_index)
     candidate_payload = _preview(candidate_index)
@@ -175,6 +201,7 @@ def _qualified_cover_report(
         incumbent_payload,
         "image/png",
         *incumbent_dimensions,
+        measures=shared_measures,
     )
     incumbent_duplicate_artifact = (
         CoverArtifact.create(
@@ -182,6 +209,7 @@ def _qualified_cover_report(
             incumbent_payload,
             "image/png",
             *incumbent_duplicate_size,
+            measures=shared_measures,
         )
         if incumbent_duplicate_size is not None
         else incumbent_artifact
@@ -191,6 +219,7 @@ def _qualified_cover_report(
         candidate_payload,
         "image/png",
         *candidate_dimensions,
+        measures=shared_measures,
     )
     incumbent = replace(
         _source(1, incumbent_payload, incumbent=True),
@@ -236,8 +265,8 @@ def _qualified_cover_report(
     fields = tuple(
         TargetField(
             value.destination,
-            TargetFieldState.VALUE,
-            incumbent_artifact.artifact_id,
+            target_state,
+            adapter_cover_value() if target_state is TargetFieldState.VALUE else None,
         )
         if value.destination is TargetDestination.COVER
         else value
@@ -248,6 +277,18 @@ def _qualified_cover_report(
         incumbent_corroboration,
         candidate,
     ]
+    if not readable_current and abs_state is not None:
+        sources.append(
+            replace(
+                incumbent,
+                state=abs_state,
+                artifact=None,
+                timeout_scope="attempted"
+                if abs_state is CoverSourceState.TIMEOUT
+                else None,
+                original_digest=abs_digest,
+            )
+        )
     if typed_timeout:
         sources.append(
             replace(
@@ -286,3 +327,64 @@ def _qualified_cover_report(
         assert source.artifact is not None
         artifacts.stage(source.artifact, original, payload)
     return report, evaluate_report(report)
+
+
+@contextmanager
+def incumbent_identity(outcome: str, reasons: tuple[str, ...] = ()) -> Iterator[None]:
+    """Classify the current cover's own candidate with this identity row.
+
+    The policy reads the incumbent's row for a positive contradiction
+    (ADR-0094 S6); the classifier's evidence for one is not needed to prove
+    what the stage does with it.
+    """
+    from mechanical_librarian.application import cover_consideration, cover_policy
+    from mechanical_librarian.application.cover_packet_semantics import (
+        canonical_packet_json,
+    )
+
+    classify = cover_policy.classify_cover_identity
+
+    def classified(
+        report_document: str, packet_document: str, *args: object, **kwargs: object
+    ) -> object:
+        result = classify(report_document, packet_document, *args, **kwargs)  # type: ignore[arg-type]
+        incumbent = next(
+            candidate["reference"]
+            for candidate in json.loads(packet_document)["candidates"]
+            if candidate["incumbent"] is True
+        )
+        document = json.loads(result.document)
+        for row in document["candidates"]:
+            if row["candidate_reference"] == incumbent:
+                row["outcome"], row["reasons"] = outcome, list(reasons)
+                if outcome == "conflict":
+                    row["evidence_references"] = []
+        return replace(result, document=canonical_packet_json(document))
+
+    # The consideration classifies again to bind what the policy read.
+    with (
+        patch.object(cover_policy, "classify_cover_identity", classified),
+        patch.object(cover_consideration, "classify_cover_identity", classified),
+    ):
+        yield
+
+
+def held_measured_stage(*args: object, **kwargs: object) -> object:
+    """The measured stage, turned into a title hold."""
+    import dataclasses
+
+    from mechanical_librarian.domain.cover_rules import (
+        CoverIssue,
+        CoverOutcome,
+        elect_measured_covers,
+    )
+
+    election = elect_measured_covers(*args, **kwargs)  # type: ignore[arg-type]
+    return dataclasses.replace(
+        election,
+        outcome=CoverOutcome.HOLD,
+        choice=None,
+        issues=(CoverIssue.TITLE_NAMES_OTHER_WORK,),
+        reason=CoverIssue.TITLE_NAMES_OTHER_WORK,
+        edition_preferred=False,
+    )

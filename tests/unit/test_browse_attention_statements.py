@@ -51,10 +51,15 @@ from mechanical_librarian.application.review_web import (
     CoverReadObservation,
     LibraryLensFilter,
 )
+from mechanical_librarian.domain.cover_automatic_decision import (
+    SCHEMA_VERSION as COVER_AUTOMATIC_DECISION_SCHEMA,
+)
+from mechanical_librarian.domain.human_decision import COVER_SELECTION_AUTHORITY_SCHEMA
 from mechanical_librarian.domain.shadow_decision import (
     DECISION_POLICY_SHA256,
     DECISION_POLICY_VERSION,
 )
+from mechanical_librarian.domain.shadow_outcome import SHADOW_OUTCOME_SCHEMA
 from tests.support.owner_responsiveness import OwnerResponsivenessFixture
 from tests.unit.test_report_browse_facts import _resolve_policies
 
@@ -341,12 +346,12 @@ def _cover_selection(
     _, target = _consideration(repository, case_id)
     key = _hex(f"selection:{case_id}:{kind}")
     document = (
-        json.dumps({"schema_version": "cover-selection-authority-v3"})
+        json.dumps({"schema_version": COVER_SELECTION_AUTHORITY_SCHEMA})
         if kind == "owner"
         else json.dumps(
             {
                 "decision_document": json.dumps(
-                    {"schema_version": "cover-automatic-decision-v3"}
+                    {"schema_version": COVER_AUTOMATIC_DECISION_SCHEMA}
                 )
             }
         )
@@ -399,7 +404,7 @@ def _shadow_outcome(
             f"resolved_policy_{key}",
             json.dumps(
                 {
-                    "schema_version": "shadow-outcome-set-v11",
+                    "schema_version": SHADOW_OUTCOME_SCHEMA,
                     "decision_policy_version": DECISION_POLICY_VERSION,
                     "decision_policy_sha256": DECISION_POLICY_SHA256,
                     "outcomes": [
@@ -574,6 +579,11 @@ def test_package_and_case_reports_are_read_as_before_when_they_differ(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Library reads a package's own report and Attention its case's (#1232)."""
+    # Held covers ask; suggested ones would not be attention (#1363 S9).
+    from mechanical_librarian.application import cover_policy
+    from tests.support.cover_producers import held_measured_stage
+
+    monkeypatch.setattr(cover_policy, "elect_measured_covers", held_measured_stage)
     fixture = OwnerResponsivenessFixture(tmp_path, 30, mixed=True)
     try:
         repository = fixture.repository

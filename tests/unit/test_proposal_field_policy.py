@@ -4,6 +4,7 @@ refuse to manufacture evidence.
 """
 
 import copy
+import hashlib
 import json
 from collections.abc import Callable
 from dataclasses import replace
@@ -2121,3 +2122,71 @@ def test_multiple_accepted_isbn_families_remain_an_owner_choice() -> None:
     assert ProposalOutcome.UNRESOLVED_CHOICE == result.outcome
     assert ("manifestation_verification_required",) == result.reasons
     assert 2 == len(result.alternatives)
+
+
+_RETAINED_DIGEST = "e" * 64
+_RETAINED_PLAN = "effect_plan_" + "f" * 64
+
+
+def _undecodable_put_back_covers(
+    current_digest: str,
+) -> tuple[CoverSource, CoverSource]:
+    """A current cover the decoder refused, and a refused retained original."""
+    return (
+        CoverSource(
+            cover_source_id(CoverSourceKind.ABS, "current"),
+            CoverSourceKind.ABS,
+            CoverSourceState.DECODE_FAILED,
+            original_digest=current_digest,
+        ),
+        CoverSource(
+            cover_source_id(CoverSourceKind.RETAINED, _RETAINED_PLAN),
+            CoverSourceKind.RETAINED,
+            CoverSourceState.DECODE_FAILED,
+            original_digest=_RETAINED_DIGEST,
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ("cover", "current_digest", "offered"),
+    (
+        (TargetFieldState.VALUE, "d" * 64, True),
+        (TargetFieldState.MISSING, "d" * 64, False),
+        (TargetFieldState.VALUE, _RETAINED_DIGEST, False),
+    ),
+    ids=("populated", "empty", "is_the_current_cover"),
+)
+def test_an_undecodable_retained_original_is_offered_back_by_its_digest(
+    cover: TargetFieldState, current_digest: str, offered: bool
+) -> None:
+    """The way back to an original the decoder refused (#1362, S11)."""
+    current, retained = _undecodable_put_back_covers(current_digest)
+    fields = _fields(
+        cover=TargetField(
+            TargetDestination.COVER,
+            cover,
+            "current-cover" if cover is TargetFieldState.VALUE else None,
+        )
+    )
+    proposal_set = evaluate_report(_report(fields=fields, covers=(current, retained)))
+    result = _result(proposal_set, TargetDestination.COVER)
+
+    assert proposal_set == ProposalSet.from_json(proposal_set.to_json())
+    if not offered:
+        assert result.alternatives == ()
+        assert result.outcome is (
+            ProposalOutcome.DEFER
+            if cover is TargetFieldState.VALUE
+            else ProposalOutcome.INELIGIBLE
+        )
+        return
+    assert result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
+    assert result.selected_alternative_id is None
+    (alternative,) = result.alternatives
+    assert alternative.value.value == "cover_" + _RETAINED_DIGEST
+    assert alternative.assessment is ProposalAssessment.REPLACES_TARGET
+    assert alternative.evidence_references == (retained.source_id,)
+    assert alternative.correlations == (
+        "correlation_" + hashlib.sha256(b"cover:retained").hexdigest(),
+    )

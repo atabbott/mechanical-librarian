@@ -16,7 +16,10 @@ from mechanical_librarian.adapters.operational_evidence import (
 )
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.private_recovery import PrivateCoverRecoveryStore
-from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.metadata_report import (
+    MetadataReportError,
+    provider_observation,
+)
 from mechanical_librarian.application.operations import (
     MAX_SUPPORT_BYTES,
     MAX_TIMINGS,
@@ -35,6 +38,12 @@ from mechanical_librarian.domain.field_effect import (
 )
 from mechanical_librarian.domain.setup_state import claim_token_digest
 from mechanical_librarian.infrastructure.first_boot import FirstBootMode
+from tests.unit.test_identity_refused_retention import (
+    PROVIDER,
+    _candidate,
+    _refused_lane,
+    _report,
+)
 
 
 def _plan() -> FieldEffectPlan:
@@ -471,6 +480,53 @@ def test_support_export_retains_only_a_browse_storage_exception_class(
     assert exported["sections"] == {
         "browse_failures": {"exception_classes": ["OperationalError"]}
     }
+
+
+def test_support_export_keeps_out_retained_refused_answers(tmp_path: Path) -> None:
+    """A stored report's refused WORK answers never reach a bundle (#1355)."""
+    report = _report(
+        provider_observation(
+            PROVIDER, (_refused_lane(_candidate("private-refused-volume")),)
+        )
+    )
+    (refused,) = report.providers[0].identity_refused_candidates
+    repository = open_repository(tmp_path / "application.sqlite3")
+    try:
+        repository.publish(report, lambda: True)
+        bundle = SupportBundle(
+            (
+                (
+                    "runtime",
+                    lambda: {
+                        "deployment": "single_container",
+                        "schema_state": "exact_current",
+                        "timing_records": 0,
+                    },
+                ),
+                (
+                    "operational_incidents",
+                    lambda: support_preparation_incidents(
+                        repository.operational_snapshot()
+                    ),
+                ),
+                (
+                    "browse_failures",
+                    lambda: {
+                        "exception_classes": repository.browse_unavailable_exception_classes()
+                    },
+                ),
+            )
+        )
+        exported = bundle.export().decode("utf-8")
+        previewed = json.dumps(bundle.preview())
+    finally:
+        repository.close()
+    for private in (
+        refused.identity,
+        *(str(claim.value) for claim in refused.claims),
+    ):
+        assert private not in exported
+        assert private not in previewed
 
 
 def test_support_preparation_incidents_match_status_and_exclude_private_values() -> (

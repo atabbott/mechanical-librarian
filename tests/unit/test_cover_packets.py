@@ -17,8 +17,13 @@ from unittest import mock
 import pytest
 from PIL import Image, ImageCms
 
+from mechanical_librarian.application.cover_policy import (
+    SCHEMA_VERSION as COVER_POLICY_REPORT_SCHEMA,
+)
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
+    CoverContext,
+    CoverContextField,
     CoverDesignation,
     CoverFinalHost,
     CoverProvenance,
@@ -48,6 +53,8 @@ from mechanical_librarian.domain.metadata_report import (
     default_target_fields,
     provider_lane_candidate_reference,
 )
+from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
+from tests.support.audiobook_reports import asserted_asin_report
 from tests.support.cover_producers import _preview, _source
 
 ROOT = Path(__file__).parents[2]
@@ -68,6 +75,9 @@ from mechanical_librarian.adapters.reviewers import (  # noqa: E402
     contained_reviewer as reviewer_adapter,
 )
 from mechanical_librarian.application import (  # noqa: E402
+    cover_identity,
+)
+from mechanical_librarian.application import (  # noqa: E402
     cover_packets as packet_builder,
 )
 from mechanical_librarian.application.contained_reviewer_contract import (  # noqa: E402
@@ -78,7 +88,6 @@ from mechanical_librarian.application.contained_reviewer_contract import (  # no
 from mechanical_librarian.application.cover_identity import (  # noqa: E402
     _CLASSIFIER_REFERENCE,
     SCHEMA_VERSION,
-    _classify_sources,
     _preview_reference,
     classify_cover_identity,
 )
@@ -184,6 +193,7 @@ def _classify_identity(
         packet_document,
         images,
         read_preview=read_preview,
+        work_identity_level=WorkIdentityLevel.IDENTIFIER,
     )
 
 
@@ -506,6 +516,7 @@ def test_normalized_transport_rejects_binding_and_source_substitution() -> None:
             packet.document,
             images,
             read_preview=lambda *_: second_payload,
+            work_identity_level=WorkIdentityLevel.IDENTIFIER,
         )
 
 
@@ -2318,6 +2329,7 @@ def test_identity_reauthenticates_every_source_to_the_normalized_transport() -> 
             packet.document,
             images,
             read_preview=lambda artifact, _variant: payload_by_artifact[artifact],
+            work_identity_level=WorkIdentityLevel.IDENTIFIER,
         ).document
     )
     assert len(result["candidates"]) == 1
@@ -2406,6 +2418,7 @@ def test_identity_reauthenticates_every_source_to_the_normalized_transport() -> 
             _rebind_packet(separate_document),
             forged_images,
             read_preview=(lambda artifact, _variant: different_by_artifact[artifact]),
+            work_identity_level=WorkIdentityLevel.IDENTIFIER,
         )
 
 
@@ -2633,6 +2646,25 @@ def test_typed_lane_mapping_requires_the_matched_candidate_in_an_isbn_lane(
         _classify_identity(report, packet, images, lambda *_: payload).document
     )
     assert value["candidates"][0]["outcome"] == expected
+
+
+def _classify_sources(
+    report: object, sources: tuple[CoverSource, ...]
+) -> tuple[str, list[str], list[str]]:
+    """The identifier classification alone, as these cases pin it.
+
+    The duck-typed reports here carry only what the identifier rules read; the
+    level facts #1355 appends (`_level_outcome`) are pinned in
+    `test_cover_identity_levels.py` and the listed-edition tests.
+    """
+    with mock.patch.object(
+        cover_identity,
+        "_level_outcome",
+        side_effect=lambda _report, _matches, identifier, _level, **_: identifier,
+    ):
+        return cover_identity._classify_sources(
+            cast(MetadataReport, report), sources, WorkIdentityLevel.IDENTIFIER
+        )
 
 
 def test_source_bound_epub_cover_is_verified_manifestation() -> None:
@@ -3162,6 +3194,7 @@ def test_report_binds_exact_packet_candidates_and_emits_only_opaque_references()
             foreign_packet.document,
             foreign_images,
             read_preview=lambda *_: shared_payload,
+            work_identity_level=WorkIdentityLevel.IDENTIFIER,
         )
 
 
@@ -3247,6 +3280,7 @@ def _policy_documents(count: int = 3):
         "cover_packet_reference": packet_value["packet_reference"],
         "report_reference": "report_" + "a" * 64,
         "schema_version": SCHEMA_VERSION,
+        "work_identity_level": "identifier",
         "work_target_reference": "work_target_ref_" + "b" * 64,
     }
     references = tuple(candidate["reference"] for candidate in candidates)
@@ -3321,6 +3355,7 @@ def _adjudicate(
             policy,
             profile_payload=(profile_payload if observation_available else None),
             read_preview=read_preview,
+            work_identity_level=WorkIdentityLevel.IDENTIFIER,
             provider_fetching=provider_fetching,
         )
     return json.loads(result.document)
@@ -3334,13 +3369,169 @@ def test_closed_policy_is_content_bound_and_plain_policy_uses_packet_order() -> 
         == report["acceptable_candidate_references"][0]
     )
     assert report["reasons"] == ["deterministic_confirmed_order"]
-    assert report["schema_version"] == "cover-policy-report-v2"
+    assert report["schema_version"] == COVER_POLICY_REPORT_SCHEMA
     assert report["actual_target_state"] == "known_empty"
     assert report["owner_ready"] is True
     assert report["observation_taxonomy_reference"] == TAXONOMY_REFERENCE
     assert CoverPolicy().reference != CoverPolicy(avoid_promotional_text=True).reference
     with pytest.raises(ValueError):
         CoverPolicy(avoid_promotional_text=1)
+
+
+def test_the_report_stage_fills_an_empty_target_or_reports_why_it_did_not() -> None:
+    # An empty target with confirmed candidates is filled with the stage's choice.
+    filled = _adjudicate()
+    assert filled["reasons"] == ["deterministic_confirmed_order"]
+    assert (filled["stage"]["outcome"], filled["stage"]["reason"]) == ("fill", None)
+    assert filled["stage"]["choice"] == filled["recommended_candidate_reference"]
+    # While a provider is still fetching, the stage stands but recommends nothing.
+    fetching = _adjudicate(provider_fetching=True)
+    assert fetching["reasons"] == ["provider_fetching"]
+    assert fetching["recommended_candidate_reference"] is None
+    assert fetching["stage"]["outcome"] == "fill"
+
+    def _unconfirmed(identity: dict[str, Any]) -> None:
+        for candidate in identity["candidates"]:
+            candidate["outcome"] = "unknown"
+
+    # With no confirmed candidate there is nothing to fill from.
+    empty = _adjudicate(identity_mutation=_unconfirmed)
+    assert empty["reasons"] == ["no_confirmed_candidates"]
+    assert empty["recommended_candidate_reference"] is None
+    assert (empty["stage"]["outcome"], empty["stage"]["choice"]) == ("empty", None)
+
+
+def _language_source(
+    index: int,
+    original: bytes,
+    language: str | None,
+    *,
+    incumbent: bool = False,
+    preview: int | None = None,
+) -> tuple[CoverSource, bytes]:
+    payload = _preview(index if preview is None else preview)
+    kind = CoverSourceKind.ABS if incumbent else CoverSourceKind.HARDCOVER
+    return (
+        CoverSource(
+            cover_source_id(kind, f"source-{index}"),
+            kind,
+            CoverSourceState.RETRIEVED,
+            CoverArtifact.create(original, payload, "image/png", 900, 900),
+            provenance=None
+            if incumbent
+            else CoverProvenance(
+                kind.value,
+                CoverDesignation.EXACT_EDITION,
+                f"work-{index}",
+                f"edition-{index}",
+                context=()
+                if language is None
+                else (CoverContext(CoverContextField.LANGUAGE, language),),
+            ),
+        ),
+        payload,
+    )
+
+
+def _language_stage(library_languages: tuple[str, ...]) -> tuple[dict[str, Any], str]:
+    """Adjudicate a real audiobook report whose current cover and one candidate are French.
+
+    Only audiobook reports carry library languages. The current cover shares
+    its original with a French provider source; one other candidate is French
+    and one has no language label.
+    """
+    built = (
+        _language_source(1, b"original-current", None, incumbent=True),
+        _language_source(2, b"original-current", "fr", preview=1),
+        _language_source(3, b"original-french", "fr"),
+        _language_source(4, b"original-plain", None),
+    )
+    base = asserted_asin_report(provider_duration="58200.000")
+    report = MetadataReport.create(
+        target=base.target,
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        providers=base.providers,
+        audio=base.audio,
+        cover_sources=tuple(
+            sorted((source for source, _ in built), key=lambda value: value.source_id)
+        ),
+        library_languages=library_languages,
+    )
+    by_artifact = {
+        cast("CoverArtifact", source.artifact).artifact_id: payload
+        for source, payload in built
+    }
+    packet = prepare_cover_packet(
+        report.to_json(), lambda artifact, _variant: by_artifact[artifact]
+    )
+    packet_value = json.loads(packet.document)
+    identity = {
+        "candidates": [
+            {
+                "candidate_reference": candidate["reference"],
+                "evidence_references": [],
+                "outcome": "verified_work_match",
+                "preview_reference": _preview_reference(
+                    packet_value["packet_reference"], candidate
+                ),
+                "reasons": ["work_identity_verified"],
+            }
+            for candidate in packet_value["candidates"]
+        ],
+        "classifier_reference": _CLASSIFIER_REFERENCE,
+        "cover_packet_reference": packet_value["packet_reference"],
+        "report_reference": "report_" + "a" * 64,
+        "schema_version": SCHEMA_VERSION,
+        "work_identity_level": WorkIdentityLevel.IDENTIFIER.value,
+        "work_target_reference": "work_target_ref_" + "b" * 64,
+    }
+    with mock.patch(
+        "mechanical_librarian.application.cover_policy.classify_cover_identity",
+        return_value=SimpleNamespace(document=canonical_json(identity)),
+    ):
+        result = adjudicate_cover_policy(
+            report.to_json(),
+            packet.document,
+            tuple(
+                (value.reference, value.digest, value.payload)
+                for value in packet.images
+            ),
+            None,
+            CoverPolicy(),
+            read_preview=lambda artifact, _variant: by_artifact[artifact],
+            work_identity_level=WorkIdentityLevel.IDENTIFIER,
+        )
+    french = cover_source_reference(report.report_id, built[2][0].source_id)
+    return json.loads(result.document)["stage"], french
+
+
+@pytest.mark.parametrize(
+    ("library_languages", "flagged"),
+    (
+        # Outside the library's languages: the French candidate is excluded,
+        # and the current cover, whose original a French source shows, has the
+        # edition-language fault with the language named.
+        (("en",), True),
+        # A compatible library language flags nothing.
+        (("fr",), False),
+        # With no library languages the rule does nothing (#1363 Q4).
+        ((), False),
+    ),
+)
+def test_the_edition_language_rule_reads_the_library_languages(
+    library_languages: tuple[str, ...], flagged: bool
+) -> None:
+    stage, french = _language_stage(library_languages)
+    excluded = {
+        item["reference"]
+        for item in stage["exclusions"]
+        if item["exclusion"] == "edition_language"
+    }
+    assert (french in excluded) is flagged
+    assert ("edition_language" in stage["issues"]) is flagged
+    assert stage["language"] == ("French" if flagged else None)
 
 
 @pytest.mark.parametrize(
@@ -3705,6 +3896,7 @@ def test_identity_is_recomputed_from_exact_report_evidence() -> None:
             CoverPolicy(),
             profile_payload=b'{"profile":"synthetic"}',
             read_preview=read_preview,
+            work_identity_level=WorkIdentityLevel.IDENTIFIER,
         ).document
     )
     assert report["status"] == "abstained"
@@ -3778,6 +3970,7 @@ def test_unknown_invented_duplicate_or_mismatched_inputs_fail_closed(mutation) -
                 CoverPolicy(),
                 profile_payload=b'{"profile":"synthetic"}',
                 read_preview=read_preview,
+                work_identity_level=WorkIdentityLevel.IDENTIFIER,
             )
 
 
@@ -3857,7 +4050,11 @@ def _audiobook_identity_reasons(
     )
     document = json.loads(
         classify_cover_identity(
-            report.to_json(), packet.document, images, read_preview=read_preview
+            report.to_json(),
+            packet.document,
+            images,
+            read_preview=read_preview,
+            work_identity_level=WorkIdentityLevel.IDENTIFIER,
         ).document
     )
     return {
@@ -4134,3 +4331,36 @@ def test_a_retained_original_a_listed_edition_also_shows_is_one_alternative(
     (alternative,) = offered
     assert listed.source_id in alternative.evidence_references
     assert (retained.source_id in alternative.evidence_references) is current
+
+
+def test_a_retained_original_the_decoder_refused_is_never_an_omission() -> None:
+    """The owner's way back is never reviewer input (#1362, S18)."""
+    payloads = (_preview(1), _preview(2))
+    sources = (_source(1, payloads[0]), _source(2, payloads[1]))
+    retained = CoverSource(
+        cover_source_id(CoverSourceKind.RETAINED, "effect_plan_" + "a" * 64),
+        CoverSourceKind.RETAINED,
+        CoverSourceState.DECODE_FAILED,
+        original_digest="9" * 64,
+    )
+    # Control: any other source the decoder refused is still named.
+    refused = CoverSource(
+        cover_source_id(CoverSourceKind.EPUB, "refused"),
+        CoverSourceKind.EPUB,
+        CoverSourceState.DECODE_FAILED,
+    )
+    report = _report((*sources, retained, refused))
+    by_artifact = {
+        source.artifact.artifact_id: payload
+        for source, payload in zip(sources, payloads, strict=True)
+        if source.artifact is not None
+    }
+
+    packet = prepare_cover_packet(
+        report.to_json(), lambda artifact, _variant: by_artifact[artifact]
+    )
+
+    named = {value["reference"] for value in json.loads(packet.document)["omissions"]}
+    assert cover_source_reference(report.report_id, refused.source_id) in named
+    assert cover_source_reference(report.report_id, retained.source_id) not in named
+    assert retained.source_id not in packet.document

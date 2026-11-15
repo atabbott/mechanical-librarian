@@ -4,6 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from mechanical_librarian.domain.reviewer_access import (
+    REVIEWER_ACCESS_SCHEMA,
     DescriptionModelMetadata,
     OpenRouterTaskSelection,
     ReviewerAccessDocument,
@@ -13,7 +14,7 @@ from mechanical_librarian.domain.reviewer_access import (
 def test_document_admits_only_two_tasks_and_two_fixed_engines() -> None:
     assert ReviewerAccessDocument.model_validate(
         {
-            "schema_version": "reviewer-access-v3",
+            "schema_version": REVIEWER_ACCESS_SCHEMA,
             "revision": 1,
             "cover_observation": {"engine": "openrouter", "model": "example/vision"},
         }
@@ -23,7 +24,7 @@ def test_document_admits_only_two_tasks_and_two_fixed_engines() -> None:
     with pytest.raises(ValidationError):
         ReviewerAccessDocument.model_validate(
             {
-                "schema_version": "reviewer-access-v3",
+                "schema_version": REVIEWER_ACCESS_SCHEMA,
                 "revision": 1,
                 "description_advice": {
                     "engine": "openrouter",
@@ -34,7 +35,7 @@ def test_document_admits_only_two_tasks_and_two_fixed_engines() -> None:
     with pytest.raises(ValidationError):
         ReviewerAccessDocument.model_validate(
             {
-                "schema_version": "reviewer-access-v3",
+                "schema_version": REVIEWER_ACCESS_SCHEMA,
                 "revision": 1,
                 "cover_observation": {"engine": "other"},
             }
@@ -97,7 +98,7 @@ def test_cover_prices_reject_absent_or_different_model(model):
     with pytest.raises(ValidationError):
         ReviewerAccessDocument.model_validate(
             {
-                "schema_version": "reviewer-access-v3",
+                "schema_version": REVIEWER_ACCESS_SCHEMA,
                 "revision": 1,
                 "cover_observation": None
                 if model is None

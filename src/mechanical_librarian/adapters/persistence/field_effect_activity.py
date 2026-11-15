@@ -51,7 +51,7 @@ from dataclasses import replace
 from functools import lru_cache
 from pathlib import Path
 from threading import Event, Lock, RLock
-from typing import Any, Literal, TypeVar, cast
+from typing import Any, Final, Literal, TypeVar, cast
 
 from mechanical_librarian.adapters.persistence.activity_documents import (
     ActivityDocuments,
@@ -74,6 +74,10 @@ from mechanical_librarian.adapters.persistence.field_effect_validation import (
     _consent_state,
     _cover_automatic_decision_value,
     _validate_automatic_decision_authority,
+    cover_pre_value,
+)
+from mechanical_librarian.adapters.persistence.level_reconciliation import (
+    stored_level_offer_documents,
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
     _active_generation_automatic_sql,
@@ -84,6 +88,7 @@ from mechanical_librarian.adapters.persistence.schema import (
     _FIELD_EFFECT_COMPANION_DECISION_SQL,
     _FIELD_EFFECT_NOT_DEFERRED_SQL,
     _FIELD_EFFECT_WAITING_STATES_SQL,
+    _UNRECONCILED_OWNER_EFFECT_SQL,
     _validate_report_row,
     _validated_report_row,
 )
@@ -110,11 +115,15 @@ from mechanical_librarian.domain.cover_automatic_decision import (
     CoverAutomaticDecision,
     parse_automatic_authority,
 )
+from mechanical_librarian.domain.cover_qualification_policy import (
+    REPLACEMENT_TARGET_STATES,
+)
 from mechanical_librarian.domain.description_advice import (
     AuthoredDescriptionDecision,
     DescriptionAdviceCandidate,
 )
 from mechanical_librarian.domain.field_effect import (
+    FIELD_EFFECT_EVENT_SCHEMA,
     FIELD_EFFECT_FAILURES,
     SUPPORTED_DESTINATIONS,
     EffectAuthority,
@@ -132,6 +141,7 @@ from mechanical_librarian.domain.field_effect import (
     canonical_json as canonical_effect_json,
 )
 from mechanical_librarian.domain.human_decision import (
+    HUMAN_DECISION_EVENT_SCHEMA,
     OWNER_SUBSET_DESTINATION,
     OWNER_TEXT_DESTINATIONS,
     VALUE_OUTCOMES,
@@ -172,6 +182,7 @@ from mechanical_librarian.domain.shadow_outcome import (
     ShadowOutcomeSet,
 )
 
+FIELD_EFFECT_CONSENT_ENVELOPE_SCHEMA: Final = "field-effect-consent-envelope-v1"
 _ACTIVITY_PAGE_BUSY_TIMEOUT_MILLISECONDS = 150
 _ACTIVITY_PAGE_BUSY_RETRY_SECONDS = 0.75
 # A read whose own refresh leaves candidates pending finishes them in bounded
@@ -219,6 +230,9 @@ _OWNER_ACTION_FAILURES = (
     "third_value",
     "readback",
     "restore_unavailable",
+    # A cover chosen under another Book matching level: its field asks the
+    # owner again (#1355).
+    "matching_changed",
 )
 _OWNER_ACTION_COUNT_SQL = (
     "SELECT count(*) FROM field_effects effect JOIN field_effect_authorities authority "
@@ -589,7 +603,12 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         if type(decision) is AuthoredDescriptionDecision:
             value = self._description_authority_value(decision)
         elif type(decision) is HumanDecision:
-            decision.validate_for(case)
+            # A choice of a level alternative stands in the stored offer its
+            # digest binds; the check validates, it never decides (#1355).
+            decision.validate_for(
+                case,
+                stored_level_offer_documents(self._connection, case.review_case_id),
+            )
             value = decision.selected_value
         else:
             automatic = cast(AutomaticDecision | CoverAutomaticDecision, decision)
@@ -731,6 +750,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         case_pre_value = (
             target_field.get("value") if target_field["state"] == "value" else None
         )
+        if decision.destination == "cover":
+            case_pre_value = self._cover_pre_value(case)
         pre_value = case_pre_value
         predecessor = None
         if type(decision) is HumanDecision:
@@ -807,62 +828,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 decision.consideration_digest,
             )
         if type(decision) is HumanDecision and decision.destination == "cover":
-            consideration_row = self._connection.execute(
-                "SELECT consideration.document,report.document,report.document_digest,consideration.document_digest,consideration.report_id FROM current_cover_considerations current "
-                "JOIN cover_considerations consideration ON consideration.consideration_id=current.consideration_id "
-                "LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id "
-                "JOIN cover_consideration_events event ON event.consideration_id=consideration.consideration_id "
-                "WHERE current.review_case_id=? AND event.kind='selected' AND event.decision_id=?",
-                (decision.review_case_id, decision.decision_id),
-            ).fetchone()
-            if consideration_row is None:
-                raise FieldEffectError("authority_binding")
-            try:
-                expanded_document = expand_cover_consideration(*consideration_row)
-            except MetadataReportError as error:
-                raise FieldEffectError("authority_binding") from error
-            consideration = json.loads(expanded_document)
-            selected_artifact = value.get("value") if type(value) is dict else None
-            selected_authority = self._connection.execute(
-                "SELECT 1 FROM current_cover_selection_authorities current JOIN cover_selection_authorities selection ON selection.selection_id=current.selection_id WHERE selection.decision_id=? AND selection.kind='owner'",
-                (decision.decision_id,),
-            ).fetchone()
-            if selected_authority != (1,):
-                raise FieldEffectError("authority_binding")
-            try:
-                self._require_owner_cover(expanded_document, selected_artifact)
-            except (ValueError, RuntimeError) as error:
-                raise FieldEffectError("authority_binding") from error
-            selected_candidate = next(
-                (
-                    candidate
-                    for candidate in consideration.get("candidates", ())
-                    if type(candidate) is dict
-                    and candidate.get("artifact_id") == selected_artifact
-                    and manual_cover_eligible(candidate)
-                    and candidate.get("incumbent") is False
-                ),
-                None,
-            )
-            incumbent_digest = consideration.get("incumbent_digest")
-            if (
-                selected_candidate is None
-                or consideration.get("target_fingerprint")
-                != decision.target_fingerprint
-                or consideration.get("policy_reference")
-                != self._current_cover_policy_reference
-                or consideration.get("replay_reference")
-                != self._current_cover_replay_reference
-                or (
-                    predecessor is None
-                    and incumbent_digest is not None
-                    and pre_value != "cover_" + str(incumbent_digest)
-                )
-            ):
-                raise FieldEffectError("authority_binding")
-            dependency_digests = (
-                decision.target_fingerprint,
-                hashlib.sha256(expanded_document.encode("utf-8")).hexdigest(),
+            dependency_digests = self._owner_cover_dependencies(
+                decision, value, pre_value, predecessor is None
             )
         return {
             "paired_bundle_id": paired_bundle_id,
@@ -879,6 +846,89 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             "pre_value": pre_value,
             "dependency_digests": dependency_digests,
         }
+
+    def _cover_pre_value(self, case: ReviewCase) -> str | None:
+        """Bind a cover write to the bytes its case's report read (#1362)."""
+        row = self._connection.execute(
+            "SELECT document FROM metadata_reports WHERE report_id=?",
+            (case.report_id,),
+        ).fetchone()
+        if row is None:
+            raise FieldEffectError("authority_binding")
+        try:
+            return cover_pre_value(MetadataReport.from_json(row[0]))
+        except (MetadataReportError, ReportValueError) as error:
+            raise FieldEffectError("authority_binding") from error
+
+    def _owner_cover_dependencies(
+        self,
+        decision: HumanDecision,
+        value: object,
+        pre_value: object,
+        unwritten: bool,
+    ) -> tuple[str, ...]:
+        """Bind an owner cover choice to its exact current consideration.
+
+        ``unwritten`` means no earlier verified write changed the cover since
+        the report, so the report's current cover must still be the one the
+        consideration compared.
+        """
+        consideration_row = self._connection.execute(
+            "SELECT consideration.document,report.document,report.document_digest,consideration.document_digest,consideration.report_id FROM current_cover_considerations current "
+            "JOIN cover_considerations consideration ON consideration.consideration_id=current.consideration_id "
+            "LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id "
+            "JOIN cover_consideration_events event ON event.consideration_id=consideration.consideration_id "
+            "WHERE current.review_case_id=? AND event.kind='selected' AND event.decision_id=?",
+            (decision.review_case_id, decision.decision_id),
+        ).fetchone()
+        if consideration_row is None:
+            raise FieldEffectError("authority_binding")
+        try:
+            expanded_document = expand_cover_consideration(*consideration_row)
+        except MetadataReportError as error:
+            raise FieldEffectError("authority_binding") from error
+        consideration = json.loads(expanded_document)
+        selected_artifact = value.get("value") if type(value) is dict else None
+        selected_authority = self._connection.execute(
+            "SELECT 1 FROM current_cover_selection_authorities current JOIN cover_selection_authorities selection ON selection.selection_id=current.selection_id WHERE selection.decision_id=? AND selection.kind='owner'",
+            (decision.decision_id,),
+        ).fetchone()
+        if selected_authority != (1,):
+            raise FieldEffectError("authority_binding")
+        try:
+            self._require_owner_cover(expanded_document, selected_artifact)
+        except (ValueError, RuntimeError) as error:
+            raise FieldEffectError("authority_binding") from error
+        selected_candidate = next(
+            (
+                candidate
+                for candidate in consideration.get("candidates", ())
+                if type(candidate) is dict
+                and candidate.get("artifact_id") == selected_artifact
+                and manual_cover_eligible(candidate)
+                and candidate.get("incumbent") is False
+            ),
+            None,
+        )
+        incumbent_digest = consideration.get("incumbent_digest")
+        if (
+            selected_candidate is None
+            or consideration.get("target_fingerprint") != decision.target_fingerprint
+            or consideration.get("policy_reference")
+            != self._current_cover_policy_reference
+            or consideration.get("replay_reference")
+            != self._current_cover_replay_reference
+            or (
+                unwritten
+                and incumbent_digest is not None
+                and pre_value != "cover_" + str(incumbent_digest)
+            )
+        ):
+            raise FieldEffectError("authority_binding")
+        return (
+            decision.target_fingerprint,
+            hashlib.sha256(expanded_document.encode("utf-8")).hexdigest(),
+        )
 
     @local_operation
     def previous_field_values(
@@ -1073,9 +1123,17 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 cover = CoverAutomaticDecision.from_json(cover_history[0])
             except AutomaticDecisionError:
                 return False
-            if (
-                cover.qualification_identity is not None
-                and not qualification_manifest_is_current(
+            # Current covers is in the cover policy, so a changed setting
+            # moves the live reference and stales the switch before it writes;
+            # its next preparation decides again under the new setting (#1363).
+            if cover.policy_reference != self._current_cover_policy_reference:
+                return False
+            # Each replacement parses only under its own identity's record,
+            # so its authority need only carry that record (#1363, #1362).
+            if cover.qualification_identity is not None and not (
+                authority.qualification_identity == cover.qualification_manifest_sha256
+                if cover.qualification_identity in REPLACEMENT_TARGET_STATES
+                else qualification_manifest_is_current(
                     cover.policy_category,
                     cover.policy_option,
                     authority.qualification_identity,
@@ -1188,7 +1246,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "destinations": sorted(SUPPORTED_DESTINATIONS),
                 "library": library,
                 "resolved_policy_id": resolved_policy_id,
-                "schema_version": "field-effect-consent-envelope-v1",
+                "schema_version": FIELD_EFFECT_CONSENT_ENVELOPE_SCHEMA,
             }
         )
         return hashlib.sha256(document.encode("utf-8")).hexdigest()
@@ -1687,6 +1745,34 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             )
         except sqlite3.Error:
             return False
+
+    def field_effect_matching_changed(
+        self, digests: tuple[str, ...], work_identity_level: str
+    ) -> bool:
+        """Whether a cover effect's consideration has another Book matching level.
+
+        A cover effect binds the expanded consideration it was chosen from.
+        When that consideration's identity was classified under a level other
+        than the configured one, the effect is stale because Book matching
+        changed, and Activity says so (#1355).
+        """
+        try:
+            for digest in digests:
+                row = self._connection.execute(
+                    "SELECT json_extract(document,'$.work_identity_level') "
+                    "FROM cover_considerations "
+                    "WHERE document_digest=? LIMIT 1",
+                    (digest,),
+                ).fetchone()
+                if (
+                    row is not None
+                    and type(row[0]) is str
+                    and row[0] != work_identity_level
+                ):
+                    return True
+        except sqlite3.Error:
+            return False
+        return False
 
     def _fresh_database_quick_check(self) -> tuple[object, ...] | None:
         database = self._connection.execute("PRAGMA database_list").fetchone()
@@ -2358,7 +2444,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         != (
                             "field-effect-title-subtitle-event-v1"
                             if paired_event
-                            else "field-effect-event-v1"
+                            else FIELD_EFFECT_EVENT_SCHEMA
                         )
                         or raw.get("event_id") != event_id
                         or raw.get("plan_id") != source_parent_id
@@ -2492,7 +2578,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     }
                     if (
                         set(raw) != event_keys
-                        or raw.get("schema_version") != "human-decision-event-v1"
+                        or raw.get("schema_version") != HUMAN_DECISION_EVENT_SCHEMA
                         or raw.get("kind") != "human_decision_recorded"
                         or raw.get("event_id") != event_id
                         or raw.get("decision_id") != decision.decision_id
@@ -2511,9 +2597,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         or event_id
                         != "human_decision_event_"
                         + hashlib.sha256(
-                            ("human-decision-event-v1:" + decision.decision_id).encode(
-                                "utf-8"
-                            )
+                            (
+                                HUMAN_DECISION_EVENT_SCHEMA + ":" + decision.decision_id
+                            ).encode("utf-8")
                         ).hexdigest()
                     ):
                         raise FieldEffectError("persistence")
@@ -3133,11 +3219,15 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         """Note the page's rows that current state makes read differently (#1711).
 
         An owner choice under its case's decision floor no longer counts, so
-        the field is asking again; a planned automatic write is held while
-        the posture is not Automatic. Neither changes the row's result.
+        the field is asking again; an owner choice Book matching asked again
+        no longer counts either; a planned automatic write is held while the
+        posture is not Automatic; a planned owner write waits while its case
+        waits for its Book matching check (#1355). None changes the row's
+        result.
         """
         decisions: list[str] = []
         planned: list[str] = []
+        owner_planned: list[str] = []
         for value in events:
             event = (
                 value.to_data()
@@ -3155,16 +3245,42 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 and event.get("state") == "planned"
             ):
                 planned.append(event_id)
+            elif event.get("state") == "planned" and event_id.startswith(
+                ("effect_event_", "effect_plan_")
+            ):
+                owner_planned.append(event_id)
         try:
-            return self._activity_page_notes_once(decisions, planned)
+            return self._activity_page_notes_once(decisions, planned, owner_planned)
         except sqlite3.Error as error:
             raise FieldEffectError("persistence") from error
 
     def _activity_page_notes_once(
-        self, decisions: list[str], planned: list[str]
+        self,
+        decisions: list[str],
+        planned: list[str],
+        owner_planned: tuple[str, ...] | list[str] = (),
     ) -> dict[str, str]:
         notes: dict[str, str] = {}
         if decisions:
+            # The choice right before a valueless `matching_changed` row is
+            # the one Book matching asked again (#1355, amendment 3). The
+            # floor's note, below, wins over it.
+            rows = self._connection.execute(
+                "SELECT event.event_id FROM human_decision_events event "
+                "JOIN human_decisions decision ON decision.decision_id=event.decision_id "
+                "JOIN current_review_packages current "
+                "ON current.review_case_id=decision.review_case_id "
+                "WHERE event.event_id IN ("
+                + ",".join("?" for _ in decisions)
+                + ") AND (SELECT json_extract(later.document,'$.cause') "
+                "FROM human_decisions later "
+                "WHERE later.review_case_id=decision.review_case_id "
+                "AND later.destination=decision.destination "
+                "AND later.ordinal>decision.ordinal "
+                "ORDER BY later.ordinal LIMIT 1)='matching_changed'",
+                decisions,
+            ).fetchall()
+            notes.update((row[0], "asked_again_matching") for row in rows)
             rows = self._connection.execute(
                 "SELECT event.event_id FROM human_decision_events event "
                 "JOIN human_decisions decision ON decision.decision_id=event.decision_id "
@@ -3184,6 +3300,20 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             ).fetchone()
             if posture is not None and posture[0] != "automatic":
                 notes.update((event_id, "held_back") for event_id in planned)
+        if owner_planned:
+            # A row names its plan or one of the plan's events; the note holds
+            # while the plan is ready and its case waits for the check.
+            rows = self._connection.execute(
+                "SELECT candidate.event_id FROM (SELECT value AS event_id "
+                "FROM json_each(?)) candidate JOIN field_effects effect "
+                "ON effect.plan_id=COALESCE((SELECT recorded.plan_id "
+                "FROM field_effect_events recorded "
+                "WHERE recorded.event_id=candidate.event_id),candidate.event_id) "
+                "WHERE effect.state IN ('planned','retryable') "
+                "AND json_valid(effect.document) AND " + _UNRECONCILED_OWNER_EFFECT_SQL,
+                (json.dumps(list(owner_planned)),),
+            ).fetchall()
+            notes.update((row[0], "waiting_for_check") for row in rows)
         return notes
 
     def initialize_activity_facts(self) -> None:
@@ -4255,6 +4385,15 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             ).fetchone()
             if row is None or row[1] != expected_state:
                 raise FieldEffectError("claim_conflict")
+            # An owner write on a case still waiting for its Book matching
+            # check waits, unclaimed, even when the check began after the
+            # pre-claim guards ran (#1355, S10).
+            if self._connection.execute(
+                "SELECT 1 FROM field_effects effect WHERE plan_id=? "
+                "AND json_valid(effect.document) AND " + _UNRECONCILED_OWNER_EFFECT_SQL,
+                (plan_id,),
+            ).fetchone():
+                raise FieldEffectError("deferred")
             persisted = FieldEffectOperation.from_json(row[0])
             for member in (persisted.plan, persisted.plan.subtitle_plan()):
                 if member is None:

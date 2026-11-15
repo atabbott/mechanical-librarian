@@ -7,6 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from mechanical_librarian.application.cover_packet_semantics import (
+    COVER_REVIEW_PACKET_SCHEMA,
     MAX_COVER_PACKET_BYTES,
     MAX_COVER_PREVIEW_BYTES,
     MAX_COVER_PREVIEWS,
@@ -33,7 +34,6 @@ from mechanical_librarian.domain.cover_evidence import (
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from mechanical_librarian.domain.proposal_set import work_route_cover_sources
 
-SCHEMA_VERSION = "cover-review-packet-v2"
 PRODUCER_REVISION = "cover-packet-producer-v1"
 
 
@@ -148,7 +148,8 @@ def prepare_cover_packet(
 
     candidates_by_digest: dict[str, _Candidate] = {}
     # Every source not retrieved is named, as before #1642, so a pending
-    # work cover says why the gallery is incomplete.
+    # work cover says why the gallery is incomplete. A retained original the
+    # decoder refused is the owner's way back, never reviewer input (#1362).
     omissions: list[dict[str, object]] = [
         {
             "reason": "source_" + source.state.value,
@@ -156,6 +157,7 @@ def prepare_cover_packet(
         }
         for source in report.cover_sources
         if source.state is not CoverSourceState.RETRIEVED
+        and source.kind is not CoverSourceKind.RETAINED
     ]
     artifact_payloads: dict[tuple[str, str], bytes] = {}
     for source in sorted(retrieved, key=lambda value: value.source_id):
@@ -390,7 +392,7 @@ def _finalize_cover_packet(
     packet_body = {
         "candidates": candidate_data,
         "omissions": omissions,
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": COVER_REVIEW_PACKET_SCHEMA,
     }
     packet = {
         **packet_body,
@@ -411,7 +413,6 @@ def _finalize_cover_packet(
 
 
 __all__ = [
-    "SCHEMA_VERSION",
     "CoverPacketImage",
     "MAX_COVER_PACKET_BYTES",
     "MAX_COVER_PREVIEW_BYTES",

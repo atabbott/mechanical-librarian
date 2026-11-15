@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from typing import Final
 
 from mechanical_librarian.adapters.reviewers.contained_reviewer import (
     ContainedReviewerAdapter,
@@ -12,6 +13,10 @@ from mechanical_librarian.adapters.reviewers.contained_reviewer import (
 from mechanical_librarian.application.contained_reviewer_contract import (
     ContainedReviewRequest,
     canonical_json,
+)
+
+CONTAINED_REVIEWER_WORKBENCH_RESULT_SCHEMA: Final = (
+    "contained-reviewer-workbench-result-v2"
 )
 
 
@@ -65,7 +70,7 @@ def run_contained_reviewer(
             "request_sha256": request.digest,
             "result": json.loads(result.document),
             "result_sha256": result.digest,
-            "schema_version": "contained-reviewer-workbench-result-v2",
+            "schema_version": CONTAINED_REVIEWER_WORKBENCH_RESULT_SCHEMA,
             "status": "completed",
         },
         ensure_ascii=False,

@@ -37,6 +37,10 @@ from mechanical_librarian.adapters.persistence import field_effect_activity
 from mechanical_librarian.adapters.persistence.field_effect_activity import (
     _ACTIVITY_PAGE_CACHE_MAX_BYTES,
 )
+from mechanical_librarian.adapters.persistence.field_effect_validation import (
+    FIELD_EFFECT_CONSENT_STATE_SCHEMA,
+    cover_pre_value,
+)
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     MetadataReportError,
     SQLiteMetadataReportRepository,
@@ -45,6 +49,9 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
+)
+from mechanical_librarian.application.cover_consideration import (
+    SCHEMA_VERSION as COVER_CONSIDERATION_SCHEMA,
 )
 from mechanical_librarian.application.field_effects import (
     GuardedApplicationError,
@@ -55,6 +62,12 @@ from mechanical_librarian.domain import audiobook_decision_qualification
 from mechanical_librarian.domain.activity_records import readable_activity_event
 from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecision,
+)
+from mechanical_librarian.domain.cover_evidence import (
+    CoverSource,
+    CoverSourceKind,
+    CoverSourceState,
+    cover_source_id,
 )
 from mechanical_librarian.domain.field_effect import (
     SUPPORTED_DESTINATIONS,
@@ -98,7 +111,10 @@ from mechanical_librarian.domain.readable_activity import (
 )
 from mechanical_librarian.domain.review_case import ReviewCase
 from tests.support import audiobookshelf_targets
-from tests.support.audiobook_covers import audiobook_cover_environment
+from tests.support.audiobook_covers import (
+    SYNTHETIC_MEASURED_RECORD,
+    audiobook_cover_environment,
+)
 from tests.support.audiobook_reports import (
     publish_audiobook_preview,
     synthetic_audiobook_bibliographic_report,
@@ -109,6 +125,7 @@ from tests.support.audiobookshelf_targets import (
 )
 from tests.support.automatic_decisions import _automatic_decisions
 from tests.support.cover_images import synthetic_image
+from tests.support.cover_producers import _qualified_cover_report, adapter_cover_value
 from tests.support.field_effects import (
     CAPABILITY,
     DEPENDENCY,
@@ -298,7 +315,7 @@ def test_activation_carries_each_current_consent_to_the_new_policy(
                 "basis": {"kind": "owner_grant"},
                 "consent": prior.to_data(),
                 "current": False,
-                "schema_version": "field-effect-consent-state-v2",
+                "schema_version": FIELD_EFFECT_CONSENT_STATE_SCHEMA,
                 "updated_at": 5,
             },
         )
@@ -312,7 +329,7 @@ def test_activation_carries_each_current_consent_to_the_new_policy(
                 },
                 "consent": value.to_data(),
                 "current": True,
-                "schema_version": "field-effect-consent-state-v2",
+                "schema_version": FIELD_EFFECT_CONSENT_STATE_SCHEMA,
                 "updated_at": 5,
             },
         )
@@ -813,7 +830,12 @@ def test_activity_page_cache_keeps_only_an_exact_current_reader_projection(
             for entry in reader._field_effect_activity._activity_page_cache.values()
         )
         assert second == first
-        assert statements == ["PRAGMA data_version"]
+        # Notes read current state on every page and are never cached (#1711):
+        # the planned owner write is a candidate for Book matching's
+        # waiting-for-check note (#1355), so its one notes read follows.
+        assert statements[0] == "PRAGMA data_version"
+        assert len(statements) == 2
+        assert statements[1].startswith("SELECT candidate.event_id FROM (SELECT value")
         assert identity.call_count == 1
 
         # A caller receives a copy: its owner-readable shaping cannot corrupt
@@ -2024,7 +2046,7 @@ def test_manual_hold_requires_explicit_return_and_later_human_wins(
             ).fetchone()[0],
             "replay_digest": "8" * 64,
             "review_case_id": case.review_case_id,
-            "schema_version": "cover-consideration-v6",
+            "schema_version": COVER_CONSIDERATION_SCHEMA,
             "supersedes_id": None,
         },
         separators=(",", ":"),
@@ -2997,6 +3019,38 @@ def test_fake_target_serializes_compare_and_write_for_direct_callers(
     assert not second_thread.is_alive()
     assert outcomes["first"].outcome == "accepted"
     assert outcomes["second"].outcome == "conflict"
+
+
+def test_a_cover_chosen_under_another_book_matching_level_closes_as_matching_changed(
+    effects: _EffectEnvironment,
+) -> None:
+    """A level change closes a cover effect bound to the old level (#1355)."""
+    cover = _plan(effects, "cover", None, "cover_" + "4" * 64, "a")
+    title = _plan(effects, destination="subtitle", suffix="b")
+    effects.dependencies.current_value = False
+    effects.dependencies.matching_changed_value = True
+    assert effects.service.apply(cover.plan.plan_id).failure == "matching_changed"
+    # Only a cover names Book matching; another moved dependency stays unnamed.
+    assert effects.service.apply(title.plan.plan_id).failure == "dependency"
+    unrelated = _plan(effects, "cover", None, "cover_" + "5" * 64, "c")
+    effects.dependencies.matching_changed_value = False
+    assert effects.service.apply(unrelated.plan.plan_id).failure == "dependency"
+
+
+def test_a_reclassified_cover_effect_closes_as_matching_changed_not_authority(
+    effects: _EffectEnvironment,
+) -> None:
+    """Reclassifying under another level retires the old consideration's
+    authority too; the effect still says Book matching changed (Codex r5, 2)."""
+    cover = _plan(effects, "cover", None, "cover_" + "6" * 64, "d")
+    effects.authority.revoked.add(cover.plan.authority.decision_id)
+    effects.dependencies.current_value = False
+    effects.dependencies.matching_changed_value = True
+    assert effects.service.apply(cover.plan.plan_id).failure == "matching_changed"
+    other = _plan(effects, "cover", None, "cover_" + "7" * 64, "e")
+    effects.authority.revoked.add(other.plan.authority.decision_id)
+    effects.dependencies.matching_changed_value = False
+    assert effects.service.apply(other.plan.plan_id).failure == "authority"
 
 
 def test_preclaim_failures_are_field_local_and_pause_is_atomic(
@@ -6189,9 +6243,22 @@ def test_pair_admission_boundaries(tmp_path, field, mode):
         "consent",
     ),
 )
-def test_guarded_audiobook_cover_materiality_boundaries(tmp_path, effects, negative):
+def test_guarded_audiobook_cover_replacement_boundaries(
+    tmp_path, effects, negative, monkeypatch
+):
+    # An undersized square cover is the measured rules' replacement, admitted
+    # under a synthetic qualification record (#1363).
+    from mechanical_librarian.domain import cover_qualification_policy
+
+    monkeypatch.setattr(
+        cover_qualification_policy,
+        "MEASURED_REPLACEMENT_QUALIFICATION_SHA256",
+        SYNTHETIC_MEASURED_RECORD,
+    )
     with audiobook_cover_environment(
-        tmp_path / "cover", [(80, 120), (640, 960)]
+        tmp_path / "cover",
+        [(200, 200), (600, 600)],
+        measured_record=SYNTHETIC_MEASURED_RECORD,
     ) as state:
         assert len(state.decisions) == 1
         target_case = audiobookshelf_targets.FieldEffectTargetCase()
@@ -6219,6 +6286,12 @@ def test_guarded_audiobook_cover_materiality_boundaries(tmp_path, effects, negat
                 capability_digest=CAPABILITY,
             )
             assert operation is not None
+            # The report states the adapter's path digest as the target value;
+            # the write binds the bytes Audiobookshelf served (#1853).
+            assert operation.plan.pre_value == (
+                "cover_" + hashlib.sha256(state.originals[0]).hexdigest()
+            )
+            assert operation.plan.pre_value != "cover_" + adapter_cover_value()
             if negative == "changed_dimensions":
                 target_case.cover_bytes = synthetic_image("PNG", (300, 450))
             elif negative == "changed_digest":
@@ -6297,6 +6370,9 @@ def test_guarded_audiobook_cover_materiality_boundaries(tmp_path, effects, negat
                 assert target_case.cover_bytes == state.originals[1]
             else:
                 assert result.state in ("stale", "superseded", "verified")
+            if negative == "changed_dimensions":
+                # Other bytes than the bound ones: refused, nothing sent.
+                assert (result.state, result.failure) == ("stale", "target_changed")
         finally:
             target_case.close()
     with closing(open_repository(tmp_path / "cover" / "state.sqlite")) as reopened:
@@ -6537,15 +6613,22 @@ def test_audiobook_selected_sources_survive_reopen_and_refuse_resealed_authority
                 "/api/v1/metadata-policy/preview-mode/outcomes?limit=20"
             )
             assert sample.status_code == 200
-            assert sample.json() == app.state.review_application.policy.shadow_sample(
-                20
-            )
+            # The browser reads each stored outcome set without its storage
+            # version (#1847).
+            browser_sample = app.state.review_application.policy.shadow_sample(20)
+            browser_sample["items"] = [
+                {key: value for key, value in item.items() if key != "schema_version"}
+                for item in browser_sample["items"]
+            ]
+            assert sample.json() == browser_sample
+            stored = json.loads(outcome.to_json())
+            del stored["schema_version"]
             assert next(
                 item
                 for item in sample.json()["items"]
                 if item["outcome_set_id"] == outcome.outcome_set_id
             ) == {
-                **json.loads(outcome.to_json()),
+                **stored,
                 "evaluated_at": dict(repository.list_shadow_outcomes(20))[
                     outcome.to_json()
                 ],
@@ -7822,7 +7905,8 @@ def test_retained_audiobook_cover_plan_reopens_but_cannot_apply(tmp_path, effect
             source,
             report,
             ("cover_order",),
-            selected_options={"cover_order": "replace_if_strictly_better"},
+            # The retained plan's replacement option is retired (#1363 Q11).
+            selected_options={"cover_order": "fixed_source_order"},
         )
         assert case_id != fixture["consideration"]["review_case_id"]
         # The retained decision's earlier F46 digest no longer decodes.
@@ -8048,3 +8132,162 @@ def test_owner_accepted_language_respelling_writes_the_display_name(
         effects.target._values[("primary", report.target.library, "item-1", "language")]
         == "English"
     )
+
+
+def _current_cover_report(
+    root: Path,
+    target: TargetField,
+    current: CoverSource | None,
+) -> MetadataReport:
+    """The qualified cover report with its target cover and ABS read replaced."""
+    report, _ = _qualified_cover_report(root)
+    return MetadataReport.create(
+        target=replace(
+            report.target,
+            fields=tuple(
+                target if field.destination is TargetDestination.COVER else field
+                for field in report.target.fields
+            ),
+        ),
+        file=report.file,
+        local_claims=report.local_claims,
+        local_reasons=report.local_reasons,
+        providers=report.providers,
+        cover_sources=tuple(
+            sorted(
+                (
+                    *(
+                        source
+                        for source in report.cover_sources
+                        if source.kind is not CoverSourceKind.ABS
+                    ),
+                    *((current,) if current is not None else ()),
+                ),
+                key=lambda source: source.source_id,
+            )
+        ),
+    )
+
+
+_DECLARED_COVER = TargetField(
+    TargetDestination.COVER, TargetFieldState.VALUE, adapter_cover_value()
+)
+_REFUSED_DIGEST = "e" * 64
+
+
+def _abs_read(state: CoverSourceState, **values: Any) -> CoverSource:
+    return CoverSource(
+        cover_source_id(CoverSourceKind.ABS, "descriptor"),
+        CoverSourceKind.ABS,
+        state,
+        **values,
+    )
+
+
+def test_a_cover_write_binds_the_bytes_audiobookshelf_served(tmp_path) -> None:
+    # The target value is the adapter's path digest; the binding is the bytes'
+    # (#1853).
+    report, _ = _qualified_cover_report(tmp_path / "retrieved")
+    (current,) = (
+        source for source in report.cover_sources if source.kind is CoverSourceKind.ABS
+    )
+    assert current.artifact is not None
+    assert cover_pre_value(report) == "cover_" + current.artifact.original_digest
+    assert cover_pre_value(report) != "cover_" + adapter_cover_value()
+    refused = _current_cover_report(
+        tmp_path / "refused",
+        _DECLARED_COVER,
+        _abs_read(CoverSourceState.DECODE_FAILED, original_digest=_REFUSED_DIGEST),
+    )
+    assert cover_pre_value(refused) == "cover_" + _REFUSED_DIGEST
+
+
+@pytest.mark.parametrize(
+    ("target", "current"),
+    (
+        (_DECLARED_COVER, _abs_read(CoverSourceState.ABSENT)),
+        (
+            TargetField(TargetDestination.COVER, TargetFieldState.MISSING),
+            CoverSource(
+                cover_source_id(CoverSourceKind.ABS, "absent"),
+                CoverSourceKind.ABS,
+                CoverSourceState.ABSENT,
+            ),
+        ),
+        (TargetField(TargetDestination.COVER, TargetFieldState.NULL), None),
+        (TargetField(TargetDestination.COVER, TargetFieldState.EMPTY), None),
+    ),
+    ids=("declared_404", "missing", "null", "empty"),
+)
+def test_a_cover_with_nothing_to_replace_is_written_as_empty(
+    tmp_path, target: TargetField, current: CoverSource | None
+) -> None:
+    assert cover_pre_value(_current_cover_report(tmp_path, target, current)) is None
+
+
+@pytest.mark.parametrize(
+    ("target", "current"),
+    (
+        (
+            _DECLARED_COVER,
+            _abs_read(CoverSourceState.TIMEOUT, timeout_scope="attempted"),
+        ),
+        (_DECLARED_COVER, _abs_read(CoverSourceState.UNAVAILABLE)),
+        (_DECLARED_COVER, _abs_read(CoverSourceState.SOURCE_CHANGED)),
+        (_DECLARED_COVER, _abs_read(CoverSourceState.DECODE_FAILED)),
+        (_DECLARED_COVER, _abs_read(CoverSourceState.OVERSIZED)),
+        (_DECLARED_COVER, None),
+        (
+            TargetField(TargetDestination.COVER, TargetFieldState.MALFORMED),
+            _abs_read(CoverSourceState.ABSENT),
+        ),
+    ),
+    ids=(
+        "timeout",
+        "unavailable",
+        "source_changed",
+        "refused_without_digest",
+        "reader_oversized",
+        "no_read",
+        "malformed_target",
+    ),
+)
+def test_a_cover_read_holding_no_bytes_binds_no_write(
+    tmp_path, target: TargetField, current: CoverSource | None
+) -> None:
+    with pytest.raises(FieldEffectError, match="^authority_binding$"):
+        cover_pre_value(_current_cover_report(tmp_path, target, current))
+
+
+def test_two_audiobookshelf_reads_bind_no_write(tmp_path) -> None:
+    # The binding names one read; two current reads cannot say which bytes the
+    # write replaces, even when each holds a digest.
+    report, _ = _qualified_cover_report(tmp_path)
+    second = CoverSource(
+        cover_source_id(CoverSourceKind.ABS, "second"),
+        CoverSourceKind.ABS,
+        CoverSourceState.DECODE_FAILED,
+        original_digest=_REFUSED_DIGEST,
+    )
+    doubled = MetadataReport.create(
+        target=report.target,
+        file=report.file,
+        local_claims=report.local_claims,
+        local_reasons=report.local_reasons,
+        providers=report.providers,
+        cover_sources=tuple(
+            sorted(
+                (
+                    *(
+                        source
+                        for source in report.cover_sources
+                        if source.kind is not CoverSourceKind.EPUB
+                    ),
+                    second,
+                ),
+                key=lambda source: source.source_id,
+            )
+        ),
+    )
+    with pytest.raises(FieldEffectError, match="^authority_binding$"):
+        cover_pre_value(doubled)

@@ -14,7 +14,18 @@ from contextlib import asynccontextmanager, suppress
 from contextvars import ContextVar
 from ipaddress import IPv6Address, IPv6Network, ip_address
 from pathlib import Path
-from typing import Annotated, Literal, Self, TypeAlias, TypedDict, TypeVar, cast
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    Final,
+    Literal,
+    Self,
+    TypeAlias,
+    TypedDict,
+    TypeVar,
+    cast,
+)
 from urllib.parse import quote, urlsplit
 
 from argon2 import PasswordHasher
@@ -49,6 +60,7 @@ from pydantic import (
     StrictInt,
     StrictStr,
     TypeAdapter,
+    create_model,
     model_validator,
 )
 from starlette.concurrency import run_in_threadpool
@@ -58,6 +70,9 @@ from mechanical_librarian.application.configuration import ReviewWebConfiguratio
 from mechanical_librarian.application.contained_reviewer_contract import (
     CoverUnavailableReason,
 )
+from mechanical_librarian.application.continuous_field_effects import (
+    ContinuousFieldActivitySchemaVersion,
+)
 from mechanical_librarian.application.field_effects import GuardedApplicationError
 from mechanical_librarian.application.live_updates import (
     LiveUpdateCapacityError,
@@ -66,14 +81,23 @@ from mechanical_librarian.application.live_updates import (
 from mechanical_librarian.application.metadata_policy import (
     MetadataPolicyApplicationError,
     PolicyTransition,
+    PreviewOutcomeSampleSchemaVersion,
 )
 from mechanical_librarian.application.operations import OperationsError
 from mechanical_librarian.application.review_application import (
+    REVIEW_PREPARATION_SCHEMA,
     ReviewApplication,
     ReviewApplicationError,
+    ReviewPreparationSchemaVersion,
 )
 from mechanical_librarian.application.review_web import (
     AutomaticWithheldCondition,
+    ReviewAttentionSchemaVersion,
+    ReviewCaseDetailSchemaVersion,
+    ReviewCaseEvidenceSchemaVersion,
+    ReviewCaseHistorySchemaVersion,
+    ReviewLibrarySchemaVersion,
+    ReviewReportDetailSchemaVersion,
     ReviewWebError,
 )
 from mechanical_librarian.application.reviewer_access import (
@@ -100,8 +124,10 @@ from mechanical_librarian.domain.field_effect import (
     FieldEffectError,
     valid_activity_transition_id,
 )
+from mechanical_librarian.domain.human_decision import HumanDecisionEventSchemaVersion
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyError
 from mechanical_librarian.domain.owner_settings import (
+    OWNER_SETTINGS_SCHEMA,
     OwnerSettingsDocument,
     ProviderAdapter,
     SecretWrite,
@@ -236,8 +262,105 @@ class _LoginRequest(BaseModel):
     password: StrictStr = Field(min_length=1, max_length=1024)
 
 
+REVIEW_SESSION_SCHEMA: Final = "review-session-v1"
+MetadataPolicyNotebookSchemaVersion = Literal["metadata-policy-notebook-v2"]
+METADATA_POLICY_NOTEBOOK_SCHEMA: Final[MetadataPolicyNotebookSchemaVersion] = (
+    "metadata-policy-notebook-v2"
+)
+
+
 class _ClosedModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
+
+
+class _StoredDocumentCopy(_ClosedModel):
+    """The browser's copy of a stored document, without its storage version.
+
+    A stored document's `schema_version` guards the store, not the page: the
+    bundle identity header already ties every page to this build. Projections
+    hand a stored document as it was read, so its version is dropped here, and
+    a storage version move changes neither this API nor the browser's fixtures
+    (#1847). Response models only: a request is never silently trimmed.
+    """
+
+    @model_validator(mode="before")
+    @classmethod
+    def _without_storage_version(cls, value: object) -> object:
+        if isinstance(value, dict) and "schema_version" in value:
+            return {key: item for key, item in value.items() if key != "schema_version"}
+        return value
+
+
+_Model = TypeVar("_Model", bound=BaseModel)
+
+
+def _browser_copy(
+    model: type[BaseModel], base: type[_Model], **overrides: Any
+) -> type[_Model]:
+    """`model`'s fields under `base`, without `schema_version`, under its name.
+
+    Derived rather than restated, so the browser's copy cannot drift from the
+    domain model; the name keeps the OpenAPI component the browser decodes.
+    """
+    fields: dict[str, Any] = {
+        name: (field.annotation, field)
+        for name, field in model.model_fields.items()
+        if name != "schema_version"
+    }
+    fields.update(overrides)
+    return create_model(model.__name__, __base__=base, __module__=__name__, **fields)
+
+
+def _stored_settings(body: BaseModel) -> OwnerSettingsDocument:
+    """The owner settings document a browser body stands for."""
+
+    return OwnerSettingsDocument.model_validate(
+        {**body.model_dump(), "schema_version": OWNER_SETTINGS_SCHEMA}
+    )
+
+
+class _OwnerSettingsBody(_ClosedModel):
+    """Owner settings as the browser reads and writes them.
+
+    The storage version is the server's to add; the domain document's own
+    checks run here, so a bad body is refused as the request it is.
+    """
+
+    @model_validator(mode="after")
+    def _valid_document(self) -> Self:
+        try:
+            _stored_settings(self)
+        except ValueError as error:
+            # Pydantic's own error, re-raised as a value error this model owns.
+            raise ValueError("invalid owner settings") from error
+        return self
+
+
+if TYPE_CHECKING:
+    # The checker reads each copy as its domain model, which has every field
+    # the copy has.
+    _OwnerSettingsDocumentCopy = OwnerSettingsDocument
+    _SettingsViewCopy = SettingsView
+    _DescriptionCandidateCopy = DescriptionAdviceCandidate
+    _DescriptionDecisionCopy = AuthoredDescriptionDecision
+else:
+    _OwnerSettingsDocumentCopy = _browser_copy(
+        OwnerSettingsDocument, _OwnerSettingsBody
+    )
+    _SettingsViewCopy = _browser_copy(
+        SettingsView, _ClosedModel, document=(_OwnerSettingsDocumentCopy, ...)
+    )
+    _DescriptionCandidateCopy = _browser_copy(
+        DescriptionAdviceCandidate, _StoredDocumentCopy
+    )
+    _DescriptionDecisionCopy = _browser_copy(
+        AuthoredDescriptionDecision, _StoredDocumentCopy
+    )
+
+
+def _settings_response(view: object) -> dict[str, object]:
+    """A Settings view for the browser: the document without its version."""
+    return cast(SettingsView, view).model_dump(exclude={"document": {"schema_version"}})
 
 
 # Closed vocabularies the response models below state, so the generated
@@ -297,7 +420,7 @@ _RECORDING_REFERENCE = (
 
 class _SettingsWriteRequest(_ClosedModel):
     expected_revision: StrictInt = Field(ge=1)
-    document: OwnerSettingsDocument
+    document: _OwnerSettingsDocumentCopy
     secrets: list[SecretWrite] = Field(max_length=32)
 
 
@@ -444,6 +567,7 @@ class _CoverIdentity(_ClosedModel):
     outcome: Literal[
         "verified_manifestation_match",
         "verified_work_match",
+        "title_creator_work_match",
         "plausible_match",
         "unknown",
         "conflict",
@@ -476,21 +600,26 @@ class _CoverCandidate(_ClosedModel):
     artifact_id: str
     # A retained candidate is the original an automatic switch replaced: the
     # owner's way back, with no identity, rank or reviewer evidence (#1363).
-    candidate_kind: Literal["candidate", "retained"]
+    # A larger copy is a larger original of the current cover's own picture,
+    # which the packet does not review on its own (#1363, Codex P2).
+    candidate_kind: Literal["candidate", "larger_copy", "retained"]
     deterministic_citations: list[str]
     deterministic_rank: int | None = Field(ge=0)
     deterministic_rank_key: list[int | str] | None = Field(min_length=7, max_length=7)
-    height: _Count
+    # A retained original the decoder refused has no size or preview (#1362).
+    height: _Count | None
     identity: _CoverIdentity | None
     incumbent: bool
     match_state: Literal["same_edition", "same_book", "match_not_confirmed"]
     # A proposed cover from the exactly matched book of an audiobook with no
-    # admitted recording; display only, its identity stays as stated (#1642).
-    match_reason: Literal["matched_book"] | None
+    # admitted recording, or one whose source record has the book's title and
+    # author at the chosen Book matching level; display only, its identity and
+    # match state stay as stated (#1642, #1355).
+    match_reason: Literal["matched_book", "title_and_author"] | None
     observation: _CoverObservation | None
     original_sha256: str
     ordinal: _Count
-    preview_sha256: str
+    preview_sha256: str | None
     reference: str
     selectable: bool
     manual_eligible: bool
@@ -507,8 +636,22 @@ class _CoverCandidate(_ClosedModel):
         ]
     ]
     state: Literal["acceptable", "available", "excluded", "recommended"]
-    transport_sha256: str
-    width: _Count
+    transport_sha256: str | None
+    width: _Count | None
+
+    @model_validator(mode="after")
+    def preview_only_missing_from_retained(self) -> _CoverCandidate:
+        missing = {
+            self.height is None,
+            self.preview_sha256 is None,
+            self.transport_sha256 is None,
+            self.width is None,
+        }
+        if missing == {True, False} or (
+            True in missing and self.candidate_kind != "retained"
+        ):
+            raise ValueError("cover candidate preview is incomplete")
+        return self
 
 
 class _CoverOmission(_ClosedModel):
@@ -524,14 +667,61 @@ class _CoverIncumbent(_ClosedModel):
     state: Literal["absent", "available", "unavailable"]
 
 
-class _CoverPolicyPreferences(_ClosedModel):
+class _CoverPolicyPreferences(_StoredDocumentCopy):
     avoid_promotional_text: bool
     avoid_tie_in_branding: bool
+    current_protection: Literal["protected", "unprotected", "proposals_only"]
+    prefer_edition: bool
     prefer_minimal_composition: bool
-    schema_version: Literal["cover-policy-v1"]
 
 
-class _CoverPolicyReport(_ClosedModel):
+_CoverStageReason = Literal[
+    "title_names_other_work",
+    "current_contradicted",
+    "unreadable",
+    "wrong_shape",
+    "below_floor",
+    "edition_language",
+    "sharper_copy",
+    "edition_preference",
+]
+
+
+class _CoverStageGroup(_ClosedModel):
+    members: list[str] = Field(min_length=2, max_length=14)
+    representative: str
+
+
+class _CoverStageExclusion(_ClosedModel):
+    exclusion: Literal[
+        "wrong_shape", "below_floor", "edition_language", "omnibus_volume"
+    ]
+    reference: str
+
+
+class _CoverStage(_ClosedModel):
+    choice: str | None
+    edition_preferred: bool
+    exclusions: list[_CoverStageExclusion] = Field(max_length=13)
+    groups: list[_CoverStageGroup] = Field(max_length=13)
+    issues: list[
+        Literal[
+            "title_names_other_work",
+            "current_contradicted",
+            "unreadable",
+            "wrong_shape",
+            "below_floor",
+            "edition_language",
+            "sharper_copy",
+        ]
+    ] = Field(max_length=7)
+    # The edition language a reason names, only when that is an issue.
+    language: str | None = Field(max_length=280)
+    outcome: Literal["keep", "replace", "suggest", "hold", "fill", "empty"]
+    reason: _CoverStageReason | None
+
+
+class _CoverPolicyReport(_StoredDocumentCopy):
     acceptable_candidate_references: Annotated[
         list[str],
         Field(json_schema_extra={"uniqueItems": True}),
@@ -547,13 +737,14 @@ class _CoverPolicyReport(_ClosedModel):
     policy_reference: str
     reasons: list[Annotated[str, Field(max_length=128)]] = Field(max_length=32)
     recommended_candidate_reference: str | None
-    schema_version: Literal["cover-policy-report-v2"]
+    stage: _CoverStage
     status: Literal["recommended", "abstained"]
 
 
-class _CoverConsiderationResponse(_ClosedModel):
-    # Twelve reviewed previews and at most one retained original.
-    candidates: list[_CoverCandidate] = Field(max_length=13)
+class _CoverConsiderationResponse(_StoredDocumentCopy):
+    # Twelve reviewed previews, at most one larger copy of the current
+    # picture and at most one retained original.
+    candidates: list[_CoverCandidate] = Field(max_length=14)
     choice_contexts: list["_ChoiceContext"]
     consideration_id: str
     current: bool
@@ -570,13 +761,12 @@ class _CoverConsiderationResponse(_ClosedModel):
     reviewer_failure_code: OpenRouterPublicFailure | None = None
     reviewer_status: Literal["completed", "failed", "unavailable"]
     reviewer_unavailable_reason: CoverUnavailableReason | None
-    schema_version: Literal["cover-consideration-v6"]
     supersedes_id: str | None
     target_fingerprint: str
 
 
 class _SelectedDescriptionAdvice(_ClosedModel):
-    candidate: DescriptionAdviceCandidate
+    candidate: _DescriptionCandidateCopy
     binding: DescriptionAdviceBinding
     current: bool
 
@@ -588,9 +778,9 @@ class _DescriptionAdviceResponse(_ClosedModel):
     model: str = Field(max_length=256)
     attempt_id: str = Field(pattern=r"^description_attempt_[0-9a-f]{32}$")
     current: bool
-    candidate: DescriptionAdviceCandidate | None
+    candidate: _DescriptionCandidateCopy | None
     binding: DescriptionAdviceBinding
-    selection: AuthoredDescriptionDecision | None
+    selection: _DescriptionDecisionCopy | None
     selected_advice: _SelectedDescriptionAdvice | None
     application_outcome: Literal["verified", "no_change_required"] | None
 
@@ -701,10 +891,12 @@ class _ReviewField(_ClosedModel):
     notices: list[str]
     owner_control: _OwnerControl | None
     proposed_values: list[_ProposedValue]
-    choice_contexts: list["_ChoiceContext"]
+    choice_contexts: list["_FieldChoiceContext"]
     provenance: list[str]
     preservation_only: bool
     corroboration_sources: list[str]
+    # The digest a choice on this field binds (#1355, S10).
+    offer_digest: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
     proposal_id: str
     target_fingerprint: str
     uncertainty: list[str]
@@ -729,6 +921,12 @@ class _ChoiceContext(_ClosedModel):
     recommendation: Literal["no_recommendation", "recommended"]
     recommendation_reason: str
     selection: Literal["current", "proposed"]
+
+
+class _FieldChoiceContext(_ChoiceContext):
+    # A choice Book matching offers names its basis; the copy stays in the
+    # browser (#1355).
+    match_basis: Literal["title_and_author"] | None
 
 
 class _TargetIdentity(_ClosedModel):
@@ -816,6 +1014,12 @@ class _CaseDetailResponse(_ClosedModel):
     audiobook_review_scope: Literal["work", "recording"] | None
     comparison_notices: list[str]
     current: bool
+    # The case waits for its Book matching check: choices are refused and
+    # owner writes wait until it is reconciled (#1355, S10).
+    checking: bool
+    # That check gave up, as Policy counts it: saving Book matching again, or
+    # a restart in file mode, retries it (#1355, review round 1).
+    check_given_up: bool
     fields: list[_ReviewField]
     # The same section the recorded-evidence view carries, under the same
     # bound: a work with a review case is the one an owner opens first, and a
@@ -825,7 +1029,7 @@ class _CaseDetailResponse(_ClosedModel):
         max_length=MAX_HEALTH_OBSERVATIONS
     )
     review_case_id: str
-    schema_version: Literal["review-case-detail-v7"]
+    schema_version: ReviewCaseDetailSchemaVersion
     target: _TargetIdentity
     writes_consented: bool
 
@@ -899,7 +1103,7 @@ class _EvidenceResponse(_ClosedModel):
     missing_lineage_count: int = Field(ge=0, le=10_000)
     next_cursor: str | None
     review_case_id: str
-    schema_version: Literal["review-case-evidence-v5"]
+    schema_version: ReviewCaseEvidenceSchemaVersion
     source_ledger: list["_ProviderOutcome"] = Field(max_length=100)
 
 
@@ -922,7 +1126,7 @@ class _HistoryDecisionItem(_ClosedModel):
     outcome: Literal["accept", "keep_current", "reject", "owner_entered", "withdraw"]
     previous_value: _ProposedValue | None
     review_case_id: str
-    schema_version: Literal["human-decision-event-v1"]
+    schema_version: HumanDecisionEventSchemaVersion
     selected_value: _ProposedValue | None
 
 
@@ -961,7 +1165,19 @@ class _HistoryAutomaticItem(_ClosedModel):
     selected_value: _ProposedValue | None
 
 
-class _HistoryCoverItem(_ClosedModel):
+class _HistoryMatchingChangedItem(_ClosedModel):
+    """A field asked again because Book matching changed its offer (#1355)."""
+
+    decision_id: str
+    destination: _TargetDestination
+    kind: Literal["asked_again_matching"]
+    occurred_at: _Instant
+    origin: Literal["book_matching"]
+    review_case_id: str
+    schema_version: Literal["matching-changed-history-event-v1"]
+
+
+class _HistoryCoverItem(_StoredDocumentCopy):
     consideration_id: str
     consideration: _CoverConsiderationResponse
     decision: _DecisionProjection | _CoverAutomaticDecisionProjection | None
@@ -977,7 +1193,6 @@ class _HistoryCoverItem(_ClosedModel):
     ]
     occurred_at: _Instant
     review_case_id: str
-    schema_version: Literal["cover-consideration-event-v1"]
 
 
 class _HistoryDescriptionItem(_ClosedModel):
@@ -1006,8 +1221,8 @@ class _HistoryDescriptionItem(_ClosedModel):
     ]
     engine: Literal["codex", "openrouter"]
     model: str = Field(max_length=256)
-    candidate: DescriptionAdviceCandidate | None
-    decision: AuthoredDescriptionDecision | None
+    candidate: _DescriptionCandidateCopy | None
+    decision: _DescriptionDecisionCopy | None
 
 
 class _HistoryResponse(_ClosedModel):
@@ -1016,12 +1231,13 @@ class _HistoryResponse(_ClosedModel):
         | _HistoryDecisionItem
         | _HistoryPreviewItem
         | _HistoryAutomaticItem
+        | _HistoryMatchingChangedItem
         | _HistoryCoverItem
         | _HistoryDescriptionItem
     ] = Field(max_length=150)
     next_cursor: str | None
     review_case_id: str
-    schema_version: Literal["review-case-history-v3"]
+    schema_version: ReviewCaseHistorySchemaVersion
 
 
 class _SessionResponse(_ClosedModel):
@@ -1034,6 +1250,8 @@ class _SessionResponse(_ClosedModel):
 class _ErrorCode(_ClosedModel):
     code: str
     managed_by_file: Literal["/data/config.json"] | None = None
+    # Only `offer_changed` says why (#1355).
+    reason: Literal["unreconciled_case", "digest_mismatch"] | None = None
 
 
 class _ErrorResponse(_ClosedModel):
@@ -1091,6 +1309,9 @@ class _MediaHealthObservation(_ClosedModel):
 
 class _PreparationFailure(_ClosedModel):
     attempt: _Count
+    # The failure is a Book matching check that gave up: the row says how to
+    # retry it, as the case's own line does (#1355).
+    check_given_up: bool
     diagnostic_reference: str
     media_health: list[_MediaHealthObservation] = Field(max_length=512)
     provider: str
@@ -1203,6 +1424,7 @@ class _CoverPutBack(_ClosedModel):
             "cover_recovery",
             "cover_retention",
             "dependency",
+            "matching_changed",
             "not_applied",
             "not_sent",
             "owner_abandoned",
@@ -1236,6 +1458,14 @@ class _CoverSwitch(_ClosedModel):
     put_back: _CoverPutBack | None
     # Put back is offered only while the work's comparison has the original.
     put_back_offered: bool
+    # The measured rule's reason for a switch and the edition language it
+    # names; a fill has neither (#1363).
+    language: str | None = Field(max_length=280)
+    reason: _CoverStageReason | None
+
+
+class _CoverRuleReason(_ClosedModel):
+    reason: _CoverStageReason
 
 
 class _CoverWork(_ClosedModel):
@@ -1243,8 +1473,12 @@ class _CoverWork(_ClosedModel):
     choosable: bool
     cover: _CoverPreview | None
     group: Literal["proposal", "choice", "kept", "auto", "none"]
+    # Why the measured rules hold this cover's switch (#1363).
+    hold: _CoverRuleReason | None
     media_kind: _MediaKind
     review_case_id: str
+    # Why the measured rules suggest switching this cover (#1363).
+    suggestion: _CoverRuleReason | None
     switched: _CoverSwitch | None
     title: str
     # The library holds a cover that could not be read, as against no cover.
@@ -1406,7 +1640,7 @@ class _ReportDetailResponse(_ClosedModel):
     provider_evidence: list[_ReportProviderEvidence] = Field(max_length=1024)
     provider_evidence_truncated: bool
     report_id: str = Field(max_length=128)
-    schema_version: Literal["review-report-detail-v6"]
+    schema_version: ReviewReportDetailSchemaVersion
     title: str = Field(max_length=1024)
 
     @model_validator(mode="after")
@@ -1451,7 +1685,7 @@ class _LibraryResponse(_ClosedModel):
     # how `review-library-v1` gained a required `media_health` member and stayed
     # v1; the literal makes the declared version and the served shape the same
     # statement, and publishes it in the OpenAPI a client is built from.
-    schema_version: Literal["review-library-v5"]
+    schema_version: ReviewLibrarySchemaVersion
 
 
 class _AttentionItem(_ClosedModel):
@@ -1474,7 +1708,7 @@ class _AttentionResponse(_ClosedModel):
     items: list[_AttentionItem]
     next_cursor: str | None
     query: str | None
-    schema_version: Literal["review-attention-v1"]
+    schema_version: ReviewAttentionSchemaVersion
     total: _Count
 
 
@@ -1550,9 +1784,14 @@ class _ActivityEvent(_ClosedModel):
     )
     library: str = Field(max_length=512)
     # What current state adds to a row without changing its result: an owner
-    # choice that no longer counts, so the field asks again, or a planned
-    # automatic write held while Automatic is off (#1711).
-    note: Literal["asked_again", "held_back"] | None = None
+    # choice that no longer counts, so the field asks again (after the work
+    # came back, or after Book matching changed its offer), a planned
+    # automatic write held while Automatic is off (#1711), or a planned owner
+    # write waiting for its work's Book matching check (#1355).
+    note: (
+        Literal["asked_again", "asked_again_matching", "held_back", "waiting_for_check"]
+        | None
+    ) = None
     occurred_at: int | None = Field(default=None, ge=0)
     origin: str = Field(max_length=512)
     state: str = Field(max_length=512)
@@ -1695,7 +1934,7 @@ class _ActivityResponse(_ClosedModel):
     provider_recovery: list[_ProviderRecoveryActivity] = Field(
         default_factory=list, max_length=100
     )
-    schema_version: Literal["continuous-field-activity-v3"]
+    schema_version: ContinuousFieldActivitySchemaVersion
     suspensions: list[_ActivitySuspension]
     waiting: _ActivityWaitingReasons
 
@@ -1754,6 +1993,7 @@ class _PreparationTriggerRecord(_ClosedModel):
         "library_added",
         "title_recovery",
         "automatic_confirmed",
+        "matching_changed",
     ]
     accepted_count: int = Field(ge=1)
     first_accepted_at: int = Field(ge=0)
@@ -1801,7 +2041,7 @@ class _PreparationPresentation(_ClosedModel):
         "completed_with_failures",
         "dismissed",
     ]
-    triggers: list[_PreparationTriggerRecord] = Field(min_length=1, max_length=5)
+    triggers: list[_PreparationTriggerRecord] = Field(min_length=1, max_length=6)
     passage: _PreparationPassage
     active_books: list[_PreparationActiveBook] = Field(max_length=5)
     active_overflow: int = Field(ge=0)
@@ -1857,7 +2097,7 @@ class _PreparationResponse(_ClosedModel):
     first_boot_works: int | None = Field(default=None, ge=0)
     presentation: _PreparationPresentation | None = None
     provider_throttling: _PreparationThrottling | None = None
-    schema_version: Literal["review-preparation-v2"] = "review-preparation-v2"
+    schema_version: ReviewPreparationSchemaVersion = REVIEW_PREPARATION_SCHEMA
 
 
 class _CoverConfirmation(_ClosedModel):
@@ -1877,6 +2117,8 @@ class _DecisionRequest(_ClosedModel):
     consideration_id: StrictStr | None = Field(
         default=None, pattern=r"^cover_consideration_[0-9a-f]{64}$"
     )
+    # The field's `offer_digest` as the page showed it (#1355, S10).
+    offered_alternatives_digest: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class _DecisionAcknowledgement(_DecisionProjection):
@@ -1897,14 +2139,12 @@ class _PolicyDraftRequest(_ClosedModel):
 
 class _PolicyDraftResponse(_ClosedModel):
     policy_id: str
-    schema_version: Literal["metadata-policy-profile-v3"] = "metadata-policy-profile-v3"
 
 
-class _PolicyProfile(_ClosedModel):
+class _PolicyProfile(_StoredDocumentCopy):
     destinations: dict[StrictStr, StrictStr] = Field(max_length=16)
     name: StrictStr = Field(min_length=1, max_length=80)
     options: dict[StrictStr, StrictStr] = Field(max_length=16)
-    schema_version: Literal["metadata-policy-profile-v3"]
 
 
 class _RichQualificationBase(_ClosedModel):
@@ -2001,7 +2241,7 @@ class _CoverQualification(_RichQualificationBase):
     automatic_available: Literal[True]
     disposition: Literal["pass"]
     field: Literal["cover_order"]
-    option: Literal["fixed_source_order", "replace_if_strictly_better"]
+    option: Literal["fixed_source_order"]
 
 
 class _TitleEbookQualification(_RichQualificationBase):
@@ -2173,7 +2413,6 @@ class _AudiobookQualification(_ClosedModel):
         "replace_descriptive",
         "prefer_isbn13",
         "adult_product",
-        "replace_if_strictly_better",
     ]
     operation: Literal[
         "fill",
@@ -2197,8 +2436,8 @@ class _PolicyProfileResponse(_ClosedModel):
     policy_id: str
     profile: _PolicyProfile
     rich_qualification: list[_RichQualification]
-    schema_version: Literal["metadata-policy-notebook-v1"] = (
-        "metadata-policy-notebook-v1"
+    schema_version: MetadataPolicyNotebookSchemaVersion = (
+        METADATA_POLICY_NOTEBOOK_SCHEMA
     )
 
 
@@ -2400,7 +2639,7 @@ class _PreviewFieldOutcomeResponse(_ClosedModel):
     rule_id: str
 
 
-class _PreviewOutcomeSetResponse(_ClosedModel):
+class _PreviewOutcomeSetResponse(_StoredDocumentCopy):
     authority: Literal["none"]
     catalogue_sha256: str
     decision_policy_sha256: str
@@ -2415,7 +2654,6 @@ class _PreviewOutcomeSetResponse(_ClosedModel):
     report_id: str
     resolved_policy_id: str
     review_case_id: str
-    schema_version: Literal["shadow-outcome-set-v11"]
     source_decision_set_id: str
     target_fingerprint: str
 
@@ -2424,7 +2662,7 @@ class _PreviewSampleResponse(_ClosedModel):
     authority: Literal["none"]
     items: list[_PreviewOutcomeSetResponse]
     next_cursor: None
-    schema_version: Literal["preview-outcome-sample-v1"]
+    schema_version: PreviewOutcomeSampleSchemaVersion
 
 
 class _PolicyTransitionFields(TypedDict):
@@ -2791,7 +3029,13 @@ def create_review_app(
             and detail.get("managed_by_file") == "/data/config.json"
             else None
         )
-        return _error(error.status_code, str(code), managed_by_file)
+        reason = detail.get("reason") if type(detail) is dict else None
+        return _error(
+            error.status_code,
+            str(code),
+            managed_by_file,
+            reason if code == "offer_changed" and type(reason) is str else None,
+        )
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(
@@ -2895,23 +3139,23 @@ def _register_settings_routes(
 
     @app.get(
         "/api/v1/settings",
-        response_model=SettingsView,
+        response_model=_SettingsViewCopy,
         responses={status: {"model": _ErrorResponse} for status in (401, 503)},
     )
     def settings(
         ml_session: str = Depends(authenticated_session_cookie),
-    ) -> SettingsView:
+    ) -> dict[str, object]:
         _require_session(application, ml_session)
         if not application.settings_available:
             raise HTTPException(503, detail={"code": "settings_unavailable"})
         try:
-            return cast(SettingsView, application.owner_settings())
+            return _settings_response(application.owner_settings())
         except ReviewApplicationError:
             raise HTTPException(503, detail={"code": "settings_unavailable"}) from None
 
     @app.patch(
         "/api/v1/settings",
-        response_model=SettingsView,
+        response_model=_SettingsViewCopy,
         responses={
             status: {"model": _ErrorResponse}
             for status in (401, 403, 409, 413, 422, 503)
@@ -2921,21 +3165,23 @@ def _register_settings_routes(
         request: _SettingsWriteRequest,
         ml_session: str = Depends(authenticated_session_cookie),
         x_csrf_token: str = Header(),
-    ) -> SettingsView:
+    ) -> dict[str, object]:
         _require_session(application, ml_session, x_csrf_token)
         if not application.settings_available:
             raise HTTPException(503, detail={"code": "settings_unavailable"})
         try:
             value = application.write_owner_settings(
-                request.document, request.expected_revision, tuple(request.secrets)
+                _stored_settings(request.document),
+                request.expected_revision,
+                tuple(request.secrets),
             )
         except ReviewApplicationError as error:
             raise _settings_write_error(error) from None
-        return cast(SettingsView, value)
+        return _settings_response(value)
 
     @app.post(
         "/api/v1/provider-recovery/retry",
-        response_model=SettingsView,
+        response_model=_SettingsViewCopy,
         responses={
             status: {"model": _ErrorResponse}
             for status in (401, 403, 409, 413, 422, 503)
@@ -2945,7 +3191,7 @@ def _register_settings_routes(
         request: _ProviderRecoveryRetryRequest,
         ml_session: str = Depends(authenticated_session_cookie),
         x_csrf_token: str = Header(),
-    ) -> SettingsView:
+    ) -> dict[str, object]:
         _require_session(application, ml_session, x_csrf_token)
         if not application.settings_available:
             raise HTTPException(503, detail={"code": "settings_unavailable"})
@@ -2953,7 +3199,7 @@ def _register_settings_routes(
             value = application.retry_provider_recovery(request.expected_generation)
         except ReviewApplicationError as error:
             raise _settings_write_error(error) from None
-        return cast(SettingsView, value)
+        return _settings_response(value)
 
 
 def _settings_write_error(error: ReviewApplicationError) -> HTTPException:
@@ -3363,7 +3609,7 @@ def _register_session_and_operations_routes(
             actor="owner",
             csrf_token=tokens.csrf_token,
             expires_at=tokens.expires_at,
-            schema_version="review-session-v1",
+            schema_version=REVIEW_SESSION_SCHEMA,
         )
 
     @app.post(
@@ -4037,6 +4283,7 @@ def _register_case_and_effect_routes(
                     cover_confirmation=None
                     if payload.cover_confirmation is None
                     else payload.cover_confirmation.model_dump(mode="json"),
+                    offered_alternatives_digest=payload.offered_alternatives_digest,
                 )
             )
         )
@@ -5014,9 +5261,10 @@ def _register_html_routes(
 def _react_asset_recovery_response() -> HTMLResponse:
     return HTMLResponse(
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
-        "<title>Review workspace unavailable</title></head><body>"
-        "<main><h1>Review workspace unavailable</h1>"
-        "<p>Ask the owner to restart after rebuilding the installed assets.</p>"
+        "<title>Mechanical Librarian could not be loaded</title></head><body>"
+        "<main><h1>Mechanical Librarian could not be loaded</h1>"
+        "<p>The page files are missing or do not match this version. "
+        "Rebuild the image, then restart the container.</p>"
         "</main></body></html>",
         status_code=503,
     )
@@ -5252,20 +5500,36 @@ def _decision_call(call: Callable[[], dict[str, object]]) -> dict[str, object]:
             "nothing_to_withdraw": 409,
             "automatic_hold": 409,
             "decision_written": 409,
+            # Distinct from `stale`: the case stands, its field's offer moved
+            # (#1355).
+            "offer_changed": 409,
         }.get(error.code, 503)
-        raise HTTPException(status, detail={"code": error.code}) from None
+        reason = getattr(error, "reason", None)
+        raise HTTPException(
+            status,
+            detail={
+                "code": error.code,
+                **(
+                    {"reason": reason}
+                    if error.code == "offer_changed" and type(reason) is str
+                    else {}
+                ),
+            },
+        ) from None
 
 
 def _error(
     status_code: int,
     code: str,
     managed_by_file: Literal["/data/config.json"] | None = None,
+    reason: str | None = None,
 ) -> JSONResponse:
     return JSONResponse(
         {
             "error": {
                 "code": code,
                 **({"managed_by_file": managed_by_file} if managed_by_file else {}),
+                **({"reason": reason} if reason else {}),
             },
             "schema_version": "review-error-v1",
         },

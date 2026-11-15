@@ -5,6 +5,7 @@ merge on reopen, and publication preconditions.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import tempfile
 import time
@@ -548,6 +549,81 @@ def test_final_currentness_rejects_same_path_abs_byte_drift() -> None:
     with pytest.raises(CurrentnessError):
         service.run("item-1", 0)
     assert {} == repository.values
+
+
+@pytest.mark.parametrize(
+    ("served", "published"),
+    ((b"refused-original", True), (b"changed-after-observation", False)),
+    ids=("unchanged", "changed"),
+)
+def test_final_currentness_compares_the_digest_of_refused_abs_bytes(
+    served: bytes, published: bool
+) -> None:
+    # Bytes the decoder refused are bound exactly as decoded bytes are, so a
+    # report never publishes over a cover that changed after it read it
+    # (#1853).
+    selected = TargetFile("a" * 64, "book.epub", "epub")
+    cover = TargetCover("descriptor", "/cover", "item-1")
+
+    class Target(FakeTarget):
+        def read_cover(self, value: TargetCover, *, deadline=None) -> bytes:
+            assert value == cover
+            return served
+
+    target = Target(
+        [
+            TargetSnapshot("ebook", "Title", (selected,), cover),
+            TargetSnapshot("ebook", "Title", (selected,), cover),
+        ]
+    )
+    refused = hashlib.sha256(b"refused-original").hexdigest()
+
+    class Observer:
+        def observe(self, _target, _providers, current, *_args):
+            return current
+
+        def observe_current(self, *_args, **_kwargs):
+            return (
+                CoverSource(
+                    cover_source_id(CoverSourceKind.ABS, "descriptor"),
+                    CoverSourceKind.ABS,
+                    CoverSourceState.DECODE_FAILED,
+                    original_digest=refused,
+                ),
+            )
+
+    repository = FakeReportRepository()
+    service = GenerateMetadataReport(
+        target=target,
+        inspector=FakeInspector(InspectionResult("c" * 64, ())),
+        repository_factory=lambda: cast(ReportRepository, repository),
+        providers=(),
+        connection=TargetConnectionConfiguration(
+            "primary", "https://example.invalid", "/private/target"
+        ),
+        library=LibraryConfiguration(
+            "ebooks", "primary", "library-id", "ebook", "books", ()
+        ),
+        mount=MediaMountConfiguration("books", "/media", "/library", True),
+        limits=ReportLimits(),
+        cover_observer=Observer(),
+    )
+    if not published:
+        with pytest.raises(CurrentnessError):
+            service.run("item-1", 0)
+        assert {} == repository.values
+        return
+    service.run("item-1", 0)
+    (document,) = repository.values.values()
+    (source,) = (
+        source
+        for source in MetadataReport.from_json(document).cover_sources
+        if source.kind is CoverSourceKind.ABS
+    )
+    assert (source.state, source.original_digest) == (
+        CoverSourceState.DECODE_FAILED,
+        refused,
+    )
 
 
 def test_repository_closes_when_inspection_or_provider_validation_fails() -> None:

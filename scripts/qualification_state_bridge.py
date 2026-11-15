@@ -368,6 +368,8 @@ def _augment_provider(provider: dict[str, object]) -> None:
     provider["recording_lookup_candidates"] = []
     provider["refused_products"] = []
     provider["audio_editions"] = []
+    provider["identity_refused_candidates"] = []
+    provider["identity_refused_truncated"] = 0
     provider["dispatch_lineage"] = None
     provider["transformation_lineage"] = None
     for value in _list(provider["lanes"]):
@@ -388,6 +390,7 @@ def _augment_provider(provider: dict[str, object]) -> None:
         lane["exhausted_dispatch"] = []
         lane["recording_lookup_hints"] = []
         lane["dispatch"] = None
+        lane["identity_refused_new"] = []
 
 
 def _project_source_field_results(
@@ -525,10 +528,12 @@ def _reconstruct_report(document: str) -> _ReconstructedReport:
             # followed no Open Library redirect, so a retrieved Open Library
             # cover was served by `covers.openlibrary.org` itself; every other
             # source states none. A retrieved source's artifact is invalidated
-            # below in any case, so no family is ever kept.
+            # below in any case, so no family is ever kept. v26 recorded no
+            # digest of refused bytes either.
             cover = _cover_source_from_data(
                 {
                     **cover_data,
+                    "original_digest": None,
                     "final_host": (
                         CoverFinalHost.COVERS_OPEN_LIBRARY.value
                         if cover_data["kind"] == CoverSourceKind.OPEN_LIBRARY.value

@@ -117,6 +117,7 @@ _FAILURE_REASONS = {
     "cover_retention": "Mechanical Librarian could not save a copy of the current "
     "cover, so it left the cover unchanged",
     "dependency": "Something this change depended on moved",
+    "matching_changed": "Book matching changed after this was prepared",
     "not_applied": "Audiobookshelf did not apply the change",
     "not_sent": "This change was not sent to Audiobookshelf",
     "owner_abandoned": "You stopped this change",
@@ -243,10 +244,6 @@ _POLICY_OPTION_LABELS = {
     ("description_fill", "google_visible_text"): "Visible Google text",
     ("description_fill", "replace_safe_plain_text"): "Fill empty or replace safe text",
     ("cover_order", "fixed_source_order"): "Fill from confirmed covers",
-    (
-        "cover_order",
-        "replace_if_strictly_better",
-    ): "Replace with a clearly larger cover",
     ("asin", "preserve_exact"): "Preserve exact ASIN",
     ("asin", "ebook_manifestation"): "Ebook edition ASIN",
     ("explicit", "unsupported"): "Leave flag unchanged",

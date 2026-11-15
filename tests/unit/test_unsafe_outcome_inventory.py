@@ -103,11 +103,17 @@ _CASE_CALL: Row = {
     (404, "*"): "pre-commit",
 }
 
-# `_decision_call`. Every refusal is raised by the decision transaction before
-# it commits (`adapters/persistence/decisions.py`); `decision_written` refuses
-# a withdrawal of a decision already written to the target (`:740`). A read
-# after the commit is absorbed by `_decision_confirmation`; the `run`
-# catch-all is `unavailable`.
+# `_decision_call`. Every refusal is raised before the decision is written:
+# by the decision transaction, which then rolls back
+# (`adapters/persistence/decisions.py`), or, for `offer_changed` on a case that
+# waits for its Book matching check, by `require_reconciled_case` after the
+# rollback. That one commits a transaction first, but only to queue the case's
+# check (`request_matching_check`): a background side effect, not owner state,
+# and no decision is recorded (#1355, amendment 4). `offer_changed` with
+# `digest_mismatch` is raised inside the decision transaction.
+# `decision_written` refuses a withdrawal of a decision already written to the
+# target. A read after the commit is absorbed by `_decision_confirmation`; the
+# `run` catch-all is `unavailable`.
 _DECISION: Row = {
     **{
         (409, code): "pre-commit"
@@ -118,6 +124,7 @@ _DECISION: Row = {
             "nothing_to_withdraw",
             "automatic_hold",
             "decision_written",
+            "offer_changed",
         )
     },
     **{

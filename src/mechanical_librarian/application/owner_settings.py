@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextlib import AbstractContextManager
 from typing import Protocol
 
 from mechanical_librarian.application.configuration import ApplicationConfiguration
 from mechanical_librarian.domain.owner_settings import (
+    OWNER_SETTINGS_SCHEMA,
+    MatchingCheck,
     OwnerSettingsDocument,
     OwnerSettingsError,
     SecretPresence,
@@ -61,12 +64,27 @@ class FileOwnerSettingsRepository:
     """File authority is observable but never writable through this boundary."""
 
     def __init__(
-        self, document: OwnerSettingsDocument, secrets: tuple[SecretPresence, ...] = ()
+        self,
+        document: OwnerSettingsDocument,
+        secrets: tuple[SecretPresence, ...] = (),
+        matching_check: Callable[[str], MatchingCheck] | None = None,
     ) -> None:
         self._document = document
         self._secrets = secrets
+        self._matching_check = matching_check
+
+    @classmethod
+    def of(
+        cls,
+        projection: SettingsView,
+        matching_check: Callable[[str], MatchingCheck] | None = None,
+    ) -> FileOwnerSettingsRepository:
+        """The repository serving ``file_settings_projection``'s view."""
+        return cls(projection.document, projection.secrets, matching_check)
 
     def read(self) -> SettingsView:
+        # The file's Book matching level is checked at startup, so Policy reads
+        # how far that check has come in file mode too (#1355, amendment 5).
         return SettingsView(
             document=self._document,
             fields=file_field_metadata(self._document),
@@ -74,6 +92,9 @@ class FileOwnerSettingsRepository:
             provider_capabilities=provider_capabilities(self._document),
             authority="file",
             managed_path="/data/config.json",
+            matching_check=None
+            if self._matching_check is None
+            else self._matching_check(self._document.matching.work_identity),
         )
 
     def write(
@@ -97,7 +118,7 @@ def file_settings_projection(
     review = configuration.review
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v4",
+            "schema_version": OWNER_SETTINGS_SCHEMA,
             "revision": 1,
             "connections": [
                 {"name": value.name, "endpoint": value.endpoint}
@@ -157,7 +178,10 @@ def file_settings_projection(
                 "avoid_promotional_text": review.cover_avoid_promotional_text,
                 "avoid_tie_in_branding": review.cover_avoid_tie_in_branding,
                 "prefer_minimal_composition": review.cover_prefer_minimal_composition,
+                "current_protection": review.cover_current_protection,
+                "prefer_edition": review.cover_prefer_edition,
             },
+            "matching": {"work_identity": review.work_identity.value},
         }
     )
     return SettingsView(

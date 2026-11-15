@@ -22,6 +22,10 @@ from unittest.mock import call, patch
 import pytest
 from PIL import Image
 
+from mechanical_librarian.application.cover_packet_semantics import (
+    COVER_REVIEW_PACKET_SCHEMA,
+)
+
 ROOT = Path(__file__).parents[2]
 sys.path.insert(0, str(ROOT / "workbench"))
 
@@ -141,7 +145,7 @@ def _cover_request() -> object:
     body = {
         "candidates": [candidate],
         "omissions": [],
-        "schema_version": "cover-review-packet-v2",
+        "schema_version": COVER_REVIEW_PACKET_SCHEMA,
     }
     packet = canonical_json(
         {

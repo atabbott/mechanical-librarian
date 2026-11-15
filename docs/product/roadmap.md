@@ -39,6 +39,10 @@ The [changelog](../../CHANGELOG.md) lists each change you can see.
 - 0.31.0 Coverage. Mechanical Librarian uses more of the evidence it already
   fetches, and each loosened rule has a measured error rate. Measured rules
   choose covers before any AI model helps.
+- 0.33.0 First library. On a first install with thousands of works, Mechanical
+  Librarian shows the real problems first. You can follow progress through the
+  backlog and check what write permission covers at that scale. Ebooks held
+  only as AZW3 or MOBI files become works.
 - 0.36.1 Persistence health. The database stays fast at library scale, and
   its size stops growing with every source lookup. A restored or upgraded
   install starts safely, or says why it stopped.
@@ -47,10 +51,6 @@ The [changelog](../../CHANGELOG.md) lists each change you can see.
 
 - 0.32.0 Series and structure. Each series gets one identity, and a read-only
   view shows what each series is missing.
-- 0.33.0 First library. On a first install with thousands of works, Mechanical
-  Librarian shows the real problems first. You can follow progress through the
-  backlog and check what write permission covers at that scale. Ebooks held
-  only as AZW3 or MOBI files become works.
 - 0.34.0 Living library. When works arrive after the first install, Mechanical
   Librarian tells you what happened to them.
 - 0.35.0 Library health findings. Mechanical Librarian reports duplicate works,

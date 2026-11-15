@@ -29,6 +29,7 @@ from mechanical_librarian.application.cover_policy import (
     CoverPolicy,
     adjudicate_cover_policy,
 )
+from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 from .results import WorkbenchResult
 
 Operation = Callable[..., object]
@@ -277,6 +278,7 @@ class CoverIdentityRequest:
     report_id: str
     database: str = "reports.sqlite"
     artifacts: str = "artifacts"
+    work_identity_level: WorkIdentityLevel = WorkIdentityLevel.IDENTIFIER
 
     def __post_init__(self) -> None:
         _required(self.report_id, "report id")
@@ -314,6 +316,7 @@ class CoverPolicyRequest:
     profile: str = "contained-reviewer-profile.json"
     database: str = "reports.sqlite"
     artifacts: str = "artifacts"
+    work_identity_level: WorkIdentityLevel = WorkIdentityLevel.IDENTIFIER
 
     def __post_init__(self) -> None:
         _required(self.report_id, "report id")
@@ -569,6 +572,7 @@ def _execute(
             read_preview=_cover_preview_reader(
                 selected, database, artifacts, request.report_id
             ),
+            work_identity_level=request.work_identity_level,
         ).document
     elif isinstance(request, CoverObservationRequest):
         database = context.path(request.database)
@@ -616,6 +620,7 @@ def _execute(
             read_preview=_cover_preview_reader(
                 selected, database, artifacts, request.report_id
             ),
+            work_identity_level=request.work_identity_level,
         ).document
     elif isinstance(request, ContainedReviewerRequest):
         paths = tuple(

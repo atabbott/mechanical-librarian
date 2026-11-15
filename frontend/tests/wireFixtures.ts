@@ -55,6 +55,11 @@ export const choiceContext = (overrides: Overrides = {}) => ({
   ...overrides,
 })
 
+// `_FieldChoiceContext`: a field's choice context also says whether Book
+// matching offered the choice (#1355).
+export const fieldChoiceContext = (overrides: Overrides = {}) =>
+  choiceContext({ match_basis: null, ...overrides })
+
 // `_TargetIdentity`.
 export const targetIdentity = (overrides: Overrides = {}) => ({
   authors: ['Ada Example'],
@@ -81,7 +86,7 @@ export const reviewField = (overrides: Overrides = {}) => ({
   automatic_selection_sources: [],
   automatic_withheld_reason: null,
   automatic_withheld_condition: null,
-  choice_contexts: [choiceContext()],
+  choice_contexts: [fieldChoiceContext()],
   classification: 'needs_attention',
   classification_cause: 'review_needed',
   classification_reason: 'This field needs your review.',
@@ -106,6 +111,7 @@ export const reviewField = (overrides: Overrides = {}) => ({
   navigation_role: 'attention',
   needs_attention: true,
   notices: [],
+  offer_digest: 'd'.repeat(64),
   owner_control: null,
   preservation_only: false,
   proposal_id: 'proposal-1',
@@ -119,6 +125,8 @@ export const reviewField = (overrides: Overrides = {}) => ({
 // `GET /api/v1/review-cases/{review_case_id}` 200.
 export const caseDetail = (overrides: Overrides = {}) => ({
   audiobook_review_scope: null,
+  check_given_up: false,
+  checking: false,
   comparison_notices: [],
   current: true,
   fields: [reviewField()],
@@ -126,7 +134,7 @@ export const caseDetail = (overrides: Overrides = {}) => ({
   recording_admission_basis: null,
   recording_identity_basis: null,
   review_case_id: 'case-1',
-  schema_version: 'review-case-detail-v7',
+  schema_version: 'review-case-detail-v8',
   target: targetIdentity(),
   writes_consented: false,
   ...overrides,
@@ -181,7 +189,16 @@ export const coverPolicyReport = (overrides: Overrides = {}) => ({
   policy_reference: 'cover-policy-synthetic',
   reasons: [],
   recommended_candidate_reference: null,
-  schema_version: 'cover-policy-report-v2',
+  stage: {
+    choice: null,
+    edition_preferred: false,
+    exclusions: [],
+    groups: [],
+    issues: [],
+    language: null,
+    outcome: 'keep',
+    reason: null,
+  },
   status: 'abstained',
   ...overrides,
 })
@@ -199,8 +216,9 @@ export const coverConsideration = (overrides: Overrides = {}) => ({
   policy_preferences: {
     avoid_promotional_text: false,
     avoid_tie_in_branding: false,
+    current_protection: 'protected',
+    prefer_edition: false,
     prefer_minimal_composition: false,
-    schema_version: 'cover-policy-v1',
   },
   policy_reference: 'cover-policy-synthetic',
   provider_fetching: false,
@@ -211,7 +229,6 @@ export const coverConsideration = (overrides: Overrides = {}) => ({
   reviewer_model: null,
   reviewer_status: 'unavailable',
   reviewer_unavailable_reason: null,
-  schema_version: 'cover-consideration-v6',
   supersedes_id: null,
   target_fingerprint: 'fingerprint-1',
   ...overrides,
@@ -275,7 +292,6 @@ export const historyCoverItem = (overrides: Overrides = {}) => ({
   kind: 'no_action',
   occurred_at: 3,
   review_case_id: 'case-1',
-  schema_version: 'cover-consideration-event-v1',
   ...overrides,
 })
 
@@ -297,7 +313,7 @@ export const caseHistory = (overrides: Overrides = {}) => ({
   items: [],
   next_cursor: null,
   review_case_id: 'case-1',
-  schema_version: 'review-case-history-v3',
+  schema_version: 'review-case-history-v4',
   ...overrides,
 })
 

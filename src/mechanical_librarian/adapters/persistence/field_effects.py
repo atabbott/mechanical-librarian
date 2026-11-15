@@ -51,6 +51,8 @@ from typing import cast
 
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
 from mechanical_librarian.adapters.persistence.field_effect_validation import (
+    FIELD_EFFECT_CONSENT_STATE_SCHEMA,
+    FIELD_EFFECT_MANUAL_HOLD_SCHEMA,
     _consent_state,
 )
 from mechanical_librarian.adapters.persistence.retained_covers import (
@@ -81,6 +83,7 @@ from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
 from mechanical_librarian.domain.description_advice import AuthoredDescriptionDecision
 from mechanical_librarian.domain.field_effect import (
+    FIELD_EFFECT_EVENT_SCHEMA,
     FIELD_EFFECT_FAILURES,
     EffectConsent,
     FieldEffectError,
@@ -337,7 +340,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                                 "basis": raw["basis"],
                                 "consent": consent.to_data(),
                                 "current": False,
-                                "schema_version": "field-effect-consent-state-v2",
+                                "schema_version": FIELD_EFFECT_CONSENT_STATE_SCHEMA,
                                 "updated_at": granted_at,
                             }
                         )
@@ -361,7 +364,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                             "basis": {"kind": "owner_grant"},
                             "consent": consent.to_data(),
                             "current": True,
-                            "schema_version": "field-effect-consent-state-v2",
+                            "schema_version": FIELD_EFFECT_CONSENT_STATE_SCHEMA,
                             "updated_at": granted_at,
                         }
                     )
@@ -443,7 +446,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                                     "basis": raw["basis"],
                                     "consent": consent.to_data(),
                                     "current": False,
-                                    "schema_version": "field-effect-consent-state-v2",
+                                    "schema_version": FIELD_EFFECT_CONSENT_STATE_SCHEMA,
                                     "updated_at": granted_at,
                                 }
                             ),
@@ -480,7 +483,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                                         "basis": raw["basis"],
                                         "consent": consent.to_data(),
                                         "current": False,
-                                        "schema_version": "field-effect-consent-state-v2",
+                                        "schema_version": FIELD_EFFECT_CONSENT_STATE_SCHEMA,
                                         "updated_at": granted_at,
                                     }
                                 ),
@@ -508,7 +511,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                                     "basis": {"kind": "owner_grant"},
                                     "consent": consent.to_data(),
                                     "current": True,
-                                    "schema_version": "field-effect-consent-state-v2",
+                                    "schema_version": FIELD_EFFECT_CONSENT_STATE_SCHEMA,
                                     "updated_at": granted_at,
                                 }
                             ),
@@ -628,7 +631,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                         "basis": raw["basis"],
                         "consent": consent.to_data(),
                         "current": False,
-                        "schema_version": "field-effect-consent-state-v2",
+                        "schema_version": FIELD_EFFECT_CONSENT_STATE_SCHEMA,
                         "updated_at": changed_at,
                     }
                 )
@@ -729,7 +732,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                                 },
                                 "consent": carried.to_data(),
                                 "current": True,
-                                "schema_version": "field-effect-consent-state-v2",
+                                "schema_version": FIELD_EFFECT_CONSENT_STATE_SCHEMA,
                                 "updated_at": activated_at,
                             }
                         ),
@@ -750,7 +753,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 "decision_id": decision_id,
                 "pending_return": None,
                 "review_case_id": review_case_id,
-                "schema_version": "field-effect-manual-hold-v2",
+                "schema_version": FIELD_EFFECT_MANUAL_HOLD_SCHEMA,
                 "updated_at": changed_at,
             }
         )
@@ -926,7 +929,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                     "destination": destination,
                     "review_case_id": review_case_id,
                     "pending_return": None,
-                    "schema_version": "field-effect-manual-hold-v2",
+                    "schema_version": FIELD_EFFECT_MANUAL_HOLD_SCHEMA,
                     "updated_at": changed_at,
                 }
             )
@@ -1241,7 +1244,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                         else None,
                         "consent": member.consent.to_data(),
                         "current": True,
-                        "schema_version": "field-effect-consent-state-v2",
+                        "schema_version": FIELD_EFFECT_CONSENT_STATE_SCHEMA,
                         "updated_at": member.consent.granted_at,
                     }
                 )
@@ -1339,7 +1342,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                     != (
                         "field-effect-title-subtitle-event-v1"
                         if operation.plan.subtitle_companion is not None
-                        else "field-effect-event-v1"
+                        else FIELD_EFFECT_EVENT_SCHEMA
                     )
                     or raw.get("subtitle_companion")
                     != (
@@ -1656,7 +1659,17 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
         changed_at: int,
         *,
         required: bool,
+        failure: str | None = None,
     ) -> int:
+        """Withdraw a decision's authority and close the effects waiting on it.
+
+        A ready effect supersedes, unless ``failure`` names why it no longer
+        stands: ``matching_changed`` closes it as ``stale`` with that failure,
+        so Activity says Book matching changed (#1355, amendment 17). A plan a
+        lost connection released supersedes either way.
+        """
+        if failure not in {None, "matching_changed"}:
+            raise FieldEffectError("invalid_transition")
         row = self._connection.execute(
             "SELECT document,current FROM field_effect_authorities WHERE decision_id=?",
             (decision_id,),
@@ -1686,13 +1699,16 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             (decision_id, decision_id),
         ).fetchall()
         for document, state in rows:
+            closed, closed_failure = (
+                ("stale", failure)
+                if failure is not None and state != "stale"
+                else ("superseded", "authority_superseded")
+            )
             operation = FieldEffectOperation.from_json(document).transition(
-                "superseded", at=changed_at, failure="authority_superseded"
+                closed, at=changed_at, failure=closed_failure
             )
             self._update_field_effect(operation, state)
-            self._record_field_effect_event(
-                operation, "superseded", operation.updated_at
-            )
+            self._record_field_effect_event(operation, closed, operation.updated_at)
             self._schedule_field_effect_cleanup(operation, changed_at)
         return len(rows)
 
@@ -2212,7 +2228,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             (operation.plan.plan_id,),
         ).fetchone()[0]
         content = {
-            "schema_version": "field-effect-event-v1",
+            "schema_version": FIELD_EFFECT_EVENT_SCHEMA,
             "plan_id": operation.plan.plan_id,
             "decision_id": operation.plan.authority.decision_id,
             "origin": operation.plan.authority.origin,

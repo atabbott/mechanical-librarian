@@ -160,7 +160,7 @@ from mechanical_librarian.application.continuous_field_effects import (
 from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
 )
-from mechanical_librarian.application.cover_policy import CoverPolicy
+from mechanical_librarian.application.cover_policy import cover_policy_of
 from mechanical_librarian.application.cover_retention import CoverRetention
 from mechanical_librarian.application.decision_preview import preview_shadow_decision
 from mechanical_librarian.application.description_advice import (
@@ -502,7 +502,7 @@ class _PublicationReceiptRepository(Protocol):
 
 
 class _ManifestEntry(TypedDict):
-    """One ``batch-manifest-v5`` entry, exactly as ``parse_manifest`` validates it."""
+    """One batch-manifest entry, exactly as ``parse_manifest`` validates it."""
 
     connection: str
     library: str
@@ -514,7 +514,7 @@ class _ManifestEntry(TypedDict):
 
 
 class _Manifest(TypedDict):
-    """The closed ``batch-manifest-v5`` document ``parse_manifest`` returns.
+    """The closed batch-manifest document ``parse_manifest`` returns.
 
     ``parse_manifest`` rejects every document whose key set, value types, entry
     shape, and derived call maxima do not match this exactly, so reading it back
@@ -2337,6 +2337,9 @@ def compose_store_runtime_generation(
                 cover_considerations=cover_considerations,
                 settings=OwnerSettingsOperations(settings_store),
                 reviewer_access=reviewer_access,
+                align_book_matching=partial(
+                    repository.align_book_matching, review.work_identity.value
+                ),
                 settings_activation=None if activation is None else activation.activate,
                 first_boot=first_boot,
                 acknowledge_first_boot=repository.acknowledge_first_boot_preparation,
@@ -2739,7 +2742,7 @@ def run_review_server(
             )
             projection = file_settings_projection(configuration, credentials)
             settings = OwnerSettingsOperations(
-                FileOwnerSettingsRepository(projection.document, projection.secrets)
+                FileOwnerSettingsRepository.of(projection, repository.matching_check)
             )
             password_binding = load_owner_password_binding(
                 Path(review.owner_password_hash_file)
@@ -2882,6 +2885,9 @@ def run_review_server(
                         provider_recovery, configuration, credentials, "managed_by_file"
                     ),
                     provider_recovery=provider_recovery,
+                    align_book_matching=partial(
+                        repository.align_book_matching, review.work_identity.value
+                    ),
                 )
                 active_review_application = review_application
                 app = create_review_app(review_application, review)
@@ -3187,14 +3193,7 @@ def _compose_cover_considerations(
             artifacts = CoverArtifactStore(artifact_store_path, create=False)
         return artifacts
 
-    policy = CoverPolicy(
-        avoid_promotional_text=review.cover_avoid_promotional_text,
-        avoid_tie_in_branding=review.cover_avoid_tie_in_branding,
-        prefer_minimal_composition=review.cover_prefer_minimal_composition,
-    )
-
-    def bind_policy(policy_reference: str, replay_reference: str) -> None:
-        repository.bind_current_cover_authority(policy_reference, replay_reference)
+    policy = cover_policy_of(review)
 
     provider_fetching = (
         (lambda _report: False)
@@ -3218,7 +3217,7 @@ def _compose_cover_considerations(
         reviewer_dispatch=reviewer_access.dispatch_cover_observation,
         reviewer_identity=reviewer_access.current_cover_observation_identity,
         reviewer_revision_current=reviewer_access.revision_is_current,
-        bind_policy=bind_policy,
+        bind_policy=repository.bind_current_cover_authority,
         provider_fetching=provider_fetching,
         retained_original=repository.retained_cover_original,
         # Opened per check, so composing never creates the private directory.
@@ -3226,6 +3225,7 @@ def _compose_cover_considerations(
         require_retained=None
         if retained_root is None
         else lambda digest: RetainedCoverStore(retained_root).require(digest),
+        work_identity_level=review.work_identity,
     )
     repository.bind_owner_cover_validation(service.require_owner_cover)
     repository.bind_cover_consideration_currentness(

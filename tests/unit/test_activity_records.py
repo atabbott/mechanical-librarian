@@ -483,8 +483,14 @@ def test_a_write_distinguishes_its_lifecycle_while_keeping_one_change(
             "Prepared change replaced",
             "A newer decision replaced the one behind this change",
         ),
+        (
+            "stale",
+            "matching_changed",
+            "Prepared change closed",
+            "Book matching changed after this was prepared",
+        ),
     ),
-    ids=("paused", "closed", "stopped", "failed", "replaced"),
+    ids=("paused", "closed", "stopped", "failed", "replaced", "matching_changed"),
 )
 def test_a_stopped_write_says_why_and_never_claims_a_new_value(
     state: str, failure: str, compact: str, reason: str

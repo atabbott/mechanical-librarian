@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from decimal import Decimal, InvalidOperation
-from typing import Annotated, Literal
+from typing import Annotated, Final, Literal
 
 from pydantic import (
     BaseModel,
@@ -15,6 +15,9 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+
+ReviewerAccessSchemaVersion = Literal["reviewer-access-v3"]
+REVIEWER_ACCESS_SCHEMA: Final[ReviewerAccessSchemaVersion] = "reviewer-access-v3"
 
 ReviewerTask = Literal["cover_observation", "description_rewrite"]
 ReviewerEngine = Literal["codex", "openrouter"]
@@ -98,7 +101,7 @@ class CoverModelMetadata(_Closed):
 class ReviewerAccessDocument(_Closed):
     """The task-scoped exact-current application authority for reviewer access."""
 
-    schema_version: Literal["reviewer-access-v3"]
+    schema_version: ReviewerAccessSchemaVersion
     revision: Annotated[StrictInt, Field(ge=1)]
     cover_observation: ReviewerTaskSelection | None = None
     description_rewrite: ReviewerTaskSelection | None = None

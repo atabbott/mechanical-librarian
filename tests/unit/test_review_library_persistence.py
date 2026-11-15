@@ -36,6 +36,9 @@ from mechanical_librarian.adapters.persistence.review_preparation import _FAILUR
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
+from mechanical_librarian.application.cover_consideration import (
+    SCHEMA_VERSION as COVER_CONSIDERATION_SCHEMA,
+)
 from mechanical_librarian.application.cover_packet_semantics import (
     canonical_packet_json,
 )
@@ -76,6 +79,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetField,
     TargetFieldState,
 )
+from mechanical_librarian.domain.owner_settings import OWNER_SETTINGS_SCHEMA
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_browse import provider_lane_facts
 from mechanical_librarian.domain.review_case import ReviewCase
@@ -114,6 +118,7 @@ def test_cover_currentness_sql_binding_fails_closed_for_unknown_and_failure(
             "provider_fetching": False,
             "manual_ready": True,
             "replay_reference": replay,
+            "cover_stage": {"outcome": "keep", "reason": None},
         }
     )
 
@@ -471,12 +476,14 @@ def test_terminal_failed_work_is_library_only_and_safe() -> None:
     )
     assert item["preparation"] == {
         "attempt": 1,
+        # A work with no case has no Book matching check to give up.
+        "check_given_up": False,
         "diagnostic_reference": "prep-adcd2c66d60d4c88",
         # A provider-credential terminal says nothing about the media.
         "media_health": [],
         "provider": "hardcover-main",
-        "reason": "A source refused its credentials.",
-        "recovery": "Replace them in Settings → Metadata sources, then scan this library again.",
+        "reason": "A source refused access.",
+        "recovery": "Check it in Settings → Metadata sources, then scan this library again.",
         "recovery_attempt": 0,
         "stage": "provider",
         "status": "authentication",
@@ -486,7 +493,7 @@ def test_terminal_failed_work_is_library_only_and_safe() -> None:
     # names the condition instead of presenting an empty record.
     assert item["summary"] == {
         "fields": [],
-        "reason": "A source refused its credentials.",
+        "reason": "A source refused access.",
         "state": "preparation_failed",
     }
     assert "credential unavailable" not in json.dumps(item)
@@ -639,8 +646,8 @@ _NO_LIBRARY_STEP = "Library has no step that fixes this."
         ),
         (
             "authentication",
-            "A source refused its credentials.",
-            "Replace them in Settings → Metadata sources, then scan this library again.",
+            "A source refused access.",
+            "Check it in Settings → Metadata sources, then scan this library again.",
         ),
         (
             "stale",
@@ -804,7 +811,7 @@ def test_cover_state_is_inside_the_current_case_read_snapshot() -> None:
                 "report_id": report.report_id,
                 "report_document": report.to_json(),
                 "review_case_id": case_id,
-                "schema_version": "cover-consideration-v6",
+                "schema_version": COVER_CONSIDERATION_SCHEMA,
                 "supersedes_id": None,
             },
             separators=(",", ":"),
@@ -3709,7 +3716,7 @@ def test_active_labels_filter_current_and_terminal_before_count_and_page(
     repository.fail_review_pipeline_action(action, "unreadable_media", False, 14)
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v4",
+            "schema_version": OWNER_SETTINGS_SCHEMA,
             "revision": 1,
             "connections": [
                 {"name": connection, "endpoint": "https://example.invalid"}

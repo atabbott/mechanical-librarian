@@ -196,6 +196,8 @@ can say that, and none exist yet. Two further limits apply.
      version and hash, a decision-set schema change and a clean rebuild
      (ADR-0013). It is made only together with a relaxation the owner has
      approved.
+   - Amended by ADR-0096 (#1355): a note stored beside an unchanged live
+     set needs no policy or set version move.
 5. **The bar for activating a relaxation.** A relaxation may be switched on
    only on the strength of owner-labelled value precision for that field
    and that relaxation, measured through #1418 under a new qualification

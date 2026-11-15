@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
-from typing import cast
+from typing import Final, Literal, cast
 
 from mechanical_librarian.domain import audiobook_decision_qualification
 from mechanical_librarian.domain.audio_inspection import AudioInspectionField
@@ -57,8 +57,10 @@ from mechanical_librarian.domain.shadow_decision import (
     ShadowDecisionSet,
 )
 from mechanical_librarian.domain.shadow_review import MAX_CITATIONS
+from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 
-SHADOW_OUTCOME_SCHEMA = "shadow-outcome-set-v11"
+ShadowOutcomeSchemaVersion = Literal["shadow-outcome-set-v11"]
+SHADOW_OUTCOME_SCHEMA: Final[ShadowOutcomeSchemaVersion] = "shadow-outcome-set-v11"
 MAX_SHADOW_OUTCOME_BYTES = 1_048_576
 
 _POLICY_CATEGORY_BY_DESTINATION = {
@@ -616,6 +618,7 @@ class ShadowOutcomeSet:
         proposal: ProposalSet,
         *,
         media_kind: str,
+        work_identity_level: WorkIdentityLevel = WorkIdentityLevel.IDENTIFIER,
     ) -> "ShadowOutcomeSet":
         """Project one case's decisions under the policy that governs it.
 
@@ -623,6 +626,10 @@ class ShadowOutcomeSet:
         projection may do to a recording is the whole subject of F46, so the
         seam that holds the case says which kind it holds and this refuses any
         disagreement (#967).
+
+        A wider ``work_identity_level`` projects a level set's decisions, whose
+        rich fields read that level's admissions (#1355, S10). Nothing stores
+        such a set; only its would-admit notes are kept.
         """
         if (
             type(case) is not ReviewCase
@@ -699,7 +706,14 @@ class ShadowOutcomeSet:
             rich_destinations = rich_destinations | {"asin", "explicit"}
         rich = {
             value.field: value
-            for value in compile_rich_metadata_preview(policy, report, proposal).fields
+            for value in (
+                # The live projection's call is exactly as it was.
+                compile_rich_metadata_preview(policy, report, proposal)
+                if work_identity_level is WorkIdentityLevel.IDENTIFIER
+                else compile_rich_metadata_preview(
+                    policy, report, proposal, work_identity_level=work_identity_level
+                )
+            ).fields
         }
         # Each rich destination's routing is settled before any decision is
         # projected, because a recording's title strip reads whether the same

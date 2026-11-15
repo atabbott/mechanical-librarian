@@ -10,6 +10,7 @@ import {
   CsrfRenewedError,
   EMPTY_TARGET_TEXT,
   UncertainMutationError,
+  mapCoverConsideration,
 } from '../src/api/http'
 import descriptionAdviceFixture from './descriptionAdviceFixture.json'
 import { coalesceMilliseconds, libraryRefreshMilliseconds } from '../src/liveInvalidation'
@@ -47,6 +48,13 @@ import {
   wholeText,
 } from './fixtures'
 import { formatWhen } from '../src/dates'
+import {
+  choiceContext,
+  coverCandidate,
+  coverConsideration,
+  coverIdentity,
+  coverPolicyReport,
+} from './wireFixtures'
 
 // A finished run's status line says when it finished, as Library reads a
 // recorded time (#1765).
@@ -1021,7 +1029,7 @@ describe('Library route', () => {
     }
     expect(document.querySelector('.preparation-run-state')).not.toHaveClass('reported-change')
     expect(screen.getByText('Private title')).toBeVisible()
-    expect(screen.getByText('1.2 books/min over the last five minutes')).toBeVisible()
+    expect(screen.getByText('1.2 works a minute')).toBeVisible()
     expect(screen.getByText('Finished title')).toBeVisible()
     let releaseOlderFetch!: (value: Awaited<ReturnType<typeof http.getPreparation>>) => void
     vi.mocked(http.getPreparation).mockImplementationOnce(
@@ -1115,20 +1123,54 @@ describe('Library route', () => {
         },
       })
     })
-    await waitFor(() =>
-      expect(screen.getByText('9.9 books/min over the last five minutes')).toBeVisible(),
-    )
+    await waitFor(() => expect(screen.getByText('9.9 works a minute')).toBeVisible())
     expect(document.querySelector('.preparation-run-state')).not.toHaveClass('reported-change')
-    const semanticChange = {
+    // Counts, books and completions move on every poll; the status line's wipe
+    // plays only when the run's state changes (#1516).
+    for (const [step, change] of [
+      ['passage', { passage: { ...confirmedPresentation.passage, ready: 2, checked: 3 } }],
+      ['active books', { active_books: [{ name: 'Next title', stage: 'Reading files' }] }],
+      [
+        'completions',
+        {
+          recent_completions: [
+            ...confirmedPresentation.recent_completions,
+            { name: 'Another title', outcome: 'ready' as const, completed_at: 104 },
+          ],
+        },
+      ],
+      [
+        'counts',
+        {
+          now: {
+            ready: 3,
+            recorded: 0,
+            not_matched: 0,
+            failed: 0,
+            in_progress: 1,
+            scan_ids: confirmedPresentation.now?.scan_ids ?? [],
+          },
+        },
+      ],
+    ] as const) {
+      act(() => {
+        queryClient.setQueryData(['review-preparation'], {
+          ...confirmed,
+          presentation: { ...confirmedPresentation, ...change, updated_at: 104 },
+        })
+      })
+      await act(async () => new Promise((resolve) => window.setTimeout(resolve, 20)))
+      expect(
+        document.querySelector('.preparation-run-state'),
+        `${step} replayed the wipe`,
+      ).not.toHaveClass('reported-change')
+    }
+    const stateChange = {
       ...confirmed,
-      presentation: {
-        ...confirmedPresentation,
-        passage: { ...confirmedPresentation.passage, ready: 2 },
-        updated_at: 104,
-      },
+      presentation: { ...confirmedPresentation, state: 'blocked' as const, updated_at: 105 },
     }
     act(() => {
-      queryClient.setQueryData(['review-preparation'], semanticChange)
+      queryClient.setQueryData(['review-preparation'], stateChange)
     })
     await waitFor(() =>
       expect(document.querySelector('.preparation-run-state')).toHaveClass('reported-change'),
@@ -1139,9 +1181,36 @@ describe('Library route', () => {
       { timeout: 1_000 },
     )
     act(() => {
-      queryClient.setQueryData(['review-preparation'], semanticChange)
+      queryClient.setQueryData(['review-preparation'], {
+        ...stateChange,
+        presentation: { ...stateChange.presentation, updated_at: 106 },
+      })
     })
     expect(document.querySelector('.preparation-run-state')).not.toHaveClass('reported-change')
+    act(() => {
+      queryClient.setQueryData(['review-preparation'], confirmed)
+    })
+    await waitFor(() =>
+      expect(document.querySelector('.preparation-run-state')).toHaveClass('reported-change'),
+    )
+    // A service that needs a restart is the "Preparation stopped" state, so it
+    // plays the wipe too, though the run's own state has not moved.
+    await waitFor(
+      () =>
+        expect(document.querySelector('.preparation-run-state')).not.toHaveClass('reported-change'),
+      { timeout: 1_000 },
+    )
+    act(() => {
+      queryClient.setQueryData(['review-preparation'], { ...confirmed, recovery_required: true })
+    })
+    expect(await screen.findByRole('heading', { name: 'Preparation stopped' })).toBeVisible()
+    await waitFor(() =>
+      expect(document.querySelector('.preparation-run-state')).toHaveClass('reported-change'),
+    )
+    act(() => {
+      queryClient.setQueryData(['review-preparation'], confirmed)
+    })
+    expect(await screen.findByRole('heading', { name: 'Preparing libraries' })).toBeVisible()
 
     await user.click(screen.getByRole('button', { name: 'Attention 1 work' }))
     const attentionRail = await screen.findByLabelText('Attention queue')
@@ -1337,7 +1406,9 @@ describe('Library route', () => {
       }),
     )
     await screen.findByRole('heading', { name: 'Preparing libraries' })
-    const readyLink = screen.getByRole('link', { name: 'Find in Works' })
+    // The title is the link; there is no separate Find in Works (#1516).
+    const readyLink = screen.getByRole('link', { name: 'Ready title' })
+    expect(screen.queryByRole('link', { name: 'Find in Works' })).toBeNull()
     expect(readyLink).toHaveAttribute('href', '/library?lens=all&q=Ready+title')
     expect(screen.getByText('A book appears in Works once it is prepared.')).toBeVisible()
     expect(document.querySelectorAll('.preparation-active-books a')).toHaveLength(0)
@@ -1412,7 +1483,18 @@ describe('Library route', () => {
       'Books that could not finish are listed in Works.',
     )
     expect(failureSentence).toBeVisible()
-    const links = screen.getAllByRole('link', { name: 'Find in Works' })
+    const links = [...document.querySelectorAll('.preparation-completions li')].map((row) => {
+      // One row per book: its title link and its outcome label, nothing else.
+      expect([...row.children].map((child) => child.tagName)).toEqual(['A', 'SMALL'])
+      return within(row as HTMLElement).getByRole('link')
+    })
+    expect(links.map((link) => link.textContent)).toEqual(['Ready title', 'Unfinished title'])
+    expect(
+      [...document.querySelectorAll('.preparation-completions small')].map(
+        (label) => label.textContent,
+      ),
+    ).toEqual(['Prepared', "Couldn't finish"])
+    expect(screen.getByText('2 finished')).toBeVisible()
     expect(links.map((link) => link.getAttribute('href'))).toEqual([
       '/library?lens=all&q=Ready+title',
       '/library?lens=all&q=Unfinished+title',
@@ -1477,9 +1559,13 @@ describe('Library route', () => {
 
     // Turning on Automatic prepares the current works again (#1573); that is
     // its own cause, never title recovery.
-    for (const [count, line] of [
-      [1, 'Started when Automatic was turned on'],
-      [2, 'Automatic turned on 2 times'],
+    // Saving Book matching re-checks current works the same way, as its own
+    // cause (#1355).
+    for (const [trigger, count, line] of [
+      ['automatic_confirmed', 1, 'Started when Automatic was turned on'],
+      ['automatic_confirmed', 2, 'Automatic turned on 2 times'],
+      ['matching_changed', 1, 'Started when Book matching was saved'],
+      ['matching_changed', 2, 'Book matching saved 2 times'],
     ] as const) {
       act(() => {
         queryClient.setQueryData(['review-preparation'], {
@@ -1490,7 +1576,7 @@ describe('Library route', () => {
             state: 'running',
             triggers: [
               {
-                trigger: 'automatic_confirmed' as const,
+                trigger,
                 accepted_count: count,
                 first_accepted_at: 200,
                 last_accepted_at: 200 + count,
@@ -1513,7 +1599,7 @@ describe('Library route', () => {
       expect(screen.queryByText(/Title recovery/u)).toBeNull()
     }
     expect(screen.queryByText(/Preparation unavailable/u)).toBeNull()
-    expect(screen.queryByRole('link', { name: 'Find in Works' })).toBeNull()
+    expect(document.querySelectorAll('.preparation-completions a')).toHaveLength(0)
   })
 
   it('states every passage numerator and only a current throughput', async () => {
@@ -1548,7 +1634,7 @@ describe('Library route', () => {
         .getAllByRole('progressbar')
         .map((bar) => bar.parentElement?.querySelector('strong')?.textContent.trim()),
     ).toEqual(['3 of 4', '2 of 4', '1 of 4', '1 of 4'])
-    expect(screen.getByText('No book finished in the last five minutes')).toBeVisible()
+    expect(screen.getByText('Nothing finished in the last five minutes')).toBeVisible()
 
     act(() => {
       queryClient.setQueryData(['review-preparation'], {
@@ -1556,7 +1642,7 @@ describe('Library route', () => {
         presentation: { ...runningPresentation, throughput_per_minute: 2.5, updated_at: 106 },
       })
     })
-    expect(await screen.findByText('2.5 books/min over the last five minutes')).toBeVisible()
+    expect(await screen.findByText('2.5 works a minute')).toBeVisible()
 
     act(() => {
       queryClient.setQueryData(['review-preparation'], {
@@ -1578,8 +1664,92 @@ describe('Library route', () => {
     await screen.findByText(wholeText(finishedLine(107)), {
       selector: '.preparation-run-state',
     })
-    expect(screen.queryByText(/books\/min/u)).toBeNull()
-    expect(screen.queryByText('No book finished in the last five minutes')).toBeNull()
+    expect(screen.queryByText(/a minute/u)).toBeNull()
+    expect(screen.queryByText('Nothing finished in the last five minutes')).toBeNull()
+  })
+
+  // The stage bars glide to each new count in about 300 ms, and with reduced
+  // motion, from the system or from Settings, they jump straight to it (#1516).
+  it.each([
+    ['glides', 'none'],
+    ['jumps with the system reduced-motion setting', 'system'],
+    ['jumps with Settings set to always reduce motion', 'settings'],
+  ] as const)('a stage bar %s to a new count', async (_case, reduced) => {
+    const previousMatchMedia = window.matchMedia
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn((query: string) => ({
+        matches: reduced === 'system' && query.includes('prefers-reduced-motion: reduce'),
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    )
+    try {
+      const runId = `preparation_run_${'e'.repeat(64)}`
+      const base = terminalPreparation(runId)
+      const runningPresentation = {
+        ...base.presentation,
+        state: 'running' as const,
+        passage: { read: 0, searches_finished: 0, compared: 0, checked: 0, ready: 0, failed: 0 },
+        recent_completions: [],
+        total: 100,
+        completed_at: null,
+        dismissible: false,
+      }
+      const running: PreparationView = {
+        ...base,
+        active: true,
+        actionable: false,
+        presentation: runningPresentation,
+      }
+      const http = createHttp()
+      http.getPreparation = vi.fn(async () => running)
+      // Settings › Appearance marks the page itself, whatever the system says.
+      if (reduced === 'settings')
+        http.getAppearance = vi.fn(async () => ({ reduced_motion: 'always_reduced' as const }))
+      const { queryClient } = renderRoute(`/library?lens=all&preparation=${runId}`, http)
+      await screen.findByRole('heading', { name: 'Preparing libraries' })
+      if (reduced === 'settings')
+        await waitFor(() =>
+          expect(document.documentElement.dataset.reducedMotion).toBe('always-reduced'),
+        )
+      const filesRead = () => screen.getByRole('progressbar', { name: /^Files read/u })
+      expect(filesRead()).toHaveAttribute('value', '0')
+
+      const seen = new Set<number>()
+      const observer = new MutationObserver(() =>
+        seen.add(Number(filesRead().getAttribute('value'))),
+      )
+      observer.observe(document.body, { attributes: true, subtree: true })
+      act(() => {
+        queryClient.setQueryData(['review-preparation'], {
+          ...running,
+          presentation: {
+            ...runningPresentation,
+            passage: { ...runningPresentation.passage, read: 80 },
+            updated_at: 106,
+          },
+        })
+      })
+      // The label states the real count at once, wherever the bar is.
+      expect(await screen.findByRole('progressbar', { name: 'Files read: 80 of 100' })).toBe(
+        filesRead(),
+      )
+      await waitFor(() => expect(filesRead()).toHaveAttribute('value', '80'), { timeout: 1_000 })
+      observer.disconnect()
+      expect(filesRead()).not.toHaveAttribute('style')
+      const between = [...seen].filter((value) => value > 0 && value < 80)
+      if (reduced === 'none') expect(between.length).toBeGreaterThan(0)
+      else expect(between).toEqual([])
+    } finally {
+      delete document.documentElement.dataset.reducedMotion
+      vi.stubGlobal('matchMedia', previousMatchMedia)
+    }
   })
 
   // The route bounds `q` by UTF-16 units and the backend by characters, so a
@@ -1611,7 +1781,7 @@ describe('Library route', () => {
     })
     renderRoute(`/library?lens=all&preparation=${runId}`, http)
 
-    const href = (await screen.findByRole('link', { name: 'Find in Works' })).getAttribute('href')
+    const href = (await screen.findByRole('link', { name })).getAttribute('href')
     const query = new URLSearchParams(href?.split('?')[1] ?? '').get('q')
     expect(query).toBe(expected)
     expect(query?.length).toBeLessThanOrEqual(128)
@@ -2320,10 +2490,10 @@ describe('Library route', () => {
     ).toBeVisible()
     // A completion is first-finish history, so its label is never a phrase the
     // run line uses for the books as they stand now (#1366).
-    const completions = [...document.querySelectorAll('.preparation-completions strong')].map(
+    const completions = [...document.querySelectorAll('.preparation-completions small')].map(
       (label) => label.textContent,
     )
-    expect(completions).toContain('Stopped before finishing')
+    expect(completions).toContain("Couldn't finish")
     for (const label of completions)
       expect(label).not.toMatch(
         /ready to browse|recorded, nothing to decide|not matched|could not finish/iu,
@@ -2490,11 +2660,12 @@ describe('Library route', () => {
       detailKind: null,
       preparation: {
         attempt: 1,
+        checkGivenUp: false,
         diagnosticReference: 'prep-0123456789abcdef',
         mediaHealth: [],
         provider: 'hardcover-main',
-        reason: 'A source refused its credentials.',
-        recovery: 'Replace them in Settings → Metadata sources, then scan this library again.',
+        reason: 'A source refused access.',
+        recovery: 'Check it in Settings → Metadata sources, then scan this library again.',
         recoveryAttempt: 0,
         stage: 'provider' as const,
         status: 'authentication' as const,
@@ -2506,14 +2677,13 @@ describe('Library route', () => {
           providerRequests: 1,
           laneKind: 'work' as const,
           provider: 'hardcover-main',
-          reason:
-            'Nothing was recorded from it. Check its credentials in Settings → Metadata sources.',
+          reason: 'Nothing was recorded from it. Check it in Settings → Metadata sources.',
           status: 'authentication' as const,
         },
       ],
       summary: {
         state: 'preparation_failed' as const,
-        reason: 'A source refused its credentials.',
+        reason: 'A source refused access.',
         fields: [],
       },
     }
@@ -2540,7 +2710,7 @@ describe('Library route', () => {
     expect(terminal?.querySelector('button, a, details, [tabindex]')).toBeNull()
     expect(screen.queryByRole('button', { name: /^Preparation unavailable\./u })).toBeNull()
     expect(terminal).toHaveTextContent(
-      'Replace them in Settings → Metadata sources, then scan this library again.',
+      'Check it in Settings → Metadata sources, then scan this library again.',
     )
     expect(screen.getByText('prep-0123456789abcdef')).toBeVisible()
 
@@ -2955,11 +3125,12 @@ describe('Library route', () => {
       detailKind: 'report' as const,
       preparation: {
         attempt: 1,
+        checkGivenUp: false,
         diagnosticReference: 'prep-masked-0123456789',
         mediaHealth: [],
         provider: 'hardcover-main',
-        reason: 'A source refused its credentials.',
-        recovery: 'Replace them in Settings → Metadata sources, then scan this library again.',
+        reason: 'A source refused access.',
+        recovery: 'Check it in Settings → Metadata sources, then scan this library again.',
         recoveryAttempt: 0,
         stage: 'provider' as const,
         status: 'authentication' as const,
@@ -3157,6 +3328,7 @@ describe('Library route', () => {
       detailKind: 'report' as const,
       preparation: {
         attempt: 1,
+        checkGivenUp: false,
         diagnosticReference: 'prep-unreadable-0123456789',
         mediaHealth: [
           {
@@ -3206,6 +3378,7 @@ describe('Library route', () => {
       ...firstWork,
       preparation: {
         attempt: 1,
+        checkGivenUp: false,
         diagnosticReference: 'prep-safe-0123456789abcdef',
         mediaHealth: [],
         provider: 'hardcover-main',
@@ -5208,7 +5381,8 @@ describe('Library route', () => {
           matchState: 'match_not_confirmed' as const,
           selectable: false,
           manualEligible: false,
-          identity: { outcome: 'conflict', reasons: ['identity_conflict'] },
+          contradiction: 'book' as const,
+          identity: { outcome: 'conflict', reasons: ['unrelated_identifier'] },
           observation: {
             ...observation(6),
             composition: 'dense' as const,
@@ -5343,6 +5517,8 @@ describe('Library route', () => {
       comparison.querySelector('.library-cover-pinned > aside')?.firstElementChild,
     ).toHaveClass('cover-choice')
     expect(within(comparison).getByText('Other covers')).toBeVisible()
+    // The gallery counts covers, not choices: two of these five cannot be chosen (#1790).
+    expect(within(comparison).getByText('5 covers')).toBeVisible()
     expect(comparison.querySelectorAll('.library-cover-gallery .library-cover-card')).toHaveLength(
       5,
     )
@@ -5548,15 +5724,10 @@ describe('Library route', () => {
     ).toHaveTextContent(/^Recommended$/u)
     expect(within(recommendedComparison).queryByText(/Alternative \d cover/u)).toBeNull()
 
-    for (const [reason, explanation] of [
-      [
-        'actual_target_unverified',
-        'The cover in Audiobookshelf could not be confirmed, so it is not replaced automatically.',
-      ],
-      [
-        'confirmed_incumbent_not_improved',
-        'No confirmed cover is better than the current one, so it is not replaced automatically.',
-      ],
+    // The measured rules' stage says why nothing is recommended (#1363).
+    for (const [outcome, explanation] of [
+      ['keep', 'The current cover has no fault, so it is kept.'],
+      ['hold', 'The title names a different book from most covers. Check the title first.'],
     ] as const) {
       cleanup()
       const ownerReady = {
@@ -5567,7 +5738,12 @@ describe('Library route', () => {
           ...consideration.policy,
           recommended_candidate_reference: null,
           status: 'abstained' as const,
-          reasons: [reason],
+          reasons: [outcome === 'keep' ? 'current_cover_kept' : 'title_names_other_work'],
+        },
+        stage: {
+          language: null,
+          outcome,
+          reason: outcome === 'keep' ? null : ('title_names_other_work' as const),
         },
       }
       renderRoute('/library?lens=all&preview=case-1&field=cover', {
@@ -5583,6 +5759,173 @@ describe('Library route', () => {
       expect(within(ownerReadyComparison).getByText(explanation)).toBeVisible()
       expect(within(ownerReadyComparison).queryByText(/· Recommended/u)).not.toBeInTheDocument()
     }
+
+    // A current cover whose own source names another book is held with its
+    // own pill and sentence; a read that settled nothing says so, not "no
+    // fault"; once the owner has chosen, the stage says nothing (#1362).
+    const stageReady = {
+      ...consideration,
+      providerFetching: false,
+      ready: true,
+      policy: {
+        ...consideration.policy,
+        recommended_candidate_reference: null,
+        status: 'abstained' as const,
+        reasons: ['current_cover_kept'],
+      },
+      stage: { language: null, outcome: 'keep' as const, reason: null },
+    }
+    for (const [field, pill, sentence] of [
+      [
+        {
+          ...coverField,
+          coverConsideration: {
+            ...stageReady,
+            policy: { ...stageReady.policy, reasons: ['current_contradicted'] },
+            stage: {
+              language: null,
+              outcome: 'hold' as const,
+              reason: 'current_contradicted' as const,
+            },
+          },
+        },
+        "Cover's source names another book",
+        'A source of the current cover names a different book.',
+      ],
+      [
+        {
+          ...coverField,
+          coverConsideration: {
+            ...stageReady,
+            incumbent: { reference: null, state: 'unavailable' as const },
+          },
+        },
+        null,
+        'Audiobookshelf did not return the current cover. It is kept until the next scan.',
+      ],
+      [
+        {
+          ...coverField,
+          humanDecision: {
+            actor: 'owner' as const,
+            application: 'apply' as const,
+            application_reason: null,
+            decision_id: 'recorded-cover',
+            destination: 'cover' as const,
+            occurred_at: 1,
+            outcome: 'keep_current' as const,
+            proposal_id: coverField.proposalId,
+            review_case_id: 'case-1',
+            target_fingerprint: coverField.targetFingerprint,
+            selected_value: null,
+          },
+          coverConsideration: stageReady,
+        },
+        null,
+        null,
+      ],
+    ] as const) {
+      cleanup()
+      renderRoute('/library?lens=all&preview=case-1&field=cover', {
+        ...createHttp(),
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+          ...detail,
+          target: { ...detail.target, mediaKind },
+          fields: [field],
+        })),
+      })
+      const comparison = await screen.findByLabelText('Choose a cover')
+      if (pill !== null) expect(within(comparison).getByText(pill)).toBeVisible()
+      const caption = comparison.querySelector(':scope > header > small')
+      if (sentence === null) expect(caption).toBeNull()
+      else expect(caption).toHaveTextContent(sentence)
+      expect(
+        within(comparison).queryByText('The current cover has no fault, so it is kept.'),
+      ).not.toBeInTheDocument()
+    }
+
+    // A kept cover with a fault shows the fault's pill and no caption: "no
+    // fault" would contradict the pill (#1363).
+    cleanup()
+    renderRoute('/library?lens=all&preview=case-1&field=cover', {
+      ...createHttp(),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        target: { ...detail.target, mediaKind },
+        fields: [
+          {
+            ...coverField,
+            coverConsideration: {
+              ...consideration,
+              providerFetching: false,
+              ready: true,
+              policy: {
+                ...consideration.policy,
+                recommended_candidate_reference: null,
+                status: 'abstained' as const,
+                reasons: ['below_floor'],
+              },
+              stage: { language: null, outcome: 'keep' as const, reason: 'below_floor' as const },
+            },
+          },
+        ],
+      })),
+    })
+    const keptWithFault = await screen.findByLabelText('Choose a cover')
+    expect(within(keptWithFault).getByText('Cover choices ready')).toBeVisible()
+    expect(within(keptWithFault).getByText('Under 300 px')).toBeVisible()
+    expect(keptWithFault.querySelector(':scope > header > small')).toBeNull()
+    expect(
+      within(keptWithFault).queryByText('The current cover has no fault, so it is kept.'),
+    ).not.toBeInTheDocument()
+
+    // Over a populated cover the stage's choice is a suggestion: "Switch
+    // suggested" with its fault's pill alone, and no settings line on its
+    // card (#1363 M2, M3).
+    cleanup()
+    renderRoute('/library?lens=all&preview=case-1&field=cover', {
+      ...createHttp(),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        target: { ...detail.target, mediaKind },
+        fields: [
+          {
+            ...coverField,
+            coverConsideration: {
+              ...recommended,
+              choiceContexts: recommended.choiceContexts.map((context) =>
+                context.alternativeId === recommended.policy.recommended_candidate_reference
+                  ? {
+                      ...context,
+                      recommendation: 'recommended' as const,
+                      recommendationReason: 'Your cover settings choose this cover.',
+                    }
+                  : context,
+              ),
+              stage: {
+                language: null,
+                outcome: 'suggest' as const,
+                reason: 'below_floor' as const,
+              },
+            },
+          },
+        ],
+      })),
+    })
+    const suggested = await screen.findByLabelText('Choose a cover')
+    expect(within(suggested).getByText('Switch suggested')).toBeVisible()
+    expect(within(suggested).queryByText('Recommended cover ready')).not.toBeInTheDocument()
+    expect(within(suggested).getByText('Under 300 px')).toBeVisible()
+    expect(suggested.querySelector(':scope > header > small')).toBeNull()
+    expect(within(suggested).queryByText(/^Suggested because/u)).not.toBeInTheDocument()
+    expect(
+      within(suggested).queryByText('Your cover settings choose this cover.'),
+    ).not.toBeInTheDocument()
+    expect(
+      within(suggested)
+        .getByRole('radio', { name: 'Choose Open Library cover, 800 × 1200 px (2)' })
+        .querySelector('small'),
+    ).toHaveTextContent(/^Suggested$/u)
   })
 
   describe('cover choices (#1290)', () => {
@@ -5656,6 +5999,66 @@ describe('Library route', () => {
       ).toHaveTextContent('800 × 1200 px')
     })
 
+    it('shows a kept original that does not decode as Image unavailable and puts it back (#1362)', async () => {
+      const user = userEvent.setup()
+      const http = coverHttp((consideration) => {
+        const last = consideration.candidates.at(-1)
+        if (last === undefined) throw new Error('fixture')
+        return {
+          candidates: [
+            ...consideration.candidates,
+            {
+              ...last,
+              artifactId: `cover_${'9'.repeat(64)}`,
+              candidateKind: 'retained' as const,
+              deterministicRank: null,
+              deterministicRankKey: null,
+              height: null,
+              identity: null,
+              incumbent: false,
+              manualEligible: true,
+              matchState: 'match_not_confirmed' as const,
+              observation: null,
+              ordinal: consideration.candidates.length,
+              originalSha256: '9'.repeat(64),
+              previewSha256: null,
+              reference: `cover_ref_${'9'.repeat(64)}`,
+              selectable: true,
+              sourceKinds: ['retained'] as const,
+              state: 'available' as const,
+              width: null,
+            },
+          ],
+          // The server names no omission for the retained original (#1362).
+          omissions: [],
+        }
+      })
+      renderRoute('/library?lens=all&preview=case-1&field=cover', http)
+      const group = await screen.findByRole('radiogroup', {
+        name: 'Which cover should this work use?',
+      })
+      const card = within(group).getByRole('radio', { name: 'Choose Replaced cover' })
+      // The same "Image unavailable" as a preview that fails to load, and no
+      // image is ever requested for it, nor a size stated.
+      expect(within(card).getByRole('img', { name: 'Cover unavailable' })).toHaveTextContent(
+        'Image unavailable',
+      )
+      expect(card.querySelector('img')).toBeNull()
+      expect(card.querySelector('.cover-dimensions')).toBeNull()
+      expect(document.querySelector('.library-cover-excluded')).toBeNull()
+      expect(
+        [...document.querySelectorAll('img')].some((image) =>
+          image.getAttribute('src')?.endsWith(encodeURIComponent(`cover_ref_${'9'.repeat(64)}`)),
+        ),
+      ).toBe(false)
+      await user.click(card)
+      await waitFor(() => expect(http.recordDecision).toHaveBeenCalledOnce())
+      expect(http.recordDecision.mock.calls[0]?.[1]).toMatchObject({
+        outcome: 'accept',
+        selectedValue: { kind: 'cover', value: `cover_${'9'.repeat(64)}` },
+      })
+    })
+
     it('counts merged duplicate images apart from unavailable candidates', async () => {
       renderRoute(
         '/library?lens=all&preview=case-1&field=cover',
@@ -5691,6 +6094,95 @@ describe('Library route', () => {
         ),
       ).toBeVisible()
       expect(document.querySelector('.library-cover-excluded')).toBeNull()
+    })
+
+    it('names a larger copy once, on its own card (#1363 M9)', async () => {
+      // The EPUB copy of the current picture is shown as its own card, so the
+      // current card does not name the EPUB and nothing reads as merged.
+      renderRoute(
+        '/library?lens=all&preview=case-1&field=cover',
+        coverHttp((consideration) => {
+          const current = consideration.candidates.find((candidate) => candidate.incumbent)
+          const larger = consideration.candidates.find((candidate) => !candidate.incumbent)
+          if (current === undefined || larger === undefined) throw new Error('fixture')
+          return {
+            candidates: consideration.candidates.map((candidate) =>
+              candidate === current
+                ? { ...candidate, sourceKinds: ['abs', 'epub'] as const }
+                : candidate === larger
+                  ? {
+                      ...candidate,
+                      candidateKind: 'larger_copy' as const,
+                      sourceKinds: ['epub'] as const,
+                    }
+                  : candidate,
+            ),
+            omissions: [
+              {
+                reason: 'duplicate_preview',
+                reference: larger.reference,
+                retained_reference: current.reference,
+              },
+            ],
+          }
+        }),
+      )
+      const group = await screen.findByRole('radiogroup', {
+        name: 'Which cover should this work use?',
+      })
+      expect(
+        within(group)
+          .getByRole('radio', { name: 'Choose Current cover' })
+          .querySelector('.cover-sources'),
+      ).toHaveTextContent(/^Audiobookshelf$/u)
+      expect(document.querySelector('.cover-merged')).toBeNull()
+    })
+
+    it('still names a current cover duplicate beside a larger copy', async () => {
+      renderRoute(
+        '/library?lens=all&preview=case-1&field=cover',
+        coverHttp((consideration) => {
+          const current = consideration.candidates.find((candidate) => candidate.incumbent)
+          const larger = consideration.candidates.find((candidate) => !candidate.incumbent)
+          if (current === undefined || larger === undefined) throw new Error('fixture')
+          return {
+            candidates: consideration.candidates.map((candidate) =>
+              candidate === current
+                ? { ...candidate, sourceKinds: ['abs', 'epub', 'hardcover'] as const }
+                : candidate === larger
+                  ? {
+                      ...candidate,
+                      candidateKind: 'larger_copy' as const,
+                      sourceKinds: ['epub'] as const,
+                    }
+                  : candidate,
+            ),
+            omissions: [
+              {
+                reason: 'duplicate_preview',
+                reference: larger.reference,
+                retained_reference: current.reference,
+              },
+              {
+                reason: 'duplicate_preview',
+                reference: 'hardcover-copy',
+                retained_reference: current.reference,
+              },
+            ],
+          }
+        }),
+      )
+      const group = await screen.findByRole('radiogroup', {
+        name: 'Which cover should this work use?',
+      })
+      expect(
+        within(group)
+          .getByRole('radio', { name: 'Choose Current cover' })
+          .querySelector('.cover-sources'),
+      ).toHaveTextContent('Audiobookshelf · EPUB file · Hardcover')
+      expect(
+        screen.getByText('1 duplicate image merged. Each card names every source that offered it.'),
+      ).toBeVisible()
     })
 
     it('never counts an admission truncation as a cover not shown', async () => {
@@ -5783,12 +6275,15 @@ describe('Library route', () => {
       expect(card).toHaveTextContent('From the matched book, not a confirmed recording.')
       expect(card).not.toHaveTextContent('Match not confirmed')
       expect(card).not.toHaveTextContent('No source confirms this cover belongs')
-      // Other unconfirmed covers keep their title, and no line repeats it (#1765).
-      const unconfirmed = within(group).getByRole('radio', {
+      // A cover that contradicts the book says so instead (#1790).
+      const contradicting = within(group).getByRole('radio', {
         name: 'Choose Open Library cover, 800 × 1200 px (5)',
       })
-      expect(unconfirmed).toHaveTextContent('Match not confirmed')
-      expect(unconfirmed.querySelector('.choice-recommendation')).toBeNull()
+      expect(contradicting).toHaveTextContent('Contradicts this book')
+      expect(contradicting).not.toHaveTextContent('Match not confirmed')
+      expect(contradicting.querySelector('.choice-recommendation')).toHaveTextContent(
+        'A source says it belongs to a different book, so you cannot choose it.',
+      )
       // The matched-book card keeps its reason, the control for the line above.
       expect(card.querySelector('.choice-recommendation')).toHaveTextContent(
         'From the matched book, not a confirmed recording.',
@@ -5800,6 +6295,181 @@ describe('Library route', () => {
           outcome: 'accept',
           coverConfirmation: { expected_selection_id: null, confirm_unverified_match: true },
         }),
+      )
+    })
+
+    it.each([
+      [[], null],
+      [['creator_initials_folded'], "An author's initials are written differently in this source."],
+    ] as const)(
+      'names a cover matched by title and author, chosen only by the owner (#1355) %#',
+      async (reasons, line) => {
+        const user = userEvent.setup()
+        const matched = `cover_transport_ref_${'5'.repeat(64)}`
+        const http = coverHttp((consideration) => ({
+          candidates: consideration.candidates.map((candidate) =>
+            candidate.reference === matched
+              ? {
+                  ...candidate,
+                  matchReason: 'title_and_author' as const,
+                  identity: { ...candidate.identity, reasons: [...reasons] },
+                }
+              : candidate,
+          ),
+        }))
+        renderRoute('/library?lens=all&preview=case-1&field=cover', http)
+        const group = await screen.findByRole('radiogroup', {
+          name: 'Which cover should this work use?',
+        })
+        const card = within(group).getByRole('radio', {
+          name: 'Choose Open Library cover, 800 × 1200 px (4)',
+        })
+        expect(card).toHaveTextContent('Same title and author')
+        expect(card).not.toHaveTextContent('Match not confirmed')
+        expect(card).not.toHaveTextContent('Same book')
+        if (line === null) expect(card.querySelector('.choice-recommendation')).toBeNull()
+        else expect(card.querySelector('.choice-recommendation')).toHaveTextContent(line)
+        // Nothing is recommended for it; the owner's tap confirms the match.
+        await user.click(card)
+        expect(http.recordDecision.mock.calls[0]?.[1]).toEqual(
+          expect.objectContaining({
+            outcome: 'accept',
+            coverConfirmation: { expected_selection_id: null, confirm_unverified_match: true },
+          }),
+        )
+      },
+    )
+  })
+
+  describe('a cover that contradicts the book (#1790)', () => {
+    const unconfirmed = (reference: string, overrides: Record<string, unknown> = {}) =>
+      coverCandidate({
+        artifact_id: `artifact-${reference}`,
+        reference,
+        deterministic_rank: null,
+        deterministic_rank_key: null,
+        match_state: 'match_not_confirmed',
+        selectable: false,
+        state: 'excluded',
+        ...overrides,
+        identity: coverIdentity({
+          candidate_reference: reference,
+          preview_reference: `cover-preview-${reference}`,
+          outcome: 'unknown',
+          reasons: ['insufficient_identity_evidence'],
+          ...(overrides.identity as Record<string, unknown> | undefined),
+        }),
+      })
+    const proposed = (reference: string, overrides: Record<string, unknown> = {}) =>
+      choiceContext({ alternative_id: reference, selection: 'proposed', ...overrides })
+    // The mapper builds the consideration, so the card reads what the server
+    // sends: a recommended confirmed cover, an unconfirmed one, one from the
+    // matched book and the contradicting one.
+    const contradictionHttp = (identity: Record<string, unknown>, matchReason: string | null) => {
+      const { coverField } = coverChecks()
+      const consideration = mapCoverConsideration(
+        coverConsideration({
+          candidates: [
+            coverCandidate({ state: 'recommended' }),
+            unconfirmed('candidate-2', { ordinal: 1 }),
+            unconfirmed('candidate-3', { ordinal: 2, match_reason: 'matched_book' }),
+            unconfirmed('candidate-4', {
+              ordinal: 3,
+              identity,
+              manual_eligible: false,
+              match_reason: matchReason,
+            }),
+          ],
+          choice_contexts: [
+            choiceContext(),
+            proposed('candidate-1', {
+              recommendation: 'recommended',
+              recommendation_reason: 'The clearest cover for this book.',
+            }),
+            proposed('candidate-2'),
+            proposed('candidate-3'),
+          ],
+          policy: coverPolicyReport({
+            recommended_candidate_reference: 'candidate-1',
+            status: 'recommended',
+          }),
+          ready: true,
+        }) as Parameters<typeof mapCoverConsideration>[0],
+      )
+      return {
+        ...createHttp(),
+        recordDecision: vi.fn<ReviewHttp['recordDecision']>(() => new Promise(() => undefined)),
+        getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+          ...detail,
+          fields: [
+            {
+              ...coverField,
+              decisionActions: ['keep_current', 'accept'] as const,
+              editable: true,
+              needsAttention: true,
+              coverConsideration: consideration,
+            },
+          ],
+        })),
+      }
+    }
+    const book = 'A source says it belongs to a different book, so you cannot choose it.'
+    const edition = 'A source says it belongs to a different edition, so you cannot choose it.'
+    const creator = 'A source names a different author or contributor, so you cannot choose it.'
+
+    it.each([
+      ['a different book', 'conflict', 'unrelated_identifier', null, book],
+      ['a different work', 'conflict', 'edition_work_contradiction', null, book],
+      ['a different edition', 'conflict', 'manifestation_publication_incompatible', null, edition],
+      [
+        'a different creator',
+        'unknown',
+        'retained_creator_or_contributor_disagreement',
+        null,
+        creator,
+      ],
+      [
+        'a different creator on a matched-book cover',
+        'unknown',
+        'retained_creator_or_contributor_disagreement',
+        'matched_book',
+        creator,
+      ],
+    ])('says why it cannot be chosen: %s', async (_name, outcome, reason, matchReason, line) => {
+      const user = userEvent.setup()
+      const http = contradictionHttp({ outcome, reasons: [reason] }, matchReason)
+      renderRoute('/library?lens=all&preview=case-1&field=cover', http)
+      const group = await screen.findByRole('radiogroup', {
+        name: 'Which cover should this work use?',
+      })
+      const cards = within(group).getAllByRole('radio')
+      expect(cards).toHaveLength(4)
+      const [recommended, unconfirmedCard, matched, contradicting] = cards
+      if (!recommended || !unconfirmedCard || !matched || !contradicting)
+        throw new Error('the cover fixture has four cards')
+      expect(contradicting.querySelector('strong')).toHaveTextContent(/^Contradicts this book$/u)
+      expect(contradicting.querySelector('.choice-recommendation')).toHaveTextContent(
+        new RegExp(`^${line}$`, 'u'),
+      )
+      expect(contradicting).not.toHaveTextContent('Match not confirmed')
+      expect(contradicting).not.toHaveTextContent('Same book')
+      expect(contradicting).not.toHaveTextContent('recording not confirmed')
+      expect(contradicting).toBeDisabled()
+      await user.click(contradicting)
+      expect(http.recordDecision).not.toHaveBeenCalled()
+      // The covers you can choose keep their own words.
+      expect(unconfirmedCard.querySelector('strong')).toHaveTextContent(/^Match not confirmed$/u)
+      expect(unconfirmedCard.querySelector('.choice-recommendation')).toBeNull()
+      expect(unconfirmedCard).toBeEnabled()
+      expect(matched.querySelector('strong')).toHaveTextContent(
+        /^Same book · recording not confirmed$/u,
+      )
+      expect(matched.querySelector('.choice-recommendation')).toHaveTextContent(
+        /^From the matched book, not a confirmed recording\.$/u,
+      )
+      expect(recommended.querySelector('strong')).toHaveTextContent(/^Same book$/u)
+      expect(recommended.querySelector('.choice-recommendation')).toHaveTextContent(
+        /^The clearest cover for this book\.$/u,
       )
     })
   })
@@ -5934,10 +6604,14 @@ describe('Library route', () => {
           timed_out: /Retry, or choose a faster model in Settings → Reviewer\./u,
         } as const
         if (reviewerFailureCode) {
-          const detail = screen.getByText(failureCopy[reviewerFailureCode])
-          expect(detail).toHaveClass('reviewer-unavailable-detail')
           // The remedy sits directly under the unavailable line it explains.
-          expect(detail.previousElementSibling).toHaveTextContent('Visual review is unavailable.')
+          const detail = screen.getByText('Visual review is unavailable.').nextElementSibling
+          expect(detail).toHaveClass('reviewer-unavailable-detail')
+          expect(detail).toHaveTextContent(failureCopy[reviewerFailureCode])
+          // Its Settings → Reviewer path links to that section (#1765).
+          expect(
+            within(detail as HTMLElement).getByRole('link', { name: 'Settings → Reviewer' }),
+          ).toHaveAttribute('href', '/settings?group=reviewer')
         } else expect(screen.queryByText(/The reviewer|No provider for this model/u)).toBeNull()
       } else {
         expect(
@@ -6024,10 +6698,9 @@ describe('Library route', () => {
         ] as const) {
           cleanup()
           const access: ReviewerAccessView = {
-            schema_version: 'reviewer-access-view-v2',
+            schema_version: 'reviewer-access-view-v3',
             cover_metadata: null,
             cost_evidence: {
-              schema_version: 'reviewer-cost-evidence-v2',
               models: [],
             },
             revision: 9,
@@ -6478,9 +7151,9 @@ describe('Library route', () => {
     const base = detail.fields[0]
     if (!base) throw new Error('cover fixture requires a field')
     const access: ReviewerAccessView = {
-      schema_version: 'reviewer-access-view-v2',
+      schema_version: 'reviewer-access-view-v3',
       cover_metadata: null,
-      cost_evidence: { schema_version: 'reviewer-cost-evidence-v2', models: [] },
+      cost_evidence: { models: [] },
       revision: 9,
       mapping: { engine: 'codex' },
       description_mapping: null,
@@ -6590,9 +7263,9 @@ describe('Library route', () => {
 
   // A retry-capable reviewer for the #1595 cover alert tests below.
   const retryAccess: ReviewerAccessView = {
-    schema_version: 'reviewer-access-view-v2',
+    schema_version: 'reviewer-access-view-v3',
     cover_metadata: null,
-    cost_evidence: { schema_version: 'reviewer-cost-evidence-v2', models: [] },
+    cost_evidence: { models: [] },
     revision: 9,
     mapping: { engine: 'codex' },
     description_mapping: null,
@@ -12813,6 +13486,7 @@ describe('Provider evidence rail', () => {
       preparationOutcomes: [],
       preparation: {
         attempt: 3,
+        checkGivenUp: false,
         diagnosticReference: 'prep-transient',
         mediaHealth: [],
         provider: null,
@@ -13289,7 +13963,6 @@ it('offers advised text in the ordinary Description chooser with its immutable a
               ...advice,
               selected_advice: { candidate, binding: advice.binding, current: true },
               selection: {
-                schema_version: 'authored-description-decision-v1',
                 decision_id: `human_decision_${'a'.repeat(64)}`,
                 candidate_id: candidate.candidate_id,
                 binding: advice.binding,
@@ -13546,7 +14219,6 @@ it.each(['verified', 'no_change_required'] as const)(
         current: outcome === 'no_change_required',
       },
       selection: {
-        schema_version: 'authored-description-decision-v1',
         decision_id: `automatic_decision_${'a'.repeat(64)}`,
         candidate_id: advice.candidate.candidate_id,
         binding: advice.binding,
@@ -13604,7 +14276,6 @@ it.each([
       application_outcome: outcome,
       selected_advice: { candidate: advice.candidate, binding: advice.binding, current },
       selection: {
-        schema_version: 'authored-description-decision-v1',
         decision_id: `${origin === 'human' ? 'human' : 'automatic'}_decision_${'a'.repeat(64)}`,
         candidate_id: advice.candidate.candidate_id,
         binding: advice.binding,
@@ -13713,7 +14384,6 @@ it.each(['human', 'automatic_policy'] as const)(
           current: scenario.current,
         },
         selection: {
-          schema_version: 'authored-description-decision-v1',
           decision_id: `${origin === 'human' ? 'human' : 'automatic'}_decision_${'a'.repeat(64)}`,
           candidate_id: field.descriptionAdvice.candidate.candidate_id,
           binding: advice.binding,
@@ -13769,7 +14439,6 @@ it.each([true, false])(
       application_outcome: null,
       selected_advice: { candidate, binding: advice.binding, current: true },
       selection: {
-        schema_version: 'authored-description-decision-v1',
         decision_id: `automatic_decision_${'a'.repeat(64)}`,
         candidate_id: candidate.candidate_id,
         binding: advice.binding,
@@ -13890,8 +14559,14 @@ it.each(['requested', 'running', 'failed', 'interrupted', 'succeeded'] as const)
       )
       if (state === 'requested' || state === 'running')
         expect(screen.getByText(/Preparing description advice/)).toBeVisible()
-      if (state === 'failed')
+      if (state === 'failed') {
         expect(screen.getByText(/The description adviser is unavailable/)).toBeVisible()
+        // Its Settings → Reviewer path links to that section (#1765).
+        expect(screen.getByRole('link', { name: 'Settings → Reviewer' })).toHaveAttribute(
+          'href',
+          '/settings?group=reviewer',
+        )
+      }
       if (state === 'succeeded') {
         expect(choices[1]).toBeEnabled()
         expect(choices[1]).toHaveAttribute('aria-checked', 'false')

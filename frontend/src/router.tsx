@@ -51,6 +51,7 @@ import type {
 import { recoverableLazy } from './chunkRecovery'
 import { CountPhrases } from './components/CountPhrases'
 import { LiveStreamNotice } from './components/LiveStreamNotice'
+import { SettingsPathText } from './components/SettingsPathText'
 import {
   preparationInvalidationDebtKey,
   useLiveInvalidation,
@@ -445,10 +446,12 @@ export const ConnectionNotice = ({
       className={`connection-notice is-${condition.state}`}
       aria-live="polite"
       aria-label="Library connection"
+      onFocus={() => onControlFocusChange(true)}
+      onBlur={() => onControlFocusChange(false)}
     >
       <div>
         <strong>{title}</strong>
-        <span>{copy}</span>
+        <span>{<SettingsPathText text={copy} />}</span>
       </div>
       <dl>
         <div>
@@ -465,8 +468,6 @@ export const ConnectionNotice = ({
         disabled={data?.recovery_required && condition.state !== 'recovered'}
         aria-disabled={condition.state === 'recovered' ? undefined : !canCheck}
         aria-busy={checking || undefined}
-        onFocus={() => onControlFocusChange(true)}
-        onBlur={() => onControlFocusChange(false)}
         onClick={() => {
           if (condition.state === 'recovered') onDismissRecovery()
           else if (canCheck) onCheck(condition.connection)

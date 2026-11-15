@@ -35,12 +35,17 @@ def test_current_records_match_runtime_permissions():
         "F20": F20_PASSING_AUTOMATIC_OPTIONS,
         "F46": audio.F46_PASSING_AUTOMATIC_OPTIONS,
     }
-    assert [len(current[f]) for f in ("F19A", "F20", "F46")] == [11, 13, 71]
+    assert [len(current[f]) for f in ("F19A", "F20", "F46")] == [11, 13, 70]
+    # The F46 record is left exactly as measured, so it still names the cover
+    # replacement the measured cover rules retired (#1363); nothing else.
+    retired = {
+        "F46": {"cover_order:replace_if_strictly_better:audiobook_cover_replace"}
+    }
     for family, (name, _, _) in records.RECORDS.items():
         document = json.loads((ROOT / records.REFERENCE / name).read_bytes())
-        assert (
-            frozenset(document["authority"]["permitted_operations"]) == current[family]
-        )
+        permitted = frozenset(document["authority"]["permitted_operations"])
+        assert retired.get(family, set()) <= permitted
+        assert permitted - retired.get(family, set()) == current[family]
     document = json.loads(
         (ROOT / records.REFERENCE / records.RECORDS["F46"][0]).read_bytes()
     )

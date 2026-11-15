@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import dataclass
 from threading import Condition
-from typing import TYPE_CHECKING, Literal, Protocol, TypeVar, cast
+from typing import TYPE_CHECKING, Final, Literal, Protocol, TypeVar, cast
 
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
@@ -93,11 +93,18 @@ from mechanical_librarian.domain.preparation_presentation import (
     PreparationTrigger,
 )
 from mechanical_librarian.domain.proposal_set import work_route_cover_offered
+from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 
 if TYPE_CHECKING:
     from mechanical_librarian.application.cover_consideration import (
         _ObservationRequest,
     )
+
+
+ReviewPreparationSchemaVersion = Literal["review-preparation-v2"]
+REVIEW_PREPARATION_SCHEMA: Final[ReviewPreparationSchemaVersion] = (
+    "review-preparation-v2"
+)
 
 _Result = TypeVar("_Result")
 
@@ -160,6 +167,10 @@ class CaseDetailView:
     audiobook_review_scope: str | None
     # How the matched recording was found when its title differs (#1723).
     recording_admission_basis: dict[str, object] | None = None
+    # The case waits for its Book matching check (#1355, S10).
+    checking: bool = False
+    # That check gave up; saving again, or a restart, retries it (#1355).
+    check_given_up: bool = False
 
     @classmethod
     def from_data(cls, value: dict[str, object]) -> "CaseDetailView":
@@ -186,6 +197,8 @@ class CaseDetailView:
             None
             if value["recording_admission_basis"] is None
             else dict(cast("dict[str, object]", value["recording_admission_basis"])),
+            value.get("checking") is True,
+            value.get("check_given_up") is True,
         )
 
     def to_data(self) -> dict[str, object]:
@@ -201,6 +214,8 @@ class CaseDetailView:
             "recording_identity_basis": self.recording_identity_basis,
             "audiobook_review_scope": self.audiobook_review_scope,
             "recording_admission_basis": self.recording_admission_basis,
+            "checking": self.checking,
+            "check_given_up": self.check_given_up,
         }
 
 
@@ -288,7 +303,7 @@ class PreparationView:
     first_boot_complete: bool = False
     first_boot_works: int | None = None
     presentation: dict[str, object] | None = None
-    schema_version: str = "review-preparation-v2"
+    schema_version: str = REVIEW_PREPARATION_SCHEMA
     recovery_required: bool = False
     provider_throttling: dict[str, object] | None = None
 
@@ -553,6 +568,7 @@ class ReviewApplication:
         first_boot: bool = False,
         acknowledge_first_boot: Callable[[], None] | None = None,
         provider_throttling: Callable[[], dict[str, object]] | None = None,
+        align_book_matching: Callable[[int], object] | None = None,
     ) -> None:
         self._updates = updates
         self._state_owner = state_owner
@@ -592,6 +608,7 @@ class ReviewApplication:
         self._first_boot = first_boot
         self._acknowledge_first_boot = acknowledge_first_boot
         self._provider_throttling = provider_throttling
+        self._align_book_matching = align_book_matching
 
     def _reviewer_changed(self) -> None:
         # Other sessions still invalidate when a rescan request is refused.
@@ -679,7 +696,10 @@ class ReviewApplication:
                             avoid_promotional_text=preferences.avoid_promotional_text,
                             avoid_tie_in_branding=preferences.avoid_tie_in_branding,
                             prefer_minimal_composition=preferences.prefer_minimal_composition,
-                        )
+                            current_protection=preferences.current_protection,
+                            prefer_edition=preferences.prefer_edition,
+                        ),
+                        WorkIdentityLevel(validated.matching.work_identity),
                     )
                     if self._cover_considerations is not None
                     else None
@@ -762,7 +782,14 @@ class ReviewApplication:
             self._preparation.start_dormant()
 
     def admit(self) -> None:
-        """Open the already-started generation after no-fail publication."""
+        """Open the already-started generation after no-fail publication.
+
+        The configured Book matching level may have changed while no
+        generation ran, so every case follows it before any owner write or
+        scheduler claim is admitted (#1355, amendment 5).
+        """
+        if self._align_book_matching is not None:
+            self._align_book_matching(self._clock())
         if isinstance(self._field_application, ContinuousGuardedApplication):
             self._field_application.admit()
         if self._preparation is not None:
@@ -1193,6 +1220,7 @@ class ReviewApplication:
         idempotency_key: str,
         consideration_id: str | None = None,
         cover_confirmation: dict[str, object] | None = None,
+        offered_alternatives_digest: str | None = None,
     ) -> dict[str, object]:
         if destination == "cover" and (
             self._cover_considerations is None or consideration_id is None
@@ -1213,6 +1241,7 @@ class ReviewApplication:
                 idempotency_key=idempotency_key,
                 consideration_id=consideration_id,
                 cover_confirmation=cover_confirmation,
+                offered_alternatives_digest=offered_alternatives_digest,
             )
             return {
                 **result,
@@ -1868,6 +1897,7 @@ def compose_review_application(
     validated_documents: ValidatedDocumentCache | None = None,
     provider_throttling: Callable[[], dict[str, object]] | None = None,
     provider_recovery: ProviderRecoverySchedule | None = None,
+    align_book_matching: Callable[[int], object] | None = None,
 ) -> ReviewApplication:
     """Compose every operation before the HTTP adapter is created."""
     gate = operation_lock or RLock()
@@ -1954,6 +1984,7 @@ def compose_review_application(
         first_boot=first_boot,
         acknowledge_first_boot=acknowledge_first_boot,
         provider_throttling=provider_throttling,
+        align_book_matching=align_book_matching,
     )
     return application
 

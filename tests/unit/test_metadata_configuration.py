@@ -11,6 +11,7 @@ import pytest
 from pydantic import ValidationError
 
 from mechanical_librarian.application.configuration import (
+    CONFIG_SCHEMA,
     ConfigurationError,
     MediaMountConfiguration,
     ProviderConnectionConfiguration,
@@ -22,6 +23,7 @@ from mechanical_librarian.domain.audio_inspection import AudioInspectionLimits
 from mechanical_librarian.domain.metadata_report import AUDIOBOOK_MARKETPLACES
 from mechanical_librarian.domain.owner_settings import SecretWrite
 from mechanical_librarian.domain.validation import credential
+from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 from mechanical_librarian.infrastructure.configuration import (
     ConfigurationInput,
     Marketplace,
@@ -34,6 +36,9 @@ from mechanical_librarian.infrastructure.security.credentials import (
     read_secret,
     target_client,
 )
+from mechanical_librarian.infrastructure.settings_authority import (
+    REVIEW_BOOTSTRAP_SCHEMA,
+)
 
 # `ConfigurationInput.model_validate` and `load_configuration_file` never open a
 # declared secret; the secrets named below are absolute paths that do not exist,
@@ -44,7 +49,7 @@ _SYNTHETIC_SECRET = str(_SYNTHETIC_ROOT / "provider.secret")
 
 def _source(root: Path) -> dict[str, object]:
     return {
-        "schema_version": "config-v9",
+        "schema_version": CONFIG_SCHEMA,
         "provider_recovery_generation": 1,
         "connections": [
             {
@@ -380,6 +385,49 @@ def test_review_tls_paths_are_explicit_absolute_and_paired() -> None:
         assert review.tls_private_key_file == str(root / "review.key")
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "admitted"),
+    (
+        *(
+            ("cover_current_protection", value, True)
+            for value in ("protected", "unprotected", "proposals_only")
+        ),
+        *(
+            ("cover_current_protection", value, False)
+            for value in ("Protected", "", None, 1, True)
+        ),
+        ("cover_prefer_edition", True, True),
+        ("cover_prefer_edition", False, True),
+        *(("cover_prefer_edition", value, False) for value in (1, "true", None)),
+    ),
+)
+def test_current_covers_admit_only_their_closed_values(
+    field: str, value: object, admitted: bool
+) -> None:
+    """Current covers (#1363): three protection values and a strict boolean."""
+    source = {
+        **_source(_SYNTHETIC_ROOT),
+        "review": {**_review(_SYNTHETIC_ROOT), field: value},
+    }
+    if admitted:
+        review = load_configuration_document(json.dumps(source).encode()).review
+        assert review is not None
+        assert getattr(review, field) == value
+    else:
+        with pytest.raises(ConfigurationError):
+            load_configuration_document(json.dumps(source).encode())
+
+
+def test_current_covers_default_to_protected_and_no_edition_preference() -> None:
+    source = {**_source(_SYNTHETIC_ROOT), "review": _review(_SYNTHETIC_ROOT)}
+    review = load_configuration_document(json.dumps(source).encode()).review
+    assert review is not None
+    assert (review.cover_current_protection, review.cover_prefer_edition) == (
+        "protected",
+        False,
+    )
+
+
 @pytest.mark.parametrize("field", ("tls_certificate_file", "tls_private_key_file"))
 def test_review_tls_paths_are_absolute_in_generated_schema(field: str) -> None:
     properties = json.loads(configuration_schema_json())["$defs"]["ReviewInput"][
@@ -503,7 +551,7 @@ def _original_schema_version(source: dict[str, object]) -> None:
 
 
 def _previous_schema_version(source: dict[str, object]) -> None:
-    source["schema_version"] = "config-v8"
+    source["schema_version"] = "config-v10"
 
 
 def _enabled_provider_without_a_secret(source: dict[str, object]) -> None:
@@ -556,7 +604,7 @@ def test_multiple_referenced_cover_providers_share_the_bounded_gallery() -> None
 
 def test_generated_schema_is_current() -> None:
     expected = (
-        Path(__file__).parents[2] / "docs" / "reference" / "config-v9.schema.json"
+        Path(__file__).parents[2] / "docs" / "reference" / "config.schema.json"
     ).read_text(encoding="utf-8")
     assert configuration_schema_json() == expected
 
@@ -986,7 +1034,7 @@ def test_hardcover_raw_token_is_confined_to_the_exact_graphql_post() -> None:
 
 
 def test_the_audio_ceiling_is_a_default_a_config_document_need_not_carry() -> None:
-    """The optional audio ceiling remains optional within current `config-v9`.
+    """The optional audio ceiling remains optional within the current config.
 
     `LimitsInput` is closed, so a key added to it would reject every document
     written before it existed had it not carried a default. Both shapes an
@@ -1062,11 +1110,65 @@ def test_browser_modes_match_domain_json_and_schema(
     assert len(combinations) == 3
 
 
+def _review_with_work_identity(**values: object) -> dict[str, object]:
+    review = {
+        "canonical_origin": "http://review.test",
+        "owner_password_hash_file": "/synthetic/owner.hash",
+        "trusted_proxy_ips": [],
+        "tls_certificate_file": None,
+        "tls_private_key_file": None,
+        **values,
+    }
+    return {**_source(_SYNTHETIC_ROOT), "review": review}
+
+
+@pytest.mark.parametrize(
+    "level",
+    ["identifier", "title_and_creator_exact", "title_and_creator"],
+)
+def test_book_matching_admits_each_closed_level(level: str) -> None:
+    """`review.work_identity` (#1355, ADR-0096) is one of three closed values."""
+    loaded = load_configuration_document(
+        json.dumps(_review_with_work_identity(work_identity=level)).encode()
+    )
+    assert loaded.review is not None
+    assert loaded.review.work_identity is WorkIdentityLevel(level)
+
+
+def test_book_matching_defaults_to_confirmed_matches_only() -> None:
+    loaded = load_configuration_document(
+        json.dumps(_review_with_work_identity()).encode()
+    )
+    assert loaded.review is not None
+    assert loaded.review.work_identity is WorkIdentityLevel.IDENTIFIER
+    schema = json.loads(configuration_schema_json())["$defs"]["ReviewInput"]
+    assert schema["properties"]["work_identity"]["enum"] == [
+        "identifier",
+        "title_and_creator_exact",
+        "title_and_creator",
+    ]
+
+
+@pytest.mark.parametrize(
+    "level",
+    ["Identifier", "exact", "", 1, None, "title_and_author"],
+    ids=("capitalised", "abbreviation", "empty", "non_string", "null", "unknown"),
+)
+def test_book_matching_refuses_any_other_value(level: object) -> None:
+    with pytest.raises(ConfigurationError):
+        load_configuration_document(
+            json.dumps(_review_with_work_identity(work_identity=level)).encode()
+        )
+
+
+@pytest.mark.parametrize("version", ("config-v9", "config-v10"))
 def test_real_predecessor_configuration_is_rejected_without_mutating_input(
-    tmp_path: Path,
+    tmp_path: Path, version: str
 ) -> None:
     source = (
-        Path(__file__).parents[1] / "support/configuration_predecessors/config-v8.json"
+        Path(__file__).parents[1]
+        / "support/configuration_predecessors"
+        / f"{version}.json"
     )
     payload = source.read_bytes()
     path = tmp_path / "config.json"
@@ -1202,7 +1304,7 @@ def test_noncanonical_scheme_prefixes_cannot_disable_browser_security(
     }
     with pytest.raises(ValueError):
         ReviewBootstrap.model_validate(
-            {"schema_version": "review-bootstrap-v2", **bootstrap}
+            {"schema_version": REVIEW_BOOTSTRAP_SCHEMA, **bootstrap}
         )
     with pytest.raises(CredentialError):
         target_client_token(origin, "synthetic-token", 5)

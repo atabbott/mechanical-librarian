@@ -562,7 +562,6 @@ def test_policy_documents_and_automatic_confirmation(tmp_path) -> None:
         ) as live:
             state = live.call("GET", "/api/v1/metadata-policy/state")
             profile = dict(state[3]["profile"])
-            del profile["schema_version"]
             profile["name"] = "Synthetic automatic covers"
             profile["destinations"] = {
                 **profile["destinations"],

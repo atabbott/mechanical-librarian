@@ -14,7 +14,9 @@ import hashlib
 import json
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
+
+QUALIFICATION_CURRENT_SCHEMA: Final = "qualification-current-v2"
 
 ROOT = Path(__file__).resolve().parents[1]
 REFERENCE = Path("docs/reference")
@@ -65,7 +67,7 @@ def verify_record(family: str, record: Any, provenance: dict[str, Any]) -> None:
     if type(authority) is not dict or set(authority) != authority_keys:
         raise ValueError("qualification authority keys are invalid")
     if (
-        record["schema"] != "qualification-current-v2"
+        record["schema"] != QUALIFICATION_CURRENT_SCHEMA
         or authority["family"] != family
         or authority["media"] != ("audiobook" if family == "F46" else "ebook")
         or record["provenance"] != PROVENANCE.name

@@ -3,6 +3,7 @@
 - Status: accepted
 - Date: 2026-09-10
 - Issues: #967, #1047, #1166, #1616
+- Superseded by: ADR-0087 in part (operation-bound authority); ADR-0093 in part (the audiobook cover replacement is retired)
 
 ## Context
 

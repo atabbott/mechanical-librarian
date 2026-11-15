@@ -6,9 +6,14 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, replace
-from typing import Literal, Self
+from typing import Final, Literal, Self
 
 from mechanical_librarian.domain.validation import matching
+
+FIELD_EFFECT_CONSENT_SCHEMA: Final = "field-effect-consent-v2"
+FIELD_EFFECT_PLAN_SCHEMA: Final = "field-effect-plan-v1"
+FIELD_EFFECT_OPERATION_SCHEMA: Final = "field-effect-operation-v1"
+FIELD_EFFECT_EVENT_SCHEMA: Final = "field-effect-event-v1"
 
 
 class FieldEffectError(ValueError):
@@ -57,6 +62,7 @@ FIELD_EFFECT_FAILURES = frozenset(
         "cover_recovery",
         "cover_retention",
         "dependency",
+        "matching_changed",
         "not_applied",
         "not_sent",
         "owner_abandoned",
@@ -392,7 +398,7 @@ class EffectConsent:
             "envelope_identity": self.envelope_identity,
             "granted_at": self.granted_at,
             "library": self.library,
-            "schema_version": "field-effect-consent-v2",
+            "schema_version": FIELD_EFFECT_CONSENT_SCHEMA,
         }
 
     @classmethod
@@ -410,7 +416,7 @@ class EffectConsent:
         if (
             type(raw) is not dict
             or set(raw) != keys
-            or raw.get("schema_version") != "field-effect-consent-v2"
+            or raw.get("schema_version") != FIELD_EFFECT_CONSENT_SCHEMA
             or raw.get("action") != "apply_field"
         ):
             raise FieldEffectError("invalid_consent")
@@ -642,7 +648,7 @@ class FieldEffectPlan:
             ),
             "schema_version": "field-effect-title-subtitle-plan-v1"
             if self.subtitle_companion is not None
-            else "field-effect-plan-v1",
+            else FIELD_EFFECT_PLAN_SCHEMA,
             "plan_id": self.plan_id,
             "connection": self.connection,
             "library": self.library,
@@ -697,7 +703,7 @@ class FieldEffectPlan:
                 != (
                     "field-effect-title-subtitle-plan-v1"
                     if paired
-                    else "field-effect-plan-v1"
+                    else FIELD_EFFECT_PLAN_SCHEMA
                 )
             ):
                 raise FieldEffectError("invalid_plan")
@@ -835,7 +841,7 @@ class FieldEffectOperation:
 
     def to_data(self) -> dict[str, object]:
         return {
-            "schema_version": "field-effect-operation-v1",
+            "schema_version": FIELD_EFFECT_OPERATION_SCHEMA,
             "plan": self.plan.to_data(),
             "state": self.state,
             "attempt": self.attempt,
@@ -860,7 +866,7 @@ class FieldEffectOperation:
             if (
                 type(raw) is not dict
                 or set(raw) != keys
-                or raw.get("schema_version") != "field-effect-operation-v1"
+                or raw.get("schema_version") != FIELD_EFFECT_OPERATION_SCHEMA
             ):
                 raise FieldEffectError("invalid_operation")
             return cls(

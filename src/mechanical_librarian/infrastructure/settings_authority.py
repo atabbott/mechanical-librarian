@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from pathlib import Path
-from typing import Annotated, Literal, TypeVar
+from typing import Annotated, Final, Literal, TypeVar
 
 from pydantic import (
     BaseModel,
@@ -27,12 +27,16 @@ from mechanical_librarian.application.configuration import (
     TargetConnectionConfiguration,
 )
 from mechanical_librarian.domain.owner_settings import SettingsView
+from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 from mechanical_librarian.infrastructure.configuration import (
     _read_regular,
     _reject_number,
     _unique_object,
     load_configuration_file,
 )
+
+ReviewBootstrapSchemaVersion = Literal["review-bootstrap-v2"]
+REVIEW_BOOTSTRAP_SCHEMA: Final[ReviewBootstrapSchemaVersion] = "review-bootstrap-v2"
 
 DEFAULT_REVIEWER_PROFILE = "/opt/mechanical-librarian/reviewer/profile.json"
 
@@ -51,7 +55,7 @@ class BootstrapMount(_Closed):
 
 
 class ReviewBootstrap(_Closed):
-    schema_version: Literal["review-bootstrap-v2"]
+    schema_version: ReviewBootstrapSchemaVersion
     canonical_origin: Annotated[StrictStr, Field(min_length=8, max_length=512)]
     tls_certificate_file: (
         Annotated[StrictStr, Field(min_length=1, max_length=1024)] | None
@@ -122,10 +126,13 @@ def store_runtime_configuration(
         cover_avoid_promotional_text=document.cover_preferences.avoid_promotional_text,
         cover_avoid_tie_in_branding=document.cover_preferences.avoid_tie_in_branding,
         cover_prefer_minimal_composition=document.cover_preferences.prefer_minimal_composition,
+        cover_current_protection=document.cover_preferences.current_protection,
+        cover_prefer_edition=document.cover_preferences.prefer_edition,
         description_remove_marketing=document.description_advice.remove_marketing,
         description_remove_sales_boasts=document.description_advice.remove_sales_boasts,
         description_remove_praise=document.description_advice.remove_praise,
         description_automatic_application=document.description_advice.automatic_application,
+        work_identity=WorkIdentityLevel(document.matching.work_identity),
     )
     return ApplicationConfiguration(
         connections=tuple(

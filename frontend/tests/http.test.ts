@@ -8,6 +8,7 @@ import {
   caseDetail,
   caseHistory,
   choiceContext,
+  fieldChoiceContext,
   coverAutomaticDecision,
   coverCandidate,
   coverConsideration,
@@ -188,9 +189,9 @@ const uncertain = (failure: string) => {
 }
 
 const reviewerAccessPayload = (overrides: Record<string, unknown> = {}) => ({
-  schema_version: 'reviewer-access-view-v2',
+  schema_version: 'reviewer-access-view-v3',
   cover_metadata: null,
-  cost_evidence: { schema_version: 'reviewer-cost-evidence-v2', models: [] },
+  cost_evidence: { models: [] },
   revision: 3,
   mapping: null,
   description_mapping: null,
@@ -933,9 +934,14 @@ describe('ReviewApiClient', () => {
         .candidates[0]?.matchReason,
     ).toBe('matched_book')
     expect('matchReason' in ((await retryCover(payload())).candidates[0] ?? {})).toBe(false)
+    // A title-and-author reason (#1355) maps without a 502, display only too.
+    expect(
+      (await retryCover(payload({ candidates: [candidate({ match_reason: 'title_and_author' })] })))
+        .candidates[0]?.matchReason,
+    ).toBe('title_and_author')
     await expect(
       retryCover(payload({ candidates: [candidate({ match_reason: 'same_book' })] })),
-    ).rejects.toMatchObject(uncertain('const@/candidates/0/match_reason'))
+    ).rejects.toMatchObject(uncertain('enum@/candidates/0/match_reason'))
   })
   it('maps only the fixed unavailable reviewer-contract reasons', async () => {
     const payload = (reviewer_unavailable_reason: unknown) =>
@@ -987,7 +993,7 @@ describe('ReviewApiClient', () => {
   it('preserves present and null series sequences and refuses an absent one', async () => {
     const detail = (
       series: readonly Record<string, unknown>[],
-      choiceContexts: unknown = [choiceContext()],
+      choiceContexts: unknown = [fieldChoiceContext()],
     ) =>
       readCase(
         caseDetail({
@@ -1074,6 +1080,17 @@ describe('ReviewApiClient', () => {
       (await readCase(closedDetail({ current: targetField({ state, value }) }))).fields[0]
         ?.currentValue,
     ).toBe(shown)
+  })
+
+  it('reads a cover’s current value as the current cover, never its id (#1363)', async () => {
+    const cover = (state: string, value: string | null) =>
+      readCase(closedDetail({ destination: 'cover', current: targetField({ state, value }) })).then(
+        (detail) => detail.fields[0],
+      )
+    const current = await cover('value', 'cover_' + 'a'.repeat(64))
+    expect(current?.currentValue).toBe('Current cover')
+    expect(current?.currentRaw).toBe('cover_' + 'a'.repeat(64))
+    expect((await cover('missing', null))?.currentValue).toBe('Not set in Audiobookshelf')
   })
 
   it('uses Unicode code point bounds for readable case identity', async () => {
@@ -1211,13 +1228,13 @@ describe('ReviewApiClient', () => {
       decision_actions: ['keep_current', 'accept'],
       proposed_values: [{ kind: 'text', value: 'Alternative' }],
       choice_contexts: [
-        choiceContext({ rationale: 'Current evidence.' }),
-        choiceContext({
+        fieldChoiceContext({ rationale: 'Current evidence.' }),
+        fieldChoiceContext({
           alternative_id: 'eligible',
           rationale: 'Eligible evidence.',
           selection: 'proposed',
         }),
-        choiceContext({
+        fieldChoiceContext({
           alternative_id: 'preserves-target',
           rationale: 'Retained non-selectable evidence.',
           selection: 'proposed',
@@ -1239,7 +1256,7 @@ describe('ReviewApiClient', () => {
     expect(
       (
         await readCase(
-          response([field({ choice_contexts: [choiceContext({ evidence: [languageRow] })] })]),
+          response([field({ choice_contexts: [fieldChoiceContext({ evidence: [languageRow] })] })]),
         )
       ).fields[0]?.choiceContexts[0]?.evidence,
     ).toEqual([languageRow])
@@ -1248,7 +1265,7 @@ describe('ReviewApiClient', () => {
         response([
           field({
             choice_contexts: [
-              choiceContext({ evidence: [{ ...languageRow, language: undefined }] }),
+              fieldChoiceContext({ evidence: [{ ...languageRow, language: undefined }] }),
             ],
           }),
         ]),
@@ -1641,7 +1658,7 @@ describe('ReviewApiClient', () => {
             ...cover,
             consideration: {
               ...cover.consideration,
-              candidates: Array.from({ length: 14 }, () => coverCandidate()),
+              candidates: Array.from({ length: 15 }, () => coverCandidate()),
             },
           },
         ],
@@ -2224,10 +2241,9 @@ describe('ReviewApiClient', () => {
       },
     ]
     const state = {
-      schema_version: 'metadata-policy-notebook-v1',
+      schema_version: 'metadata-policy-notebook-v2',
       policy_id: 'policy-1',
       profile: {
-        schema_version: 'metadata-policy-profile-v3',
         name: 'Active',
         options: {},
         destinations: {},
@@ -2297,10 +2313,9 @@ describe('ReviewApiClient', () => {
       second: { option: 'two', destination: 'ignore' },
     }
     const active = {
-      schema_version: 'metadata-policy-notebook-v1',
+      schema_version: 'metadata-policy-notebook-v2',
       policy_id: 'policy-1',
       profile: {
-        schema_version: 'metadata-policy-profile-v3',
         name: 'Active',
         options: { title_layout: 'preserve' },
         destinations: { title_layout: 'ask' },
@@ -2318,10 +2333,9 @@ describe('ReviewApiClient', () => {
       ),
     ).toMatchObject({ changed: false, activeName: 'Active' })
     const reordered = {
-      schema_version: 'metadata-policy-notebook-v1',
+      schema_version: 'metadata-policy-notebook-v2',
       policy_id: 'policy-1',
       profile: {
-        schema_version: 'metadata-policy-profile-v3',
         name: 'Active',
         options: { first: 'one', second: 'two' },
         destinations: { first: 'ask', second: 'ignore' },
@@ -2357,10 +2371,9 @@ describe('ReviewApiClient', () => {
       tags: { option: 'off', destination: 'ask' },
     }
     const active = {
-      schema_version: 'metadata-policy-notebook-v1',
+      schema_version: 'metadata-policy-notebook-v2',
       policy_id: 'policy-1',
       profile: {
-        schema_version: 'metadata-policy-profile-v3',
         name: 'Active',
         options: { title_layout: 'preserve' },
         destinations: {},
@@ -2437,6 +2450,7 @@ describe('ReviewApiClient', () => {
       outcome: 'keep_current',
       proposalId: 'proposal-1',
       targetFingerprint: 'fingerprint-1',
+      offerDigest: 'offer-digest',
       idempotencyKey: 'same-decision',
     })
 
@@ -2965,8 +2979,9 @@ describe('ReviewApiClient', () => {
     for (const [invalid, failure] of [
       [{ ...base, authority: 'deploy' }, 'enum@/authority'],
       [
-        { ...base, document: { ...doc, schema_version: 'owner-settings-v3' } },
-        'const@/document/schema_version',
+        // The stored settings version stays on the server (#1847).
+        { ...base, document: { ...doc, schema_version: 'any' } },
+        'unknown_key@/document/schema_version',
       ],
       [
         {
@@ -3087,13 +3102,18 @@ describe('ReviewApiClient', () => {
       'library_added',
       'title_recovery',
       'automatic_confirmed',
+      'matching_changed',
     ].map((trigger) => ({ ...presentation.triggers[0], trigger }))
-    expect((await read({ triggers: allTriggers })).presentation?.triggers).toHaveLength(5)
+    expect((await read({ triggers: allTriggers })).presentation?.triggers).toHaveLength(6)
     expect((await read({ triggers: [allTriggers[3]] })).presentation?.triggers[0]?.trigger).toBe(
       'title_recovery',
     )
     expect((await read({ triggers: [allTriggers[4]] })).presentation?.triggers[0]?.trigger).toBe(
       'automatic_confirmed',
+    )
+    // Saving Book matching re-checks current works as its own cause (#1355).
+    expect((await read({ triggers: [allTriggers[5]] })).presentation?.triggers[0]?.trigger).toBe(
+      'matching_changed',
     )
     await expect(
       read({ triggers: [...allTriggers, { ...allTriggers[0], trigger: 'unknown' }] }),
@@ -3221,6 +3241,7 @@ describe('ReviewApiClient', () => {
           detail_kind: 'case',
           preparation: {
             attempt: 1,
+            check_given_up: false,
             diagnostic_reference: 'diagnostic-1',
             media_health: [],
             provider: 'none',
@@ -3643,6 +3664,7 @@ it('sends an ordinary chooser authored command only to the bound authored select
     outcome: 'accept',
     proposalId: field.proposalId,
     targetFingerprint: field.targetFingerprint,
+    offerDigest: field.offerDigest,
     selectedValue: { kind: 'text', value: candidate.output.description },
     idempotencyKey: 'owner-choice-idempotency',
     authoredDescription: { candidateId: candidate.candidate_id, binding: advice.binding },
@@ -3659,6 +3681,92 @@ it('sends an ordinary chooser authored command only to the bound authored select
     expect(new Headers(options.headers).get('idempotency-key')).toBe('owner-choice-idempotency')
   }
 })
+
+it('binds a choice to the offer the field showed (#1355)', async () => {
+  const { default: payload } = await import('./descriptionAdviceFixture.json')
+  const served = payload.fields.find((item) => item.destination === 'series')
+  const field = (await readCase(payload)).fields.find((item) => item.destination === 'series')
+  if (!served || !field) throw new Error('fixture requires its series field')
+  expect(field.offerDigest).toBe(served.offer_digest)
+  const fetchMock = vi.fn<typeof fetch>(async () => Response.json({}, { status: 500 }))
+  const client = new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) })
+  await client
+    .recordDecision('case-1', {
+      destination: 'series',
+      outcome: 'keep_current',
+      proposalId: field.proposalId,
+      targetFingerprint: field.targetFingerprint,
+      offerDigest: field.offerDigest,
+      idempotencyKey: 'offer-bound-choice',
+    })
+    .catch(() => undefined)
+  const options = fetchMock.mock.calls[0]?.[1]
+  if (!options) throw new Error('decision request was not sent')
+  expect(JSON.parse(options.body as string)).toMatchObject({
+    offered_alternatives_digest: served.offer_digest,
+    target_fingerprint: served.target_fingerprint,
+  })
+})
+
+it('reads a case waiting for its check and a value offered for title and author (#1355)', async () => {
+  const { default: payload } = await import('./descriptionAdviceFixture.json')
+  const changed = {
+    ...payload,
+    checking: true,
+    check_given_up: true,
+    fields: payload.fields.map((field) =>
+      field.destination === 'series'
+        ? {
+            ...field,
+            choice_contexts: field.choice_contexts.map((context) =>
+              context.selection === 'proposed'
+                ? { ...context, match_basis: 'title_and_author' }
+                : context,
+            ),
+          }
+        : field,
+    ),
+  }
+  const read = await readCase(changed)
+  expect(read.checking).toBe(true)
+  expect(read.checkGivenUp).toBe(true)
+  const series = read.fields.find((item) => item.destination === 'series')
+  if (!series) throw new Error('fixture requires its series field')
+  expect(series.choiceContexts.map((context) => context.matchBasis)).toEqual(
+    series.choiceContexts.map((context) =>
+      context.selection === 'proposed' ? 'title_and_author' : null,
+    ),
+  )
+  expect((await readCase(payload)).checking).toBe(false)
+})
+
+it.each(['digest_mismatch', 'unreconciled_case'])(
+  'carries why a choice was refused as offer_changed (%s)',
+  async (reason) => {
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      Response.json(
+        { schema_version: 'review-error-v1', error: { code: 'offer_changed', reason } },
+        { status: 409 },
+      ),
+    )
+    const client = new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) })
+    const refused = await client
+      .recordDecision('case-1', {
+        destination: 'series',
+        outcome: 'keep_current',
+        proposalId: 'proposal-1',
+        targetFingerprint: 'fingerprint-1',
+        offerDigest: 'offer-digest',
+        idempotencyKey: 'offer-changed-choice',
+      })
+      .then(
+        () => null,
+        (error: unknown) => error,
+      )
+    expect(refused).toBeInstanceOf(ApiError)
+    expect(refused).toMatchObject({ status: 409, code: 'offer_changed', reason })
+  },
+)
 
 it.each([undefined, 'applying', 'verified'])(
   'rejects an unbound or invalid description application outcome %s',
@@ -3802,6 +3910,7 @@ it('validates the closed decision confirmation and maps its case exactly once', 
     outcome: 'keep_current' as const,
     proposalId: 'proposal-1',
     targetFingerprint: 'fingerprint-1',
+    offerDigest: 'offer-digest',
     idempotencyKey: 'same-decision',
   }
   const casePayload = { ...payload, review_case_id: 'case-1', current: false }
@@ -3863,6 +3972,7 @@ it.each(['decisions', 'description-advice/selection'])(
       outcome: 'accept' as const,
       proposalId: field.proposalId,
       targetFingerprint: field.targetFingerprint,
+      offerDigest: field.offerDigest,
       selectedValue: {
         kind: 'text' as const,
         value: field.descriptionAdvice.candidate.output.description,
@@ -3956,6 +4066,7 @@ it.each(['invalid JSON', 'interrupted body'])(
         outcome: 'accept',
         proposalId: 'proposal-1',
         targetFingerprint: 'fingerprint-1',
+        offerDigest: 'offer-digest',
         idempotencyKey: 'owner-choice-idempotency',
         selectedValue: { kind: 'cover', value: `cover_${'a'.repeat(64)}` },
         considerationId: `cover_consideration_${'b'.repeat(64)}`,
@@ -4002,7 +4113,6 @@ it.each([null, '0', '0.000001'])(
       readReviewerAccess({
         ...value,
         cost_evidence: {
-          schema_version: 'reviewer-cost-evidence-v2',
           models: [],
           private: 'forbidden',
         },
@@ -4028,7 +4138,7 @@ describe('reviewer cost evidence', () => {
   }
   const evidence = (cost_evidence: unknown) =>
     readReviewerAccess(reviewerAccessPayload({ cost_evidence }))
-  const valid = { schema_version: 'reviewer-cost-evidence-v2', models: [row] }
+  const valid = { models: [row] }
 
   it('admits per-row cost runs and refuses a missing row run or a top-level run', async () => {
     expect((await evidence(valid)).cost_evidence).toEqual(valid)
@@ -4044,7 +4154,7 @@ describe('reviewer cost evidence', () => {
         `pattern@${at}/models/0/measured_run/source_head`,
       ],
       [{ ...valid, measured_run: run }, `unknown_key@${at}/measured_run`],
-      [{ ...valid, schema_version: 'reviewer-cost-evidence-v1' }, `const@${at}/schema_version`],
+      [{ ...valid, schema_version: 'any' }, `unknown_key@${at}/schema_version`],
     ] as const)
       await expect(evidence(invalid)).rejects.toMatchObject(refused(failure))
   })
@@ -4468,7 +4578,7 @@ describe('central response decoding (#1685)', () => {
     [
       'GET /api/v1/metadata-policy/preview-mode/outcomes',
       (client: ReviewApiClient) => client.getPreviewSample(),
-      { schema_version: 'preview-outcome-sample-v1' },
+      { schema_version: 'preview-outcome-sample-v2' },
       '/authority',
     ],
     [
@@ -4861,6 +4971,7 @@ describe('case-detail write decoding (#1688)', () => {
       outcome: 'accept',
       proposalId: field.proposalId,
       targetFingerprint: field.targetFingerprint,
+      offerDigest: field.offerDigest,
       selectedValue: { kind: 'text', value: candidate.output.description },
       idempotencyKey: 'decoded-decision',
       ...(authored
@@ -5158,7 +5269,6 @@ describe('reviewer-access write decoding (#1690)', () => {
       (client: ReviewApiClient) => client.selectReviewer(null, 3),
       reviewerAccessPayload({
         cost_evidence: {
-          schema_version: 'reviewer-cost-evidence-v2',
           models: [
             {
               model: 'openai/gpt-6-luna',
@@ -5989,5 +6099,247 @@ describe('the retained original as a cover candidate (#1363)', () => {
     ['another source', { source_kinds: ['open_library'] }],
   ])('refuses an original with %s', async (_name, overrides) => {
     await expect(read(retained(overrides))).rejects.toThrow(ApiError)
+  })
+
+  // An original the decoder refused has no size or preview at all (#1362).
+  const previewless = { height: null, width: null, preview_sha256: null, transport_sha256: null }
+
+  it('maps an original the decoder refused with no size or preview', async () => {
+    const [mapped] = (await read(retained(previewless))).candidates
+    expect(mapped).toMatchObject({
+      candidateKind: 'retained',
+      height: null,
+      previewSha256: null,
+      width: null,
+      selectable: true,
+    })
+  })
+
+  it.each(Object.keys(previewless))('refuses an original missing only its %s', async (key) => {
+    await expect(read(retained({ [key]: null }))).rejects.toThrow(
+      expect.objectContaining({ code: 'contradictory_retained_cover' }),
+    )
+  })
+
+  it.each(['candidate', 'larger_copy'])('refuses a %s with no preview', async (kind) => {
+    expect(() =>
+      mapCoverConsideration(
+        coverConsideration({
+          candidates: [coverCandidate({ candidate_kind: kind, ...previewless })],
+          ready: true,
+          choice_contexts: [
+            choiceContext(),
+            choiceContext({ alternative_id: 'candidate-1', selection: 'proposed' }),
+          ],
+          policy: coverPolicyReport(),
+        }) as Parameters<typeof mapCoverConsideration>[0],
+      ),
+    ).toThrow(expect.objectContaining({ code: 'missing_cover_preview' }))
+  })
+})
+
+describe('a larger copy of the current cover as a candidate (#1363)', () => {
+  const read = (candidate: unknown) =>
+    mapCoverConsideration(
+      coverConsideration({
+        candidates: [candidate],
+        ready: true,
+        choice_contexts: [
+          choiceContext(),
+          choiceContext({ alternative_id: 'candidate-1', selection: 'proposed' }),
+        ],
+        policy: coverPolicyReport(),
+      }) as Parameters<typeof mapCoverConsideration>[0],
+    )
+
+  it('keeps its kind beside its confirmed identity and rank', () => {
+    const [mapped] = read(coverCandidate({ candidate_kind: 'larger_copy' })).candidates
+    expect(mapped).toMatchObject({
+      candidateKind: 'larger_copy',
+      matchState: 'same_book',
+      deterministicRank: 1,
+      selectable: true,
+    })
+  })
+
+  it('refuses one with no confirmed match', () => {
+    expect(() =>
+      read(
+        coverCandidate({
+          candidate_kind: 'larger_copy',
+          identity: coverIdentity({ outcome: 'unknown' }),
+          match_state: 'match_not_confirmed',
+          selectable: false,
+          deterministic_rank: null,
+          deterministic_rank_key: null,
+          state: 'excluded',
+        }),
+      ),
+    ).toThrow(expect.objectContaining({ code: 'contradictory_cover_identity' }))
+  })
+})
+
+describe('a full comparison with a larger copy and a Put back (#1363, Codex R1)', () => {
+  // Twelve reviewed previews, the larger copy and the retained original.
+  const consideration = (cards: number) => {
+    const card = (ordinal: number) => {
+      const reference = `candidate-${String(ordinal)}`
+      const kind =
+        ordinal === cards - 1 ? 'retained' : ordinal === cards - 2 ? 'larger_copy' : 'candidate'
+      return kind === 'retained'
+        ? coverCandidate({
+            artifact_id: `artifact-${String(ordinal)}`,
+            candidate_kind: 'retained',
+            deterministic_rank: null,
+            deterministic_rank_key: null,
+            identity: null,
+            match_state: 'match_not_confirmed',
+            ordinal,
+            reference,
+            source_kinds: ['retained'],
+            state: 'available',
+          })
+        : coverCandidate({
+            artifact_id: `artifact-${String(ordinal)}`,
+            candidate_kind: kind,
+            deterministic_rank: null,
+            deterministic_rank_key: [1, 0, -10000, -100, -100, ordinal, reference],
+            identity: coverIdentity({ candidate_reference: reference }),
+            incumbent: ordinal === 0,
+            manual_eligible: ordinal !== 0,
+            ordinal,
+            reference,
+            selectable: ordinal !== 0,
+            state: ordinal === 0 ? 'excluded' : 'available',
+          })
+    }
+    return coverConsideration({
+      candidates: Array.from({ length: cards }, (_, ordinal) => card(ordinal)),
+      choice_contexts: [
+        choiceContext(),
+        ...Array.from({ length: cards - 1 }, (_, index) =>
+          choiceContext({
+            alternative_id: `candidate-${String(index + 1)}`,
+            selection: 'proposed',
+          }),
+        ),
+      ],
+      incumbent: { reference: 'candidate-0', state: 'available' },
+      policy: coverPolicyReport({ acceptable_candidate_references: [] }),
+      ready: true,
+    })
+  }
+
+  it('reads all fourteen cards', async () => {
+    const read = await retryCover(consideration(14))
+    expect(read.candidates.map((candidate) => candidate.candidateKind)).toEqual([
+      ...Array<string>(12).fill('candidate'),
+      'larger_copy',
+      'retained',
+    ])
+  })
+
+  it('refuses a fifteenth card', async () => {
+    const refusal: unknown = await retryCover(consideration(15)).catch((error: unknown) => error)
+    expect(refusal).toMatchObject({ at: '/candidates' })
+  })
+})
+
+describe('a cover that contradicts the book (#1790)', () => {
+  const unconfirmed = (
+    identity: Record<string, unknown>,
+    overrides: Record<string, unknown> = {},
+  ) =>
+    coverCandidate({
+      identity: coverIdentity(identity),
+      manual_eligible: false,
+      match_state: 'match_not_confirmed',
+      selectable: false,
+      deterministic_rank: null,
+      deterministic_rank_key: null,
+      state: 'excluded',
+      ...overrides,
+    })
+  const read = (candidate: unknown, overrides: Record<string, unknown> = {}) =>
+    mapCoverConsideration(
+      coverConsideration({
+        candidates: [candidate],
+        choice_contexts: [choiceContext()],
+        policy: coverPolicyReport({ acceptable_candidate_references: [] }),
+        ...overrides,
+      }) as Parameters<typeof mapCoverConsideration>[0],
+    )
+
+  it.each([
+    ['a different book', 'conflict', ['unrelated_identifier'], 'book'],
+    ['a different work', 'conflict', ['edition_work_contradiction'], 'book'],
+    ['a different edition', 'conflict', ['manifestation_publication_incompatible'], 'edition'],
+    ['a different creator', 'unknown', ['retained_creator_or_contributor_disagreement'], 'creator'],
+  ])('names %s', (_name, outcome, reasons, contradiction) => {
+    const [mapped] = read(unconfirmed({ outcome, reasons })).candidates
+    expect(mapped).toMatchObject({ contradiction, manualEligible: false })
+  })
+
+  it('leaves an unconfirmed cover with no contradiction unmarked', () => {
+    const [mapped] = read(
+      unconfirmed(
+        { outcome: 'unknown', reasons: ['insufficient_identity_evidence'] },
+        { manual_eligible: true },
+      ),
+      {
+        ready: true,
+        choice_contexts: [
+          choiceContext(),
+          choiceContext({ alternative_id: 'candidate-1', selection: 'proposed' }),
+        ],
+      },
+    ).candidates
+    expect(mapped?.manualEligible).toBe(true)
+    expect(mapped).not.toHaveProperty('contradiction')
+  })
+
+  it('never marks the current cover', () => {
+    const [mapped] = read(
+      unconfirmed({ outcome: 'conflict', reasons: ['unrelated_identifier'] }, { incumbent: true }),
+      { incumbent: { reference: 'candidate-1', state: 'available' }, ready: true },
+    ).candidates
+    expect(mapped?.incumbent).toBe(true)
+    expect(mapped).not.toHaveProperty('contradiction')
+  })
+
+  it('never marks the retained original', () => {
+    const [mapped] = read(
+      coverCandidate({
+        candidate_kind: 'retained',
+        deterministic_rank: null,
+        deterministic_rank_key: null,
+        identity: null,
+        match_state: 'match_not_confirmed',
+        reference: 'retained-1',
+        source_kinds: ['retained'],
+        state: 'available',
+      }),
+      {
+        policy: null,
+        ready: true,
+        choice_contexts: [
+          choiceContext(),
+          choiceContext({ alternative_id: 'retained-1', selection: 'proposed' }),
+        ],
+      },
+    ).candidates
+    expect(mapped?.candidateKind).toBe('retained')
+    expect(mapped).not.toHaveProperty('contradiction')
+  })
+
+  it('refuses a contradicting cover the server says can be chosen', () => {
+    expect(() =>
+      read(
+        unconfirmed(
+          { outcome: 'conflict', reasons: ['unrelated_identifier'] },
+          { manual_eligible: true },
+        ),
+      ),
+    ).toThrow(expect.objectContaining({ code: 'contradictory_cover_manual_eligibility' }))
   })
 })

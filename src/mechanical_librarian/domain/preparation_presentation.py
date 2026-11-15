@@ -44,6 +44,7 @@ class PreparationTrigger(StrEnum):
     LIBRARY_ADDED = "library_added"
     TITLE_RECOVERY = "title_recovery"
     AUTOMATIC_CONFIRMED = "automatic_confirmed"
+    MATCHING_CHANGED = "matching_changed"
 
 
 TERMINAL_PREPARATION_STATES = frozenset(

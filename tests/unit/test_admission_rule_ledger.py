@@ -267,6 +267,7 @@ class Fixture:
         identity: str | None,
         *,
         designation: str | None = None,
+        reasons: tuple[str, ...] | None = None,
     ) -> str:
         """Add a cover candidate; return its report cover source id.
 
@@ -303,6 +304,7 @@ class Fixture:
                 "candidate_reference": reference,
                 "outcome": outcome,
                 "evidence_references": [self.text()],
+                **({} if reasons is None else {"reasons": list(reasons)}),
             }
         )
         self.consideration["identity_document"] = json.dumps(identity_document)
@@ -1337,6 +1339,64 @@ def test_a_listed_edition_cover_reaches_every_record_of_its_book(
     assert (classifier["true_positive"], classifier["false_positive"]) == (2, 0)
 
 
+def _level_match_snapshot(
+    tmp_path: Path, outcome: str, reasons: tuple[str, ...]
+) -> tuple[int, str, str]:
+    text = Sentinels()
+    fixture = Fixture(text, "v26-like")
+    provider = fixture.provider()
+    work = text()
+    accepted, _ = fixture.record(provider, work, lane="work")
+    fixture.record(provider, work, lane="work")
+    fixture.bind(provider, accepted, work, "accepted")
+    fixture.cover_candidate(outcome, provider, work, None, reasons=reasons)
+    fixture.result(
+        "cover",
+        "unresolved_choice",
+        ["cover_gallery_incomplete", "owner_cover_choice_required"],
+    )
+    database = _database(tmp_path / "level.sqlite3", "v26-like", [fixture])
+    return _run(_arguments([("snap-a", database, EBOOK_REVISION)], tmp_path))
+
+
+def test_a_level_match_cover_is_read_as_an_unelected_candidate(
+    tmp_path: Path,
+) -> None:
+    """A store at a wider Book matching level (#1355, S16) reads like unknown."""
+    code, stdout, _ = _level_match_snapshot(
+        tmp_path,
+        "title_creator_work_match",
+        (
+            "creator_initials_folded",
+            "work_identity:title_and_creator",
+            "work_identity_level_met",
+        ),
+    )
+    assert code == 0
+    rows = _rows(stdout)
+    classifier = _snapshot(rows["C1"], "snap-a")
+    assert (classifier["true_positive"], classifier["false_positive"]) == (2, 0)
+    work_search = _snapshot(rows["C2"], "snap-a")
+    assert (work_search["fields"], work_search["true_positive"]) == (1, 2)
+
+
+@pytest.mark.parametrize(
+    ("outcome", "reasons"),
+    (
+        ("title_creator_match", ()),
+        ("unknown", ("work_identity:everything",)),
+        ("unknown", ("work_identity_level_unknown",)),
+    ),
+    ids=("outcome", "level_rule", "level_reason"),
+)
+def test_a_cover_outcome_or_level_reason_the_ledger_does_not_know_refuses(
+    tmp_path: Path, outcome: str, reasons: tuple[str, ...]
+) -> None:
+    code, stdout, stderr = _level_match_snapshot(tmp_path, outcome, reasons)
+    assert (code, stdout) == (2, "")
+    assert stderr == "admission-rule-ledger: snapshot schema unrecognised\n"
+
+
 # --- 7. Ranking ------------------------------------------------------------
 
 
@@ -1574,8 +1634,13 @@ def test_the_attention_child_matches_the_cold_start_report_on_an_empty_database(
 
 
 def test_the_attention_child_drops_a_cover_only_case_without_covers(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # A held cover asks; a suggested one would not be attention (#1363 S9).
+    from mechanical_librarian.application import cover_policy
+    from tests.support.cover_producers import held_measured_stage
+
+    monkeypatch.setattr(cover_policy, "elect_measured_covers", held_measured_stage)
     database = tmp_path / "application.sqlite3"
     repository = open_repository(database)
     attention_work = _bibliographic_report(
@@ -2874,3 +2939,257 @@ def test_only_the_active_policy_generation_settles_a_field(tmp_path: Path) -> No
     code, stdout, _ = _run(_arguments([("snap-a", database, EBOOK_REVISION)], tmp_path))
     assert code == 0
     assert _automatic(_snapshot(_rows(stdout)["A2"], "snap-a")) == (0, 1, 0)
+
+
+# --- Test 25: Book matching levels (#1355) ----------------------------------
+
+
+def _levels_store(path: Path, reports: Sequence[str]) -> Path:
+    """A snapshot store holding one current case per report document.
+
+    The level replay reads only the current cases' stored reports, so the
+    other tables the ledger requires stay empty.
+    """
+    connection = sqlite3.connect(path)
+    connection.executescript(
+        "CREATE TABLE current_review_packages(review_case_id TEXT);"
+        "CREATE TABLE review_cases(review_case_id TEXT, report_id TEXT, document TEXT);"
+        "CREATE TABLE metadata_reports(report_id TEXT, document TEXT);"
+        "CREATE TABLE shadow_decision_outcomes(review_case_id TEXT, document TEXT,"
+        " evaluated_at TEXT);"
+        "CREATE TABLE cover_considerations(consideration_id TEXT, document TEXT);"
+        "CREATE TABLE current_cover_considerations(review_case_id TEXT,"
+        " consideration_id TEXT);"
+    )
+    for index, text in enumerate(reports):
+        report_id = f"report-{index}"
+        case_id = f"case-{index}"
+        connection.execute(
+            "INSERT INTO metadata_reports VALUES (?, ?)", (report_id, text)
+        )
+        connection.execute(
+            "INSERT INTO review_cases VALUES (?, ?, ?)", (case_id, report_id, "{}")
+        )
+        connection.execute("INSERT INTO current_review_packages VALUES (?)", (case_id,))
+    connection.commit()
+    connection.close()
+    return path
+
+
+def _predecessor(report_json: str) -> str:
+    """The same report as v80 wrote it: no retained refused answers."""
+    from mechanical_librarian.domain.metadata_report import (
+        canonical_json,
+        report_content_address,
+    )
+
+    data = json.loads(report_json)
+    for provider in data["providers"]:
+        assert provider.pop("identity_refused_candidates") == []
+        assert provider.pop("identity_refused_truncated") == 0
+        for lane in provider["lanes"]:
+            assert lane.pop("identity_refused_new") == []
+    data["schema_version"] = "metadata-report-v80"
+    data.pop("report_id")
+    data["report_id"] = report_content_address(data)
+    return canonical_json(data)
+
+
+def _level_reports() -> tuple[str, str, str]:
+    """A refused synopsis only the fold admits, a report with nothing to
+    admit, and that second report as the previous schema wrote it."""
+    from tests.support import ebook_synopsis
+    from tests.unit import test_level_proposal_sets as level_sets
+
+    refused = level_sets._report(level_sets._refused(level_sets._synopsis()))
+    plain = ebook_synopsis.synopsis_report()
+    return refused.to_json(), plain.to_json(), _predecessor(plain.to_json())
+
+
+def _levels_entry(database: Path) -> dict[str, object]:
+    import scripts.admission_rule_levels as levels
+
+    return levels.snapshot_entry("snap-a", levels.replay_levels(database))
+
+
+def _level_row(entry: Mapping[str, object], level: str) -> dict[str, object]:
+    return next(
+        row
+        for row in cast("list[dict[str, object]]", entry["levels"])
+        if row["level"] == level
+    )
+
+
+def _field_counts(row: Mapping[str, object], destination: str) -> dict[str, object]:
+    return next(
+        counts
+        for counts in cast("list[dict[str, object]]", row["fields"])
+        if counts["destination"] == destination
+    )
+
+
+def test_level_replay_is_identical_at_identifier_and_counts_each_level(
+    tmp_path: Path,
+) -> None:
+    """Test 25: each current case's report replays identically at
+    ``identifier``, and each wider level has its own row: the records it
+    admits, the ones only the fold admits, and the fields it changes."""
+    refused, plain, predecessor = _level_reports()
+    database = _levels_store(
+        tmp_path / "levels.sqlite3",
+        [refused, plain, predecessor, '{"schema_version": "metadata-report-v57"}'],
+    )
+    entry = _levels_entry(database)
+    assert (entry["cases"], entry["replayed"], entry["upgraded"]) == (4, 3, 1)
+    assert entry["not_replayed"] == {"schema_unsupported": 1, "replay_failed": 0}
+    assert entry["identity"] == {
+        "level": "identifier",
+        "compared": 3,
+        "differences": 0,
+    }
+    assert (entry["retained_refused"], entry["retained_truncated"]) == (1, 0)
+    assert [
+        row["level"] for row in cast("list[dict[str, object]]", entry["levels"])
+    ] == [
+        "title_and_creator_exact",
+        "title_and_creator",
+    ]
+    for level in ("title_and_creator_exact", "title_and_creator"):
+        row = _level_row(entry, level)
+        assert row["cases_with_admission"] == 1
+        assert row["share_with_admission"] == round(1 / 3, 4)
+        assert (row["admitted_live"], row["admitted_retained"]) == (0, 1)
+        assert row["initials_fold"] == 1
+        description = _field_counts(row, "description")
+        assert (description["changed"], description["gained"]) == (1, 1)
+        assert (description["substituted"], description["would_admit"]) == (1, 1)
+        # The title changes, so the title, subtitle and series group is
+        # substituted whole although series offers the same alternatives.
+        assert _field_counts(row, "series") == {
+            "destination": "series",
+            "changed": 0,
+            "gained": 0,
+            "substituted": 1,
+            "would_admit": 0,
+        }
+        assert _field_counts(row, "genres") == {
+            "destination": "genres",
+            "changed": 0,
+            "gained": 0,
+            "substituted": 0,
+            "would_admit": 0,
+        }
+
+
+def test_a_predecessor_report_upgrades_to_the_current_report() -> None:
+    import scripts.admission_rule_levels as levels
+
+    _refused, plain, predecessor = _level_reports()
+    report, upgraded = levels.parse_report(predecessor)
+    assert upgraded and report is not None
+    assert report.to_json() == plain
+
+
+def test_a_level_replay_difference_at_identifier_is_counted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The identity check is not vacuous: level evidence at ``identifier``
+    counts every case as a difference."""
+    import scripts.admission_rule_levels as levels
+
+    refused, plain, _predecessor_text = _level_reports()
+    database = _levels_store(tmp_path / "levels.sqlite3", [refused, plain])
+    monkeypatch.setattr(levels, "level_evidence", lambda _report, _level: object())
+    entry = _levels_entry(database)
+    assert entry["identity"] == {"level": "identifier", "compared": 2, "differences": 2}
+
+
+def test_level_replay_output_is_aggregate_only(tmp_path: Path) -> None:
+    """Test 25: the option's JSON and Markdown carry counts and the closed
+    vocabulary only, never a title, creator, value, case or report identity."""
+    import scripts.admission_rule_levels as levels
+
+    refused, plain, predecessor = _level_reports()
+    store = _levels_store(tmp_path / "levels.sqlite3", [refused, plain, predecessor])
+    fixture = Fixture(Sentinels(), "v26-like")
+    database = _database(tmp_path / "ledger.sqlite3", "v26-like", [fixture])
+    outputs = []
+    for output_format in ("json", "markdown"):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        code = ledger.main(
+            _arguments(
+                [("snap-a", database, EBOOK_REVISION)],
+                tmp_path,
+                "--work-identity-levels",
+                "--format",
+                output_format,
+            ),
+            stdout=stdout,
+            stderr=stderr,
+            ancestry=_always,
+            attention=_no_attention,
+            series_replay=_no_series,
+            level_replay=lambda _database: levels.replay_levels(store),
+        )
+        assert (code, stderr.getvalue()) == (0, "")
+        outputs.append(stdout.getvalue())
+    document, markdown = outputs
+    section = json.loads(document)["work_identity_levels"]
+    assert [entry["label"] for entry in section["snapshots"]] == ["snap-a"]
+    keys: list[str] = []
+    strings: list[str] = []
+    _strings(section, keys, strings)
+    assert set(keys) | set(strings) <= levels.VOCABULARY | {
+        "snap-a",
+        "snapshots",
+        "label",
+    }
+    for text in (document, markdown):
+        assert _SENTINEL not in text
+        assert _no_level_fixture_strings(text)
+    assert markdown.startswith("### Replay at identifier\n")
+    assert "| snap-a | title_and_creator | description | 1 | 1 | 1 | 1 |" in markdown
+
+
+def _no_level_fixture_strings(text: str) -> bool:
+    """No value, title, creator or report identity of the level fixtures."""
+    from tests.unit import test_level_proposal_sets as level_sets
+
+    refused, plain, _predecessor_text = _level_reports()
+    identities = [json.loads(value)["report_id"] for value in (refused, plain)]
+    return all(
+        value not in text
+        for value in (level_sets.SYNOPSIS, "Example Book", "refused-1", *identities)
+    )
+
+
+def test_no_replayed_case_prints_not_estimable(tmp_path: Path) -> None:
+    """Test 25: with n = 0 the share and the field counts print "not
+    estimable", never a rate over nothing."""
+    fixture = Fixture(Sentinels(), "v26-like")
+    database = _database(tmp_path / "ledger.sqlite3", "v26-like", [fixture])
+    stdout, stderr = io.StringIO(), io.StringIO()
+    code = ledger.main(
+        _arguments(
+            [("snap-a", database, EBOOK_REVISION)],
+            tmp_path,
+            "--work-identity-levels",
+            "--format",
+            "markdown",
+        ),
+        stdout=stdout,
+        stderr=stderr,
+        ancestry=_always,
+        attention=_no_attention,
+        series_replay=_no_series,
+    )
+    assert (code, stderr.getvalue()) == (0, "")
+    markdown = stdout.getvalue()
+    assert "| snap-a | 1 | 0 | 0 | 1 / 0 | not estimable | 0 | 0 |" in markdown
+    assert (
+        "| snap-a | title_and_creator_exact | not estimable | 0 / 0 | 0 |" in markdown
+    )
+    assert (
+        "| snap-a | title_and_creator | description | not estimable | not estimable"
+        " | not estimable | not estimable |"
+    ) in markdown

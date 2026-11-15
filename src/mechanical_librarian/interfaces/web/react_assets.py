@@ -8,8 +8,9 @@ import re
 from dataclasses import dataclass, field
 from importlib.resources import files
 from pathlib import Path
-from typing import Protocol
+from typing import Final, Protocol
 
+REVIEW_REACT_ASSETS_SCHEMA: Final = "review-react-assets-v1"
 _BUILD_IDENTITY = re.compile(r"^[0-9a-f]{64}$")
 _CSRF_TOKEN = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
 _ASSET_PATH = re.compile(
@@ -180,7 +181,7 @@ def load_react_asset_bundle(
     if (
         type(value) is not dict
         or set(value) != {"assets", "build_identity", "entry", "schema"}
-        or value["schema"] != "review-react-assets-v1"
+        or value["schema"] != REVIEW_REACT_ASSETS_SCHEMA
         or type(value["build_identity"]) is not str
         or _BUILD_IDENTITY.fullmatch(value["build_identity"]) is None
         or value["entry"] != "index.html"
@@ -242,7 +243,7 @@ def load_react_asset_bundle(
 
     identity_input = json.dumps(
         {
-            "schema": "review-react-assets-v1",
+            "schema": REVIEW_REACT_ASSETS_SCHEMA,
             "entry": "index.html",
             "assets": value["assets"],
         },

@@ -356,7 +356,6 @@ describe('policy impact projections', () => {
       'description_fill:replace_safe_plain_text',
       'description_fill:google_visible_text',
       'cover_order:fixed_source_order',
-      'cover_order:replace_if_strictly_better',
       'asin:preserve_exact',
       'asin:ebook_manifestation',
       'explicit:unsupported',

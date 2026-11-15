@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from decimal import Decimal, localcontext
-from typing import Annotated, Literal
+from typing import Annotated, Final, Literal
 
 from pydantic import (
     BaseModel,
@@ -18,6 +18,11 @@ from pydantic import (
 from mechanical_librarian.domain.reviewer_access import (
     DescriptionModelMetadata,
     OpenRouterModelId,
+)
+
+ReviewerCostEvidenceSchemaVersion = Literal["reviewer-cost-evidence-v2"]
+REVIEWER_COST_EVIDENCE_SCHEMA: Final[ReviewerCostEvidenceSchemaVersion] = (
+    "reviewer-cost-evidence-v2"
 )
 
 Count = Annotated[StrictInt, Field(ge=0, le=100_000)]
@@ -75,7 +80,7 @@ def per_thousand(total: str, attempts: int) -> Decimal:
 
 
 class ReviewerCostEvidence(_Closed):
-    schema_version: Literal["reviewer-cost-evidence-v2"]
+    schema_version: ReviewerCostEvidenceSchemaVersion
     models: Annotated[tuple[ReviewerCostEstimate, ...], Field(max_length=100)]
 
     @model_validator(mode="after")

@@ -397,9 +397,11 @@ KEYWORDS: tuple[tuple[str, str, str, str, object], ...] = (
         ("S70", "_CoverCandidate", "/properties/deterministic_rank_key/anyOf/0", key, 7)
         for key in ("minItems", "maxItems")
     ),
+    ("S71", "_CoverCandidate", "/properties/ordinal", "minimum", 0),
+    # A retained original the decoder refused has no size (#1362).
     *(
-        ("S71", "_CoverCandidate", f"/properties/{name}", "minimum", 0)
-        for name in ("height", "ordinal", "width")
+        ("S71", "_CoverCandidate", f"/properties/{name}/anyOf/0", "minimum", 0)
+        for name in ("height", "width")
     ),
     ("S72", "_CoverIdentity", "/properties/outcome", "enum", cover_identity._OUTCOMES),
     ("S73", "_PreparationProgress", "/properties/state", "enum", SCAN_STATES),

@@ -20,6 +20,7 @@ from mechanical_librarian.application.cover_observation import (
 from mechanical_librarian.application.cover_packets import prepare_cover_packet
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.metadata_report import MetadataReport
+from mechanical_librarian.domain.reviewer_cost import REVIEWER_COST_EVIDENCE_SCHEMA
 from tests.support.audiobook_synopsis import recording_synopsis_report
 from tests.support.automatic_no_change import _automatic_no_change_inputs
 from tests.support.cover_producers import _preview, _source
@@ -232,7 +233,7 @@ def test_composed_real_reports_packets_dispatch_capture_and_read_only(
     ] == [("cover", 2, "10.00"), ("description", 2, "10.00")]
     evidence = result["public_evidence"]
     assert set(evidence) == {"schema_version", "models"}
-    assert evidence["schema_version"] == "reviewer-cost-evidence-v2"
+    assert evidence["schema_version"] == REVIEWER_COST_EVIDENCE_SCHEMA
     assert {
         (row["measured_run"]["source_head"], row["measured_run"]["cohort_sha256"])
         for row in evidence["models"]

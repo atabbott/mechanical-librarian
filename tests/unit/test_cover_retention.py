@@ -12,6 +12,10 @@ from pathlib import Path
 
 import pytest
 
+from mechanical_librarian.adapters.cover_artifacts import (
+    CoverDecodeRejected,
+    decode_cover,
+)
 from mechanical_librarian.adapters.field_effect_authority import (
     PersistedFieldEffectAuthority,
 )
@@ -31,11 +35,16 @@ from mechanical_librarian.application.continuous_field_effects import (
 )
 from mechanical_librarian.application.cover_retention import CoverRetention
 from mechanical_librarian.application.field_effects import GuardedFieldApplication
+from mechanical_librarian.domain import cover_qualification_policy
 from mechanical_librarian.domain.cover_automatic_decision import (
     CoverAutomaticDecision,
 )
+from mechanical_librarian.domain.cover_qualification_policy import (
+    MEASURED_REPLACEMENT_IDENTITY,
+)
 from mechanical_librarian.domain.field_effect import FieldEffectOperation
 from mechanical_librarian.domain.readable_activity import failure_reason
+from tests.support.audiobook_covers import SYNTHETIC_MEASURED_RECORD
 from tests.support.field_effects import (
     CAPABILITY,
     DEPENDENCY,
@@ -53,17 +62,30 @@ OLD_DIGEST = hashlib.sha256(OLD).hexdigest()
 NEW = "cover_" + "9" * 64
 
 
+@pytest.fixture(autouse=True)
+def _measured_record(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A switch of a populated cover is the measured rules' replacement, which
+    # only a qualification record admits; this stands in for one (#1363).
+    monkeypatch.setattr(
+        cover_qualification_policy,
+        "MEASURED_REPLACEMENT_QUALIFICATION_SHA256",
+        SYNTHETIC_MEASURED_RECORD,
+    )
+
+
 def _automatic_cover(suffix: str = "0") -> CoverAutomaticDecision:
     fixture = Path(__file__).parents[1] / "fixtures/cover-authority-v2.json"
     raw = json.loads(json.loads(fixture.read_text())["decisions"][0])
     arguments = {
-        name: raw[name]
+        name: raw.get(name)
         for name in inspect.signature(CoverAutomaticDecision.create).parameters
     }
     arguments.update(
         rank_key=tuple(raw["rank_key"]),
         citation_ids=tuple(raw["citation_ids"]),
-        policy_option="replace_if_strictly_better",
+        policy_option="fixed_source_order:measured_replacement",
+        qualification_identity=MEASURED_REPLACEMENT_IDENTITY,
+        reason="below_floor",
         artifact_id=NEW,
         candidate_id="alternative_" + (suffix * 64)[:64],
     )
@@ -821,3 +843,30 @@ def test_the_writer_reads_an_original_from_either_store(tmp_path: Path) -> None:
     assert reader.read_original_digest(OLD_DIGEST) == OLD
     with pytest.raises(MetadataReportError, match="artifact is unavailable"):
         reader.read_original_digest("b" * 64)
+
+
+def test_an_original_the_decoder_refuses_is_kept_byte_for_byte(
+    effects: _EffectEnvironment,
+) -> None:
+    """Retention never decodes: it keeps exactly the bytes the write replaces,
+    whether or not they decode (#1362, A5)."""
+    undecodable = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+    with pytest.raises(CoverDecodeRejected):
+        decode_cover(undecodable)
+    digest = hashlib.sha256(undecodable).hexdigest()
+    effects.recovery = PrivateCoverRecoveryStore(
+        Path(effects.temporary.name) / "undecodable-recovery", lambda _: undecodable
+    )
+    store = RetainedCoverStore(_root(effects))
+    service = _service(effects, store)
+    planned = _automatic_plan(effects, service, pre="cover_" + digest)
+
+    assert service.apply(planned.plan.plan_id).state == "verified"
+
+    assert (_root(effects) / f"{digest}.retained").read_bytes() == undecodable
+    assert store.read(digest) == undecodable
+    assert effects.repository.retained_cover_original("primary", "books", "book-1") == (
+        digest,
+        planned.plan.plan_id,
+        planned.plan.authority.decision_id,
+    )

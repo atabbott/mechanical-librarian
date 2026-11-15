@@ -80,6 +80,7 @@ class ActivityResult(StrEnum):
     VERIFIED = "Verified"
     CLOSED = "Closed"
     ITEM_CHANGED = "Closed because the item changed"
+    MATCHING_CHANGED = "Closed because Book matching changed"
     REPLACED = "Replaced"
     STOPPED = "Stopped"
     RECORDED = "Recorded"
@@ -208,6 +209,8 @@ def activity_result_label(state: str, failure: object = None) -> ActivityResult:
         return ActivityResult.WAITING_TO_RETRY
     if (state, failure) == ("stale", "target_changed"):
         return ActivityResult.ITEM_CHANGED
+    if (state, failure) == ("stale", "matching_changed"):
+        return ActivityResult.MATCHING_CHANGED
     return _RESULT_LABELS.get(state, ActivityResult.RECORDED)
 
 

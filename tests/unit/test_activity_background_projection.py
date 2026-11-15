@@ -64,7 +64,10 @@ from mechanical_librarian.domain.proposal_set import ProposalSet
 from mechanical_librarian.domain.review_case import ReviewCase, ReviewCaseValueError
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
 from mechanical_librarian.infrastructure.first_boot import FirstBootMode
-from mechanical_librarian.infrastructure.settings_authority import ReviewBootstrap
+from mechanical_librarian.infrastructure.settings_authority import (
+    REVIEW_BOOTSTRAP_SCHEMA,
+    ReviewBootstrap,
+)
 from tests.support.automatic_decisions import _automatic_decisions
 from tests.support.automatic_no_change import _automatic_no_change_inputs
 from tests.support.description_advice import _prepared
@@ -1548,7 +1551,7 @@ def test_a_store_root_hands_what_it_validated_to_its_activity_readers(
         return Mock()
 
     bootstrap = ReviewBootstrap(
-        schema_version="review-bootstrap-v2",
+        schema_version=REVIEW_BOOTSTRAP_SCHEMA,
         tls_certificate_file="/synthetic/certificate",
         tls_private_key_file="/synthetic/private-key",
         canonical_origin="https://library.invalid",

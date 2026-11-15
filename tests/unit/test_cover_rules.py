@@ -26,6 +26,7 @@ from mechanical_librarian.domain.cover_rules import (
     CoverProtection,
     CoverRuleCandidate,
     CurrentCover,
+    CurrentCoverRead,
     MeasuredCoverElection,
     SameArtGroup,
     elect_measured_covers,
@@ -78,7 +79,7 @@ def _candidate(
     identity: str = WORK,
     ordinal: int = 0,
     measures: CoverMeasures | None = None,
-    non_english_edition: bool = False,
+    edition_outside_library_languages: bool = False,
     omnibus_volume: bool = False,
     title_differs: bool = False,
 ) -> CoverRuleCandidate:
@@ -89,7 +90,7 @@ def _candidate(
         height=size[1],
         packet_ordinal=ordinal,
         measures=measures,
-        non_english_edition=non_english_edition,
+        edition_outside_library_languages=edition_outside_library_languages,
         omnibus_volume=omnibus_volume,
         title_differs=title_differs,
     )
@@ -100,18 +101,24 @@ def _current(
     *,
     identity: str | None = WORK,
     measures: CoverMeasures | None = None,
-    non_english_edition: bool = False,
+    edition_outside_library_languages: bool = False,
+    read: CurrentCoverRead = CurrentCoverRead.UNREADABLE,
+    retainable: bool = False,
+    contradicted: bool = False,
 ) -> CurrentCover:
+    """A readable cover of ``size``, or with no size an unreadable or unknown one."""
     if size is None:
-        return CurrentCover("current", identity, readable=False)
+        return CurrentCover("current", identity, read=read, retainable=retainable)
     return CurrentCover(
         "current",
         identity,
-        readable=True,
+        read=CurrentCoverRead.READABLE,
+        retainable=True,
         width=size[0],
         height=size[1],
         measures=measures,
-        non_english_edition=non_english_edition,
+        edition_outside_library_languages=edition_outside_library_languages,
+        contradicted=contradicted,
     )
 
 
@@ -384,7 +391,8 @@ def test_a_chain_of_near_matches_never_makes_another_art_a_copy() -> None:
     assert set(fault_free.ranked) == {"near", "far"}
 
     faulty = _elect(
-        candidates, current=_current(measures=_measures(), non_english_edition=True)
+        candidates,
+        current=_current(measures=_measures(), edition_outside_library_languages=True),
     )
     assert faulty.issues == (CoverIssue.EDITION_LANGUAGE,)
     assert (faulty.outcome, faulty.choice) == (CoverOutcome.REPLACE, "far")
@@ -393,7 +401,9 @@ def test_a_chain_of_near_matches_never_makes_another_art_a_copy() -> None:
 def test_a_fault_of_the_art_is_not_replaced_by_another_copy_of_it() -> None:
     copy = _candidate("copy", PORTRAIT, identity=EDITION, measures=_measures())
     other = _candidate("other", (1000, 1500), measures=_measures(art=1))
-    current = _current((800, 1200), measures=_measures(), non_english_edition=True)
+    current = _current(
+        (800, 1200), measures=_measures(), edition_outside_library_languages=True
+    )
 
     election = _elect((copy, other), current=current)
     assert election.ranked == ("copy", "other")
@@ -427,7 +437,11 @@ def _art_fault_cases() -> list[tuple[str, CurrentCover, tuple[int, int], CoverIs
     return [
         (
             "edition_language",
-            _current((800, 1200), measures=_measures(), non_english_edition=True),
+            _current(
+                (800, 1200),
+                measures=_measures(),
+                edition_outside_library_languages=True,
+            ),
             (1200, 1800),
             CoverIssue.EDITION_LANGUAGE,
         ),
@@ -510,7 +524,9 @@ def test_an_undersized_cover_is_cured_by_a_copy_that_clears_the_floor() -> None:
 
     foreign = _elect(
         (copy, other),
-        current=_current(small, measures=_measures(), non_english_edition=True),
+        current=_current(
+            small, measures=_measures(), edition_outside_library_languages=True
+        ),
     )
     assert foreign.issues == (CoverIssue.BELOW_FLOOR, CoverIssue.EDITION_LANGUAGE)
     assert foreign.choice == "other"
@@ -565,13 +581,15 @@ def test_omnibus_excludes_a_member_volume_only_for_an_omnibus() -> None:
     assert single.choice == "volume"
 
 
-def test_a_non_english_edition_is_excluded_and_faults_the_current_cover() -> None:
+def test_a_edition_outside_library_languages_is_excluded_and_faults_the_current_cover() -> (
+    None
+):
     election = _elect(
         (
-            _candidate("foreign", (800, 1200), non_english_edition=True),
+            _candidate("foreign", (800, 1200), edition_outside_library_languages=True),
             _candidate("english", PORTRAIT, measures=_measures(art=1)),
         ),
-        current=_current(non_english_edition=True),
+        current=_current(edition_outside_library_languages=True),
     )
 
     assert election.excluded == (("foreign", CoverExclusion.EDITION_LANGUAGE),)
@@ -583,9 +601,11 @@ def test_the_first_failing_check_names_an_exclusion() -> None:
     small = COVER_FLOOR_SHORT_EDGE - 1
     election = _elect(
         (
-            _candidate("all", (small, small), non_english_edition=True),
+            _candidate("all", (small, small), edition_outside_library_languages=True),
             _candidate(
-                "language-volume", omnibus_volume=True, non_english_edition=True
+                "language-volume",
+                omnibus_volume=True,
+                edition_outside_library_languages=True,
             ),
             _candidate("square-volume", SQUARE, omnibus_volume=True),
         ),
@@ -636,13 +656,152 @@ def test_a_title_that_names_another_work_holds_selection(
     assert empty_target.outcome is (CoverOutcome.HOLD if held else CoverOutcome.FILL)
 
 
-def test_an_unreadable_current_cover_is_only_ever_suggested() -> None:
+@pytest.mark.parametrize(
+    ("protection", "retainable", "outcome"),
+    [
+        (CoverProtection.PROTECTED, True, CoverOutcome.REPLACE),
+        (CoverProtection.UNPROTECTED, True, CoverOutcome.REPLACE),
+        (CoverProtection.PROPOSALS_ONLY, True, CoverOutcome.SUGGEST),
+        (CoverProtection.PROTECTED, False, CoverOutcome.SUGGEST),
+        (CoverProtection.UNPROTECTED, False, CoverOutcome.SUGGEST),
+        (CoverProtection.PROPOSALS_ONLY, False, CoverOutcome.SUGGEST),
+    ],
+    ids=[
+        "protected_retainable",
+        "unprotected_retainable",
+        "proposals_only_retainable",
+        "protected_not_retainable",
+        "unprotected_not_retainable",
+        "proposals_only_not_retainable",
+    ],
+)
+def test_an_unreadable_current_cover_is_switched_only_when_it_can_be_kept(
+    protection: CoverProtection, retainable: bool, outcome: CoverOutcome
+) -> None:
+    """ADR-0094 S4 and A7: the first eligible candidate, automatic only if kept."""
+    election = _elect(
+        (_candidate("second", ordinal=1), _candidate("first", (800, 1200))),
+        current=_current(None, identity=None, retainable=retainable),
+        protection=protection,
+    )
+    assert election.issues == (CoverIssue.UNREADABLE,)
+    assert election.reason is CoverIssue.UNREADABLE
+    assert (election.outcome, election.choice) == (outcome, "first")
+
+
+def test_an_unreadable_current_cover_with_nothing_eligible_is_kept_with_its_issue() -> (
+    None
+):
     for protection in CoverProtection:
         election = _elect(
-            (_candidate("art"),), current=_current(None), protection=protection
+            (_candidate("square", SQUARE),),
+            current=_current(None, identity=None, retainable=True),
+            protection=protection,
         )
+        assert (election.outcome, election.choice) == (CoverOutcome.KEEP, None)
         assert election.issues == (CoverIssue.UNREADABLE,)
-        assert (election.outcome, election.choice) == (CoverOutcome.SUGGEST, "art")
+
+
+def test_an_unknown_read_decides_nothing_in_any_mode() -> None:
+    """ADR-0094 S3: a transient read keeps the cover with no issue or choice."""
+    unknown = _current(None, identity=None, read=CurrentCoverRead.UNKNOWN)
+    for protection in CoverProtection:
+        for prefer_edition in (False, True):
+            election = _elect(
+                (ALTERNATIVE, _candidate("work", (1000, 1500))),
+                current=unknown,
+                protection=protection,
+                prefer_edition=prefer_edition,
+            )
+            assert (election.outcome, election.choice) == (CoverOutcome.KEEP, None)
+            assert election.issues == ()
+            assert election.reason is None
+
+
+@pytest.mark.parametrize(
+    "current",
+    [
+        _current(measures=_measures(art=2), contradicted=True),
+        _current(SQUARE, contradicted=True),
+        _current(
+            (COVER_FLOOR_SHORT_EDGE - 1, 2 * COVER_FLOOR_SHORT_EDGE),
+            identity=None,
+            contradicted=True,
+        ),
+    ],
+    ids=["fault_free", "wrong_shape", "below_floor_unconfirmed"],
+)
+def test_a_contradicted_current_cover_holds_in_every_mode(
+    current: CurrentCover,
+) -> None:
+    """ADR-0094 S6: the owner decides, whatever the cover's faults."""
+    for protection in CoverProtection:
+        for prefer_edition in (False, True):
+            election = _elect(
+                (ALTERNATIVE,),
+                current=current,
+                protection=protection,
+                prefer_edition=prefer_edition,
+            )
+            assert (election.outcome, election.choice) == (CoverOutcome.HOLD, None)
+            assert election.issues == (CoverIssue.CURRENT_CONTRADICTED,)
+            assert election.reason is CoverIssue.CURRENT_CONTRADICTED
+
+
+def test_a_contradiction_is_recorded_beside_a_title_hold() -> None:
+    candidates = tuple(
+        _candidate(f"c{index}", measures=_measures(art=index), title_differs=True)
+        for index in range(2)
+    )
+    election = _elect(
+        candidates,
+        current=_current(SQUARE, contradicted=True),
+        title_conflict=True,
+    )
+
+    assert (election.outcome, election.choice) == (CoverOutcome.HOLD, None)
+    assert election.issues == (
+        CoverIssue.TITLE_NAMES_OTHER_WORK,
+        CoverIssue.CURRENT_CONTRADICTED,
+    )
+    assert election.reason is CoverIssue.TITLE_NAMES_OTHER_WORK
+
+
+@pytest.mark.parametrize(
+    ("protection", "faulty_outcome"),
+    [
+        (CoverProtection.PROTECTED, CoverOutcome.REPLACE),
+        (CoverProtection.UNPROTECTED, CoverOutcome.REPLACE),
+        (CoverProtection.PROPOSALS_ONLY, CoverOutcome.SUGGEST),
+    ],
+    ids=["protected", "unprotected", "proposals_only"],
+)
+def test_a_readable_unconfirmed_cover_takes_part_under_protection(
+    protection: CoverProtection, faulty_outcome: CoverOutcome
+) -> None:
+    """ADR-0094 A1: identity is not read; a fault decides, as for a confirmed one."""
+    fault_free = _elect(
+        (ALTERNATIVE,),
+        current=_current(identity=None, measures=_measures(art=2)),
+        protection=protection,
+    )
+    assert (fault_free.outcome, fault_free.choice) == (CoverOutcome.KEEP, None)
+    assert fault_free.issues == ()
+
+    faulty = _elect(
+        (ALTERNATIVE,), current=_current(SQUARE, identity=None), protection=protection
+    )
+    assert (faulty.outcome, faulty.choice) == (faulty_outcome, "edition")
+    assert faulty.reason is CoverIssue.WRONG_SHAPE
+
+    # Identity never replaces: the edition option reads a confirmed work only.
+    edition = _elect(
+        (ALTERNATIVE,),
+        current=_current(identity=None, measures=_measures(art=2)),
+        protection=protection,
+        prefer_edition=True,
+    )
+    assert (edition.outcome, edition.edition_preferred) == (CoverOutcome.KEEP, False)
 
 
 def test_a_fault_with_nothing_eligible_keeps_the_current_cover() -> None:
@@ -656,7 +815,7 @@ def test_issues_are_recorded_in_priority_order() -> None:
     small = COVER_FLOOR_SHORT_EDGE - 1
     election = _elect(
         (_candidate("art", measures=_measures(art=1)),),
-        current=_current((small, small), non_english_edition=True),
+        current=_current((small, small), edition_outside_library_languages=True),
     )
 
     assert election.issues == (
@@ -761,8 +920,38 @@ def _fixtures() -> list[tuple[str, Callable[..., MeasuredCoverElection]]]:
         ),
         ("unreadable", partial(_elect, (ALTERNATIVE,), current=_current(None))),
         (
+            "unreadable_retainable",
+            partial(
+                _elect,
+                (ALTERNATIVE,),
+                current=_current(None, identity=None, retainable=True),
+            ),
+        ),
+        (
+            "unknown",
+            partial(
+                _elect,
+                (ALTERNATIVE,),
+                current=_current(None, identity=None, read=CurrentCoverRead.UNKNOWN),
+            ),
+        ),
+        (
+            "contradicted",
+            partial(
+                _elect, (ALTERNATIVE,), current=_current(SQUARE, contradicted=True)
+            ),
+        ),
+        (
+            "unconfirmed_wrong_shape",
+            partial(_elect, (ALTERNATIVE,), current=_current(SQUARE, identity=None)),
+        ),
+        (
             "edition_language",
-            partial(_elect, (ALTERNATIVE,), current=_current(non_english_edition=True)),
+            partial(
+                _elect,
+                (ALTERNATIVE,),
+                current=_current(edition_outside_library_languages=True),
+            ),
         ),
         (
             "sharper_copy",
@@ -853,12 +1042,60 @@ def test_the_result_does_not_depend_on_candidate_order() -> None:
         lambda: _candidate("x", (0, 600)),
         lambda: _candidate("x", PORTRAIT, ordinal=-1),
         lambda: _candidate("x", PORTRAIT, title_differs=1),  # type: ignore[arg-type]  # reason: proves the exact-type check
-        lambda: CurrentCover("current", WORK, readable=True),
-        lambda: CurrentCover("current", WORK, readable=False, width=1, height=1),
-        lambda: CurrentCover("current", WORK, readable=False, non_english_edition=True),
-        lambda: CurrentCover("current", "unverified", readable=True, width=1, height=1),
+        lambda: CurrentCover("current", WORK, CurrentCoverRead.READABLE, True),
+        lambda: CurrentCover(
+            "current", WORK, CurrentCoverRead.UNREADABLE, False, width=1, height=1
+        ),
+        lambda: CurrentCover(
+            "current",
+            WORK,
+            CurrentCoverRead.UNREADABLE,
+            False,
+            edition_outside_library_languages=True,
+        ),
+        lambda: CurrentCover(
+            "current", "unverified", CurrentCoverRead.READABLE, True, width=1, height=1
+        ),
         lambda: _candidate("x", PORTRAIT, identity=["verified_work_match"]),  # type: ignore[arg-type]  # reason: proves the exact-type check
-        lambda: CurrentCover("current", {}, readable=True, width=1, height=1),  # type: ignore[arg-type]  # reason: as above
+        lambda: CurrentCover(
+            "current",
+            {},  # type: ignore[arg-type]  # reason: as above
+            CurrentCoverRead.READABLE,
+            True,
+            width=1,
+            height=1,
+        ),
+        lambda: CurrentCover("current", WORK, "readable", True, width=1, height=1),  # type: ignore[arg-type]  # reason: proves the exact-type check
+        lambda: CurrentCover(
+            "current", WORK, CurrentCoverRead.READABLE, False, width=1, height=1
+        ),
+        lambda: CurrentCover("current", None, CurrentCoverRead.UNKNOWN, True),
+        lambda: CurrentCover(
+            "current", None, CurrentCoverRead.UNKNOWN, False, width=1, height=1
+        ),
+        lambda: CurrentCover(
+            "current", None, CurrentCoverRead.UNREADABLE, True, contradicted=True
+        ),
+        lambda: CurrentCover(
+            "current", None, CurrentCoverRead.UNKNOWN, False, contradicted=True
+        ),
+        lambda: CurrentCover(
+            "current",
+            WORK,
+            CurrentCoverRead.READABLE,
+            1,  # type: ignore[arg-type]  # reason: proves the exact-type check
+            width=1,
+            height=1,
+        ),
+        lambda: CurrentCover(
+            "current",
+            WORK,
+            CurrentCoverRead.READABLE,
+            True,
+            width=1,
+            height=1,
+            contradicted=1,  # type: ignore[arg-type]  # reason: as above
+        ),
     ],
     ids=[
         "short_phash",
@@ -878,6 +1115,14 @@ def test_the_result_does_not_depend_on_candidate_order() -> None:
         "current_identity",
         "list_identity",
         "object_identity",
+        "read_as_text",
+        "readable_not_retainable",
+        "unknown_retainable",
+        "unknown_with_size",
+        "unreadable_contradicted",
+        "unknown_contradicted",
+        "integer_retainable",
+        "integer_contradicted",
     ],
 )
 def test_malformed_values_are_refused(build: Callable[[], object]) -> None:

@@ -6,6 +6,7 @@ import json
 import pytest
 
 from mechanical_librarian.application.batch import (
+    BATCH_MANIFEST_SCHEMA,
     MAX_MANIFEST_BYTES,
     BatchError,
     BatchSelection,
@@ -78,7 +79,7 @@ def test_manifest_is_canonical_and_private():
         ("hardcover",),
     )
     assert b"Title" not in value
-    assert b'"schema":"batch-manifest-v5"' in value
+    assert f'"schema":"{BATCH_MANIFEST_SCHEMA}"'.encode() in value
     assert parse_manifest(value)["id"] == parse_manifest(value)["id"]
 
 
@@ -87,7 +88,9 @@ def test_manifest_rejects_tamper_and_config_fingerprint_excludes_secret_path():
     with pytest.raises(BatchError):
         parse_manifest(raw.replace(b'"entries":[]', b'"entries":[{}]'))
     with pytest.raises(BatchError):
-        parse_manifest(raw.replace(b"batch-manifest-v5", b"batch-manifest-v4"))
+        parse_manifest(
+            raw.replace(BATCH_MANIFEST_SCHEMA.encode(), b"batch-manifest-v4")
+        )
     first = ApplicationConfiguration(
         (
             TargetConnectionConfiguration(

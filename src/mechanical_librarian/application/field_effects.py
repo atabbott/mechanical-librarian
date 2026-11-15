@@ -263,6 +263,8 @@ class ConsentCurrentness(Protocol):
 class DependencyCurrentness(Protocol):
     def current(self, digests: tuple[str, ...]) -> bool: ...
 
+    def matching_changed(self, digests: tuple[str, ...]) -> bool: ...
+
 
 class CoverRecovery(Protocol):
     def capture(self, plan: FieldEffectPlan) -> None: ...
@@ -773,7 +775,16 @@ class GuardedFieldApplication:
             for member in (plan, plan.subtitle_plan())
             if member is not None
         ):
-            return self._stale(operation, "authority")
+            return self._stale(
+                operation,
+                "matching_changed"
+                if any(
+                    self._authority_failure(member) == "matching_changed"
+                    for member in (plan, plan.subtitle_plan())
+                    if member is not None
+                )
+                else "authority",
+            )
         try:
             with self._timing.measure("apply", "target"):
                 result = self._target.apply(plan)
@@ -972,6 +983,52 @@ class GuardedFieldApplication:
             self._recover_cleanup(result)
         return result
 
+    def _may_have_landed(self, operation: FieldEffectOperation) -> bool:
+        """Whether a retry's earlier request may have reached the target.
+
+        Only history can say a request may have been sent, so a plan that
+        never reached `applying` is not taken for one (#1402).
+        """
+        return (operation.state, operation.failure) == (
+            "retryable",
+            "target_failure",
+        ) and any(
+            json.loads(event)["kind"] == "applying"
+            for event in self._repository.field_effect_event_documents(
+                operation.plan.plan_id
+            )
+        )
+
+    def _stale_unless_landed(
+        self, operation: FieldEffectOperation, failure: str
+    ) -> FieldEffectOperation:
+        """Refuse a plan, unless its earlier request landed.
+
+        A cover setting changed after a write that may have landed moves the
+        cover policy, so the retry's authority is no longer current. If the
+        target already shows the desired value the write happened: it is
+        recorded as verified, keeping the switch and the original kept for
+        Put back, instead of staling and releasing them (#1363, #1402). A
+        target that cannot be read refuses as before.
+        """
+        if self._may_have_landed(operation):
+            try:
+                observed = self._target.read(operation.plan)
+            except TargetServiceUnavailable:
+                return self._stale(operation, failure)
+            if observed.matches(operation.plan, desired=True, check_version=True):
+                return self._complete(operation, "retryable")
+        return self._stale(operation, failure)
+
+    def _authority_failure(self, member: FieldEffectPlan) -> str:
+        """`matching_changed` for a cover chosen under another level, else `authority`."""
+        return (
+            "matching_changed"
+            if member.destination == "cover"
+            and self._dependencies.matching_changed(member.dependency_digests)
+            else "authority"
+        )
+
     def _preclaim(
         self,
         operation: FieldEffectOperation,
@@ -1047,11 +1104,23 @@ class GuardedFieldApplication:
             if capability.digest != member.capability_digest:
                 return self._stale(operation, "capability")
             if not self._authority.current(member.authority):
-                return self._stale(operation, "authority")
+                # Reclassifying under another Book matching level retires the
+                # old consideration's authority too; name the cause (#1355).
+                return self._stale_unless_landed(
+                    operation, self._authority_failure(member)
+                )
             if not self._consent.current(member.consent):
                 return self._stale(operation, "consent")
             if not self._dependencies.current(member.dependency_digests):
-                return self._stale(operation, "dependency")
+                # A cover chosen under another Book matching level says so
+                # (#1355); every other moved dependency stays unnamed.
+                return self._stale(
+                    operation,
+                    "matching_changed"
+                    if member.destination == "cover"
+                    and self._dependencies.matching_changed(member.dependency_digests)
+                    else "dependency",
+                )
         try:
             observed = self._target.read(plan)
         except Exception as error:
@@ -1077,16 +1146,9 @@ class GuardedFieldApplication:
             # what this read shows instead of a change it did not make. Only
             # history can say a request may have been sent, so a plan that
             # never reached `applying` is not taken for one (#1402).
-            if (
-                (operation.state, operation.failure) == ("retryable", "target_failure")
-                and observed.matches(plan, desired=True, check_version=True)
-                and any(
-                    json.loads(event)["kind"] == "applying"
-                    for event in self._repository.field_effect_event_documents(
-                        plan.plan_id
-                    )
-                )
-            ):
+            if observed.matches(
+                plan, desired=True, check_version=True
+            ) and self._may_have_landed(operation):
                 return self._complete(operation, "retryable")
             return self._stale(operation, "target_changed")
         if operation.attempt >= 3:

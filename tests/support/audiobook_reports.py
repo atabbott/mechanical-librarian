@@ -401,8 +401,10 @@ def retained_recorded_only_decision(
                 for key in (
                     "actor",
                     "application",
+                    "cause",
                     "destination",
                     "idempotency_digest",
+                    "offered_alternatives_digest",
                     "outcome",
                     "proposal_id",
                     "review_case_id",

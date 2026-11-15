@@ -36,6 +36,9 @@ from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
 from mechanical_librarian.application.field_effects import GuardedFieldApplication
+from mechanical_librarian.domain.cover_automatic_decision import (
+    SCHEMA_VERSION as COVER_AUTOMATIC_DECISION_SCHEMA,
+)
 from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyProfile,
@@ -476,7 +479,7 @@ def _cover_ledger(
                 json.dumps(
                     {
                         "decision_document": json.dumps(
-                            {"schema_version": "cover-automatic-decision-v3"}
+                            {"schema_version": COVER_AUTOMATIC_DECISION_SCHEMA}
                         )
                     }
                 ),

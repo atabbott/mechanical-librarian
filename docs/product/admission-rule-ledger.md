@@ -361,3 +361,7 @@ refuses the run. A database with a non-empty write-ahead log is refused;
 checkpoint a copy first. Without `--format markdown` the script prints the
 `admission-rule-ledger-v2` JSON document the tables are rendered from. Both
 snapshots together replay in about four seconds.
+
+Add `--work-identity-levels` to print, instead, each Book matching level's
+counts, from current reports replayed under this checkout. A report older than
+the previous report schema is counted as not replayed.

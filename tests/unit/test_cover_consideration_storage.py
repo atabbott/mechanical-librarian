@@ -19,7 +19,11 @@ from mechanical_librarian.adapters.persistence.cover_consideration_documents imp
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.domain.cover_automatic_decision import (
+    SCHEMA_VERSION as COVER_AUTOMATIC_DECISION_SCHEMA,
+)
 from mechanical_librarian.domain.field_effect import FieldEffectError
+from mechanical_librarian.domain.human_decision import COVER_SELECTION_AUTHORITY_SCHEMA
 from tests.support.cover_retention import retained_cover_case
 from tests.support.metadata_report_schemas import (
     PRIOR_ATTENTION_FACT_OBJECTS,
@@ -213,14 +217,17 @@ def test_actual_embedded_predecessor_refused_without_mutation(
             schema,
             "_COVER_SELECTION_AUTHORITIES_SQL",
             schema._COVER_SELECTION_AUTHORITIES_SQL.replace(
-                "'cover-selection-authority-v3'", "'cover-selection-authority-v2'"
+                f"'{COVER_SELECTION_AUTHORITY_SCHEMA}'",
+                "'cover-selection-authority-v2'",
+            ).replace(
+                f"'{COVER_AUTOMATIC_DECISION_SCHEMA}'", "'cover-automatic-decision-v3'"
             ),
         ),
     ):
         schema._create_schema(connection)
     # The producer predates #1199's report browse facts, #1202's
     # history indexes, #1204's indexes, #1211's case indexes, #1232's
-    # attention facts and #1363's retained covers.
+    # attention facts, #1363's retained covers and #1355's level storage.
     connection.executescript(
         "".join(
             f"DROP {kind.upper()} {name};"
@@ -243,6 +250,11 @@ def test_actual_embedded_predecessor_refused_without_mutation(
         "DROP INDEX current_review_case_lineages_case;"
         "DROP INDEX current_review_packages_case;"
         "DROP TABLE review_case_episodes;"
+        "DROP TABLE review_case_level_offers;"
+        "DROP TABLE level_decision_notes;"
+        "DROP TABLE level_proposal_sets;"
+        "DROP TABLE review_case_level_reconciliation;"
+        "ALTER TABLE review_preparation_control DROP COLUMN work_identity_level;"
         "DROP TABLE retained_cover_listings;"
         "DROP TABLE retained_cover_removals;"
         "DROP TABLE retained_cover_bindings;"
@@ -447,3 +459,16 @@ def test_corrupt_report_sql_type_rolls_back_publication(tmp_path: Path) -> None:
         assert connection.execute(
             "SELECT count(*) FROM cover_considerations"
         ).fetchone() == (1,)
+
+
+@pytest.mark.parametrize(
+    "reader",
+    ["current_cover_consideration_document", "current_cover_consideration_level"],
+)
+def test_current_comparison_readers_hold_the_connection_lock(reader: str) -> None:
+    from mechanical_librarian.adapters.persistence.cover_considerations import (
+        SQLiteCoverConsiderationRepository,
+    )
+
+    method = getattr(SQLiteCoverConsiderationRepository, reader)
+    assert getattr(method, "__wrapped__", None) is not None, reader

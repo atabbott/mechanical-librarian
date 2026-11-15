@@ -99,7 +99,8 @@ must hash to the plan's own pre-value; it is bound to the plan in an
 append-only record and then kept under its SHA-256 in an owner-only
 `retained-covers` directory beside the recovery directory. The directory holds
 at most 2,000 originals or 2 GiB. When it is full, nothing older is dropped:
-the new switch stops and nothing is written. If the write ends any way
+a switch that would need room is suggested instead, and a write that races to
+a full store stops and writes nothing. If the write ends any way
 other than verified, or a newer switch pushes it off the list of the most
 recent 1,000 switches, a persisted, retryable obligation removes the copy,
 queued in the same transaction as that change. A retained original is never
@@ -111,6 +112,12 @@ cached, and the retained original is never served. Report assembly stores
 only the original's preview in the artifact store, so its bytes stay in the
 retained directory alone and a release leaves no copy of them. A Put back that
 verifies releases the copy in the same transaction.
+
+An original the decoder refuses is kept and put back byte for byte all the
+same, because retention never decodes it (#1362). It has no preview: report
+assembly offers it by the digest the retained store has just verified and
+stages nothing, the book page and Covers show "Image unavailable" in its
+place, and Put back uploads the exact retained bytes.
 
 ## What leaves the host
 

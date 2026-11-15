@@ -179,3 +179,12 @@ has no fuzzy matching, token subsets or accent stripping.
 - No fuzzy matching, edit distance, token subsets, accent stripping, subtitle
   admission, manifestation selection,
   reviewer decision, or production write is added.
+
+## #1355 amendment
+
+Behind `review.work_identity`
+([ADR-0096](0096-owner-chosen-work-identity-strictness.md)), a provider record
+may also match a cover, or offer a value for the owner to choose in a title,
+subtitle, authors, description, genres, tags or series field, by a level's
+predicate. Comparison links, creator order and the table above are unchanged,
+and a level admission never creates an agreement link.

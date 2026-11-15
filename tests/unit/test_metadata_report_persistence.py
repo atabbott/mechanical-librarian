@@ -29,6 +29,9 @@ from mechanical_librarian.adapters.persistence.metadata_reports import open_repo
 from mechanical_librarian.application.metadata_report import (
     MetadataReportError,
 )
+from mechanical_librarian.domain.cover_automatic_decision import (
+    SCHEMA_VERSION as COVER_AUTOMATIC_DECISION_SCHEMA,
+)
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
     CoverSource,
@@ -37,6 +40,7 @@ from mechanical_librarian.domain.cover_evidence import (
     cover_source_id,
 )
 from mechanical_librarian.domain.field_effect import FieldEffectError
+from mechanical_librarian.domain.human_decision import COVER_SELECTION_AUTHORITY_SCHEMA
 from mechanical_librarian.domain.metadata_report import (
     AudioDiscoveryTitle,
     FileFacts,
@@ -486,7 +490,14 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             ),
         ),
         (
-            "immediate previous v78",
+            "previous v78",
+            lambda connection: create_prior_schema(
+                connection,
+                "metadata-report-v78",
+            ),
+        ),
+        (
+            "immediate previous v79",
             lambda connection: create_prior_schema(
                 connection,
                 PREVIOUS_REPORT_SCHEMA,
@@ -646,6 +657,8 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("field_effects",),
             ("human_decision_events",),
             ("human_decisions",),
+            ("level_decision_notes",),
+            ("level_proposal_sets",),
             ("metadata_policy_drafts",),
             ("metadata_policy_resolutions",),
             ("metadata_policy_state",),
@@ -666,6 +679,8 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("review_attention_facts",),
             ("review_case_episodes",),
             ("review_case_field_facts",),
+            ("review_case_level_offers",),
+            ("review_case_level_reconciliation",),
             ("review_case_transitions",),
             ("review_cases",),
             ("review_preparation_absences",),
@@ -904,7 +919,8 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
         with closing(open_repository(path)) as repository:
             # The producer predates #1199's report browse facts, #1202's
             # history indexes, #1204's indexes, #1211's case indexes, #1232's
-            # attention facts and #1363's retained cover tables.
+            # attention facts, #1363's retained cover tables and #1355's
+            # level storage.
             repository._connection.executescript(
                 "".join(
                     f"DROP {kind.upper()} {name};"
@@ -932,6 +948,11 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
                 "DROP INDEX current_review_case_lineages_case;"
                 "DROP INDEX current_review_packages_case;"
                 "DROP TABLE review_case_episodes;"
+                "DROP TABLE review_case_level_offers;"
+                "DROP TABLE level_decision_notes;"
+                "DROP TABLE level_proposal_sets;"
+                "DROP TABLE review_case_level_reconciliation;"
+                "ALTER TABLE review_preparation_control DROP COLUMN work_identity_level;"
             )
             rows = repository._connection.execute(
                 "SELECT type,name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"
@@ -2450,10 +2471,15 @@ def test_current_schema_cannot_relabel_falsely_valid_predecessor_title() -> None
     document["library_languages"] = []
     # v61 added each provider's refused products (#1307); an empty record
     # keeps the falsely valid title the first thing refused.
-    # v64 added each provider's audio editions (#962).
+    # v64 added each provider's audio editions (#962), and v81 its refused
+    # WORK answers and each lane's refused identities (#1355).
     for provider in document["providers"]:
         provider["refused_products"] = []
         provider["audio_editions"] = []
+        provider["identity_refused_candidates"] = []
+        provider["identity_refused_truncated"] = 0
+        for lane in provider["lanes"]:
+            lane["identity_refused_new"] = []
     # v63 added the companion ebook section (#1319).
     document["companion"] = None
     # v66 added the EPUB cover recovery (#1357).
@@ -2655,12 +2681,16 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
                     ).read_text()
                 )["cover_considerations_sql"],
             )
-        # Their owner selection CHECK named v2, before #1363's Put back.
+        # Their owner selection CHECK named v2, before #1363's Put back, and
+        # their automatic one decision v3, before the measured rules' reason.
         old.setattr(
             persistence_schema,
             "_COVER_SELECTION_AUTHORITIES_SQL",
             persistence_schema._COVER_SELECTION_AUTHORITIES_SQL.replace(
-                "'cover-selection-authority-v3'", "'cover-selection-authority-v2'"
+                f"'{COVER_SELECTION_AUTHORITY_SCHEMA}'",
+                "'cover-selection-authority-v2'",
+            ).replace(
+                f"'{COVER_AUTOMATIC_DECISION_SCHEMA}'", "'cover-automatic-decision-v3'"
             ),
         )
         # The earlier producers predate #1245's report discriminator; the v20
@@ -2679,7 +2709,8 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
             if not current_scaffolding:
                 # The earlier producers predate #1199's report browse facts,
                 # #1202's history indexes, #1204's indexes, #1211's case indexes,
-                # #1232's attention facts and #1363's retained cover tables.
+                # #1232's attention facts, #1363's retained cover tables and
+                # #1355's level storage.
                 repository._connection.executescript(
                     "".join(
                         f"DROP {kind.upper()} {name};"
@@ -2707,16 +2738,26 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
                     "DROP INDEX current_review_case_lineages_case;"
                     "DROP INDEX current_review_packages_case;"
                     "DROP TABLE review_case_episodes;"
+                    "DROP TABLE review_case_level_offers;"
+                    "DROP TABLE level_decision_notes;"
+                    "DROP TABLE level_proposal_sets;"
+                    "DROP TABLE review_case_level_reconciliation;"
+                    "ALTER TABLE review_preparation_control DROP COLUMN work_identity_level;"
                 )
             else:
                 # The v20 producer predates #1358's case episodes, #1310's
-                # resolution index led by the resolved id and #1363's retained
-                # cover tables.
+                # resolution index led by the resolved id, #1363's retained
+                # cover tables and #1355's level storage.
                 repository._connection.executescript(
                     "DROP TABLE retained_cover_listings;"
                     "DROP TABLE retained_cover_removals;"
                     "DROP TABLE retained_cover_bindings;"
                     "DROP TABLE review_case_episodes;"
+                    "DROP TABLE review_case_level_offers;"
+                    "DROP TABLE level_decision_notes;"
+                    "DROP TABLE level_proposal_sets;"
+                    "DROP TABLE review_case_level_reconciliation;"
+                    "ALTER TABLE review_preparation_control DROP COLUMN work_identity_level;"
                     "DROP INDEX metadata_policy_resolutions_resolved;"
                     "CREATE INDEX metadata_policy_resolutions_resolved "
                     "ON metadata_policy_resolutions(library_name,resolved_policy_id,generation);"

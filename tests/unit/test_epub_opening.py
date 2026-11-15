@@ -705,7 +705,6 @@ def test_identifier_owner_spans_are_computed_once_per_element() -> None:
 
 def test_canonical_envelope_rejects_forged_versions_lineage_and_usage() -> None:
     report = _extract(opening_claims_complete())
-    assert EPUB_OPENING_EXTRACTOR_VERSION == "epub-opening-v5"
     assert all(
         claim.citation.extractor_version == EPUB_OPENING_EXTRACTOR_VERSION
         for claim in report.claims

@@ -51,7 +51,7 @@ interface Change {
 
 export const sections: readonly { id: Group; label: string; description: string }[] = [
   { id: 'connection', label: 'Audiobookshelf', description: 'Service address and access key' },
-  { id: 'libraries', label: 'Libraries', description: 'Collections and their sources' },
+  { id: 'libraries', label: 'Libraries', description: 'Sources and languages' },
   { id: 'providers', label: 'Metadata sources', description: 'Where evidence comes from' },
   { id: 'reviewer', label: 'Reviewer', description: 'Optional AI advice' },
   { id: 'background', label: 'Background work', description: 'Requests, limits and polling' },
@@ -124,7 +124,7 @@ export const numberFields: readonly NumberField[] = [
   {
     fieldId: 'limits.timeout_seconds',
     label: 'Request timeout',
-    description: 'How long one Audiobookshelf or source request may take.',
+    description: '1 to 60 seconds',
     minimum: 1,
     maximum: 60,
     unit: 'seconds',
@@ -132,15 +132,15 @@ export const numberFields: readonly NumberField[] = [
   {
     fieldId: 'server.library_polling_interval_seconds',
     label: 'Library polling interval',
-    description: 'How often libraries are checked for new or changed books.',
+    description: '1 to 1,440 minutes (1 day)',
     minimum: 60,
     maximum: 86_400,
     unit: 'minutes',
   },
   {
     fieldId: 'server.graceful_shutdown_seconds',
-    label: 'Shutdown budget',
-    description: 'How long running work may finish when the service stops.',
+    label: 'Shutdown grace period',
+    description: '1 to 300 seconds',
     minimum: 1,
     maximum: 300,
     unit: 'seconds',
@@ -148,7 +148,7 @@ export const numberFields: readonly NumberField[] = [
   {
     fieldId: 'limits.target_response_bytes',
     label: 'Audiobookshelf response limit',
-    description: 'Largest Audiobookshelf response that is read.',
+    description: 'Up to 4 MB',
     minimum: 1024,
     maximum: 4_194_304,
     unit: 'MB',
@@ -157,7 +157,7 @@ export const numberFields: readonly NumberField[] = [
   {
     fieldId: 'limits.provider_response_bytes',
     label: 'Source response limit',
-    description: 'Largest metadata source response that is read.',
+    description: 'Up to 0.25 MB (256 KB)',
     minimum: 1024,
     maximum: 262_144,
     unit: 'MB',
@@ -165,8 +165,8 @@ export const numberFields: readonly NumberField[] = [
   },
   {
     fieldId: 'limits.source_archive_bytes',
-    label: 'Source archive limit',
-    description: 'Largest ebook file opened for evidence.',
+    label: 'Ebook file limit',
+    description: 'Up to 256 MB',
     minimum: 1024,
     maximum: 268_435_456,
     unit: 'MB',
@@ -176,8 +176,8 @@ export const numberFields: readonly NumberField[] = [
     // An audiobook is read by header rather than whole and is routinely larger
     // than any EPUB, so it carries its own ceiling rather than the archive one.
     fieldId: 'limits.audio_source_bytes',
-    label: 'Audiobook source limit',
-    description: 'Largest audiobook file whose header is read.',
+    label: 'Audiobook file limit',
+    description: 'Up to 16,384 MB (16 GB)',
     minimum: 1024,
     maximum: 17_179_869_184,
     unit: 'MB',
@@ -185,8 +185,8 @@ export const numberFields: readonly NumberField[] = [
   },
   {
     fieldId: 'server.session_lifetime_seconds',
-    label: 'Owner session lifetime',
-    description: 'How long a sign-in lasts before you sign in again.',
+    label: 'Sign-in length',
+    description: '5 to 43,200 minutes (30 days)',
     minimum: 300,
     maximum: 2_592_000,
     unit: 'minutes',
@@ -240,19 +240,19 @@ export const validationErrors = (
     if (!settingsEndpointValid(connection.endpoint))
       errors.push({
         fieldId: `connection.${connection.name}.endpoint`,
-        message: `${connection.name} endpoint must contain 1–2,048 characters.`,
+        message: 'Enter an Audiobookshelf endpoint of up to 2,048 characters.',
       })
     const fieldId = `connection.${connection.name}.key`
     const existing = view.secrets.find((item) => item.field_id === fieldId)?.configured === true
     const pending = secrets[fieldId]
     if ((!existing && !pending?.value) || pending?.operation === 'clear')
-      errors.push({ fieldId, message: `${connection.name} requires an access key.` })
+      errors.push({ fieldId, message: 'Audiobookshelf needs an access key.' })
   }
   for (const provider of document.providers) {
     if (provider.adapter === 'open_library' && provider.enabled) {
       const fieldId = `provider.${provider.name}.contact_email`
       if (!provider.contact_email)
-        errors.push({ fieldId, message: `${provider.name} needs a contact email while enabled.` })
+        errors.push({ fieldId, message: 'Enter a contact email for Open Library, or turn it off.' })
       else if (!settingsOpenLibraryEmailValid(provider.contact_email))
         errors.push({
           fieldId,
@@ -271,7 +271,7 @@ export const validationErrors = (
     if (!settingsTextValid(library.library_id, 1, 128))
       errors.push({
         fieldId: `library.${library.name}.library_id`,
-        message: `${library.name} identifier must contain 1–128 characters.`,
+        message: 'Enter an Audiobookshelf library ID of up to 128 characters.',
       })
   for (const entry of Object.values(secrets))
     if (entry.operation !== 'clear' && (!entry.value || !settingsSecretValid(entry.value)))
@@ -313,7 +313,7 @@ export const languageChoices = (listed: readonly string[]) => {
   return offeredLanguages.filter((option) => !taken.has(languageClass(option.value)))
 }
 const languageList = (tags: readonly string[]) =>
-  tags.length ? tags.map(languageName).join(', ') : 'None declared'
+  tags.length ? tags.map(languageName).join(', ') : 'No languages'
 
 // What Save would change, as the owner reads it. Secret values never appear:
 // only whether a key will be set, replaced or cleared. A library's sources can

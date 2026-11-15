@@ -102,6 +102,8 @@ export const detail: CaseDetailView = {
   audiobookReviewScope: null,
   id: 'case-1',
   current: true,
+  checking: false,
+  checkGivenUp: false,
   target: {
     connection: 'local',
     library: 'Books',
@@ -135,6 +137,7 @@ export const detail: CaseDetailView = {
       choiceContexts: [],
       proposalId: 'proposal-1',
       targetFingerprint: 'fingerprint-1',
+      offerDigest: 'offer-digest',
       humanDecision: null,
       automaticDecision: null,
       automaticWithheldReason: null,
@@ -401,10 +404,9 @@ export const createHttp = (): ReviewHttp => ({
   }),
   returnToAutomatic: vi.fn(async () => undefined),
   getPolicyState: vi.fn(async (): Promise<PolicyStateView> => ({
-    schema_version: 'metadata-policy-notebook-v1',
+    schema_version: 'metadata-policy-notebook-v2',
     policy_id: 'policy-1',
     profile: {
-      schema_version: 'metadata-policy-profile-v3',
       name: 'Default',
       options: {},
       destinations: {},
@@ -424,7 +426,7 @@ export const createHttp = (): ReviewHttp => ({
     category_suspensions: {},
   })),
   getPreviewSample: vi.fn(async (): Promise<PreviewSampleView> => ({
-    schema_version: 'preview-outcome-sample-v1',
+    schema_version: 'preview-outcome-sample-v2',
     authority: 'none',
     items: [],
     next_cursor: null,

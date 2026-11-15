@@ -59,8 +59,37 @@ brackets are GitHub issues.
   old paths gets 404. Stored outcome sets keep `shadow-outcome-set-v11`; no
   rebuild is needed (#1739).
 
+## 0.33.0 — First library (in progress)
+
+- **Clean rebuild required** only for an install whose setup was interrupted.
+  Setup now asks for libraries before sources, so its stored state is
+  `setup-state-v5`, and startup refuses an unfinished `setup-state-v4` setup. A
+  finished install is unaffected (#1516).
+- First-run setup has six steps. Every book library and the sources that suit
+  it start ticked, setup checks each library's folder itself and asks only
+  about folders it cannot find, and Start opens Library signed in. Google Books
+  needs an API key while it is on, in setup and Settings: an install that has
+  Google Books on with no key must add a key or turn Google Books off before
+  Settings can be saved (#1516, #1765).
+- Library's preparation panel moves less. Its status line plays its wipe only
+  when the run's state changes, and its stage bars glide to each new count
+  unless reduced motion is set. Each recent completion is one row: the title
+  is the link, labelled Prepared or Couldn't finish. The rate reads in works a
+  minute (#1516).
+- Settings → Reviewer counts its example costs and cover requests in works, as
+  setup does (#1852).
+
 ## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
 
+- **Clean rebuild required.** Choosing, putting back or automatically
+  switching a cover over one Audiobookshelf already holds no longer fails
+  before it writes. The write binds the current cover's exact bytes, even when
+  they are not a readable image (#1853).
+- **Clean rebuild required.** A replaced cover that is not a readable image can
+  be put back, and reads "Image unavailable". A current cover that is not
+  confirmed, or has no readable image, is suggested for replacement when it
+  has a fault. One whose source names another book is held for you, and one
+  Audiobookshelf did not return is kept until the next scan (#1362).
 - **Clean rebuild required.** A book Hardcover finds now offers its editions'
   covers in review. Only editions in the library's languages, with at least
   300 px on the short side, are fetched, so a library with no languages gets
@@ -184,6 +213,22 @@ brackets are GitHub issues.
   what to check, the writing box says whether a change was written, and a
   cover comparison that could not be loaded names the button that tries again
   (#1765, #1791).
+- Settings reads plainly. Field hints show the accepted range instead of a
+  sentence about the field, the theme, reviewer and languages lines are
+  shorter, a lost save says "No answer came back", and errors say what to
+  enter instead of naming an internal identifier. "Settings → Reviewer" and
+  "Settings → Audiobookshelf" in reviewer errors and the library connection
+  notice are links to that section (#1765).
+- Settings → Reviewer reads plainly. The cover reviewer and description
+  adviser drop internal terms such as "contained reviewer profile", "work
+  packet" and "engine", Codex profile and memory problems say what to fix, a
+  lost answer says "No answer came back", and the Codex rows say no cost is
+  shown because Codex uses your plan's allowance (#1765).
+- Server messages read plainly. Two setup source descriptions drop "work
+  identity" and "corroborate", the OpenRouter notes state the free-model limits
+  and data use in short sentences, key and Open Library email errors say what
+  to enter, a source that refuses access says what to check, and the wrong-address
+  and missing-files pages say what to open or rebuild (#1765).
 - Description work saved while preparation is paused now starts as soon as
   preparation resumes. Before, it waited for the next library poll, and a
   library whose last scan had failures was not polled at all. Resuming also
@@ -222,6 +267,31 @@ brackets are GitHub issues.
   or not an image, reads **Image unavailable** instead of **No cover** in
   Covers and on the book page, and a rotated cover reports the size it is
   shown at (#1363).
+- **Clean rebuild required.** Policy has a Book matching setting. Set wider
+  than "Confirmed matches only", a cover from a source record with the book's
+  title and author is labelled "Same title and author", and one whose author's
+  initials are written differently, such as "R.F." for "R. F.", can be chosen.
+  None is chosen automatically. The default changes nothing (#1355).
+- A cover you cannot choose because a source says it belongs to a different
+  book or edition, or names a different author or contributor, now reads
+  "Contradicts this book" with that reason, instead of "Match not confirmed"
+  or "Same book". The Other covers gallery now counts its covers instead of
+  calling them all available (#1790).
+- **Clean rebuild required.** With Book matching set wider than "Confirmed
+  matches only", a field that needs you also offers values, such as a
+  description or series, from source records with the book's title and author.
+  None is chosen automatically. A work whose check against a new setting could
+  not run says so in Library, with how to retry. Each report now keeps the
+  records a title and author search found but did not match, so they can be
+  offered (#1355, #1780).
+- **Clean rebuild required.** Covers follow measured rules: a readable cover
+  with no fault is kept without asking, and a cover with a fault (wrong shape,
+  under 300 px, unreadable, a sharper copy, another language's edition) is
+  suggested in Covers with that fault named. A larger copy of the same picture,
+  such as the one in the book's EPUB, can replace a cover that is under 300 px
+  or much smaller. Policy's new Current covers says when a cover may be replaced; the
+  replace-if-larger cover option is gone. A configuration file must be
+  rewritten as `config-v11` (#1363).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 

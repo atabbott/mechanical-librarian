@@ -23,15 +23,34 @@ from mechanical_librarian.adapters.evidence_extractors.audio_local import (
     interpret,
 )
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
+from mechanical_librarian.application.continuous_field_effects import (
+    CONTINUOUS_FIELD_ACTIVITY_SCHEMA,
+)
+from mechanical_librarian.application.cover_consideration import (
+    SCHEMA_VERSION as COVER_CONSIDERATION_SCHEMA,
+)
 from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationError,
 )
+from mechanical_librarian.application.cover_policy import (
+    POLICY_SCHEMA_VERSION as COVER_POLICY_SCHEMA,
+)
 from mechanical_librarian.application.field_effects import GuardedApplicationError
+from mechanical_librarian.application.metadata_policy import (
+    PREVIEW_OUTCOME_SAMPLE_SCHEMA,
+)
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.review_application import (
+    REVIEW_PREPARATION_SCHEMA,
+)
 from mechanical_librarian.application.review_pipeline import (
     ReviewPipelineError,
 )
 from mechanical_librarian.application.review_web import (
+    REVIEW_CASE_DETAIL_SCHEMA,
+    REVIEW_CASE_EVIDENCE_SCHEMA,
+    REVIEW_CASE_HISTORY_SCHEMA,
+    REVIEW_REPORT_DETAIL_SCHEMA,
     BrowseReviewLibrary,
     InspectCurrentReviewCase,
     ReviewAttentionSnapshot,
@@ -97,12 +116,14 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
     default_target_fields,
 )
+from mechanical_librarian.domain.owner_settings import OWNER_SETTINGS_SCHEMA
 from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
 from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.review_browse import ReviewBrowseValueError
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.review_field_classification import ReviewFieldState
 from mechanical_librarian.interfaces.web.app import (
+    METADATA_POLICY_NOTEBOOK_SCHEMA,
     _CaseDetailResponse,
     _CoverOmission,
     _MediaHealthObservation,
@@ -306,8 +327,10 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(
         "policy_preferences": {
             "avoid_promotional_text": False,
             "avoid_tie_in_branding": False,
+            "current_protection": "protected",
+            "prefer_edition": False,
             "prefer_minimal_composition": False,
-            "schema_version": "cover-policy-v1",
+            "schema_version": COVER_POLICY_SCHEMA,
         },
         "policy_reference": "cover_policy_" + "2" * 64,
         "provider_fetching": False,
@@ -317,7 +340,7 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(
         "reviewer_model": None,
         "reviewer_status": "unavailable",
         "reviewer_unavailable_reason": None,
-        "schema_version": "cover-consideration-v6",
+        "schema_version": COVER_CONSIDERATION_SCHEMA,
         "supersedes_id": None,
         "target_fingerprint": case.target_fingerprint,
     }
@@ -430,6 +453,7 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(
                 "proposal_id": cover["proposal_id"],
                 "selected_value": None,
                 "target_fingerprint": cover["target_fingerprint"],
+                "offered_alternatives_digest": cover["offer_digest"],
             },
         )
     assert 200 == decision.status_code, decision.text
@@ -455,6 +479,160 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(
     assert 401 == revoked.status_code
     assert "no-store, private" == revoked.headers["cache-control"]
     assert reads == covers.image.call_count
+
+
+def test_a_full_packet_with_a_larger_copy_and_a_put_back_reaches_the_browser(
+    web: ReviewWebContext[_CloseRecordingRepository],
+) -> None:
+    # Codex R1 on #1363: twelve reviewed previews, the larger copy of the
+    # current picture and the retained original make fourteen cards, which the
+    # retry answer and the work detail must both carry.
+    sources = (
+        _cover_source(1, _cover_preview(1), incumbent=True),
+        _cover_source(2, _cover_preview(2), embedded=True),
+    )
+    base = _cover_report(sources)
+    incumbent_artifact = sources[0].artifact
+    assert incumbent_artifact is not None
+    report = MetadataReport.create(
+        target=TargetFacts(
+            base.target.connection,
+            base.target.library,
+            base.target.item,
+            tuple(
+                TargetField(
+                    field.destination,
+                    TargetFieldState.VALUE,
+                    incumbent_artifact.artifact_id,
+                )
+                if field.destination is TargetDestination.COVER
+                else field
+                for field in base.target.fields
+            ),
+        ),
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        providers=base.providers,
+        cover_sources=base.cover_sources,
+    )
+    case = ReviewCase.create(evaluate_report(report), report)
+    repository = FakeReviewRepository(case, report)
+
+    def card(ordinal: int, kind: str) -> dict[str, object]:
+        reference = f"cover_ref_{ordinal:064x}"
+        retained = kind == "retained"
+        return {
+            "artifact_id": f"cover_{ordinal:064x}",
+            "candidate_kind": kind,
+            "deterministic_citations": [reference],
+            "deterministic_rank": None,
+            "deterministic_rank_key": None
+            if retained
+            else [1, 0, -960000, -800, -1200, ordinal, reference],
+            "height": 1200,
+            "identity": None
+            if retained
+            else {
+                "candidate_reference": reference,
+                "evidence_references": [],
+                "outcome": "verified_work_match",
+                "preview_reference": f"cover_preview_{ordinal:064x}",
+                "reasons": [],
+            },
+            "incumbent": ordinal == 0,
+            "match_reason": None,
+            "match_state": "match_not_confirmed" if retained else "same_book",
+            "observation": None,
+            "original_sha256": f"{ordinal:064x}",
+            "ordinal": ordinal,
+            "preview_sha256": f"{ordinal + 100:064x}",
+            "reference": reference,
+            "selectable": ordinal != 0,
+            "manual_eligible": ordinal != 0,
+            "source_kinds": ["retained"]
+            if retained
+            else ["epub"]
+            if kind == "larger_copy"
+            else ["abs"]
+            if ordinal == 0
+            else ["hardcover"],
+            "state": "available",
+            "transport_sha256": f"{ordinal + 200:064x}",
+            "width": 800,
+        }
+
+    candidates = [
+        *(card(ordinal, "candidate") for ordinal in range(12)),
+        card(12, "larger_copy"),
+        card(13, "retained"),
+    ]
+    view = {
+        "candidates": candidates,
+        "consideration_id": "cover_consideration_" + "b" * 64,
+        "choice_contexts": [],
+        "current": True,
+        "incumbent": {
+            "reference": candidates[0]["reference"],
+            "state": "available",
+        },
+        "omissions": [],
+        "policy": None,
+        "policy_preferences": {
+            "avoid_promotional_text": False,
+            "avoid_tie_in_branding": False,
+            "current_protection": "protected",
+            "prefer_edition": False,
+            "prefer_minimal_composition": False,
+            "schema_version": COVER_POLICY_SCHEMA,
+        },
+        "policy_reference": "cover_policy_" + "2" * 64,
+        "provider_fetching": False,
+        "ready": True,
+        "reviewer_access_revision": None,
+        "reviewer_engine": None,
+        "reviewer_model": None,
+        "reviewer_status": "unavailable",
+        "reviewer_unavailable_reason": None,
+        "schema_version": COVER_CONSIDERATION_SCHEMA,
+        "supersedes_id": None,
+        "target_fingerprint": case.target_fingerprint,
+    }
+    covers = Mock()
+    covers.project.return_value = view
+    covers.project_for_review.return_value = (view, "current")
+    covers.ensure.return_value = view
+    web.client.close()
+    app = create_transport_test_app(
+        repository,
+        ReviewWebConfiguration(
+            tls_certificate_file="/synthetic/review.crt",
+            tls_private_key_file="/synthetic/review.key",
+            canonical_origin="https://review.test",
+            owner_password_hash_file=str(web.hash_path),
+            session_lifetime_seconds=600,
+        ),
+        clock=lambda: web.now,
+        cover_considerations=covers,
+    )
+    web.client = TestClient(app, base_url="https://review.test")
+    login = web.login()
+    retried = web.client.post(
+        f"/api/v1/review-cases/{case.review_case_id}/cover-considerations/retry",
+        headers={**web.origin, "X-CSRF-Token": str(login["csrf_token"])},
+    )
+    assert 200 == retried.status_code, retried.text
+    assert [row["candidate_kind"] for row in retried.json()["candidates"]] == [
+        *(["candidate"] * 12),
+        "larger_copy",
+        "retained",
+    ]
+    detail = web.client.get(f"/api/v1/review-cases/{case.review_case_id}")
+    assert 200 == detail.status_code, detail.text
+    cover = next(
+        field for field in detail.json()["fields"] if field["destination"] == "cover"
+    )
+    assert len(cover["cover_consideration"]["candidates"]) == 14
 
 
 def test_shutdown_timeout_preserves_shared_repository_for_live_worker(
@@ -606,7 +784,7 @@ def test_activity_is_permanent_and_consent_is_csrf_bound(
     assert script.status_code == 200
     assert web.client.get("/api/v1/activity").json()["prepared"]["total"] == 2
     history = web.client.get("/api/v1/activity").json()
-    assert history["schema_version"] == "continuous-field-activity-v3"
+    assert history["schema_version"] == CONTINUOUS_FIELD_ACTIVITY_SCHEMA
     assert history["backup_ready"] is None and history["example"] is None
     readiness = web.client.get("/api/v1/activity/permission-readiness")
     assert readiness.status_code == 200
@@ -1001,7 +1179,6 @@ def test_policy_mutations_return_specific_bounded_problems_and_fail_closed(
     headers = {**web.origin, "X-CSRF-Token": login["csrf_token"]}
     active = web.client.get("/api/v1/metadata-policy/state")
     payload = active.json()["profile"]
-    del payload["schema_version"]
     payload["name"] = "Draft"
     payload["options"]["removed"] = "unknown"
     invalid = web.client.post(
@@ -1012,7 +1189,6 @@ def test_policy_mutations_return_specific_bounded_problems_and_fail_closed(
     assert "review-error-v1" == invalid.json()["schema_version"]
     assert "no-store, private" == invalid.headers["cache-control"]
     valid_payload = active.json()["profile"]
-    del valid_payload["schema_version"]
     denied = web.client.post(
         "/api/v1/metadata-policy/preview", headers=web.origin, json=valid_payload
     )
@@ -1105,7 +1281,6 @@ def test_policy_routes_are_closed_read_only_and_schema_deterministic(
     active = web.client.get("/api/v1/metadata-policy/state")
     assert 200 == active.status_code
     payload = active.json()["profile"]
-    del payload["schema_version"]
     payload["name"] = "<hostile draft>"
     payload["options"]["date_precision"] = "full_date"
     before = (dict(web.repository.decisions), dict(web.repository.policy_documents))
@@ -1113,7 +1288,7 @@ def test_policy_routes_are_closed_read_only_and_schema_deterministic(
         "/api/v1/metadata-policy/validate", headers=headers, json=payload
     )
     assert 200 == validated.status_code
-    assert "metadata-policy-notebook-v1" == validated.json()["schema_version"]
+    assert METADATA_POLICY_NOTEBOOK_SCHEMA == validated.json()["schema_version"]
     created = web.client.post(
         "/api/v1/metadata-policy/drafts", headers=headers, json=payload
     )
@@ -1178,7 +1353,6 @@ def test_preview_posture_and_sample_are_authenticated_non_authoritative(
     } == state.json()
     active = web.client.get("/api/v1/metadata-policy/state").json()
     automatic_payload = active["profile"]
-    del automatic_payload["schema_version"]
     automatic_payload["name"] = "Preview automatic intent"
     automatic_payload["destinations"]["title_layout"] = "automatic"
     validated_before_preview = web.client.post(
@@ -1230,7 +1404,7 @@ def test_preview_posture_and_sample_are_authenticated_non_authoritative(
         ]["title_layout"]
     )
     sample = web.client.get("/api/v1/metadata-policy/preview-mode/outcomes?limit=10")
-    assert "preview-outcome-sample-v1" == sample.json()["schema_version"]
+    assert PREVIEW_OUTCOME_SAMPLE_SCHEMA == sample.json()["schema_version"]
     assert [] == sample.json()["items"]
     leaving = web.client.get("/api/v1/metadata-policy/preview-mode/leave-preview")
     assert leaving.json()["confirmation_required"]
@@ -1267,7 +1441,6 @@ def test_policy_draft_persistence_failure_is_unavailable_not_validation(
     login = web.login()
     headers = {**web.origin, "X-CSRF-Token": login["csrf_token"]}
     payload = web.client.get("/api/v1/metadata-policy/state").json()["profile"]
-    del payload["schema_version"]
     response = web.client.post(
         "/api/v1/metadata-policy/drafts", headers=headers, json=payload
     )
@@ -1550,6 +1723,7 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
                 "provider": "hardcover-main",
                 "authority": "hardcover",
                 "recording_lookup_candidates": [],
+                "identity_refused_candidates": [],
                 "audio_editions": [],
                 "candidates": [
                     {
@@ -1568,6 +1742,7 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
             {
                 "provider": "open-library-main",
                 "recording_lookup_candidates": [],
+                "identity_refused_candidates": [],
                 "audio_editions": [],
                 "authority": "open_library",
                 "candidates": [
@@ -1667,7 +1842,7 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
         )
 
     assert first["next_cursor"] == reopened["next_cursor"]
-    assert first["schema_version"] == "review-case-evidence-v5"
+    assert first["schema_version"] == REVIEW_CASE_EVIDENCE_SCHEMA
     assert first["missing_lineage_count"] == 0
     assert first["source_ledger"] == []
     assert partial["missing_lineage_count"] == 1
@@ -1760,7 +1935,7 @@ def test_automatic_history_values_require_an_exact_decision_identity(
     expected = (
         {"kind": "text", "value": "Existing description."} if mismatch is None else None
     )
-    assert history["schema_version"] == "review-case-history-v3"
+    assert history["schema_version"] == REVIEW_CASE_HISTORY_SCHEMA
     assert history["items"][0]["previous_value"] == expected
     assert history["items"][0]["selected_value"] == expected
     assert history["items"][1]["previous_value"] is None
@@ -2278,6 +2453,7 @@ def _decide(web: ReviewWebContext[_CloseRecordingRepository]) -> str:
             "proposal_id": field["proposal_id"],
             "selected_value": field["proposed_values"][0],
             "target_fingerprint": field["target_fingerprint"],
+            "offered_alternatives_digest": field["offer_digest"],
         },
     )
     assert recorded.status_code == 200, recorded.text
@@ -2549,7 +2725,7 @@ def test_an_audiobooks_recorded_evidence_is_reachable_from_the_library(
 
     assert detail.status_code == 200, detail.text
     body = detail.json()
-    assert body["schema_version"] == "review-report-detail-v6"
+    assert body["schema_version"] == REVIEW_REPORT_DETAIL_SCHEMA
     assert (body["connection"], body["library"], body["item"]) == (
         "primary",
         "ebooks",
@@ -2619,7 +2795,7 @@ def test_a_recordings_media_health_reaches_the_owner_with_its_bound(
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["schema_version"] == "review-report-detail-v6"
+    assert body["schema_version"] == REVIEW_REPORT_DETAIL_SCHEMA
     assert len(body["media_health"]) == 1
     stated = body["media_health"][0]
     assert stated["kind"] == "runtime_short_of_provider"
@@ -3184,7 +3360,7 @@ def test_chapter_runtime_admission_is_attributed_in_case_and_report(
     basis = response.json()["recording_identity_basis"]
     assert (basis is None) is omitted
     assert _report_detail(report.to_data(), report)["recording_identity_basis"] == basis
-    assert response.json()["schema_version"] == "review-case-detail-v7"
+    assert response.json()["schema_version"] == REVIEW_CASE_DETAIL_SCHEMA
     if basis is not None:
         assert basis == {
             "basis": "chapter_runtime_and_structure",
@@ -3234,13 +3410,13 @@ def test_an_alternative_admission_is_attributed_in_case_and_report(web) -> None:
         "provider": "enrichment",
         "candidate": "enrichment-B0LINKED01",
     }
-    assert body["schema_version"] == "review-case-detail-v7"
+    assert body["schema_version"] == REVIEW_CASE_DETAIL_SCHEMA
     assert body["recording_admission_basis"] == expected
     assert body["recording_identity_basis"] is None
     assert body["audiobook_review_scope"] == "recording"
     detail = _report_detail(report.to_data(), report)
     assert detail["recording_admission_basis"] == expected
-    assert detail["schema_version"] == "review-report-detail-v6"
+    assert detail["schema_version"] == REVIEW_REPORT_DETAIL_SCHEMA
 
     # The scope validators refuse a basis the scope cannot carry, and the two
     # notes together.
@@ -3260,7 +3436,7 @@ def test_an_alternative_admission_is_attributed_in_case_and_report(web) -> None:
     report_body = web.client.get(
         "/api/v1/library/report?connection=primary&library=audio&item=item-1"
     ).json()
-    assert report_body["schema_version"] == "review-report-detail-v6"
+    assert report_body["schema_version"] == REVIEW_REPORT_DETAIL_SCHEMA
     assert report_body["recording_admission_basis"] == expected
     _ReportDetailResponse.model_validate(report_body)
     for changed in (
@@ -3355,7 +3531,8 @@ def test_current_policy_exposes_exact_accepted_audiobook_operations(web):
     ]
     available = {entry["identity"] for entry in entries if entry["automatic_available"]}
     assert available == audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS
-    assert len(available) == 71
+    # #1363 retired the audiobook cover replacement, F46's only cover option.
+    assert len(available) == 70
     assert {
         entry["destination"] for entry in entries if entry["automatic_available"]
     } == {
@@ -3366,7 +3543,6 @@ def test_current_policy_exposes_exact_accepted_audiobook_operations(web):
         "series",
         "genres",
         "asin",
-        "cover",
         "publishedDate",
         "description",
         "explicit",
@@ -4558,7 +4734,7 @@ def test_preparation_read_carries_value_free_provider_throttling(
     web.login()
     response = web.client.get("/api/v1/review-preparation")
     assert response.status_code == 200
-    assert response.json()["schema_version"] == "review-preparation-v2"
+    assert response.json()["schema_version"] == REVIEW_PREPARATION_SCHEMA
     assert response.json()["provider_throttling"] == {
         "generation": 3,
         "retry": "available",
@@ -4602,7 +4778,7 @@ def _retry_settings_document(generation: int):
 
     return OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v4",
+            "schema_version": OWNER_SETTINGS_SCHEMA,
             "revision": 1,
             "connections": [
                 {"name": "primary", "endpoint": "https://library.example.invalid"}
@@ -4836,3 +5012,62 @@ def test_a_work_route_date_reads_as_the_books_first_publication() -> None:
             "source": "Hardcover",
         }
     ]
+
+
+def _retained_cover_candidate(**changed: object) -> dict[str, object]:
+    """A retained candidate the decoder refused, as the API states it (#1362)."""
+    return {
+        "artifact_id": "cover_" + "9" * 64,
+        "candidate_kind": "retained",
+        "deterministic_citations": ["cover_ref_" + "1" * 64],
+        "deterministic_rank": None,
+        "deterministic_rank_key": None,
+        "height": None,
+        "identity": None,
+        "incumbent": False,
+        "match_state": "match_not_confirmed",
+        "match_reason": None,
+        "observation": None,
+        "original_sha256": "9" * 64,
+        "ordinal": 2,
+        "preview_sha256": None,
+        "reference": "cover_ref_" + "1" * 64,
+        "selectable": True,
+        "manual_eligible": True,
+        "source_kinds": ["retained"],
+        "state": "available",
+        "transport_sha256": None,
+        "width": None,
+        **changed,
+    }
+
+
+_PREVIEW = {
+    "height": 600,
+    "preview_sha256": "a" * 64,
+    "transport_sha256": "a" * 64,
+    "width": 400,
+}
+
+
+def test_only_a_retained_cover_candidate_may_have_no_preview() -> None:
+    from mechanical_librarian.interfaces.web.app import _CoverCandidate
+
+    _CoverCandidate.model_validate(_retained_cover_candidate())
+    _CoverCandidate.model_validate(_retained_cover_candidate(**_PREVIEW))
+    for key in _PREVIEW:
+        # A partial set is never a candidate the page can show or not show.
+        with pytest.raises(ValidationError):
+            _CoverCandidate.model_validate(
+                _retained_cover_candidate(**{**_PREVIEW, key: None})
+            )
+    for kind, sources in (("candidate", ["hardcover"]), ("larger_copy", ["abs"])):
+        with pytest.raises(ValidationError):
+            _CoverCandidate.model_validate(
+                _retained_cover_candidate(candidate_kind=kind, source_kinds=sources)
+            )
+        _CoverCandidate.model_validate(
+            _retained_cover_candidate(
+                candidate_kind=kind, source_kinds=sources, **_PREVIEW
+            )
+        )

@@ -4,14 +4,17 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from mechanical_librarian.domain.reviewer_cost import ReviewerCostEvidence
+from mechanical_librarian.domain.reviewer_cost import (
+    REVIEWER_COST_EVIDENCE_SCHEMA,
+    ReviewerCostEvidence,
+)
 
 
 def test_shipped_evidence_keeps_each_row_with_its_own_complete_run():
-    public = Path("docs/reference/reviewer-cost-evidence-v2.json").read_bytes()
+    public = Path(f"docs/reference/{REVIEWER_COST_EVIDENCE_SCHEMA}.json").read_bytes()
     assert (
         files("mechanical_librarian")
-        .joinpath("resources/reviewer-cost-evidence-v2.json")
+        .joinpath(f"resources/{REVIEWER_COST_EVIDENCE_SCHEMA}.json")
         .read_bytes()
         == public
     )
@@ -109,7 +112,7 @@ def test_public_aggregate_refuses_invalid_or_incomplete_rows(field, value):
             "observed_at": 1,
         },
     }
-    evidence = {"schema_version": "reviewer-cost-evidence-v2", "models": [row]}
+    evidence = {"schema_version": REVIEWER_COST_EVIDENCE_SCHEMA, "models": [row]}
     assert (
         ReviewerCostEvidence.model_validate_json(json.dumps(evidence))
         .models[0]
@@ -142,7 +145,7 @@ def test_evidence_refuses_a_row_without_its_run_or_a_top_level_run():
         "per_1000_usd": "10",
     }
     evidence: dict[str, object] = {
-        "schema_version": "reviewer-cost-evidence-v2",
+        "schema_version": REVIEWER_COST_EVIDENCE_SCHEMA,
         "models": [],
     }
     assert ReviewerCostEvidence.model_validate_json(json.dumps(evidence)).models == ()

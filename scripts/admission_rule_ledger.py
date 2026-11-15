@@ -63,6 +63,13 @@ vetoed each combination, a re-check under main's same-name series rule and
 three closed relaxations, replayed under each source. With ``--format
 markdown`` it prints that analysis's tables instead of the ledger's.
 
+The ``--work-identity-levels`` flag adds the Book matching level replay of
+#1355 (``scripts/admission_rule_levels.py``) under ``work_identity_levels``:
+every current case's report replayed under this checkout's levels, its
+identity at ``identifier``, and per wider level the records admitted and
+refused and the fields whose alternatives change. With ``--format markdown``
+it prints that replay's tables instead of the ledger's.
+
 Usage:
     git archive --format=tar --prefix=src-REV/ REV src scripts | tar -x -C SCRATCH
     uv run python scripts/admission_rule_ledger.py \
@@ -71,7 +78,7 @@ Usage:
         [--source-report LABEL /copy/cold-start-report.json] \
         [--snapshot ...] [--repository CHECKOUT] [--format json|markdown] \
         [--follow-on GATE=ISSUE ...] [--breakdown GATE] \
-        [--a6-abstention | --a3-combination]
+        [--a6-abstention | --a3-combination | --work-identity-levels]
 """
 
 from __future__ import annotations
@@ -99,6 +106,7 @@ from mechanical_librarian.domain.validation import exact_type
 if TYPE_CHECKING:
     from scripts.admission_rule_a3 import A3Reader
     from scripts.admission_rule_a6 import A6Reader
+    from scripts.admission_rule_levels import LevelsReader
     from scripts.admission_rule_series import SeriesProbe, SeriesReader
 
 LEDGER_SCHEMA = "admission-rule-ledger-v2"
@@ -347,6 +355,47 @@ def _build_case(
     return case
 
 
+# The cover identity outcomes every source revision may store. A level match
+# (#1355, ADR-0096) is stored at a configured Book matching level wider than
+# `identifier`; it never elects a cover, so the gates read it with unknown.
+_COVER_OUTCOMES = frozenset(
+    {
+        "verified_manifestation_match",
+        "verified_work_match",
+        "title_creator_work_match",
+        "plausible_match",
+        "unknown",
+        "conflict",
+    }
+)
+_COVER_UNELECTED = frozenset({"unknown", "title_creator_work_match"})
+# The level facts #1355 appends to an unverified candidate's reasons.
+_COVER_LEVEL_REASONS = frozenset(
+    {
+        "work_identity_level_met",
+        "work_identity_level_refused",
+        "work_identity_level_ambiguous",
+        "creator_initials_folded",
+        "work_identity:title_and_creator_exact",
+        "work_identity:title_and_creator",
+    }
+)
+
+
+def _known_cover_candidate(candidate: dict[str, object]) -> bool:
+    reasons = candidate.get("reasons", [])
+    return (
+        candidate.get("outcome") in _COVER_OUTCOMES
+        and isinstance(reasons, list)
+        and all(
+            reason in _COVER_LEVEL_REASONS
+            for reason in reasons
+            if isinstance(reason, str)
+            and (reason.startswith("work_identity") or reason.startswith("creator_"))
+        )
+    )
+
+
 def _index_cover_records(case: Case, consideration: dict[str, object]) -> None:
     """Bind each cover candidate to the provider records whose covers it shows.
 
@@ -355,8 +404,11 @@ def _index_cover_records(case: Case, consideration: dict[str, object]) -> None:
     the stated edition when there is one. A work-level cover (a default, work
     or related cover without an edition) binds every record of that work at
     that provider, and so does a listed edition, whose edition is never a
-    record (#1380).
+    record (#1380). A candidate whose outcome or level reason the ledger does
+    not know refuses the snapshot rather than being counted as anything.
     """
+    if not all(_known_cover_candidate(value) for value in case.cover_candidates):
+        raise Refusal("snapshot schema unrecognised")
     works: dict[tuple[str, str], list[str]] = {}
     for provider in case.providers():
         name = _text(provider.get("provider"))
@@ -713,7 +765,7 @@ def _pictured(case: Case, candidate: dict[str, object]) -> frozenset[str]:
 
 
 def _work_search_unknown(case: Case, candidate: dict[str, object]) -> bool:
-    if candidate.get("outcome") != "unknown":
+    if candidate.get("outcome") not in _COVER_UNELECTED:
         return False
     records = _pictured(case, candidate)
     return bool(records) and all(
@@ -1063,8 +1115,8 @@ CATALOGUE: tuple[Gate, ...] = (
         "cover",
         "admit unknown and conflict cover candidates",
         "cover_candidates",
-        _cover(_candidate_outcome("unknown", "conflict")),
-        cover_predicate=_candidate_outcome("unknown", "conflict"),
+        _cover(_candidate_outcome(*_COVER_UNELECTED, "conflict")),
+        cover_predicate=_candidate_outcome(*_COVER_UNELECTED, "conflict"),
         disposition="already filed as #1355",
     ),
     Gate(
@@ -2908,6 +2960,16 @@ def _series_module() -> ModuleType:
     return module
 
 
+def _levels_module() -> ModuleType:
+    """Import the level replay, which imports this module back (#1355)."""
+    try:
+        from scripts import admission_rule_levels as module
+    except ImportError:  # pragma: no cover - direct `python scripts/...` execution
+        sys.modules.setdefault("admission_rule_ledger", sys.modules[__name__])
+        import admission_rule_levels as module  # type: ignore[no-redef,import-not-found]  # reason: same module under both execution styles; only resolvable when scripts/ is sys.path[0]
+    return module
+
+
 def build_ledger(
     inputs: Sequence[SnapshotInput],
     *,
@@ -2916,6 +2978,7 @@ def build_ledger(
     series_replay: SeriesReader | None = None,
     a6_replay: A6Reader | None = None,
     a3_replay: A3Reader | None = None,
+    levels_replay: LevelsReader | None = None,
     follow_ons: Mapping[str, int] | None = None,
     breakdown: str | None = None,
 ) -> dict[str, object]:
@@ -2927,6 +2990,8 @@ def build_ledger(
     a3 = None if a3_replay is None else _a3_module()
     a3_entries: list[dict[str, object]] = []
     a3_tallies: list[object] = []
+    levels = None if levels_replay is None else _levels_module()
+    levels_entries: list[dict[str, object]] = []
     for item in inputs:
         connection = _open_snapshot(item.database)
         try:
@@ -2984,6 +3049,10 @@ def build_ledger(
                 )
             )
             a3_tallies.append(a3_tally)
+        if levels is not None and levels_replay is not None:
+            levels_entries.append(
+                levels.snapshot_entry(item.label, levels_replay(item.database))
+            )
         if len(probe.rows) != probe.report_rows_excluded:
             raise Refusal("attention probe disagrees with the source's report query")
         summary = summarise_attention(probe)
@@ -3034,6 +3103,10 @@ def build_ledger(
         }
         ledger[a3.KEY] = combined
         vocabulary |= a3.vocabulary(combined)
+    if levels is not None:
+        replayed: dict[str, object] = {"snapshots": levels_entries}
+        ledger[levels.KEY] = replayed
+        vocabulary |= levels.vocabulary(replayed)
     _closed(ledger, vocabulary)
     return ledger
 
@@ -3265,6 +3338,9 @@ def render_markdown(ledger: Mapping[str, object]) -> str:
     if "a3_combination" in ledger:
         a3 = _a3_module()
         return "\n".join(a3.render(_dict(ledger[a3.KEY]))) + "\n"
+    if "work_identity_levels" in ledger:
+        levels = _levels_module()
+        return "\n".join(levels.render(_dict(ledger[levels.KEY]))) + "\n"
     snapshots = cast("list[dict[str, object]]", ledger["snapshots"])
     labels = [cast("str", entry["label"]) for entry in snapshots]
     header = (
@@ -3397,6 +3473,7 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
     )
     parser.add_argument("--a6-abstention", action="store_true")
     parser.add_argument("--a3-combination", action="store_true")
+    parser.add_argument("--work-identity-levels", action="store_true")
     parser.add_argument("--format", choices=("json", "markdown"), default="json")
     parser.add_argument(
         "--follow-on", action="append", default=[], metavar="GATE=ISSUE"
@@ -3468,6 +3545,7 @@ def main(
     series_replay: SeriesReader | None = None,
     decision_replay: A6Reader | None = None,
     combination_replay: A3Reader | None = None,
+    level_replay: LevelsReader | None = None,
 ) -> int:
     output = sys.stdout if stdout is None else stdout
     errors = sys.stderr if stderr is None else stderr
@@ -3495,6 +3573,13 @@ def main(
                 if combination_replay is None
                 else combination_replay
             )
+        levels_replay: LevelsReader | None = None
+        if arguments.work_identity_levels:
+            levels_replay = (
+                cast("LevelsReader", _levels_module().replay_levels)
+                if level_replay is None
+                else level_replay
+            )
         ledger = build_ledger(
             inputs,
             ancestry=git_ancestry(arguments.repository)
@@ -3504,6 +3589,7 @@ def main(
             series_replay=series_replay,
             a6_replay=a6_replay,
             a3_replay=a3_replay,
+            levels_replay=levels_replay,
             follow_ons=follow_ons,
             breakdown=breakdown,
         )

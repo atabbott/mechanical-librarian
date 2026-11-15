@@ -40,7 +40,8 @@ type DescriptionBindingDto = ResponseSchema<'DescriptionAdviceBinding'>
 type OwnerControlDto = ResponseSchema<'_OwnerControl'>
 type EvidenceDto = ResponseSchema<'_EvidenceResponse'>
 type HistoryDto = ResponseSchema<'_HistoryResponse'>
-type ChoiceContextDto = ResponseSchema<'_ChoiceContext'>
+type ChoiceContextDto = ResponseSchema<'_ChoiceContext'> &
+  Partial<Pick<ResponseSchema<'_FieldChoiceContext'>, 'match_basis'>>
 type CoverObservationDto = ResponseSchema<'_CoverObservation'>
 type CoverConsiderationDto = ResponseSchema<'_CoverConsiderationResponse'>
 type ProviderOutcomeDto = ResponseSchema<'_ProviderOutcome'>
@@ -503,6 +504,8 @@ export interface MediaHealthObservationView {
 }
 export interface PreparationFailureView {
   attempt: number
+  // The failure is the work's Book matching check, which gave up (#1355).
+  checkGivenUp: boolean
   diagnosticReference: string
   mediaHealth: readonly MediaHealthObservationView[]
   provider: string
@@ -658,6 +661,9 @@ export interface ChoiceContextView {
   recommendation: 'no_recommendation' | 'recommended'
   recommendationReason: string
   selection: 'current' | 'proposed'
+  // A value offered because its source record has the book's title and
+  // author, though not a confirmed match (#1355); null for any other.
+  matchBasis?: 'title_and_author' | null
 }
 export type DescriptionAdviceView = ResponseSchema<'_DescriptionAdviceResponse'>
 // The branch that chose a field's sentence; Library decides rows from it (#1791).
@@ -688,6 +694,9 @@ export interface ReviewFieldView {
   choiceContexts: readonly ChoiceContextView[]
   proposalId: string
   targetFingerprint: string
+  // The digest of what this field offers now; a choice sends it back so the
+  // server refuses one made against an offer that has since changed (#1355).
+  offerDigest: string
   humanDecision: ResponseSchema<'_DecisionProjection'> | null
   inventoryRole?: 'primary' | 'contextual'
   automaticDecision:
@@ -738,27 +747,37 @@ export interface CoverObservationView {
 }
 export interface CoverCandidateView {
   artifactId: string
-  /** `retained` is the original an automatic switch replaced: Put back (#1363). */
-  candidateKind: 'candidate' | 'retained'
+  /**
+   * `retained` is the original an automatic switch replaced: Put back (#1363).
+   * `larger_copy` is a larger original of the current cover's own picture.
+   */
+  candidateKind: 'candidate' | 'larger_copy' | 'retained'
+  /** Why a proposed cover cannot be chosen: a source says it belongs to a different book or edition, or names a different author or contributor (#1790). */
+  contradiction?: 'book' | 'edition' | 'creator'
   deterministicCitations: readonly string[]
   deterministicRank: number | null
   deterministicRankKey: readonly (number | string)[] | null
-  height: number
+  /** Null, with `previewSha256` and `width`, only for a retained original the decoder refused (#1362). */
+  height: number | null
   identity: Readonly<Record<string, unknown>> | null
   incumbent: boolean
   matchState: 'same_edition' | 'same_book' | 'match_not_confirmed'
-  /** A proposed cover from the matched book; the recording stays unconfirmed (#1642). */
-  matchReason?: 'matched_book'
+  /**
+   * A proposed cover from the matched book; the recording stays unconfirmed
+   * (#1642). `title_and_author`: from a record Book matching counts as the same
+   * book by title and author; the match stays unconfirmed (#1355).
+   */
+  matchReason?: 'matched_book' | 'title_and_author'
   observation: CoverObservationView | null
   originalSha256: string
   ordinal: number
-  previewSha256: string
+  previewSha256: string | null
   reference: string
   selectable: boolean
   manualEligible: boolean
   sourceKinds: readonly CoverSourceKind[]
   state: 'acceptable' | 'available' | 'excluded' | 'recommended'
-  width: number
+  width: number | null
 }
 export interface CoverConsiderationView {
   choiceContexts: readonly ChoiceContextView[]
@@ -771,6 +790,8 @@ export interface CoverConsiderationView {
   }
   omissions: readonly Readonly<Record<string, unknown>>[]
   policy: Readonly<Record<string, unknown>> | null
+  /** The measured cover rules' stage from the policy report (#1363). */
+  stage?: Pick<ResponseSchema<'_CoverStage'>, 'language' | 'outcome' | 'reason'> | null
   providerFetching: boolean
   ready: boolean
   policyPreferences: {
@@ -810,6 +831,12 @@ export interface CaseDetailView {
   comparisonNotices: readonly string[]
   mediaHealth: readonly MediaHealthObservationView[]
   writesConsented: boolean
+  // The work waits for its check against a changed Book matching setting:
+  // its choices are refused until the check finishes (#1355).
+  checking: boolean
+  // That check gave up: saving Book matching again, or a restart in file
+  // mode, retries it. Its choices stay disabled (#1355).
+  checkGivenUp: boolean
   fields: readonly ReviewFieldView[]
 }
 export interface EvidenceObservationView {
@@ -863,6 +890,12 @@ export type HistoryItemView = (
   | {
       category: 'preview'
       dispositions: readonly { count: number; outcome: PreviewDisposition }[]
+    }
+  | {
+      // Book matching changed what this field offers, so it asks again
+      // (#1355). The line itself lands with the History copy.
+      category: 'matching_changed'
+      destination: TargetDestination
     }
   | {
       category: 'cover'
@@ -1169,6 +1202,7 @@ export interface DecisionCommand {
   proposalId: string
   selectedValue?: Schema<'_ProposedValue'> | null
   targetFingerprint: string
+  offerDigest: string
   idempotencyKey: string
   considerationId?: string
   coverConfirmation?: { expected_selection_id: string | null; confirm_unverified_match: boolean }
@@ -1326,6 +1360,9 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     readonly code: string,
+    // Why a refusal applies, where the code has reasons: `offer_changed` says
+    // whether the work waits for its check or the field's offer changed (#1355).
+    readonly reason: string | null = null,
   ) {
     super(`Review API request failed (${String(status)}: ${code})`)
     this.name = 'ApiError'
@@ -1835,6 +1872,7 @@ export class ReviewApiClient implements ReviewHttp {
       idempotencyKey,
       proposalId,
       targetFingerprint,
+      offerDigest,
       selectedValue,
       destination,
       outcome,
@@ -1849,6 +1887,7 @@ export class ReviewApiClient implements ReviewHttp {
         proposal_id: proposalId,
         selected_value: selectedValue ?? null,
         target_fingerprint: targetFingerprint,
+        offered_alternatives_digest: offerDigest,
         consideration_id: considerationId ?? null,
         cover_confirmation: coverConfirmation ?? null,
       },
@@ -2616,6 +2655,7 @@ export const mapLibrary = (value: LibraryDto): LibraryView => ({
           ? null
           : {
               attempt: preparation.attempt,
+              checkGivenUp: preparation.check_given_up,
               diagnosticReference: preparation.diagnostic_reference,
               mediaHealth: mapMediaHealth(preparation.media_health),
               provider: preparation.provider,
@@ -2742,6 +2782,8 @@ export const mapCaseDetail = (value: CaseDetailDto): CaseDetailView => {
       value.recording_admission_basis,
     ),
     writesConsented: value.writes_consented,
+    checking: value.checking,
+    checkGivenUp: value.check_given_up,
     fields: value.fields.map(mapReviewField),
   }
 }
@@ -2762,13 +2804,18 @@ const mapReviewField = (field: ReviewFieldDto): ReviewFieldView => ({
   manualReturnFailed: field.manual_return_failed,
   navigationRole: field.navigation_role,
   // An empty or unreadable current value says which, in Audiobookshelf's
-  // name, rather than one word for both (#1286).
-  currentValue: targetValueText(field.current.state, field.current.value),
+  // name, rather than one word for both (#1286). A cover's value is an
+  // artifact id, so it reads as the current cover, never as the id (#1363).
+  currentValue:
+    field.destination === 'cover' && field.current.state === 'value'
+      ? 'Current cover'
+      : targetValueText(field.current.state, field.current.value),
   currentRaw: field.current.value,
   proposedValues: field.proposed_values,
   choiceContexts: mapChoiceContexts(field.choice_contexts, field.proposed_values.length),
   proposalId: field.proposal_id,
   targetFingerprint: field.target_fingerprint,
+  offerDigest: field.offer_digest,
   humanDecision: field.human_decision,
   inventoryRole: field.inventory_role,
   automaticDecision: field.automatic_decision,
@@ -2825,55 +2872,11 @@ export const mapEvidence = (value: EvidenceDto): EvidenceView => ({
   sourceLedger: value.source_ledger.map(mapProviderOutcome),
 })
 
-const mapHistoryItem = (item: HistoryDto['items'][number], index: number): HistoryItemView => {
-  if ('checkpoint' in item)
-    return { category: 'transition', occurredAt: null, outcome: item.kind, reason: item.reason }
+const mapCoverHistoryItem = (
+  item: Extract<HistoryDto['items'][number], { readonly consideration: unknown }>,
+  index: number,
+): HistoryItemView => {
   const occurredAt = item.occurred_at
-  // Each item kind has its own event schema, named by its version.
-  if (item.schema_version === 'description-advice-history-v1')
-    return {
-      category: 'description',
-      occurredAt,
-      outcome: item.kind,
-      state: item.state,
-      model: item.model,
-      engine: item.engine,
-      candidate: item.candidate === null ? null : mapDescriptionCandidate(item.candidate),
-      selected: item.kind === 'description_selected',
-      chosenBy:
-        item.decision === null ? null : item.decision.origin === 'human' ? 'owner' : 'automatic',
-    }
-  // Only an owner decision states what it may go on to do; a retained F45
-  // decision is the only one that carries a reason (#968).
-  if (item.schema_version === 'human-decision-event-v1')
-    return {
-      category: 'owner',
-      applicationReason: item.application_reason,
-      outcome: item.outcome,
-      occurredAt,
-      destination: item.destination,
-      previousValue: item.previous_value,
-      selectedValue: item.selected_value,
-    }
-  if (item.schema_version === 'automatic-decision-history-event-v1')
-    return {
-      category: 'automatic',
-      outcome: item.outcome,
-      occurredAt,
-      destination: item.destination,
-      previousValue: item.previous_value,
-      selectedValue: item.selected_value,
-    }
-  if (item.schema_version === 'preview-history-event-v1')
-    return {
-      category: 'preview',
-      occurredAt,
-      // The decoder holds each key to the disposition names (propertyNames).
-      dispositions: Object.entries(item.dispositions).map(([outcome, count]) => ({
-        count,
-        outcome: outcome as PreviewDisposition,
-      })),
-    }
   const { consideration, decision } = item
   const decisionOutcome = decision?.outcome
   const ownerOutcome =
@@ -2924,6 +2927,62 @@ const mapHistoryItem = (item: HistoryDto['items'][number], index: number): Histo
   }
 }
 
+const mapHistoryItem = (item: HistoryDto['items'][number], index: number): HistoryItemView => {
+  if ('checkpoint' in item)
+    return { category: 'transition', occurredAt: null, outcome: item.kind, reason: item.reason }
+  // A cover item is told apart by its consideration; it carries no version of
+  // its own, because its event's version stays in the store (#1847).
+  if ('consideration' in item) return mapCoverHistoryItem(item, index)
+  const occurredAt = item.occurred_at
+  // Each other item kind has its own event schema, named by its version.
+  if (item.schema_version === 'description-advice-history-v1')
+    return {
+      category: 'description',
+      occurredAt,
+      outcome: item.kind,
+      state: item.state,
+      model: item.model,
+      engine: item.engine,
+      candidate: item.candidate === null ? null : mapDescriptionCandidate(item.candidate),
+      selected: item.kind === 'description_selected',
+      chosenBy:
+        item.decision === null ? null : item.decision.origin === 'human' ? 'owner' : 'automatic',
+    }
+  // Only an owner decision states what it may go on to do; a retained F45
+  // decision is the only one that carries a reason (#968).
+  if (item.schema_version === 'human-decision-event-v1')
+    return {
+      category: 'owner',
+      applicationReason: item.application_reason,
+      outcome: item.outcome,
+      occurredAt,
+      destination: item.destination,
+      previousValue: item.previous_value,
+      selectedValue: item.selected_value,
+    }
+  if (item.schema_version === 'automatic-decision-history-event-v1')
+    return {
+      category: 'automatic',
+      outcome: item.outcome,
+      occurredAt,
+      destination: item.destination,
+      previousValue: item.previous_value,
+      selectedValue: item.selected_value,
+    }
+  if (item.schema_version === 'matching-changed-history-event-v1')
+    return { category: 'matching_changed', occurredAt, destination: item.destination }
+  // What is left is the preview event.
+  return {
+    category: 'preview',
+    occurredAt,
+    // The decoder holds each key to the disposition names (propertyNames).
+    dispositions: Object.entries(item.dispositions).map(([outcome, count]) => ({
+      count,
+      outcome: outcome as PreviewDisposition,
+    })),
+  }
+}
+
 export const mapHistory = (value: HistoryDto): HistoryView => ({
   items: value.items.map(mapHistoryItem),
   ...(value.next_cursor ? { nextCursor: value.next_cursor } : {}),
@@ -2946,6 +3005,7 @@ const mapChoiceContexts = (
     recommendation: item.recommendation,
     recommendationReason: item.recommendation_reason,
     selection: item.selection,
+    matchBasis: item.match_basis ?? null,
   }))
   const [current, ...proposed] = contexts
   // current-first and proposed-count; X55 (the current context names no
@@ -2993,12 +3053,20 @@ const mapCoverObservation = (
 /**
  * The retained original as the owner's way back (#1363, D2): never the
  * current cover, never reviewed or ranked, and choosable exactly while the
- * server still offers it, which it does only while its copy is kept.
+ * server still offers it, which it does only while its copy is kept. One the
+ * decoder refused has no size or preview at all (#1362).
  */
 const mapRetainedCandidate = (
   candidate: CoverConsiderationDto['candidates'][number],
 ): CoverCandidateView => {
+  const previewless = [
+    candidate.height,
+    candidate.width,
+    candidate.preview_sha256,
+    candidate.transport_sha256,
+  ].filter((value) => value === null).length
   if (
+    (previewless !== 0 && previewless !== 4) ||
     candidate.identity !== null ||
     candidate.incumbent ||
     candidate.match_state !== 'match_not_confirmed' ||
@@ -3058,16 +3126,30 @@ export const mapCoverConsideration = (value: CoverConsiderationDto): CoverConsid
           ? 'same_book'
           : 'match_not_confirmed'
     const confirmed = expectedMatchState !== 'match_not_confirmed'
+    // Why a proposed cover contradicts the book (#1790); the incumbent never
+    // carries one.
+    const contradiction = incumbent
+      ? undefined
+      : identity.outcome === 'conflict'
+        ? identity.reasons.includes('manifestation_publication_incompatible')
+          ? 'edition'
+          : 'book'
+        : identity.reasons.includes('retained_creator_or_contributor_disagreement')
+          ? 'creator'
+          : undefined
     const manualEligible = candidate.manual_eligible
-    if (
-      manualEligible !==
-      (!incumbent &&
-        identity.outcome !== 'conflict' &&
-        !identity.reasons.includes('retained_creator_or_contributor_disagreement'))
-    )
+    if (manualEligible !== (!incumbent && contradiction === undefined))
       throw new ApiError(502, 'contradictory_cover_manual_eligibility')
-    const { reference } = candidate
+    const { reference, height, width } = candidate
     const previewSha256 = candidate.preview_sha256
+    // Only a retained original may have no preview (#1362).
+    if (
+      height === null ||
+      width === null ||
+      previewSha256 === null ||
+      candidate.transport_sha256 === null
+    )
+      throw new ApiError(502, 'missing_cover_preview')
     const observation = mapCoverObservation(candidate.observation, reference, previewSha256)
     const matchState = candidate.match_state
     // match-state and unconfirmed-unranked; X59 (a confirmed incumbent is
@@ -3086,13 +3168,17 @@ export const mapCoverConsideration = (value: CoverConsiderationDto): CoverConsid
     const matchReason = candidate.match_reason
     if (matchReason !== null && (incumbent || identity.outcome === 'conflict'))
       throw new ApiError(502, 'contradictory_cover_match_reason')
+    // A larger copy is never the current cover and always confirmed (#1363).
+    if (candidate.candidate_kind === 'larger_copy' && (incumbent || !confirmed))
+      throw new ApiError(502, 'contradictory_cover_identity')
     return {
       artifactId: candidate.artifact_id,
-      candidateKind: 'candidate',
+      candidateKind: candidate.candidate_kind,
+      ...(contradiction === undefined ? {} : { contradiction }),
       deterministicCitations: candidate.deterministic_citations,
       deterministicRank,
       deterministicRankKey,
-      height: candidate.height,
+      height,
       identity,
       incumbent,
       matchState,
@@ -3106,7 +3192,7 @@ export const mapCoverConsideration = (value: CoverConsiderationDto): CoverConsid
       manualEligible,
       sourceKinds: candidate.source_kinds,
       state: candidate.state,
-      width: candidate.width,
+      width,
     }
   })
   // unique-references, X58 (distinct artifacts) and ordinal-position, which
@@ -3244,6 +3330,14 @@ export const mapCoverConsideration = (value: CoverConsiderationDto): CoverConsid
     incumbent: { reference: value.incumbent.reference, state: incumbentState },
     omissions: value.omissions,
     policy,
+    stage:
+      policy === null
+        ? null
+        : {
+            language: policy.stage.language,
+            outcome: policy.stage.outcome,
+            reason: policy.stage.reason,
+          },
     providerFetching,
     ready,
     policyPreferences: {
@@ -3275,5 +3369,9 @@ const structuredError = async (response: Response) => {
   }
   if (!record(value) || !record(value.error) || typeof value.error.code !== 'string')
     return new ApiError(response.status, 'invalid_error_response')
-  return new ApiError(response.status, value.error.code)
+  return new ApiError(
+    response.status,
+    value.error.code,
+    typeof value.error.reason === 'string' ? value.error.reason : null,
+  )
 }

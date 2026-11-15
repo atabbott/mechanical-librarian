@@ -109,7 +109,10 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     default_target_fields,
 )
-from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
+from mechanical_librarian.domain.owner_settings import (
+    OWNER_SETTINGS_SCHEMA,
+    OwnerSettingsDocument,
+)
 from mechanical_librarian.domain.preparation_presentation import (
     PreparationRunState,
     PreparationTrigger,
@@ -139,7 +142,7 @@ class _UnsizedFingerprint:
 def _install_settings_authority(repository: object) -> None:
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v4",
+            "schema_version": OWNER_SETTINGS_SCHEMA,
             "revision": 1,
             "connections": [
                 {"name": "primary", "endpoint": "https://library.example.invalid"}
@@ -12810,3 +12813,111 @@ def test_work_route_advice_prepares_its_cover_and_never_a_description(tmp_path):
         ):
             stages.prepare_advice(repository, action)
         assert covers == [action]
+
+
+@pytest.mark.parametrize(
+    ("stored", "reuse_only"),
+    (("identifier", True), ("title_and_creator", False), (None, False)),
+    ids=("matching_check", "same_level", "no_comparison"),
+)
+def test_a_matching_check_projection_starts_no_description_attempt(
+    stored: str | None, reuse_only: bool
+) -> None:
+    """A projection that finds the cover comparison made under another Book
+    matching level is a matching check: description advice may only reuse an
+    earlier attempt, so the check makes no model request (#1355)."""
+    from types import SimpleNamespace
+
+    from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
+
+    stages = _proposal_stages(lambda *_: pytest.fail("proposal dispatch"))
+    stages._configuration = cast(
+        "ApplicationConfiguration",
+        SimpleNamespace(
+            review=SimpleNamespace(work_identity=WorkIdentityLevel.TITLE_AND_CREATOR)
+        ),
+    )
+    repository = cast(
+        "ReviewPipelineRepository",
+        SimpleNamespace(current_cover_consideration_level=lambda _case: stored),
+    )
+    action = PipelineAction(
+        "action-1",
+        "scan-1",
+        "projection",
+        1,
+        "primary",
+        "books",
+        "library-id",
+        _PRODUCER,
+        1,
+        "a" * 64,
+        "item-1",
+        "b" * 64,
+        0,
+        source_fingerprint="c" * 64,
+        review_case_id="review_case_" + "a" * 64,
+    )
+    calls: list[dict[str, object]] = []
+    order: list[str] = []
+    with (
+        patch.object(
+            stages, "prepare_cover", side_effect=lambda *_: order.append("cover")
+        ),
+        patch.object(
+            stages,
+            "_prepare_description",
+            side_effect=lambda _repository, _action, **values: calls.append(values),
+        ),
+    ):
+        stages.prepare_advice(repository, action)
+    assert calls == [{"reuse_only": reuse_only}]
+    assert order == ["cover"]
+
+
+def test_projection_reconciles_the_case_level_before_its_shadow_outcome() -> None:
+    """Each projection, a matching check's included, first reconciles the case
+    to the configured Book matching level from stored data (#1355, S10): an
+    admission that replays its recorded answer reconciles nothing."""
+    events: list[tuple[object, ...]] = []
+
+    class Repository:
+        def reconcile_case_level(self, case_id: str, at: int) -> str:
+            events.append(("reconcile", case_id, at))
+            return "reconciled"
+
+        def persist_shadow_outcome(
+            self, case_id: str, at: int, **keywords: object
+        ) -> str:
+            events.append(("persist", case_id, at, tuple(keywords)))
+            return "complete"
+
+    stages = _proposal_stages(lambda *_arguments: "unused")
+    repository = cast("ReviewPipelineRepository", Repository())
+    assert stages.project(repository, "case-0") == "complete"
+    action = PipelineAction(
+        "action-1",
+        "scan-1",
+        "projection",
+        1,
+        "primary",
+        "ebooks",
+        "library-id",
+        _PRODUCER,
+        1,
+        "a" * 64,
+        "item-1",
+        "b" * 64,
+        0,
+        source_fingerprint="c" * 64,
+        report_id="report-1",
+        proposal_set_id="proposal-1",
+        review_case_id="case-1",
+    )
+    assert stages.project(repository, action) == "complete"
+    assert events == [
+        ("reconcile", "case-0", 7),
+        ("persist", "case-0", 7, ()),
+        ("reconcile", "case-1", 7),
+        ("persist", "case-1", 7, ("staged_action",)),
+    ]

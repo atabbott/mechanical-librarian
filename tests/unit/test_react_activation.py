@@ -251,7 +251,7 @@ def test_deep_corrupt_manifest_is_one_stable_workspace_recovery(case: _Case) -> 
     assert first.status_code == 503
     assert second.status_code == 503
     assert first.text == second.text
-    assert "Review workspace unavailable" in first.text
+    assert "Mechanical Librarian could not be loaded" in first.text
 
 
 def _raw(case: _Case, path: str, **headers: str) -> tuple[int, dict[str, str], bytes]:

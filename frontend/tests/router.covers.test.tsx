@@ -140,6 +140,8 @@ const work = (
   group,
   media_kind: 'epub',
   review_case_id: id,
+  hold: null,
+  suggestion: null,
   switched: null,
   title: titles[id] ?? id,
   unreadable_cover: false,
@@ -250,6 +252,59 @@ describe('Covers view (#1633)', () => {
     const { router } = renderRoute('/library?lens=all&view=covers', coversHttp({ decide }))
     expect(await screen.findByRole('heading', { level: 2, name: 'First Book' })).toBeVisible()
     expect(router.state.location.search.cover).toBe('case-1')
+  })
+
+  it('says why a cover that contradicts the book cannot be chosen (#1790)', async () => {
+    const user = userEvent.setup()
+    const http = coversHttp({ decide })
+    http.getCaseDetail.mockImplementation(async (id) => {
+      const value = coverDetail(id, titles[id] ?? id)
+      return {
+        ...value,
+        fields: value.fields.map((field) =>
+          field.coverConsideration
+            ? {
+                ...field,
+                coverConsideration: {
+                  ...field.coverConsideration,
+                  candidates: [
+                    ...field.coverConsideration.candidates,
+                    {
+                      ...candidate('5', false),
+                      contradiction: 'edition' as const,
+                      deterministicRank: null,
+                      deterministicRankKey: null,
+                      identity: {
+                        outcome: 'conflict',
+                        reasons: ['manifestation_publication_incompatible'],
+                      },
+                      manualEligible: false,
+                      matchState: 'match_not_confirmed' as const,
+                      ordinal: 2,
+                      selectable: false,
+                      sourceKinds: ['hardcover' as const],
+                      state: 'excluded' as const,
+                    },
+                  ],
+                },
+              }
+            : field,
+        ),
+      }
+    })
+    renderRoute('/library?lens=all&view=covers&tab=decide&cover=case-1', http)
+    const group = await screen.findByRole('radiogroup', {
+      name: 'Which cover should this book use?',
+    })
+    const card = within(group).getByRole('radio', { name: /Hardcover cover/u })
+    expect(card.querySelector('strong')).toHaveTextContent(/^Contradicts this book$/u)
+    expect(card.querySelector('.choice-recommendation')).toHaveTextContent(
+      /^A source says it belongs to a different edition, so you cannot choose it\.$/u,
+    )
+    expect(card).not.toHaveTextContent('Match not confirmed')
+    expect(card).toBeDisabled()
+    await user.click(card)
+    expect(http.recordDecision).not.toHaveBeenCalled()
   })
 
   it('records one tap as the choice, opens the next book and counts again', async () => {
@@ -387,10 +442,20 @@ describe('Covers view (#1633)', () => {
           filled: false,
           put_back: null,
           put_back_offered: true,
+          language: null,
+          reason: null,
         },
       }),
       work('case-2', 'auto', {
-        switched: { at, before: null, filled: true, put_back: null, put_back_offered: false },
+        switched: {
+          at,
+          before: null,
+          filled: true,
+          put_back: null,
+          put_back_offered: false,
+          language: null,
+          reason: null,
+        },
       }),
     ])
     const http = coversHttp({ switched })
@@ -438,7 +503,15 @@ describe('Covers view (#1633)', () => {
     const at = Math.floor(Date.now() / 1000) - 7200
     const switched = page('switched', [
       work('case-1', 'auto', {
-        switched: { at, before: null, filled: false, put_back: null, put_back_offered: false },
+        switched: {
+          at,
+          before: null,
+          filled: false,
+          put_back: null,
+          put_back_offered: false,
+          language: null,
+          reason: null,
+        },
       }),
     ])
     renderRoute('/library?lens=all&view=covers&tab=switched', coversHttp({ switched }))
@@ -504,6 +577,8 @@ describe('Covers view (#1633)', () => {
           filled: false,
           put_back: null,
           put_back_offered: true,
+          language: null,
+          reason: null,
         },
       }),
     ])
@@ -811,6 +886,8 @@ describe('Put back (#1363)', () => {
           filled: false,
           put_back,
           put_back_offered,
+          language: null,
+          reason: null,
         },
       }),
     ])
@@ -837,6 +914,62 @@ describe('Put back (#1363)', () => {
     expect(await screen.findByText('Put back First Book.')).toBeVisible()
     expect(within(row).getByText('Put back')).toBeVisible()
     await waitFor(() => expect(within(row).getByRole('button', { name: 'Change' })).toHaveFocus())
+  })
+
+  it('puts back an original that does not decode, shown as Image unavailable', async () => {
+    // The decoder refused the original, so it has no preview anywhere (#1362).
+    const user = userEvent.setup()
+    const http = coversHttp({
+      switched: page('switched', [
+        work('case-1', 'auto', {
+          switched: {
+            at: Math.floor(Date.now() / 1000) - 60,
+            before: null,
+            filled: false,
+            put_back: null,
+            put_back_offered: true,
+            language: null,
+            reason: null,
+          },
+        }),
+      ]),
+    })
+    http.getCaseDetail.mockImplementation(async (id) => {
+      const value = withRetained(coverDetail(id, titles[id] ?? id))
+      return {
+        ...value,
+        fields: value.fields.map((field) =>
+          field.coverConsideration
+            ? {
+                ...field,
+                coverConsideration: {
+                  ...field.coverConsideration,
+                  candidates: field.coverConsideration.candidates.map((item) =>
+                    item.candidateKind === 'retained'
+                      ? { ...item, height: null, previewSha256: null, width: null }
+                      : item,
+                  ),
+                },
+              }
+            : field,
+        ),
+      }
+    })
+    renderRoute('/library?lens=all&view=covers&tab=switched', http)
+    const [row] = await screen.findAllByRole('listitem')
+    if (!row) throw new Error('a switched row is required')
+    expect(within(row).getByRole('img', { name: 'Previous cover' })).toHaveTextContent(
+      'Image unavailable',
+    )
+    expect(within(row).queryByText('No cover')).toBeNull()
+    await user.click(within(row).getByRole('button', { name: 'Put back' }))
+    await waitFor(() => expect(http.recordDecision).toHaveBeenCalledOnce())
+    expect(http.recordDecision.mock.calls[0]?.[1]).toMatchObject({
+      outcome: 'accept',
+      selectedValue: { kind: 'cover', value: `cover_${'4'.repeat(64)}` },
+      coverConfirmation: { expected_selection_id: null, confirm_unverified_match: true },
+    })
+    expect(await screen.findByText('Put back First Book.')).toBeVisible()
   })
 
   it('refuses as stale when the original is no longer offered, recording nothing', async () => {
@@ -953,5 +1086,120 @@ describe('Put back (#1363)', () => {
       value: `cover_${'4'.repeat(64)}`,
     })
     expect(await screen.findByText('Put back First Book.')).toBeVisible()
+  })
+})
+
+describe('Measured cover rules (#1363)', () => {
+  const at = Math.floor(Date.now() / 1000) - 60
+  const switchedFor = (
+    id: string,
+    reason: NonNullable<CoverWorkView['switched']>['reason'],
+    extra: Partial<CoverWorkView> = {},
+  ): CoverWorkView =>
+    work(id, 'auto', {
+      switched: {
+        at,
+        before: reason === null ? null : preview('b', 200, 300),
+        filled: reason === null,
+        put_back: null,
+        put_back_offered: false,
+        language: null,
+        reason,
+      },
+      ...extra,
+    })
+
+  it('names the fault and says why each switch happened', async () => {
+    const switched = page('switched', [
+      switchedFor('case-1', 'below_floor'),
+      switchedFor('case-2', 'wrong_shape', { media_kind: 'm4b' }),
+    ])
+    renderRoute('/library?lens=all&view=covers&tab=switched', coversHttp({ switched }))
+    const [first, second] = await screen.findAllByRole('listitem')
+    if (!first || !second) throw new Error('two switched rows are required')
+    expect(within(first).getByText('Under 300 px')).toBeVisible()
+    expect(
+      within(first).getByText('The cover was 200 × 300 px, under 300 px on its short side.'),
+    ).toBeVisible()
+    // The shape fault names the medium it is wrong for.
+    expect(within(second).getByText('Book shape on an audiobook')).toBeVisible()
+    expect(
+      within(second).getByText('Square art for an audiobook whose cover was book-shaped.'),
+    ).toBeVisible()
+  })
+
+  it('filters switches by fault, showing fills only under All', async () => {
+    const user = userEvent.setup()
+    const switched = page('switched', [
+      switchedFor('case-1', 'below_floor'),
+      switchedFor('case-2', null),
+      switchedFor('case-3', 'sharper_copy'),
+    ])
+    renderRoute('/library?lens=all&view=covers&tab=switched', coversHttp({ switched }))
+    expect(await screen.findAllByRole('listitem')).toHaveLength(3)
+    const show = screen.getByRole('combobox', { name: 'Show' })
+    expect(show).toHaveTextContent('All')
+    await user.click(show)
+    // Only the faults present, in the copy table's order; a fill has none.
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+      'All',
+      'Sharper copy available',
+      'Under 300 px',
+    ])
+    await user.click(screen.getByRole('option', { name: 'Sharper copy available' }))
+    const [only, ...rest] = screen.getAllByRole('listitem')
+    if (!only) throw new Error('a shown row is required')
+    expect(rest).toHaveLength(0)
+    expect(within(only).getByRole('link', { name: 'Third Book' })).toBeVisible()
+  })
+
+  it('shows a suggestion To decide with its fault and no filter', async () => {
+    const decidePage = page('decide', [
+      work('case-1', 'proposal', { suggestion: { reason: 'unreadable' } }),
+    ])
+    renderRoute('/library?lens=all&view=covers&tab=decide', coversHttp({ decide: decidePage }))
+    expect(await screen.findByText('Unreadable image')).toBeVisible()
+    expect(screen.queryByRole('combobox', { name: 'Show' })).toBeNull()
+  })
+
+  it("shows a held switch's reason on its To decide row (#1363 M7)", async () => {
+    const decidePage = page('decide', [
+      work('case-1', 'choice', { hold: { reason: 'title_names_other_work' } }),
+    ])
+    renderRoute('/library?lens=all&view=covers&tab=decide', coversHttp({ decide: decidePage }))
+    expect(await screen.findByText('Title names another book')).toBeVisible()
+  })
+
+  it('shows a contradiction hold To decide with its own pill (#1362)', async () => {
+    const decidePage = page('decide', [
+      work('case-1', 'choice', { hold: { reason: 'current_contradicted' } }),
+    ])
+    renderRoute('/library?lens=all&view=covers&tab=decide', coversHttp({ decide: decidePage }))
+    const [row] = await screen.findAllByRole('listitem')
+    if (!row) throw new Error('a hold row is required')
+    expect(within(row).getByText("Cover's source names another book")).toBeVisible()
+  })
+
+  it('says why an unreadable cover was switched and lists it under Show (#1362)', async () => {
+    const user = userEvent.setup()
+    const switched = page('switched', [
+      switchedFor('case-1', 'unreadable'),
+      switchedFor('case-2', 'below_floor'),
+    ])
+    renderRoute('/library?lens=all&view=covers&tab=switched', coversHttp({ switched }))
+    const [first] = await screen.findAllByRole('listitem')
+    if (!first) throw new Error('a switched row is required')
+    expect(within(first).getByText('Unreadable image')).toBeVisible()
+    expect(
+      within(first).getByText(
+        'Audiobookshelf had no image for the cover, or Mechanical Librarian could not read it.',
+      ),
+    ).toBeVisible()
+    await user.click(screen.getByRole('combobox', { name: 'Show' }))
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+      'All',
+      'Under 300 px',
+      'Unreadable image',
+    ])
   })
 })

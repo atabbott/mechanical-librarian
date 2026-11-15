@@ -47,6 +47,7 @@ from mechanical_librarian.application.review_pipeline import (
 )
 from mechanical_librarian.domain.cover_evidence import CoverSourceKind
 from mechanical_librarian.domain.field_effect import FieldEffectOperation
+from mechanical_librarian.domain.human_decision import COVER_SELECTION_AUTHORITY_SCHEMA
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from tests.support.cover_images import synthetic_image
 from tests.support.field_effects import (
@@ -61,6 +62,9 @@ from tests.support.field_effects import (
     effects as effects,
 )
 from tests.unit.test_cover_retention import _automatic_cover
+from tests.unit.test_cover_retention import (
+    _measured_record as _measured_record,  # autouse: a switch is the measured replacement
+)
 from tests.unit.test_not_matched_lens import (
     _audiobook,
     _completes_without_identity,
@@ -94,11 +98,13 @@ def _root(effects: _EffectEnvironment) -> Path:
 
 
 def _application(
-    effects: _EffectEnvironment, rescans: list[tuple[str, str]]
+    effects: _EffectEnvironment,
+    rescans: list[tuple[str, str]],
+    original: bytes = ORIGINAL,
 ) -> GuardedFieldApplication:
     """The guarded writer as composition builds it, reading the real original."""
     recovery = PrivateCoverRecoveryStore(
-        Path(effects.temporary.name) / "recovery-originals", lambda _: ORIGINAL
+        Path(effects.temporary.name) / "recovery-originals", lambda _: original
     )
     return GuardedFieldApplication(
         effects.repository,
@@ -125,7 +131,9 @@ def _application(
 
 
 def _switch(
-    effects: _EffectEnvironment, application: GuardedFieldApplication
+    effects: _EffectEnvironment,
+    application: GuardedFieldApplication,
+    original_digest: str = ORIGINAL_DIGEST,
 ) -> FieldEffectOperation:
     automatic = _automatic_cover()
     effects.authority.automatic_values[automatic.decision_id] = envelope(
@@ -138,7 +146,7 @@ def _switch(
         library="books",
         work_id="book-1",
         destination="cover",
-        pre_value="cover_" + ORIGINAL_DIGEST,
+        pre_value="cover_" + original_digest,
         desired_value=envelope("cover", SWITCHED),
         target_fingerprint=automatic.target_fingerprint,
         target_version="version-1",
@@ -372,7 +380,7 @@ def _owner_put_back(
         {
             "candidate_kind": "retained",
             "retained_plan_id": switch_plan,
-            "schema_version": "cover-selection-authority-v3",
+            "schema_version": COVER_SELECTION_AUTHORITY_SCHEMA,
         }
     )
     connection = sqlite3.connect(effects.database_path)
@@ -450,6 +458,70 @@ def test_a_put_back_releases_its_copy_only_when_its_write_verifies(
         )
 
 
+# Signature-valid bytes the constrained decoder refuses.
+UNDECODABLE = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+UNDECODABLE_DIGEST = hashlib.sha256(UNDECODABLE).hexdigest()
+
+
+def test_an_original_that_does_not_decode_is_kept_offered_and_put_back(
+    effects: _EffectEnvironment,
+) -> None:
+    """The owner gets back exactly the bytes a switch replaced, whether or not
+    they decode (#1362, A5 and S11).
+
+    The switch is seeded by planning it directly under a synthetic automatic
+    authority, as every Put back proof here does: until #1362's stage change,
+    the stage itself never switches a cover it could not read.
+    """
+    artifacts = CoverArtifactStore(Path(effects.temporary.name) / "artifacts")
+    observer = CoverEvidenceObserver(
+        cast("TargetCoverReader", None), artifacts, (), _root(effects)
+    )
+    application = _application(effects, [], UNDECODABLE)
+    switch = _switch(effects, application, UNDECODABLE_DIGEST)
+    assert application.apply(switch.plan.plan_id).state == "verified"
+    assert RetainedCoverStore(_root(effects)).read(UNDECODABLE_DIGEST) == UNDECODABLE
+
+    # The next report offers it by its verified digest, with no artifact and
+    # nothing staged, so no preview of it exists anywhere.
+    binding = effects.repository.retained_cover_original("primary", "books", "book-1")
+    assert binding == (
+        UNDECODABLE_DIGEST,
+        switch.plan.plan_id,
+        switch.plan.authority.decision_id,
+    )
+    (source,) = observer._retained_source(binding, CoverDeadline.start())
+    assert (source.kind, source.artifact, source.original_digest) == (
+        CoverSourceKind.RETAINED,
+        None,
+        UNDECODABLE_DIGEST,
+    )
+    stored = Path(effects.temporary.name) / "artifacts"
+    assert not any(path.is_file() for path in stored.rglob("*"))
+
+    # Put back: the writer reads the original from the retained store, as
+    # composition's Audiobookshelf writer does, and uploads exactly those bytes.
+    uploaded: list[bytes] = []
+    effects.target.after_apply = lambda plan: uploaded.append(
+        ContentAddressedOriginals(artifacts, _root(effects)).read_original_digest(
+            cast(str, plan.desired_value).removeprefix("cover_")
+        )
+    )
+    put_back = _plan(
+        effects,
+        "cover",
+        pre=SWITCHED,
+        desired="cover_" + UNDECODABLE_DIGEST,
+        suffix="7",
+    )
+    _owner_put_back(effects, put_back.plan.authority.decision_id, switch.plan.plan_id)
+
+    assert application.apply(put_back.plan.plan_id).state == "verified"
+    assert uploaded == [UNDECODABLE]
+    assert effects.target.read(put_back.plan).value == "cover_" + UNDECODABLE_DIGEST
+    assert _removals(effects) == [(switch.plan.plan_id, "released")]
+
+
 def _progress(state: str, rescan_requested: bool) -> PipelineProgress:
     return PipelineProgress(
         "scan", "primary", "books", state, 0, 0, 0, 0, 0, 0, rescan_requested
@@ -515,3 +587,56 @@ def test_the_scan_request_runs_after_the_write_commits(
     application.apply(switch.plan.plan_id)
 
     assert observed == ["verified"]
+
+
+def test_a_retained_put_back_leaks_nothing_to_events_or_the_bundle(
+    effects: _EffectEnvironment,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The retained path and the original's bytes stay private (#1363, A15)."""
+    from mechanical_librarian.adapters.operational_evidence import SupportBundle
+    from mechanical_librarian.application.operations import (
+        support_preparation_incidents,
+    )
+
+    application = _application(effects, [])
+    switch = _switch(effects, application)
+    assert application.apply(switch.plan.plan_id).state == "verified"
+    put_back = _plan(
+        effects, "cover", pre=SWITCHED, desired="cover_" + ORIGINAL_DIGEST, suffix="7"
+    )
+    _owner_put_back(effects, put_back.plan.authority.decision_id, switch.plan.plan_id)
+    assert application.apply(put_back.plan.plan_id).state == "verified"
+    repository = effects.repository
+    bundle = (
+        SupportBundle(
+            (
+                (
+                    "operational_incidents",
+                    lambda: support_preparation_incidents(
+                        repository.operational_snapshot()
+                    ),
+                ),
+            )
+        )
+        .export()
+        .decode()
+    )
+    activity = json.dumps(
+        repository.field_effect_activity_page(
+            search=None, event_type="all", occurred_after=0, page=1, page_size=25
+        )
+    )
+    written = capsys.readouterr()
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    surfaces = "\n".join((written.out, written.err, logged, bundle, activity))
+    # Control: the original was kept under the retained root.
+    assert any(_root(effects).iterdir())
+    for leaked in (
+        str(_root(effects)),
+        "retained-covers",
+        ORIGINAL[:16].hex(),
+        ORIGINAL[:16].decode("latin-1"),
+    ):
+        assert leaked not in surfaces

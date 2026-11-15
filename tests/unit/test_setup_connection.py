@@ -7,7 +7,10 @@ from mechanical_librarian.application.setup_connection import (
     SetupConnectionOperation,
     SetupConnectionVerification,
 )
-from mechanical_librarian.domain.setup_state import SetupStateDocument
+from mechanical_librarian.domain.setup_state import (
+    SETUP_STATE_SCHEMA,
+    SetupStateDocument,
+)
 
 _BOOTSTRAP = "$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$hash"
 
@@ -20,7 +23,7 @@ class _Failure(Exception):
 class _Repository:
     def __init__(self) -> None:
         self.document = SetupStateDocument(
-            schema_version="setup-state-v4",
+            schema_version=SETUP_STATE_SCHEMA,
             revision=2,
             bootstrap_verifier_digest="0" * 64,
             completed_steps=["claim"],
@@ -132,7 +135,7 @@ def test_operation_records_connection_only_after_successful_probe() -> None:
 
     document = operation.connect(2, "primary", "https://abs.invalid", "secret-value")
 
-    assert document.next_step() == "providers"
+    assert document.next_step() == "libraries"
     assert repository.writes == [
         (document, 2, {"connection.primary.key": "secret-value"})
     ]

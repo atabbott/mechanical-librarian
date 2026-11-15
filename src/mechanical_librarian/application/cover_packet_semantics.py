@@ -10,7 +10,7 @@ import struct
 import warnings
 import zlib
 from dataclasses import dataclass
-from typing import cast
+from typing import Final, cast
 
 from PIL import Image, UnidentifiedImageError
 
@@ -24,6 +24,8 @@ from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
     validate_projection_text,
 )
+
+COVER_REVIEW_PACKET_SCHEMA: Final = "cover-review-packet-v2"
 
 MAX_COVER_PREVIEWS = 12
 MAX_COVER_PREVIEW_BYTES = 1_048_576
@@ -459,7 +461,7 @@ def read_cover_packet_document(packet_document: str) -> dict[str, object]:
             or canonical_packet_json(packet) != packet_document
             or set(packet)
             != {"candidates", "omissions", "packet_reference", "schema_version"}
-            or packet["schema_version"] != "cover-review-packet-v2"
+            or packet["schema_version"] != COVER_REVIEW_PACKET_SCHEMA
             or type(packet["candidates"]) is not list
             or not 1 <= len(packet["candidates"]) <= MAX_COVER_PREVIEWS
             or type(packet["omissions"]) is not list

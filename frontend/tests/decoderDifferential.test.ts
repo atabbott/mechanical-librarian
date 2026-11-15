@@ -392,13 +392,7 @@ const PRESENCE_SITES: readonly (readonly [string, Family, string, Case, string])
   ],
   ['reviewerStatus:2020', 'ReviewerAccess', 'ReviewerEngineStatus', codexCleared, '/codex'],
   ['mapDescriptionMetadata:2067', 'ReviewerAccess', 'DescriptionModelMetadata', modelTest, ''],
-  [
-    'mapCostEvidence:2111',
-    'ReviewerAccess',
-    'ReviewerCostEvidence',
-    codexCleared,
-    '/cost_evidence',
-  ],
+  ['mapCostEvidence:2111', 'ReviewerAccess', 'ReviewerCostView', codexCleared, '/cost_evidence'],
   [
     'mapCostEvidence:2123',
     'ReviewerAccess',
@@ -641,6 +635,7 @@ const coveredWork = builder('Library', 'library.cover-and-failure', LIBRARY, () 
         },
         preparation: {
           attempt: 1,
+          check_given_up: false,
           diagnostic_reference: 'diagnostic-1',
           media_health: [],
           provider: 'none',
@@ -1151,6 +1146,7 @@ const decision: DecisionCommand = {
   outcome: 'accept',
   proposalId: 'p',
   targetFingerprint: 't',
+  offerDigest: 'offer-digest',
   idempotencyKey: 'k',
 }
 type Binding = NonNullable<DecisionCommand['authoredDescription']>['binding']

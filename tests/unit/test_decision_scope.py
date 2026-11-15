@@ -104,6 +104,8 @@ def _sealed(decision: HumanDecision, **changes: object) -> HumanDecision:
             "review_case_id",
             "selected_value",
             "target_fingerprint",
+            "cause",
+            "offered_alternatives_digest",
         )
     }
     digest = human_decision._sha256(human_decision._canonical(request))
@@ -312,6 +314,19 @@ _PINNED: dict[str, object] = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _cover_held(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the decided case's cover in attention, so the lens reads it.
+
+    Its cover would otherwise be a suggested switch, which is not attention
+    (#1363, S9); a title hold is, so every route still reads the decisions.
+    """
+    from mechanical_librarian.application import cover_policy
+    from tests.support.cover_producers import held_measured_stage
+
+    monkeypatch.setattr(cover_policy, "elect_measured_covers", held_measured_stage)
+
+
 @pytest.mark.parametrize("mutation", _PINNED)
 def test_a_row_refuses_each_decision_exactly_as_before(
     tmp_path: Path, mutation: str
@@ -349,7 +364,7 @@ def _old_validate_for_browse_case(
     decision._validate_for(
         review_case_id,
         target_fingerprint,
-        proposals,
+        (proposals,),
         applications=admitted_applications(media_kind),
     )
 
