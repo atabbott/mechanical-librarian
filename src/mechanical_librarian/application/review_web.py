@@ -415,7 +415,19 @@ class OwnerPasswordChange(Protocol):
 
     def current(self) -> OwnerCredential: ...
     def successor(self, password: str) -> OwnerCredential: ...
-    def adopt(self, expected: OwnerCredential, successor: OwnerCredential) -> bool: ...
+    def adopt(
+        self,
+        expected: OwnerCredential,
+        successor: OwnerCredential,
+        committed: Callable[[], None] | None = None,
+    ) -> bool:
+        """Commit ``successor`` while ``expected`` is live, then make it live.
+
+        ``committed`` runs once the store holds the successor and before any
+        request can be checked against it, so what it removes can only belong
+        to the replaced verifier.
+        """
+        ...
 
 
 class OwnerVerifierStore(Protocol):
@@ -655,8 +667,9 @@ class OwnerSessionService:
     store or the verifier gave. The two that answer with something other than
     ``persistence`` say why where they stand. The one deliberate exception is
     the purge after a committed password change: the change has already
-    happened and every purged row is already unreachable, so its failure is
-    reported in the ``owner_password_change`` event rather than as an error.
+    committed and every purged row is unreachable once the successor is live,
+    so its failure is reported in the ``owner_password_change`` event rather
+    than as an error.
     """
 
     def __init__(
@@ -840,18 +853,12 @@ class OwnerSessionService:
         ):
             raise ReviewWebError("invalid_password")
         try:
-            tokens, session_digest = self._replace_password(
+            tokens, ended = self._replace_password(
                 change, credential, current_password, new_password, client, now
             )
         except ReviewWebError as error:
             _owner_password_change_event(error.code, None)
             raise
-        try:
-            ended: int | None = self._repository.end_review_sessions_except(
-                session_digest
-            )
-        except Exception:
-            ended = None
         _owner_password_change_event("changed", ended)
         return tokens
 
@@ -863,8 +870,12 @@ class OwnerSessionService:
         new_password: str,
         client: str,
         now: int,
-    ) -> tuple[SessionTokens, str]:
-        """Spend a sign-in attempt, verify, then commit the successor."""
+    ) -> tuple[SessionTokens, int | None]:
+        """Spend a sign-in attempt, verify, then commit the successor.
+
+        Returns the new session and how many sessions the purge removed, or
+        ``None`` when the purge failed.
+        """
         try:
             permitted = self._repository.begin_login(
                 now,
@@ -902,8 +913,21 @@ class OwnerSessionService:
             )
         except Exception as error:
             raise ReviewWebError("persistence") from error
+        ended: int | None = None
+
+        def purge() -> None:
+            # Runs between the commit and the swap, so every other row is keyed
+            # by the replaced verifier: a sign-in or a later change under the
+            # successor cannot have written one yet. Best effort, because those
+            # rows are unreachable either way.
+            nonlocal ended
+            try:
+                ended = self._repository.end_review_sessions_except(session_digest)
+            except Exception:
+                ended = None
+
         try:
-            adopted = change.adopt(credential, successor)
+            adopted = change.adopt(credential, successor, purge)
         except Exception as error:
             self._discard_session(session_digest, csrf_token, now)
             raise ReviewWebError("persistence") from error
@@ -912,7 +936,7 @@ class OwnerSessionService:
             # against, so its session is gone with the rest.
             self._discard_session(session_digest, csrf_token, now)
             raise ReviewWebError("unauthorized")
-        return SessionTokens(session_token, csrf_token, expires_at), session_digest
+        return SessionTokens(session_token, csrf_token, expires_at), ended
 
     def _discard_session(self, session_digest: str, csrf_token: str, now: int) -> None:
         """Best-effort revoke of a session whose password change did not commit.

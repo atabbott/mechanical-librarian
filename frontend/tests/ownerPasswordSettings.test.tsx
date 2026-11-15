@@ -403,16 +403,6 @@ describe('Owner password', () => {
       'No answer came back, and the password was not changed. Try again.',
     ],
     [
-      'an unreadable answer',
-      new UncertainMutationError({
-        operation: 'POST /api/v1/session/password',
-        responseStatus: 200,
-        at: '',
-        reason: 'no_decoder',
-      }),
-      'No answer came back, and the password was not changed. Try again.',
-    ],
-    [
       'a server failure',
       new ApiError(503, 'persistence'),
       'The password was not changed. Try again.',
@@ -435,6 +425,34 @@ describe('Owner password', () => {
       expect(field('New password')).toHaveValue(next)
     },
   )
+
+  it('offers Reload after an unreadable answer, although Settings can be read', async () => {
+    // The answer may have carried the new session, so a read that succeeds
+    // does not show the password unchanged.
+    const http = refusing(
+      new UncertainMutationError({
+        operation: 'POST /api/v1/session/password',
+        responseStatus: 200,
+        at: '',
+        reason: 'no_decoder',
+      }),
+    )
+    http.getSettings = vi.fn(async () => view())
+    const { user } = setup(http)
+    await open(user)
+    await fill(user, { current, next, confirmation: next })
+    await send(user)
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(
+      'No answer came back, and the page could not check whether the password changed.',
+    )
+    expect(alert).toContainElement(screen.getByRole('button', { name: 'Reload' }))
+    expect(screen.queryByText(/the password was not changed/u)).not.toBeInTheDocument()
+    expect(http.getSettings).toHaveBeenCalledOnce()
+    expect(http.changePassword).toHaveBeenCalledOnce()
+    expect(field('New password')).toHaveValue(next)
+  })
 
   it('offers Reload when the read after a lost answer fails too', async () => {
     const http = refusing(new AmbiguousMutationError())

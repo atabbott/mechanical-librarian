@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
+from collections.abc import Callable
 from typing import cast
 
 import pytest
@@ -52,12 +53,15 @@ class _Sessions:
         self.inner = SQLiteReviewSessionRepository.open_ephemeral()
         self.steps = steps
         self.purge_failure = False
+        self.during_purge: Callable[[], None] | None = None
 
     def __getattr__(self, name: str) -> object:
         return getattr(self.inner, name)
 
     def end_review_sessions_except(self, session_digest: str) -> int:
         self.steps.append("purge")
+        if self.during_purge is not None:
+            self.during_purge()
         if self.purge_failure:
             raise RuntimeError("synthetic purge failure")
         return self.inner.end_review_sessions_except(session_digest)
@@ -116,6 +120,35 @@ def test_the_purge_runs_only_after_the_replacement_commits(
         "outcome": "changed",
         "sessions_ended": 2,
     }
+
+
+def test_the_purge_runs_before_the_replacement_goes_live() -> None:
+    service, holder, store, sessions = _service()
+    changer = service.login(_CURRENT, _CLIENT)
+    seen: list[object] = []
+
+    def during_purge() -> None:
+        # The store holds the replacement, but no request is checked against
+        # it yet: a sign-in with the new password is refused, so the purge
+        # cannot meet a session that belongs to the replacement.
+        seen.append(holder.current().encoded != store.value)
+        with pytest.raises(ReviewWebError, match="invalid_credentials"):
+            service.login(_NEW, "client:203.0.113.9")
+        seen.append("refused")
+
+    sessions.during_purge = during_purge
+    tokens = service.change_password(
+        changer.session_token, changer.csrf_token, _CURRENT, _NEW, _NEW, _CLIENT
+    )
+
+    assert seen == [True, "refused"]
+    assert holder.current().encoded == store.value
+    # A sign-in once the replacement is live keeps its session beside the
+    # changer's: nothing purges after the swap.
+    later = service.login(_NEW, "client:203.0.113.9")
+    assert service.authenticate(later.session_token) == "owner"
+    assert service.authenticate(tokens.session_token) == "owner"
+    assert _rows(sessions)[0] == 2
 
 
 def test_a_failed_purge_is_still_a_change(capsys: pytest.CaptureFixture[str]) -> None:
@@ -213,6 +246,27 @@ def test_store_owner_password_swaps_only_after_the_store_commits() -> None:
     with pytest.raises(RuntimeError):
         failing.adopt(current, successor)
     assert failing.current() is current
+
+
+def test_the_swap_follows_whatever_the_committed_step_does() -> None:
+    store = _Store(PasswordHasher().hash(_CURRENT), [])
+    holder = StoreOwnerPassword(store)
+    holder.seed(store.value)
+    expected = holder.current()
+    successor = holder.successor(_NEW)
+    live: list[object] = []
+
+    def committed() -> None:
+        live.append(holder.current())
+        raise RuntimeError("synthetic failure after the commit")
+
+    with pytest.raises(RuntimeError):
+        holder.adopt(expected, successor, committed)
+
+    # The store already holds the successor, so the holder must too.
+    assert live == [expected]
+    assert store.value == successor.encoded
+    assert holder.current() is successor
 
 
 def test_concurrent_adopts_let_exactly_one_win() -> None:

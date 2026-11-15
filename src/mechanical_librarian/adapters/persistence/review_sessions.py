@@ -328,10 +328,10 @@ class SQLiteReviewSessionRepository:
     def end_review_sessions_except(self, session_digest: str) -> int:
         """Delete every session but ``session_digest``, and every failed attempt.
 
-        Runs after an owner password change. Each removed row was already
-        unreachable, because every digest is keyed by the replaced verifier,
-        so this only stops them lingering until expiry. Returns how many
-        sessions it removed.
+        Runs while an owner password change takes effect, before any request
+        is checked against the new verifier. Every removed row is keyed by the
+        replaced one and so unreachable from then on; this only stops them
+        lingering until expiry. Returns how many sessions it removed.
         """
         with self._lock:
             try:

@@ -5648,8 +5648,19 @@ class StoreOwnerPassword:
     def successor(self, password: str) -> _StoreOwnerCredential:
         return _StoreOwnerCredential(PasswordHasher().hash(password))
 
-    def adopt(self, expected: OwnerCredential, successor: OwnerCredential) -> bool:
-        """Commit ``successor`` and swap to it, only while ``expected`` is live."""
+    def adopt(
+        self,
+        expected: OwnerCredential,
+        successor: OwnerCredential,
+        committed: Callable[[], None] | None = None,
+    ) -> bool:
+        """Commit ``successor`` and swap to it, only while ``expected`` is live.
+
+        ``committed`` runs after the commit and before the swap, still under
+        the lock: until the swap no request is checked against the successor,
+        so no session of its own can exist for ``committed`` to remove. The
+        swap follows whatever ``committed`` does.
+        """
         if (
             type(expected) is not _StoreOwnerCredential
             or type(successor) is not _StoreOwnerCredential
@@ -5660,7 +5671,11 @@ class StoreOwnerPassword:
                 expected.encoded, successor.encoded
             ):
                 return False
-            self._current = successor
+            try:
+                if committed is not None:
+                    committed()
+            finally:
+                self._current = successor
             return True
 
 

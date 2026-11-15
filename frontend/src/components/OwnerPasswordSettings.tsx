@@ -6,6 +6,7 @@ import {
   ApiError,
   BuildMismatchError,
   SessionExpiredError,
+  UncertainMutationError,
   refusalCopy,
   uncertainWriteOutcome,
 } from '../api/http'
@@ -246,13 +247,19 @@ export const OwnerPasswordSettings = ({ http, form }: { http: ReviewHttp; form?:
         if (!(reread instanceof SessionExpiredError)) fail({ kind: 'unchecked' })
         return
       }
-      fail({
-        kind: 'line',
-        text:
-          error instanceof ApiError && error.status >= 500
-            ? notChanged
-            : 'No answer came back, and the password was not changed. Try again.',
-      })
+      // An answer that arrived but could not be read may have carried the new
+      // session, and then this read succeeded on it and proves nothing. With
+      // no answer, or a failure, the browser still holds the session it sent,
+      // which a change would have ended.
+      if (error instanceof UncertainMutationError) fail({ kind: 'unchecked' })
+      else
+        fail({
+          kind: 'line',
+          text:
+            error instanceof ApiError && error.status >= 500
+              ? notChanged
+              : 'No answer came back, and the password was not changed. Try again.',
+        })
     } else if (error instanceof ApiError && error.code === 'current_password_invalid')
       refuse({ current: 'That password was not accepted. Check it and try again.' })
     else fail(refusalLine(error))
