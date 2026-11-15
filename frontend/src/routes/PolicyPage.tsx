@@ -813,9 +813,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                           <strong>Setting</strong>
                           {/* While Automatic is chosen, the note under the option
                               says it is not offered instead. */}
-                          {notOfferedNoted ? (
-                            <small>Automatic not offered</small>
-                          ) : null}
+                          {notOfferedNoted ? <small>Automatic not offered</small> : null}
                         </span>
                         <SegmentedControl
                           label={`${field.label} setting`}
