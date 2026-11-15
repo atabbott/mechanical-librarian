@@ -46,6 +46,8 @@ The [changelog](../../CHANGELOG.md) lists each change you can see.
 - 0.36.1 Persistence health. The database stays fast at library scale, and
   its size stops growing with every source lookup. A restored or upgraded
   install starts safely, or says why it stopped.
+- 0.37.0 Provider economy. Mechanical Librarian reuses answers it already has,
+  so it asks each source less often for the same evidence.
 
 ## Next
 
@@ -59,8 +61,6 @@ The [changelog](../../CHANGELOG.md) lists each change you can see.
 - 0.36.0 Standing owner instructions. You can stop new proposals for one field
   of one work. You can also keep a genre list for each library, and Mechanical
   Librarian maps each source's genres onto it.
-- 0.37.0 Provider economy. Mechanical Librarian reuses answers it already has,
-  so it asks each source less often for the same evidence.
 - 0.38.0 Owner-directed matching. From a work in Library, you can search one
   source and choose which of its books the work is. After one search, a work
   that Library lists as Not matched becomes an ordinary review case.

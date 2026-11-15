@@ -72,6 +72,10 @@ from mechanical_librarian.adapters.persistence.provider_recovery import (
     ProviderRecoveryStoreError,
     SQLiteProviderRecoveryStore,
 )
+from mechanical_librarian.adapters.persistence.provider_responses import (
+    SQLiteProviderResponseStore,
+    open_provider_response_store,
+)
 from mechanical_librarian.adapters.persistence.review_sessions import (
     SQLiteReviewSessionRepository,
 )
@@ -110,6 +114,11 @@ from mechanical_librarian.adapters.providers.itunes_search_metadata import (
 from mechanical_librarian.adapters.providers.open_library_metadata import (
     OpenLibraryMetadataProvider,
     OpenLibraryPacer,
+)
+from mechanical_librarian.adapters.providers.response_reuse import (
+    ProviderResponseReuse,
+    provider_response_reuse,
+    retaining_provider,
 )
 from mechanical_librarian.adapters.retained_covers import (
     ContentAddressedOriginals,
@@ -920,6 +929,7 @@ def run_metadata_report_loaded(
     pipeline_repository: SQLiteMetadataReportRepository | None = None,
     review_claim_next: bool = False,
     timing: StageTimer | None = None,
+    provider_responses: SQLiteProviderResponseStore | None = None,
 ) -> str:
     """Compose one report solely from an already validated configuration snapshot."""
     connection, library, mount, provider_configs = configuration.select(
@@ -995,8 +1005,14 @@ def run_metadata_report_loaded(
         def factory(
             value: ProviderConnectionConfiguration = provider,
         ) -> MetadataProvider:
+            # A re-search asks live and replaces what is held (#1064).
+            reuse = provider_response_reuse(
+                provider_responses,
+                value.adapter,
+                review_action is not None and review_action.research,
+            )
             instance = _metadata_provider(
-                value, configuration, credentials, marketplaces, pacers
+                value, configuration, credentials, marketplaces, pacers, reuse
             )
             if isinstance(instance, str):
                 raise MetadataReportError(
@@ -1004,7 +1020,7 @@ def run_metadata_report_loaded(
                     if instance == "credential unavailable"
                     else "provider configuration is invalid"
                 )
-            return instance
+            return retaining_provider(instance, reuse)
 
         bindings.append(provider_binding(provider, factory))
 
@@ -1244,6 +1260,7 @@ def _metadata_provider(
     credentials: dict[str, str] | None,
     marketplaces: tuple[str, ...],
     pacers: _ProviderPacers,
+    reuse: ProviderResponseReuse | None = None,
 ) -> MetadataProvider | _ProviderRefusal:
     """Construct one provider connection's adapter, or name why its
     configuration supports none; each caller raises its own refusal."""
@@ -1260,6 +1277,7 @@ def _metadata_provider(
             configuration.limits.timeout_seconds,
             api_key=api_key,
             pacer=pacers.google_books,
+            responses=reuse,
         )
     if value.adapter == "hardcover":
         if value.secret_file is None and credentials is None:
@@ -1280,6 +1298,7 @@ def _metadata_provider(
             configuration.limits.provider_response_bytes,
             configuration.limits.timeout_seconds,
             pacer=pacers.hardcover,
+            responses=reuse,
         )
     if value.adapter == "open_library" and value.contact_email is not None:
         return OpenLibraryMetadataProvider(
@@ -1290,6 +1309,7 @@ def _metadata_provider(
             configuration.limits.provider_response_bytes,
             configuration.limits.timeout_seconds,
             pacer=pacers.open_library,
+            responses=reuse,
         )
     if value.adapter == "inventaire":
         return InventaireMetadataProvider(
@@ -1298,6 +1318,7 @@ def _metadata_provider(
             configuration.limits.provider_response_bytes,
             configuration.limits.timeout_seconds,
             pacer=pacers.inventaire,
+            responses=reuse,
         )
     # The four audiobook adapters are keyless, so a retry constructs one
     # from the same configuration the foreground did.
@@ -1309,6 +1330,7 @@ def _metadata_provider(
             configuration.limits.timeout_seconds,
             marketplaces=marketplaces,
             pacer=pacers.audible_catalog,
+            responses=reuse,
         )
     if value.adapter == "audnexus":
         return AudnexusMetadataProvider(
@@ -1318,6 +1340,7 @@ def _metadata_provider(
             configuration.limits.timeout_seconds,
             marketplaces=marketplaces,
             pacer=pacers.audnexus,
+            responses=reuse,
         )
     if value.adapter == "audiosilo":
         return AudioSiloMetadataProvider(
@@ -1326,6 +1349,7 @@ def _metadata_provider(
             configuration.limits.provider_response_bytes,
             configuration.limits.timeout_seconds,
             pacer=pacers.audiosilo,
+            responses=reuse,
         )
     if value.adapter == "itunes_search":
         return ITunesSearchMetadataProvider(
@@ -1334,6 +1358,7 @@ def _metadata_provider(
             configuration.limits.provider_response_bytes,
             configuration.limits.timeout_seconds,
             pacer=pacers.itunes_search,
+            responses=reuse,
         )
     return "configuration invalid"
 
@@ -1344,15 +1369,19 @@ def _retry_provider(
     credentials: dict[str, str] | None,
     marketplaces: tuple[str, ...],
     pacers: _ProviderPacers,
+    responses: SQLiteProviderResponseStore | None = None,
 ) -> MetadataProvider:
     """Construct a provider retry's adapter from the configuration it was
     resolved against, or refuse one that configuration no longer supports."""
+    # A retry asks live and replaces what is held: the answers held for this
+    # item are older than the failure it is retrying.
+    reuse = provider_response_reuse(responses, value.adapter, True)
     instance = _metadata_provider(
-        value, configuration, credentials, marketplaces, pacers
+        value, configuration, credentials, marketplaces, pacers, reuse
     )
     if isinstance(instance, str):
         raise ProviderRetrySuccessorError("provider retry configuration changed")
-    return instance
+    return retaining_provider(instance, reuse)
 
 
 def _pipeline_repositories(
@@ -1425,13 +1454,14 @@ def _provider_recovery_wiring(
     provider_recovery: SQLiteProviderRecoveryStore,
     repository_factory: Callable[[], SQLiteMetadataReportRepository],
     pipeline_holder: dict[str, ReviewPreparationPipeline],
+    provider_responses: SQLiteProviderResponseStore | None = None,
 ) -> tuple[ProviderRecoveryActivation, threading.Event, Callable[[int], RecoveryRun]]:
     """Wire provider recovery to the pipeline `pipeline_holder` holds once built."""
     retry_resolver = partial(
         resolve_configured_retry,
         configuration,
         retry_provider=lambda value, marketplaces: _retry_provider(
-            value, configuration, credentials, marketplaces, pacers
+            value, configuration, credentials, marketplaces, pacers, provider_responses
         ),
         google_burst_remaining=(
             pacers.google_books.remaining_burst
@@ -1543,6 +1573,17 @@ def create_review_pipeline(
     discovery_lock = threading.Lock()
     if provider_recovery is None:
         raise ConfigurationError("provider recovery store is unavailable")
+    # Held provider answers, beside the recovery store; a store that cannot be
+    # used leaves every request live (#1064).
+    provider_responses = (
+        None
+        if private_root is None
+        else open_provider_response_store(private_root / "provider-responses.sqlite")
+    )
+    stopping = ExitStack()
+    stopping.callback(provider_recovery.close)
+    if provider_responses is not None:
+        stopping.callback(provider_responses.close)
 
     recover_artifacts_once, repository_factory, observation_repository_factory = (
         _pipeline_repositories(
@@ -1562,6 +1603,7 @@ def create_review_pipeline(
         provider_recovery,
         repository_factory,
         pipeline_holder,
+        provider_responses,
     )
 
     # The pipeline hands every stage callback back exactly the repository
@@ -1602,6 +1644,7 @@ def create_review_pipeline(
             review_claim_next=claim_next,
             timing=timing,
             credentials=credentials,
+            provider_responses=provider_responses,
         )
 
     def drain_outbox(repository: ReviewPipelineRepository) -> None:
@@ -1708,7 +1751,7 @@ def create_review_pipeline(
         recovery_wake=cast("Callable[[int], None]", recover_provider),
         recovery_drain=recovery_cancel.set,
         recovery_resume=recovery_cancel.clear,
-        on_stop=provider_recovery.close,
+        on_stop=stopping.close,
         background_wake=_compose_cover_taste(
             taste_lease.store,
             artifact_store_path,
@@ -3522,9 +3565,8 @@ def run_provider_recovery_once(
     configuration = load_configuration_file(config_path)
     if configuration.review is None:
         raise ConfigurationError("review configuration is unavailable")
-    store = SQLiteProviderRecoveryStore.open(
-        _private_root(database_path) / "provider-recovery.sqlite"
-    )
+    private_root = _private_root(database_path)
+    store = SQLiteProviderRecoveryStore.open(private_root / "provider-recovery.sqlite")
     repository = open_repository(database_path, create=False)
     reviewer_access: ReviewerAccessOperations | None = None
     supervisor: ReviewPreparationSupervisor | None = None
@@ -3536,6 +3578,7 @@ def run_provider_recovery_once(
             catalogue_path,
             artifact_store_path,
             reviewer_access,
+            private_root=private_root,
             provider_recovery=store,
         )
         supervisor.recover_provider_once()

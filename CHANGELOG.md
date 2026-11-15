@@ -18,6 +18,15 @@ brackets are GitHub issues.
 - Settings can sign out every other browser from Access and diagnostics, in
   store and file mode, and keeps this browser signed in (#1385).
 
+## 0.37.0 — Provider economy (in progress)
+
+- Mechanical Librarian keeps each source's answers and reuses them when it asks
+  the same question again, so preparing a book again sends far fewer requests.
+  A failed lookup keeps nothing and is asked again, and the weekly search for
+  an unmatched audiobook always asks live. The answers are kept in
+  `/data/private/provider-responses.sqlite`; losing it only means asking again
+  (#1064).
+
 ## 0.36.1 — Persistence health (in progress)
 
 - Your decision on a field now keeps Automatic off that field on every later

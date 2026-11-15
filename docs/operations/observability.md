@@ -92,7 +92,7 @@ text, credential or path.
 | `provider_recovery_schedule` | The review library cannot read the recovery schedule, so it withdraws the retry promise (WARNING, `code: unavailable`). |
 | `owner_password_change` | An owner password change reached the sign-in throttle. `outcome` is `changed` or the refusal code; `sessions_ended` counts the other session rows removed, or is null when nothing changed or their removal failed. Info, or WARNING for `persistence`, `runtime` or a failed removal. |
 | `owner_sign_out_others` | Sign out other browsers reached the session store. `outcome` is `signed_out`, `csrf`, `unauthorized` or `persistence`; `sessions_ended` counts the other session rows removed, or is null for a refusal or a failure. Info, or WARNING for `persistence`. |
-| `provider_request_failed`, `provider_throttled`, `provider_deadline_stop`, `provider_adapter_fault`, `provider_recovery_job` | See [provider logs](#provider-logs). |
+| `provider_request_failed`, `provider_throttled`, `provider_deadline_stop`, `provider_adapter_fault`, `provider_recovery_job`, `provider_response_store` | See [provider logs](#provider-logs). |
 
 `preparation_unknown_failure` holds only validated code identities and
 application frame locations. Match its `reference` to the preparation reference
@@ -113,6 +113,7 @@ dispatch writes nothing.
 | `provider_deadline_stop` | `stop: before_dispatch` when the deadline left a request unsent; `stop: in_flight` when it ended a retry. |
 | `provider_adapter_fault` | The adapter itself failed the lookup (`outcome_class: adapter_fault`). `fault_class` is `report_validation` when the report refused what the adapter built from a response, or `programming` for an error in the adapter; never the exception's text. |
 | `provider_recovery_job` | A recovery job changed state; `transition` is below. |
+| `provider_response_store` | The [provider-response store](metadata-report.md#held-provider-answers) could not be used, so a request went live or an answer was not kept (WARNING). `store_fault` is `unavailable` (not opened), `read_failed`, `write_failed` or `row_corrupt` (a held answer failed its check and was deleted). It carries only `adapter`, when known. |
 
 | `transition` | Written after |
 | --- | --- |
@@ -124,8 +125,8 @@ dispatch writes nothing.
 
 A recovery line is written only after its store change commits.
 
-Dispatch events are de-duplicated per lookup, with a `count`. Every provider
-line carries:
+Dispatch events are de-duplicated per lookup, with a `count`. Every dispatch
+and recovery line carries:
 
 - `adapter`, `provider`;
 - `item_ref`: `item-` plus 16 hex characters of a SHA-256 over connection,
