@@ -4446,6 +4446,36 @@ def _level_work_claims(candidate: ProviderCandidate, kind: ClaimKind) -> list[st
     ]
 
 
+@dataclass(frozen=True, slots=True)
+class LevelIdentityInputs:
+    """The target and record a wider level compares (#1355, S5).
+
+    The target is the report's stored title and AUTHORS, never a query
+    spelling. The record is its single valid work title (``None`` unless it
+    states exactly one) and its valid work author creators in raw order,
+    each once. The level seam reads exactly these, so an offline replay
+    reads the same inputs through this one function.
+    """
+
+    target_title: str | None
+    target_authors: tuple[str, ...]
+    record_title: str | None
+    record_creators: tuple[str, ...]
+
+
+def level_identity_inputs(
+    report: MetadataReport, candidate: ProviderCandidate
+) -> LevelIdentityInputs:
+    """The stored target and the record one wider level compares (#1355)."""
+    titles = _level_work_claims(candidate, ClaimKind.TITLE)
+    return LevelIdentityInputs(
+        report.target.current_title,
+        _target_stored_authors(report),
+        titles[0] if len(titles) == 1 else None,
+        tuple(dict.fromkeys(_level_work_claims(candidate, ClaimKind.CREATOR))),
+    )
+
+
 def _level_bound_identifiers(
     report: MetadataReport,
     provider: ProviderObservation,
@@ -4508,8 +4538,9 @@ def level_contradiction(
     if type(level) is not WorkIdentityLevel or level is WorkIdentityLevel.IDENTIFIER:
         raise ReportValueError("work identity level is invalid")
     wide = level is WorkIdentityLevel.TITLE_AND_CREATOR
-    target_title = report.target.current_title
-    target_authors = _target_stored_authors(report)
+    inputs = level_identity_inputs(report, candidate)
+    target_title = inputs.target_title
+    target_authors = inputs.target_authors
     if (
         target_title is not None
         and target_authors
@@ -4523,9 +4554,7 @@ def level_contradiction(
         is WorkIdentityContradiction.EXPLICIT
     ):
         return True
-    record_creators = tuple(
-        dict.fromkeys(_level_work_claims(candidate, ClaimKind.CREATOR))
-    )
+    record_creators = inputs.record_creators
     if (
         wide
         and target_authors
@@ -4607,15 +4636,13 @@ def _candidate_level_admission(
     *,
     fold_initials: bool,
 ) -> LevelAdmission | None:
-    target_title = report.target.current_title
-    target_authors = _target_stored_authors(report)
+    inputs = level_identity_inputs(report, candidate)
+    target_title = inputs.target_title
+    target_authors = inputs.target_authors
     if not target_authors:
         return None
-    titles = _level_work_claims(candidate, ClaimKind.TITLE)
-    record_title = titles[0] if len(titles) == 1 else None
-    record_creators = tuple(
-        dict.fromkeys(_level_work_claims(candidate, ClaimKind.CREATOR))
-    )
+    record_title = inputs.record_title
+    record_creators = inputs.record_creators
     omnibus = (
         target_title is not None
         and record_title is not None
@@ -7717,8 +7744,10 @@ __all__ = [
     "LEVEL_READ_DESTINATIONS",
     "LevelEvidence",
     "LevelAdmissionRecord",
+    "LevelIdentityInputs",
     "candidate_title_and_creator_evidence",
     "level_contradiction",
+    "level_identity_inputs",
     "provider_candidate_bound_identifiers",
     "provider_candidate_level_admission",
     "level_evidence",
