@@ -354,7 +354,7 @@ brackets are GitHub issues.
   saved in the app, given a copy of its `review-bootstrap.json`, and a new
   read-only workbench script runs the cold-start report, the work-route
   measurement and the Hardcover series sample over one folder of copies,
-  saving each result in a new owner-only folder (#ISSUE).
+  saving each result in a new owner-only folder (#1875).
 - **Clean rebuild required.** An audiobook asks AudioSilo only when neither
   Audible nor Audnexus has already matched its recording by running time;
   otherwise Sources shows AudioSilo as **Not needed**. Open Library gets one
