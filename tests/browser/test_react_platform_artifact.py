@@ -2181,10 +2181,14 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         expect(page.get_by_text("Open Library", exact=True)).to_be_visible()
         expect(page.get_by_text("Hardcover", exact=True)).to_be_visible()
         assert page.locator(".direct-choice-grid").count() == 0
+        # No decision controls; the masthead's status icon may name lookups
+        # waiting to retry (#1494).
         assert (
-            page.get_by_role(
+            page.get_by_role("main")
+            .get_by_role(
                 "button", name=re.compile("choose|retry|return|resume", re.IGNORECASE)
-            ).count()
+            )
+            .count()
             == 0
         )
         assert page.get_by_role("radio").count() == 0
@@ -2272,10 +2276,14 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         ):
             assert identifier not in history_text
         assert page.locator(".direct-choice-grid").count() == 0
+        # No decision controls; the masthead's status icon may name lookups
+        # waiting to retry (#1494).
         assert (
-            page.get_by_role(
+            page.get_by_role("main")
+            .get_by_role(
                 "button", name=re.compile("choose|retry|return|resume", re.IGNORECASE)
-            ).count()
+            )
+            .count()
             == 0
         )
         assert page.get_by_role("radio").count() == 0
@@ -2323,7 +2331,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             "/library?lens=needs_attention&preview=missing-case&field=authors"
         )
         assert (
-            page.get_by_role("button", name=re.compile("retry", re.IGNORECASE)).count()
+            page.get_by_role("main")
+            .get_by_role("button", name=re.compile("retry", re.IGNORECASE))
+            .count()
             == 0
         )
         assert page.evaluate("() => document.documentElement.scrollWidth") <= 320
@@ -4657,7 +4667,11 @@ def test_masthead_holds_still_while_status_changes() -> None:
                 for label in list(_PREPARATION_STATES)[1:]:
                     state["preparation"] = label
                     page.evaluate("() => globalThis.__publish('preparation')")
-                    expect(trigger).to_have_text(label)
+                    # The icon speaks the label, then any source sentences
+                    # the cohort's lookups add (#1494).
+                    expect(trigger).to_have_accessible_name(
+                        re.compile(f"^{re.escape(label)}(\\. |$)")
+                    )
                     page.evaluate(_TWO_FRAMES)
                     states[label] = page.evaluate(_MASTHEAD_GEOMETRY)
                     clipped += [

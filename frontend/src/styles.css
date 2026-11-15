@@ -65,7 +65,8 @@ h2 { margin-bottom:.35rem; }
 .masthead nav a[aria-current='page'] { color:var(--accent-strong); background:var(--accent-soft); }
 :is(.shell-status, .shell-actions) button { min-height:44px; padding:.45rem .7rem; background:transparent; white-space:nowrap; }
 .shell-status button { padding-block:0; line-height:1.25; white-space:normal; }
-.theme-toggle { display:inline-flex; min-width:44px; align-items:center; justify-content:center; gap:.4rem; }
+:is(.shell-status, .shell-actions) .icon-button { position:relative; display:inline-flex; width:44px; min-width:44px; height:44px; min-height:44px; align-items:center; justify-content:center; padding:0; color:var(--ink); }
+.icon-button svg { display:block; flex:none; }
 /* The masthead's arrangement follows the shell's width in rem, at the ladder's
    steps, so enlarged text takes the arrangement that text would need on a
    narrower screen: one row, the brand name receding below 1200px; then brand
@@ -81,30 +82,29 @@ h2 { margin-bottom:.35rem; }
   .shell-status { grid-area:status; }
   .shell-actions { grid-area:actions; }
   :is(.shell-status, .shell-actions) button { max-width:100%; white-space:normal; }
-  /* Two lines of status stay inside one 44px row. */
-  .shell-status button { padding-block:.3rem; font-size:.75rem; line-height:1.25; }
 }
 @container shell (max-width:47.5rem) {
-  /* Brand and actions, a status row held open whether or not anything is in it, then the destinations. */
-  .masthead { grid-template-columns:minmax(0,1fr) auto; grid-template-areas:'brand actions' 'status status' 'nav nav'; align-items:start; padding:.5rem max(.75rem,16px); }
+  /* Brand, status and actions in one row, then the destinations: the status
+     keeps its place between the mark and the icons, so a reconnect line
+     arriving moves nothing. */
+  .masthead { grid-template-columns:auto minmax(0,1fr) auto; grid-template-areas:'brand status actions' 'nav nav nav'; align-items:center; padding:.5rem max(.75rem,16px); }
   .brand { justify-self:start; }
   .brand > span:last-child { display:none; }
   /* Four equal links in one row; enlarged text drops to fewer columns rather than splitting a word. */
   .masthead nav { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,4.25rem),1fr)); width:100%; overflow:visible; }
   .masthead nav a { min-width:44px; justify-content:center; padding:.4rem .55rem; text-align:center; white-space:normal; overflow-wrap:normal; }
-  /* Preparation keeps its own column, so the notice arriving beside it moves nothing. */
-  .shell-status { display:grid; grid-template-columns:minmax(0,3fr) minmax(0,2fr); gap:.35rem; }
-  .shell-status > .preparation-activity { grid-column:2; }
-  .shell-status > .preparation-activity > button { width:100%; }
+  /* The reconnect line wraps inside the slot; the status icon keeps its place at its end. */
+  .shell-status { display:flex; justify-content:flex-end; gap:.35rem; min-width:0; font-size:.75rem; }
   .preparation-popover { right:.75rem; }
-  .shell-actions { display:grid; grid-template-columns:repeat(2,minmax(44px,auto)); min-width:0; justify-content:end; }
+  .shell-actions { display:grid; grid-template-columns:repeat(2,44px); min-width:0; justify-content:end; }
   :is(.shell-status, .shell-actions) button { padding-inline:.55rem; font-size:.75rem; }
-  .theme-toggle > span:last-child { display:none; }
 }
-/* Narrower than any screen at ordinary text: the two stack rather than split a word,
-   and the destinations pair up so the masthead stays within half the screen. */
+/* Narrower than any screen at ordinary text: the status takes a row of its own,
+   held open whether or not anything is in it, and the destinations pair up so
+   the masthead stays within half the screen. */
 @container shell (max-width:19rem) {
-  .shell-status { grid-template-columns:minmax(0,1fr); } .shell-status > .preparation-activity { grid-column:1; }
+  .masthead { grid-template-columns:minmax(0,1fr) auto; grid-template-areas:'brand actions' 'status status' 'nav nav'; }
+  .shell-status { justify-content:flex-start; }
   .masthead nav { grid-template-columns:repeat(2,minmax(0,1fr)); } .masthead nav a { padding-inline:.25rem; }
 }
 .navigation-status, .sr-only, .cm-activity-authority-actions > .activity-command-status:empty, .activity-consent-ledger > p[role='status']:empty { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
@@ -1189,10 +1189,6 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .cm-library-handoff-action { display:flex; align-items:center; flex-wrap:wrap; gap:.5rem .9rem; }
 .cm-library-handoff-action > a:not(.button-primary) { display:inline-flex; min-height:44px; align-items:center; font-size:.78rem; font-weight:650; }
 .cm-library-handoff-reason, .cm-library-handoff [role='alert'] { grid-column:1 / -1; margin:0; color:var(--soft); font-size:.78rem; line-height:1.4; }
-.preparation-stages { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:.1rem .6rem; margin:.35rem 0 .2rem; }
-.preparation-stages div { display:contents; }
-.preparation-stages dt { color:var(--soft); font-size:.75rem; }
-.preparation-stages dd { margin:0; font-size:.75rem; font-weight:700; text-align:right; }
 @media (max-width:760px) {
   .cm-write-consent-summary { gap:.75rem; }
   .cm-write-consent-summary dl { gap:.3rem 0; }
@@ -1769,3 +1765,31 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
   .taste-section li:not(.taste-editing) > .taste-who { grid-column:2; grid-row:2; justify-self:start; align-self:center; padding-top:0; }
   .taste-section li:not(.taste-editing) > .taste-pencil { grid-column:3; grid-row:2; justify-self:end; align-self:center; margin-block:0; }
 }
+
+/* Masthead icons (#1494): the status icon's ring turns only while preparing and
+   only when neither the system nor the Settings preference asks for less motion;
+   its fill shows either way. The tooltip repeats the accessible name for sighted
+   keyboard and pointer users while its button is hovered or focused, and Escape
+   hides it. It never takes the pointer, so it cannot hold itself open over the
+   destinations below. */
+/* The ring turns by its dash, one circumference (2π × 9.6) a turn, so its box
+   never grows past the icon's as a rotated group's would. */
+@keyframes status-icon-turn { to { stroke-dashoffset:-60.3186px; } }
+.status-icon-turn circle { animation:none; }
+@media (prefers-reduced-motion:no-preference) {
+  html:not([data-reduced-motion='always-reduced']) .status-icon-turn circle { animation:status-icon-turn 1.6s linear infinite; }
+}
+.masthead-tooltip { position:absolute; z-index:40; top:calc(100% + .35rem); right:0; width:max-content; max-width:min(18rem,calc(100vw - 1.5rem)); padding:.35rem .55rem; border-radius:.35rem; color:var(--surface); background:var(--ink); font-size:.75rem; font-weight:600; line-height:1.35; white-space:normal; text-align:left; pointer-events:none; opacity:0; visibility:hidden; }
+.icon-button:is(:hover, :focus-visible):not([data-tooltip='dismissed']) > .masthead-tooltip { opacity:1; visibility:visible; }
+.preparation-popover .source-lookups { display:grid; gap:.5rem; padding:.7rem 0; border-bottom:1px solid var(--line); }
+.preparation-popover .source-lookups h3 { margin:0; font:inherit; font-weight:700; }
+.preparation-popover .source-lookups ul { display:grid; gap:.6rem; margin:0; padding:0; list-style:none; }
+.preparation-popover .source-lookups li { display:grid; gap:.1rem; min-width:0; font-size:.86rem; line-height:1.4; overflow-wrap:anywhere; }
+.preparation-popover .source-lookups li span { color:var(--soft); }
+.preparation-popover .source-lookups li.needs-you span { color:var(--ink); }
+.preparation-popover .source-lookups li a { justify-self:start; padding-block:.6rem; color:var(--accent-strong); font-weight:650; }
+.preparation-popover .source-lookups button { justify-self:start; font-weight:650; }
+.source-lookups-file { margin:.2rem 0 0; color:var(--soft); font-size:.78rem; line-height:1.4; }
+.source-lookups-outcome { margin:0; font-size:.86rem; font-weight:650; }
+.source-lookups-outcome:empty { position:absolute; width:1px; height:1px; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); }
+.source-lookups-outcome[role='alert'] { color:var(--danger); }

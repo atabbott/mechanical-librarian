@@ -79,7 +79,9 @@ export const StatusIcon = ({
           cy="12"
           r={RADIUS}
           strokeWidth="2.6"
-          strokeDasharray={`${String(fill * CIRCUMFERENCE)} ${String(CIRCUMFERENCE)}`}
+          // One dash and one gap make exactly one turn of the ring, so the
+          // stylesheet turns it by moving the dash, which never widens its box.
+          strokeDasharray={`${String(fill * CIRCUMFERENCE)} ${String((1 - fill) * CIRCUMFERENCE)}`}
           transform="rotate(-90 12 12)"
         />
       </g>

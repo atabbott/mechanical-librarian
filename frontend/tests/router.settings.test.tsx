@@ -3924,6 +3924,31 @@ describe('settings provider throttling (#1282)', () => {
     )
   })
 
+  it('keeps no copy of a routine wait, and the notice for a missing key (#1494)', async () => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    const routine = throttled()
+    const [missingKey] = routine.provider_throttling?.entries ?? []
+    if (!missingKey) throw new Error('the fixture has its entry')
+    http.getPreparation = vi.fn(async () => ({
+      ...routine,
+      provider_throttling: {
+        generation: 1,
+        retry: 'available' as const,
+        entries: [{ ...missingKey, remedy: null, reasons: ['burst_throttled' as const] }],
+      },
+    }))
+    renderRoute('/settings?group=connection', http)
+    await screen.findByRole('textbox', { name: 'Audiobookshelf endpoint' })
+    await waitFor(() => expect(http.getPreparation).toHaveBeenCalled())
+    expect(screen.queryByRole('region', { name: 'Source lookups waiting to retry' })).toBeNull()
+    cleanup()
+    http.getPreparation = vi.fn(async () => routine)
+    renderRoute('/settings?group=connection', http)
+    const notice = await screen.findByRole('region', { name: 'Source lookups waiting to retry' })
+    expect(within(notice).getByRole('link', { name: 'Add a Google Books API key' })).toBeVisible()
+  })
+
   it('replaces the generation number with Retry now and leaves the other number rows', async () => {
     const http = createHttp()
     http.getSettings = vi.fn(async () => view())

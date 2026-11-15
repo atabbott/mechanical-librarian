@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import time
 from pathlib import Path
 from typing import cast
 
@@ -276,6 +277,7 @@ def test_preparation_carries_three_throttled_sources_and_every_remedy() -> None:
         ("Synthetic ebooks", "google_books"),
         ("Synthetic ebooks", "hardcover"),
         (THROTTLE_LONG_LIBRARY, "open_library"),
+        ("Synthetic ebooks", "inventaire"),
     ]
     assert {entry["remedy"] for entry in entries} == {
         "add_api_key",
@@ -283,4 +285,14 @@ def test_preparation_carries_three_throttled_sources_and_every_remedy() -> None:
         None,
     }
     assert {entry["state"] for entry in entries} == {"waiting", "dormant", "exhausted"}
-    assert sorted(entry["deferred"] for entry in entries) == [1, 214, 10_000]
+    assert sorted(entry["deferred"] for entry in entries) == [1, 12, 214, 10_000]
+    # The needs-you set (#1494): every entry but the routine Inventaire wait,
+    # which has no remedy, is waiting and has not yet waited a day.
+    routine = [
+        entry["adapter"]
+        for entry in entries
+        if entry["state"] == "waiting"
+        and entry["remedy"] is None
+        and entry["notice_at"] > time.time()
+    ]
+    assert routine == ["inventaire"]

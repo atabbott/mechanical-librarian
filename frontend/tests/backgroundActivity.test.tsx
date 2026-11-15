@@ -392,7 +392,7 @@ describe('Status icon (#1494 acceptance 7)', () => {
     const arc = container.querySelector('.status-icon-turn circle')
     const circumference = 2 * Math.PI * 9.6
     expect(arc?.getAttribute('stroke-dasharray')).toBe(
-      `${String(0.5 * circumference)} ${String(circumference)}`,
+      `${String(0.5 * circumference)} ${String((1 - 0.5) * circumference)}`,
     )
     expect(container.querySelectorAll('svg > circle')).toHaveLength(1)
   })
