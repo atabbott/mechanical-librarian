@@ -177,8 +177,10 @@ def _kept_answers(root: Path, *, journal: bool = False) -> Path:
     return kept
 
 
-@pytest.mark.parametrize("reviewer", [False, True])
-@pytest.mark.parametrize("journal", [False, True])
+@pytest.mark.parametrize(
+    "reviewer", [False, True], ids=["no_reviewer", "empty_reviewer"]
+)
+@pytest.mark.parametrize("journal", [False, True], ids=["alone", "with_journal"])
 def test_kept_provider_answers_do_not_block_first_run_setup(
     tmp_path: Path, reviewer: bool, journal: bool
 ) -> None:

@@ -90,13 +90,21 @@ for every book. A volume last run by a build before 0.37.0 has no such file.
    `private/provider-responses.sqlite` out of the stopped volume.
 2. In the emptied or new volume, create `private/` with mode `0700` and put
    the file back inside it with mode `0600`, both owned by the container user
-   (UID 65532). Put nothing else in `private/`.
+   (UID 65532). Put nothing else in `private/`. From the volume's directory
+   on the host, with your copy beside you:
+
+   ```text
+   sudo install -d -m 0700 -o 65532 -g 65532 private
+   sudo install -m 0600 -o 65532 -g 65532 provider-responses.sqlite private/
+   ```
+
 3. Continue with the steps for your mode.
 
-In store mode, first-run setup refuses to start if `private/` holds anything
-else, or if the directory or the file has another owner or mode. A file that
-is damaged or was written by an incompatible build never stops startup: every
-source is asked live and a `provider_response_store` line says `unavailable`
+In either mode, a `private/` with another owner or mode stops startup. In
+store mode, first-run setup also refuses to start if `private/` holds anything
+else or the file has another owner or mode. A file that is damaged or was
+written by an incompatible build never stops startup: every source is asked
+live and a `provider_response_store` line says `unavailable`
 ([Rebuilding one store](#rebuilding-one-store)).
 
 ## Rebuilding one store
