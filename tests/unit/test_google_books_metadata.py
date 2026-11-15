@@ -1016,7 +1016,10 @@ def test_keyless_and_keyed_requests_are_fixed_and_credentials_never_persist() ->
         assert GOOGLE_BOOKS_URL == str(requests[0].url.copy_with(query=None))
         assert "isbn:9780306406157" == requests[0].url.params["q"]
         assert "6" == requests[0].url.params["maxResults"]
-        assert api_key == requests[0].url.params.get("key")
+        assert "key" not in requests[0].url.params
+        assert api_key == requests[0].headers.get("x-goog-api-key")
+        if api_key is not None:
+            assert api_key not in str(requests[0].url)
         candidate = observation.candidates[0]
         assert "google-books-volume-volume_1" == candidate.identity
         assert "unresolved" == candidate.work_identity

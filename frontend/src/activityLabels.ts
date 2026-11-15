@@ -72,7 +72,7 @@ export const noteLabel: Record<ActivityNote, string> = {
 }
 export const noteSentence: Record<ActivityNote, string> = {
   asked_again:
-    'This choice was made before the book came back for review, so the field asks you again.',
+    'This choice was made before the work came back for review, so the field asks you again.',
   asked_again_matching:
     'Book matching changed what this field offers, so this choice no longer counts and the field is asking you again.',
   // The server names a choice it had already written and verified (#1355).

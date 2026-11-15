@@ -561,11 +561,16 @@ describe('Policy route', () => {
     const asin = await screen.findByRole('region', { name: 'ASIN' })
     expect(within(asin).getByRole('button', { name: 'Automatic' })).toBeEnabled()
     expect(within(asin).queryByText('Automatic not offered')).toBeNull()
+    // The card says what Automatic does on each kind of book; the setting
+    // beside it says what is chosen.
     expect(asin.querySelector('.cm-policy-media-scope')).toHaveTextContent(
-      'Ebooks: Ask me. Your choice. If set to Automatic: No automatic effect. Needs you.',
+      'Automatic on ebooks: Not offered.',
     )
     expect(asin.querySelector('.cm-policy-media-scope')).toHaveTextContent(
-      'Audiobooks: Ask me. Your choice. If set to Automatic: Fill ASIN if empty.',
+      'Automatic on audiobooks: Fill ASIN if empty.',
+    )
+    expect(asin.querySelector('.cm-policy-media-scope')).not.toHaveTextContent(
+      'No automatic effect. Needs you.',
     )
     await user.click(within(asin).getByText('Audiobook operations'))
     expect(within(asin).getByText(/Fill an empty field\. Automatic offered\./u)).toBeVisible()
@@ -579,9 +584,11 @@ describe('Policy route', () => {
     await user.click(screen.getByRole('button', { name: 'Identity' }))
     const title = await screen.findByRole('region', { name: 'Title and subtitle' })
     expect(within(title).getByRole('button', { name: 'Automatic' })).toBeDisabled()
-    expect(title.querySelector('.cm-policy-media-scope')).toHaveTextContent(
-      'Ebooks: Ask me. Your choice. If set to Automatic: No automatic effect. Needs you.',
-    )
+    // Neither kind of book offers Automatic, so the setting's note says it
+    // once and the card adds no "Not offered." lines.
+    expect(within(title).getAllByText(/not offered/iu)).toHaveLength(1)
+    expect(within(title).getByText('Automatic not offered')).toBeVisible()
+    expect(title.querySelector('.cm-policy-media-scope')).toBeNull()
   })
 
   it('says Language fills and respells the same language on both media (#1496)', async () => {
@@ -622,7 +629,10 @@ describe('Policy route', () => {
     const language = await screen.findByRole('region', { name: 'Language' })
     const scope = language.querySelector('.cm-policy-media-scope')
     expect(scope).not.toBeNull()
-    expect(scope).toHaveTextContent('If set to Automatic: Fill empty or respell the same language.')
+    expect(scope).toHaveTextContent('Automatic on ebooks: Fill empty or respell the same language.')
+    expect(scope).toHaveTextContent(
+      'Automatic on audiobooks: Fill empty or respell the same language.',
+    )
     expect(scope?.textContent.match(/Fill empty or respell the same language/gu)).toHaveLength(2)
     expect(scope).not.toHaveTextContent('Fill empty only')
   })
@@ -2662,8 +2672,12 @@ it('explains title re-evaluation, retains retry, and restores focus after recove
   }
   renderRoute('/policy', http)
   await screen.findByRole('heading', { name: 'Library policy' })
-  const summary = screen.getByText('Mode').closest('summary')
+  const summary = screen
+    .getByText(/^(?:Preview mode|Automatic|Human review) active$/u)
+    .closest('summary')
   if (!summary) throw new Error('Safety summary missing')
+  // The summary names the active mode alone, with no separate "Mode" caption.
+  expect(summary).toHaveTextContent(/^(?:Preview mode|Automatic|Human review) active$/u)
   await user.click(summary)
   expect(
     screen.getByText(
@@ -2710,7 +2724,9 @@ it.each(['a server failure', 'an undecodable answer (#1692)'])(
     }
     renderRoute('/policy', http)
     await screen.findByRole('heading', { name: 'Library policy' })
-    const summary = screen.getByText('Mode').closest('summary')
+    const summary = screen
+      .getByText(/^(?:Preview mode|Automatic|Human review) active$/u)
+      .closest('summary')
     if (!summary) throw new Error('Safety summary missing')
     await user.click(summary)
     await user.click(screen.getByRole('button', { name: 'Pause automatic decisions' }))
@@ -2742,7 +2758,9 @@ it('keeps a refused Automatic confirmation as nothing changed', async () => {
   }
   renderRoute('/policy', http)
   await screen.findByRole('heading', { name: 'Library policy' })
-  const summary = screen.getByText('Mode').closest('summary')
+  const summary = screen
+    .getByText(/^(?:Preview mode|Automatic|Human review) active$/u)
+    .closest('summary')
   if (!summary) throw new Error('Safety summary missing')
   await user.click(summary)
   await user.click(screen.getByRole('button', { name: 'Turn on Automatic' }))
@@ -2763,7 +2781,9 @@ it('names a provider-consensus title suspension by its destination (#1286)', asy
   }
   renderRoute('/policy', http)
   await screen.findByRole('heading', { name: 'Library policy' })
-  const summary = screen.getByText('Mode').closest('summary')
+  const summary = screen
+    .getByText(/^(?:Preview mode|Automatic|Human review) active$/u)
+    .closest('summary')
   if (!summary) throw new Error('Safety summary missing')
   await user.click(summary)
   expect(screen.getByRole('button', { name: 'Recover Title suspension' })).toBeVisible()
@@ -2856,7 +2876,9 @@ it.each([
         presentation: prior === 'missing' ? null : { state: 'completed_clean' },
       }),
     )
-    const summary = screen.getByText('Mode').closest('summary')
+    const summary = screen
+      .getByText(/^(?:Preview mode|Automatic|Human review) active$/u)
+      .closest('summary')
     if (!summary) throw new Error('Safety summary missing')
     await user.click(summary)
     await user.click(
@@ -2891,7 +2913,7 @@ it.each([
   ['ask', 'Ask me. Your choice.'],
   ['automatic', 'Automatic.'],
 ])(
-  'states selected %s behavior before eligibility in cards and activation',
+  "states Automatic's effect in cards and selected %s behavior before eligibility in activation",
   async (mode, label) => {
     const user = userEvent.setup()
     const http = createHttp()
@@ -2924,17 +2946,13 @@ it.each([
         : { policy_id: 'draft' }) as T
     renderRoute('/policy?section=curation', http)
     const tags = await screen.findByRole('region', { name: 'Tags' })
-    expect(tags.querySelector('.cm-policy-media-scope')).toHaveTextContent(`Ebooks: ${label}`)
-    expect(tags.querySelector('.cm-policy-media-scope')).toHaveTextContent(`Audiobooks: ${label}`)
-    if (mode !== 'automatic')
-      expect(tags.querySelector('.cm-policy-media-scope')).toHaveTextContent(
-        'If set to Automatic: Fill empty only.',
-      )
-    // One label, then plain sentences: no stacked colons (#1760).
-    else
-      expect(tags.querySelector('.cm-policy-media-scope')).toHaveTextContent(
-        'Ebooks: Automatic. Fill empty only.',
-      )
+    // The card names what Automatic does whatever is selected; the setting
+    // beside it says what is chosen. One label, then a plain sentence (#1760).
+    const scope = tags.querySelector('.cm-policy-media-scope')
+    expect(scope).toHaveTextContent('Automatic on ebooks: Fill empty only.')
+    expect(scope).toHaveTextContent('Automatic on audiobooks:')
+    expect(scope).not.toHaveTextContent('If set to Automatic')
+    if (mode !== 'automatic') expect(scope).not.toHaveTextContent(label)
     await user.click(within(tags).getByRole('combobox', { name: 'Tags option' }))
     await user.click(screen.getByRole('option', { name: 'Add missing values' }))
     await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
