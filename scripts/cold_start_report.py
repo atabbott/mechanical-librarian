@@ -1,9 +1,17 @@
 """Aggregate-only cold-start measurement report over persisted state (#743).
 
 A workbench instrument, deliberately not part of the installed product: run it
-from a checkout against the configuration file and COPIES of (or read-only
-access to) the application and catalogue databases. It writes nothing and
+from a checkout against COPIES of (or read-only access to) the application and
+catalogue databases and of the install's settings. It writes nothing and
 prints one cold-start report JSON document to stdout.
+
+An install with ``config.json`` gives a copy of it with ``--config``. An
+install whose settings are saved in the app gives ``--bootstrap`` a copy of its
+``review-bootstrap.json`` instead: the owner settings are then read from the
+``--database`` copy through ``OwnerSettingsStore.read`` on the read-only
+connection, and the mounts from the bootstrap, and both are projected through
+``store_runtime_configuration``, the runtime's own projection. The saved keys
+are never read into the configuration.
 
 The report is aggregate-only by construction. It contains connection,
 library, provider, and mount names from the operator's own configuration,
@@ -41,8 +49,17 @@ Usage:
         [--stage-timings /copy/stage-timings.json] \
         [--recovery-database /copy/provider-recovery.sqlite]
 
+    uv run python scripts/cold_start_report.py \
+        --bootstrap /copy/review-bootstrap.json \
+        --database /copy/application.sqlite3 \
+        --catalogue /copy/catalogue.sqlite3 \
+        [--mount-root books=/host/path/to/mount ...] \
+        [--stage-timings /copy/stage-timings.json] \
+        [--recovery-database /copy/provider-recovery.sqlite]
+
 ``--mount-root`` remaps a configured mount name to a host path for the
-extension census, because the configuration records container paths.
+extension census, because the configuration or bootstrap records container
+paths.
 """
 
 from __future__ import annotations
@@ -61,6 +78,9 @@ from typing import TextIO, cast
 from urllib.parse import quote
 
 from mechanical_librarian.adapters.operational_evidence import LocalTimingStore
+from mechanical_librarian.adapters.persistence.owner_settings import (
+    OwnerSettingsStore,
+)
 from mechanical_librarian.adapters.persistence.review_sql import (
     _CURRENT_COVER_ATTENTION_AUTHORITY_SQL,
     _CURRENT_LIBRARY_FROM_SQL,
@@ -79,6 +99,7 @@ from mechanical_librarian.adapters.persistence.schema import (
 from mechanical_librarian.application.configuration import (
     AUDIOBOOK_DISPATCH_ADAPTERS,
     ApplicationConfiguration,
+    ConfigurationError,
 )
 from mechanical_librarian.application.operations import OperationsError, StageTiming
 from mechanical_librarian.domain.audio_inspection import (
@@ -115,12 +136,18 @@ from mechanical_librarian.domain.metadata_report import (
     provider_dispatch_class,
     work_discovery_lane_payloads,
 )
+from mechanical_librarian.domain.owner_settings import OwnerSettingsError
 from mechanical_librarian.domain.proposal_set import (
     AudiobookReviewScope,
     audiobook_review_scope,
 )
 from mechanical_librarian.domain.reviewer_decision_summary import correlation_identity
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
+from mechanical_librarian.infrastructure.settings_authority import (
+    ReviewBootstrap,
+    load_review_bootstrap,
+    store_runtime_configuration,
+)
 
 COLD_START_REPORT_SCHEMA = "cold-start-report-v10"
 
@@ -1926,9 +1953,100 @@ def _mount_roots(values: list[str]) -> dict[str, Path]:
     return roots
 
 
+_BOTH_SETTINGS = (
+    "Give --config or --bootstrap, not both. An install with config.json reads "
+    "its settings from that file alone."
+)
+_NO_SETTINGS = (
+    "Give --config a copy of config.json or, if settings are saved in the app, "
+    "--bootstrap a copy of review-bootstrap.json."
+)
+_NO_DATABASE = "No file at the --database path. Give it a copy of application.sqlite3."
+_NO_CONFIG = "No file at the --config path. Give it a copy of config.json."
+_UNREADABLE_CONFIG = (
+    "This checkout cannot read the --config file. Give it a copy of the "
+    "config.json this install starts with."
+)
+_NO_BOOTSTRAP = (
+    "No file at the --bootstrap path. Give it a copy of review-bootstrap.json."
+)
+_UNREADABLE_BOOTSTRAP = (
+    "This checkout cannot read the --bootstrap file. Give it a copy of the "
+    "review-bootstrap.json this install starts with."
+)
+_NO_SAVED_SETTINGS = (
+    "The --database copy holds no saved settings. Finish setup in the app "
+    "first, or give --config if the install uses config.json."
+)
+_UNLISTED_MOUNT = (
+    "A library uses a media mount that the --bootstrap file does not list. "
+    "Give it the review-bootstrap.json this install starts with."
+)
+_UNREADABLE_SETTINGS = (
+    "This checkout cannot combine the settings saved in the --database copy "
+    "with the --bootstrap file. Copy both from an install built from this checkout."
+)
+
+
+def _file_configuration(path: Path) -> ApplicationConfiguration:
+    """Read a ``config.json`` copy, refusing a missing or unreadable one."""
+    if not path.is_file():
+        raise SystemExit(_NO_CONFIG)
+    try:
+        return load_configuration_file(path)
+    except (ConfigurationError, OSError) as error:
+        raise SystemExit(_UNREADABLE_CONFIG) from error
+
+
+def _review_bootstrap(path: Path) -> ReviewBootstrap:
+    """Read a ``review-bootstrap.json`` copy, refusing a missing or bad one."""
+    if not path.is_file():
+        raise SystemExit(_NO_BOOTSTRAP)
+    try:
+        return load_review_bootstrap(path)
+    except ConfigurationError as error:
+        raise SystemExit(_UNREADABLE_BOOTSTRAP) from error
+
+
+def _store_configuration(
+    connection: sqlite3.Connection, bootstrap: ReviewBootstrap
+) -> ApplicationConfiguration:
+    """Build the runtime's configuration from settings saved in the app.
+
+    The owner settings come through the store's own ``read`` on the script's
+    read-only connection, which opens no transaction and projects the
+    document the way the runtime does; the mounts and address come from the
+    bootstrap. The saved keys never reach the configuration: the settings view
+    carries only whether each one is present.
+    """
+    try:
+        settings = OwnerSettingsStore(connection).read()
+    except OwnerSettingsError as error:
+        raise SystemExit(_NO_SAVED_SETTINGS) from error
+    listed = {mount.name for mount in bootstrap.mounts}
+    if any(
+        library.mount is not None and library.mount not in listed
+        for library in settings.document.libraries
+    ):
+        raise SystemExit(_UNLISTED_MOUNT)
+    try:
+        return store_runtime_configuration(settings, bootstrap)
+    except ConfigurationError as error:
+        raise SystemExit(_UNREADABLE_SETTINGS) from error
+
+
 def main(argv: list[str] | None = None, stdout: TextIO | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", required=True, type=Path)
+    parser.add_argument(
+        "--config",
+        type=Path,
+        help="a copy of config.json, when the install has one",
+    )
+    parser.add_argument(
+        "--bootstrap",
+        type=Path,
+        help="a copy of review-bootstrap.json, when settings are saved in the app",
+    )
     parser.add_argument("--database", required=True, type=Path)
     parser.add_argument("--catalogue", required=True, type=Path)
     parser.add_argument(
@@ -1953,6 +2071,12 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None) -> int:
     arguments = parser.parse_args(argv)
     output = sys.stdout if stdout is None else stdout
 
+    config: Path | None = arguments.config
+    bootstrap_path: Path | None = arguments.bootstrap
+    if config is not None and bootstrap_path is not None:
+        raise SystemExit(_BOTH_SETTINGS)
+    if config is None and bootstrap_path is None:
+        raise SystemExit(_NO_SETTINGS)
     roots = _mount_roots(arguments.mount_root)
     timings = (
         None
@@ -1964,9 +2088,18 @@ def main(argv: list[str] | None = None, stdout: TextIO | None = None) -> int:
         if arguments.recovery_database is None
         else _read_recovery(arguments.recovery_database)
     )
-    configuration = load_configuration_file(arguments.config)
-    connection = _open_read_only(arguments.database)
+    database: Path = arguments.database
+    if not database.is_file():
+        raise SystemExit(_NO_DATABASE)
+    file_configuration = None if config is None else _file_configuration(config)
+    bootstrap = None if bootstrap_path is None else _review_bootstrap(bootstrap_path)
+    connection = _open_read_only(database)
     try:
+        configuration = (
+            _store_configuration(connection, bootstrap)
+            if bootstrap is not None
+            else cast("ApplicationConfiguration", file_configuration)
+        )
         snapshot = cold_start_snapshot(connection)
     finally:
         connection.close()

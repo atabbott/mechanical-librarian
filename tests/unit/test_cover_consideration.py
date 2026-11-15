@@ -2501,10 +2501,60 @@ def test_an_undecodable_retained_original_with_nothing_to_review_is_no_omission(
     stored = json.loads(case.store.current[case_id])
     assert stored["packet_document"] is None
     assert [item["candidate_kind"] for item in stored["candidates"]] == ["retained"]
-    assert [omission["reference"] for omission in projected["omissions"]] == [
+    # The unread current cover has its own card, so its source is stored as
+    # an omission but not counted as a cover not shown (#1866).
+    assert [omission["reference"] for omission in stored["omissions"]] == [
         cover_source_reference(report.report_id, current.source_id)
     ]
-    service.project_historical(case.store.current[case_id])
+    assert projected["omissions"] == []
+    assert service.project_historical(case.store.current[case_id])["omissions"] == []
+
+
+def test_a_current_cover_not_returned_is_not_counted_as_a_cover_not_shown(
+    case: _Case,
+) -> None:
+    """#1866: a transient read of the current cover is not a cover not shown.
+
+    Another source the read missed is still counted, and the stored and
+    packet omissions keep both.
+    """
+    current = CoverSource(
+        cover_source_id(CoverSourceKind.ABS, "current"),
+        CoverSourceKind.ABS,
+        CoverSourceState.TIMEOUT,
+        timeout_scope="attempted",
+    )
+    missed = CoverSource(
+        cover_source_id(CoverSourceKind.HARDCOVER, "missed"),
+        CoverSourceKind.HARDCOVER,
+        CoverSourceState.TIMEOUT,
+        provenance=CoverProvenance(
+            "hardcover", CoverDesignation.WORK, "work-missed", None
+        ),
+        timeout_scope="attempted",
+    )
+    sources = (current, case.sources[1], missed)
+    report = _with_cover(_report(sources), TargetFieldState.VALUE, sources)
+    case_id = "review_case_" + "q" * 64
+
+    projected = case.service.ensure(case_id, report.to_json(), case.proposal)
+
+    stored = json.loads(case.store.current[case_id])
+    assert stored["incumbent"]["state"] == "unavailable"
+    current_reference = cover_source_reference(report.report_id, current.source_id)
+    missed_reference = cover_source_reference(report.report_id, missed.source_id)
+    assert {omission["reference"] for omission in stored["omissions"]} >= {
+        current_reference,
+        missed_reference,
+    }
+    packet = json.loads(stored["packet_document"])
+    assert {omission["reference"] for omission in packet["omissions"]} >= {
+        current_reference,
+        missed_reference,
+    }
+    references = [omission["reference"] for omission in projected["omissions"]]
+    assert current_reference not in references
+    assert missed_reference in references
 
 
 @pytest.mark.parametrize(

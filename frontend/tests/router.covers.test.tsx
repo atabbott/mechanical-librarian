@@ -197,7 +197,7 @@ const library0 = {
 }
 const decide = page('decide', [work('case-1', 'proposal'), work('case-2', 'choice')])
 const chooseOther = async (user: ReturnType<typeof userEvent.setup>) => {
-  const group = await screen.findByRole('radiogroup', { name: 'Which cover should this book use?' })
+  const group = await screen.findByRole('radiogroup', { name: 'Which cover should this work use?' })
   await user.click(within(group).getByRole('radio', { name: /Open Library cover/u }))
 }
 // A wide screen, where an open book sits beside the list.
@@ -295,7 +295,7 @@ describe('Covers view (#1633)', () => {
     })
     renderRoute('/library?lens=all&view=covers&tab=decide&cover=case-1', http)
     const group = await screen.findByRole('radiogroup', {
-      name: 'Which cover should this book use?',
+      name: 'Which cover should this work use?',
     })
     const card = within(group).getByRole('radio', { name: /Hardcover cover/u })
     expect(card.querySelector('strong')).toHaveTextContent(/^Contradicts this book$/u)
@@ -383,7 +383,7 @@ describe('Covers view (#1633)', () => {
     await chooseOther(user)
     expect(
       await screen.findByText(
-        "This book's covers changed since the page loaded. Nothing was changed.",
+        "This work's covers changed since the page loaded. Nothing was changed.",
       ),
     ).toBeVisible()
     await waitFor(() => expect(screen.getByRole('button', { name: 'Reload' })).toHaveFocus())
@@ -424,9 +424,146 @@ describe('Covers view (#1633)', () => {
     await chooseOther(user)
     expect(
       await screen.findByText(
-        'No answer came back. Check whether the cover was changed before choosing again.',
+        'No answer came back. Check whether your choice was recorded before choosing again.',
       ),
     ).toBeVisible()
+  })
+
+  it('says a refused choice was not recorded (#1866)', async () => {
+    const user = userEvent.setup()
+    const http = coversHttp({ decide })
+    http.recordDecision.mockRejectedValueOnce(new ApiError(422, 'invalid_choice'))
+    renderRoute('/library?lens=all&view=covers&cover=case-1', http)
+    await chooseOther(user)
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      /^Your choice was not recorded\. Choose again\.$/u,
+    )
+    expect(screen.queryByText(/No answer came back/u)).toBeNull()
+  })
+
+  // Covers keeps an unread current cover as the book page does (#1865).
+  it.each([
+    ['a transient read', []],
+    ['a missing image', [{ reason: 'source_absent' }]],
+    ['refused bytes', [{ reason: 'source_decode_failed', original_digest: 'd'.repeat(64) }]],
+  ])('keeps an unread current cover after %s', async (_case, omissions) => {
+    const user = userEvent.setup()
+    const unread = (id: string): CaseDetailView => {
+      const value = coverDetail(id, titles[id] ?? id)
+      return {
+        ...value,
+        fields: value.fields.map((field) =>
+          field.coverConsideration
+            ? {
+                ...field,
+                coverConsideration: {
+                  ...field.coverConsideration,
+                  candidates: [candidate('2', false)],
+                  incumbent: { reference: null, state: 'unavailable' as const },
+                  omissions,
+                },
+              }
+            : field,
+        ),
+      }
+    }
+    let recorded: CaseDetailView | null = null
+    const http = coversHttp({ all: page('all', [work('case-1', 'choice')]) })
+    http.getCaseDetail.mockImplementation(async (id) => recorded ?? unread(id))
+    http.recordDecision.mockImplementation(async (caseId, command) => {
+      const acknowledgement = recordedAcknowledgement(unread(caseId), {
+        actor: 'owner',
+        application: 'apply' as const,
+        application_reason: null,
+        decision_id: 'decision-1',
+        destination: command.destination,
+        invalidation_sequences: [],
+        schema_version: 'review-decision-v1',
+        occurred_at: 1,
+        outcome: command.outcome,
+        proposal_id: command.proposalId,
+        review_case_id: caseId,
+        selected_value: command.selectedValue ?? null,
+        target_fingerprint: command.targetFingerprint,
+      })
+      if (acknowledgement.confirmation.status === 'confirmed')
+        recorded = acknowledgement.confirmation.case
+      return acknowledgement
+    })
+    renderRoute('/library?lens=all&view=covers&tab=all&cover=case-1', http)
+    await user.click(await screen.findByRole('radio', { name: 'Keep current cover' }))
+    await waitFor(() => expect(http.recordDecision).toHaveBeenCalledOnce())
+    expect(http.recordDecision.mock.calls[0]?.[1]).toMatchObject({
+      destination: 'cover',
+      outcome: 'keep_current',
+      selectedValue: null,
+    })
+    expect(await screen.findByText('Kept First Book.')).toBeVisible()
+    cleanup()
+    renderRoute('/library?lens=all&view=covers&tab=all&cover=case-1', http)
+    const kept = await screen.findByRole('radio', { name: 'Keep current cover' })
+    expect(kept).toHaveTextContent('Your choice')
+    expect(kept).toHaveAttribute('aria-checked', 'true')
+  })
+
+  it('names a Before or Now frame with no preview for what is missing (#1866)', async () => {
+    const at = Math.floor(Date.now() / 1000) - 7200
+    const switchedRow = (id: string, extra: Partial<CoverWorkView>) =>
+      work(id, 'auto', {
+        switched: {
+          at,
+          before: null,
+          filled: false,
+          put_back: null,
+          put_back_offered: false,
+          language: null,
+          reason: null,
+        },
+        ...extra,
+      })
+    const switched = page('switched', [
+      switchedRow('case-1', { cover: null, unreadable_cover: true }),
+      switchedRow('case-2', { cover: null }),
+    ])
+    renderRoute('/library?lens=all&view=covers&tab=switched', coversHttp({ switched }))
+    const [unreadable, empty] = await screen.findAllByRole('listitem')
+    if (!unreadable || !empty) throw new Error('two switched rows are required')
+    expect(
+      within(unreadable).getByRole('img', { name: 'Previous cover unavailable' }),
+    ).toBeVisible()
+    expect(within(unreadable).getByRole('img', { name: 'Current cover unavailable' })).toBeVisible()
+    expect(within(unreadable).queryByRole('img', { name: 'Cover now' })).toBeNull()
+    expect(within(empty).getByRole('img', { name: 'No cover' })).toHaveTextContent('No cover')
+  })
+
+  it('names the current card of a switched comparison as changed automatically (#1866)', async () => {
+    const user = userEvent.setup()
+    const at = Math.floor(Date.now() / 1000) - 7200
+    const switched = page('switched', [
+      work('case-1', 'auto', {
+        switched: {
+          at,
+          before: preview('b', 500, 500),
+          filled: false,
+          put_back: null,
+          put_back_offered: false,
+          language: null,
+          reason: null,
+        },
+      }),
+    ])
+    renderRoute('/library?lens=all&view=covers&tab=switched', coversHttp({ switched }))
+    const [row] = await screen.findAllByRole('listitem')
+    if (!row) throw new Error('a switched row is required')
+    await user.click(within(row).getByRole('button', { name: 'Others' }))
+    const group = await screen.findByRole('radiogroup', {
+      name: 'Which cover should this work use?',
+    })
+    // The name says what the visible label says, as the book page's does.
+    expect(
+      within(group).getByRole('radio', { name: 'Keep current cover · changed automatically' }),
+    ).toHaveTextContent('Current cover · changed automatically')
+    expect(within(group).queryByRole('radio', { name: 'Keep current cover' })).toBeNull()
   })
 
   it('lists automatic switches with Before and Now, and Keep lands on Change', async () => {
@@ -520,6 +657,9 @@ describe('Covers view (#1633)', () => {
     if (!row) throw new Error('a switched row is required')
     expect(within(row).getByText('Image unavailable')).toBeVisible()
     expect(within(row).queryByText('No cover')).toBeNull()
+    // The frame is named for what is missing, not as the picture (#1866).
+    expect(within(row).getByRole('img', { name: 'Previous cover unavailable' })).toBeVisible()
+    expect(within(row).queryByRole('img', { name: 'Previous cover' })).toBeNull()
   })
 
   it('reads Covers again on a library update and keeps the decided book in place', async () => {
@@ -636,14 +776,18 @@ describe('Covers view (#1633)', () => {
       ]),
     })
     renderRoute('/library?lens=all&view=covers', http)
-    // The thumbnail shows the state; a screen reader hears it after the title.
+    // The state is written under the title, read after it (#1866).
     const unreadable = await screen.findByRole('button', {
       name: /^First Book.*Image unavailable/u,
     })
     // The 3rem thumbnail is too small for the words: it shows the frame only.
     expect(within(unreadable).getAllByText('Image unavailable')).toHaveLength(1)
+    expect(within(unreadable).getByText('Image unavailable')).toBeVisible()
+    expect(within(unreadable).getByText('Image unavailable')).not.toHaveClass('sr-only')
     expect(unreadable.querySelector('.covers-image-missing')).toBeEmptyDOMElement()
-    expect(screen.getByRole('button', { name: /^Second Book.*No cover/u })).toBeVisible()
+    const missing = screen.getByRole('button', { name: /^Second Book.*No cover/u })
+    expect(within(missing).getByText('No cover')).toBeVisible()
+    expect(within(missing).getByText('No cover').tagName).toBe('SMALL')
   })
 
   it.each([
@@ -724,13 +868,27 @@ describe('Covers view (#1633)', () => {
     expect(within(tile).getByText('An Author')).toBeVisible()
     await user.click(tile)
     const panel = (
-      await screen.findByRole('radiogroup', { name: 'Which cover should this book use?' })
+      await screen.findByRole('radiogroup', { name: 'Which cover should this work use?' })
     ).closest('li')
     // Every tile of the row comes before the panel.
     expect(panel?.previousElementSibling).toHaveTextContent('Third Book')
     expect(screen.queryByRole('link', { name: 'Covers' })).toBeNull()
     await user.click(screen.getByRole('button', { name: 'Close' }))
     await waitFor(() => expect(screen.getByRole('button', { name: /First Book/u })).toHaveFocus())
+  })
+
+  it('lists a chosen cover not yet written under All as Your choice (#1866)', async () => {
+    const http = coversHttp({
+      all: page('all', [work('case-1', 'chosen'), work('case-2', 'kept')]),
+    })
+    renderRoute('/library?lens=all&view=covers&tab=all', http)
+    const chosen = await screen.findByRole('button', { name: /First Book/u })
+    const pill = within(chosen).getByText('Your choice')
+    expect(pill).toHaveClass('status-pill', 'is-neutral')
+    expect(within(chosen).queryByText('Kept')).toBeNull()
+    expect(
+      within(screen.getByRole('button', { name: /Second Book/u })).getByText('Kept'),
+    ).toBeVisible()
   })
 
   it('places the open book after the last tile of its row, measured without the panel', async () => {
@@ -757,7 +915,7 @@ describe('Covers view (#1633)', () => {
       renderRoute('/library?lens=all&view=covers&tab=all', http)
       await user.click(await screen.findByRole('button', { name: /First Book/u }))
       const panel = (
-        await screen.findByRole('radiogroup', { name: 'Which cover should this book use?' })
+        await screen.findByRole('radiogroup', { name: 'Which cover should this work use?' })
       ).closest('li')
       await waitFor(() => expect(panel?.previousElementSibling).toHaveTextContent('Second Book'))
       expect(panel?.nextElementSibling).toHaveTextContent('Third Book')
@@ -858,11 +1016,11 @@ describe('Covers view (#1633)', () => {
     await waitFor(() => expect(router.state.location.search.cover).toBeUndefined())
   })
 
-  it('shows Back to books for the open book', async () => {
+  it('shows Back to works for the open book', async () => {
     const user = userEvent.setup()
     const http = coversHttp({ decide })
     const { router } = renderRoute('/library?lens=all&view=covers&cover=case-1', http)
-    await user.click(await screen.findByRole('button', { name: 'Back to books' }))
+    await user.click(await screen.findByRole('button', { name: 'Back to works' }))
     await waitFor(() => expect(router.state.location.search.cover).toBeUndefined())
   })
 
@@ -959,7 +1117,7 @@ describe('Put back (#1363)', () => {
     renderRoute('/library?lens=all&view=covers&tab=switched', http)
     const [row] = await screen.findAllByRole('listitem')
     if (!row) throw new Error('a switched row is required')
-    expect(within(row).getByRole('img', { name: 'Previous cover' })).toHaveTextContent(
+    expect(within(row).getByRole('img', { name: 'Previous cover unavailable' })).toHaveTextContent(
       'Image unavailable',
     )
     expect(within(row).queryByText('No cover')).toBeNull()
@@ -985,7 +1143,7 @@ describe('Put back (#1363)', () => {
     await user.click(within(row).getByRole('button', { name: 'Put back' }))
     expect(
       await within(row).findByText(
-        "This book's covers changed since the page loaded. Nothing was changed.",
+        "This work's covers changed since the page loaded. Nothing was changed.",
       ),
     ).toBeVisible()
     expect(http.recordDecision).not.toHaveBeenCalled()
@@ -1075,7 +1233,7 @@ describe('Put back (#1363)', () => {
     if (!row) throw new Error('a switched row is required')
     await user.click(within(row).getByRole('button', { name: 'Others' }))
     const group = await screen.findByRole('radiogroup', {
-      name: 'Which cover should this book use?',
+      name: 'Which cover should this work use?',
     })
     const card = within(group).getByRole('radio', { name: 'Choose Replaced cover' })
     expect(within(card).getByText('Replaced cover')).toBeVisible()
@@ -1179,6 +1337,11 @@ describe('Measured cover rules (#1363)', () => {
     const [row] = await screen.findAllByRole('listitem')
     if (!row) throw new Error('a hold row is required')
     expect(within(row).getByText("Cover's source names another book")).toBeVisible()
+    // The pill is its own row of the item, under the title and status, so it
+    // is not squeezed into the title column (#1866).
+    const pill = within(row).getByText("Cover's source names another book")
+    expect(pill).toHaveClass('covers-queue-hold')
+    expect(pill.parentElement).toHaveClass('covers-queue-item')
   })
 
   it('says why an unreadable cover was switched and lists it under Show (#1362)', async () => {
@@ -1191,10 +1354,9 @@ describe('Measured cover rules (#1363)', () => {
     const [first] = await screen.findAllByRole('listitem')
     if (!first) throw new Error('a switched row is required')
     expect(within(first).getByText('Unreadable image')).toBeVisible()
+    // A replaced cover was unreadable; a fill had nothing to read (#1866).
     expect(
-      within(first).getByText(
-        'Audiobookshelf had no image for the cover, or Mechanical Librarian could not read it.',
-      ),
+      within(first).getByText('Mechanical Librarian could not read the previous cover.'),
     ).toBeVisible()
     await user.click(screen.getByRole('combobox', { name: 'Show' }))
     expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
@@ -1202,6 +1364,27 @@ describe('Measured cover rules (#1363)', () => {
       'Under 300 px',
       'Unreadable image',
     ])
+  })
+
+  it('says a filled unreadable cover had no image (#1866)', async () => {
+    const switched = page('switched', [
+      work('case-1', 'auto', {
+        switched: {
+          at,
+          before: null,
+          filled: true,
+          put_back: null,
+          put_back_offered: false,
+          language: null,
+          reason: 'unreadable',
+        },
+      }),
+    ])
+    renderRoute('/library?lens=all&view=covers&tab=switched', coversHttp({ switched }))
+    const [row] = await screen.findAllByRole('listitem')
+    if (!row) throw new Error('a switched row is required')
+    expect(within(row).getByText('Audiobookshelf had no image for the cover.')).toBeVisible()
+    expect(within(row).queryByText(/could not read/u)).toBeNull()
   })
 })
 

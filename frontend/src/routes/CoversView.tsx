@@ -1,7 +1,7 @@
 import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useRouter } from '@tanstack/react-router'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
+import type { ReactNode, RefObject } from 'react'
 
 import { ApiError, refusalCopy, uncertainWriteOutcome } from '../api/http'
 import type {
@@ -34,14 +34,24 @@ import TasteProfileView from './TasteProfileView'
 // asks of the owner. Each choice is one gesture through the book's own
 // decision command; nothing here acts on more than one book.
 
+// A cover the owner chose that is not yet written is their choice, not a kept
+// cover; it is listed only under All (#1866).
 const groupLabels = {
   proposal: 'Switch suggested',
   choice: 'Choose',
+  chosen: 'Your choice',
   kept: 'Kept',
   auto: 'Switched',
   none: 'One cover',
 } satisfies Record<CoverWorkView['group'], string>
-const groupOrder: readonly CoverWorkView['group'][] = ['proposal', 'choice', 'kept', 'auto', 'none']
+const groupOrder: readonly CoverWorkView['group'][] = [
+  'proposal',
+  'choice',
+  'chosen',
+  'kept',
+  'auto',
+  'none',
+]
 const tabLabels = {
   decide: 'To decide',
   kept: 'Kept',
@@ -55,9 +65,11 @@ const emptyCopy = {
   // All holds every work under review, so it is empty only when Works is.
   all: 'No works yet.',
 } satisfies Record<CoverTab, string>
-const staleCopy = "This book's covers changed since the page loaded. Nothing was changed."
-const lostCopy = 'No answer came back. Check whether the cover was changed before choosing again.'
-const question = 'Which cover should this book use?'
+const staleCopy = "This work's covers changed since the page loaded. Nothing was changed."
+const lostCopy =
+  'No answer came back. Check whether your choice was recorded before choosing again.'
+const refusedCopy = 'Your choice was not recorded. Choose again.'
+const question = 'Which cover should this work use?'
 // The width at and below which an open book replaces the list.
 const compactQuery = '(max-width: 1024px)'
 const wide = () =>
@@ -73,10 +85,14 @@ const rowFault = (work: CoverWorkView) =>
   work.group === 'auto'
     ? (work.switched?.reason ?? null)
     : (work.suggestion?.reason ?? work.hold?.reason ?? null)
-function FaultPill({ work }: { work: CoverWorkView }) {
+function FaultPill({ work, className }: { work: CoverWorkView; className?: string }) {
   const fault = rowFault(work)
   const label = fault === null ? null : coverFaultLabel(fault, audiobook(work))
-  return label === null ? null : <StatusPill tone="notice">{label}</StatusPill>
+  return label === null ? null : (
+    <StatusPill tone="notice" {...(className ? { className } : {})}>
+      {label}
+    </StatusPill>
+  )
 }
 const dayMonth = (seconds: number) =>
   new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short' }).format(
@@ -133,7 +149,7 @@ const failureOf = (error: unknown, field: ReviewField | undefined): Failure =>
     ? { kind: 'stale' }
     : uncertainWriteOutcome(error)
       ? { kind: 'message', text: lostCopy }
-      : { kind: 'message', text: ownerRefusalCopy(error, field) ?? refusalCopy(error, lostCopy) }
+      : { kind: 'message', text: ownerRefusalCopy(error, field) ?? refusalCopy(error, refusedCopy) }
 
 // The book's own decision command, exactly as its page sends it.
 const coverCommand = (
@@ -198,11 +214,14 @@ function CoverImage({
   cover,
   unreadable,
   alt = '',
+  missingAlt = alt,
   quiet = false,
 }: {
   cover: { url: string } | null
   unreadable: boolean
   alt?: string
+  /** The frame's name when no preview shows: what is missing, not the image. */
+  missingAlt?: string
   /** Too small to hold the words: the frame alone, the state read beside it. */
   quiet?: boolean
 }) {
@@ -221,7 +240,7 @@ function CoverImage({
     )
   const state = cover || unreadable ? 'Image unavailable' : 'No cover'
   return alt ? (
-    <span className="covers-image-missing" role="img" aria-label={alt}>
+    <span className="covers-image-missing" role="img" aria-label={missingAlt}>
       {state}
     </span>
   ) : (
@@ -315,7 +334,7 @@ function CoverComparison({
     <section className="covers-comparison" aria-labelledby={`covers-book-${work.review_case_id}`}>
       {onBack ? (
         <button className="covers-back" type="button" onClick={onBack}>
-          Back to books
+          Back to works
         </button>
       ) : null}
       <header>
@@ -360,7 +379,10 @@ function CoverComparison({
           prepareFailure={prepareFailure}
           question={question}
           {...(work.group === 'auto'
-            ? { currentLabel: 'Current cover · changed automatically' }
+            ? {
+                currentLabel: 'Current cover · changed automatically',
+                keepLabel: 'Keep current cover · changed automatically',
+              }
             : {})}
           coversLink={false}
         />
@@ -388,8 +410,142 @@ const reasonLine = (work: CoverWorkView) =>
         before: work.switched.before,
         after: work.cover,
         language: work.switched.language,
+        filled: work.switched.filled,
       })
     : null
+/** A switched row's Before and Now frames, with the arrow between them. */
+function SwitchedFrames({
+  work,
+  switched,
+}: {
+  work: CoverWorkView
+  switched: NonNullable<CoverWorkView['switched']>
+}) {
+  return (
+    <>
+      <figure>
+        {switched.filled ? (
+          // A fill replaced nothing: its caption says so, once.
+          <span className="covers-image-missing" aria-hidden="true" />
+        ) : (
+          // A replacement always had a cover; with no preview to show, it is
+          // unavailable, never "No cover".
+          <CoverImage
+            cover={switched.before}
+            unreadable
+            alt="Previous cover"
+            missingAlt="Previous cover unavailable"
+          />
+        )}
+        <figcaption>
+          Before
+          {switched.before ? <small>{size(switched.before)}</small> : null}
+          {switched.filled ? <small>No cover</small> : null}
+        </figcaption>
+      </figure>
+      <span className="covers-arrow" aria-hidden="true">
+        →
+      </span>
+      <figure>
+        <CoverImage
+          cover={work.cover}
+          unreadable={work.unreadable_cover}
+          alt="Cover now"
+          missingAlt={
+            work.cover || work.unreadable_cover ? 'Current cover unavailable' : 'No cover'
+          }
+        />
+        <figcaption>
+          Now
+          {work.cover ? <small>{size(work.cover)}</small> : null}
+        </figcaption>
+      </figure>
+    </>
+  )
+}
+/** Why a switched row's last action did not record, or why nothing was put back. */
+function SwitchedFailure({
+  failure,
+  refused,
+  onReload,
+}: {
+  failure: Failure | null
+  refused: boolean
+  onReload: () => void
+}) {
+  return failure?.kind === 'stale' ? (
+    <div className="covers-failure" role="alert">
+      <p>{staleCopy}</p>
+      <button type="button" onClick={onReload}>
+        Reload
+      </button>
+    </div>
+  ) : failure ? (
+    <p className="covers-failure" role="alert">
+      {failure.text}
+    </p>
+  ) : refused ? (
+    // Announced once if it arrives with a live update while the row is open.
+    <p className="covers-failure" role="status">
+      {putBackRefusedCopy}
+    </p>
+  ) : null
+}
+/** A switched row's outcome and Change, or its Put back, Keep and Others. */
+function SwitchedActions({
+  work,
+  titleId,
+  shown,
+  offerPutBack,
+  busy,
+  open,
+  change,
+  onPutBack,
+  onKeep,
+  onOpen,
+}: {
+  work: CoverWorkView
+  titleId: string
+  shown: Outcome | undefined
+  offerPutBack: boolean
+  busy: boolean
+  open: boolean
+  change: RefObject<HTMLButtonElement | null>
+  onPutBack: () => void
+  onKeep: () => void
+  onOpen: () => void
+}) {
+  return (
+    <div className="covers-switched-actions">
+      {shown ? (
+        <>
+          <StatusPill tone="accent">{donePills[shown]}</StatusPill>
+          {work.choosable ? (
+            <button ref={change} type="button" aria-describedby={titleId} onClick={onOpen}>
+              Change
+            </button>
+          ) : null}
+        </>
+      ) : work.choosable ? (
+        <>
+          {/* Offered only while the book's comparison has the original: before
+              the book is prepared again after its switch, it cannot be chosen. */}
+          {offerPutBack ? (
+            <button type="button" aria-describedby={titleId} disabled={busy} onClick={onPutBack}>
+              Put back
+            </button>
+          ) : null}
+          <button type="button" aria-describedby={titleId} disabled={busy} onClick={onKeep}>
+            Keep
+          </button>
+          <button type="button" aria-describedby={titleId} aria-expanded={open} onClick={onOpen}>
+            Others
+          </button>
+        </>
+      ) : null}
+    </div>
+  )
+}
 function SwitchedRow({
   work,
   index,
@@ -428,11 +584,13 @@ function SwitchedRow({
   // so the row offers Keep and Others again and says why.
   const refused = putBackRefused(work)
   const shown = done ?? (putBack && putBackPending.has(putBack.state) ? 'put_back' : undefined)
-  // Keep is the book's keep-current command; its case is read first so the
-  // command carries the exact proposal and selection it answers. The command
-  // admits keep-current only beside another cover, so a switch with no other
-  // choice offers no Keep (human_decision.decision_actions).
-  const keep = async () => {
+  // Keep and Put back read the book's case first, so the command carries the
+  // exact proposal and selection it answers; a case with nothing to send is
+  // stale.
+  const recordFromCase = async (
+    command: (field: ReviewField | undefined) => DecisionCommand | null,
+    outcome: Outcome,
+  ) => {
     setFailure(null)
     setKeeping(true)
     let field: ReviewField | undefined
@@ -442,74 +600,43 @@ function SwitchedRow({
         staleTime: 0,
       })
       field = coverField(detail.fields)
-      if (!field) throw new ApiError(409, 'stale')
-      await submitCover(
-        http,
-        queryClient,
-        work.review_case_id,
-        coverCommand(field, 'keep_current', null),
-      )
-      onRecorded('kept')
+      const next = command(field)
+      if (!next) throw new ApiError(409, 'stale')
+      await submitCover(http, queryClient, work.review_case_id, next)
+      onRecorded(outcome)
     } catch (error) {
       setFailure(failureOf(error, field))
     } finally {
       setKeeping(false)
     }
   }
-  // Put back is the book's accept of the original the switch replaced, read
-  // from its case as Keep is; an original no longer offered is stale.
-  const putBackOriginal = async () => {
-    setFailure(null)
-    setKeeping(true)
-    let field: ReviewField | undefined
-    try {
-      const detail = await queryClient.query({
-        ...detailQuery(http, work.review_case_id),
-        staleTime: 0,
-      })
-      field = coverField(detail.fields)
+  // Keep is the book's keep-current command. The command admits keep-current
+  // only beside another cover, so a switch with no other choice offers no
+  // Keep (human_decision.decision_actions).
+  const keep = () =>
+    recordFromCase((field) => (field ? coverCommand(field, 'keep_current', null) : null), 'kept')
+  // Put back is the book's accept of the original the switch replaced; an
+  // original no longer offered is stale.
+  const putBackOriginal = () =>
+    recordFromCase((field) => {
       const original = retainedCandidate(field)
-      if (!field || !original) throw new ApiError(409, 'stale')
-      await submitCover(
-        http,
-        queryClient,
-        work.review_case_id,
-        coverCommand(field, 'accept', { kind: 'cover', value: original.artifactId }),
-      )
-      onRecorded('put_back')
-    } catch (error) {
-      setFailure(failureOf(error, field))
-    } finally {
-      setKeeping(false)
-    }
+      return field && original
+        ? coverCommand(field, 'accept', { kind: 'cover', value: original.artifactId })
+        : null
+    }, 'put_back')
+  const reload = () => {
+    setFailure(null)
+    void http
+      .getCaseSuccessor(work.review_case_id)
+      .catch(() => null)
+      .then((successor) => {
+        void invalidateForegroundQueries(queryClient, { queryKey: ['covers'] })
+        if (successor && successor !== work.review_case_id) onReplaced(successor)
+      })
   }
   return (
     <li className="covers-switched-row">
-      <figure>
-        {switched.filled ? (
-          // A fill replaced nothing: its caption says so, once.
-          <span className="covers-image-missing" aria-hidden="true" />
-        ) : (
-          // A replacement always had a cover; with no preview to show, it is
-          // unavailable, never "No cover".
-          <CoverImage cover={switched.before} unreadable alt="Previous cover" />
-        )}
-        <figcaption>
-          Before
-          {switched.before ? <small>{size(switched.before)}</small> : null}
-          {switched.filled ? <small>No cover</small> : null}
-        </figcaption>
-      </figure>
-      <span className="covers-arrow" aria-hidden="true">
-        →
-      </span>
-      <figure>
-        <CoverImage cover={work.cover} unreadable={work.unreadable_cover} alt="Cover now" />
-        <figcaption>
-          Now
-          {work.cover ? <small>{size(work.cover)}</small> : null}
-        </figcaption>
-      </figure>
+      <SwitchedFrames work={work} switched={switched} />
       <div className="covers-switched-text">
         <h3 id={titleId}>
           <Link to="/library" search={bookSearch(work.review_case_id)} data-cover-index={index}>
@@ -524,74 +651,20 @@ function SwitchedRow({
             {reasonLine(work) ? <p>{reasonLine(work)}</p> : null}
           </>
         ) : null}
-        {failure?.kind === 'stale' ? (
-          <div className="covers-failure" role="alert">
-            <p>{staleCopy}</p>
-            <button
-              type="button"
-              onClick={() => {
-                setFailure(null)
-                void http
-                  .getCaseSuccessor(work.review_case_id)
-                  .catch(() => null)
-                  .then((successor) => {
-                    void invalidateForegroundQueries(queryClient, { queryKey: ['covers'] })
-                    if (successor && successor !== work.review_case_id) onReplaced(successor)
-                  })
-              }}
-            >
-              Reload
-            </button>
-          </div>
-        ) : failure ? (
-          <p className="covers-failure" role="alert">
-            {failure.text}
-          </p>
-        ) : refused && !done ? (
-          // Announced once if it arrives with a live update while the row is open.
-          <p className="covers-failure" role="status">
-            {putBackRefusedCopy}
-          </p>
-        ) : null}
+        <SwitchedFailure failure={failure} refused={refused && !done} onReload={reload} />
       </div>
-      <div className="covers-switched-actions">
-        {shown ? (
-          <>
-            <StatusPill tone="accent">{donePills[shown]}</StatusPill>
-            {work.choosable ? (
-              <button ref={change} type="button" aria-describedby={titleId} onClick={onOpen}>
-                Change
-              </button>
-            ) : null}
-          </>
-        ) : work.choosable ? (
-          <>
-            {/* Offered only while the book's comparison has the original: before
-                the book is prepared again after its switch, it cannot be chosen. */}
-            {!switched.put_back_offered || refused ? null : (
-              <button
-                type="button"
-                aria-describedby={titleId}
-                disabled={keeping}
-                onClick={() => void putBackOriginal()}
-              >
-                Put back
-              </button>
-            )}
-            <button
-              type="button"
-              aria-describedby={titleId}
-              disabled={keeping}
-              onClick={() => void keep()}
-            >
-              Keep
-            </button>
-            <button type="button" aria-describedby={titleId} aria-expanded={open} onClick={onOpen}>
-              Others
-            </button>
-          </>
-        ) : null}
-      </div>
+      <SwitchedActions
+        work={work}
+        titleId={titleId}
+        shown={shown}
+        offerPutBack={switched.put_back_offered && !refused}
+        busy={keeping}
+        open={open}
+        change={change}
+        onPutBack={() => void putBackOriginal()}
+        onKeep={() => void keep()}
+        onOpen={onOpen}
+      />
       {open ? (
         <div className="covers-row-comparison">
           <CoverComparison work={work} onRecorded={onRecorded} onReplaced={onReplaced} />
@@ -627,8 +700,10 @@ function QueueItem({
         <span>
           <strong>{work.title}</strong>
           <small>{byline(work)}</small>
-          <CoverStateText work={work} />
-          {done ? null : <FaultPill work={work} />}
+          {/* The 48 px frame is too small for the words, so the state is read here. */}
+          {work.cover ? null : (
+            <small>{work.unreadable_cover ? 'Image unavailable' : 'No cover'}</small>
+          )}
         </span>
         <StatusPill
           tone={
@@ -641,6 +716,8 @@ function QueueItem({
         >
           {done ? 'Reviewed' : groupLabels[work.group]}
         </StatusPill>
+        {/* Its own row under the title and status, so a long hold stays on one line. */}
+        {done ? null : <FaultPill work={work} className="covers-queue-hold" />}
       </button>
     </li>
   )

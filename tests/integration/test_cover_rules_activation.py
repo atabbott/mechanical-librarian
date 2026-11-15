@@ -13,6 +13,7 @@ import contextlib
 import hashlib
 import json
 import os
+import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -51,6 +52,7 @@ from mechanical_librarian.application.cover_consideration import (
 from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.cover_retention import CoverRetention
 from mechanical_librarian.application.field_effects import GuardedFieldApplication
+from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.operations import support_preparation_incidents
 from mechanical_librarian.application.owner_settings import OwnerSettingsOperations
 from mechanical_librarian.application.review_application import (
@@ -70,7 +72,7 @@ from mechanical_librarian.domain.cover_rules import (
     CoverMeasures,
 )
 from mechanical_librarian.domain.field_effect import FieldEffectOperation
-from mechanical_librarian.domain.human_decision import HumanDecision
+from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecisionError
 from mechanical_librarian.domain.metadata_policy import (
     DEFAULT_OPTIONS,
     OPTION_CATALOGUE,
@@ -78,7 +80,7 @@ from mechanical_librarian.domain.metadata_policy import (
     human_review_destinations,
     resolve_policy,
 )
-from mechanical_librarian.domain.metadata_report import MetadataReport
+from mechanical_librarian.domain.metadata_report import MetadataReport, TargetFieldState
 from mechanical_librarian.domain.owner_settings import (
     OWNER_SETTINGS_SCHEMA,
     OwnerSettingsDocument,
@@ -1177,3 +1179,234 @@ def test_an_unconfirmed_switch_needs_its_own_record(
         assert _stage(document)["outcome"] == "replace"
         assert _selections(prepared.repository) == []
         assert prepared.repository.pending_field_effect_decision_documents(1) == ()
+
+
+def _keep_current(
+    prepared: _Prepared, document: str, key: str, expected: str | None = None
+) -> None:
+    """Record the owner's keep of the current cover over this comparison."""
+    repository = prepared.repository
+    case = ReviewCase.create_from_data(
+        json.loads(repository.get_review_case(prepared.review_case_id))["case"]
+    )
+    proposal = next(row for row in case.proposals if row["destination"] == "cover")
+    _service(prepared)
+    repository.record_human_decision(
+        HumanDecision.create(
+            case,
+            proposal_id=str(proposal["proposal_id"]),
+            target_fingerprint=case.target_fingerprint,
+            destination="cover",
+            actor="owner",
+            outcome="keep_current",
+            selected_value=None,
+            idempotency_key=key,
+            occurred_at=11,
+        ),
+        cover_consideration_id=json.loads(document)["consideration_id"],
+        cover_confirmation={
+            "expected_selection_id": expected,
+            "confirm_unverified_match": False,
+        },
+    )
+
+
+_UNREAD_CURRENT = (
+    pytest.param({"abs_state": CoverSourceState.TIMEOUT}, id="transient"),
+    pytest.param({"abs_state": CoverSourceState.ABSENT}, id="404"),
+    pytest.param(
+        {
+            "abs_state": CoverSourceState.DECODE_FAILED,
+            "abs_digest": hashlib.sha256(_UNDECODABLE).hexdigest(),
+        },
+        id="decoder_refused",
+    ),
+)
+
+
+@pytest.mark.parametrize("unread", _UNREAD_CURRENT)
+def test_keeping_a_current_cover_that_could_not_be_read_is_recorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, unread: dict[str, Any]
+) -> None:
+    """#1865 (a): the keep names no candidate and binds the comparison.
+
+    Before, the keep of a current cover Mechanical Librarian could not read
+    was refused as an invalid choice, though the page offered it.
+    """
+    for record in (
+        "MEASURED_REPLACEMENT_QUALIFICATION_SHA256",
+        "UNCONFIRMED_REPLACEMENT_QUALIFICATION_SHA256",
+    ):
+        monkeypatch.setattr(cover_qualification_policy, record, None)
+    with _prepared(tmp_path, readable_current=False, **unread) as prepared:
+        repository = prepared.repository
+        document = repository.current_cover_consideration_document(
+            prepared.review_case_id
+        )
+        assert document is not None
+        value = json.loads(document)
+        assert value["incumbent"]["state"] == "unavailable"
+        assert not any(row["incumbent"] for row in value["candidates"])
+        _keep_current(prepared, document, "synthetic-owner-keeps-unread-0001")
+
+        (selection,) = _selections(repository)
+        assert selection["kind"] == "owner"
+        assert {
+            key: selection[key]
+            for key in (
+                "candidate_artifact_id",
+                "candidate_kind",
+                "rank_key",
+                "observed_identity",
+                "candidate_reference",
+                "original_sha256",
+                "preview_sha256",
+                "retained_plan_id",
+            )
+        } == dict.fromkeys(
+            (
+                "candidate_artifact_id",
+                "candidate_kind",
+                "rank_key",
+                "observed_identity",
+                "candidate_reference",
+                "original_sha256",
+                "preview_sha256",
+                "retained_plan_id",
+            )
+        )
+        assert selection["consideration_id"] == value["consideration_id"]
+        assert HumanDecision.from_json(selection["decision_document"]).outcome == (
+            "keep_current"
+        )
+        assert repository._connection.execute(
+            "SELECT kind FROM cover_consideration_events "
+            "WHERE consideration_id=? AND kind IN "
+            "('selected','kept_incumbent','no_action')",
+            (value["consideration_id"],),
+        ).fetchall() == [("kept_incumbent",)]
+        kept = cast("dict[str, Any]", cover_page(repository, "kept", None, None))
+        assert [item["review_case_id"] for item in kept["items"]] == [
+            prepared.review_case_id
+        ]
+    # Reopening runs the startup validation over the new row form (S3).
+    reopened = open_repository(tmp_path / "reports.sqlite")
+    try:
+        assert [row["kind"] for row in _selections(reopened)] == ["owner"]
+    finally:
+        reopened.close()
+
+
+@pytest.mark.parametrize("kept", (True, False), ids=("kept", "control"))
+def test_a_kept_unread_cover_is_never_switched_automatically(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kept: bool
+) -> None:
+    """#1865 (a): the keep stops the switch a decoder refusal would admit.
+
+    The control, with no keep, shows the unconfirmed record admits the switch
+    when the work is prepared again (ADR-0094 S4).
+    """
+    for record in (
+        "MEASURED_REPLACEMENT_QUALIFICATION_SHA256",
+        "UNCONFIRMED_REPLACEMENT_QUALIFICATION_SHA256",
+    ):
+        monkeypatch.setattr(cover_qualification_policy, record, None)
+    with _prepared(
+        tmp_path,
+        readable_current=False,
+        abs_state=CoverSourceState.DECODE_FAILED,
+        abs_digest=hashlib.sha256(_UNDECODABLE).hexdigest(),
+    ) as prepared:
+        repository = prepared.repository
+        first = repository.current_cover_consideration_document(prepared.review_case_id)
+        assert first is not None
+        assert _selections(repository) == []
+        if kept:
+            _keep_current(prepared, first, "synthetic-owner-keeps-unread-0002")
+        monkeypatch.setattr(
+            cover_qualification_policy,
+            "UNCONFIRMED_REPLACEMENT_QUALIFICATION_SHA256",
+            SYNTHETIC_UNCONFIRMED_RECORD,
+        )
+        service = _service(prepared)
+        service.update_policy(CoverPolicy(prefer_edition=True))
+        after = _reprepare(service, prepared)
+
+        assert (
+            json.loads(after)["consideration_id"]
+            != json.loads(first)["consideration_id"]
+        )
+        assert _stage(after)["outcome"] == "replace"
+        kinds = [row["kind"] for row in _selections(repository)]
+        assert kinds == (["owner"] if kept else ["automatic"])
+
+
+def test_a_keep_naming_no_cover_is_refused_unless_the_current_cover_was_unread(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1865 S2: the wider row form holds only over an unread current cover.
+
+    A keep over an empty cover is refused when recorded; a stored keep that
+    names no candidate over a comparison holding the current cover is refused
+    at startup.
+    """
+    for record in (
+        "MEASURED_REPLACEMENT_QUALIFICATION_SHA256",
+        "UNCONFIRMED_REPLACEMENT_QUALIFICATION_SHA256",
+    ):
+        monkeypatch.setattr(cover_qualification_policy, record, None)
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    with _prepared(
+        empty, readable_current=False, target_state=TargetFieldState.EMPTY
+    ) as prepared:
+        document = prepared.repository.current_cover_consideration_document(
+            prepared.review_case_id
+        )
+        assert document is not None
+        assert json.loads(document)["incumbent"]["state"] == "absent"
+        # The empty cover was filled automatically; the keep answers that.
+        (filled,) = _selections(prepared.repository)
+        assert filled["kind"] == "automatic"
+        with pytest.raises(HumanDecisionError, match="^invalid_choice$"):
+            _keep_current(
+                prepared,
+                document,
+                "synthetic-owner-keeps-empty-0001",
+                filled["selection_id"],
+            )
+        assert _selections(prepared.repository) == [filled]
+    readable = tmp_path / "readable"
+    readable.mkdir()
+    with _prepared(readable) as prepared:
+        document = prepared.repository.current_cover_consideration_document(
+            prepared.review_case_id
+        )
+        assert document is not None
+        value = json.loads(document)
+        assert value["incumbent"]["state"] == "available"
+        _keep_current(prepared, document, "synthetic-owner-keeps-read-0001")
+        (selection,) = _selections(prepared.repository)
+        assert selection["candidate_reference"] is not None
+    database = readable / "reports.sqlite"
+    hostile = sqlite3.connect(database)
+    hostile.execute("DROP TRIGGER cover_selection_authorities_no_update")
+    for key in (
+        "candidate_artifact_id",
+        "rank_key",
+        "observed_identity",
+        "candidate_reference",
+        "original_sha256",
+        "preview_sha256",
+    ):
+        selection[key] = None
+    hostile.execute(
+        "UPDATE cover_selection_authorities SET document=? WHERE selection_id=?",
+        (_canonical_json(selection), selection["selection_id"]),
+    )
+    hostile.commit()
+    hostile.close()
+    with pytest.raises(
+        MetadataReportError, match="^database is unavailable or incompatible$"
+    ):
+        open_repository(database)

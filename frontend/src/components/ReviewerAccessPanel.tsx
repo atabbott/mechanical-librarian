@@ -354,7 +354,7 @@ function OpenRouterReviewer({
     <div className="settings-field-row">
       <div>
         <h4>OpenRouter</h4>
-        <p>A vision model reviews each book’s covers.</p>
+        <p>A vision model reviews each work’s covers.</p>
         <p>{view.data_use_caveat}</p>
       </div>
       <div className="settings-field-control">

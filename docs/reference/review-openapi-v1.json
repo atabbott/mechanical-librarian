@@ -2291,6 +2291,7 @@
                 "enum": [
                   "asked_again",
                   "asked_again_matching",
+                  "asked_again_matching_written",
                   "held_back",
                   "waiting_for_check"
                 ],
@@ -5518,6 +5519,7 @@
               "proposal",
               "choice",
               "kept",
+              "chosen",
               "auto",
               "none"
             ],

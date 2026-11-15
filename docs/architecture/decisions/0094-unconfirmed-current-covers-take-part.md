@@ -85,6 +85,10 @@ A field whose current bytes cannot be retained is not switched automatically.
 
 Owner-final decisions and earlier owner cover decisions made in the product
 are never overridden, and candidates come only from ADR-0093's eligible set.
+The owner can keep a current cover Mechanical Librarian could not read in all
+three cases (a transient read, a 404, decoder-refused bytes): the keep names
+no candidate, so an unreadable cover the owner kept is never switched
+automatically, and the keep clears a standing suggestion (#1865).
 
 **Shadow first.** Until the owner-run qualification held by #1418 passes (the
 cover election qualification's real cohorts re-run with the new eligible set
