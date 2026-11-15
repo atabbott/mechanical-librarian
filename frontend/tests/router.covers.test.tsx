@@ -2126,6 +2126,29 @@ describe('Covers → Taste profile edits (#1372 PR 2)', () => {
     expect(screen.getByText('No answer came back. Check whether the rule was saved.')).toBeVisible()
   })
 
+  it('takes no typing while a save is pending', async () => {
+    const user = userEvent.setup()
+    let answer: (view: TasteProfileView) => void = () => undefined
+    const http = editHttp(
+      owned,
+      () =>
+        new Promise<TasteProfileView>((resolve) => {
+          answer = resolve
+        }),
+    )
+    renderRoute(tasteRoute, http)
+    await user.click(await screen.findByRole('button', { name: 'Edit rule 1' }))
+    const input = screen.getByRole('textbox', { name: 'Rule 1' })
+    await user.type(input, ' now')
+    await user.click(screen.getByRole('button', { name: 'Save rule' }))
+    await waitFor(() => expect(input).toHaveAttribute('readonly'))
+    await user.type(input, ' more')
+    expect(input).toHaveValue('Bold illustrated art. now')
+    await act(async () => {
+      answer(owned)
+    })
+  })
+
   it('takes a 400-character rule whose characters need two UTF-16 units', async () => {
     const user = userEvent.setup()
     const text = 'x'.repeat(399) + '😀'

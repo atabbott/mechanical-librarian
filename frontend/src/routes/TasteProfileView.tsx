@@ -294,6 +294,8 @@ function RuleForm({
         ref={input}
         id={id}
         value={draft}
+        // What is typed during a save would not be in it, so it waits.
+        readOnly={pending}
         autoComplete="off"
         aria-describedby={`${id}-count`}
         onChange={(event) => {
