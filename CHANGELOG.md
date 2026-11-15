@@ -101,11 +101,14 @@ brackets are GitHub issues.
   the book's authors and names another still does not (#1355).
 - **Clean rebuild required.** Covers has a Taste profile tab. Once you have
   chosen 25 covers, an OpenRouter vision model you pick in Settings → Reviewer
-  writes rules about the covers you choose and pass over. The profile is shown
-  read-only and changes nothing yet. `review.cover_taste_build_daily_requests`
-  (default 8) caps its requests a day (#1372).
+  writes rules about the covers you choose and pass over. The profile changes
+  nothing yet. `review.cover_taste_build_daily_requests` (default 8) caps its
+  requests a day (#1372).
 - **Clean rebuild required.** Codex can write the taste profile too: choose it
   or an OpenRouter model in Settings → Reviewer › Taste profile (#1372).
+- **Clean rebuild required.** You can edit, add and remove taste profile
+  rules. Your rules stay as you wrote them through rebuilds, and rules you
+  removed are not written again (#1372).
 - **Clean rebuild required.** Choosing, putting back or automatically
   switching a cover over one Audiobookshelf already holds no longer fails
   before it writes. The write binds the current cover's exact bytes, even when

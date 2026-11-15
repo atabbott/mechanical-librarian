@@ -26,8 +26,16 @@ from mechanical_librarian.domain.cover_taste import (
     TASTE_MIN_ARTS,
     TASTE_REBUILD_DECISIONS,
     TASTE_SCHEDULED_BUILDS_PER_DAY,
+    CoverTasteError,
     TasteBuildFailure,
+    TasteEditAction,
     TasteProfile,
+    TasteRule,
+    TasteSection,
+    apply_taste_edit,
+    merge_taste_rebuild,
+    taste_budget,
+    taste_removed_valid,
 )
 from mechanical_librarian.domain.metadata_report import AUDIO_FILE_FORMATS
 
@@ -78,24 +86,63 @@ def _day(now: int) -> int:
     return now // _DAY_SECONDS
 
 
+# The keys a version's document closes over, and those an edit version
+# copies from its predecessor so "Built" and "Decisions" stay the build's.
+_VERSION_KEYS = frozenset(
+    {
+        "build_id",
+        "built_at",
+        "input",
+        "left_out",
+        "model",
+        "removed",
+        "rules",
+        "schema_version",
+        "source",
+        "version",
+    }
+)
+_INHERITED = ("build_id", "built_at", "input", "left_out", "model")
+
+
 def validate_cover_taste_versions(connection: sqlite3.Connection) -> None:
-    """Refuse a stored version that a build could not have written."""
-    for version, document in connection.execute(
-        "SELECT version,document FROM cover_taste_profile_versions ORDER BY version"
+    """Refuse a stored version that no build or owner edit could have written."""
+    previous: dict[str, object] | None = None
+    for version, build_id, created_at, document in connection.execute(
+        "SELECT version,build_id,created_at,document "
+        "FROM cover_taste_profile_versions ORDER BY version"
     ):
         value = json.loads(document)
         if (
             type(value) is not dict
-            or set(value)
-            != {"build_id", "input", "model", "rules", "schema_version", "version"}
+            or set(value) != _VERSION_KEYS
             or value["schema_version"] != COVER_TASTE_PROFILE_SCHEMA
             or value["version"] != version
+            or value["source"] not in {"build", "edit"}
             or type(value["input"]) is not dict
             or set(value["input"]) != _RECORD_KEYS
+            or type(value["left_out"]) is not int
+            or value["left_out"] < 0
+            or type(value["built_at"]) is not int
+            or type(value["removed"]) is not list
+            or not taste_removed_valid(value["removed"])
             or canonical_json(value) != document
         ):
             raise ValueError("taste profile version is invalid")
-        TasteProfile.from_rules(value["rules"])
+        profile = TasteProfile.from_rules(value["rules"])
+        if value["source"] == "build":
+            # A build numbers its rules 1..N in section order (S2, S7).
+            if (
+                value["build_id"] != build_id
+                or value["built_at"] != created_at
+                or [rule.number for rule in profile.rules]
+                != list(range(1, len(profile.rules) + 1))
+            ):
+                raise ValueError("taste profile version is invalid")
+        elif previous is None or any(value[key] != previous[key] for key in _INHERITED):
+            # An edit's base is always version - 1, never a first version.
+            raise ValueError("taste profile version is invalid")
+        previous = value
 
 
 class SQLiteCoverTasteRepository(ConnectionScoped):
@@ -173,8 +220,14 @@ class SQLiteCoverTasteRepository(ConnectionScoped):
                 "SELECT count(*) FROM cover_taste_builds WHERE trigger='cadence' AND day=?",
                 (_day(now),),
             ).fetchone()[0]
-            if (last is not None and last[0] in {"requested", "running"}) or (
-                scheduled >= TASTE_SCHEDULED_BUILDS_PER_DAY
+            # S9: kept rules that leave no rule or word to write make a
+            # cadence build pointless, though it would still cost a request.
+            budget = taste_budget(tuple(rule.text for rule in self._newest()[1]))
+            if (
+                (last is not None and last[0] in {"requested", "running"})
+                or scheduled >= TASTE_SCHEDULED_BUILDS_PER_DAY
+                or budget["rules"] <= 0
+                or budget["words"] <= 0
             ):
                 transaction.commit()
                 return False
@@ -300,17 +353,75 @@ class SQLiteCoverTasteRepository(ConnectionScoped):
             (_TASK, _day(now)),
         )
 
+    def _newest(
+        self,
+    ) -> tuple[dict[str, object] | None, tuple[TasteRule, ...], tuple[str, ...]]:
+        """The newest version's document, its kept rules and its removed texts."""
+        row = self._connection.execute(
+            "SELECT document FROM cover_taste_profile_versions "
+            "ORDER BY version DESC LIMIT 1"
+        ).fetchone()
+        if row is None:
+            return None, (), ()
+        document = cast("dict[str, object]", json.loads(row[0]))
+        return (
+            document,
+            TasteProfile.from_rules(document["rules"]).kept(),
+            tuple(cast("list[str]", document["removed"])),
+        )
+
+    def _append(
+        self,
+        build_id: str | None,
+        now: int,
+        document: dict[str, object],
+    ) -> int:
+        version = cast(
+            int,
+            self._connection.execute(
+                "SELECT coalesce(max(version),0) FROM cover_taste_profile_versions"
+            ).fetchone()[0]
+            + 1,
+        )
+        self._connection.execute(
+            "INSERT INTO cover_taste_profile_versions VALUES(?,?,?,?)",
+            (
+                version,
+                build_id,
+                now,
+                canonical_json(
+                    {
+                        **document,
+                        "schema_version": COVER_TASTE_PROFILE_SCHEMA,
+                        "version": version,
+                    }
+                ),
+            ),
+        )
+        return version
+
+    @local_operation
+    def kept(self) -> tuple[tuple[TasteRule, ...], tuple[str, ...]]:
+        """The newest version's owner and edited rules and its removed texts,
+        which a build sends as `kept` and `left_out` (S8)."""
+        _document, kept, removed = self._newest()
+        return kept, removed
+
     @local_operation
     def succeed(
         self,
         build_id: str,
         now: int,
-        profile: TasteProfile,
+        built: TasteProfile,
         record: dict[str, object],
         *,
+        failure: TasteBuildFailure,
         stop_day: bool = False,
-    ) -> int | None:
-        """Append the next version for a running build; None when it was not running."""
+    ) -> int | TasteBuildFailure | None:
+        """Append the next version for a running build, merged against the
+        newest version as it stands now, since an owner edit may have landed
+        while the build ran (S7). A merge over a bound records `failure` and
+        returns it; None when the build was not running."""
         if set(record) != _RECORD_KEYS:
             raise ValueError("taste input record is invalid")
         transaction = self._transaction("taste_succeed")
@@ -323,29 +434,38 @@ class SQLiteCoverTasteRepository(ConnectionScoped):
             if row is None:
                 transaction.commit()
                 return None
-            version = (
+            document, _kept, removed = self._newest()
+            try:
+                profile, left_out = merge_taste_rebuild(
+                    None
+                    if document is None
+                    else TasteProfile.from_rules(document["rules"]),
+                    removed,
+                    built,
+                )
+            except CoverTasteError:
                 self._connection.execute(
-                    "SELECT coalesce(max(version),0) FROM cover_taste_profile_versions"
-                ).fetchone()[0]
-                + 1
-            )
-            self._connection.execute(
-                "INSERT INTO cover_taste_profile_versions VALUES(?,?,?,?)",
-                (
-                    version,
-                    build_id,
-                    now,
-                    canonical_json(
-                        {
-                            "build_id": build_id,
-                            "input": record,
-                            "model": row[0],
-                            "rules": profile.rules_data(),
-                            "schema_version": COVER_TASTE_PROFILE_SCHEMA,
-                            "version": version,
-                        }
-                    ),
-                ),
+                    "UPDATE cover_taste_builds SET state='failed',failure=?,"
+                    "updated_at=max(?,updated_at) WHERE build_id=?",
+                    (failure, now, build_id),
+                )
+                if stop_day:
+                    self._stop_day(now)
+                transaction.commit()
+                return failure
+            version = self._append(
+                build_id,
+                now,
+                {
+                    "build_id": build_id,
+                    "built_at": now,
+                    "input": record,
+                    "left_out": left_out,
+                    "model": row[0],
+                    "removed": list(removed),
+                    "rules": profile.rules_data(),
+                    "source": "build",
+                },
             )
             self._connection.execute(
                 "UPDATE cover_taste_builds SET state='succeeded',"
@@ -355,7 +475,51 @@ class SQLiteCoverTasteRepository(ConnectionScoped):
             if stop_day:
                 self._stop_day(now)
             transaction.commit()
-            return cast(int, version)
+            return version
+        except BaseException:
+            transaction.rollback()
+            raise
+
+    @local_operation
+    def edit(
+        self,
+        version: int,
+        action: TasteEditAction,
+        number: int | None,
+        section: TasteSection | None,
+        text: str | None,
+        now: int,
+    ) -> int | None:
+        """Apply one owner edit to the newest version, named by `version`, as
+        the next version; None when the text is unchanged. Raises
+        `TasteEditError` with its closed code, writing nothing (S10)."""
+        transaction = self._transaction("taste_edit")
+        try:
+            transaction.begin()
+            document, _kept, removed = self._newest()
+            current = (
+                None
+                if document is None or document["version"] != version
+                else TasteProfile.from_rules(document["rules"])
+            )
+            edited = apply_taste_edit(current, removed, action, number, section, text)
+            if edited is None:
+                transaction.commit()
+                return None
+            assert document is not None
+            profile, listed = edited
+            written = self._append(
+                None,
+                now,
+                {
+                    **{key: document[key] for key in _INHERITED},
+                    "removed": list(listed),
+                    "rules": profile.rules_data(),
+                    "source": "edit",
+                },
+            )
+            transaction.commit()
+            return written
         except BaseException:
             transaction.rollback()
             raise

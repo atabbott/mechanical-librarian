@@ -28,7 +28,10 @@ from mechanical_librarian.application.reviewer_access import (
 from mechanical_librarian.domain.cover_taste import (
     CoverTasteError,
     TasteBuildFailure,
+    TasteEditAction,
     TasteProfile,
+    TasteRule,
+    TasteSection,
 )
 
 # The cadence reads the eligible count, so it runs at most once a minute even
@@ -62,10 +65,23 @@ class CoverTasteRepository(Protocol):
         self,
         build_id: str,
         now: int,
-        profile: TasteProfile,
+        built: TasteProfile,
         record: dict[str, object],
         *,
+        failure: TasteBuildFailure,
         stop_day: bool = False,
+    ) -> int | TasteBuildFailure | None: ...
+
+    def kept(self) -> tuple[tuple[TasteRule, ...], tuple[str, ...]]: ...
+
+    def edit(
+        self,
+        version: int,
+        action: TasteEditAction,
+        number: int | None,
+        section: TasteSection | None,
+        text: str | None,
+        now: int,
     ) -> int | None: ...
 
     def decisions(self) -> tuple[TasteDecisionSource, ...]: ...
@@ -146,6 +162,17 @@ class CoverTasteBuildService:
         ):
             raise CoverTasteRetryError("taste build is not retryable")
 
+    def edit(
+        self,
+        version: int,
+        action: TasteEditAction,
+        number: int | None,
+        section: TasteSection | None,
+        text: str | None,
+    ) -> None:
+        """Save one owner edit as a new version at once; raises `TasteEditError`."""
+        self._repository().edit(version, action, number, section, text, self._clock())
+
     def wake(self, now: int, changed: Callable[[], object] = lambda: None) -> bool:
         """Schedule and run due builds; only the preparation runner calls it.
 
@@ -200,7 +227,10 @@ class CoverTasteBuildService:
         failure: TasteBuildFailure = "unavailable"
         stop_day = False
         try:
-            inputs = assemble_taste_inputs(repository.decisions(), self._read_preview)
+            kept, removed = repository.kept()
+            inputs = assemble_taste_inputs(
+                repository.decisions(), self._read_preview, kept=kept, left_out=removed
+            )
             request = (
                 None
                 if inputs is None
@@ -245,11 +275,15 @@ class CoverTasteBuildService:
                     failure = "invalid_output"
                 repository.fail(build_id, self._clock(), failure, stop_day=stop_day)
                 return
+            # The merge with the owner's rules happens as the version is
+            # written; one over a bound ends the build as the unusable reply
+            # above would (S7).
             repository.succeed(
                 build_id,
                 self._clock(),
                 admitted,
                 inputs.record,
+                failure="invalid_output" if reply.usage_reported else "unknown_charge",
                 stop_day=stop_day,
             )
         except TasteContractError:

@@ -47,6 +47,7 @@ from mechanical_librarian.application.reviewer_contracts import (
     ReviewerProvisioningStatus,
 )
 from mechanical_librarian.application.reviewer_host import ReviewerHostStatus
+from mechanical_librarian.interfaces.web.app import REVIEW_TASTE_PROFILE_SCHEMA
 from tests.support.cover_taste import record_owner_cover_decisions
 from tests.unit.review_app_fixture import (
     TEST_REACT_BUILD_IDENTITY,
@@ -187,7 +188,7 @@ def _built(
         repository.close()
 
 
-def test_a_profile_is_written_from_owner_choices_and_shown_read_only(tmp_path) -> None:
+def test_a_profile_is_written_from_owner_choices_and_shown(tmp_path) -> None:
     with _built(tmp_path) as built:
         before = built.repository._connection.execute(
             "SELECT count(*) FROM cover_selection_authorities"
@@ -234,16 +235,18 @@ def test_a_profile_is_written_from_owner_choices_and_shown_read_only(tmp_path) -
             assert response.status_code == 200
             assert "no-store" in response.headers["cache-control"]
             body = response.json()
-            assert body["schema_version"] == "review-taste-profile-v1"
+            assert body["schema_version"] == REVIEW_TASTE_PROFILE_SCHEMA
             assert body["chosen"] == 25
             assert body["profile"]["version"] == 1
+            assert body["profile"]["kind"] == "built"
             assert body["profile"]["rules"][0] == {
                 "number": 1,
                 "section": "drawn_to",
                 "text": SENTINEL,
+                "provenance": "model",
             }
             assert body["versions"] == [
-                {"version": 1, "built_at": NOW, "decisions": 25}
+                {"version": 1, "kind": "built", "created_at": NOW, "decisions": 25}
             ]
 
 
@@ -415,6 +418,131 @@ def test_profile_content_never_reaches_operational_output(
         for reference in references:
             assert reference not in text, name
         assert "data:image" not in text, name
+    assert '"unavailable"' in failures
+
+
+OWNER_TEXT = "Drawn to OWNERQUILL painted art."
+REPEATED = "Prefers a sharper copy of the same art."
+
+
+def _owner_edits(built: _Built) -> None:
+    """Edit rule 1, remove rule 2 and add a rule, each over HTTP."""
+    edits: tuple[dict[str, object], ...] = (
+        {"action": "edit", "number": 1, "text": OWNER_TEXT},
+        {"action": "remove", "number": 2},
+        {"action": "add", "section": "keep_or_switch", "text": "Keeps sharp art."},
+    )
+    with _client(built) as (client, headers):
+        for version, body in enumerate(edits, start=1):
+            response = client.post(
+                "/api/v1/covers/taste/rules",
+                json={"version": version, **body},
+                headers=headers,
+            )
+            assert response.status_code == 200, response.text
+        stale = client.post(
+            "/api/v1/covers/taste/rules",
+            json={"version": 1, "action": "remove", "number": 1},
+            headers=headers,
+        )
+        assert (stale.status_code, stale.json()["error"]["code"]) == (409, "stale")
+        assert OWNER_TEXT not in stale.text
+
+
+def test_owner_edits_survive_a_rebuild_and_removed_rules_stay_out(tmp_path) -> None:
+    """#1372 PR 2 E13: the builder is sent the kept rules and removed texts,
+    and the rebuild keeps the owner's rules word for word and leaves out the
+    model's repeats of a removed or replaced text."""
+    with _built(tmp_path) as built:
+        built.service.wake(NOW)
+        _owner_edits(built)
+        record_owner_cover_decisions(tmp_path, built.repository, 10, start=25)
+        built.openrouter.clear()
+        built.service.wake(NOW + 120)
+        [client] = built.openrouter
+        [request] = client.requests
+        packet = json.loads(request.packet_document)
+        assert packet["kept"] == [
+            {"section": "drawn_to", "text": OWNER_TEXT},
+            {"section": "keep_or_switch", "text": "Keeps sharp art."},
+        ]
+        assert packet["left_out"] == [REPEATED, SENTINEL]
+        assert packet["budget"] == {"characters": 8_144, "rules": 38, "words": 1_192}
+        with _client(built) as (http, headers):
+            body = http.get("/api/v1/covers/taste", headers=headers).json()
+        assert body["profile"]["kind"] == "built"
+        assert body["profile"]["rules"] == [
+            {
+                "number": 1,
+                "section": "drawn_to",
+                "text": OWNER_TEXT,
+                "provenance": "edited",
+            },
+            {
+                "number": 2,
+                "section": "keep_or_switch",
+                "text": "Keeps sharp art.",
+                "provenance": "owner",
+            },
+        ]
+        assert [(row["version"], row["kind"]) for row in body["versions"]] == [
+            (5, "built"),
+            (4, "edited"),
+            (3, "edited"),
+            (2, "edited"),
+            (1, "built"),
+        ]
+        versions = cast(
+            "list[tuple[int, int, dict[str, Any]]]", built.service.read()["versions"]
+        )
+        # The newest version is first.
+        document = versions[0][2]
+        assert document["left_out"] == 2
+
+
+def test_owner_rule_text_never_reaches_operational_output(
+    tmp_path, capsys: pytest.CaptureFixture[str], caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    with _built(tmp_path) as built:
+        built.service.wake(NOW)
+        _owner_edits(built)
+        built.openrouter.clear()
+        built.openrouter.append(
+            _TasteOpenRouter("k", MODEL, answer=RuntimeError(f"echo {OWNER_TEXT}"))
+        )
+        record_owner_cover_decisions(tmp_path, built.repository, 10, start=25)
+        built.service.wake(NOW + 120)
+        bundle = (
+            SupportBundle(
+                (
+                    (
+                        "operational_incidents",
+                        lambda: support_preparation_incidents(
+                            built.repository.operational_snapshot()
+                        ),
+                    ),
+                )
+            )
+            .export()
+            .decode()
+        )
+        failures = json.dumps(
+            built.repository._connection.execute(
+                "SELECT * FROM cover_taste_builds"
+            ).fetchall()
+        )
+        status = json.dumps(built.repository.operational_snapshot(), default=str)
+    captured = capsys.readouterr()
+    for name, text in {
+        "stdout": captured.out,
+        "stderr": captured.err,
+        "log": caplog.text,
+        "support bundle": bundle,
+        "failure history": failures,
+        "status": status,
+    }.items():
+        assert "OWNERQUILL" not in text, name
     assert '"unavailable"' in failures
 
 

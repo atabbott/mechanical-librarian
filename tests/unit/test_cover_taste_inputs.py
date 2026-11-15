@@ -6,8 +6,12 @@ import hashlib
 import json
 from dataclasses import replace
 
+import pytest
+
 from mechanical_librarian.application.cover_taste_contract import (
     admit_taste_build_request,
+    taste_image_request_bytes,
+    taste_request_frame_bytes,
 )
 from mechanical_librarian.application.cover_taste_inputs import (
     TasteCandidateSource,
@@ -15,6 +19,7 @@ from mechanical_librarian.application.cover_taste_inputs import (
     assemble_taste_inputs,
     taste_previews,
 )
+from mechanical_librarian.domain.cover_taste import TasteRule
 from tests.support.cover_taste import canonical, stored_preview
 
 NONCE = b"\x00" * 32
@@ -89,12 +94,14 @@ def test_inputs_seal_closed_facts_only_and_admit() -> None:
         )
         for index in range(3)
     ]
-    inputs = assemble_taste_inputs(decisions, _read, nonce=NONCE)
+    inputs = assemble_taste_inputs(decisions, _read, kept=(), left_out=(), nonce=NONCE)
     assert inputs is not None
     request = admit_taste_build_request(inputs.packet_document, inputs.images)
     assert len(request.images) == 6
     packet = json.loads(inputs.packet_document)
-    assert set(packet) == {"decisions", "schema_version"}
+    assert set(packet) == {"budget", "decisions", "kept", "left_out", "schema_version"}
+    assert (packet["kept"], packet["left_out"]) == ([], [])
+    assert packet["budget"] == {"characters": 8_192, "rules": 40, "words": 1_200}
     for decision in packet["decisions"]:
         assert set(decision) == {"images", "medium"}
         for image in decision["images"]:
@@ -131,7 +138,7 @@ def test_same_art_shares_a_group_letter_and_shape_is_stated() -> None:
             _candidate(3, art="y", wrong_shape=True),
         ),
     )
-    inputs = assemble_taste_inputs([decision], _read, nonce=NONCE)
+    inputs = assemble_taste_inputs([decision], _read, kept=(), left_out=(), nonce=NONCE)
     assert inputs is not None
     images = json.loads(inputs.packet_document)["decisions"][0]["images"]
     assert [
@@ -160,18 +167,25 @@ def test_a_decision_whose_preview_is_missing_or_changed_is_dropped_and_counted()
             raise OSError("missing")
         return _STORE[digest]
 
-    inputs = assemble_taste_inputs([good, missing, changed], read, nonce=NONCE)
+    inputs = assemble_taste_inputs(
+        [good, missing, changed], read, kept=(), left_out=(), nonce=NONCE
+    )
     assert inputs is not None
     assert inputs.record["included"] == 1
     assert inputs.record["dropped"] == 2
     assert inputs.record["truncated"] is True
-    assert assemble_taste_inputs([missing], read, nonce=NONCE) is None
+    assert (
+        assemble_taste_inputs([missing], read, kept=(), left_out=(), nonce=NONCE)
+        is None
+    )
 
 
 def test_120_decisions_cap_at_50_in_a_stable_sample() -> None:
     decisions = [_decision(index, (_candidate(index),)) for index in range(120)]
-    first = assemble_taste_inputs(decisions, _read, nonce=NONCE)
-    again = assemble_taste_inputs(list(reversed(decisions)), _read, nonce=NONCE)
+    first = assemble_taste_inputs(decisions, _read, kept=(), left_out=(), nonce=NONCE)
+    again = assemble_taste_inputs(
+        list(reversed(decisions)), _read, kept=(), left_out=(), nonce=NONCE
+    )
     assert first is not None and again is not None
     assert first.record["included"] == 50
     assert first.record["eligible"] == 120
@@ -185,7 +199,7 @@ def test_image_cap_truncates_before_100_images() -> None:
         _decision(index, tuple(_candidate(index * 10 + part) for part in range(4)))
         for index in range(30)
     ]
-    inputs = assemble_taste_inputs(decisions, _read, nonce=NONCE)
+    inputs = assemble_taste_inputs(decisions, _read, kept=(), left_out=(), nonce=NONCE)
     assert inputs is not None
     assert inputs.record["images"] == 100
     assert inputs.record["included"] == 25
@@ -194,8 +208,55 @@ def test_image_cap_truncates_before_100_images() -> None:
 
 def test_references_are_fresh_per_build() -> None:
     decisions = [_decision(1, (_candidate(1),))]
-    one = assemble_taste_inputs(decisions, _read)
-    two = assemble_taste_inputs(decisions, _read)
+    one = assemble_taste_inputs(decisions, _read, kept=(), left_out=())
+    two = assemble_taste_inputs(decisions, _read, kept=(), left_out=())
     assert one is not None and two is not None
     assert one.images[0].reference != two.images[0].reference
     assert one.record["input_sha256"] == two.record["input_sha256"]
+
+
+KEPT = (
+    TasteRule(2, "drawn_to", "Calm type.", "owner"),
+    TasteRule(5, "avoid", "Busy type!", "edited"),
+)
+
+
+def test_the_packet_carries_kept_rules_removed_texts_and_their_budget() -> None:
+    decisions = [_decision(1, (_candidate(1),))]
+    inputs = assemble_taste_inputs(
+        decisions, _read, kept=KEPT, left_out=("Glossy finish.",), nonce=NONCE
+    )
+    assert inputs is not None
+    packet = json.loads(inputs.packet_document)
+    assert packet["kept"] == [
+        {"section": "drawn_to", "text": "Calm type."},
+        {"section": "avoid", "text": "Busy type!"},
+    ]
+    assert packet["left_out"] == ["Glossy finish."]
+    assert packet["budget"] == {"characters": 8_172, "rules": 38, "words": 1_196}
+    assert admit_taste_build_request(inputs.packet_document, inputs.images)
+
+
+def test_the_byte_budget_starts_from_the_kept_rules_and_removed_texts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decisions = [_decision(1, (_candidate(1),))]
+    alone = assemble_taste_inputs(decisions, _read, kept=(), left_out=(), nonce=NONCE)
+    assert alone is not None
+    removed = tuple(f"Removed rule {index} " + "é" * 300 for index in range(40))
+    # Exactly room for the decision with no owner rules, and less with them.
+    monkeypatch.setattr(
+        "mechanical_librarian.application.cover_taste_inputs.TASTE_MAX_REQUEST_BYTES",
+        taste_request_frame_bytes(alone.packet_document)
+        + 64
+        + 64
+        + 192
+        + taste_image_request_bytes(alone.images[0].jpeg),
+    )
+    assert assemble_taste_inputs(decisions, _read, kept=(), left_out=(), nonce=NONCE)
+    assert (
+        assemble_taste_inputs(
+            decisions, _read, kept=KEPT, left_out=removed, nonce=NONCE
+        )
+        is None
+    )

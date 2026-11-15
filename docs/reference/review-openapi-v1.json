@@ -12133,7 +12133,7 @@
       },
       "_TasteProfileResponse": {
         "additionalProperties": false,
-        "description": "Covers → Taste profile, read-only (#1372). It never carries a path,\ntitle, reference or anything the model saw.",
+        "description": "Covers → Taste profile (#1372). It never carries a path, title,\nreference or anything the model saw.",
         "properties": {
           "build": {
             "anyOf": [
@@ -12176,7 +12176,7 @@
             "type": "integer"
           },
           "schema_version": {
-            "const": "review-taste-profile-v1",
+            "const": "review-taste-profile-v2",
             "title": "Schema Version",
             "type": "string"
           },
@@ -12216,6 +12216,14 @@
             "title": "Decisions",
             "type": "integer"
           },
+          "kind": {
+            "enum": [
+              "built",
+              "edited"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
           "rules": {
             "items": {
               "$ref": "#/components/schemas/_TasteRule"
@@ -12232,6 +12240,7 @@
         },
         "required": [
           "version",
+          "kind",
           "built_at",
           "decisions",
           "rules"
@@ -12258,10 +12267,19 @@
         "additionalProperties": false,
         "properties": {
           "number": {
-            "maximum": 40.0,
+            "maximum": 9999.0,
             "minimum": 1.0,
             "title": "Number",
             "type": "integer"
+          },
+          "provenance": {
+            "enum": [
+              "model",
+              "edited",
+              "owner"
+            ],
+            "title": "Provenance",
+            "type": "string"
           },
           "section": {
             "enum": [
@@ -12283,23 +12301,96 @@
         "required": [
           "number",
           "section",
-          "text"
+          "text",
+          "provenance"
         ],
         "title": "_TasteRule",
         "type": "object"
       },
-      "_TasteVersion": {
+      "_TasteRuleAdd": {
         "additionalProperties": false,
         "properties": {
-          "built_at": {
-            "minimum": 0.0,
-            "title": "Built At",
+          "action": {
+            "const": "add",
+            "title": "Action",
+            "type": "string"
+          },
+          "section": {
+            "enum": [
+              "drawn_to",
+              "avoid",
+              "trade_offs",
+              "keep_or_switch"
+            ],
+            "title": "Section",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 4096,
+            "title": "Text",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "action",
+          "section",
+          "text"
+        ],
+        "title": "_TasteRuleAdd",
+        "type": "object"
+      },
+      "_TasteRuleEdit": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "const": "edit",
+            "title": "Action",
+            "type": "string"
+          },
+          "number": {
+            "maximum": 9999.0,
+            "minimum": 1.0,
+            "title": "Number",
             "type": "integer"
           },
-          "decisions": {
-            "maximum": 50.0,
-            "minimum": 0.0,
-            "title": "Decisions",
+          "text": {
+            "maxLength": 4096,
+            "title": "Text",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "action",
+          "number",
+          "text"
+        ],
+        "title": "_TasteRuleEdit",
+        "type": "object"
+      },
+      "_TasteRuleRemove": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "const": "remove",
+            "title": "Action",
+            "type": "string"
+          },
+          "number": {
+            "maximum": 9999.0,
+            "minimum": 1.0,
+            "title": "Number",
             "type": "integer"
           },
           "version": {
@@ -12310,7 +12401,44 @@
         },
         "required": [
           "version",
-          "built_at",
+          "action",
+          "number"
+        ],
+        "title": "_TasteRuleRemove",
+        "type": "object"
+      },
+      "_TasteVersion": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "minimum": 0.0,
+            "title": "Created At",
+            "type": "integer"
+          },
+          "decisions": {
+            "maximum": 50.0,
+            "minimum": 0.0,
+            "title": "Decisions",
+            "type": "integer"
+          },
+          "kind": {
+            "enum": [
+              "built",
+              "edited"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "kind",
+          "created_at",
           "decisions"
         ],
         "title": "_TasteVersion",
@@ -13440,6 +13568,140 @@
           }
         ],
         "summary": "Retry Taste Build"
+      }
+    },
+    "/api/v1/covers/taste/rules": {
+      "post": {
+        "description": "Edit, add or remove one rule of the version shown; each saved\nchange is a new version at once. Errors carry only a closed code.",
+        "operationId": "edit_taste_rule_api_v1_covers_taste_rules_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "discriminator": {
+                  "mapping": {
+                    "add": "#/components/schemas/_TasteRuleAdd",
+                    "edit": "#/components/schemas/_TasteRuleEdit",
+                    "remove": "#/components/schemas/_TasteRuleRemove"
+                  },
+                  "propertyName": "action"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/_TasteRuleEdit"
+                  },
+                  {
+                    "$ref": "#/components/schemas/_TasteRuleAdd"
+                  },
+                  {
+                    "$ref": "#/components/schemas/_TasteRuleRemove"
+                  }
+                ],
+                "title": "Request"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_TasteProfileResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Edit Taste Rule"
       }
     },
     "/api/v1/field-effects/pause": {
