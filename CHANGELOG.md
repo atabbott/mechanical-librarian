@@ -10,6 +10,12 @@ existing `/data` volume must be rebuilt; [upgrades](docs/operations/upgrades.md)
 says how. Sections marked "in progress" are still open. The numbers in
 brackets are GitHub issues.
 
+## 0.39.0 — Owner trust (in progress)
+
+- In store mode, Settings can change the owner password. It asks for the
+  current password, keeps this browser signed in and signs out every other
+  browser (#1385).
+
 ## 0.36.1 — Persistence health (in progress)
 
 - Stopping writes for a library, or granting them again for a changed set of

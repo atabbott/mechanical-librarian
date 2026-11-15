@@ -740,6 +740,18 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
 .settings-secret-state > span { display:flex; flex-wrap:wrap; gap:.4rem; }
 .settings-secret-state button,.settings-secret-editor button { padding:.45rem .65rem; }
 .settings-secret-editor small { color:var(--soft); overflow-wrap:anywhere; }
+.settings-password,.settings-password-field { display:grid; gap:.65rem; min-width:0; }
+.settings-password-field { gap:.25rem; }
+.settings-password label { font-size:.75rem; font-weight:650; }
+.settings-password small { color:var(--soft); font-size:.75rem; font-weight:400; }
+.settings-password-actions { display:flex; flex-wrap:wrap; gap:.4rem; }
+.settings-password-actions button { padding:.45rem .8rem; }
+.settings-password-reveal { justify-self:start; padding:.45rem .65rem; font-size:.75rem; }
+.settings-password-status { margin:0; color:var(--accent-strong); font-size:.75rem; font-weight:650; }
+.settings-password .settings-field-error { margin:0; color:var(--danger); font-size:.75rem; font-weight:650; }
+/* After the shared settings input rule, which it must outrank. */
+.settings-field-control .settings-password input[aria-invalid='true'] { border-color:var(--danger); }
+.settings-password small.is-refused { color:var(--danger); font-size:.875rem; font-weight:650; }
 .settings-choice { display:grid; gap:.1rem; min-width:0; margin:0; padding:.35rem .7rem; border:1px solid var(--line-strong); border-radius:.45rem; }
 .settings-choice legend { padding:0 .25rem; color:var(--soft); font-size:.75rem; font-weight:700; }
 .settings-choice label { display:flex; align-items:center; gap:.5rem; min-height:44px; }

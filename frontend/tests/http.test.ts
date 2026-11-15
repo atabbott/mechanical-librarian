@@ -6493,3 +6493,174 @@ describe('taste profile decoder (#1372)', () => {
     ).rejects.toBeInstanceOf(Error)
   })
 })
+
+describe('changePassword', () => {
+  const build = 'c'.repeat(64)
+  const body = {
+    current_password: 'old horse battery',
+    new_password: 'correct horse battery staple',
+    confirmation: 'correct horse battery staple',
+  }
+  const changed = () => new Response(null, { status: 204 })
+  const gone = () => Response.json({ error: { code: 'unauthorized' } }, { status: 401 })
+  const refused = (status: number, code: string) => Response.json({ error: { code } }, { status })
+  const flush = () => new Promise<void>((resolve) => window.setTimeout(resolve, 0))
+  const client = (
+    fetchMock: typeof fetch,
+    tokens: { current: () => string; renew: () => Promise<string> } = {
+      current: () => token,
+      renew: vi.fn(async () => renewedToken),
+    },
+  ) => {
+    const expired = vi.fn()
+    return {
+      expired,
+      tokens,
+      client: new ReviewApiClient({
+        csrf: tokens,
+        fetch: fetchMock,
+        buildIdentity: build,
+        onSessionExpired: expired,
+      }),
+    }
+  }
+  // The change is held in flight while another request is answered.
+  const holding = () => {
+    let release: (response: Response) => void = () => undefined
+    const fetchMock = vi.fn<typeof fetch>()
+    fetchMock.mockImplementationOnce(() => new Promise<Response>((resolve) => (release = resolve)))
+    fetchMock.mockResolvedValue(gone())
+    return { fetchMock, release: (response: Response) => release(response) }
+  }
+
+  it('posts the three passwords with the build identity and CSRF token, then renews the token', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => changed())
+    const { client: http, tokens } = client(fetchMock)
+
+    await expect(http.changePassword(body)).resolves.toBeUndefined()
+
+    const [path, init] = fetchMock.mock.calls[0] ?? []
+    expect(path).toBe('/api/v1/session/password')
+    expect(init?.method).toBe('POST')
+    expect(JSON.parse(init?.body as string)).toEqual(body)
+    const headers = new Headers(init?.headers)
+    expect(headers.get('x-ml-build-identity')).toBe(build)
+    expect(headers.get('x-csrf-token')).toBe(token)
+    expect(headers.get('content-type')).toBe('application/json')
+    expect(tokens.renew).toHaveBeenCalledOnce()
+  })
+
+  it('succeeds although the token renewal after the change fails', async () => {
+    const renew = vi.fn(async () => {
+      throw new SessionExpiredError()
+    })
+    const { client: http, expired } = client(
+      vi.fn<typeof fetch>(async () => changed()),
+      { current: () => token, renew },
+    )
+
+    await expect(http.changePassword(body)).resolves.toBeUndefined()
+    expect(renew).toHaveBeenCalledOnce()
+    await flush()
+    expect(expired).not.toHaveBeenCalled()
+  })
+
+  it('never sends the change again after a CSRF challenge', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => refused(403, 'csrf'))
+    const { client: http, tokens } = client(fetchMock)
+
+    await expect(http.changePassword(body)).rejects.toBeInstanceOf(CsrfRenewedError)
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(tokens.renew).toHaveBeenCalledOnce()
+  })
+
+  it('discards a 401 a parallel request got while the change succeeded', async () => {
+    const { fetchMock, release } = holding()
+    const { client: http, expired } = client(fetchMock)
+
+    const change = http.changePassword(body)
+    await expect(http.getAttention({})).rejects.toBeInstanceOf(SessionExpiredError)
+    await flush()
+    expect(expired).not.toHaveBeenCalled()
+    release(changed())
+    await change
+    await flush()
+    expect(expired).not.toHaveBeenCalled()
+    // The mark clears: a later 401 goes to sign-in.
+    await expect(http.getLibrary({ lens: 'all' })).rejects.toBeInstanceOf(SessionExpiredError)
+    await vi.waitFor(() => expect(expired).toHaveBeenCalledOnce())
+  })
+
+  it('ignores a 401 answered after the change for a request that left before it', async () => {
+    const answers: ((response: Response) => void)[] = []
+    const fetchMock = vi.fn<typeof fetch>(
+      () => new Promise<Response>((resolve) => answers.push(resolve)),
+    )
+    const { client: http, expired } = client(fetchMock)
+
+    const change = http.changePassword(body)
+    const earlier = http.getAttention({})
+    answers[0]?.(changed())
+    await change
+    // The earlier request carried the replaced session's cookie.
+    answers[1]?.(gone())
+    await expect(earlier).rejects.toBeInstanceOf(SessionExpiredError)
+    await flush()
+    expect(expired).not.toHaveBeenCalled()
+    // A request that leaves on the new session and answers 401 goes to sign-in.
+    const later = http.getLibrary({ lens: 'all' })
+    answers[2]?.(gone())
+    await expect(later).rejects.toBeInstanceOf(SessionExpiredError)
+    await vi.waitFor(() => expect(expired).toHaveBeenCalledOnce())
+  })
+
+  it.each([
+    ['a refusal', refused(403, 'current_password_invalid'), { status: 403 }],
+    ['a lost answer', undefined, { name: 'AmbiguousMutationError' }],
+  ])('replays a 401 held back during the change after %s', async (_, answer, failure) => {
+    const { fetchMock, release } = holding()
+    const { client: http, expired } = client(fetchMock)
+
+    const change = http.changePassword(body)
+    await expect(http.getAttention({})).rejects.toBeInstanceOf(SessionExpiredError)
+    await flush()
+    expect(expired).not.toHaveBeenCalled()
+    if (answer === undefined)
+      release(Promise.reject(new TypeError('network')) as unknown as Response)
+    else release(answer)
+    await expect(change).rejects.toMatchObject(failure)
+    await vi.waitFor(() => expect(expired).toHaveBeenCalledOnce())
+  })
+
+  it('goes to sign-in when the change itself answers 401', async () => {
+    const { client: http, expired } = client(vi.fn<typeof fetch>(async () => gone()))
+
+    await expect(http.changePassword(body)).rejects.toBeInstanceOf(SessionExpiredError)
+    await vi.waitFor(() => expect(expired).toHaveBeenCalledOnce())
+  })
+
+  it('reports a lost answer as uncertain, and a refusal as itself', async () => {
+    const lost = client(
+      vi.fn<typeof fetch>(async () => {
+        throw new TypeError('network')
+      }),
+    )
+    await expect(lost.client.changePassword(body)).rejects.toBeInstanceOf(AmbiguousMutationError)
+    expect(lost.tokens.renew).not.toHaveBeenCalled()
+    const wrong = client(vi.fn<typeof fetch>(async () => refused(429, 'throttled')))
+    await expect(wrong.client.changePassword(body)).rejects.toMatchObject({
+      status: 429,
+      code: 'throttled',
+    })
+    expect(wrong.tokens.renew).not.toHaveBeenCalled()
+  })
+
+  it('names a 204-only operation that answers nothing', () => {
+    expectTypeOf<RequestAnswer<'POST', '/api/v1/session/password'>>().toEqualTypeOf<undefined>()
+    expectTypeOf<'/api/v1/session/password'>().toExtend<RoutablePath<'POST'>>()
+    expectTypeOf<Parameters<ReviewApiClient['changePassword']>[0]>().toEqualTypeOf<
+      components['schemas']['_PasswordChangeRequest']
+    >()
+    expect(matchOperation('POST', '/api/v1/session/password')).toBeUndefined()
+  })
+})

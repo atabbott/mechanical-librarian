@@ -330,6 +330,7 @@ from mechanical_librarian.infrastructure.setup_claim_token import (
     retire_setup_claim_token,
 )
 from mechanical_librarian.interfaces.web import (
+    StoreOwnerPassword,
     create_review_app,
     load_owner_password_binding,
     owner_password_binding,
@@ -391,6 +392,9 @@ class _StoreRuntimeActivation:
         self._artifact_store_path = artifact_store_path
         self._settings_store = settings_store
         self._repository_authority = repository_authority
+        # Every generation reads the owner verifier here, so a password change
+        # reaches all of them and no cutover restores an earlier one.
+        self.owner_password = StoreOwnerPassword(settings_store)
         self._dispatcher: MutableRuntimeDispatcher | None = None
         self._lock = threading.RLock()
         # The candidate's recovery cutover, held until its authority commits.
@@ -2319,7 +2323,12 @@ def compose_store_runtime_generation(
                     activation.activity_facts if activation is not None else None,
                     activation.activity_documents if activation is not None else None,
                 )
-            owner_binding = owner_password_binding(encoded_verifier)
+            owner_password = (
+                StoreOwnerPassword(settings_store)
+                if activation is None
+                else activation.owner_password
+            )
+            owner_password.seed(encoded_verifier)
             review_application = compose_review_application(
                 state_owner=repository,
                 session_store=session_store,
@@ -2330,9 +2339,10 @@ def compose_store_runtime_generation(
                 admission=repository.operation_admission,
                 operation_lock=repository.operation_lock,
                 policy_store=repository,
-                verify_password=owner_binding[0],
-                session_digest=owner_binding[1],
-                client_digest=owner_binding[2],
+                verify_password=owner_password.verify,
+                session_digest=owner_password.session_digest,
+                client_digest=owner_password.client_digest,
+                owner_password_change=owner_password,
                 clock=lambda: int(time.time()),
                 session_lifetime_seconds=review.session_lifetime_seconds,
                 graceful_shutdown_seconds=review.graceful_shutdown_seconds,
@@ -3356,6 +3366,9 @@ class _OfflineSessionStore:
     def revoke_review_session(
         self, session_digest: str, csrf_digest: str, now: int
     ) -> str:
+        raise self._unavailable()
+
+    def end_review_sessions_except(self, session_digest: str) -> int:
         raise self._unavailable()
 
 
