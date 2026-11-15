@@ -320,6 +320,10 @@ brackets are GitHub issues.
   or much smaller. Policy's new Current covers says when a cover may be replaced; the
   replace-if-larger cover option is gone. A configuration file must be
   rewritten as `config-v11` (#1363).
+- With automatic description advice on, a description whose sources all
+  repeat the current text is no longer replaced by the adviser's result,
+  which you could not have chosen or reversed there. The result stays shown
+  for reference, and the review API refuses choosing it directly too (#1892).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 
