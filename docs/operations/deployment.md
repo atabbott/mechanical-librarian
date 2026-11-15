@@ -162,7 +162,7 @@ serve its older covers. What each client contacts is in
 Give the service a host name of its own rather than a port on a host name
 another web app uses. Browsers send a cookie to every port on a host name, so
 if the service ran at `nas.local:8080` beside Audiobookshelf at
-`nas.local:13378`, Audiobookshelf would receive the service's session cookie.
+`nas.local:13378`, Audiobookshelf could receive the service's session cookie.
 
 Sign-in allows five attempts per client address in any five minutes. The
 address is the one the container sees. If Docker's port publishing hands every

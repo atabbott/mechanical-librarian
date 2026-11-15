@@ -1,9 +1,9 @@
 """Every unsafe review route is bounded and gated before it reads a body.
 
-FastAPI reads and validates a route's body before the route's session
-dependency runs, so a route left off a list of limits would take a body of
-any size from someone who has not signed in. These tests walk the routes the
-app actually registers, so a new route is covered the moment it is added.
+FastAPI parses a route's body before the route's session dependency runs, so
+the body bound sits in front of routing and applies to every unsafe request by
+default. These tests walk the routes the app actually registers, so a new route
+is covered the moment it is added.
 """
 
 from __future__ import annotations

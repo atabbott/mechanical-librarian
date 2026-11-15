@@ -277,10 +277,11 @@ The Mend-hosted Renovate GitHub App proposes updates within
 - **FFmpeg and Codex.** The image builds FFmpeg from a source release and
   installs one Codex platform package, each checked against a SHA-256 in the
   `Dockerfile` that Renovate cannot compute. Renovate watches both versions so
-  a security release appears on the Dependency Dashboard; an approved pull
-  request moves only the version, and the checksums (and, for Codex, the
-  [artifact tables](#contained-reviewer-image-artifacts)) are updated by hand
-  before it can pass.
+  a security release appears on the Dependency Dashboard. An approved pull
+  request moves only `FFMPEG_VERSION`, or the native `codex-cli` version check,
+  so it fails until the rest is updated by hand: the FFmpeg checksum, or
+  Codex's other version strings, tarball checksums and
+  [artifact tables](#contained-reviewer-image-artifacts).
 - **Playwright.** A Playwright update brings a newer Chromium, so it gets its
   own pull request and waits for approval. Approve it when someone can look
   into a browser-test failure: 1.64.1 failed the direct-route document count

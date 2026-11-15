@@ -80,6 +80,9 @@ class _Edge:
                 log_config=None,
                 access_log=False,
                 lifespan="off",
+                # Far above `_PATIENCE`, so only the protocol's own deadlines
+                # can close a connection inside a test.
+                timeout_keep_alive=60,
             )
         )
         self._thread = threading.Thread(
@@ -196,9 +199,19 @@ def test_a_body_still_arriving_after_an_early_answer_is_closed(
             b"POST /api/v1/activity/consent HTTP/1.1\r\nHost: edge\r\n"
             b"Content-Length: 1000\r\n\r\n" + b"x" * 10
         )
-        received, waited = _read_until_closed(client)
-    assert received.startswith(b"HTTP/1.1 413 ")
-    assert waited < _PATIENCE
+        answer = _read_response(client)
+        assert answer.startswith(b"HTTP/1.1 413 ")
+        started = time.monotonic()
+        # The body keeps trickling after the answer; only the body deadline
+        # can close the connection, since each byte is fresh activity.
+        while time.monotonic() - started < _PATIENCE:
+            try:
+                client.sendall(b"x")
+            except (BrokenPipeError, ConnectionResetError):
+                break
+            time.sleep(0.05)
+        else:
+            pytest.fail("a body trickling after an early answer held the connection")
 
 
 def test_a_complete_request_is_answered_and_kept_alive(short_deadlines: None) -> None:
