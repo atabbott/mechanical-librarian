@@ -1994,9 +1994,126 @@ describe('Covers → Taste profile edits (#1372 PR 2)', () => {
     )
     renderRoute(tasteRoute, tasteHttp(full))
     await screen.findByRole('heading', { name: 'What you avoid' })
-    await user.click(within(sectionOf('What you avoid')).getByRole('button', { name: 'Add rule' }))
-    expect(statusLine()).toHaveTextContent('40 rules is the limit.')
+    const avoid = sectionOf('What you avoid')
+    const add = within(avoid).getByRole('button', { name: 'Add rule' })
+    await user.click(add)
+    // Said beside the Add rule pressed, which keeps focus; not at the top.
+    expect(within(avoid).getByRole('status')).toHaveTextContent('40 rules is the limit.')
+    expect(add).toHaveFocus()
+    expect(statusLine()).toHaveTextContent('')
+    expect(
+      within(sectionOf('What you’re drawn to')).getByRole('status', { hidden: true }),
+    ).toHaveTextContent('')
     expect(screen.queryByRole('textbox')).toBeNull()
+  })
+
+  it('says a rule was removed when a lost Remove turns out to have landed', async () => {
+    const user = userEvent.setup()
+    const without = withRules(owned, owned.profile?.rules.slice(0, 2) ?? [], 4)
+    let current = owned
+    const http = {
+      ...editHttp(owned, async () => {
+        current = without
+        throw new UncertainMutationError({
+          operation: 'POST /api/v1/covers/taste/rules',
+          responseStatus: 200,
+          at: '',
+          reason: 'synthetic',
+        })
+      }),
+      getTasteProfile: vi.fn(async () => current),
+    }
+    renderRoute(tasteRoute, http)
+    await user.click(await screen.findByRole('button', { name: 'Edit rule 2' }))
+    await user.click(screen.getByRole('button', { name: 'Remove' }))
+    expect(await screen.findByText('Rule 2 removed.')).toBe(statusLine())
+    expect(screen.queryByRole('textbox')).toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
+    await waitFor(() => expect(statusLine()).toHaveFocus())
+    // The editor is closed for good: a rule numbered 2 again opens nothing.
+    expect(screen.queryByText('Busy type!')).toBeNull()
+  })
+
+  it('closes with the stale line when a re-read drops the open rule', async () => {
+    const user = userEvent.setup()
+    // A rebuild lands while rule 4 is open and numbers the rules 1 and 2.
+    const rebuilt = withRules(
+      owned,
+      [
+        { number: 1, section: 'drawn_to', text: 'Bold illustrated art.', provenance: 'model' },
+        { number: 2, section: 'avoid', text: 'Busy type!', provenance: 'edited' },
+      ],
+      4,
+    )
+    let current = owned
+    const http = { ...tasteHttp(owned), getTasteProfile: vi.fn(async () => current) }
+    const { queryClient } = renderRoute(tasteRoute, http)
+    await user.click(await screen.findByRole('button', { name: 'Edit rule 4' }))
+    current = rebuilt
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ['covers', 'taste'] })
+    })
+    expect(
+      await screen.findByText(
+        'The taste profile changed since the page loaded. Nothing was changed.',
+      ),
+    ).toBe(statusLine())
+    expect(screen.queryByRole('textbox')).toBeNull()
+    await waitFor(() => expect(statusLine()).toHaveFocus())
+  })
+
+  it('says a rule was saved when Save repeats a lost save that landed', async () => {
+    const user = userEvent.setup()
+    const landed = withRules(
+      owned,
+      (owned.profile?.rules ?? []).map((rule) =>
+        rule.number === 2 ? { ...rule, text: 'Busy type! now' } : rule,
+      ),
+      4,
+    )
+    let current = owned
+    const http = {
+      ...editHttp(owned, async () => {
+        current = landed
+        throw new UncertainMutationError({
+          operation: 'POST /api/v1/covers/taste/rules',
+          responseStatus: 200,
+          at: '',
+          reason: 'synthetic',
+        })
+      }),
+      getTasteProfile: vi.fn(async () => current),
+    }
+    renderRoute(tasteRoute, http)
+    await user.click(await screen.findByRole('button', { name: 'Edit rule 2' }))
+    await user.type(screen.getByRole('textbox', { name: 'Rule 2' }), ' now')
+    await user.click(screen.getByRole('button', { name: 'Save rule' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'No answer came back. Check whether the rule was saved.',
+    )
+    await screen.findByText('4')
+    await user.click(screen.getByRole('button', { name: 'Save rule' }))
+    expect(http.editTasteRule).toHaveBeenCalledTimes(1)
+    expect(await screen.findByText('Rule 2 saved.')).toBe(statusLine())
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Edit rule 2' })).toHaveFocus())
+  })
+
+  it('cancels with Escape back to the pencil, or to Add rule for a new rule', async () => {
+    const user = userEvent.setup()
+    renderRoute(tasteRoute, tasteHttp(owned))
+    await user.click(await screen.findByRole('button', { name: 'Edit rule 1' }))
+    await user.type(screen.getByRole('textbox', { name: 'Rule 1' }), ' now')
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('textbox')).toBeNull()
+    expect(screen.getByText('Bold illustrated art.')).toBeVisible()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Edit rule 1' })).toHaveFocus())
+    const avoid = sectionOf('What you avoid')
+    await user.click(within(avoid).getByRole('button', { name: 'Add rule' }))
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('textbox')).toBeNull()
+    await waitFor(() =>
+      expect(within(avoid).getByRole('button', { name: 'Add rule' })).toHaveFocus(),
+    )
   })
 
   it('refuses a rule the profile has no room for before sending it', async () => {

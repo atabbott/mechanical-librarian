@@ -278,7 +278,16 @@ function RuleForm({
       })
   }
   return (
-    <form className="taste-edit" onSubmit={submit}>
+    <form
+      className="taste-edit"
+      onSubmit={submit}
+      onKeyDown={(event) => {
+        // Escape cancels, as Cancel does.
+        if (event.key !== 'Escape' || pending) return
+        event.preventDefault()
+        onCancel()
+      }}
+    >
       <label className="sr-only" htmlFor={id}>
         {`Rule ${String(number)}`}
       </label>
@@ -331,13 +340,35 @@ function RuleForm({
   )
 }
 
-function Profile({ view }: { view: TasteProfile }) {
+// The line under the editor for a refused edit: the server's closed code where
+// it has one, else the fallback.
+const refusalLine = (error: unknown, removing: boolean): string =>
+  error instanceof ApiError && error.status === 422 && Object.hasOwn(refusalLines, error.code)
+    ? refusalLines[error.code as keyof typeof refusalLines]
+    : refusalCopy(
+        error,
+        removing
+          ? 'The rule was not removed. Reload and try again.'
+          : 'The rule was not saved. Reload and try again.',
+      )
+
+// An edit whose answer was lost; the re-read says whether it landed.
+interface Uncertain {
+  action: TasteRuleEdit['action']
+  number: number | null
+}
+
+// The editor's state and its one mutation: which rule is open, the line under
+// it, the status line, the 40-rule line, and where focus goes next.
+function useTasteRuleEditor(view: TasteProfile) {
   const { http } = useReviewContext()
   const cache = useQueryClient()
   const container = useRef<HTMLDivElement>(null)
+  const uncertain = useRef<Uncertain | null>(null)
   const [editing, setEditing] = useState<Editing | null>(null)
   const [refusal, setRefusal] = useState<string | null>(null)
   const [status, setStatus] = useState('')
+  const [limitAt, setLimitAt] = useState<Rule['section'] | null>(null)
   const [focus, setFocus] = useState<FocusTarget | null>(null)
   const save = useMutation({
     mutationFn: ({ version, edit }: { version: number; edit: TasteRuleEdit }) =>
@@ -360,20 +391,39 @@ function Profile({ view }: { view: TasteProfile }) {
     setFocus(null)
   }, [focus, view])
   const profile = view.profile
-  if (profile === null) return null
+  const close = (target: FocusTarget) => {
+    uncertain.current = null
+    setEditing(null)
+    setRefusal(null)
+    setLimitAt(null)
+    setFocus(target)
+  }
+  // A re-read without the open rule (a lost Remove that landed, or a rebuild
+  // that renumbered) closes the editor and says why in the status line.
+  const missing =
+    editing?.kind === 'rule' &&
+    profile !== null &&
+    !profile.rules.some((rule) => rule.number === editing.number)
+      ? editing
+      : null
+  useLayoutEffect(() => {
+    if (missing === null) return
+    const lost = uncertain.current
+    setStatus(
+      lost?.action === 'remove' && lost.number === missing.number
+        ? `Rule ${String(missing.number)} removed.`
+        : staleCopy,
+    )
+    close('status')
+  }, [missing])
   const pending = save.isPending
-  const ruleNumbers = profile.rules.map((rule) => rule.number)
-  const nextNumber = Math.max(0, ...ruleNumbers) + 1
   const open = (next: Editing) => {
     if (pending) return
     // One rule at a time: opening another editor discards the open draft.
+    uncertain.current = null
     setEditing(next)
     setRefusal(null)
-  }
-  const close = (target: FocusTarget) => {
-    setEditing(null)
-    setRefusal(null)
-    setFocus(target)
+    setLimitAt(null)
   }
   const send = (
     current: Editing,
@@ -400,6 +450,10 @@ function Profile({ view }: { view: TasteProfile }) {
             return
           }
           if (uncertainWriteOutcome(error)) {
+            uncertain.current = {
+              action: edit.action,
+              number: edit.action === 'add' ? null : edit.number,
+            }
             setRefusal(
               removing
                 ? 'No answer came back. Check whether the rule was removed.'
@@ -408,31 +462,24 @@ function Profile({ view }: { view: TasteProfile }) {
             reread()
             return
           }
-          const named =
-            error instanceof ApiError && error.status === 422 && error.code in refusalLines
-              ? refusalLines[error.code as keyof typeof refusalLines]
-              : null
-          setRefusal(
-            named ??
-              refusalCopy(
-                error,
-                removing
-                  ? 'The rule was not removed. Reload and try again.'
-                  : 'The rule was not saved. Reload and try again.',
-              ),
-          )
+          setRefusal(refusalLine(error, removing))
         },
       },
     )
   }
   const saveRule = (current: Editing, typed: string, setDraft: (text: string) => void) => {
+    if (profile === null) return
     const text = normalizeTasteRule(typed)
     const rule =
       current.kind === 'rule'
         ? profile.rules.find((item) => item.number === current.number)
         : undefined
     if (current.kind === 'rule' && rule?.text === text) {
-      // Unchanged: nothing to save, and nothing to say.
+      // Unchanged: nothing to save. After a lost answer the re-read shows the
+      // save landed, so say so; otherwise there is nothing to say.
+      const landed =
+        uncertain.current?.action === 'edit' && uncertain.current.number === current.number
+      if (landed) setStatus(`Rule ${String(current.number)} saved.`)
       close({ pencil: current.number })
       return
     }
@@ -460,6 +507,56 @@ function Profile({ view }: { view: TasteProfile }) {
           : { status: `Rule ${String(added.number)} saved.`, focus: { pencil: added.number } }
       })
   }
+  const remove = (current: Editing, number: number) => {
+    const section = profile?.rules.find((rule) => rule.number === number)?.section
+    send(current, { action: 'remove', number }, () => ({
+      status: `Rule ${String(number)} removed.`,
+      focus: section === undefined ? 'status' : { add: section },
+    }))
+  }
+  const add = (section: Rule['section']) => {
+    if (pending || profile === null) return
+    if (profile.rules.length >= 40) {
+      // Said beside the Add rule pressed, which keeps focus.
+      setLimitAt(section)
+      return
+    }
+    open({ kind: 'new', section, version: profile.version })
+  }
+  const editor = {
+    editing,
+    refusal,
+    status,
+    limitAt,
+    pending,
+    open,
+    close,
+    saveRule,
+    remove,
+    add,
+  }
+  return { container, editor }
+}
+
+type TasteRuleEditor = ReturnType<typeof useTasteRuleEditor>['editor']
+
+function TasteSection({
+  section,
+  profile,
+  editor,
+}: {
+  section: Rule['section']
+  profile: NonNullable<TasteProfile['profile']>
+  editor: TasteRuleEditor
+}) {
+  const { editing, pending } = editor
+  const rules = profile.rules.filter((rule) => rule.section === section)
+  const adding = editing?.kind === 'new' && editing.section === section ? editing : null
+  const numbers = new Set(profile.rules.map((rule) => rule.number))
+  // As the server numbers an added rule: above the highest, or the lowest free
+  // number once that would pass 9,999.
+  let nextNumber = Math.max(0, ...numbers) + 1
+  if (nextNumber > 9_999) for (nextNumber = 1; numbers.has(nextNumber); nextNumber += 1);
   const editorFor = (number: number, initial: string, current: Editing) => (
     <RuleForm
       key={current.kind === 'rule' ? `rule-${String(number)}` : `new-${current.section}`}
@@ -467,22 +564,83 @@ function Profile({ view }: { view: TasteProfile }) {
       initial={initial}
       removable={current.kind === 'rule'}
       pending={pending}
-      refusal={refusal}
+      refusal={editor.refusal}
       onSave={(typed, setDraft) => {
-        saveRule(current, typed, setDraft)
+        editor.saveRule(current, typed, setDraft)
       }}
       onCancel={() => {
-        close(current.kind === 'rule' ? { pencil: number } : { add: current.section })
+        editor.close(current.kind === 'rule' ? { pencil: number } : { add: current.section })
       }}
       onRemove={() => {
-        const section = profile.rules.find((rule) => rule.number === number)?.section
-        send(current, { action: 'remove', number }, () => ({
-          status: `Rule ${String(number)} removed.`,
-          focus: section === undefined ? 'status' : { add: section },
-        }))
+        editor.remove(current, number)
       }}
     />
   )
+  return (
+    <section className="taste-section" aria-labelledby={`taste-${section}`}>
+      <h2 id={`taste-${section}`}>{sectionHeadings[section]}</h2>
+      {rules.length > 0 || adding !== null ? (
+        <ol>
+          {rules.map((rule) =>
+            editing?.kind === 'rule' && editing.number === rule.number ? (
+              <li key={rule.number} value={rule.number} className="taste-editing">
+                {editorFor(rule.number, rule.text, editing)}
+              </li>
+            ) : (
+              <li key={rule.number} value={rule.number}>
+                <span>{rule.text}</span>
+                <span className="taste-who">
+                  {rule.provenance === 'owner' ? (
+                    <StatusPill tone="accent">Yours</StatusPill>
+                  ) : rule.provenance === 'edited' ? (
+                    <StatusPill tone="accent">Edited</StatusPill>
+                  ) : null}
+                </span>
+                <button
+                  type="button"
+                  className="taste-pencil"
+                  data-taste-pencil={rule.number}
+                  aria-label={`Edit rule ${String(rule.number)}`}
+                  title="Edit"
+                  aria-disabled={pending || undefined}
+                  onClick={() => {
+                    editor.open({ kind: 'rule', number: rule.number, version: profile.version })
+                  }}
+                >
+                  <Pencil />
+                </button>
+              </li>
+            ),
+          )}
+          {adding === null ? null : (
+            <li value={nextNumber} className="taste-editing">
+              {editorFor(nextNumber, '', adding)}
+            </li>
+          )}
+        </ol>
+      ) : null}
+      <button
+        type="button"
+        className="taste-add"
+        data-taste-add={section}
+        aria-disabled={pending || undefined}
+        onClick={() => {
+          editor.add(section)
+        }}
+      >
+        Add rule
+      </button>
+      <p className="taste-limit" role="status">
+        {editor.limitAt === section ? limitCopy : ''}
+      </p>
+    </section>
+  )
+}
+
+function Profile({ view }: { view: TasteProfile }) {
+  const { container, editor } = useTasteRuleEditor(view)
+  const profile = view.profile
+  if (profile === null) return null
   return (
     <div ref={container} className="taste-editor">
       <dl className="taste-meta">
@@ -504,76 +662,14 @@ function Profile({ view }: { view: TasteProfile }) {
         </div>
       </dl>
       <p className="taste-status" role="status" tabIndex={-1}>
-        {status}
+        {editor.status}
       </p>
       {/* Wide screens put Versions beside the rules, as the prototype does. */}
       <div className="taste-body">
         <div className="taste-rules">
-          {(Object.keys(sectionHeadings) as Rule['section'][]).map((section) => {
-            const rules = profile.rules.filter((rule) => rule.section === section)
-            const adding = editing?.kind === 'new' && editing.section === section ? editing : null
-            return (
-              <section key={section} className="taste-section" aria-labelledby={`taste-${section}`}>
-                <h2 id={`taste-${section}`}>{sectionHeadings[section]}</h2>
-                {rules.length > 0 || adding !== null ? (
-                  <ol>
-                    {rules.map((rule) =>
-                      editing?.kind === 'rule' && editing.number === rule.number ? (
-                        <li key={rule.number} value={rule.number} className="taste-editing">
-                          {editorFor(rule.number, rule.text, editing)}
-                        </li>
-                      ) : (
-                        <li key={rule.number} value={rule.number}>
-                          <span>{rule.text}</span>
-                          <span className="taste-who">
-                            {rule.provenance === 'owner' ? (
-                              <StatusPill tone="accent">Yours</StatusPill>
-                            ) : rule.provenance === 'edited' ? (
-                              <StatusPill tone="accent">Edited</StatusPill>
-                            ) : null}
-                          </span>
-                          <button
-                            type="button"
-                            className="taste-pencil"
-                            data-taste-pencil={rule.number}
-                            aria-label={`Edit rule ${String(rule.number)}`}
-                            title="Edit"
-                            aria-disabled={pending || undefined}
-                            onClick={() => {
-                              open({ kind: 'rule', number: rule.number, version: profile.version })
-                            }}
-                          >
-                            <Pencil />
-                          </button>
-                        </li>
-                      ),
-                    )}
-                    {adding === null ? null : (
-                      <li value={nextNumber} className="taste-editing">
-                        {editorFor(nextNumber, '', adding)}
-                      </li>
-                    )}
-                  </ol>
-                ) : null}
-                <button
-                  type="button"
-                  className="taste-add"
-                  data-taste-add={section}
-                  aria-disabled={pending || undefined}
-                  onClick={() => {
-                    if (pending) return
-                    if (profile.rules.length >= 40) {
-                      setStatus(limitCopy)
-                      return
-                    }
-                    open({ kind: 'new', section, version: profile.version })
-                  }}
-                >
-                  Add rule
-                </button>
-              </section>
-            )
-          })}
+          {(Object.keys(sectionHeadings) as Rule['section'][]).map((section) => (
+            <TasteSection key={section} section={section} profile={profile} editor={editor} />
+          ))}
         </div>
         <Versions view={view} />
       </div>
