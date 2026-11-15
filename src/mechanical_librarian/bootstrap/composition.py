@@ -2205,6 +2205,7 @@ def _provider_throttling_reader(
         keyed,
         configuration.provider_recovery_generation,
         retry,
+        provider_recovery.answered_sources(),
     )
 
 

@@ -685,6 +685,7 @@ describe('Application shell', () => {
                 notice_at: null,
               },
             ],
+            answered: [],
           },
         })),
       }

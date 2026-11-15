@@ -88,7 +88,9 @@ CEILING = {
     # through the report and retry constructors: imports and keyword arguments.
     # 3354 since #1385's sign-out refusal (2026-11-15): the offline store
     # refuses signing out other browsers too.
-    "composition.py": 3354,
+    # 3355 since #1494 passed the recovery store's answered sources to the
+    # throttling read: one argument.
+    "composition.py": 3355,
     # 142 since #1372 PR 1c's run_taste_build_reviewer, the taste build's
     # counterpart of run_description_reviewer.
     "contained_reviewer.py": 142,

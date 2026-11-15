@@ -1477,6 +1477,28 @@ class SQLiteProviderRecoveryStore:
             for row in rows
         )
 
+    def answered_sources(self) -> tuple[tuple[str, str], ...]:
+        """Name each scope and adapter with a job completed in its generation.
+
+        A scope also closes as recovered when every waiting job went stale, so
+        recovery alone is no evidence that a provider answered (#1494). Read
+        after ``throttling_snapshot``: an answer is never lost between the two.
+        """
+        try:
+            with self._lock:
+                rows = self._connection.execute(
+                    "SELECT DISTINCT h.scope,h.adapter FROM provider_recovery_health h "
+                    "WHERE EXISTS(SELECT 1 FROM provider_recovery_jobs j "
+                    "WHERE j.connection=h.connection AND j.adapter=h.adapter AND j.scope=h.scope "
+                    "AND j.generation=h.generation AND j.state='complete') "
+                    "ORDER BY h.scope,h.adapter LIMIT 256"
+                ).fetchall()
+        except sqlite3.Error as error:
+            raise ProviderRecoveryStoreError(
+                "provider recovery persistence is unavailable"
+            ) from error
+        return tuple((row[0], row[1]) for row in rows)
+
     def cover_fetching_identities(self) -> frozenset[tuple[str, str, str, str]]:
         """Capture exact active report identities in one recovery-store read."""
         try:

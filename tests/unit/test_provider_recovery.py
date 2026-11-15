@@ -34,6 +34,9 @@ from mechanical_librarian.application.provider_recovery_runner import (
 from mechanical_librarian.application.provider_retry_successor import (
     ProviderRetrySuccessorError,
 )
+from mechanical_librarian.application.review_application import (
+    provider_throttling_view,
+)
 from mechanical_librarian.application.review_pipeline import ReviewPipelineError
 from mechanical_librarian.bootstrap.composition import (
     _provider_recovery_jobs,
@@ -5532,6 +5535,55 @@ def _recover(store: SQLiteProviderRecoveryStore, now: int) -> None:
     )
     store.complete_success(token="owner", recovery=claimed, now=now + _DAY)
     assert () == store.throttling_snapshot()
+
+
+def _retry_now_view(
+    path: Path, failure: str | None, *members: str
+) -> tuple[tuple[str, int, bool], dict[str, object]]:
+    """Press Retry now over waiting lookups, run it once, and read the view."""
+    store = SQLiteProviderRecoveryStore.open(path)
+    _fail(store, "transient", 0)
+    store.enqueue_jobs(tuple(_job(member) for member in members), enqueued_at=0)
+    # Retry now raises the generation; the waiting jobs move into it.
+    assert 1 == store.reconcile_generation(generation=2, now=10)
+
+    def retry(*_: object) -> None:
+        if failure is not None:
+            raise RuntimeError("synthetic failure")
+
+    run = ScopedProviderRecoveryRunner(
+        store=store,
+        generation=2,
+        retry=retry,
+        classify_failure=lambda _: (cast("str", failure), None),
+        clock=lambda: 10,
+    ).run_one(now=10, token="owner")
+    view = provider_throttling_view(
+        store.throttling_snapshot(), {}, 2, "available", store.answered_sources()
+    )
+    store.close()
+    return (run.state, run.fanout, run.settled), view
+
+
+def test_a_retry_whose_lookups_all_went_stale_does_not_read_as_answered(
+    tmp_path: Path,
+) -> None:
+    """A retry whose waiting lookups all went stale closes the scope with no
+    provider answer; the view must not read the same as one that was answered
+    (#1494)."""
+    stale_run, stale = _retry_now_view(tmp_path / "stale.sqlite", "stale", "a", "b")
+    one_run, one = _retry_now_view(tmp_path / "one.sqlite", None, "a")
+    two_run, two = _retry_now_view(tmp_path / "two.sqlite", None, "a", "b")
+    assert [("recovered", 0, True), ("recovered", 0, True), ("recovered", 1, True)] == [
+        stale_run,
+        one_run,
+        two_run,
+    ]
+    assert stale != two
+    nothing = {"generation": 2, "retry": "available", "entries": []}
+    source = {"library": "books", "adapter": "google_books"}
+    assert {**nothing, "answered": []} == stale
+    assert {**nothing, "answered": [source]} == one == two
 
 
 def test_waiting_since_is_the_first_event_of_the_current_wait(tmp_path: Path) -> None:

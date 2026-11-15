@@ -2878,7 +2878,12 @@ describe('ReviewApiClient', () => {
       remedy: 'add_api_key',
       notice_at: 1_800_086_400,
     }
-    const throttling = { generation: 3, retry: 'available', entries: [entry] }
+    const throttling = {
+      generation: 3,
+      retry: 'available',
+      entries: [entry],
+      answered: [{ library: 'Synthetic audio', adapter: 'hardcover' }],
+    }
     // An absent block was once read as none (T5); the schema requires it.
     const absent = { ...base }
     delete absent.provider_throttling
@@ -2949,6 +2954,11 @@ describe('ReviewApiClient', () => {
       [{ ...throttling, retry: 'later' }, `enum@${at}/retry`],
       [{ ...throttling, generation: 0 }, `min@${at}/generation`],
       [{ ...throttling, extra: true }, `unknown_key@${at}/extra`],
+      [{ generation: 3, retry: 'available', entries: [entry] }, `required@${at}/answered`],
+      [
+        { ...throttling, answered: [{ library: 'Synthetic audio', adapter: 'unknown_source' }] },
+        `enum@${at}/answered/0/adapter`,
+      ],
     ] as const)
       await expect(
         readPreparation({ ...base, provider_throttling: invalid }),

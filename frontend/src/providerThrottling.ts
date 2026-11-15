@@ -104,6 +104,11 @@ const outcomeTail: Readonly<Record<Settled, readonly [string, string]>> = {
 }
 /** The one outcome that says Retry now worked; only it carries the tick (#1494). */
 export const retryRecovered = 'Retried. Every waiting lookup got an answer.'
+/**
+ * Said without the tick when nothing is waiting but a pressed source stopped
+ * with no answer: its lookups were no longer needed (#1494).
+ */
+export const retryCleared = 'Retried. No lookups are waiting.'
 export type RetryClass = 'recovered' | 'failed' | 'waiting_again' | 'pending'
 export type PressedEntry = Pick<ProviderThrottleEntry, 'library' | 'adapter'>
 
@@ -137,7 +142,11 @@ export const retryOutcome = (
     if (settled === 'pending') return null
     if (entry !== undefined && settled !== 'recovered') unsettled.push(entry)
   }
-  if (unsettled.length === 0) return retryRecovered
+  if (unsettled.length === 0) {
+    // Absence says only that nothing waits; the answer is the server's word.
+    const answered = new Set(throttling.answered.map(entryKey))
+    return pressed.every((item) => answered.has(entryKey(item))) ? retryRecovered : retryCleared
+  }
   const sources = [...new Set(unsettled.map((entry) => entry.adapter))]
   return [
     'Retried.',

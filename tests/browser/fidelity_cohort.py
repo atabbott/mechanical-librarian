@@ -1912,6 +1912,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                 "generation": 1,
                 "retry": "available",
                 "entries": _throttling_entries(),
+                "answered": [],
             },
         }
     if path == "/api/v1/library":

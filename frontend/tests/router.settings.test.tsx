@@ -3988,6 +3988,7 @@ describe('settings provider throttling (#1282)', () => {
           notice_at: null,
         },
       ],
+      answered: [],
     },
   })
 
@@ -4035,6 +4036,7 @@ describe('settings provider throttling (#1282)', () => {
         generation: 1,
         retry: 'available' as const,
         entries: [{ ...missingKey, remedy: null, reasons: ['burst_throttled' as const] }],
+        answered: [],
       },
     }))
     renderRoute('/settings?group=connection', http)

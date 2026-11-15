@@ -352,6 +352,7 @@ def provider_throttling_view(
     providers: Mapping[str, bool],
     generation: int,
     retry: Literal["available", "managed_by_file", "unavailable"],
+    answered: Iterable[tuple[str, str]] = (),
 ) -> dict[str, object]:
     """Total deferred provider lookups per library and source, value-free.
 
@@ -359,6 +360,9 @@ def provider_throttling_view(
     API key; it is read only to choose a remedy, and no instance name leaves.
     ``notice_at`` is when the entry's longest current wait reaches a day; the
     browser compares it with its own clock, so no clock is read here.
+    ``answered`` names each library and source a provider answered in this
+    generation, so Retry now's outcome claims answers only where there were
+    some: a source also stops waiting when its lookups went stale (#1494).
     """
     groups: dict[tuple[str, str], list[Mapping[str, object]]] = {}
     for row in rows:
@@ -411,7 +415,14 @@ def provider_throttling_view(
                 else None,
             }
         )
-    return {"generation": generation, "retry": retry, "entries": entries}
+    return {
+        "generation": generation,
+        "retry": retry,
+        "entries": entries,
+        "answered": [
+            {"library": library, "adapter": adapter} for library, adapter in answered
+        ],
+    }
 
 
 class PolicyOperations:

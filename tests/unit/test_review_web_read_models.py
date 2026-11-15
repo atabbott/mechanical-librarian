@@ -4769,7 +4769,11 @@ def test_preparation_read_carries_value_free_provider_throttling(
             clock=lambda: web.now,
             review_preparation=FakePreparation(),
             provider_throttling=lambda: provider_throttling_view(
-                rows, {"private-google-instance": False}, 3, "available"
+                rows,
+                {"private-google-instance": False},
+                3,
+                "available",
+                (("books", "google_books"),),
             ),
         ),
         base_url="https://review.test",
@@ -4793,6 +4797,7 @@ def test_preparation_read_carries_value_free_provider_throttling(
                 "notice_at": 86_500,
             }
         ],
+        "answered": [{"library": "books", "adapter": "google_books"}],
     }
     assert "private-google-instance" not in response.text
 

@@ -59,12 +59,16 @@ const preparation = (
   overrides: Partial<PreparationView> = {},
   generation = 4,
   retry: ProviderThrottlingView['retry'] = 'available',
+  answered: ProviderThrottlingView['answered'] = [],
 ): PreparationView => ({
   ...idlePreparation,
   libraries: [library()],
-  provider_throttling: entries === null ? null : { generation, retry, entries },
+  provider_throttling: entries === null ? null : { generation, retry, entries, answered },
   ...overrides,
 })
+
+// The default entry's source, as one whose lookups a provider answered.
+const google = [{ library: 'Synthetic ebooks', adapter: 'google_books' } as const]
 
 // A page notice stand-in: the second place Retry now lives, on the same command.
 const NoticeRetry = ({ http, data }: { http: ReviewHttp; data: PreparationView | undefined }) => {
@@ -313,7 +317,7 @@ describe('Retry now outcome (#1494 acceptance 6)', () => {
     expect(popoverRetry).toHaveAttribute('aria-busy', 'true')
     await user.click(popoverRetry)
     expect(http.retryProviderRecovery).toHaveBeenCalledTimes(1)
-    current = preparation([], {}, 5)
+    current = preparation([], {}, 5, 'available', google)
     await act(async () => release(settingsView()))
     await act(() => queryClient.invalidateQueries({ queryKey: ['review-preparation'] }))
     const outcome = 'Retried. Every waiting lookup got an answer.'
@@ -347,7 +351,7 @@ describe('Retry now outcome (#1494 acceptance 6)', () => {
     // A second press, then the popover closes before the server answers.
     await user.click(within(popover).getByRole('button', { name: 'Retry now' }))
     await user.click(within(popover).getByRole('button', { name: 'Close' }))
-    current = preparation([], {}, 6)
+    current = preparation([], {}, 6, 'available', google)
     await act(async () => release(settingsView()))
     await act(() => queryClient.invalidateQueries({ queryKey: ['review-preparation'] }))
     await user.click(await trigger())
@@ -381,7 +385,7 @@ describe('Retry now outcome (#1494 acceptance 6)', () => {
     const notice = screen.getByRole('region', { name: 'Notice stand-in' })
     await user.click(within(notice).getByRole('button', { name: 'Notice retry' }))
     await user.click(within(popover).getByRole('button', { name: 'Close' }))
-    current = preparation([], {}, 6)
+    current = preparation([], {}, 6, 'available', google)
     await act(async () => release(settingsView()))
     await act(() => queryClient.invalidateQueries({ queryKey: ['review-preparation'] }))
     await waitFor(() =>
@@ -389,6 +393,25 @@ describe('Retry now outcome (#1494 acceptance 6)', () => {
         'Retried. Every waiting lookup got an answer.',
       ),
     )
+  })
+
+  it('says without a tick that nothing is waiting when no source answered', async () => {
+    const user = userEvent.setup()
+    let current = preparation([entry()])
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi.fn(async () => current),
+      retryProviderRecovery: vi.fn(async () => settingsView()),
+    }
+    const { queryClient } = renderActivity(http)
+    const popover = await openPopover(user)
+    await user.click(within(popover).getByRole('button', { name: 'Retry now' }))
+    // The waiting lookups went stale: the source left with no answer (#1494).
+    current = preparation([], {}, 5)
+    await act(() => queryClient.invalidateQueries({ queryKey: ['review-preparation'] }))
+    const status = within(popover).getByRole('status')
+    await waitFor(() => expect(status).toHaveTextContent('Retried. No lookups are waiting.'))
+    expect(status).not.toHaveAttribute('data-outcome')
   })
 
   it('moves focus to the outcome line when Retry now leaves while focused', async () => {
@@ -407,7 +430,7 @@ describe('Retry now outcome (#1494 acceptance 6)', () => {
       expect(within(popover).getByRole('status')).toHaveTextContent('retrying now'),
     )
     expect(command).toHaveFocus()
-    current = preparation([], {}, 5)
+    current = preparation([], {}, 5, 'available', google)
     await act(() => queryClient.invalidateQueries({ queryKey: ['review-preparation'] }))
     const status = within(popover).getByRole('status')
     await waitFor(() =>

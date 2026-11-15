@@ -5121,7 +5121,12 @@ describe('owner language in Activity (#1286)', () => {
         actionable: false,
         paused: false,
         libraries: [],
-        provider_throttling: { generation: 1, retry: 'available', entries: [throttle] },
+        provider_throttling: {
+          generation: 1,
+          retry: 'available',
+          entries: [throttle],
+          answered: [],
+        },
       })),
     }
     renderRoute('/activity', http)

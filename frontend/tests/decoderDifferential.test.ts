@@ -300,7 +300,12 @@ const throttleEntry = {
 }
 const throttled = builder('Preparation', 'preparation.throttling', PREPARATION, () =>
   preparation({
-    provider_throttling: { generation: 3, retry: 'available', entries: [throttleEntry] },
+    provider_throttling: {
+      generation: 3,
+      retry: 'available',
+      entries: [throttleEntry],
+      answered: [{ library: 'Synthetic ebooks', adapter: 'google_books' }],
+    },
   }),
 )
 const lapsed = builder('Activity', 'activity.lapsed', ACTIVITY, () =>

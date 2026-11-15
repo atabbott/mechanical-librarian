@@ -9714,9 +9714,48 @@
         "title": "_PreparationThrottleEntry",
         "type": "object"
       },
+      "_PreparationThrottleSource": {
+        "additionalProperties": false,
+        "properties": {
+          "adapter": {
+            "enum": [
+              "open_library",
+              "inventaire",
+              "hardcover",
+              "google_books",
+              "audible_catalog",
+              "audnexus",
+              "audiosilo",
+              "itunes_search"
+            ],
+            "title": "Adapter",
+            "type": "string"
+          },
+          "library": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Library",
+            "type": "string"
+          }
+        },
+        "required": [
+          "library",
+          "adapter"
+        ],
+        "title": "_PreparationThrottleSource",
+        "type": "object"
+      },
       "_PreparationThrottling": {
         "additionalProperties": false,
         "properties": {
+          "answered": {
+            "items": {
+              "$ref": "#/components/schemas/_PreparationThrottleSource"
+            },
+            "maxItems": 256,
+            "title": "Answered",
+            "type": "array"
+          },
           "entries": {
             "items": {
               "$ref": "#/components/schemas/_PreparationThrottleEntry"
@@ -9743,7 +9782,8 @@
         "required": [
           "generation",
           "retry",
-          "entries"
+          "entries",
+          "answered"
         ],
         "title": "_PreparationThrottling",
         "type": "object"

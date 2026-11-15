@@ -2219,6 +2219,7 @@ def test_a_failed_settings_commit_never_moves_recovery_past_a_restart(
                     "notice_at": 86_500,
                 }
             ],
+            "answered": [],
         }
 
 

@@ -2237,10 +2237,16 @@ class _PreparationThrottleEntry(_ClosedModel):
     notice_at: int | None = Field(ge=0, le=8_640_000_000_000)
 
 
+class _PreparationThrottleSource(_ClosedModel):
+    library: StrictStr = Field(min_length=1, max_length=64)
+    adapter: ProviderAdapter
+
+
 class _PreparationThrottling(_ClosedModel):
     generation: int = Field(ge=1)
     retry: Literal["available", "managed_by_file", "unavailable"]
     entries: list[_PreparationThrottleEntry] = Field(max_length=256)
+    answered: list[_PreparationThrottleSource] = Field(max_length=256)
 
 
 class _PreparationResponse(_ClosedModel):

@@ -15335,7 +15335,7 @@ describe('library provider throttling notice (#1282)', () => {
     actionable: false,
     paused: false,
     libraries: [],
-    provider_throttling: { generation: 4, retry, entries },
+    provider_throttling: { generation: 4, retry, entries, answered: [] },
   })
   const notice = () => screen.findByRole('region', { name: 'Source lookups waiting to retry' })
   const container = () => document.querySelector<HTMLElement>('.provider-throttle-notice')
@@ -15596,6 +15596,7 @@ describe('library provider throttling notice (#1282)', () => {
         generation: 5,
         retry: 'available',
         entries: [entry({ remedy: 'add_api_key', state: 'checking' })],
+        answered: [],
       },
     }
     await user.click(within(region).getByRole('button', { name: 'Retry now' }))
@@ -15604,7 +15605,12 @@ describe('library provider throttling notice (#1282)', () => {
     expect(status).not.toHaveAttribute('data-outcome')
     current = {
       ...throttled([]),
-      provider_throttling: { generation: 5, retry: 'available', entries: [] },
+      provider_throttling: {
+        generation: 5,
+        retry: 'available',
+        entries: [],
+        answered: [{ library: entry().library, adapter: entry().adapter }],
+      },
     }
     await act(() => queryClient.invalidateQueries({ queryKey: ['review-preparation'] }))
     await waitFor(() =>
@@ -15632,6 +15638,7 @@ describe('library provider throttling notice (#1282)', () => {
         generation: 5,
         retry: 'available',
         entries: [entry({ remedy: 'add_api_key' })],
+        answered: [],
       },
     }
     await user.click(within(region).getByRole('button', { name: 'Retry now' }))

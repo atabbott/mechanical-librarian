@@ -29,11 +29,11 @@ const entry = (overrides: Partial<ProviderThrottleEntry> = {}): ProviderThrottle
   notice_at: null,
   ...overrides,
 })
-const throttling = (entries: ProviderThrottleEntry[], generation = 4): ProviderThrottlingView => ({
-  generation,
-  retry: 'available',
-  entries,
-})
+const throttling = (
+  entries: ProviderThrottleEntry[],
+  generation = 4,
+  answered: ProviderThrottlingView['answered'] = [],
+): ProviderThrottlingView => ({ generation, retry: 'available', entries, answered })
 const NOW = 1_800_000_000_000
 
 describe('needsYou (#1494 acceptance 1)', () => {
@@ -105,7 +105,6 @@ describe('retryOutcome (#1494 acceptance 6)', () => {
   })
 
   it.each([
-    [[], 'Retried. Every waiting lookup got an answer.'],
     [
       [entry()],
       'Retried. Google Books is still limiting requests, so 214 lookups are waiting again.',
@@ -163,6 +162,22 @@ describe('retryOutcome (#1494 acceptance 6)', () => {
       { library: 'Synthetic ebooks', adapter: 'open_library' } as const,
     ]
     expect(retryOutcome(pressed, 4, throttling(current, 5))).toBe(sentence)
+  })
+
+  it('claims answers only when every pressed source got one', () => {
+    // A source also stops waiting when its lookups went stale: nothing is
+    // waiting, and no provider answered (#1494).
+    expect(retryOutcome([google, hardcover], 4, throttling([], 5, [hardcover, google]))).toBe(
+      'Retried. Every waiting lookup got an answer.',
+    )
+    for (const answered of [[], [google]])
+      expect(retryOutcome([google, hardcover], 4, throttling([], 5, answered))).toBe(
+        'Retried. No lookups are waiting.',
+      )
+    // A source that is waiting again is still the one named.
+    expect(retryOutcome([google, hardcover], 4, throttling([entry()], 5))).toBe(
+      'Retried. Google Books is still limiting requests, so 214 lookups are waiting again.',
+    )
   })
 
   it('says one Retried. and one sentence per source that did not recover, summed over libraries', () => {
