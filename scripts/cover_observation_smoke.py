@@ -500,6 +500,8 @@ def build_plan(
 
 def _money(value: Decimal) -> str:
     """Dollars and cents, with up to four places for amounts under a cent."""
+    if 0 < value < Decimal("0.0001"):
+        return "under $0.0001"
     if value != 0 and abs(value) < Decimal("0.01"):
         text = f"{value.quantize(Decimal('0.0001')):f}".rstrip("0")
         return "$" + (text if not text.endswith(".") else text + "00")
@@ -731,7 +733,7 @@ def summarise(
         "report_schema_version": REVISED_CONTRACT.report_schema_version,
         "reports_valid": len(valid),
         "requests_selected": selected,
-        "requests_sent": len(attempts),
+        "requests_sent": sum(attempt.posted for attempt in attempts),
         "saved_model": plan.saved_model,
         "schema_version": RESULT_SCHEMA,
         "source_head": _source_head(),

@@ -476,6 +476,25 @@ def test_ctrl_c_mid_request_is_recorded_with_an_unknown_charge(
     assert record["failure"] == "interrupted"
 
 
+class InterruptingBeforeSend(Fake):
+    def respond(self, request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            raise KeyboardInterrupt
+        return super().respond(request)
+
+
+def test_ctrl_c_before_sending_counts_no_request(library: Any, tmp_path: Path) -> None:
+    fake = InterruptingBeforeSend()
+    plan, key = _repeated_plan(library, fake, 3)
+    result = smoke.run_smoke(plan, key, tmp_path / "run", transport=fake)
+    assert fake.posts == 0
+    assert result["stopped"] == "interrupted"
+    assert result["status"] == "incomplete"
+    assert result["requests_sent"] == 0
+    assert result["unknown_charges"] == 0
+    assert result["spent_usd"] == "0"
+
+
 def test_a_missing_preview_is_counted_not_fatal(library: Any) -> None:
     database, artifacts, _ = library
     # item-b's only cover is preview 3; without it item-b cannot be prepared.
@@ -497,11 +516,12 @@ def test_a_missing_preview_is_counted_not_fatal(library: Any) -> None:
         ("0", "$0.00"),
         ("0.002", "$0.002"),
         ("0.00015", "$0.0002"),
+        ("0.00002", "under $0.0001"),
         ("0.13", "$0.13"),
         ("5", "$5.00"),
         ("1234.5", "$1,234.50"),
     ],
-    ids=["zero", "fraction", "tiny", "cents", "whole", "thousands"],
+    ids=["zero", "fraction", "tiny", "below-display", "cents", "whole", "thousands"],
 )
 def test_money_reads_as_dollars_and_cents(value: str, text: str) -> None:
     assert smoke._money(Decimal(value)) == text
