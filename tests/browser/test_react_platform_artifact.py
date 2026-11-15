@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlsplit
 
+import pytest
 from playwright.sync_api import Page, Route, expect, sync_playwright
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
@@ -19,6 +20,7 @@ from mechanical_librarian.interfaces.web.react_assets import (
     ReactAssetBundle,
     load_react_asset_bundle,
 )
+from tests.browser import fidelity_cohort
 from tests.browser.fidelity_cohort import (
     BUILD_IDENTITY as _BUILD_IDENTITY,
 )
@@ -5371,6 +5373,75 @@ def test_write_permission_panel_fits_a_phone_at_200_percent_text() -> None:
                 )
                 if sideways > 0:
                     failures.append(f"{where}: the page scrolls {sideways}px sideways")
+        assert failures == [], "\n".join(failures)
+
+
+# Each write plan field card's content past the card's inner right edge.
+_PAST_THE_FIELD_CARD = """() => [...document.querySelectorAll('.write-plan-field')].flatMap(field => {
+  const card = field.closest('li');
+  const style = getComputedStyle(card);
+  const right = card.getBoundingClientRect().right - parseFloat(style.borderRightWidth) -
+    parseFloat(style.paddingRight);
+  const found = card.scrollWidth > card.clientWidth
+    ? [`${card.firstElementChild.textContent.trim()} scrolls ${card.scrollWidth - card.clientWidth}px`] : [];
+  for (const node of card.querySelectorAll('*')) {
+    const box = node.getBoundingClientRect();
+    if (box.width && box.right > right + 0.5)
+      found.push(`"${node.textContent.trim().slice(0, 30)}" runs ${Math.round(box.right - right)}px past its card`);
+  }
+  return found;
+})"""
+
+
+def _open_write_permissions(page: Page) -> None:
+    page.goto("https://react-platform.invalid/activity")
+    page.get_by_role("button", name="Review write permissions").first.click()
+    page.get_by_role("heading", name="Write permissions", exact=True).wait_for()
+    page.locator(".write-plan-field").first.wait_for()
+    page.evaluate(_TWO_FRAMES)
+
+
+def test_write_plan_values_line_up_down_the_list() -> None:
+    """At 1280px every listed change's New value starts at one left edge, so
+    rows of different lengths read as two columns (#1336)."""
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1280, "height": 900}, locale="en-US")
+        page.add_init_script(_LIVE_UPDATE_STREAM)
+        _serve_cohort(page)
+        _open_write_permissions(page)
+        rows = page.locator(".write-plan-rows > li")
+        lengths = rows.evaluate_all("rows => rows.map(row => row.textContent.length)")
+        lefts = rows.evaluate_all(
+            "rows => rows.map(row => row.querySelector('.write-plan-values > div:last-child')"
+            ".getBoundingClientRect().left)"
+        )
+        assert len(set(lengths)) > 1, lengths
+        assert max(lefts) - min(lefts) < 0.5, lefts
+
+
+def test_write_plan_groups_stay_in_their_cards_at_320px_and_200_percent_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """In a plan past the file limit, each group's count and Show cue move to
+    their own line and wrap inside the field card at 320px with 200% text (#1336)."""
+    monkeypatch.setattr(
+        fidelity_cohort,
+        "_COHORT_WRITE_PLAN",
+        fidelity_cohort.COHORT_WRITE_PLANS["over_limit"],
+    )
+    with ExitStack() as stack:
+        page = _enlarged_cohort(stack, 320, 844)
+        _open_write_permissions(page)
+        expect(page.get_by_text("23,570 changes")).to_be_visible()
+        failures = page.evaluate(_PAST_THE_FIELD_CARD)
+        sideways = page.evaluate(
+            "() => document.documentElement.scrollWidth - innerWidth"
+        )
+        if sideways > 0:
+            failures.append(f"the page scrolls {sideways}px sideways")
         assert failures == [], "\n".join(failures)
 
 

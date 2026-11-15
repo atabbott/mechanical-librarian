@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -146,18 +146,34 @@ describe('WritePlanField: one library and field of the plan (#1336)', () => {
       <WritePlanField plan={large} library="books" destination="title" />,
     )
 
-    const [mine, automatic] = [...container.querySelectorAll('details')] as [
-      HTMLDetailsElement,
-      HTMLDetailsElement,
-    ]
-    expect(mine.open).toBe(false)
+    expect(container.querySelectorAll('details')).toHaveLength(1)
+    const mine = within(container).getByRole('group')
+    expect(mine).not.toHaveAttribute('open')
     expect(within(mine).getByText('1,234 changes')).toBeInTheDocument()
     expect(within(mine).getByText('1,232 more in the file')).toBeInTheDocument()
-    // A count-only group lists no rows and says where they are.
-    expect(within(automatic).queryByRole('list')).toBeNull()
-    expect(within(automatic).getByText('6 more in the file')).toBeInTheDocument()
+    // A count-only group has nothing to open: its line alone, same words.
+    const automatic = container.querySelector('.write-plan-summary')
+    expect(automatic?.tagName).toBe('P')
+    expect(automatic).toHaveTextContent(/^Chosen automatically6 changes$/)
+    expect(automatic?.closest('details')).toBeNull()
+    expect(container).not.toHaveTextContent('6 more in the file')
     await user.click(within(mine).getByText('Chosen by you'))
-    expect(mine.open).toBe(true)
+    expect(mine).toHaveAttribute('open')
+  })
+
+  it("shows a small plan's group whose only row is unreadable as its line alone", () => {
+    const unreadable = plan(1, [
+      { library: 'books', destination: 'title', kind: 'automatic', count: 1, rows: [] },
+    ])
+    const { container } = render(
+      <WritePlanField plan={unreadable} library="books" destination="title" />,
+    )
+
+    expect(container.querySelector('details')).toBeNull()
+    expect(container.querySelector('.write-plan-summary')).toHaveTextContent(
+      /^Chosen automatically1 change$/,
+    )
+    expect(screen.queryByRole('list')).toBeNull()
   })
 })
 
@@ -296,18 +312,21 @@ describe('ActivityWritePlan: the lead and the two files (#1336)', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Download JSON' }))
     })
     const status = screen.getByRole('status')
+    const line = status.closest('p')
     act(() => report(0))
-    expect(status).toHaveTextContent(/^Preparing the file…$/)
+    expect(line).toHaveTextContent(/^Preparing the file…$/)
     act(() => report(100))
-    expect(status).toHaveTextContent('Preparing the file… 100 of 20,000 changes')
+    expect(line).toHaveTextContent('Preparing the file… 100 of 20,000 changes')
     act(() => report(250))
-    expect(status).toHaveTextContent('Preparing the file… 100 of 20,000 changes')
+    expect(line).toHaveTextContent('Preparing the file… 100 of 20,000 changes')
     vi.setSystemTime(11_000)
     act(() => report(4_321))
-    expect(status).toHaveTextContent('Preparing the file… 4,321 of 20,000 changes')
+    expect(line).toHaveTextContent('Preparing the file… 4,321 of 20,000 changes')
+    // Only the start is announced; the moving count beside it is not live.
+    expect(status).toHaveTextContent(/^Preparing the file…$/)
 
     await act(async () => finish(file))
-    expect(status).toHaveTextContent('')
+    expect(line).toHaveTextContent('')
     expect(vi.getTimerCount()).toBe(1) // only the saved file's own minute
   })
 
@@ -324,7 +343,7 @@ describe('ActivityWritePlan: the lead and the two files (#1336)', () => {
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Download CSV' }))
     })
-    const status = screen.getByRole('status')
+    const status = screen.getByRole('status').closest('p')
 
     act(() => report(100))
     act(() => {
@@ -361,6 +380,10 @@ describe('ActivityWritePlan: the lead and the two files (#1336)', () => {
 
     await user.click(screen.getByRole('button', { name: 'Download CSV' }))
     expect(await screen.findByText('The file was not downloaded. Try again.')).toBeVisible()
+    // The failure is what the live region says next.
+    expect(screen.getByRole('status')).toHaveTextContent(
+      /^The file was not downloaded\. Try again\.$/,
+    )
     expect(saved).toEqual([])
 
     await user.click(screen.getByRole('button', { name: 'Download CSV' }))
@@ -376,8 +399,11 @@ describe('ActivityWritePlan: the lead and the two files (#1336)', () => {
     await user.click(screen.getByRole('button', { name: 'Download JSON' }))
 
     expect(await screen.findByText('The file was not downloaded.')).toBeVisible()
-    expect(screen.getByRole('button', { name: 'Reload' })).toBeVisible()
+    const reload = screen.getByRole('button', { name: 'Reload' })
+    expect(reload).toBeVisible()
     expect(screen.queryByRole('button', { name: /Download/ })).toBeNull()
+    // The pressed button is gone; focus goes on to Reload, not the page.
+    await waitFor(() => expect(reload).toHaveFocus())
   })
 
   it('abandons a download in flight when the panel closes', async () => {

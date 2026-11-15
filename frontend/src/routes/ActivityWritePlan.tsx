@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from 'react'
 import { BuildMismatchError } from '../api/http'
 import type { WritePlanFormat, WritePlanView } from '../api/http'
 import { StaleBuildRead } from '../components/StaleBuildRead'
+import { focusAfterRetry } from '../focusAfterRetry'
 import { useReviewContext } from '../router'
 
 /** A file lists at most this many changes, and says so inside itself. */
@@ -51,6 +52,8 @@ export const ActivityWritePlan = ({ plan }: { plan: WritePlanView }) => {
   const [state, setState] = useState<DownloadState>({ kind: 'idle' })
   const controller = useRef<AbortController | null>(null)
   const trailing = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const block = useRef<HTMLDivElement>(null)
+  const reload = useRef<HTMLButtonElement>(null)
   // A download in flight ends with the panel; nothing is saved after it.
   useEffect(
     () => () => {
@@ -98,7 +101,15 @@ export const ActivityWritePlan = ({ plan }: { plan: WritePlanView }) => {
       setState({ kind: 'idle' })
     } catch (error) {
       if (current.signal.aborted) return
-      setState(error instanceof BuildMismatchError ? { kind: 'stale' } : { kind: 'failed' })
+      if (error instanceof BuildMismatchError) {
+        setState({ kind: 'stale' })
+        // The pressed button is gone, so focus goes on to Reload, as the
+        // check's own retry does.
+        focusAfterRetry(
+          () => reload.current,
+          () => block.current,
+        )
+      } else setState({ kind: 'failed' })
     } finally {
       clearTimeout(trailing.current)
       trailing.current = undefined
@@ -107,13 +118,13 @@ export const ActivityWritePlan = ({ plan }: { plan: WritePlanView }) => {
   }
 
   return (
-    <div className="activity-write-plan">
+    <div className="activity-write-plan" ref={block}>
       <p>{leadText(plan.total)}</p>
       {plan.total > WRITE_PLAN_FILE_ROWS ? (
         <p>The file lists the first {count(WRITE_PLAN_FILE_ROWS)} changes.</p>
       ) : null}
       {state.kind === 'stale' ? (
-        <StaleBuildRead lead="The file was not downloaded." />
+        <StaleBuildRead lead="The file was not downloaded." ref={reload} />
       ) : (
         <div className="activity-write-plan-actions">
           {(['csv', 'json'] as const).map((format) => (
@@ -129,14 +140,24 @@ export const ActivityWritePlan = ({ plan }: { plan: WritePlanView }) => {
           ))}
         </div>
       )}
-      <p role="status">
-        {state.kind === 'busy'
-          ? state.rows === null
+      {/* Announced once when the file starts and again if it fails; the
+          count beside it moves every second and is not announced. */}
+      <p className="activity-write-plan-status">
+        <span role="status">
+          {state.kind === 'busy'
             ? 'Preparing the file…'
-            : `Preparing the file… ${count(Math.min(state.rows, expected))} of ${count(expected)} changes`
-          : state.kind === 'failed'
-            ? 'The file was not downloaded. Try again.'
-            : ''}
+            : state.kind === 'failed'
+              ? 'The file was not downloaded. Try again.'
+              : ''}
+        </span>
+        {state.kind === 'busy' && state.rows !== null ? (
+          <>
+            {' '}
+            <span className="activity-write-plan-progress">
+              {count(Math.min(state.rows, expected))} of {count(expected)} changes
+            </span>
+          </>
+        ) : null}
       </p>
     </div>
   )

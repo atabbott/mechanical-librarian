@@ -107,7 +107,7 @@ h2 { margin-bottom:.35rem; }
   .shell-status { grid-template-columns:minmax(0,1fr); } .shell-status > .preparation-activity { grid-column:1; }
   .masthead nav { grid-template-columns:repeat(2,minmax(0,1fr)); } .masthead nav a { padding-inline:.25rem; }
 }
-.navigation-status, .sr-only, .cm-activity-authority-actions > .activity-command-status:empty, .activity-consent-ledger > p[role='status']:empty { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+.navigation-status, .sr-only, .cm-activity-authority-actions > .activity-command-status:empty, .activity-consent-ledger > p[role='status']:empty, .activity-write-plan-status:has(> [role='status']:empty) { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
 .shell-error { margin:0; padding:.75rem 1rem; color:var(--danger); text-align:center; }
 .shell-error.is-uncertain { color:color-mix(in srgb,var(--notice) 80%,var(--ink)); background:var(--notice-soft); }
 .build-mismatch { display:flex; gap:1rem; align-items:center; justify-content:center; padding:.75rem; color:#211500; background:#ffd27a; }
@@ -1788,15 +1788,19 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 .activity-consent-library ul { grid-template-columns:minmax(0,1fr); }
 .write-plan-field { flex-basis:100%; display:grid; grid-template-columns:minmax(0,1fr); gap:.35rem; min-width:0; }
 .write-plan-group { min-width:0; padding-top:.3rem; border-top:1px solid var(--line); }
-.write-plan-group > summary { display:flex; flex-wrap:wrap; align-items:center; gap:.1rem .6rem; min-height:44px; cursor:pointer; list-style:none; }
+/* A group with nothing to open is the same line without its cue. */
+.write-plan-group > :is(summary, .write-plan-summary) { display:flex; flex-wrap:wrap; align-items:center; gap:.1rem .6rem; min-height:44px; margin:0; list-style:none; }
+.write-plan-group > summary { cursor:pointer; }
 .write-plan-group > summary::-webkit-details-marker { display:none; }
-.write-plan-chooser { flex:1 1 auto; min-width:0; font-weight:600; }
-/* Each part wraps to its own line before a word would break. */
-.activity-consent-library .write-plan-count { flex:0 0 auto; color:var(--soft); white-space:nowrap; }
-.write-plan-group > summary::after { content:'Show'; flex:0 0 auto; color:var(--accent-strong); text-decoration:underline; }
-.write-plan-group[open] > summary::after { content:'Hide'; }
+.write-plan-chooser { flex:1 1 auto; min-width:0; }
+/* The count and its Show or Hide cue are one unit: it moves to the next line
+   whole, and wraps inside itself only when that line is still too narrow. */
+.activity-consent-library .write-plan-count { display:flex; flex-wrap:wrap; flex:0 1 auto; column-gap:.6rem; min-width:0; margin-inline-start:auto; color:var(--soft); }
+.write-plan-group > summary > .write-plan-count::after { content:'Show'; color:var(--accent-strong); text-decoration:underline; }
+.write-plan-group[open] > summary > .write-plan-count::after { content:'Hide'; }
 .activity-consent-library .write-plan-rows { display:grid; grid-template-columns:minmax(0,1fr); gap:.45rem; margin:.2rem 0 0; }
-.activity-consent-library .write-plan-rows > li { display:grid; gap:.25rem; padding:.55rem .65rem; background:var(--surface); }
+/* Every row takes the whole width, so Current and New line up down the list. */
+.activity-consent-library .write-plan-rows > li { display:grid; grid-template-columns:minmax(0,1fr); justify-content:normal; gap:.25rem; padding:.55rem .65rem; background:var(--surface); }
 .write-plan-work, .write-plan-why, .write-plan-more { margin:0; min-width:0; overflow-wrap:anywhere; }
 .activity-consent-library .write-plan-work span, .write-plan-why, .write-plan-more { color:var(--soft); }
 .write-plan-values { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.25rem .75rem; margin:0; }
@@ -1804,7 +1808,6 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 .write-plan-values dd { margin:0; min-width:0; overflow-wrap:anywhere; }
 .activity-write-plan { display:grid; gap:.5rem; margin:.5rem 0; }
 .activity-write-plan > p { margin:0; }
-.activity-write-plan > p[role='status']:empty { display:none; }
 .activity-write-plan-actions { display:flex; flex-wrap:wrap; gap:.5rem; }
 @media (max-width:760px) {
   .write-plan-values { grid-template-columns:minmax(0,1fr); }

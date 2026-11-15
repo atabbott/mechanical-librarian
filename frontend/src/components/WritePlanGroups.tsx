@@ -42,24 +42,32 @@ const WritePlanGroup = ({
   // When every listable change is shown, a missing row could not be read, and
   // the file leaves it out too, so nothing is announced as being there.
   const more = everyRowShown ? 0 : group.count - group.rows.length
+  const label = (
+    <>
+      <span className="write-plan-chooser">
+        {group.kind === 'human' ? 'Chosen by you' : 'Chosen automatically'}
+      </span>
+      <span className="write-plan-count">{changesText(group.count)}</span>
+    </>
+  )
+  // With no row to show there is nothing to open: the group is its line alone.
+  if (group.rows.length === 0)
+    return (
+      <div className="write-plan-group">
+        <p className="write-plan-summary">{label}</p>
+      </div>
+    )
   return (
     <details className="write-plan-group" open={everyRowShown}>
       {/* The Show or Hide cue is generated content; <details> states the
           expanded state to assistive technology itself. */}
-      <summary>
-        <span className="write-plan-chooser">
-          {group.kind === 'human' ? 'Chosen by you' : 'Chosen automatically'}
-        </span>
-        <span className="write-plan-count">{changesText(group.count)}</span>
-      </summary>
-      {group.rows.length ? (
-        <ul className="write-plan-rows">
-          {group.rows.map((row, index) => (
-            // Rows carry no identity by design: their place is their key.
-            <WritePlanRow key={index} row={row} />
-          ))}
-        </ul>
-      ) : null}
+      <summary>{label}</summary>
+      <ul className="write-plan-rows">
+        {group.rows.map((row, index) => (
+          // Rows carry no identity by design: their place is their key.
+          <WritePlanRow key={index} row={row} />
+        ))}
+      </ul>
       {more > 0 ? (
         <p className="write-plan-more">{more.toLocaleString('en-US')} more in the file</p>
       ) : null}

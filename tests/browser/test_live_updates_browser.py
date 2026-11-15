@@ -1224,7 +1224,7 @@ def test_the_write_plan_downloads_as_a_saved_file_without_granting_anything() ->
                     saved[filename] = Path(path).read_bytes()
                     # The file's own status line, empty (and so hidden) once saved.
                     expect(
-                        review.locator(".activity-write-plan > p[role='status']")
+                        review.locator(".activity-write-plan-status [role='status']")
                     ).to_have_text("")
 
                 csv_lines = saved["mechanical-librarian-write-plan.csv"].split(b"\r\n")

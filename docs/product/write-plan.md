@@ -17,7 +17,7 @@ by the sources that support it. An empty value reads "Not set". A cover is
 named in words, "Current cover" and "Selected cover", never by its image or
 identity.
 
-Sources are provider names only. A value you accepted names the providers of
+Sources are provider names only. A value you chose names the providers of
 the evidence behind it, and an automatic one the providers its outcome cites.
 A cover names only the sources its chosen image was found in: each provider
 that supplied it, or "Local library record" for the library's own cover; the
