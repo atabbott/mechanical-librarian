@@ -177,7 +177,10 @@ function CodexSignIn({
     <div className="settings-field-row">
       <div>
         <h3 tabIndex={-1}>Shared Codex sign-in</h3>
-        <p>Cover review and description advice both use it. Choose Codex for each task below.</p>
+        <p>
+          Cover review, description advice and the taste profile can use it. Choose Codex for each
+          task below.
+        </p>
         <p>Model: {view.codex.model ?? 'Unavailable'}</p>
         <p aria-live="polite">Status: {reviewerStateLabels[codexState]}</p>
         {codexReason ? <p role="alert">{codexReason}</p> : null}
