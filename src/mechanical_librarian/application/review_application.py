@@ -67,6 +67,7 @@ from mechanical_librarian.application.review_web import (
     HumanDecisionStore,
     InspectCurrentReviewCase,
     LibraryLabels,
+    OwnerPasswordChange,
     OwnerSessionService,
     ProviderRecoverySchedule,
     RecordHumanDecision,
@@ -962,7 +963,7 @@ class ReviewApplication:
     def ready(self) -> bool:
         return self._operations is None or self._operations.ready()
 
-    # The four session operations below deliberately bypass ``serialized``:
+    # The six session operations below deliberately bypass ``serialized``:
     # the session store owns its dedicated database and lock (#912), so owner
     # sign-in and session checks never queue behind an operation that holds
     # the application gate while it waits on a scan's write transaction.
@@ -978,6 +979,27 @@ class ReviewApplication:
 
     def logout(self, session_token: str, csrf_token: str) -> None:
         self._sessions.logout(session_token, csrf_token)
+
+    def logout_others(self, session_token: str, csrf_token: str) -> int:
+        return self._sessions.logout_others(session_token, csrf_token)
+
+    def change_owner_password(
+        self,
+        session_token: str,
+        csrf_token: str,
+        current_password: str,
+        new_password: str,
+        confirmation: str,
+        client: str,
+    ) -> SessionTokens:
+        return self._sessions.change_password(
+            session_token,
+            csrf_token,
+            current_password,
+            new_password,
+            confirmation,
+            client,
+        )
 
     def operations_status(self) -> dict[str, object]:
         if self._operations is None:
@@ -1920,6 +1942,7 @@ def compose_review_application(
     graceful_shutdown_seconds: int,
     session_digest: Callable[[str], str],
     client_digest: Callable[[str], str],
+    owner_password_change: OwnerPasswordChange | None = None,
     close_state_owner: bool = False,
     preparation: ReviewPreparationSupervisor | None = None,
     policy_libraries: tuple[tuple[str, dict[str, object] | None], ...] = (),
@@ -2005,6 +2028,7 @@ def compose_review_application(
             clock,
             session_lifetime_seconds,
             client_digest=client_digest,
+            password_change=owner_password_change,
         ),
         cases=InspectCurrentReviewCase(case_store, cover_considerations),
         decisions=RecordHumanDecision(decision_store, clock, timing),

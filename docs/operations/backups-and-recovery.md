@@ -15,6 +15,7 @@ database rows, pointers or artifact files to force a store open.
 | Application database | `/data/application.sqlite3` | Reports, proposals, decisions, policy, consent, write history. In store mode also owner settings and secrets. |
 | Cover artifact store | `/data/artifacts/` | Must match the database. Files are named by the SHA-256 of their content. |
 | Provider-recovery database | `/data/private/provider-recovery.sqlite` | Restore it from the same backup as the application database. Startup refuses a recovery store whose generation is newer than the configuration. |
+| Provider-response database | `/data/private/provider-responses.sqlite` | Optional. Losing it means providers are asked again. Holds provider answers that name your books, so keep it as private as the rest. It may be [carried across a clean rebuild](upgrades.md#keeping-provider-answers). |
 | Session database | `/data/private/review-sessions.sqlite` | Optional. Losing it costs one sign-in. Holds only token and client digests. |
 | Catalogue database | `/data/catalogue.sqlite3` | Optional; regenerable. |
 | Codex sign-in | `/data/reviewer/auth/` | Present only if you use the contained Codex reviewer. A credential. |
@@ -85,6 +86,15 @@ is invalid, the container runs in file mode and ignores the restored settings.
 
 Restore the whole database, never parts of it: records such as cover
 considerations are refused if the reports and artifacts they cite are missing.
+
+Restoring brings back the backup's owner password: in store mode it is in the
+application database, in file mode in the restored hash file. A restored
+session database also brings back every unexpired session issued under that
+password, including sessions signed out since the backup. After such a
+restore, press Sign out other browsers
+([owner sessions](deployment.md#owner-sessions)), or change the password
+([changing the owner password](deployment.md#changing-the-owner-password)),
+which ends every other session too.
 
 Restoring does not change Audiobookshelf. On restart, consent, pause and
 authority are reloaded from the restored state, and interrupted writes recover

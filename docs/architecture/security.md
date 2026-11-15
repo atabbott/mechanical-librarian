@@ -84,8 +84,10 @@ visitor who reaches the port first cannot take the workspace
   `409`. The token file is then removed. Later steps need a session, and
   kickoff closes setup for good.
 
-Startup admits only the exact seeded predecessor or valid current incomplete
-setup; any other non-empty, malformed or store-mode state fails closed.
+Startup admits only the exact seeded predecessor, valid current incomplete
+setup, or
+[kept provider answers](decisions/0101-reuse-stored-provider-answers.md)
+alone; any other non-empty, malformed or store-mode state fails closed.
 Connection setup stores endpoint and key only after one bounded
 `GET /api/libraries` under the [egress rules](#credentials-and-egress)
 succeeds, and failures echo no key or userinfo. Service folder paths are kept
@@ -103,6 +105,12 @@ only to compare with mount mappings, and those checks never read media.
   lookup keyed by the exact verifier, CSRF digests, expiry, revocation and
   throttle rows. Replacing the verifier invalidates every session. Logout
   deletes the cookie only after revocation is durable.
+- In store mode, Settings changes the password after checking the current
+  one, which spends a sign-in attempt. One transaction stores the new verifier
+  only while the stored one is the one checked. The changing browser gets a
+  new session and every other session ends. File mode answers `409`.
+- In either mode, Sign out other browsers checks this session's CSRF token and
+  deletes every other session in one transaction. It clears no attempts.
 - A workspace page opened without a session sends the browser to sign-in with
   that page as `next`. Sign-in returns only to a workspace page on this
   origin: the server matches `next` against the workspace routes and a
@@ -112,7 +120,8 @@ only to compare with mount mappings, and those checks never read media.
 
 Sign-in allows five attempts per client in any five minutes, under a global
 ceiling of 100; a refusal is `429 throttled`. A granted session clears only
-its own client's attempts. The client key is an HMAC, never a stored address.
+its own client's attempts; a password change clears every client's. The
+client key is an HMAC keyed by the verifier, never a stored address.
 
 The client comes from the transport: an untrusted peer is its socket
 address, whatever its `X-Forwarded-For` says, and a peer in
@@ -201,11 +210,10 @@ request whose headers take over 10 seconds or whose body takes 30 more.
 
 ## Credentials and egress
 
-Secrets are read only in infrastructure while building their named client;
-a disabled provider's stored key builds nothing.
+Secrets are read only in infrastructure while building their named client.
 Every HTTP client ignores ambient proxy settings, follows no redirect itself,
 verifies certificate and host name on HTTPS, and uses an explicit timeout and
-one connection. No endpoint is arbitrary and nothing is cached.
+one connection. No endpoint is arbitrary.
 
 ### Target (Audiobookshelf)
 
@@ -237,6 +245,10 @@ which enabling never restores.
   responses. [Dispatch](../reference/configuration.md#dispatch) sends
   audiobooks only to `AUDIOBOOK_DISPATCH_ADAPTERS` and ebooks only to
   `EBOOK_DISPATCH_ADAPTERS`.
+- Clean observations' success bodies are kept owner-only for reuse, never
+  request text or credentials; each is verified when read, not at open, and
+  decoded and bounded as live
+  ([ADR-0101](decisions/0101-reuse-stored-provider-answers.md)).
 - Retained refused WORK answers serve only Book matching, never a live
   reader, support bundle or diagnostic, and fetch no cover
   ([refused work answers](../operations/metadata-report.md#refused-work-answers)).
@@ -315,9 +327,8 @@ Allowed cover origins:
 - Audiobookshelf's raw cover route, with no credential, cookie or referrer.
 - Hardcover, only on `assets.hardcover.app`, with no redirect.
 - Inventaire, on constructed fixed-origin URLs.
-- Open Library, on constructed fixed-origin URLs, with one closed redirect
-  route: `archive.org`, then an `ia<N>.us.archive.org` datanode, each hop
-  bound to the requested cover id.
+- Open Library, on constructed fixed-origin URLs, with the closed redirect
+  route below.
 - Audible on `m.media-amazon.com`, and iTunes on `is1-ssl` to
   `is5-ssl.mzstatic.com`.
 
@@ -539,8 +550,7 @@ returns a fixed set of visual properties with explicit unknowns and no
 ranking, winner or identity field. The local parser needs exactly one
 observation per admitted candidate and checks every binding. The adjudicator
 makes no model call and recomputes identity from the retained report, under
-the Book matching level the comparison binds. A level change reuses earlier
-observer output (#1355).
+the Book matching level the comparison binds.
 
 Each preview is verified against its report digest and re-encoded into a
 metadata-free single-frame PNG; admission requires byte equality after
@@ -686,8 +696,8 @@ claims with closed provenance and comparison facts, never a credential,
 private path, rejected provider value, response body or arbitrary EPUB text
 ([data privacy](data-privacy.md)). When Audiobookshelf names no author, an
 ebook's own EPUB creators may leave the host as query text: one to four
-distinct package creators with no role or an author role. Through the shared
-ebook plan, every enabled ebook metadata provider receives them: Google Books, Hardcover, Inventaire, iTunes and Open Library.
+distinct package creators with no role or an author role. Every enabled ebook
+provider receives them through the shared plan: Google Books, Hardcover, Inventaire, iTunes and Open Library.
 
 ### Publication
 

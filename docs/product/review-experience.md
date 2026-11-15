@@ -555,8 +555,8 @@ The ledger shows one row per change: the work or setting, the field, the exact
 before and after, who chose it, and whether Audiobookshelf confirmed it.
 Categories are your choice, automatic choice, policy change and recovery.
 Values come from the record made at the time, so later changes never alter
-history. A record that was not a change, such as a paused preparation, says
-what happened instead. Automatic checks with nothing to write gather into one
+history. A record that was no change, such as a paused preparation, says
+what happened. Automatic checks with nothing to write gather into one
 row, "Checked N fields, no changes". Each Details control names its row's
 field, work, result and time. Search, filters, a 7, 30 or 90-day range and 25,
 50 or 100-row pages run on the server. An unknown filter shows every event and
@@ -566,12 +566,11 @@ says so.
 
 Settings has seven sections: Audiobookshelf, Libraries, Metadata sources,
 Reviewer, Background work, Access and diagnostics, and Appearance. The section
-is the `?group=` URL value. A message elsewhere that names Settings → Reviewer
-or Settings → Audiobookshelf links to that section. Wider than 760 pixels, a
-section index sits beside the page, and at 760 or narrower a selector replaces
-it.
+is the `?group=` URL value. A message naming Settings → Reviewer or Settings →
+Audiobookshelf links there. A section index sits beside the page above 760
+pixels; at 760 or narrower a selector replaces it.
 
-The page edits one draft of all settings, and each section counts its changes,
+The page edits one draft of all settings; each section counts its changes,
 indirect ones too. While anything is unsaved, a bottom tray shared with Policy
 lists before and after values and offers Discard all and Save settings. A tray
 taller than a third of the window scrolls with the page. Save settings checks
@@ -585,17 +584,20 @@ edits ([configuration](../reference/configuration.md),
 
 Secrets show only as `Configured · ····xxxx` or `Not configured`. Turning a
 source off keeps its key, turns off its cover evidence and removes it from its
-libraries. Turning it back on does not add it to those libraries again.
+libraries. Turning it back on does not re-add it.
 
 Each library lists its languages by name, the first marked Preferred, with
-buttons to move or remove each and a picker to add one, up to eight. In a
-file-managed deployment the list is read only.
+buttons to move or remove each and a picker to add one, up to eight.
 
-Reviewer sign-in, validation and tests take effect at once, outside Save
+Reviewer sign-in, validation and tests apply at once, outside Save
 settings. Cover and description pickers show cost per 1,000 works. One
 OpenRouter key serves all three tasks; replacing it keeps every choice.
 Reviewer advice allows no write
 ([ADR-0062](../architecture/decisions/0062-owner-managed-reviewer-access.md)).
+
+In Access and diagnostics, Sign out other browsers and, in store mode, Owner
+password (given the current one) apply at once and sign out every other
+browser ([deployment](../operations/deployment.md#owner-sessions)).
 
 ## Words and values
 
@@ -603,8 +605,8 @@ The voice is the one `DESIGN.md` states under Voice. Mechanical Librarian
 never turns a code into words: it refuses an unknown code instead of
 sentence-casing it. Acronyms stay capitalised, languages read by name with
 their tag ("English (en)"), and sizes use MB. Times within the past hour are
-relative, others on the same day show the clock time, and other days add the
-date. A time still ahead is never relative.
+relative, others today show the clock time, and other days add the date. A
+time still ahead is never relative.
 
 ## Responsive and accessible behaviour
 

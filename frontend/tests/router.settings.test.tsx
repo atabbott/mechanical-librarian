@@ -392,11 +392,110 @@ describe('owner settings route', () => {
       expect(screen.queryByRole('button', { name: 'Save settings' })).not.toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Discard all' })).not.toBeInTheDocument()
     }
+    // File mode keeps its hash file: Access has no Owner password row, and
+    // Other browsers comes first.
+    await user.click(screen.getByRole('button', { name: /Access and diagnostics/ }))
+    expect(screen.getByText('Diagnostic timings')).toBeVisible()
+    expect(screen.queryByText('Owner password')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Change password' })).not.toBeInTheDocument()
+    expect(screen.getByText('Other browsers')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Sign out other browsers' })).toBeEnabled()
+    expect(
+      [...window.document.querySelectorAll('.settings-sheet .settings-field-title')][0]
+        ?.textContent,
+    ).toBe('Other browsers')
     // The locked view reads a size as the editable field does (#1286 X13).
     await user.click(screen.getByRole('button', { name: /Background work/ }))
     await user.click(screen.getByText('Response and file size limits'))
     expect(screen.getByText('0.0625 MB (64 KB)')).toBeVisible()
     expect(screen.getByText('8,192 MB (8 GB)')).toBeVisible()
+  })
+
+  it('puts Owner password first in Access, outside Save settings, in store mode', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    renderRoute('/settings?group=access', http)
+    await user.click(await screen.findByRole('button', { name: 'Change password' }))
+    const rows = [...window.document.querySelectorAll('.settings-sheet .settings-field-title')]
+    expect(rows.map((row) => row.textContent)).toEqual([
+      'Owner password',
+      'Other browsers',
+      'Sign-in length',
+      'Diagnostic timings',
+    ])
+    await user.type(
+      screen.getByLabelText('Current password', { selector: 'input' }),
+      'old horse battery',
+    )
+    await user.type(
+      screen.getByLabelText('New password', { selector: 'input' }),
+      'correct horse battery staple',
+    )
+    // Typing a password is not a settings change.
+    expect(screen.queryByRole('region', { name: 'Unsaved settings' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Save settings' })).not.toBeInTheDocument()
+    expect(http.writeSettings).not.toHaveBeenCalled()
+  })
+
+  it('keeps an open Owner password form through a Settings save', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.writeSettings = vi.fn(async (request: SettingsWrite) => ({
+      ...view(),
+      document: savedDocument(request.document),
+    }))
+    renderRoute('/settings?group=access', http)
+    await user.click(await screen.findByRole('button', { name: 'Change password' }))
+    const current = () => screen.getByLabelText('Current password', { selector: 'input' })
+    await user.type(current(), 'old horse battery')
+    await user.click(segment('Diagnostic timings', 'On'))
+    await user.click(screen.getByRole('button', { name: 'Save settings' }))
+
+    // The editor remounts on a save. A form that closed beside this notice
+    // would read as a saved password.
+    expect(await screen.findByText('Settings saved and in use.')).toBeVisible()
+    expect(current()).toHaveValue('old horse battery')
+    expect(http.changePassword).not.toHaveBeenCalled()
+  })
+
+  it('keeps the Other browsers line through a Settings save and a section visit, and clears it when Settings is left', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.writeSettings = vi.fn(async (request: SettingsWrite) => ({
+      ...view(),
+      document: savedDocument(request.document),
+    }))
+    const { router } = renderRoute('/settings?group=access', http)
+    await user.click(await screen.findByRole('button', { name: 'Sign out other browsers' }))
+    const done = 'Every other browser was signed out.'
+    const line = await screen.findByText(done)
+    expect(line).toHaveAttribute('role', 'status')
+    await waitFor(() => expect(line).toHaveFocus())
+    // Signing out other browsers is not a settings change.
+    expect(screen.queryByRole('region', { name: 'Unsaved settings' })).not.toBeInTheDocument()
+    expect(http.writeSettings).not.toHaveBeenCalled()
+
+    // The editor remounts on a save; the line stays.
+    await user.click(segment('Diagnostic timings', 'On'))
+    await user.click(screen.getByRole('button', { name: 'Save settings' }))
+    expect(await screen.findByText('Settings saved and in use.')).toBeVisible()
+    expect(screen.getByText(done)).toBeVisible()
+
+    await user.click(screen.getByRole('button', { name: /Appearance/ }))
+    expect(await screen.findByRole('heading', { level: 2, name: 'Appearance' })).toBeVisible()
+    expect(screen.queryByText(done)).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /Access and diagnostics/ }))
+    expect(await screen.findByText(done)).toBeVisible()
+
+    await act(() => router.navigate({ to: '/library', search: { lens: 'all' } }))
+    await waitFor(() => expect(router.state.location.pathname).toBe('/library'))
+    await act(() => router.navigate({ to: '/settings', search: { group: 'access' } }))
+    expect(await screen.findByRole('button', { name: 'Sign out other browsers' })).toBeEnabled()
+    expect(screen.queryByText(done)).not.toBeInTheDocument()
+    expect(http.logoutOthers).toHaveBeenCalledOnce()
   })
 
   it('owns group navigation in the URL and restores it with browser history', async () => {
