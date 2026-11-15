@@ -636,9 +636,11 @@ confirmed match.
 | --- | --- | --- |
 | `identifier` | Confirmed matches only | An identifier or a retained recording admission confirms it, as before |
 | `title_and_creator_exact` | Same title and every author | Its title and its whole author set agree with the book's |
-| `title_and_creator` | Same title and any author | Its title agrees and it shares at least one author |
+| `title_and_creator` | Same title and any author | Its title agrees and one author list includes the other |
 
-A record that lists only some of the book's authors still does not count.
+A record that lists only some of the book's authors counts. So does one that
+lists all of them and others. One that leaves out one of the book's authors and
+names another does not.
 
 At either wider value a cover from such a record is labelled "Same title and
 author". A title, subtitle, authors, description, genres, tags or series field

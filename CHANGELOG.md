@@ -84,6 +84,10 @@ brackets are GitHub issues.
 
 ## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
 
+- **Clean rebuild required.** With Book matching set to "Same title and any
+  author", a source record that lists only some of the book's authors, or all
+  of them and others, now counts as the same book. One that leaves out one of
+  the book's authors and names another still does not (#1355).
 - **Clean rebuild required.** Covers has a Taste profile tab. Once you have
   chosen 25 covers, an OpenRouter vision model you pick in Settings → Reviewer
   writes rules about the covers you choose and pass over. The profile is shown

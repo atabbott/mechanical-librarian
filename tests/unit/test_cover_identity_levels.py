@@ -37,8 +37,12 @@ from mechanical_librarian.application.cover_policy import (
 )
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
+    ClaimScope,
     Comparison,
+    FieldState,
     MetadataReport,
+    ProviderCandidate,
+    ProviderClaim,
     ProviderQueryKind,
     TargetDestination,
     TargetFacts,
@@ -226,12 +230,140 @@ def test_the_one_work_rule_counts_only_records_meeting_the_level(
     assert _classify_sources(report, (_listed_source(),), level) == expected
 
 
+_BOOK = "hardcover-work-0000000007"
+_MET_WIDE = ["work_identity_level_met", "work_identity:title_and_creator"]
+_TWO_AUTHORS = ("Ada Author", "Bea Author")
+
+
+def _real_candidate(
+    creators: tuple[str, ...], identity: str = _BOOK
+) -> ProviderCandidate:
+    """A real record beside the duck fixtures: the classifier alone needs one."""
+
+    def claim(kind: ClaimKind, value: str, **values: Any) -> ProviderClaim:
+        return ProviderClaim.create(
+            provider="hardcover",
+            candidate=identity,
+            kind=kind,
+            value=value,
+            state=FieldState.VALID,
+            scope=ClaimScope.WORK,
+            applicability="not_applicable",
+            **values,
+        )
+
+    return ProviderCandidate(
+        identity,
+        _BOOK,
+        (
+            claim(ClaimKind.TITLE, "Synthetic Title"),
+            *(
+                claim(ClaimKind.CREATOR, value, role="author", raw_order=index + 1)
+                for index, value in enumerate(creators)
+            ),
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ("target", "creators", "folded"),
+    (
+        (_TWO_AUTHORS, ("Ada Author",), False),
+        (("J. R. Example",), ("J.R. Example", "Co Author"), True),
+    ),
+    ids=("nested", "folded_nested"),
+)
+@pytest.mark.parametrize(
+    "level", list(WorkIdentityLevel), ids=lambda value: value.value
+)
+def test_a_nested_record_cover_at_each_configured_level(
+    level: WorkIdentityLevel,
+    target: tuple[str, ...],
+    creators: tuple[str, ...],
+    folded: bool,
+) -> None:
+    """A cover bound to a nested record is met at `title_and_creator` at every
+    configured level; only the configured wide level changes the outcome."""
+    report = _report(
+        cast("Any", _real_candidate(creators)), target=_target(authors=target)
+    )
+    facts = [*_MET_WIDE, *(["creator_initials_folded"] if folded else [])]
+    assert _classify_sources(report, (_listed_source(),), level) == (
+        "title_creator_work_match" if level is _WIDE else "unknown",
+        facts,
+        [],
+    )
+
+
+def test_an_overlapping_record_cover_is_refused_at_every_level() -> None:
+    record = _candidate(creators=("Ada Author", "Cy Author"))
+    report = _report(record, target=_target(authors=_TWO_AUTHORS))
+    for level in WorkIdentityLevel:
+        assert _classify_sources(report, (_listed_source(),), level) == (
+            "unknown",
+            ["work_identity_level_refused"],
+            [],
+        )
+
+
+def test_an_exact_record_beside_a_nested_one_is_not_met_at_the_exact_level() -> None:
+    """Negative control for a single gate at the widest level: the exact
+    level refuses on the nested record, so a configured exact level keeps the
+    identifier outcome."""
+    equal = _real_candidate(_TWO_AUTHORS)
+    nested = _real_candidate(("Ada Author",), identity="hardcover-edition-0000000011")
+    report = _report(
+        cast("Any", equal), cast("Any", nested), target=_target(authors=_TWO_AUTHORS)
+    )
+    for level in (_IDENTIFIER, _EXACT):
+        assert _classify_sources(report, (_listed_source(),), level) == (
+            "unknown",
+            _MET_WIDE,
+            [],
+        )
+    assert _classify_sources(report, (_listed_source(),), _WIDE) == (
+        "title_creator_work_match",
+        _MET_WIDE,
+        [],
+    )
+
+
+def test_an_overlapping_record_beside_an_exact_one_refuses_the_wide_level() -> None:
+    """The overlap veto holds at a configured wide level even when another
+    bound record meets the exact level; the exact level is unchanged."""
+    equal = _real_candidate(_TWO_AUTHORS)
+    overlapping = _candidate(
+        creators=("Ada Author", "Cy Author"), identity="hardcover-edition-0000000012"
+    )
+    report = _report(
+        cast("Any", equal), overlapping, target=_target(authors=_TWO_AUTHORS)
+    )
+    assert _classify_sources(report, (_listed_source(),), _IDENTIFIER) == (
+        "unknown",
+        _MET_EXACT,
+        [],
+    )
+    assert _classify_sources(report, (_listed_source(),), _EXACT) == (
+        "title_creator_work_match",
+        _MET_EXACT,
+        [],
+    )
+    assert _classify_sources(report, (_listed_source(),), _WIDE) == (
+        "unknown",
+        ["work_identity_level_refused"],
+        [],
+    )
+
+
 def test_the_level_rules_rotate_the_classifier_reference() -> None:
     assert {
         "listed-edition-work-identity-binding:level-outcome",
         "provider-identity-without-identifier-level-predicate:title-creator-work-match",
         "provider-identity-without-identifier-level-refused-or-ambiguous:unchanged",
         "listed-edition-beside-another-source-contradiction:level-refused",
+        "level-title-and-creator-nested-author-lists:own-list-comparison",
+        "level-title-and-creator-overlapping-author-lists:level-refused",
+        "level-contradiction-gate-per-level:exact-and-wide-apart",
     } <= set(_CLASSIFIER_RULES)
     assert not any("level-shadow" in rule for rule in _CLASSIFIER_RULES)
 

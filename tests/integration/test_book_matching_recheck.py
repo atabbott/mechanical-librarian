@@ -432,9 +432,12 @@ def _listed_case(
     automatic: bool = False,
     cover_order: str | None = None,
     verified: bool = False,
+    co_author: str | None = None,
 ) -> AbstractContextManager[_Library]:
     """One work whose only cover is a listed-edition record of the same title
-    and author; with `verified` the file's embedded cover joins it."""
+    and author; with `verified` the file's embedded cover joins it. With
+    `co_author` the record names the file's author and that one besides, so
+    its author list contains the file's."""
     from mechanical_librarian.domain.cover_evidence import (
         CoverContext,
         CoverContextField,
@@ -468,6 +471,21 @@ def _listed_case(
                 scope=ClaimScope.WORK,
                 role="author",
                 order=1,
+            ),
+            *(
+                ()
+                if co_author is None
+                else (
+                    _claim(
+                        "hardcover",
+                        edition,
+                        ClaimKind.CREATOR,
+                        co_author,
+                        scope=ClaimScope.WORK,
+                        role="author",
+                        order=2,
+                    ),
+                )
             ),
         ),
     )
@@ -632,6 +650,44 @@ def test_a_level_match_never_becomes_an_automatic_cover(
             "unknown"
             if level is WorkIdentityLevel.IDENTIFIER
             else "title_creator_work_match"
+        )
+        library.now[0] += 1
+        library.drain()
+        connection = root._connection
+        assert connection.execute(
+            "SELECT count(*) FROM cover_selection_authorities"
+        ).fetchone() == (0,)
+        assert connection.execute(
+            "SELECT count(*) FROM automatic_decisions WHERE destination='cover'"
+        ).fetchone() == (0,)
+
+
+@pytest.mark.parametrize("cover_order", _COVER_ORDERS)
+@pytest.mark.parametrize("level", list(WorkIdentityLevel), ids=lambda v: v.value)
+def test_a_nested_author_level_match_never_becomes_an_automatic_cover(
+    tmp_path: Path, level: WorkIdentityLevel, cover_order: str
+) -> None:
+    """A record naming the file's author and a co-author counts only at
+    `title_and_creator` (#1355), and even there its cover is never
+    recommended, accepted or selected automatically."""
+    with _listed_case(
+        tmp_path, automatic=True, cover_order=cover_order, co_author="Second Writer"
+    ) as library:
+        case_id, _ = _case(library)
+        _compare(library, level)
+        root = library.root
+        consideration = json.loads(
+            cast(str, root.current_cover_consideration_document(case_id))
+        )
+        policy = json.loads(consideration["policy_report_document"])
+        assert policy["recommended_candidate_reference"] is None
+        assert policy["acceptable_candidate_references"] == []
+        (candidate,) = consideration["candidates"]
+        assert candidate["selectable"] is False
+        assert candidate["identity"]["outcome"] == (
+            "title_creator_work_match"
+            if level is WorkIdentityLevel.TITLE_AND_CREATOR
+            else "unknown"
         )
         library.now[0] += 1
         library.drain()
