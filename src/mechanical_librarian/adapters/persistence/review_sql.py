@@ -217,6 +217,22 @@ def _active_generation_automatic_sql(decision: str) -> str:
     )
 
 
+# The latest manual hold per destination across one work's cases, given its
+# connection, library and item: the owner's hold follows the work, not the
+# case (ADR-0085). Admission carries it to each case; a withdrawal restores it
+# where the withdrawn answer's own hold stood.
+_WORK_LATEST_MANUAL_HOLDS_SQL = (
+    "SELECT destination,active,document FROM (SELECT hold.destination,"
+    "hold.active,hold.document,row_number() OVER (PARTITION BY "
+    "hold.destination ORDER BY hold.updated_at DESC,hold.rowid DESC) "
+    "position FROM field_effect_manual_holds hold WHERE "
+    "hold.review_case_id IN (SELECT to_review_case_id FROM "
+    "review_case_transitions WHERE connection_name=? AND "
+    "library_name=? AND item_id=? AND to_review_case_id IS NOT NULL)) "
+    "WHERE position=1"
+)
+
+
 # A field is decided by its latest owner decision of the case's episode unless
 # that withdrew it (ADR-0085); an earlier decision never settles a field the
 # owner took back, nor one the work has since left and returned to. An

@@ -3,7 +3,8 @@
 Status: Accepted
 
 [ADR-0085](0085-owner-entered-values-withdrawal-and-reselection.md) amends manual holds:
-admission carries a work's active hold to its successor case.
+admission carries a work's active hold to its successor case, and its
+Amendment 1 (proposed) has every owner answer but a withdrawal set a hold.
 Issue #1370 amends consent across an owner's policy activation: see
 [Consent across policy activation](#consent-across-policy-activation).
 Issue #1402 amends recovery: a stranded claim returns unsent, and a plan a lost
