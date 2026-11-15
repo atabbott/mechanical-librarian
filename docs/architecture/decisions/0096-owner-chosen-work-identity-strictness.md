@@ -469,8 +469,7 @@ chosen automatically until #1418.
 
 ## Amendment: the write plan names a level choice's source (2026-11-15, #1336)
 
-- Status: proposed. Only the owner's own answer makes this amendment
-  accepted; until then the body above stays the accepted record.
+- Status: accepted (accepted by the owner on 2026-11-15)
 
 The write plan (#1336) lists each prepared change with the sources that gave
 its new value. A value the owner chose from a stored level offer is in no live
