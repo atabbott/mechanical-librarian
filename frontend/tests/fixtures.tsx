@@ -88,6 +88,7 @@ export const library: LibraryView = {
       library: 'Books',
       mediaKind: 'epub',
       attentionCount: 1,
+      pinnedCount: 0,
       attention: 'needs_attention',
       detailUrl: '/review/case-1',
       detailKind: 'case' as const,
@@ -147,6 +148,8 @@ export const detail: CaseDetailView = {
       provenance: [],
       preservationOnly: false,
       corroborationSources: [],
+      pin: null,
+      pinControl: null,
     },
   ],
 }

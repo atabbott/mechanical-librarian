@@ -93,7 +93,12 @@
         "provider_fe07db53652cff3a2705227b53c1ec256664f7588a807f6d14c11b2d76c2a827"
       ],
       "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
-      "uncertainty": []
+      "uncertainty": [],
+      "pin": null,
+      "pin_control": {
+        "pin": true,
+        "unpin": false
+      }
     },
     {
       "automatic_decision": null,
@@ -183,7 +188,12 @@
       ],
       "provenance": ["provider_c5d00f6325d00d72af199f7c0702def45ae7370bea82b63ca0dc945103f7d7a8"],
       "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
-      "uncertainty": []
+      "uncertainty": [],
+      "pin": null,
+      "pin_control": {
+        "pin": true,
+        "unpin": false
+      }
     },
     {
       "automatic_decision": null,
@@ -275,7 +285,12 @@
         "provider_e97d5b01d8c4d1ac75dd707cf93c8fab512629f95e64aa6695aa2dfa62ef913f"
       ],
       "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
-      "uncertainty": ["manifestation_verification_required"]
+      "uncertainty": ["manifestation_verification_required"],
+      "pin": null,
+      "pin_control": {
+        "pin": true,
+        "unpin": false
+      }
     },
     {
       "automatic_decision": null,
@@ -366,7 +381,12 @@
       "proposed_values": [],
       "provenance": ["provider_2971cd71b126c09d2fa6302f11d2415450509930da157f8b1d8be7f2ce069efc"],
       "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
-      "uncertainty": []
+      "uncertainty": [],
+      "pin": null,
+      "pin_control": {
+        "pin": true,
+        "unpin": false
+      }
     },
     {
       "automatic_decision": null,
@@ -420,7 +440,12 @@
       "proposed_values": [],
       "provenance": [],
       "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
-      "uncertainty": []
+      "uncertainty": [],
+      "pin": null,
+      "pin_control": {
+        "pin": true,
+        "unpin": false
+      }
     },
     {
       "automatic_decision": null,
@@ -504,7 +529,12 @@
       "proposed_values": [],
       "provenance": ["provider_ea8a4dca284e531ebea622b06ded41aadb8982dd803f8ef277e870c4232dfb87"],
       "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
-      "uncertainty": []
+      "uncertainty": [],
+      "pin": null,
+      "pin_control": {
+        "pin": true,
+        "unpin": false
+      }
     },
     {
       "automatic_decision": null,
@@ -558,7 +588,9 @@
       "proposed_values": [],
       "provenance": [],
       "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
-      "uncertainty": []
+      "uncertainty": [],
+      "pin": null,
+      "pin_control": null
     },
     {
       "automatic_decision": null,
@@ -612,7 +644,9 @@
       "proposed_values": [],
       "provenance": [],
       "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
-      "uncertainty": []
+      "uncertainty": [],
+      "pin": null,
+      "pin_control": null
     },
     {
       "automatic_decision": {
@@ -744,7 +778,12 @@
       ],
       "provenance": ["provider_8d5555b014ce6a5575d245545fd197836a76c7f8e5f496697d90521e01e2e5e4"],
       "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
-      "uncertainty": ["populated_subjective_field", "populated_value_meets_floor"]
+      "uncertainty": ["populated_subjective_field", "populated_value_meets_floor"],
+      "pin": null,
+      "pin_control": {
+        "pin": true,
+        "unpin": false
+      }
     },
     {
       "automatic_decision": null,
@@ -798,7 +837,9 @@
       "proposed_values": [],
       "provenance": [],
       "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
-      "uncertainty": []
+      "uncertainty": [],
+      "pin": null,
+      "pin_control": null
     },
     {
       "automatic_decision": null,
@@ -852,7 +893,9 @@
       "proposed_values": [],
       "provenance": [],
       "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
-      "uncertainty": []
+      "uncertainty": [],
+      "pin": null,
+      "pin_control": null
     },
     {
       "automatic_decision": null,
@@ -928,7 +971,12 @@
       ],
       "provenance": ["provider_e8f3d5f76eca4ea97b720bfe78e64cf22c5796eef346431fdfe943fc76f4e457"],
       "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
-      "uncertainty": []
+      "uncertainty": [],
+      "pin": null,
+      "pin_control": {
+        "pin": true,
+        "unpin": false
+      }
     },
     {
       "automatic_decision": null,
@@ -982,14 +1030,16 @@
       "proposed_values": [],
       "provenance": [],
       "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
-      "uncertainty": []
+      "uncertainty": [],
+      "pin": null,
+      "pin_control": null
     }
   ],
   "media_health": [],
   "recording_admission_basis": null,
   "recording_identity_basis": null,
   "review_case_id": "review_case_94e38e29672b960dbb3d682650240d48900ff54434414ac6c0239cd8655bbedc",
-  "schema_version": "review-case-detail-v8",
+  "schema_version": "review-case-detail-v9",
   "target": {
     "authors": ["Mick Herron"],
     "connection": "primary",

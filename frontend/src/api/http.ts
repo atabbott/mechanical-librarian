@@ -181,6 +181,8 @@ export const DECISION_OUTCOMES = [
   'reject',
   'owner_entered',
   'withdraw',
+  'pin',
+  'unpin',
 ] as const
 lits<Schema<'_HistoryDecisionItem'>['outcome']>()(DECISION_OUTCOMES)
 export type DecisionOutcome = (typeof DECISION_OUTCOMES)[number]
@@ -618,6 +620,8 @@ export interface LibraryWorkView {
   libraryDisplayName?: string
   mediaKind: MediaKind
   attentionCount: number
+  // The fields an owner pin holds on this work (ADR-0085, Amendment 2).
+  pinnedCount: number
   attention: AttentionState
   // Where this work opens, and what opens there. A work with a review case
   // points at that case; a work with only a published report points at the
@@ -730,6 +734,10 @@ export interface ReviewFieldView {
   corroborationSources: readonly string[]
   descriptionAdvice?: DescriptionAdviceView | null
   ownerControl?: OwnerControlView | null
+  // An owner pin on the field, in force or changed, with the value it keeps,
+  // and whether a pin or an unpin is accepted now (ADR-0085, Amendment 2).
+  pin: { state: 'in_force' | 'changed'; value: ResponseSchema<'_TargetField'> } | null
+  pinControl: { pin: boolean; unpin: boolean } | null
   currentCoverSelectionId?: string | null
   currentCoverSelectionArtifactId?: string | null
   coverConsideration?: CoverConsiderationView | null
@@ -2848,6 +2856,7 @@ export const mapLibrary = (value: LibraryDto): LibraryView => ({
       libraryDisplayName: item.library_display_name ?? item.library,
       mediaKind: item.media_kind,
       attentionCount: item.attention_count,
+      pinnedCount: item.pinned_count,
       attention: item.attention_state,
       detailUrl: item.detail_url,
       detailKind: item.detail_kind,
@@ -3031,6 +3040,8 @@ const mapReviewField = (field: ReviewFieldDto): ReviewFieldView => ({
   descriptionAdvice:
     field.description_advice === null ? null : mapDescriptionAdvice(field.description_advice),
   ownerControl: field.owner_control === null ? null : mapOwnerControl(field.owner_control),
+  pin: field.pin,
+  pinControl: field.pin_control,
   coverConsideration:
     field.cover_consideration === null ? null : mapCoverConsideration(field.cover_consideration),
   currentCoverSelectionArtifactId: field.current_cover_selection_artifact_id,
