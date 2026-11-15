@@ -47,8 +47,9 @@ It prints the adviser, then one count per line:
   automatically and you can choose it, replacing a description or filling an
   empty one. A link follows for each, up to the labels the bar still needs.
 - Already decided counts works whose decision is already a label.
-- Advice you cannot choose counts works where every source repeats your
-  description, so the page offers no choice
+- Advice you cannot choose counts works whose page offers no choice for the
+  description, such as one the library will not accept changes to. A work
+  where every source repeats your description is counted under To decide
   ([ADR-0099](../architecture/decisions/0099-qualify-automatic-description-advice.md),
   Decision 6).
 - Advice marked as needing you counts text the adviser did not mark ready.

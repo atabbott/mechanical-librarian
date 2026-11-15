@@ -15,6 +15,7 @@ import { DecodeFailure, matchOperation, responseDecoders } from '../src/generate
 import descriptionAdviceActivityFixture from './descriptionAdviceActivityFixture.json'
 import descriptionAdviceFixture from './descriptionAdviceFixture.json'
 import descriptionAdvicePreservationFixture from './descriptionAdvicePreservationFixture.json'
+import descriptionAdviceRepeatedFixture from './descriptionAdviceRepeatedFixture.json'
 import identifierEvidenceFixture from './identifierEvidenceFixture.json'
 import * as settingsFixtures from './settingsFixtures'
 import {
@@ -191,6 +192,13 @@ const preserved = accepted(
   'capture:descriptionAdvicePreservationFixture',
   get(casePath(descriptionAdvicePreservationFixture.review_case_id)),
   () => descriptionAdvicePreservationFixture,
+)
+accepted(
+  'server',
+  'CaseDetail',
+  'capture:descriptionAdviceRepeatedFixture',
+  get(casePath(descriptionAdviceRepeatedFixture.review_case_id)),
+  () => descriptionAdviceRepeatedFixture,
 )
 const { detail: identifierDetail, evidence: identifierEvidence } = identifierEvidenceFixture
 const identifierCase = identifierDetail.review_case_id
