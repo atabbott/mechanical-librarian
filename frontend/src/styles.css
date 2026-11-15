@@ -1644,6 +1644,7 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 .taste-editor button[aria-disabled='true'] { cursor:not-allowed; color:color-mix(in srgb,var(--ink) 55%,var(--surface)); border-color:color-mix(in srgb,var(--line) 55%,var(--surface)); }
 .taste-editor .button-primary[aria-disabled='true'] { color:var(--surface); background:color-mix(in srgb,var(--accent-strong) 55%,var(--surface)); border-color:color-mix(in srgb,var(--accent-strong) 55%,var(--surface)); }
 .taste-editor .button-danger[aria-disabled='true'] { color:color-mix(in srgb,var(--danger) 55%,var(--surface)); border-color:color-mix(in srgb,var(--danger) 55%,var(--surface)); }
+.taste-editor .taste-pencil[aria-disabled='true'] { border-color:transparent; }
 @media (max-width:760px) {
   .taste-section li:not(.taste-editing) { grid-template-columns:auto minmax(0,1fr) auto; }
   .taste-section li > .taste-who { grid-column:2; grid-row:2; justify-self:start; }
@@ -1653,7 +1654,8 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 /* A narrow row (a phone at large text): the text takes the full width and the
    pencil moves to the second row, beside the pill, at the end. */
 @container taste-section (max-width:20em) {
+  .taste-section li:not(.taste-editing) { grid-template-columns:auto minmax(0,1fr) auto; }
   .taste-section li:not(.taste-editing) > span:first-child { grid-column:2 / 4; grid-row:1; }
-  .taste-section li:not(.taste-editing) > .taste-who { grid-column:2; grid-row:2; justify-self:start; }
-  .taste-section li:not(.taste-editing) > .taste-pencil { grid-column:3; grid-row:2; justify-self:end; margin-block:0; }
+  .taste-section li:not(.taste-editing) > .taste-who { grid-column:2; grid-row:2; justify-self:start; align-self:center; padding-top:0; }
+  .taste-section li:not(.taste-editing) > .taste-pencil { grid-column:3; grid-row:2; justify-self:end; align-self:center; margin-block:0; }
 }

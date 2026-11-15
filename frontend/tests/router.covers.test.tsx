@@ -2116,6 +2116,17 @@ describe('Covers → Taste profile edits (#1372 PR 2)', () => {
     )
   })
 
+  it('keeps the editor open when Escape ends an input method composition', async () => {
+    const user = userEvent.setup()
+    renderRoute(tasteRoute, tasteHttp(owned))
+    await user.click(await screen.findByRole('button', { name: 'Edit rule 1' }))
+    const input = screen.getByRole('textbox', { name: 'Rule 1' })
+    fireEvent.keyDown(input, { key: 'Escape', isComposing: true })
+    expect(screen.getByRole('textbox', { name: 'Rule 1' })).toBe(input)
+    fireEvent.keyDown(input, { key: 'Escape' })
+    expect(screen.queryByRole('textbox')).toBeNull()
+  })
+
   it('refuses a rule the profile has no room for before sending it', async () => {
     const user = userEvent.setup()
     const crowded = withRules(

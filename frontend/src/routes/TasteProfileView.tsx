@@ -282,8 +282,8 @@ function RuleForm({
       className="taste-edit"
       onSubmit={submit}
       onKeyDown={(event) => {
-        // Escape cancels, as Cancel does.
-        if (event.key !== 'Escape' || pending) return
+        // Escape cancels, as Cancel does; not while an input method composes.
+        if (event.key !== 'Escape' || event.nativeEvent.isComposing || pending) return
         event.preventDefault()
         onCancel()
       }}
