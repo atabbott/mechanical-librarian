@@ -146,12 +146,13 @@ class CoverTasteBuildService:
         ):
             raise CoverTasteRetryError("taste build is not retryable")
 
-    def wake(self, now: int) -> bool:
+    def wake(self, now: int, changed: Callable[[], object] = lambda: None) -> bool:
         """Schedule and run due builds; only the preparation runner calls it.
 
-        Returns whether a build was scheduled or ran, so the runner can tell an
-        open Covers → Taste profile to read again. A view that shows a build
-        in flight polls until it ends, so a build that raises needs no notice.
+        `changed` tells an open Covers → Taste profile to read again. It is
+        called before a build runs, so the view shows it in flight and polls,
+        and again when the build has ended, even one that raised. Returns
+        whether a build was scheduled or ran.
         """
         repository = self._repository()
         if not self._recovered:
@@ -168,8 +169,13 @@ class CoverTasteBuildService:
                 self._daily_limit,
             )
         build_id = repository.pending()
+        if scheduled or build_id is not None:
+            changed()
         if build_id is not None:
-            self._run(repository, build_id)
+            try:
+                self._run(repository, build_id)
+            finally:
+                changed()
         return scheduled or build_id is not None
 
     def _run(self, repository: CoverTasteRepository, build_id: str) -> None:

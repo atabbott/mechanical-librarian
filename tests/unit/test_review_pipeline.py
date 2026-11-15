@@ -12899,42 +12899,54 @@ def test_lane_one_carries_the_background_wake_with_the_supervisor_clock() -> Non
     """The taste profile build runs on lane 1, never lane 0 (#1372 Q7)."""
     woken: list[int] = []
     supervisor = ReviewPreparationSupervisor(
-        _ScheduledPipeline(), clock=lambda: 41, background_wake=woken.append
+        _ScheduledPipeline(),
+        clock=lambda: 41,
+        background_wake=lambda now, _changed: woken.append(now),
     )
     assert _lane_run(supervisor, 1, 2) == 2
     assert woken == [41, 41]
     lane_zero: list[int] = []
     other = ReviewPreparationSupervisor(
-        _ScheduledPipeline(), clock=lambda: 41, background_wake=lane_zero.append
+        _ScheduledPipeline(),
+        clock=lambda: 41,
+        background_wake=lambda now, _changed: lane_zero.append(now),
     )
     _lane_run(other, 0, 1)
     assert lane_zero == []
 
 
-def test_lane_one_announces_a_library_notice_after_a_wake_that_changed_a_build() -> (
+def test_lane_one_announces_a_library_notice_each_time_the_work_says_it_changed() -> (
     None
 ):
-    """#1372: a scheduled or finished taste build tells an open Covers →
-    Taste profile to read again; a wake that changed nothing says nothing."""
-    results = iter([False, True, None])
+    """#1372: the taste build says when Covers → Taste profile should read
+    again (a build starting and ending); a wake that changed nothing says
+    nothing, and a notice sent before the work raised still goes out."""
+    calls = iter([0, 2, 1])
     announced: list[tuple[str, str | None]] = []
 
     class _Pipeline(_ScheduledPipeline):
         def attach_updates(self, announce: object) -> None:
             return None
 
+    def background(_now: int, changed: Callable[[], object]) -> None:
+        count = next(calls)
+        for _ in range(count):
+            changed()
+        if count == 1:
+            raise RuntimeError("synthetic build failure")
+
     supervisor = ReviewPreparationSupervisor(
-        _Pipeline(), clock=lambda: 41, background_wake=lambda _now: next(results)
+        _Pipeline(), clock=lambda: 41, background_wake=background
     )
     supervisor.attach_updates(lambda topic, subject: announced.append((topic, subject)))
     assert _lane_run(supervisor, 1, 3) == 3
-    assert announced == [("library", None)]
+    assert announced == [("library", None)] * 3
 
 
 def test_lane_one_contains_a_background_failure_and_continues() -> None:
     wakes: list[int] = []
 
-    def background(now: int) -> None:
+    def background(now: int, _changed: Callable[[], object]) -> None:
         wakes.append(now)
         raise RuntimeError("synthetic build failure")
 
@@ -12948,7 +12960,9 @@ def test_lane_one_contains_a_background_failure_and_continues() -> None:
 def test_a_stopped_supervisor_never_wakes_background_work() -> None:
     woken: list[int] = []
     supervisor = ReviewPreparationSupervisor(
-        _ScheduledPipeline(), clock=lambda: 41, background_wake=woken.append
+        _ScheduledPipeline(),
+        clock=lambda: 41,
+        background_wake=lambda now, _changed: woken.append(now),
     )
     supervisor._stop.set()
     supervisor._wake.set()

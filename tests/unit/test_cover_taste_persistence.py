@@ -507,6 +507,40 @@ def test_a_wake_says_whether_it_scheduled_or_ran_a_build(repository) -> None:
     assert _store(repository).schedule(NOW, False, LIMIT) is False
 
 
+def test_a_wake_announces_a_build_before_it_is_sent_and_again_when_it_ends(
+    repository,
+) -> None:
+    """#1372 K1: an open Covers → Taste profile reads the build in flight, so
+    it polls, and reads its end; a wake that changed nothing says nothing."""
+    events: list[str] = []
+    seed = _Seed(repository)
+    seed.many(24)
+    service = _service(repository, _Client(_VALID))
+    service.wake(NOW, lambda: events.append("changed"))
+    assert events == []
+    seed.decision("item-24")
+
+    def sent() -> None:
+        events.append("sent")
+        assert _state(repository) == [("cadence", "building", None)]
+
+    _service(repository, _Client(_VALID, sent)).wake(
+        NOW, lambda: events.append("changed")
+    )
+    assert events == ["changed", "sent", "changed"]
+
+
+def test_a_build_that_raises_still_announces_its_end(repository) -> None:
+    _Seed(repository).many(25)
+    events: list[str] = []
+    with pytest.raises(RuntimeError):
+        _service(repository, RuntimeError("synthetic")).wake(
+            NOW, lambda: events.append("changed")
+        )
+    assert events == ["changed", "changed"]
+    assert _state(repository) == [("cadence", "failed", "unavailable")]
+
+
 def test_invalid_output_keeps_version_n_in_use(repository) -> None:
     _Seed(repository).many(25)
     _service(repository, _Client(_VALID)).wake(NOW)

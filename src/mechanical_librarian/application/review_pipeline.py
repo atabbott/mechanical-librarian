@@ -1475,7 +1475,7 @@ class ReviewPreparationSupervisor:
         recovery_drain: Callable[[], None] | None = None,
         recovery_resume: Callable[[], None] | None = None,
         on_stop: Callable[[], None] | None = None,
-        background_wake: Callable[[int], object] | None = None,
+        background_wake: Callable[[int, Callable[[], object]], object] | None = None,
         background_close: Callable[[], None] | None = None,
     ) -> None:
         if polling_interval_seconds is not None and (
@@ -1860,11 +1860,13 @@ class ReviewPreparationSupervisor:
                         # its own state; a failure here is contained like
                         # recovery's above and retried at the next wake.
                         try:
-                            # A wake that scheduled or ran a build changed what
-                            # Covers → Taste profile shows, and Covers reads
-                            # again on a library notice (#1372).
-                            if self._background_wake(self._clock()) is True:
-                                self._announce("library", None)
+                            # The work says when what Covers → Taste profile
+                            # shows changed: Covers reads again on a library
+                            # notice (#1372).
+                            self._background_wake(
+                                self._clock(),
+                                lambda: self._announce("library", None),
+                            )
                         except Exception:  # noqa: BLE001 - see above
                             pass
                     while (

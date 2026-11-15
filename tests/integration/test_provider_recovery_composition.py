@@ -341,8 +341,8 @@ def test_stopping_the_supervisor_closes_the_taste_lane_repository() -> None:
             before = len(opened)
             wake = supervisor._background_wake
             assert wake is not None
-            wake(7_200)
-            wake(7_201)
+            wake(7_200, lambda: None)
+            wake(7_201, lambda: None)
             taste = opened[before:]
             assert len(taste) == 1
             taste[0]._connection.execute("SELECT 1")
