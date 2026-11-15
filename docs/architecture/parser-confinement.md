@@ -57,6 +57,9 @@ both layers survive the exec.
 
 ## Hosts without Landlock
 
+This behaviour is proposed in
+[ADR-0100](decisions/0100-confine-parser-helpers.md).
+
 Landlock needs Linux 5.13 or newer with it enabled, and a container profile
 that admits its three calls; the supported Compose profile and Docker Engine
 25's default profile both do. Where it is missing, the helpers still run with
