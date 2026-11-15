@@ -1370,7 +1370,7 @@ def _plan_row(
 # Every change listed (9 of at most 25), so the plan's rows and counts agree
 # with ``prepared``: a cover, an empty current value, a long description, an
 # owner-entered, put-back and automatic row, and a row with no sources (#1336).
-_COHORT_WRITE_PLAN: dict[str, object] = {
+_COHORT_WRITE_PLAN_SMALL: dict[str, object] = {
     "total": 9,
     "groups": [
         {
@@ -1490,6 +1490,152 @@ _COHORT_WRITE_PLAN: dict[str, object] = {
         },
     ],
 }
+
+
+def _large_write_plan(total: int) -> dict[str, object]:
+    """A plan too large to list: two groups show examples, one only a count."""
+    return {
+        "total": total,
+        "groups": [
+            {
+                "library": "Household ebooks",
+                "destination": "authors",
+                "kind": "human",
+                "count": total - 600 - 114 - 26,
+                "rows": [
+                    _plan_row(
+                        "Paper Moons",
+                        "Jane Larkspur",
+                        "Jane Larkspur",
+                        "Jane Larkspur, Tom Reed",
+                        "You chose this value",
+                        ("Hardcover", "Open Library"),
+                    ),
+                    _plan_row(
+                        "Harbour Lights",
+                        "Mina Ortiz",
+                        "Mina Ortiz",
+                        "Mina Ortiz, Ines Calder",
+                        "You chose this value",
+                        ("Hardcover",),
+                    ),
+                ],
+            },
+            {
+                "library": "Household ebooks",
+                "destination": "description",
+                "kind": "automatic",
+                "count": 600,
+                "rows": [
+                    _plan_row(
+                        "Quiet Orbit",
+                        "Sam Okafor",
+                        "Not set",
+                        "A short novel about a radio operator on a lonely station.",
+                        "Description: Fill empty with safe plain text",
+                        ("Hardcover",),
+                    ),
+                    _plan_row(
+                        "Field Notes on Moss",
+                        "R. Almeida",
+                        "Not set",
+                        "A naturalist's year among the mosses of a northern valley.",
+                        "Description: Fill empty with safe plain text",
+                        ("Open Library",),
+                    ),
+                ],
+            },
+            {
+                "library": "Spoken stories",
+                "destination": "cover",
+                "kind": "automatic",
+                "count": 114,
+                "rows": [
+                    _plan_row(
+                        "The Night Ferry",
+                        "Ada Brennan",
+                        "Current cover",
+                        "Selected cover",
+                        "Cover: Fill from confirmed covers",
+                        ("Audible",),
+                    ),
+                ],
+            },
+            {
+                "library": "Research shelf",
+                "destination": "title",
+                "kind": "human",
+                "count": 26,
+                "rows": [],
+            },
+        ],
+    }
+
+
+# The plan states the permission review is seen in: every change listed, a
+# plan of examples and counts, and one past the file's 20,000-change limit.
+# The readiness counts below are read from whichever plan is current, so a
+# field's "prepared" always agrees with the groups listed under it.
+COHORT_WRITE_PLANS: dict[str, dict[str, object]] = {
+    "small": _COHORT_WRITE_PLAN_SMALL,
+    "large": _large_write_plan(1_240),
+    "over_limit": _large_write_plan(24_310),
+}
+_COHORT_WRITE_PLAN = COHORT_WRITE_PLANS["small"]
+
+
+def _plan_groups() -> list[dict[str, object]]:
+    return cast("list[dict[str, object]]", _COHORT_WRITE_PLAN["groups"])
+
+
+def _planned(library: str, destination: str) -> int:
+    return sum(
+        cast("int", group["count"])
+        for group in _plan_groups()
+        if group["library"] == library and group["destination"] == destination
+    )
+
+
+def _planned_by_kind(library: str | None = None) -> dict[str, int]:
+    counts = {"automatic": 0, "human": 0}
+    for group in _plan_groups():
+        if library is None or group["library"] == library:
+            counts[cast("str", group["kind"])] += cast("int", group["count"])
+    return {**counts, "total": counts["automatic"] + counts["human"]}
+
+
+# Each library: (connection, library, state, fields), each field being
+# (destination, state, consented). Every field a plan group names is listed, so
+# each group renders under its field (#1336).
+_COHORT_FIELDS: tuple[tuple[str, str, str, tuple[tuple[str, str, bool], ...]], ...] = (
+    (
+        "primary",
+        "Household ebooks",
+        "partially_allowed",
+        (
+            ("authors", "allowed", True),
+            ("description", "allowed", True),
+            ("subtitle", "field_unavailable", False),
+            ("title", "allowed", True),
+        ),
+    ),
+    (
+        "primary",
+        "Spoken stories",
+        "allowed",
+        (
+            ("authors", "allowed", False),
+            ("cover", "allowed", False),
+            ("title", "allowed", False),
+        ),
+    ),
+    (
+        "archive",
+        "Research shelf",
+        "not_ready",
+        (("title", "unexpected_effect_behavior", False),),
+    ),
+)
 
 
 def _activity(query: dict[str, list[str]]) -> dict[str, object]:
@@ -1639,20 +1785,11 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
         "paused": False,
         "configured_libraries": [
             {
-                "connection": "primary",
-                "library": "Household ebooks",
-                "prepared": {"automatic": 2, "human": 3, "total": 5},
-            },
-            {
-                "connection": "primary",
-                "library": "Spoken stories",
-                "prepared": {"automatic": 1, "human": 1, "total": 2},
-            },
-            {
-                "connection": "archive",
-                "library": "Research shelf",
-                "prepared": {"automatic": 0, "human": 2, "total": 2},
-            },
+                "connection": connection,
+                "library": library,
+                "prepared": _planned_by_kind(library),
+            }
+            for connection, library, _state, _fields in _COHORT_FIELDS
         ],
         "consented_libraries": [
             {"connection": "primary", "library": "Household ebooks", "prepared": None}
@@ -1662,62 +1799,20 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
         ],
         "capabilities": [
             {
-                "connection": "primary",
-                "library": "Household ebooks",
-                "state": "partially_allowed",
+                "connection": connection,
+                "library": library,
+                "state": state,
                 "destinations": [
                     {
-                        "destination": "authors",
-                        "state": "allowed",
-                        "consented": True,
-                        "prepared": 2,
-                    },
-                    {
-                        "destination": "subtitle",
-                        "state": "field_unavailable",
-                        "consented": False,
-                        "prepared": 0,
-                    },
-                    {
-                        "destination": "title",
-                        "state": "allowed",
-                        "consented": True,
-                        "prepared": 4,
-                    },
+                        "destination": destination,
+                        "state": field_state,
+                        "consented": consented,
+                        "prepared": _planned(library, destination),
+                    }
+                    for destination, field_state, consented in fields
                 ],
-            },
-            {
-                "connection": "primary",
-                "library": "Spoken stories",
-                "state": "allowed",
-                "destinations": [
-                    {
-                        "destination": "authors",
-                        "state": "allowed",
-                        "consented": False,
-                        "prepared": 1,
-                    },
-                    {
-                        "destination": "title",
-                        "state": "allowed",
-                        "consented": False,
-                        "prepared": 3,
-                    },
-                ],
-            },
-            {
-                "connection": "archive",
-                "library": "Research shelf",
-                "state": "not_ready",
-                "destinations": [
-                    {
-                        "destination": "title",
-                        "state": "unexpected_effect_behavior",
-                        "consented": False,
-                        "prepared": 2,
-                    },
-                ],
-            },
+            }
+            for connection, library, state, fields in _COHORT_FIELDS
         ],
         "events": [
             {
@@ -1794,7 +1889,7 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
             "range_days": int(query.get("range_days", ["30"])[0]),
             "total": len(events),
         },
-        "prepared": {"automatic": 3, "human": 6, "total": 9},
+        "prepared": _planned_by_kind(),
         # Waiting, split into the four different next steps an owner has plus
         # what is moving now, so this cohort renders #639's summary rather than
         # the single number it replaced.

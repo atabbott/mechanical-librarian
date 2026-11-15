@@ -50,8 +50,15 @@ export const ActivityWritePlan = ({ plan }: { plan: WritePlanView }) => {
   const { http } = useReviewContext()
   const [state, setState] = useState<DownloadState>({ kind: 'idle' })
   const controller = useRef<AbortController | null>(null)
+  const trailing = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   // A download in flight ends with the panel; nothing is saved after it.
-  useEffect(() => () => controller.current?.abort(), [])
+  useEffect(
+    () => () => {
+      controller.current?.abort()
+      clearTimeout(trailing.current)
+    },
+    [],
+  )
   if (plan.total === 0) return null
   const busy = state.kind === 'busy'
   const expected = Math.min(plan.total, WRITE_PLAN_FILE_ROWS)
@@ -62,11 +69,24 @@ export const ActivityWritePlan = ({ plan }: { plan: WritePlanView }) => {
     controller.current = current
     setState({ kind: 'busy', rows: null })
     let shown = 0
+    let latest = 0
+    const show = () => {
+      trailing.current = undefined
+      shown = Date.now()
+      setState({ kind: 'busy', rows: latest })
+    }
     const progress = (rows: number) => {
-      const now = Date.now()
-      if (rows === 0 || now - shown < PROGRESS_INTERVAL_MS) return
-      shown = now
-      setState({ kind: 'busy', rows })
+      if (rows === 0) return
+      latest = rows
+      const wait = shown + PROGRESS_INTERVAL_MS - Date.now()
+      if (wait <= 0) {
+        clearTimeout(trailing.current)
+        show()
+      } else {
+        // A held-back count still shows within the second, even if the
+        // stream then pauses.
+        trailing.current ??= setTimeout(show, wait)
+      }
     }
     try {
       const file = await http.downloadActivityWritePlan(format, current.signal, progress)
@@ -80,6 +100,8 @@ export const ActivityWritePlan = ({ plan }: { plan: WritePlanView }) => {
       if (current.signal.aborted) return
       setState(error instanceof BuildMismatchError ? { kind: 'stale' } : { kind: 'failed' })
     } finally {
+      clearTimeout(trailing.current)
+      trailing.current = undefined
       if (controller.current === current) controller.current = null
     }
   }

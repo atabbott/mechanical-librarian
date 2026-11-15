@@ -1286,7 +1286,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                   />
                   <strong>{displayName}</strong>
                   <small>
-                    {preparedCount(library)} prepared ·{' '}
+                    {preparedCount(library).toLocaleString('en-US')} prepared ·{' '}
                     {permission?.backup_ready !== true
                       ? 'Backup not confirmed'
                       : libraryWritesHeld(destinations)
@@ -1300,9 +1300,9 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                       <span>{destinationLabel(entry.destination)}</span>
                       <small>
                         {writesEnabled(entry)
-                          ? `Writes enabled · ${String(entry.prepared)} prepared`
+                          ? `Writes enabled · ${entry.prepared.toLocaleString('en-US')} prepared`
                           : entry.state === 'allowed'
-                            ? `Included · ${String(entry.prepared)} prepared`
+                            ? `Included · ${entry.prepared.toLocaleString('en-US')} prepared`
                             : `${entry.consented ? 'Writes held' : 'Excluded'}: ${destinationReason(entry.state, consent.lapsed !== null)}`}
                       </small>
                       <WritePlanField

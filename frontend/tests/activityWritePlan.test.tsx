@@ -280,8 +280,7 @@ describe('ActivityWritePlan: the lead and the two files (#1336)', () => {
   })
 
   it('counts received changes at most once a second, up to the file limit', async () => {
-    vi.useFakeTimers({ now: 10_000, toFake: ['Date'] })
-    const user = userEvent.setup()
+    vi.useFakeTimers({ now: 10_000, toFake: ['Date', 'setTimeout', 'clearTimeout'] })
     let report: (rows: number) => void = () => undefined
     let finish: (value: WritePlanFile) => void = () => undefined
     download.mockImplementation(
@@ -293,7 +292,9 @@ describe('ActivityWritePlan: the lead and the two files (#1336)', () => {
     )
     render(<ActivityWritePlan plan={plan(25_000, [])} />)
 
-    await user.click(screen.getByRole('button', { name: 'Download JSON' }))
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Download JSON' }))
+    })
     const status = screen.getByRole('status')
     act(() => report(0))
     expect(status).toHaveTextContent(/^Preparing the file…$/)
@@ -307,6 +308,50 @@ describe('ActivityWritePlan: the lead and the two files (#1336)', () => {
 
     await act(async () => finish(file))
     expect(status).toHaveTextContent('')
+    expect(vi.getTimerCount()).toBe(1) // only the saved file's own minute
+  })
+
+  it('catches a held-back count up within the second when the stream pauses', async () => {
+    vi.useFakeTimers({ now: 10_000, toFake: ['Date', 'setTimeout', 'clearTimeout'] })
+    let report: (rows: number) => void = () => undefined
+    download.mockImplementation(
+      (_format, _signal, onRows) =>
+        new Promise(() => {
+          report = onRows ?? report
+        }),
+    )
+    const { unmount } = render(<ActivityWritePlan plan={plan(25_000, [])} />)
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Download CSV' }))
+    })
+    const status = screen.getByRole('status')
+
+    act(() => report(100))
+    act(() => {
+      vi.advanceTimersByTime(400)
+    })
+    act(() => report(250))
+    act(() => {
+      vi.advanceTimersByTime(300)
+    })
+    act(() => report(900))
+    // Rows arrived, then the stream paused: no new chunk comes.
+    expect(status).toHaveTextContent('Preparing the file… 100 of 20,000 changes')
+    act(() => {
+      vi.advanceTimersByTime(299)
+    })
+    expect(status).toHaveTextContent('Preparing the file… 100 of 20,000 changes')
+    act(() => {
+      vi.advanceTimersByTime(1)
+    })
+    expect(status).toHaveTextContent('Preparing the file… 900 of 20,000 changes')
+    expect(vi.getTimerCount()).toBe(0)
+
+    // A count held back when the panel goes is never shown after it.
+    act(() => report(1_500))
+    expect(vi.getTimerCount()).toBe(1)
+    unmount()
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   it('says the file was not downloaded when it fails, and tries again', async () => {

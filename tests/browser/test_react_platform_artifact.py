@@ -1294,7 +1294,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 ).wait_for()
                 page.locator(".activity-consent-library").filter(
                     has_text="Household ebooks"
-                ).get_by_text("5 prepared · Writes enabled").wait_for()
+                ).get_by_text("6 prepared · Writes enabled").wait_for()
                 spoken = (
                     page.locator(".activity-consent-library")
                     .filter(has_text="Spoken stories")
@@ -2496,7 +2496,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 "grants": [
                     {
                         "library": "Spoken stories",
-                        "destinations": ["authors", "title"],
+                        "destinations": ["authors", "cover", "title"],
                     }
                 ]
             }

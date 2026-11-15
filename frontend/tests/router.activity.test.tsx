@@ -3882,6 +3882,28 @@ it('lists each field’s prepared changes under it in the permission review (#13
   expect(screen.getByRole('checkbox')).not.toBeChecked()
 })
 
+it('groups the digits of prepared counts in the permission review (#1336)', async () => {
+  const user = userEvent.setup()
+  const http = createHttp()
+  const ready = permissionReadiness(permissionHistory)
+  vi.mocked(http.getActivity).mockResolvedValue(permissionHistory)
+  vi.mocked(http.getActivityConsent).mockResolvedValue(consentOf(permissionHistory))
+  vi.mocked(http.getActivityPermissionReadiness).mockResolvedValue({
+    ...ready,
+    capabilities: ready.capabilities.map((item) => ({
+      ...item,
+      destinations: item.destinations.map((entry) => ({ ...entry, prepared: 1100 })),
+    })),
+  })
+  renderRoute('/activity', http, createLiveStream())
+  await user.click(await screen.findByRole('button', { name: 'Review write permissions' }))
+
+  // The field lines agree with the plan's grouped counts beside them.
+  const fields = await screen.findAllByRole('list', { name: /fields$/ })
+  expect(fields[0]).toHaveTextContent('1,100 prepared')
+  expect(fields[0]).not.toHaveTextContent('1100 prepared')
+})
+
 const basisChanged = 'Your library settings changed. Check write permissions again.'
 const grantedHistory: ActivityView = {
   ...permissionHistory,
