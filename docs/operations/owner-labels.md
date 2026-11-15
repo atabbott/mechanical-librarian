@@ -1,7 +1,7 @@
 # Owner labels
 
-Two tools list the fields where your decision is the evidence a measurement
-needs. Each decision you make on a listed field is one label. Both are
+Three tools list the fields where your decision is the evidence a measurement
+needs. Each decision you make on a listed field is one label. All three are
 workbench tools, not part of the installed product. Run them from the checkout
 you built the install from.
 
@@ -93,8 +93,14 @@ value. Only empty fields are listed. A field you already decided is left out.
 A withdrawn decision lists it again. When you have decided them, take a new
 copy and run the work-route measurement on it.
 
+## Description advice
+
+[Description advice qualification](description-advice-qualification.md) lists
+the descriptions the adviser's text could be written to automatically, and
+scores your decisions on them against your bar.
+
 ## Options
 
-Both tools print links and counts only. Add `--origin https://host:port` if
+The relaxation and work-route tools print links and counts only. Add `--origin https://host:port` if
 you open Mechanical Librarian at another address than http://localhost:8080,
 and `--limit N` (1 to 500) for more than 50 links per list.

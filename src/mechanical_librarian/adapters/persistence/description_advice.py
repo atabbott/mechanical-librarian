@@ -28,6 +28,7 @@ from mechanical_librarian.domain.description_advice import (
     automatic_description_floor_met,
     description_digest,
     description_document,
+    description_qualification_manifest,
 )
 from mechanical_librarian.domain.metadata_report import MetadataReport
 
@@ -376,12 +377,8 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                 binding=expected_binding,
                 origin=origin,
                 resolved_policy_id=proposal.resolved_policy_id,
-                qualification_manifest_sha256=description_digest(
-                    {
-                        "instruction": DESCRIPTION_INSTRUCTION,
-                        "schema": DESCRIPTION_OUTPUT_SCHEMA,
-                        "preferences": self.current_settings().cleanup().model_dump(),
-                    }
+                qualification_manifest_sha256=description_qualification_manifest(
+                    self.current_settings().cleanup()
                 ),
                 idempotency_digest=idempotency_digest,
                 occurred_at=now,
@@ -463,13 +460,7 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                 or safety[1] is not None
                 or "description" in dict(json.loads(safety[2]))
                 or decision.qualification_manifest_sha256
-                != description_digest(
-                    {
-                        "instruction": DESCRIPTION_INSTRUCTION,
-                        "schema": DESCRIPTION_OUTPUT_SCHEMA,
-                        "preferences": self.current_settings().cleanup().model_dump(),
-                    }
-                )
+                != description_qualification_manifest(self.current_settings().cleanup())
             ):
                 raise FieldEffectError("authority_binding")
         return {"kind": "text", "value": candidate.output.description}

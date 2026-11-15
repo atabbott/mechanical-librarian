@@ -140,8 +140,10 @@ suspected vulnerabilities privately, as [SECURITY.md](SECURITY.md) describes.
 
 ## What merging proves
 
-`.github/workflows/public-gate.yml` is the only workflow. It runs every `gate`
-check below on each pull-request head and again on the merged `main` commit.
+`.github/workflows/public-gate.yml` is the only gate workflow. It runs every
+`gate` check below on each pull-request head and again on the merged `main`
+commit. `.github/workflows/scheduled-audit.yml` reruns its dependency audit on
+`main` each week and gates nothing.
 `maintainer-manual` checks are run by hand or in review. The third column is
 exact text from the workflow for a gate check, and text deliberately absent
 from it for a manual one, so the table can be checked against the workflow.
