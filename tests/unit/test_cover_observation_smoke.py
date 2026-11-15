@@ -379,7 +379,7 @@ def test_unknown_charge_stops_the_run(library: Any, tmp_path: Path) -> None:
     assert result["status"] == "incomplete"
     assert result["stopped"] == "unknown_charge"
     assert "Stopped because OpenRouter did not report what a request cost." in text
-    assert "Spent at least $0.00 of $5.00; 1 request's charge is unknown." in text
+    assert "Spent at least $0.00 of $5.00. One request's charge is unknown." in text
     assert result["unknown_charges"] == 1
 
 

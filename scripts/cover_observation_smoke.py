@@ -875,6 +875,7 @@ _SHEET_STYLE = """
 --muted:#a8a197;--line:#3a3732;--card:#211f1c;--accent:#8db7e0;--accent-fg:#10202f}}
 *{box-sizing:border-box}
 html{scroll-padding-top:8rem}
+@media (max-width:1023px){html{scroll-padding-top:11rem}}
 body{margin:0;background:var(--bg);color:var(--fg);
 font:100%/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
 header{position:sticky;top:0;z-index:1;background:var(--bg);
@@ -893,9 +894,10 @@ article{background:var(--card);border:1px solid var(--line);border-radius:8px;
 padding:16px;display:grid;grid-template-columns:minmax(120px,320px) 1fr;gap:16px}
 figure{margin:0}
 figure img{display:block;width:320px;max-width:100%;height:auto;
-border:1px solid var(--line)}
+outline:1px solid var(--line)}
 figcaption{color:var(--muted);margin-top:4px}
 fieldset{border:0;margin:0 0 12px;padding:0}
+fieldset.missing{outline:2px dashed var(--accent);outline-offset:4px}
 legend{font-weight:600;margin-bottom:4px}
 label{display:inline-flex;align-items:center;gap:6px;margin:2px 14px 2px 0;
 min-height:32px}
@@ -926,10 +928,17 @@ function show() {
 }
 document.getElementById("next").addEventListener("click", () => {
   const index = COVERS.findIndex(c => !complete(c));
-  if (index < 0) return;
+  if (index < 0) {
+    document.getElementById("saved").textContent =
+      "Every cover is answered. Press Save labels.";
+    return;
+  }
   const article = document.getElementById("cover-" + (index + 1));
   const open = Array.from(article.querySelectorAll("fieldset")).find(
     set => !set.querySelector("input:checked"));
+  document.querySelectorAll(".missing").forEach(set =>
+    set.classList.remove("missing"));
+  if (open) open.classList.add("missing");
   article.scrollIntoView();
   (open || article).querySelector("input").focus();
 });
@@ -941,6 +950,7 @@ document.querySelectorAll("input[type=radio]").forEach(input => {
     labels[input.dataset.cover][input.dataset.question] = input.value;
     if (store) { try { store.setItem(key, JSON.stringify(labels)); } catch (e) {} }
     document.getElementById("saved").textContent = "";
+    input.closest("fieldset").classList.remove("missing");
     show();
   });
 });
@@ -1048,7 +1058,8 @@ def _valid_sheet(sheet: object) -> bool:
 
 
 def score(run: Path, labels_path: Path) -> dict[str, Any]:
-    sheet = _read_json_file(run / "labelling" / "sheet.json", 4_194_304)
+    sheet_path = run / "labelling" / "sheet.json"
+    sheet = _read_json_file(sheet_path, 4_194_304) if sheet_path.is_file() else None
     if not _valid_sheet(sheet):
         raise SmokeRefused(
             f"{run} is not a smoke run folder with a labelling sheet. Pass the "
@@ -1179,9 +1190,10 @@ def main(
     }[result["status"]]
     spend = f"Spent {_money(spent)} of {_money(cap)}."
     if result["unknown_charges"]:
-        spend = (
-            f"Spent at least {_money(spent)} of {_money(cap)}; "
-            f"{result['unknown_charges']} request's charge is unknown."
+        spend = f"Spent at least {_money(spent)} of {_money(cap)}. " + (
+            "One request's charge is unknown."
+            if result["unknown_charges"] == 1
+            else f"{result['unknown_charges']} requests' charges are unknown."
         )
     out.write(
         f"{verdict}: {result['reports_valid']} of {result['requests_selected']} "

@@ -19,10 +19,12 @@ Run these from the checkout you built the install from, in one Terminal
 window. They stop the container, copy `/data/application.sqlite3` and the
 `/data/artifacts` folder out of it (the same moment for both), and start it
 again. `docker cp` reads from the stopped container, so this works whether
-your data is in Docker's named volume or in a folder you mounted.
+your data is in Docker's named volume or in a folder you mounted. Running the
+block again replaces the earlier copy.
 
 ```
 OUT=~/cover-smoke
+rm -rf "$OUT/smoke-copy"
 mkdir -m 700 -p "$OUT/smoke-copy"
 docker compose stop
 C=$(docker compose ps -aq mechanical-librarian)
@@ -50,7 +52,7 @@ the model's prices, and sends no cover. It prints the model, the request count,
 the worst case per request and for the whole run, the spending cap and a
 confirmation code, then the command to run.
 
-Three options change the plan; add them to this command if you want them:
+Three options change the plan. Add them to this command if you want them:
 `--requests N` (at most 1,000), `--spend-cap-usd AMOUNT` ($5 by default, at
 most $100) and `--model vendor/model` to smoke a model other than your saved
 one.
@@ -79,8 +81,15 @@ The last lines say whether the smoke passed and what it spent:
 | Result | Meaning |
 | --- | --- |
 | `passed` | Every request was sent and every answer was a valid report. |
-| `failed` | At least one answer was rejected or a request failed. The model cannot be relied on for the revised schema. |
-| `incomplete` | The run stopped early. The line under the result says why. If the cap stopped it, raise `--spend-cap-usd` or lower `--requests` and run the preflight again; otherwise run it again with a new folder. |
+| `failed` | At least one answer was rejected or a request failed. The line under the result counts each failure code. If any is `output_rejected`, the model cannot be relied on for the revised schema. For any other code, fix what its row below says and run again. |
+| `incomplete` | The run stopped early. The line under the result says why. If the cap stopped it, raise `--spend-cap-usd` or lower `--requests`. Then run again. |
+
+To run again, move the earlier run aside so the next steps use the new one,
+then run the preflight and paste its command as above:
+
+```
+mv "$OUT/cover-smoke" "$OUT/cover-smoke-1"
+```
 
 Failure codes:
 
@@ -117,7 +126,8 @@ uv run python scripts/cover_observation_smoke.py score \
 ```
 
 If you saved more than once, your browser named the later files
-`cover-labels (1).json` or similar: pass the newest one.
+`cover-labels (1).json` or similar. Pass the newest one, in quotes because of
+the space and brackets: `--labels ~/Downloads/"cover-labels (1).json"`.
 
 It counts, for each of the four questions, your answer against the model's,
 separately for marked and unmarked covers. It sets no pass mark: whether a
