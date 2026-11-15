@@ -24,6 +24,7 @@ import scripts.hardcover_series_sample as series_sample
 import scripts.relaxation_label_sample as relaxation_sample
 
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
+from mechanical_librarian.application.configuration import CONFIG_SCHEMA
 from mechanical_librarian.application.contained_reviewer_contract import (
     canonical_json,
 )
@@ -489,6 +490,137 @@ def test_copy_without_saved_settings_is_refused(tmp_path: Path) -> None:
     assert _refusal("sample", "--database", str(database)) == labels._NO_SETTINGS
     # score reads labels without settings.
     assert _score(database)["identities"]
+
+
+# An install whose settings come from config.json (#1898).
+
+
+def _config(
+    tmp_path: Path, review: dict[str, object] | None = None, **choices: bool
+) -> Path:
+    """A copied config.json; `choices` are its description fields, `review`
+    None leaves the review section out."""
+    document: dict[str, object] = {
+        "schema_version": CONFIG_SCHEMA,
+        "provider_recovery_generation": 1,
+        "connections": [
+            {
+                "name": "library",
+                "adapter": "audiobookshelf",
+                "endpoint": "https://library.invalid",
+                "secret_file": "/synthetic/library.secret",
+            }
+        ],
+        "libraries": [
+            {
+                "name": "books",
+                "connection": "library",
+                "library_id": "library-a",
+                "mount": "books",
+                "provider_connections": [],
+            }
+        ],
+        "mounts": [
+            {
+                "name": "books",
+                "container_path": "/media/books",
+                "service_path": "/books",
+                "read_only": True,
+            }
+        ],
+        "providers": [],
+    }
+    if review is not None:
+        document["review"] = {
+            **review,
+            **{f"description_{name}": value for name, value in choices.items()},
+        }
+    path = tmp_path / "copy" / "config.json"
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(json.dumps(document))
+    return path
+
+
+_REVIEW: dict[str, object] = {
+    "canonical_origin": "https://review.example.invalid",
+    "owner_password_hash_file": "/synthetic/owner.hash",
+    "tls_certificate_file": "/synthetic/review.crt",
+    "tls_private_key_file": "/synthetic/review.key",
+}
+
+
+@pytest.mark.parametrize("review", [_REVIEW, None], ids=["review", "no_review"])
+def test_a_file_mode_copy_is_read_with_its_configuration(
+    tmp_path: Path, review: dict[str, object] | None
+) -> None:
+    prepared = _store(tmp_path, settings=False)
+    database = prepared.copy()
+    config = str(_config(tmp_path, review))
+    assert _sample(database, "--config", config) == [
+        *_sample_lines(replacing=1),
+        _link(prepared.case),
+    ]
+    score = json.loads(
+        _run(
+            "score", "--database", str(database), "--config", config, "--format", "json"
+        )
+    )
+    assert _only(score)["not_counted"]["undecided"] == 1
+
+
+def test_cleanup_choices_in_the_configuration_are_bound(tmp_path: Path) -> None:
+    """Advice made under the default choices is out of date under the file's."""
+    database = _store(tmp_path, settings=False).copy()
+    config = str(_config(tmp_path, _REVIEW, remove_praise=False))
+    assert _sample(database, "--config", config) == _sample_lines(out_of_date=1)
+    score = json.loads(
+        _run(
+            "score", "--database", str(database), "--config", config, "--format", "json"
+        )
+    )
+    assert score["identities"] == []
+    # Without the file, score assumes the default choices.
+    assert _only(_score(database))["not_counted"]["undecided"] == 1
+
+
+def test_automatic_on_in_the_configuration_is_refused(tmp_path: Path) -> None:
+    database = _store(tmp_path, settings=False).copy()
+    config = str(_config(tmp_path, _REVIEW, automatic_application=True))
+    assert (
+        _refusal("sample", "--database", str(database), "--config", config)
+        == labels._AUTOMATIC_ON_IN_FILE
+    )
+
+
+@pytest.mark.parametrize("command", ["sample", "score"])
+def test_a_configuration_for_a_copy_with_saved_settings_is_refused(
+    tmp_path: Path, command: str
+) -> None:
+    database = _store(tmp_path).copy()
+    config = str(_config(tmp_path, _REVIEW))
+    assert (
+        _refusal(command, "--database", str(database), "--config", config)
+        == labels._CONFIG_NOT_NEEDED
+    )
+
+
+@pytest.mark.parametrize("command", ["sample", "score"])
+@pytest.mark.parametrize("damage", ["missing", "not_json", "unknown_field"])
+def test_an_unreadable_configuration_is_refused(
+    tmp_path: Path, command: str, damage: str
+) -> None:
+    database = _store(tmp_path, settings=False).copy()
+    config = _config(tmp_path, _REVIEW)
+    if damage == "missing":
+        config.unlink()
+    elif damage == "not_json":
+        config.write_text("{")
+    else:
+        config.write_text(json.dumps({**json.loads(config.read_text()), "x": 1}))
+    assert (
+        _refusal(command, "--database", str(database), "--config", str(config))
+        == labels._CONFIG_UNREADABLE
+    )
 
 
 def test_advice_from_another_checkout_is_refused(
