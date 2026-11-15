@@ -3,7 +3,7 @@
 Mechanical Librarian keeps the owner's library metadata and the evidence
 needed to explain and recover every change. All of it is private application
 state under `/data`. There is no retention period, pruning, purge or selective
-export: reports, ProposalSets, cases, decisions and Activity events are
+export, except that held provider answers past a size ceiling are removed: reports, ProposalSets, cases, decisions and Activity events are
 append-only, and recovery or deletion works on whole databases. Anyone who can read the volume or a backup can read everything,
 including secrets in store mode. Store `/data` and its backups as private,
 owner-only state with encryption at rest
@@ -35,6 +35,16 @@ Where each store lives is in [SQLite topology](sqlite-topology.md).
   without the mark adds. Never a path, excerpt or association text.
 
 Cover originals and previews are stored once per digest in the artifact store.
+
+**Provider answers.** `/data/private/provider-responses.sqlite` keeps each
+success body a provider returned for an observation that ended clean, so a
+later preparation reuses it instead of asking again
+([ADR-0101](decisions/0101-reuse-stored-provider-answers.md)). A body is kept
+with a digest of its request and when it was fetched, never the request text,
+a header or a credential. The bodies name the owner's books, and a request
+digest can be confirmed by guessing the title it asked for, so the file is
+private evidence like the reports. No report, diagnostic or support bundle
+reads it, and the answers fetched longest ago are removed past 2 GiB.
 
 **Derived records.** ProposalSets, review cases, policy-preview outcome sets
 and preparation work rows hold only bounded values, opaque identities,
@@ -71,7 +81,8 @@ private `/data/reviewer/auth` directory.
 
 No store, log, diagnostic, support bundle or API response contains:
 
-- raw Audiobookshelf, provider or model responses, request URLs or bodies;
+- raw Audiobookshelf or model responses, provider responses outside the
+  provider-answer store above, request URLs or bodies;
 - provider cover URLs, endpoint paths or arbitrary upstream properties;
 - private filesystem paths (only the catalogue database keeps each supported
   item's service and mount path, and no report, list or API response shows

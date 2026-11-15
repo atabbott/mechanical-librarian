@@ -325,6 +325,28 @@ class SQLiteReviewSessionRepository:
                 self._rollback()
                 raise MetadataReportError("review session is unavailable") from error
 
+    def end_review_sessions_except(self, session_digest: str) -> int:
+        """Delete every session but ``session_digest``, and every failed attempt.
+
+        Runs while an owner password change takes effect, before any request
+        is checked against the new verifier. Every removed row is keyed by the
+        replaced one and so unreachable from then on; this only stops them
+        lingering until expiry. Returns how many sessions it removed.
+        """
+        with self._lock:
+            try:
+                self._connection.execute("BEGIN IMMEDIATE")
+                ended = self._connection.execute(
+                    "DELETE FROM review_sessions WHERE session_digest<>?",
+                    (session_digest,),
+                ).rowcount
+                self._connection.execute("DELETE FROM review_login_failures")
+                self._connection.execute("COMMIT")
+                return ended
+            except sqlite3.Error as error:
+                self._rollback()
+                raise MetadataReportError("review session is unavailable") from error
+
     def _rollback(self) -> None:
         if self._connection.in_transaction:
             self._connection.execute("ROLLBACK")

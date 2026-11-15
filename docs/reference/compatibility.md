@@ -135,9 +135,10 @@ refused.
 | `work-route-measurement-v1` | The read-only [work-route measurement](../operations/work-route-measurement.md) |
 | `review-react-assets-v1` | The browser bundle identity manifest |
 
-The session database (`/data/private/review-sessions.sqlite`) and the provider
-recovery database (`/data/private/provider-recovery.sqlite`) have exact schemas
-of their own and no separate version string.
+The session database (`/data/private/review-sessions.sqlite`), the provider
+recovery database (`/data/private/provider-recovery.sqlite`) and the
+provider-response database (`/data/private/provider-responses.sqlite`) have
+exact schemas of their own and no separate version string.
 
 ### HTTP API
 

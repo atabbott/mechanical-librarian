@@ -392,11 +392,64 @@ describe('owner settings route', () => {
       expect(screen.queryByRole('button', { name: 'Save settings' })).not.toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Discard all' })).not.toBeInTheDocument()
     }
+    // File mode keeps its hash file: Access has no Owner password row.
+    await user.click(screen.getByRole('button', { name: /Access and diagnostics/ }))
+    expect(screen.getByText('Diagnostic timings')).toBeVisible()
+    expect(screen.queryByText('Owner password')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Change password' })).not.toBeInTheDocument()
     // The locked view reads a size as the editable field does (#1286 X13).
     await user.click(screen.getByRole('button', { name: /Background work/ }))
     await user.click(screen.getByText('Response and file size limits'))
     expect(screen.getByText('0.0625 MB (64 KB)')).toBeVisible()
     expect(screen.getByText('8,192 MB (8 GB)')).toBeVisible()
+  })
+
+  it('puts Owner password first in Access, outside Save settings, in store mode', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    renderRoute('/settings?group=access', http)
+    await user.click(await screen.findByRole('button', { name: 'Change password' }))
+    const rows = [...window.document.querySelectorAll('.settings-sheet .settings-field-title')]
+    expect(rows.map((row) => row.textContent)).toEqual([
+      'Owner password',
+      'Sign-in length',
+      'Diagnostic timings',
+    ])
+    await user.type(
+      screen.getByLabelText('Current password', { selector: 'input' }),
+      'old horse battery',
+    )
+    await user.type(
+      screen.getByLabelText('New password', { selector: 'input' }),
+      'correct horse battery staple',
+    )
+    // Typing a password is not a settings change.
+    expect(screen.queryByRole('region', { name: 'Unsaved settings' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Save settings' })).not.toBeInTheDocument()
+    expect(http.writeSettings).not.toHaveBeenCalled()
+  })
+
+  it('keeps an open Owner password form through a Settings save', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.writeSettings = vi.fn(async (request: SettingsWrite) => ({
+      ...view(),
+      document: savedDocument(request.document),
+    }))
+    renderRoute('/settings?group=access', http)
+    await user.click(await screen.findByRole('button', { name: 'Change password' }))
+    const current = () => screen.getByLabelText('Current password', { selector: 'input' })
+    await user.type(current(), 'old horse battery')
+    await user.click(segment('Diagnostic timings', 'On'))
+    await user.click(screen.getByRole('button', { name: 'Save settings' }))
+
+    // The editor remounts on a save. A form that closed beside this notice
+    // would read as a saved password.
+    expect(await screen.findByText('Settings saved and in use.')).toBeVisible()
+    expect(current()).toHaveValue('old horse battery')
+    expect(http.changePassword).not.toHaveBeenCalled()
   })
 
   it('owns group navigation in the URL and restores it with browser history', async () => {

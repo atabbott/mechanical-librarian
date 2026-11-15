@@ -157,6 +157,10 @@ def test_other_private_runtime_state_still_fails_closed(tmp_path: Path) -> None:
     (private / "provider-recovery.sqlite").touch()
     with pytest.raises(FirstBootError):
         _select(tmp_path, resume=True)
+    (private / "provider-recovery.sqlite").unlink()
+    (private / "provider-responses.sqlite").touch()
+    with pytest.raises(FirstBootError):
+        _select(tmp_path, resume=True)
 
 
 @pytest.mark.parametrize(

@@ -10,6 +10,21 @@ existing `/data` volume must be rebuilt; [upgrades](docs/operations/upgrades.md)
 says how. Sections marked "in progress" are still open. The numbers in
 brackets are GitHub issues.
 
+## 0.39.0 — Owner trust (in progress)
+
+- In store mode, Settings can change the owner password. It asks for the
+  current password, keeps this browser signed in and signs out every other
+  browser (#1385).
+
+## 0.37.0 — Provider economy (in progress)
+
+- Mechanical Librarian keeps each source's answers and reuses them when it asks
+  the same question again, so preparing a book again sends far fewer requests.
+  A failed lookup keeps nothing and is asked again, and the weekly search for
+  an unmatched audiobook always asks live. The answers are kept in
+  `/data/private/provider-responses.sqlite`; losing it only means asking again
+  (#1064).
+
 ## 0.36.1 — Persistence health (in progress)
 
 - Your decision on a field now keeps Automatic off that field on every later
@@ -350,6 +365,11 @@ brackets are GitHub issues.
   repeat the current text is no longer replaced by the adviser's result,
   which you could not have chosen or reversed there. The result stays shown
   for reference, and the review API refuses choosing it directly too (#1892).
+- Automatically apply ready description advice now only suggests until a
+  release shows, from your decisions, that the adviser is right often enough
+  with those cleanup choices. No release does yet, so the adviser's text is
+  offered on the work's page as with the switch off, and an automatic choice
+  stored before this change is not written (ADR-0099, #1886).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 

@@ -208,9 +208,10 @@ not an all-clear.
 Only enabled, referenced providers are contacted. A disabled reference records
 one `disabled` observation with no client, credential access or traffic.
 Results are neutral: zero rows is `no_match`, any valid bounded set is
-`candidates`, and every candidate is kept. There is no winner, score, merge,
-fuzzy search or cache. Lanes converging on one provider work count as one
-source.
+`candidates`, and every candidate is kept. There is no winner, score, merge or
+fuzzy search. An answer already held for the same request is reused instead of
+asking again ([held provider answers](#held-provider-answers)). Lanes
+converging on one provider work count as one source.
 
 ### Ebook lanes
 
@@ -457,6 +458,32 @@ retryability and a saturating count — never values, bodies or credentials.
 Failed, throttled or deadline-stopped dispatches write value-free `provider_*`
 stderr lines ([observability](observability.md)).
 
+### Held provider answers
+
+Every provider asks the
+[provider-response store](../architecture/sqlite-topology.md#provider-response-database)
+before it sends a request
+([ADR-0101](../architecture/decisions/0101-reuse-stored-provider-answers.md)).
+An answer held for the same request is read exactly as a live one: it counts
+against the same attempt, retry and byte ceilings and passes the same decoder
+and parser. Only the pacing wait and the request are skipped. A miss asks the
+provider as before. The provider's `accessed_at` is set by its first request:
+the fetch time of the held answer that served it, or now when that request
+goes live.
+
+- An answer is kept only when the provider's observation and every lane of it
+  ended `candidates`, `no_match` or `insufficient_input`, and only a 200 body
+  the session read and the adapter did not refuse. A failed, incomplete,
+  malformed, oversized or limit-exceeded lane keeps nothing from that
+  observation, and a request that succeeded only on a retry is not kept.
+- A held answer is reused whatever its age. The weekly
+  [re-search](#after-the-report) of an audiobook that admitted no recording
+  and every [provider recovery](provider-recovery.md) retry ask live and
+  replace what is held.
+- A held answer the decoder or the adapter refuses when it is reused is
+  removed, so that request is asked live the next time.
+- Losing or refusing the store costs only requests: every request goes live.
+
 ### Dates, titles and creators
 
 - Dates keep their exact lexical, precision, event and scope; precision is
@@ -586,10 +613,12 @@ If settlement cannot commit, preparation stops; see
 ## Replay and identity
 
 The report ID is derived from the complete canonical document, including each
-provider's `accessed_at`, captured at its first real request (`null` if none
-was sent). Reopening returns the same bytes and contacts nothing. A new
-observation creates a new immutable report even when the facts are unchanged;
-only the current pointer moves. Replay rechecks every invariant above from the
+provider's `accessed_at`, captured at its first request (`null` if none was
+sent), or the fetch time of a [held answer](#held-provider-answers) that
+served it. Reopening returns the same bytes and contacts nothing. A new
+observation creates a new immutable report even when the facts are unchanged,
+unless every provider's first answer and the rest it used were held, which
+yields the same report again; only the current pointer moves. Replay rechecks every invariant above from the
 stored report. Reports from earlier schemas cannot be replayed; do not relabel
 or rewrite them.
 

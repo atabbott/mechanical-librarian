@@ -10,6 +10,9 @@ from typing import Any, Callable
 
 import httpx
 
+from mechanical_librarian.adapters.providers.response_reuse import (
+    ProviderResponseReuse,
+)
 from mechanical_librarian.adapters.providers.retry_safety import (
     ProviderFailure,
     ProviderRequestPacer,
@@ -137,6 +140,7 @@ class InventaireMetadataProvider:
         timeout_seconds: float = 5.0,
         *,
         pacer: ProviderRequestPacer | None = None,
+        responses: ProviderResponseReuse | None = None,
         clock: Callable[[], float] = time.monotonic,
         wall_clock: Callable[[], float] = time.time,
         sleep: Callable[[float], None] = time.sleep,
@@ -159,6 +163,7 @@ class InventaireMetadataProvider:
             _DiscoveryRequestLedger("inventaire", "entities-v5.1.1"),
             pacer=active_pacer,
             clocks=ProviderClocks(clock, wall_clock, sleep, jitter),
+            responses=responses,
         )
         self._called = False
         self._schema_rejections = 0

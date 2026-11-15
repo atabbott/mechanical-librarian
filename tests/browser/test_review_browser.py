@@ -58,7 +58,10 @@ from mechanical_librarian.application.metadata_report import (
     MetadataLookup,
     qualify_provider_observation,
 )
-from mechanical_librarian.application.owner_settings import OwnerSettingsOperations
+from mechanical_librarian.application.owner_settings import (
+    FileOwnerSettingsRepository,
+    OwnerSettingsOperations,
+)
 from mechanical_librarian.application.review_application import (
     REVIEW_PREPARATION_SCHEMA,
 )
@@ -103,6 +106,7 @@ from mechanical_librarian.domain.setup_state import (
     claim_token_digest,
 )
 from mechanical_librarian.infrastructure.settings_authority import BootstrapMount
+from mechanical_librarian.interfaces.web import StoreOwnerPassword
 from mechanical_librarian.interfaces.web.react_assets import ReactAssetLoader
 from mechanical_librarian.interfaces.web.setup import create_setup_app
 from tests.browser.text_size import set_root_text
@@ -550,6 +554,7 @@ def _server(
     audiobook_tranche: bool = False,
     settings_document: OwnerSettingsDocument | None = _DEFAULT_SETTINGS_DOCUMENT,
     on_app: Callable[[Any], None] | None = None,
+    owner_password: Literal["file", "store"] | None = None,
     write_consent: Callable[[Any], tuple[str, ...]] | None = None,
 ):
     repository = open_repository(database, create=True, cross_thread=True)
@@ -597,11 +602,26 @@ def _server(
             [
                 (f"connection.{item.name}.key", f"synthetic-{item.name}-secret")
                 for item in settings_document.connections
-            ],
+            ]
+            # A store deployment keeps the verifier beside the settings, and
+            # Settings can change it there.
+            + (
+                [("owner.password.verifier", hash_path.read_text(encoding="utf-8"))]
+                if owner_password == "store"
+                else []
+            ),
         )
         connection.commit()
         connection.close()
-        settings = OwnerSettingsOperations(repository.owner_settings_store())
+        settings = OwnerSettingsOperations(
+            FileOwnerSettingsRepository(settings_document)
+            if owner_password == "file"
+            else repository.owner_settings_store()
+        )
+    store_password = None
+    if owner_password == "store":
+        store_password = StoreOwnerPassword(repository.owner_settings_store())
+        store_password.seed(hash_path.read_text(encoding="utf-8"))
     if audiobook_tranche:
         # The tranche's policy has to reach the automatic posture before any
         # other case exists, because confirmation requires a settled
@@ -1849,6 +1869,7 @@ def _server(
         cover_considerations=cover_considerations,
         settings=settings,
         reviewer_access=reviewer_access,
+        owner_password=store_password,
     )
     if owner_library_change:
         owner_changed = False
@@ -10949,7 +10970,12 @@ def test_provider_recovery_rail_explains_exact_automatic_withholding():
 @pytest.mark.parametrize(
     "state", ("ready", "needs_review", "failed", "automatic", "no_change")
 )
-def test_description_advice_displays_real_persisted_outcomes(state):
+def test_description_advice_displays_real_persisted_outcomes(state, monkeypatch):
+    if state in {"automatic", "no_change"}:
+        from tests.support.description_advice import qualify_description_advice
+
+        # The server runs in this process, so the record holds for its life.
+        qualify_description_advice(monkeypatch, "synthetic-contained-model")
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         root.chmod(0o700)
