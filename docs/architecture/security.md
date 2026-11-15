@@ -319,12 +319,11 @@ Allowed cover origins:
 - Audible on `m.media-amazon.com`, and iTunes on `is1-ssl` to
   `is5-ssl.mzstatic.com`.
 
-No other provider follows a redirect. Any other host is a typed `unsafe_remote` outcome and no socket
-opens. Remote covers use their own address-pinned transport with
-bounded bytes, attempts and deadline. Each DNS answer must be a public
-address: an IPv6 answer must be global unicast (`2000::/3`), and an
-IPv4-mapped or well-known NAT64 (`64:ff9b::/96`) answer is judged by the IPv4
-address it carries. Embedded audiobook art is never
+No other provider follows a redirect. Other hosts are `unsafe_remote`
+before a socket opens. Remote covers use their own transport, bounding bytes,
+attempts and deadline, pinned per hop to a public answer: IPv6 within
+`2000::/3`, or an IPv4-mapped or `64:ff9b::/96` answer judged by its
+IPv4. Embedded audiobook art is never
 acquired. Reports never keep the remote URL.
 
 A Hardcover edition row becomes a listed-edition descriptor only after a
@@ -350,17 +349,16 @@ collapses, nor do covers from different providers.
 Open Library's route is a code constant on its two cover descriptors, never
 configuration, and holds only for the constructed
 `covers.openlibrary.org/b/id/<id>-L.jpg?default=false` URL. Each `Location`
-is checked as the exact header text, before any join or decoding, with one
-anchored full match: printable ASCII, lowercase `https://`, port absent or
+header is matched exactly, before any join or decoding, by one anchored full
+match: printable ASCII, lowercase `https://`, port absent or
 443. Hop 1 must be `archive.org/download/<item>/<zip>/<file>` with no query,
 fragment or `%`. Hop 2 must be `ia<N>.us.archive.org/view_archive.php` whose
 `&`-split query holds exactly `archive` and `file`, bound byte for byte to hop
-1. The file must be `<id>-L.jpg` or its ten-digit zero-padded form. There are
-at most three requests, in fixed positions, inside one attempt window; any
-other redirect is `unsafe_remote` before a lookup. Every hop is pinned and
-bounded as above. The `archive.org` hops send no User-Agent, so the contact
-email stays on Open Library's origin. A retrieved Open Library cover records
-only the closed `final_host` family: `covers.openlibrary.org`, `archive.org`
+1. The file must be `<id>-L.jpg` or its ten-digit zero-padded form. At most
+three requests, in fixed positions, share one attempt window; any other
+redirect is `unsafe_remote` before a lookup. The `archive.org` hops send no
+User-Agent, so the contact email stays on Open Library's origin. A retrieved Open Library cover records
+only the `final_host` family: `covers.openlibrary.org`, `archive.org`
 or `us.archive.org`.
 
 Book matching (`review.work_identity`, #1355) changes which retrieved covers
