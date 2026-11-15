@@ -290,6 +290,22 @@ adopt.
 - `tests/unit/test_admission_rule_ledger.py` covers the split into rows A6a
   and A6b, the upstream echo's exclusion from A6a, and the status shown when
   a source cannot separate rich-preview reasons.
+- `tests/unit/test_admission_rule_a6.py` also covers Decision 5's owner
+  labels:
+  - each outcome counted, and whether the owner chose the admitted value;
+  - a decided case a rescan replaced counted for its label only, and
+    withdrawn, historical and unadmitted decisions counted for nothing;
+  - the table pooled per relaxation and over all five, with no pass mark,
+    and "not recorded" where a snapshot stores no owner decisions;
+  - the real child replaying decided cases, and the owner's command running
+    on a product-built store through every child.
+- `tests/unit/test_relaxation_label_sample.py` covers the finder that lists
+  the fields each relaxation would admit and the owner has not decided: it
+  lists what the reading scores, counts a decided field once even after a
+  rescan, lists a withdrawn one again, and refuses a store built by another
+  decision-policy version.
+- Neither retained snapshot stores an owner decision, so replaying decided
+  cases adds none and every pooled row of the owner-labels table reads 0.
 - Re-running the documented Reproduce commands on both retained snapshots
   regenerates the tables of [the ledger](../../product/admission-rule-ledger.md)
   and of [the A6 analysis](../../product/automatic-decision-abstention.md)

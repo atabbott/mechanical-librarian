@@ -2,7 +2,7 @@
 
 Synthetic only: packets are built here as the child would report them, and
 every free-text slot carries a sentinel, so a leaked value shows up in the
-output. One test replays a product-built database through the real child.
+output. A few tests replay product-built databases through the real child.
 """
 
 from __future__ import annotations
@@ -10,7 +10,8 @@ from __future__ import annotations
 import dataclasses
 import io
 import json
-from collections.abc import Sequence
+import sqlite3
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import cast
 
@@ -18,9 +19,16 @@ import pytest
 import scripts.admission_rule_a6 as a6
 import scripts.admission_rule_ledger as ledger
 
-from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.persistence.metadata_reports import (
+    SQLiteMetadataReportRepository,
+    open_repository,
+)
 from mechanical_librarian.domain import shadow_decision
+from mechanical_librarian.domain.human_decision import HumanDecision
+from mechanical_librarian.domain.metadata_report import MetadataReport
 from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.review_case import ReviewCase
+from tests.support.proposal_evidence import consensus_provider_title
 from tests.unit.test_admission_rule_ledger import (
     _SENTINEL,
     EBOOK_REVISION,
@@ -624,6 +632,8 @@ def _breakdown_fixture(text: Sentinels) -> tuple[Fixture, dict[str, str]]:
     fixture.abstain("authors", "evidence_sufficiency_manual")
     title = fixture.results[0]
     alternative = ledger._dicts(title["alternatives"])[0]
+    # The owner accepted the value the title relaxation admits: one label.
+    fixture.decide(1, "title", "accept", alternative["value"])
     return fixture, {
         "alternative": cast("str", alternative["alternative_id"]),
         "claim": claim,
@@ -711,6 +721,26 @@ def test_the_breakdown_keeps_the_proposable_population_apart(tmp_path: Path) -> 
     assert (relaxation["true_positive"], relaxation["false_positive"]) == (1, 0)
     assert relaxation["field_classes"]["discriminable"] == 1
     assert relaxation["pick_agrees"] == 1
+    assert entry["owner_labels"] == [
+        {
+            "population": "proposable",
+            "rule": "title_two_correlations_without_local",
+            "owner": {
+                "labelled": 1,
+                "by_outcome": {
+                    "accept": 1,
+                    "owner_entered": 0,
+                    "keep_current": 0,
+                    "reject": 0,
+                },
+                "pick_agrees": 1,
+                "rate": 1.0,
+                "wilson_lower_bound": round(
+                    cast("float", ledger.wilson_lower_bound(1, 1)), 4
+                ),
+            },
+        }
+    ]
     pooled = {row["rule"]: row for row in section["pooled_relaxations"]}
     # n = 0 is not estimable, never a precision.
     assert pooled["authors_one_correlation"]["n"] == 0
@@ -819,3 +849,517 @@ def test_the_child_replays_a_product_case_and_the_mirror_agrees(tmp_path: Path) 
         assert item.reason is not None
         _states, _compared, disagreed = a6.attribute(item, a6.table_for(probe.version))
         assert disagreed == 0
+
+
+# --- Owner labels (ADR-0092 Decision 5) -------------------------------------
+
+
+def admitting_fixture(text: Sentinels, *, alternatives: int = 1) -> Fixture:
+    """A proposable title that ``replay_all`` makes the title relaxation admit.
+
+    The admitted candidate is the first alternative; any further alternative
+    is another value the owner could choose.
+    """
+    fixture = Fixture(text, "v26-like")
+    provider = fixture.provider()
+    work = text()
+    accepted, claim = fixture.record(provider, work)
+    fixture.bind(provider, accepted, work, "accepted")
+    fixture.result("title", "propose_change", ["unique_typed_candidate"], [claim])
+    title = fixture.results[0]
+    title["alternatives"] = [
+        *ledger._dicts(title["alternatives"]),
+        *(
+            {"alternative_id": text(), "value": text(), "evidence_references": []}
+            for _ in range(alternatives - 1)
+        ),
+    ]
+    fixture.shadow.append(
+        {
+            "destination": "title",
+            "disposition": "abstention",
+            "reason_code": "insufficient_support",
+            "policy_destination": "automatic",
+            "candidate_id": text(),
+        }
+    )
+    return fixture
+
+
+def title_value(fixture: Fixture, index: int = 0) -> object:
+    """The value of the fixture's title alternative; the first is admitted."""
+    return ledger._dicts(fixture.results[0]["alternatives"])[index]["value"]
+
+
+def replay_all(
+    database: Path,
+    *,
+    version: str = V22,
+    failed: int = 0,
+    skip: Sequence[str] = ("stale-case",),
+) -> a6.A6Reader:
+    """A replay that admits each case's first title alternative by relaxation."""
+    connection = sqlite3.connect(database)
+    rows = connection.execute("SELECT review_case_id,document FROM review_cases")
+    cases: dict[str, tuple[a6.Proposal, ...]] = {}
+    text = Sentinels()
+    for case_id, document in rows.fetchall():
+        results = json.loads(document)["results"]
+        titles = [item for item in results if item["destination"] == "title"]
+        if case_id in skip or not titles:
+            continue
+        alternative = titles[0]["alternatives"][0]
+        candidate = _work(
+            text,
+            candidate_id=alternative["alternative_id"],
+            evidence_references=tuple(alternative["evidence_references"]),
+            local=0,
+            correlations=2,
+            eligible=False,
+        )
+        cases[case_id] = (_proposal(text, "title", [candidate]),)
+    connection.close()
+
+    def reader(_root: Path, _database: Path) -> a6.A6Probe:
+        return a6.A6Probe(version, frozenset(SCALAR), True, cases, failed)
+
+    return reader
+
+
+def _owner_run(
+    tmp_path: Path,
+    fixtures: Sequence[Fixture],
+    *extra: str,
+    floors: Mapping[int, int] | None = None,
+    owner_tables: bool = False,
+) -> str:
+    """The ledger's A6 output over one synthetic snapshot."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    database = _database(
+        tmp_path / "owner.sqlite3",
+        "v26-like",
+        fixtures,
+        floors=floors,
+        owner_tables=owner_tables,
+    )
+    stdout, stderr = io.StringIO(), io.StringIO()
+    code = ledger.main(
+        [
+            *_arguments([("snap-a", database, EBOOK_REVISION)], tmp_path),
+            "--a6-abstention",
+            *extra,
+        ],
+        stdout=stdout,
+        stderr=stderr,
+        ancestry=lambda _commit, _revision: True,
+        attention=lambda _root, _db: ledger.AttentionProbe((), 0, 0, SCALAR, True),
+        series_replay=_no_series,
+        decision_replay=replay_all(database),
+    )
+    assert code == 0, stderr.getvalue()
+    return stdout.getvalue()
+
+
+def _pooled_owner(section: Mapping[str, object], rule: str) -> object:
+    return next(
+        row["owner"]
+        for row in ledger._dicts(section["pooled_owner_labels"])
+        if row["rule"] == rule
+    )
+
+
+_TITLE_RULE = "title_two_correlations_without_local"
+
+
+@pytest.mark.parametrize(
+    ("outcome", "chosen", "expected"),
+    [
+        ("accept", 0, (1, "accept")),
+        ("accept", 1, (0, "accept")),
+        ("owner_entered", 0, (1, "owner_entered")),
+        ("keep_current", None, (0, "keep_current")),
+        ("reject", None, (0, "reject")),
+    ],
+    ids=[
+        "accept-the-admitted-value",
+        "accept-another-value",
+        "enter-the-admitted-value",
+        "keep-the-current-value",
+        "reject",
+    ],
+)
+def test_owner_labels_count_by_outcome_and_admitted_choice(
+    tmp_path: Path, outcome: str, chosen: int | None, expected: tuple[int, str]
+) -> None:
+    text = Sentinels()
+    fixture = admitting_fixture(text, alternatives=2)
+    fixture.decide(
+        1, "title", outcome, None if chosen is None else title_value(fixture, chosen)
+    )
+    section = json.loads(_owner_run(tmp_path, [fixture]))["a6_abstention"]
+    (row,) = section["snapshots"][0]["owner_labels"]
+    assert (row["population"], row["rule"]) == ("proposable", _TITLE_RULE)
+    agrees, named = expected
+    owner = row["owner"]
+    assert (owner["labelled"], owner["pick_agrees"]) == (1, agrees)
+    assert owner["by_outcome"] == {
+        name: int(name == named)
+        for name in ("accept", "owner_entered", "keep_current", "reject")
+    }
+    assert _pooled_owner(section, _TITLE_RULE) == owner
+    assert section["all_owner_labels"]["owner"] == owner
+
+
+def test_a_decided_earlier_case_counts_for_owner_labels_only(tmp_path: Path) -> None:
+    text = Sentinels()
+    current = admitting_fixture(text)
+    earlier = admitting_fixture(text)
+    earlier.current = False
+    earlier.decide(1, "title", "accept", title_value(earlier))
+    section = json.loads(_owner_run(tmp_path, [current, earlier]))["a6_abstention"]
+    entry = section["snapshots"][0]
+    # Populations, checks and relaxations are the current case's alone.
+    assert [row["fields"] for row in entry["populations"]] == [1]
+    assert [row["candidates"] for row in entry["sub_checks"]] == [1]
+    (relaxation,) = entry["relaxations"]
+    assert relaxation["outcomes"]["admitted"] == 1
+    assert (relaxation["true_positive"], relaxation["unreached_fields"]) == (1, 0)
+    # The earlier case's decision still labels its admitted field.
+    (row,) = entry["owner_labels"]
+    assert (row["owner"]["labelled"], row["owner"]["pick_agrees"]) == (1, 1)
+
+
+@pytest.mark.parametrize(
+    ("decisions", "floor", "destination"),
+    [
+        ([(1, "accept"), (2, "withdraw")], None, "title"),
+        ([(3, "accept")], 3, "title"),
+        ([(1, "accept")], None, "language"),
+    ],
+    ids=["withdrawn", "history-at-the-episode-floor", "field-not-admitted"],
+)
+def test_withdrawn_history_and_unadmitted_fields_label_nothing(
+    tmp_path: Path,
+    decisions: Sequence[tuple[int, str]],
+    floor: int | None,
+    destination: str,
+) -> None:
+    text = Sentinels()
+    fixture = admitting_fixture(text)
+    # Blocked and abstained for no eligible action: no relaxation is tried
+    # there, so a decision on it labels no relaxation.
+    fixture.result("language", "defer", ["no_supported_evidence"], [text()])
+    fixture.abstain("language", "no_eligible_action")
+    result = next(
+        item for item in fixture.results if item["destination"] == destination
+    )
+    value = ledger._dicts(result["alternatives"])[0]["value"]
+    for ordinal, outcome in decisions:
+        fixture.decide(
+            ordinal, destination, outcome, value if outcome == "accept" else None
+        )
+    section = json.loads(
+        _owner_run(tmp_path, [fixture], floors=None if floor is None else {0: floor})
+    )["a6_abstention"]
+    assert section["snapshots"][0]["owner_labels"] == []
+    assert section["all_owner_labels"]["owner"]["labelled"] == 0
+
+
+def test_without_the_owner_table_the_reading_says_not_recorded(
+    tmp_path: Path,
+) -> None:
+    text = Sentinels()
+    output = _owner_run(tmp_path / "json", [admitting_fixture(text)])
+    section = json.loads(output)["a6_abstention"]
+    assert section["snapshots"][0]["owner_labels"] is None
+    assert {row["owner"] for row in section["pooled_owner_labels"]} == {None}
+    assert section["all_owner_labels"] == {"owner": None}
+    markdown = _owner_run(
+        tmp_path / "markdown", [admitting_fixture(text)], "--format", "markdown"
+    )
+    cells = "not recorded | not recorded | not recorded | not recorded |"
+    assert f"| {_TITLE_RULE} | pooled | both | {cells}" in markdown
+    assert f"| all relaxations | pooled | both | {cells}" in markdown
+    # An empty owner table is stored decisions: zero labels, not estimable.
+    empty = _owner_run(
+        tmp_path / "empty",
+        [admitting_fixture(text)],
+        "--format",
+        "markdown",
+        owner_tables=True,
+    )
+    assert (
+        "| all relaxations | pooled | both | 0 | 0 / 0 / 0 / 0 | 0 | not estimable |"
+        in (empty)
+    )
+
+
+def _rate_cell(successes: int, total: int) -> str:
+    """A rate cell as the reading prints it, from its four-place figures."""
+    bound = round(cast("float", ledger.wilson_lower_bound(successes, total)), 4)
+    return f"{round(successes / total, 4):.3f} ({bound:.3f})"
+
+
+def _owner_section(markdown: str) -> list[str]:
+    lines = markdown.splitlines()
+    return lines[lines.index("### Owner labels") :]
+
+
+def test_the_owner_labels_table_pools_each_relaxation_and_all_of_them(
+    tmp_path: Path,
+) -> None:
+    text = Sentinels()
+    fixtures = [admitting_fixture(text, alternatives=2) for _ in range(3)]
+    fixtures[0].decide(1, "title", "accept", title_value(fixtures[0]))
+    fixtures[1].decide(2, "title", "accept", title_value(fixtures[1], 1))
+    fixtures[2].decide(3, "title", "owner_entered", title_value(fixtures[2]))
+    database = _database(tmp_path / "pooled.sqlite3", "v26-like", fixtures)
+    second = _database(tmp_path / "second.sqlite3", "v26-like", [fixtures[0]])
+    replays = {database: replay_all(database), second: replay_all(second)}
+
+    def run(*extra: str) -> str:
+        stdout = io.StringIO()
+        code = ledger.main(
+            [
+                *_arguments(
+                    [
+                        ("snap-a", database, EBOOK_REVISION),
+                        ("snap-b", second, EBOOK_REVISION),
+                    ],
+                    tmp_path,
+                ),
+                "--a6-abstention",
+                *extra,
+            ],
+            stdout=stdout,
+            stderr=io.StringIO(),
+            ancestry=lambda _commit, _revision: True,
+            attention=lambda _root, _db: ledger.AttentionProbe((), 0, 0, SCALAR, True),
+            series_replay=_no_series,
+            decision_replay=lambda root, path: replays[path](root, path),
+        )
+        assert code == 0
+        return stdout.getvalue()
+
+    section = json.loads(run())["a6_abstention"]
+    pooled = cast("dict[str, object]", _pooled_owner(section, _TITLE_RULE))
+    # Three labels on snap-a and one on snap-b; three chose the admitted value.
+    assert (pooled["labelled"], pooled["pick_agrees"]) == (4, 3)
+    assert pooled["rate"] == 0.75
+    assert pooled["wilson_lower_bound"] == round(
+        cast("float", ledger.wilson_lower_bound(3, 4)), 4
+    )
+    assert section["all_owner_labels"]["owner"] == pooled
+    for row in section["pooled_owner_labels"]:
+        if row["rule"] != _TITLE_RULE:
+            assert row["owner"]["labelled"] == 0
+            assert row["owner"]["rate"] is None
+    owner_keys: list[str] = []
+    _strings(section["pooled_owner_labels"], owner_keys, [])
+    assert not [key for key in owner_keys if "pass" in key or "mark" in key]
+    table = _owner_section(run("--format", "markdown"))
+    rate = _rate_cell(3, 4)
+    assert table[2] == (
+        "| Relaxation | Snapshot | Population | Owner-labelled fields | "
+        "Accepted / entered / kept current / rejected | Chose the admitted value | "
+        "Rate (Wilson 95% lower limit) |"
+    )
+    assert table[4:] == [
+        f"| {_TITLE_RULE} | snap-a | proposable | 3 | 2 / 1 / 0 / 0 | 2 | "
+        f"{_rate_cell(2, 3)} |",
+        f"| {_TITLE_RULE} | snap-b | proposable | 1 | 1 / 0 / 0 / 0 | 1 | "
+        f"{_rate_cell(1, 1)} |",
+        "| authors_one_correlation | pooled | both | 0 | 0 / 0 / 0 / 0 | 0 | "
+        "not estimable |",
+        f"| {_TITLE_RULE} | pooled | both | 4 | 3 / 1 / 0 / 0 | 3 | {rate} |",
+        "| publisher_two_correlations_without_local | pooled | both | 0 | "
+        "0 / 0 / 0 / 0 | 0 | not estimable |",
+        "| language_two_correlations_without_local | pooled | both | 0 | "
+        "0 / 0 / 0 / 0 | 0 | not estimable |",
+        "| published_date_day_one_correlation | pooled | both | 0 | "
+        "0 / 0 / 0 / 0 | 0 | not estimable |",
+        f"| all relaxations | pooled | both | 4 | 3 / 1 / 0 / 0 | 3 | {rate} |",
+    ]
+    assert not [line for line in table if "pass" in line.lower() or "mark" in line]
+
+
+# --- Owner labels on product-built stores -----------------------------------
+
+
+def _title_report(*authorities: str) -> MetadataReport:
+    """No current title, and providers agreeing on one: the title relaxation
+    admits it under main's checks (no local match, two correlations)."""
+    return _bibliographic_report(
+        current_title=None,
+        providers=tuple(
+            consensus_provider_title(name, "Vexmorin Ledger", authority=name)
+            for name in authorities
+        ),
+    )
+
+
+def _publish_case(
+    repository: SQLiteMetadataReportRepository,
+    report: MetadataReport,
+    replacing: MetadataReport | None = None,
+) -> str:
+    repository.publish(
+        report, lambda: True, None if replacing is None else replacing.report_id
+    )
+    proposal = evaluate_report(report)
+    repository.publish_proposal(proposal)
+    case_id = cast(
+        "str", json.loads(repository.admit_review_case(proposal))["review_case_id"]
+    )
+    repository.persist_shadow_outcome(case_id, 4)
+    return case_id
+
+
+def decide_title(
+    repository: SQLiteMetadataReportRepository, case_id: str, outcome: str, key: str
+) -> None:
+    """Record the owner's decision on the title, accepting its one value."""
+    case = ReviewCase.create_from_data(
+        json.loads(repository.get_review_case(case_id))["case"]
+    )
+    proposal = next(item for item in case.proposals if item["destination"] == "title")
+    alternatives = cast(
+        "list[dict[str, object]]",
+        cast("dict[str, object]", proposal["result"])["alternatives"],
+    )
+    repository.record_human_decision(
+        HumanDecision.create(
+            case,
+            proposal_id=str(proposal["proposal_id"]),
+            target_fingerprint=case.target_fingerprint,
+            destination="title",
+            actor="owner",
+            outcome=outcome,
+            selected_value=cast("dict[str, object]", alternatives[0]["value"])
+            if outcome == "accept"
+            else None,
+            idempotency_key=f"owner-labels-{key}",
+            occurred_at=1_000,
+        )
+    )
+
+
+def product_store(
+    database: Path, *, decide: str | None = None, rescan: bool = False
+) -> list[str]:
+    """One product-built ebook whose title a relaxation admits; its case ids."""
+    repository = open_repository(database)
+    first = _title_report("hardcover", "open_library")
+    cases = [_publish_case(repository, first)]
+    if decide is not None:
+        decide_title(repository, cases[0], decide, decide)
+    if rescan:
+        later = _title_report("hardcover", "open_library", "google_books")
+        cases.append(_publish_case(repository, later, first))
+    repository.close()
+    return cases
+
+
+def test_the_child_replays_decided_cases_where_owner_decisions_are_stored(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "application.sqlite3"
+    earlier, current = product_store(database, decide="accept", rescan=True)
+    probe = a6.child_a6(REPOSITORY, database)
+    assert probe.failed == 0
+    assert set(probe.cases) == {earlier, current}
+    connection = ledger._open_snapshot(database)
+    try:
+        assert connection.execute(
+            "SELECT review_case_id FROM current_review_packages"
+        ).fetchall() == [(current,)]
+        tally, media = a6.measure_a6(connection, probe)
+    finally:
+        connection.close()
+    # The current case is measured; the decided earlier one only labels.
+    assert sum(media.values()) == 1
+    assert sum(tally.populations.values()) == 1
+    assert (
+        sum(result.outcomes["admitted"] for result in tally.relaxations.values()) == 1
+    )
+    (counts,) = tally.owner.values()
+    assert (counts.owner_labelled, counts.owner_accept, counts.owner_agrees) == (
+        1,
+        1,
+        1,
+    )
+
+
+def test_the_child_reads_a_store_without_the_owner_table(tmp_path: Path) -> None:
+    database = tmp_path / "application.sqlite3"
+    (case_id,) = product_store(database)
+    connection = sqlite3.connect(database)
+    connection.execute("DROP TABLE human_decisions")
+    connection.commit()
+    connection.close()
+    probe = a6.child_a6(REPOSITORY, database)
+    assert (probe.failed, set(probe.cases)) == (0, {case_id})
+    connection = ledger._open_snapshot(database)
+    try:
+        tally, _media = a6.measure_a6(connection, probe)
+    finally:
+        connection.close()
+    assert not tally.owner_recorded and not tally.owner
+    admitted = {
+        key: result.outcomes["admitted"] for key, result in tally.relaxations.items()
+    }
+    assert admitted == {("proposable", _TITLE_RULE): 1}
+
+
+@pytest.mark.parametrize("output", ["json", "markdown"], ids=["json", "markdown"])
+def test_the_owner_command_runs_on_a_product_store_through_every_child(
+    tmp_path: Path, output: str
+) -> None:
+    database = tmp_path / "application.sqlite3"
+    product_store(database, decide="accept")
+    stdout, stderr = io.StringIO(), io.StringIO()
+    # The owner's command, with only git ancestry injected: the attention,
+    # series and decision replays are the real child processes.
+    code = ledger.main(
+        [
+            "--snapshot",
+            "library",
+            str(database),
+            EBOOK_REVISION,
+            "--source-root",
+            "library",
+            str(REPOSITORY),
+            "--a6-abstention",
+            "--format",
+            output,
+        ],
+        stdout=stdout,
+        stderr=stderr,
+        ancestry=lambda _commit, _revision: True,
+    )
+    assert code == 0, stderr.getvalue()
+    if output == "markdown":
+        assert (
+            f"| {_TITLE_RULE} | library | proposable | 1 | 1 / 0 / 0 / 0 | 1 | "
+            f"{_rate_cell(1, 1)} |"
+        ) in stdout.getvalue()
+        assert "Vexmorin" not in stdout.getvalue()
+        return
+    section = json.loads(stdout.getvalue())["a6_abstention"]
+    (entry,) = section["snapshots"]
+    assert entry["engine"] == shadow_decision.DECISION_POLICY_VERSION
+    assert (entry["human_decisions"], entry["replay_failed_cases"]) == (1, 0)
+    assert entry["mirror_disagreements"] == 0
+    (relaxation,) = entry["relaxations"]
+    assert (relaxation["rule"], relaxation["outcomes"]["admitted"]) == (
+        _TITLE_RULE,
+        1,
+    )
+    (row,) = entry["owner_labels"]
+    assert (row["owner"]["labelled"], row["owner"]["pick_agrees"]) == (1, 1)
+    keys: list[str] = []
+    values: list[str] = []
+    _strings(section, keys, values)
+    vocabulary = a6.vocabulary(section) | ledger.closed_vocabulary(["library"])
+    for value in [*keys, *values]:
+        assert value in vocabulary, value

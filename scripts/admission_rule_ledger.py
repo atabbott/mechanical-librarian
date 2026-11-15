@@ -51,10 +51,10 @@ path, configured connection, library or provider name is ever emitted.
 
 The ``--a6-abstention`` flag adds the automatic-decision abstention analysis
 of #1745 (``scripts/admission_rule_a6.py``) to the JSON document under
-``a6_abstention``: its two populations, the first failing eligibility check
-and the closed relaxations, replayed under each source. With ``--format
-markdown`` it prints that analysis's tables instead of the ledger's, so each
-page is one run's output.
+``a6_abstention``: its two populations, the first failing eligibility check,
+the closed relaxations and the owner labels on the fields they admit,
+replayed under each source. With ``--format markdown`` it prints that
+analysis's tables instead of the ledger's, so each page is one run's output.
 
 The ``--a3-combination`` flag adds the bibliographic-combination analysis of
 #1746 (``scripts/admission_rule_a3.py``) under ``a3_combination``: each A3
@@ -2050,6 +2050,28 @@ def series_cases_sql(connection: sqlite3.Connection) -> str:
 OwnerDecisions = dict[str, dict[str, tuple[str, object]]]
 
 
+def _case_items(
+    connection: sqlite3.Connection, scope_sql: str
+) -> dict[str, tuple[object, ...]]:
+    """The library item each case in scope is for, or the case itself.
+
+    The item is the case document's ``target.connection``, ``target.library``
+    and ``target.item``, which a write and rescan do not change. ``scope_sql``
+    is a condition on ``rc``, the review case.
+    """
+    return {
+        case_id: (connection_name, library, item)
+        if None not in (connection_name, library, item)
+        else (case_id,)
+        for case_id, connection_name, library, item in connection.execute(
+            "SELECT rc.review_case_id,json_extract(rc.document,'$.target.connection'),"
+            "json_extract(rc.document,'$.target.library'),"
+            "json_extract(rc.document,'$.target.item') "
+            f"FROM review_cases rc WHERE {scope_sql}"
+        )
+    }
+
+
 def _owner_decisions(connection: sqlite3.Connection) -> OwnerDecisions | None:
     """The owner decision that labels each case's field, or None where none
     are stored (#1748).
@@ -2079,17 +2101,7 @@ def _owner_decisions(connection: sqlite3.Connection) -> OwnerDecisions | None:
         "FROM human_decisions ORDER BY ordinal"
     ):
         latest[(case_id, destination)] = (ordinal, outcome, selected)
-    items: dict[str, tuple[object, ...]] = {
-        case_id: (connection_name, library, item)
-        if None not in (connection_name, library, item)
-        else (case_id,)
-        for case_id, connection_name, library, item in connection.execute(
-            "SELECT rc.review_case_id,json_extract(rc.document,'$.target.connection'),"
-            "json_extract(rc.document,'$.target.library'),"
-            "json_extract(rc.document,'$.target.item') "
-            f"FROM review_cases rc WHERE {_DECIDED_SQL}"
-        )
-    }
+    items = _case_items(connection, _DECIDED_SQL)
     winners: dict[tuple[object, ...], tuple[int, str, str, str]] = {}
     for (case_id, destination), (ordinal, outcome, selected) in latest.items():
         floor = floors.get(case_id)
@@ -3093,6 +3105,7 @@ def build_ledger(
         section: dict[str, object] = {
             "snapshots": a6_entries,
             "pooled_relaxations": a6.pooled_relaxations(a6_tallies),
+            **a6.pooled_owner_labels(a6_tallies),
         }
         ledger[a6.KEY] = section
         vocabulary |= a6.vocabulary(section)

@@ -24,9 +24,10 @@ records.
 ## Before running it
 
 Description, genres and narrators are measured from your own decisions, so
-first review the work route's offers on audiobooks whose field is empty. For
-each of those fields, accept the proposed value where it is right and enter or
-keep your own where it is not. Only the latest decision per book and field
+first review the work route's offers on audiobooks whose field is empty.
+[Owner labels](owner-labels.md#work-route-offers) lists them. For each of
+those fields, accept the proposed value where it is right and enter or keep
+your own where it is not. Only the latest decision per book and field
 counts, chosen among decisions on a work-route offer into an empty field, and
 a withdrawn one is left out. A provider without an exact match is not compared
 (`no_exact_source`). Series and the publication date need
