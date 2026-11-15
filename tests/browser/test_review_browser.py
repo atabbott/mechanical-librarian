@@ -504,7 +504,6 @@ def _server(
     genre_destination: str = "automatic",
     genre_current: tuple[str, ...] | None = None,
     genre_others: str = "ask",
-    genre_tags_option: str | None = None,
     owner_write: bool = False,
     owner_recur: bool = False,
     owner_library_change: bool = False,
@@ -1163,11 +1162,7 @@ def _server(
 
         report = genre_report(genres=genre_fixture, current=genre_current)
         case_id, proposal_set = publish_genre_case(
-            repository,
-            report,
-            genre_destination,
-            genre_others,
-            tags_option=genre_tags_option,
+            repository, report, genre_destination, genre_others
         )
         if owner_write:
             case_id, report = _seed_owner_write(
@@ -11812,9 +11807,19 @@ def test_owner_enters_a_title_at_enlarged_text():
 
 def test_an_ebook_tags_fill_under_ask_is_an_optional_choice():
     """An ebook's Tags fill set to Ask me is optional, as on a recording (#1707)."""
-    with _owner_page(
-        genre_fixture=("Fantasy",), genre_others="ask", genre_tags_option="fill_empty"
-    ) as (page, origin, case_id):
+    from tests.support import genre_reports
+
+    ebook_tags_fill = partial(
+        genre_reports.publish_genre_case, tags_option="fill_empty"
+    )
+    with (
+        patch.object(genre_reports, "publish_genre_case", ebook_tags_fill),
+        _owner_page(genre_fixture=("Fantasy",), genre_others="ask") as (
+            page,
+            origin,
+            case_id,
+        ),
+    ):
         page.goto(f"{origin}/library?lens=all&preview={case_id}&field=tags")
         needs_you = page.locator("dt", has_text=re.compile("^Needs you$")).locator(
             "xpath=following-sibling::dd[1]"
