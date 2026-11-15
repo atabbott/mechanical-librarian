@@ -149,6 +149,7 @@ from mechanical_librarian.domain.human_decision import (
     OWNER_SUBSET_DESTINATION,
     OWNER_TEXT_DESTINATIONS,
     VALUE_OUTCOMES,
+    DecisionScope,
     HumanDecision,
     HumanDecisionError,
     manual_cover_eligible,
@@ -795,7 +796,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
 
         Called after the decision resolved in the same snapshot, so its case is
         current. Sources are provider names only: an owner's accepted value
-        names its alternative's evidence, an automatic one its outcome's
+        names its alternative's evidence in the offer the choice bound (the
+        live proposals or a stored level offer), an automatic one its outcome's
         citations, a cover its candidate's citations. An entered or restored
         value and description advice, which keeps digests only, name none.
         """
@@ -812,7 +814,14 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                                 "list[str]", alternative.get("evidence_references", [])
                             )
                         )
-                        for proposal in case.proposals
+                        for proposal in decision.bound_offer(
+                            DecisionScope.of(
+                                case,
+                                stored_level_offer_documents(
+                                    self._connection, case.review_case_id
+                                ),
+                            )
+                        )
                         if proposal.get("proposal_id") == decision.proposal_id
                         for alternative in cast(
                             "list[dict[str, object]]",
@@ -869,6 +878,13 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         report = self._plan_report(report_id)
         cited = set(references)
         labels = set(provider_source_labels(report, list(references)))
+        # A level alternative cites a refused answer's claims (#1355).
+        labels.update(
+            provider_label(provider.authority)
+            for provider in report.providers
+            for candidate in provider.identity_refused_candidates
+            if any(claim.reference in cited for claim in candidate.claims)
+        )
         for source in report.cover_sources:
             if cover_source_reference(report.report_id, source.source_id) in cited:
                 labels.add(

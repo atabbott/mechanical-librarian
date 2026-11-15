@@ -47,6 +47,10 @@ _READERS: dict[str, str] = {
     # The review API cites a refused product's evidence when a level choice
     # names it (S10 "Readers", amendment 2): evidence only, never an offer.
     "application/review_web.py::_evidence_by_reference": "review_api_evidence",
+    # The write plan names the provider whose refused product a level choice
+    # cites (#1336): the provider's name only, never the record or an offer.
+    "adapters/persistence/field_effect_activity.py::"
+    "SQLiteFieldEffectActivityRepository._plan_source_labels": "write_plan_source_name",
     # A retry successor keeps each carried lane's own records (AC6).
     "application/provider_retry_successor.py::"
     "GenerateProviderRetrySuccessor._merged.result": "producer",
