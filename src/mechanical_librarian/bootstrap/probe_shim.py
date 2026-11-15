@@ -8,7 +8,9 @@ not started yet.
 
 This module closes the window by making the bounded step a process of its own:
 the parent spawns a plain interpreter, which applies exactly the rlimit ladder
-``preexec_fn`` used to apply and then ``execv``s the probe binary the parent
+``preexec_fn`` used to apply, confines itself (``adapters.child_confinement``:
+read only its libraries and the passed descriptor, execute only the probe, no
+network or other process) and then ``execv``s the probe binary the parent
 resolved.  The limits are installed by an ordinary process before an ordinary
 exec, so nothing runs between a fork and an exec at all.
 
@@ -21,6 +23,8 @@ from __future__ import annotations
 import os
 import resource
 import sys
+
+from mechanical_librarian.adapters.child_confinement import confine_probe
 
 # The probe's own ceilings, which are not the interpretation child's.
 # `RLIMIT_NPROC` is deliberately absent: it is a per-uid ceiling on processes
@@ -81,6 +85,9 @@ def main(arguments: list[str]) -> int:
         # without the close-on-exec flag does.
         os.set_inheritable(descriptor, True)
         apply_limits()
+        # Last, so the probe executes only this binary, reads only its
+        # libraries and this descriptor, and carries the filter through exec.
+        confine_probe(binary, descriptor)
         os.execv(binary, [binary, *arguments[3:]])
     except BaseException:
         return _UNAVAILABLE

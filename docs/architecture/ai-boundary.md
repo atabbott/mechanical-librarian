@@ -34,12 +34,13 @@ It never receives owner decisions, target-only text, titles, identifiers,
 paths or credentials. The reply is one bounded description and `ready` or
 `needs_review`, stored as authored content. The owner can select a stored
 result by reference. Automatic application is off by default; when the owner
-turns it on, only a current `ready` result that passes the description floor
-can be admitted, through the normal policy and write rules
+turns it on, only a current `ready` result that passes the description floor,
+on a field that offers the owner a choice, can be admitted, through the normal
+policy and write rules
 ([configuration](../reference/configuration.md#description-advice)).
 
-**Taste profile.** An OpenRouter vision model writes the owner's taste
-profile from up to 50 of their recorded cover choices: up to 100 cover images
+**Taste profile.** A vision model, Codex or OpenRouter, writes the owner's
+taste profile from up to 50 of their recorded cover choices: up to 100 cover images
 and closed facts about each (size, shape, same-art group, chosen or passed
 over, current, and the book's format), never a title, author, identifier,
 path or provider text. The reply is up to 40 numbered rules in four sections,
@@ -47,8 +48,8 @@ stored as an append-only version and shown read-only in Covers → Taste
 profile. It influences nothing yet: no observation, recommendation or
 decision reads it (#1372). Builds are scheduled, at most 4 a day, and every
 request counts against a daily limit
-([configuration](../reference/configuration.md#taste-profile)). The task is
-OpenRouter only in 0.31.0
+([configuration](../reference/configuration.md#taste-profile)). The owner
+chooses its engine separately from cover review
 ([ADR-0095](decisions/0095-learned-cover-taste-profile.md)).
 
 ## Request contract
@@ -70,9 +71,10 @@ profile build is retried only on an explicit owner retry.
 
 ## Taste profile builder
 
-The taste profile builder (#1372) is OpenRouter only in 0.31.0, with its own
-model selection under the shared key
-([ADR-0095](decisions/0095-learned-cover-taste-profile.md)). It reads owner
+The taste profile builder (#1372) runs on either engine, one at a time with
+no fallback: the contained Codex reviewer or its own OpenRouter model under
+the shared key ([ADR-0095](decisions/0095-learned-cover-taste-profile.md)).
+It reads owner
 cover choices already recorded and writes only its own append-only profile
 versions; nothing reads a profile yet, so it cannot influence an observation,
 recommendation, decision or write.
@@ -90,16 +92,23 @@ recommendation, decision or write.
   encoded as a deterministic JPEG at quality 90, sealed in the packet by
   digest and re-derived and compared byte for byte before sending. The
   request is at most 24 MB. The cover observer keeps the PNG.
+- **Codex leg.** Codex receives the same admitted request. Each JPEG is
+  re-checked and bound to its digest, sealed, and mounted read-only as
+  `/images/NN.jpg` in packet order; the schema is the same with its draft
+  named. One build is one attempt, under the provisioned profile and the
+  same profile check as cover review.
 - **Output.** A closed schema: at most 40 rules in four sections, each at
   most 400 code points, at most 1,200 words and 8,192 code points in all,
   admitted as inert text and only ever rendered as text. A reply that is
   not one such JSON object, including one cut at the output limit, is
-  `invalid_output`; a reply whose body cannot be read counts as
-  `unknown_charge`.
+  `invalid_output`; on OpenRouter only, a reply whose body cannot be read
+  counts as `unknown_charge`.
 - **Ceilings.** One build at a time and at most 4 scheduled a UTC day. Each
-  request is counted durably before dispatch against
-  `cover_taste_build_daily_requests`; a timeout after sending or a reply
-  without usage stops the task for the day as `unknown_charge`. A build
+  request on either engine is counted durably before dispatch against
+  `cover_taste_build_daily_requests`. On OpenRouter a timeout after sending
+  or a reply without usage stops the task for the day as `unknown_charge`;
+  Codex reports no per-request cost, so its failures end the build
+  `unavailable` and never stop the day. A build
   interrupted by restart ends `interrupted` and is never retried silently; a
   fault or lost write during a build ends it at once instead.
 - **Storage.** Versions are append-only by trigger, and each stored profile

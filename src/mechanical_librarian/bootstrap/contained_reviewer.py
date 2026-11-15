@@ -14,6 +14,9 @@ from mechanical_librarian.application.contained_reviewer_contract import (
     admit_cover_review_request,
     canonical_json,
 )
+from mechanical_librarian.application.cover_taste_contract import (
+    AdmittedTasteBuildRequest,
+)
 
 
 def run_cover_packet_reviewer(
@@ -138,3 +141,22 @@ def run_description_reviewer(
     return canonical_json(
         {"request_sha256": request.digest, "result": json.loads(result.document)}
     )
+
+
+def run_taste_build_reviewer(
+    profile_payload: bytes, request: AdmittedTasteBuildRequest
+) -> str:
+    """Run one admitted taste build on the contained engine; return its result."""
+    reviewer = ContainedReviewerAdapter(
+        load_contained_reviewer_profile_bytes(profile_payload)
+    )
+    dispatched = False
+
+    def record_dispatch(_pid: int, _pgid: int, _start_token: str) -> None:
+        nonlocal dispatched
+        dispatched = True
+
+    result = reviewer.run_taste_build(request, record_dispatch)
+    if not dispatched:
+        raise RuntimeError("contained reviewer did not record dispatch")
+    return result.document

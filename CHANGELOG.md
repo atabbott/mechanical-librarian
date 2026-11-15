@@ -12,6 +12,11 @@ brackets are GitHub issues.
 
 ## 0.36.1 — Persistence health (in progress)
 
+- Your decision on a field now keeps Automatic off that field on every later
+  read of the work until you choose Resume automatic handling, including a
+  correction made after Automatic's own change and answers given in Preview,
+  while paused or under Ask me. Before, Automatic could write over them.
+  Withdrawing a decision removes the hold it set (ADR-0085 Amendment 1).
 - Stopping writes for a library, or granting them again for a changed set of
   fields, now closes a change that was waiting for Audiobookshelf to come back,
   instead of leaving it waiting beside a new one, and a cover's restore point
@@ -93,6 +98,8 @@ brackets are GitHub issues.
   writes rules about the covers you choose and pass over. The profile is shown
   read-only and changes nothing yet. `review.cover_taste_build_daily_requests`
   (default 8) caps its requests a day (#1372).
+- **Clean rebuild required.** Codex can write the taste profile too: choose it
+  or an OpenRouter model in Settings → Reviewer › Taste profile (#1372).
 - **Clean rebuild required.** Choosing, putting back or automatically
   switching a cover over one Audiobookshelf already holds no longer fails
   before it writes. The write binds the current cover's exact bytes, even when
@@ -318,6 +325,10 @@ brackets are GitHub issues.
   or much smaller. Policy's new Current covers says when a cover may be replaced; the
   replace-if-larger cover option is gone. A configuration file must be
   rewritten as `config-v11` (#1363).
+- With automatic description advice on, a description whose sources all
+  repeat the current text is no longer replaced by the adviser's result,
+  which you could not have chosen or reversed there. The result stays shown
+  for reference, and the review API refuses choosing it directly too (#1892).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 

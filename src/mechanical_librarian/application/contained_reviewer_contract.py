@@ -15,11 +15,17 @@ from mechanical_librarian.application.cover_packet_semantics import (
 from mechanical_librarian.application.cover_packet_semantics import (
     bind_cover_packet,
 )
+from mechanical_librarian.domain.cover_taste import TASTE_MAX_IMAGES
 
 MAX_INPUT_BYTES = 1_048_576
 MAX_SCHEMA_BYTES = 65_536
 COVER_MEMORY_BYTES = 1_073_741_824
 COVER_PROCESS_LIMIT = 32
+# Descriptors the reviewer's broker and Bubblewrap may hold: 64 of their own
+# plus one for each sealed image passed in, so a 100-preview taste build
+# carries every image and an image-free request stays at 64 (#1372).
+REVIEWER_DESCRIPTOR_LIMIT = 64
+MAX_REVIEWER_DESCRIPTOR_LIMIT = REVIEWER_DESCRIPTOR_LIMIT + TASTE_MAX_IMAGES
 COVER_MODEL = "gpt-5.6-sol"
 # The reasons a cover consideration may report for an unavailable reviewer:
 # the browser's two resource limits. A stale model is not one. No production

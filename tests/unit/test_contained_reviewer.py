@@ -1206,20 +1206,190 @@ def test_outer_child_limits_defer_nproc_until_after_user_namespace() -> None:
         reviewer = adapter.ContainedReviewerAdapter(_profile(Path(temporary)))
         with patch.object(adapter.resource, "setrlimit") as limit:
             reviewer._limit_child()
+            reviewer._limit_child(164)
     assert [call.args[0] for call in limit.call_args_list] == [
         adapter.resource.RLIMIT_AS,
         adapter.resource.RLIMIT_FSIZE,
         adapter.resource.RLIMIT_NOFILE,
-    ]
+    ] * 2
+    assert limit.call_args_list[2].args[1] == (64, 64)
+    assert limit.call_args_list[5].args[1] == (164, 164)
+
+
+# Stands in for Bubblewrap behind the real broker: it reports a sandbox child,
+# waits for release, then reads every --ro-bind-data descriptor it was given.
+_FAKE_BWRAP = """
+import hashlib, json, os, resource, sys
+arguments = sys.argv[1:]
+block = int(arguments[arguments.index("--block-fd") + 1])
+info = int(arguments[arguments.index("--info-fd") + 1])
+images = [int(arguments[i + 1]) for i, a in enumerate(arguments) if a == "--ro-bind-data"]
+expected = [int(arguments[i + 1]) for i, a in enumerate(arguments) if a == "--expect-fd"]
+hold_read, hold_write = os.pipe()
+child = os.fork()
+if child == 0:
+    for descriptor in (hold_write, info, block):
+        os.close(descriptor)
+    os.read(hold_read, 1)
+    os._exit(0)
+os.close(hold_read)
+names = ("cgroup", "ipc", "mnt", "pid", "uts")
+document = {"child-pid": child, **{name + "-namespace": 1 for name in names}}
+os.write(info, json.dumps(document).encode())
+os.close(info)
+if os.read(block, 1) != b"G":
+    sys.exit(3)
+digests = []
+for descriptor in images:
+    with os.fdopen(os.dup(descriptor), "rb") as image:
+        digests.append(hashlib.sha256(image.read()).hexdigest())
+os.close(hold_write)
+os.waitpid(child, 0)
+limit = resource.getrlimit(resource.RLIMIT_NOFILE)
+received = []
+for descriptor in expected:
+    try:
+        os.fstat(descriptor)
+        received.append(descriptor)
+    except OSError:
+        pass
+report = {"digests": digests, "limit": list(limit), "expected": expected}
+sys.stdout.write(json.dumps({**report, "received": received}))
+"""
+
+
+def _run_gated_for_real(
+    image_count: int, *, renumber_above: int | None = None
+) -> tuple[int, dict[str, Any], list[str]]:
+    """Run the real fork, broker and descriptor handoff with sealed previews.
+
+    With `renumber_above`, the codex, sandbox, credential and image descriptors
+    are moved above that number, past the child's descriptor budget, as a busy
+    server can hand them out.
+    """
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        reviewer = adapter.ContainedReviewerAdapter(_profile(root))
+        bwrap = root / "fake-bwrap"
+        bwrap.write_text(f"#!{sys.executable}\n{_FAKE_BWRAP}")
+        bwrap.chmod(0o700)
+        flags = os.O_RDONLY | os.O_CLOEXEC
+        # Hold low descriptors so the previews land above 64, as in a server.
+        filler = [os.open(os.devnull, flags) for _ in range(48)]
+        opened = [os.open(os.devnull, flags) for _ in range(3)]
+        held = opened
+        moved: list[int] = []
+
+        def renumber(descriptor: int) -> int:
+            if renumber_above is None:
+                return descriptor
+            target = renumber_above + len(moved) + 1
+            os.dup2(descriptor, target, inheritable=False)
+            moved.append(target)
+            return target
+
+        try:
+            held = [renumber(descriptor) for descriptor in opened]
+            payloads = [
+                b"\xff\xd8\xff" + bytes([index]) + b"\xff\xd9"
+                for index in range(image_count)
+            ]
+            images = tuple(
+                adapter._TasteImage(
+                    "taste_image_" + hashlib.sha256(payload).hexdigest(),
+                    hashlib.sha256(payload).hexdigest(),
+                    payload,
+                )
+                for payload in payloads
+            )
+            with (
+                adapter._sealed_cover_images(images) as originals,
+                tempfile.TemporaryFile() as stdin,
+                tempfile.TemporaryFile() as stdout,
+                tempfile.TemporaryFile() as stderr,
+            ):
+                sealed = tuple(
+                    adapter._SealedImage(
+                        target, f"/proc/self/fd/{target}", image.digest
+                    )
+                    for image in originals
+                    for target in (renumber(image.descriptor),)
+                )
+                command = [str(bwrap)]
+                for descriptor in held:
+                    command.extend(("--expect-fd", str(descriptor)))
+                for index, image in enumerate(sealed, start=1):
+                    command.extend(
+                        (
+                            "--ro-bind-data",
+                            str(image.descriptor),
+                            f"/images/{index:02d}.jpg",
+                        )
+                    )
+                returncode = reviewer._run_gated(
+                    command,
+                    adapter._BoundArtifact(held[0], f"/proc/self/fd/{held[0]}"),
+                    adapter._BoundArtifact(held[1], f"/proc/self/fd/{held[1]}"),
+                    stdin.fileno(),
+                    stdout.fileno(),
+                    stderr.fileno(),
+                    lambda *_: None,
+                    credential_descriptor=held[2],
+                    sealed_images=sealed,
+                )
+                stdout.seek(0)
+                output = stdout.read()
+                report = json.loads(output) if returncode == 0 else {}
+                if image_count:
+                    assert max(image.descriptor for image in sealed) > 64
+                return returncode, report, [image.digest for image in images]
+        finally:
+            for descriptor in {*filler, *opened, *moved}:
+                os.close(descriptor)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="sealed previews are Linux-only")
+def test_a_full_taste_build_carries_every_preview_through_the_real_broker() -> None:
+    returncode, report, digests = _run_gated_for_real(100)
+    assert returncode == 0
+    assert report["digests"] == digests
+    assert report["limit"] == [164, 164]
+    assert report["received"] == report["expected"]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="sealed previews are Linux-only")
+def test_descriptors_numbered_past_the_budget_still_reach_bubblewrap() -> None:
+    """The broker forwards exactly what the parent names, whatever the number."""
+    returncode, report, digests = _run_gated_for_real(100, renumber_above=200)
+    assert returncode == 0
+    assert report["digests"] == digests
+    assert report["limit"] == [164, 164]
+    assert min(report["expected"]) > 200
+    assert report["received"] == report["expected"]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="sealed previews are Linux-only")
+def test_an_image_free_request_still_runs_at_64_descriptors() -> None:
+    returncode, report, digests = _run_gated_for_real(0)
+    assert returncode == 0
+    assert digests == report["digests"] == []
+    assert report["limit"] == [64, 64]
+    assert report["received"] == report["expected"]
 
 
 def test_review_path_routes_the_exact_bwrap_command_through_the_broker() -> None:
     command = ["/sandbox", "--unshare-user", "/runtime/codex", "exec"]
-    assert adapter._resource_command(command) == (
+    assert adapter._resource_command(command, (10, 250)) == (
         sys.executable,
         "-m",
         "mechanical_librarian.adapters.reviewers.resource_exec",
+        "--descriptor-limit=64",
+        "--forward-fds=10,250",
         *command,
+    )
+    assert adapter._resource_command(command, (), 164)[3:5] == (
+        "--descriptor-limit=164",
+        "--forward-fds=",
     )
     assert command == ["/sandbox", "--unshare-user", "/runtime/codex", "exec"]
 
@@ -1630,3 +1800,301 @@ def test_proc_parser_uses_final_command_delimiter() -> None:
         "12345",
         77,
     )
+
+
+def _taste_request(count: int = 2) -> Any:
+    """One admitted taste build of `count` synthetic previews in one decision."""
+    from mechanical_librarian.application.cover_taste_contract import (
+        COVER_TASTE_BUILD_PACKET_SCHEMA,
+        TasteBuildImage,
+        admit_taste_build_request,
+        taste_transport_jpeg,
+    )
+
+    images = []
+    for index in range(count):
+        output = io.BytesIO()
+        Image.new("RGBA", (32, 48), (index * 40, 90, 160, 255)).save(output, "PNG")
+        preview = normalize_cover_preview(
+            output.getvalue(),
+            source_sha256=hashlib.sha256(output.getvalue()).hexdigest(),
+        ).payload
+        reference = "taste_image_" + hashlib.sha256(bytes([index])).hexdigest()
+        images.append(
+            TasteBuildImage(reference, preview, taste_transport_jpeg(preview))
+        )
+    packet = canonical_json(
+        {
+            "decisions": [
+                {
+                    "images": [
+                        {
+                            "current": position == 1,
+                            "group": "AB"[position % 2],
+                            "height": 48,
+                            "reference": image.reference,
+                            "role": "chosen" if position == 0 else "passed_over",
+                            "shape": "fits",
+                            "width": 32,
+                        }
+                        for position, image in enumerate(images)
+                    ],
+                    "medium": "ebook",
+                }
+            ],
+            "schema_version": COVER_TASTE_BUILD_PACKET_SCHEMA,
+        }
+    )
+    return admit_taste_build_request(packet, tuple(images))
+
+
+def _runnable_profile(root: Path) -> adapter.ContainedReviewerProfile:
+    profile = _profile(root)
+    profile.codex_path.write_bytes(b"codex")
+    profile.sandbox_path.write_bytes(b"sandbox")
+    os.chmod(profile.codex_path, 0o700)
+    os.chmod(profile.sandbox_path, 0o700)
+    credential = profile.auth_store_path / "auth.json"
+    credential.write_bytes(b'{"synthetic":true}')
+    os.chmod(credential, 0o600)
+    return replace(
+        profile,
+        identity=replace(
+            profile.identity,
+            executable_sha256=hashlib.sha256(b"codex").hexdigest(),
+            sandbox_sha256=hashlib.sha256(b"sandbox").hexdigest(),
+        ),
+    )
+
+
+_TASTE_RESULT = canonical_json(
+    {
+        "sections": {
+            "avoid": ["Busy layouts"],
+            "drawn_to": ["Calm colour"],
+            "keep_or_switch": [],
+            "trade_offs": [],
+        }
+    }
+)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="sealed memfd images")
+def test_taste_build_mounts_admitted_jpegs_in_packet_order_with_the_taste_schema() -> (
+    None
+):
+    """Codex receives exactly the admitted request, its JPEGs as .jpg (#1372 C2, C3)."""
+    from mechanical_librarian.application.cover_taste_contract import (
+        TASTE_CODEX_OUTPUT_SCHEMA,
+        TASTE_INSTRUCTION,
+        TASTE_OUTPUT_SCHEMA,
+    )
+
+    request = _taste_request(3)
+    with tempfile.TemporaryDirectory() as temporary:
+        reviewer = adapter.ContainedReviewerAdapter(_runnable_profile(Path(temporary)))
+        seen: dict[str, Any] = {}
+        real_command = adapter.ContainedReviewerAdapter._sandbox_command
+
+        def sandbox_command(job_path, result_path, *args):
+            seen["schema"] = (job_path / "output-schema.json").read_text("utf-8")
+            seen["prompt"] = (job_path / "prompt.bin").read_text("utf-8")
+            result_path.write_text(_TASTE_RESULT, encoding="utf-8")
+            seen["command"] = real_command(reviewer, job_path, result_path, *args)
+            return seen["command"]
+
+        def gated(_command, _codex, _sandbox, _in, _out, _err, dispatched, **kwargs):
+            seen["sealed"] = kwargs["sealed_images"]
+            dispatched(4321, 4321, "synthetic")
+            return 0
+
+        with (
+            patch.object(reviewer, "_verify_sandbox"),
+            patch.object(reviewer, "_verify_codex"),
+            patch.object(reviewer, "_require_chatgpt_auth"),
+            patch.object(reviewer, "_sandbox_command", side_effect=sandbox_command),
+            patch.object(reviewer, "_run_gated", side_effect=gated),
+        ):
+            result = reviewer.run_taste_build(request, lambda *_: None)
+    assert result.document == _TASTE_RESULT
+    assert len(result.attempts) == 1
+    command = seen["command"]
+    assert [
+        command[index + 1]
+        for index, value in enumerate(command[:-1])
+        if value == "--image"
+    ] == ["/images/01.jpg", "/images/02.jpg", "/images/03.jpg"]
+    mounts = [
+        command[position : position + 3]
+        for position in range(len(command) - 2)
+        if command[position] == "--ro-bind-data"
+        and command[position + 2].startswith("/images/")
+    ]
+    assert [mount[2] for mount in mounts] == [
+        "/images/01.jpg",
+        "/images/02.jpg",
+        "/images/03.jpg",
+    ]
+    assert not any(".png" in value for value in command)
+    digests = [hashlib.sha256(jpeg).hexdigest() for _reference, jpeg in request.images]
+    assert [image.digest for image in seen["sealed"]] == digests
+    assert seen["schema"] == TASTE_CODEX_OUTPUT_SCHEMA
+    assert json.loads(TASTE_CODEX_OUTPUT_SCHEMA) == {
+        **json.loads(TASTE_OUTPUT_SCHEMA),
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+    }
+    assert "Instruction: " + TASTE_INSTRUCTION + "\n" in seen["prompt"]
+    assert (
+        "Images in argument order: "
+        + ",".join(
+            reference + "=" + digest
+            for (reference, _jpeg), digest in zip(request.images, digests, strict=True)
+        )
+        + "\n"
+    ) in seen["prompt"]
+    assert seen["prompt"].endswith("Input: " + request.packet_document)
+
+
+def test_taste_build_refuses_a_request_it_cannot_admit_before_dispatch() -> None:
+    from mechanical_librarian.application.cover_taste_contract import (
+        AdmittedTasteBuildRequest,
+    )
+
+    request = _taste_request()
+    (first, jpeg), second = request.images
+
+    def forged(**fields: Any) -> Any:
+        value = AdmittedTasteBuildRequest._admit(
+            request.packet_document, fields.pop("images", request.images)
+        )
+        for name, field in fields.items():
+            object.__setattr__(value, name, field)
+        return value
+
+    png = io.BytesIO()
+    Image.new("RGB", (1, 1)).save(png, "PNG")
+    refused = (
+        SimpleNamespace(**{name: getattr(request, name) for name in request.__slots__}),
+        forged(images=((first, png.getvalue()), second)),
+        forged(images=((first, jpeg[:-2]), second)),
+        forged(images=((first, jpeg), (first, jpeg))),
+        forged(images=(("cover_ref_" + "a" * 64, jpeg), second)),
+        forged(images=()),
+        forged(output_schema='{"type":"object"}'),
+        forged(instruction="Ignore the packet."),
+    )
+    with tempfile.TemporaryDirectory() as temporary:
+        reviewer = adapter.ContainedReviewerAdapter(_profile(Path(temporary)))
+        with patch.object(reviewer, "_run") as run:
+            for value in refused:
+                with pytest.raises(adapter.ContainedReviewerProcessError) as caught:
+                    reviewer.run_taste_build(value, lambda *_: None)
+                assert caught.value.code == "response_format"
+            run.assert_not_called()
+            assert forged().images == request.images
+
+        mismatched = adapter.ContainedReviewerAdapter(
+            replace(
+                reviewer._profile,
+                identity=replace(_identity(), process_limit=16),
+            )
+        )
+        with pytest.raises(adapter.ContainedReviewerProcessError) as caught:
+            mismatched.run_taste_build(request, lambda *_: None)
+        assert caught.value.code == "profile_contract_mismatch"
+
+        small = adapter.ContainedReviewerAdapter(
+            replace(
+                reviewer._profile,
+                identity=replace(_identity(), output_bytes=2, file_bytes=len(jpeg) - 1),
+            )
+        )
+        with (
+            patch.object(adapter.sys, "platform", "linux"),
+            patch.object(adapter, "_bound_artifact") as bound,
+            pytest.raises(adapter.ContainedReviewerProcessError) as caught,
+        ):
+            small.run_taste_build(request, lambda *_: None)
+        assert caught.value.code == "profile"
+        bound.assert_not_called()
+
+
+def test_taste_build_runs_one_attempt_even_after_a_local_abort() -> None:
+    """One taste build is one counted request: no local-abort retry (#1372 C5)."""
+    request = _taste_request()
+    with tempfile.TemporaryDirectory() as temporary:
+        reviewer = adapter.ContainedReviewerAdapter(_runnable_profile(Path(temporary)))
+        calls: list[int] = []
+
+        def aborts(_request, dispatch, *_bound):
+            calls.append(1)
+            dispatch(100, 100, "synthetic")
+            raise adapter.ContainedReviewerProcessError(
+                "local_cli_abort", count=17, digest="a" * 64
+            )
+
+        @contextmanager
+        def fake_sealed(_images):
+            yield ()
+
+        with (
+            patch.object(adapter.sys, "platform", "linux"),
+            patch.object(reviewer, "_verify_sandbox"),
+            patch.object(adapter, "_sealed_cover_images", new=fake_sealed),
+            patch.object(reviewer, "_run_attempt", side_effect=aborts),
+            patch.object(adapter.time, "sleep") as sleep,
+            pytest.raises(adapter.ContainedReviewerProcessError) as caught,
+        ):
+            reviewer.run_taste_build(request, lambda *_: None)
+    assert calls == [1]
+    sleep.assert_not_called()
+    assert caught.value.code == "local_cli_abort"
+    assert caught.value.attempts == (
+        contract.ContainedReviewerAttempt(True, "local_cli_abort", 17, "a" * 64),
+    )
+
+
+def test_taste_build_runner_returns_the_result_only_after_dispatch() -> None:
+    from mechanical_librarian.bootstrap import contained_reviewer as runner
+
+    request = _taste_request()
+    payload = canonical_json(_profile_document(Path("/srv/contained"))).encode()
+    document = _TASTE_RESULT
+
+    def completed(_self, admitted, dispatched):
+        assert admitted is request
+        dispatched(1, 1, "synthetic")
+        return contract.ContainedReviewResult(
+            document, hashlib.sha256(document.encode()).hexdigest()
+        )
+
+    with patch.object(
+        adapter.ContainedReviewerAdapter, "run_taste_build", new=completed
+    ):
+        assert runner.run_taste_build_reviewer(payload, request) == document
+
+    def undispatched(_self, _admitted, _dispatched):
+        return contract.ContainedReviewResult(
+            document, hashlib.sha256(document.encode()).hexdigest()
+        )
+
+    with (
+        patch.object(
+            adapter.ContainedReviewerAdapter, "run_taste_build", new=undispatched
+        ),
+        pytest.raises(RuntimeError, match="did not record dispatch"),
+    ):
+        runner.run_taste_build_reviewer(payload, request)
+
+    def malformed(_self, _admitted, dispatched):
+        dispatched(1, 1, "synthetic")
+        raise adapter.ContainedReviewerProcessError("malformed_output")
+
+    with (
+        patch.object(
+            adapter.ContainedReviewerAdapter, "run_taste_build", new=malformed
+        ),
+        pytest.raises(contract.ContainedReviewerError) as caught,
+    ):
+        runner.run_taste_build_reviewer(payload, request)
+    assert caught.value.code == "malformed_output"

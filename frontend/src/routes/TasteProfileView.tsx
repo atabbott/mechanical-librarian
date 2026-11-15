@@ -55,7 +55,7 @@ const failureCopy = (
 function NotConfigured() {
   return (
     <p>
-      Choose a taste profile model in{' '}
+      Set up the taste profile model in{' '}
       <Link to="/settings" search={{ group: 'reviewer' }}>
         Settings
       </Link>

@@ -53,13 +53,13 @@ SLACK = 10
 # Child, probe and container entry points stay in bootstrap by design. They
 # are exempt from the construct rules but pinned by ncnc size.
 ENTRY_POINTS = {
-    "audio_child.py": 267,
-    # 150 since #1363 moved the hash into adapters/cover_measures.py beside
-    # the same-art measures, which the child imports and calls, and reports
-    # the oriented size the preview and measures read.
-    "cover_child.py": 150,
-    "epub_child.py": 667,
-    "probe_shim.py": 66,
+    # The four parser children each gained one import and one call when
+    # confinement moved into adapters/child_confinement.py; the cover child
+    # shrank because its own network filter moved there.
+    "audio_child.py": 269,
+    "cover_child.py": 116,
+    "epub_child.py": 669,
+    "probe_shim.py": 70,
     "container.py": 77,
     "container_health.py": 110,
 }
@@ -77,16 +77,22 @@ CEILING = {
     # preparation runner's background lane and both review applications, and
     # passed its daily limit to reviewer access: construction and keywords,
     # with its artifact store opened on first read, and its lane's repository
-    # leased and closed when the supervisor stops.
-    "composition.py": 3286,
-    "contained_reviewer.py": 124,
+    # leased and closed when the supervisor stops. 3302 since #1372 PR 1c
+    # bound the Codex taste build like description advice: one binding and
+    # its guarded runner, one import line each and one keyword argument.
+    "composition.py": 3302,
+    # 142 since #1372 PR 1c's run_taste_build_reviewer, the taste build's
+    # counterpart of run_description_reviewer.
+    "contained_reviewer.py": 142,
     **ENTRY_POINTS,
 }
 DEF_COUNT = {
     "__init__.py": 1,
-    # 111 since #1372's _compose_cover_taste, a one-call constructor.
-    "composition.py": 111,
-    "contained_reviewer.py": 5,
+    # 111 since #1372's _compose_cover_taste, a one-call constructor; 113
+    # since PR 1c's Codex taste binding and its runner.
+    "composition.py": 113,
+    # 7 since PR 1c's run_taste_build_reviewer and its dispatch recorder.
+    "contained_reviewer.py": 7,
 }
 # Set to the measured size only by an owner review; lowered by a refactor
 # stage's own net change; raised only on the owner's instruction.
@@ -135,8 +141,9 @@ RESIDUAL: dict[str, int | None] = {
     _C + "run_review_server": 360,
     # Constructs the Codex device-auth manager, which tests replace on
     # composition, and the reviewer access around it.
-    # 168 since #1372 passed the taste profile daily limit.
-    _C + "_compose_reviewer_access": 168,
+    # 168 since #1372 passed the taste profile daily limit; 182 since PR 1c
+    # bound the Codex taste build as description advice is bound.
+    _C + "_compose_reviewer_access": 182,
     # Opens the cover artifact store and binds the SQLite repository's cover
     # hooks to CoverConsiderationService; both are adapter calls. 84 since
     # #1363 passed the Current covers settings as two keyword arguments.

@@ -118,6 +118,7 @@ def test_snapshot_digest_mismatch_rejects_before_any_parser_dispatch() -> None:
     with (
         patch.object(child, "_install_parent_guard"),
         patch.object(child, "_apply_limits"),
+        patch.object(child, "confine_interpreter"),
         patch.object(child, "_read_context", return_value=_opening_context(expected)),
         patch.object(child, "_snapshot_source", return_value=b"changed then restored"),
         patch.object(child, "_write_report", side_effect=written.append),
@@ -138,6 +139,7 @@ def test_snapshot_memory_exhaustion_is_a_resource_limit_terminal() -> None:
     with (
         patch.object(child, "_install_parent_guard"),
         patch.object(child, "_apply_limits"),
+        patch.object(child, "confine_interpreter"),
         patch.object(child, "_read_context", return_value=_opening_context(expected)),
         patch.object(child, "_snapshot_source", side_effect=MemoryError()),
         patch.object(child, "_write_report", side_effect=written.append),
@@ -174,6 +176,7 @@ def test_matching_snapshot_is_the_immutable_source_used_for_all_parser_reads() -
     with (
         patch.object(child, "_install_parent_guard"),
         patch.object(child, "_apply_limits"),
+        patch.object(child, "confine_interpreter"),
         patch.object(child, "_read_context", return_value=_opening_context(expected)),
         patch.object(child, "_snapshot_source", return_value=bytes(snapshot)),
         patch.object(child, "_write_report", side_effect=written.append),
@@ -204,6 +207,7 @@ def test_unknown_capability_is_rejected_without_package_dispatch() -> None:
     with (
         patch.object(child, "_install_parent_guard"),
         patch.object(child, "_apply_limits"),
+        patch.object(child, "confine_interpreter"),
         patch.object(child, "_read_context", return_value=context),
         patch.object(child, "_write_report", side_effect=written.append),
         patch.object(child.signal, "signal"),

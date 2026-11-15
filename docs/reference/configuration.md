@@ -538,10 +538,10 @@ application never repairs a profile.
 
 ### Reviewer access
 
-Which reviewer serves each task is application state (`reviewer-access-v4`),
+Which reviewer serves each task is application state (`reviewer-access-v5`),
 not configuration. Cover review, description advice and the taste profile
-each have an optional OpenRouter model and share one write-only key that is
-never returned.
+each select Codex or an optional OpenRouter model; the OpenRouter models share
+one write-only key that is never returned.
 
 A model is accepted only if it supports structured outputs, returns text and
 takes the task's input: images for cover review and the taste profile, text
@@ -563,10 +563,10 @@ pending cover effects until the owner chooses again.
 ### Taste profile
 
 `cover_taste_build_daily_requests` is how many taste profile requests
-Mechanical Librarian sends to OpenRouter in one UTC day. Every request counts:
-scheduled builds, failed builds and the owner's Try again. When the limit is
-reached, or OpenRouter does not confirm what a request cost, no build starts
-until the next UTC day. At most 4 builds are scheduled a day whatever the
+Mechanical Librarian sends in one UTC day, to Codex or OpenRouter. Every
+request counts: scheduled builds, failed builds and the owner's Try again, on
+either engine. When the limit is reached, or OpenRouter does not confirm what
+a request cost, no build starts until the next UTC day. At most 4 builds are scheduled a day whatever the
 limit. Settings → Reviewer shows the limit read-only; in store mode it is 8.
 
 A first build needs a taste profile model and 25 recorded cover choices;
@@ -614,10 +614,13 @@ not truncated. What is and is not sent is in
 
 With `description_automatic_application` off, ordinary description fill
 still applies. With it on, a current `ready` result that passes the
-description floor is admitted through the normal policy and write rules, and
-may replace a populated description. The floor is valid plain text with no
-markup or visible cut-off, not a placeholder and not mostly quoted praise. The
-owner can still choose a result below it.
+description floor is admitted through the normal policy and write rules on a
+field that offers the owner a choice, and may replace a populated description.
+The floor is valid plain text with no markup or visible cut-off, not a
+placeholder and not mostly quoted praise. The owner can still choose a result
+below it. A field that offers no choice, such as one whose sources all repeat
+the current description, keeps its current value and shows the result for
+reference only.
 
 - An owner's final choice wins, and in-flight effects are not raced.
 - Identical text records no change and sends no PATCH or Attention item.

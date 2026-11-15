@@ -1469,7 +1469,7 @@ describe('Covers → Taste profile (#1372)', () => {
       'href',
       '/settings?group=reviewer',
     )
-    expect(screen.getByText(/Choose a taste profile model in/u)).toBeVisible()
+    expect(screen.getByText(/Set up the taste profile model in/u)).toBeVisible()
   })
 
   it.each([0, 1, 24])('says how many covers are chosen, %i of 25', async (chosen) => {
@@ -1619,7 +1619,7 @@ describe('Covers → Taste profile (#1372)', () => {
         },
       }),
     )
-    expect(await screen.findByText(/Choose a taste profile model in/u)).toBeVisible()
+    expect(await screen.findByText(/Set up the taste profile model in/u)).toBeVisible()
     expect(screen.queryByText('The taste profile could not be updated.')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
   })
@@ -1645,7 +1645,7 @@ describe('Covers → Taste profile (#1372)', () => {
       )
       expect(await screen.findByText(copy)).toBeVisible()
       expect(screen.getByRole('button', { name: 'Try again' })).toBeVisible()
-      expect(screen.queryByText(/Choose a taste profile model in/u)).toBeNull()
+      expect(screen.queryByText(/Set up the taste profile model in/u)).toBeNull()
     },
   )
 

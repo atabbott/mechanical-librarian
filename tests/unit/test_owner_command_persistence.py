@@ -750,8 +750,11 @@ def _recur_after_release(
     _genres_policy(store, "ask", 2)
     earlier = store.publish(rewritten(_HELD, publisher="Changed Elsewhere"))
     if before_release is not None:
-        store.decide(before_release, _FANTASY, destination="genres")
+        # Every owner answer holds the field (ADR-0085, Amendment 1), so
+        # this answer's hold is the one B carries and the one released.
+        token = store.decide(before_release, _FANTASY, destination="genres").decision_id
     store.publish(rewritten(_HELD, publisher="Changed Again"))
+    assert _hold(store) == token
     assert store.repository.clear_field_effect_manual_hold(
         store.case.review_case_id, "genres", store.clock(), token
     )
@@ -772,28 +775,13 @@ def test_a_decision_on_a_recurring_case_without_automatic_handling_is_planned(
     )
     assert decision.decision_id in {document["decision_id"] for document in pending}
     assert store.write(decision).plan.desired_value == ["Fantasy"]
-    # With nothing automatic to hold, the case holds nothing.
-    assert _hold(store) is None
+    # With nothing automatic on the case, the answer still holds the field,
+    # replacing the released row (ADR-0085, Amendment 1).
+    assert _hold(store) == decision.decision_id
 
 
-# R-A: that decision leaves the case as if it was never held, so a successor
-# read under automatic handling is handled automatically.
-@pytest.mark.parametrize("outcome", ["accept", "withdraw"])
-def test_a_decision_on_a_recurring_case_carries_no_hold_forward(
-    held: tuple[OwnerStore, str], outcome: str
-) -> None:
-    store, token = held
-    if outcome == "accept":
-        _recur_after_release(store, token)
-        store.write(store.decide("accept", _FANTASY, destination="genres"))
-        later = rewritten(_HELD, publisher="Changed Elsewhere", genres=("Fantasy",))
-    else:
-        # The accept recorded before the release is the earlier episode's
-        # (#1358), so the owner accepts and withdraws within this one.
-        _recur_after_release(store, token, before_release="accept")
-        store.decide("accept", _FANTASY, destination="genres")
-        store.decide("withdraw", destination="genres")
-        later = rewritten(_HELD, publisher="Changed Later")
+def _automatic_genres_again(store: OwnerStore, later: MetadataReport) -> None:
+    """Genres turns back to Automatic and the work is read as `later`."""
     # The Ask transition's work item went stale as the work changed under
     # it; the owner acknowledges that before the next policy is activated.
     transition = store.repository.metadata_policy_transition()
@@ -803,6 +791,38 @@ def test_a_decision_on_a_recurring_case_carries_no_hold_forward(
     )
     _genres_policy(store, "automatic", 3)
     store.publish(later)
+
+
+# Amendment 1: that answer holds the field on the work's later cases, so a
+# successor read under automatic handling keeps the owner's genres.
+def test_a_decision_on_a_recurring_case_holds_its_field_on_later_cases(
+    held: tuple[OwnerStore, str],
+) -> None:
+    store, token = held
+    _recur_after_release(store, token)
+    decision = store.decide("accept", _FANTASY, destination="genres")
+    store.write(decision)
+    _automatic_genres_again(
+        store, rewritten(_HELD, publisher="Changed Elsewhere", genres=("Fantasy",))
+    )
+    assert _hold(store) == decision.decision_id
+    assert _automatic_genres(store) == []
+
+
+# R-A: a withdrawn answer takes its hold with it, and the released hold is
+# not restored, so a successor read under automatic handling is handled
+# automatically.
+def test_a_withdrawn_decision_on_a_recurring_case_carries_no_hold_forward(
+    held: tuple[OwnerStore, str],
+) -> None:
+    store, token = held
+    # The accept recorded before the release is the earlier episode's
+    # (#1358), so the owner accepts and withdraws within this one.
+    _recur_after_release(store, token, before_release="accept")
+    store.decide("accept", _FANTASY, destination="genres")
+    store.decide("withdraw", destination="genres")
+    assert _hold(store) is None
+    _automatic_genres_again(store, rewritten(_HELD, publisher="Changed Later"))
     assert _hold(store) is None
     assert _automatic_genres(store) == [store.case.review_case_id]
 

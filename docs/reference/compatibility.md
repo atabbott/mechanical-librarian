@@ -79,7 +79,7 @@ refused.
 | `review-bootstrap-v2` | The store-mode bootstrap document at `/run/secrets/review-bootstrap.json` |
 | `owner-settings-v6` | Store-mode owner settings in the application database, including Book matching (`matching.work_identity`) and Current covers |
 | `setup-state-v5` | Incomplete first-run setup, with libraries and their folders recorded before sources, including the setup claim token digest ([ADR-0086](../architecture/decisions/0086-deployment-held-setup-claim-token.md)). A setup left unfinished by an earlier build is refused at startup |
-| `reviewer-access-v4` | Optional reviewer access for cover review, description advice and the taste profile |
+| `reviewer-access-v5` | Optional reviewer access for cover review, description advice and the taste profile |
 
 ### Reports, proposals and policy
 
@@ -113,7 +113,7 @@ refused.
 | `cover-policy-report-v5` | Cover policy evaluation, embedding the cover identity report; owner readiness and automatic recommendation are independent, and the measured cover rules' outcome and reason are recorded |
 | `cover-automatic-decision-v5` | An automatic cover decision, with the measured rule's reason for a replacement and which shadow identity admitted it: one for a confirmed current cover, one for a cover that is not confirmed |
 | `cover-selection-authority-v1`, `cover-selection-authority-v3` | Cover selections: v1 wraps an automatic choice, v3 an owner choice and the switch a Put back undoes |
-| `cover-taste-build-packet-v1` | The closed facts and image transports one taste profile build sends to OpenRouter |
+| `cover-taste-build-packet-v1` | The closed facts and image transports one taste profile build sends to its model |
 | `cover-taste-profile-v1` | A taste profile version: up to 40 numbered rules in four sections, with the inputs it was built from. It influences nothing yet |
 | `field-effect-consent-state-v2` | A library consent and its basis: the owner's grant or the policy activation that carried it |
 | `field-effect-consent-envelope-v1` | The consent envelope whose identity digests the destination set |
