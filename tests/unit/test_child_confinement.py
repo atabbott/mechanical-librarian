@@ -316,24 +316,38 @@ def test_without_landlock_the_filter_and_limits_still_hold(
     assert received == []
 
 
+# socket(AF_INET, SOCK_STREAM, 0) as i386 system call 359 via int 0x80.
+_I386_SOCKET_CALL = """
+import ctypes, mmap
+machine_code = bytes.fromhex("53b867010000bb02000000b901000000ba00000000cd805bc3")
+page = mmap.mmap(-1, 4096, prot=mmap.PROT_READ | mmap.PROT_WRITE | mmap.PROT_EXEC)
+page.write(machine_code)
+address = ctypes.addressof(ctypes.c_char.from_buffer(page))
+ctypes.CFUNCTYPE(ctypes.c_int)(address)()
+"""
+
+
+def _i386_entry_available() -> bool:
+    """A kernel without i386 emulation (or with it disabled at boot) faults
+    the call before seccomp sees it, so the live check means nothing there."""
+    completed = subprocess.run(
+        [sys.executable, "-I", "-c", _I386_SOCKET_CALL],
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    return completed.returncode == 0
+
+
 @linux_only
 @pytest.mark.skipif(platform.machine() != "x86_64", reason="i386 entry is x86 only")
 def test_the_32_bit_entry_point_kills_the_child(secret: Path) -> None:
+    if not _i386_entry_available():
+        pytest.skip("this kernel offers no i386 entry point")
     code, _result = _run(
-        """
-        import ctypes, mmap
-        from mechanical_librarian.adapters.child_confinement import (
-            confine_interpreter,
-        )
-        confine_interpreter()
-        # socket(AF_INET, SOCK_STREAM, 0) as i386 system call 359 via int 0x80.
-        machine_code = bytes.fromhex("53b867010000bb02000000b901000000ba00000000cd805bc3")
-        page = mmap.mmap(-1, 4096, prot=mmap.PROT_READ | mmap.PROT_WRITE | mmap.PROT_EXEC)
-        page.write(machine_code)
-        address = ctypes.addressof(ctypes.c_char.from_buffer(page))
-        ctypes.CFUNCTYPE(ctypes.c_int)(address)()
-        report()
-        """,
+        "from mechanical_librarian.adapters.child_confinement import"
+        " confine_interpreter\n"
+        "confine_interpreter()\n" + _I386_SOCKET_CALL + "report()\n",
         secret,
         0,
     )
