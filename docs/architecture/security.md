@@ -490,6 +490,8 @@ the mapping revision and secret together and releases the owner-operation
 gate before network work; the result write rechecks the revision, so an A-B-A
 change cannot make old evidence current.
 
+Taste rule edits are capped at 8 KiB, `stale` when outdated.
+
 ### OpenRouter
 
 Egress is fixed to `https://openrouter.ai` and one exact model, with
@@ -527,8 +529,7 @@ after the owner selects Codex again.
 
 ### Cover observer
 
-The cover observer is the only model use that can influence a decision, as
-advisory evidence
+Only the cover observer influences decisions, as advisory evidence
 ([ADR-0049](decisions/0049-owner-confirmed-cover-considerations.md)). It
 returns a fixed set of visual properties with explicit unknowns and no
 ranking, winner or identity field. The local parser needs exactly one
@@ -572,10 +573,9 @@ owner-entered value. The decision and its audit event commit atomically and
 are append-only. Automation never overrides an owner decision.
 
 Withdrawal appends a valueless row, revokes unclaimed authority in the same
-transaction and never re-arms automation. A previous value offered as a
-suggestion grants no authority: choosing it is an ordinary owner-entered write,
-stale if the field changed. A manual hold follows the work
-to its successor case; Return to automatic releases it only after the scan it
+transaction and never re-arms automation. Choosing a previous value offered
+as a suggestion is an ordinary owner-entered write, stale if the field
+changed. A manual hold follows the work to its successor case; Return to automatic releases it only after the scan it
 requests succeeds, and only if no later owner decision replaced the hold
 ([ADR-0039](decisions/0039-continuous-guarded-application.md)).
 
