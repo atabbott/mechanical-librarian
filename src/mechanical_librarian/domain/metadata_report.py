@@ -110,12 +110,19 @@ from mechanical_librarian.domain.work_identity import (
     _closed_equal as _closed_title_equal,
 )
 
-REPORT_SCHEMA = "metadata-report-v80"
+REPORT_SCHEMA = "metadata-report-v81"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v6"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
 MAX_REPORT_BYTES = 2_097_152
 MAX_CANDIDATES = 5
+# Refused edition identities one WORK lane can add to its observation's
+# retained set (#1355): every rung of the longest ladder, four, each
+# answering at most `MAX_CANDIDATES` products.
+MAX_IDENTITY_REFUSED_PER_LANE = 4 * MAX_CANDIDATES
+# What retained refused WORK answers may add to a report's canonical document
+# (#1355); report construction drops them before anything else.
+MAX_IDENTITY_REFUSED_BYTES = 524_288
 # Hardcover audio editions one observation retains (#962). Only editions that
 # credit a narrator and state a runtime inside the tight band of the recording
 # are kept, and a work has a handful at most.
@@ -2764,10 +2771,28 @@ class ProviderLaneObservation:
     exhausted_dispatch: tuple[WorkDispatchLineage, ...] = ()
     recording_lookup_hints: tuple[RecordingLookupHint, ...] = ()
     dispatch: ProviderLaneDispatch | None = None
+    # The refused edition identities this WORK lane added to its observation's
+    # `identity_refused_candidates` (#1355), retained or truncated, sorted;
+    # identities an earlier lane added are not repeated.
+    identity_refused_new: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         self._validate_lane()
         self._validate_dispatch()
+        refused = self.identity_refused_new
+        if type(refused) is not tuple or (
+            refused
+            and (
+                self.kind is not ProviderQueryKind.WORK
+                or self.status is not ProviderStatus.NO_MATCH
+                or len(refused) > MAX_IDENTITY_REFUSED_PER_LANE
+                or any(type(value) is not str for value in refused)
+                or refused != tuple(sorted(set(refused)))
+            )
+        ):
+            raise ReportValueError("provider lane refused identities are invalid")
+        for value in refused:
+            _text(value, "provider lane refused identity", 128)
 
     def _validate_dispatch(self) -> None:
         """Hold one dispatch record to the outcome its lane allows (#1258)."""
@@ -2970,6 +2995,7 @@ class ProviderLaneObservation:
                 value.to_data() for value in self.recording_lookup_hints
             ],
             "dispatch": None if self.dispatch is None else self.dispatch.to_data(),
+            "identity_refused_new": list(self.identity_refused_new),
         }
 
 
@@ -3085,6 +3111,14 @@ class ProviderObservation:
     # never an independent source, since an Audible exclusive's facts can only
     # have come from Audible. It only witnesses which recording the file is.
     audio_editions: tuple[ProviderCandidate, ...] = ()
+    # A WORK answer that set admission refused, kept whole for ADR-0096's
+    # level path (#1355): the union over the rungs and lanes that refused,
+    # at most `MAX_CANDIDATES`, and how many more the bound or the report's
+    # byte budget dropped. Never read by set admission, productions, live
+    # consumers or `candidates`; only the level seam reads it, through its
+    # set rule, and a truncated set admits nothing there.
+    identity_refused_candidates: tuple[ProviderCandidate, ...] = ()
+    identity_refused_truncated: int = 0
 
     def __post_init__(self) -> None:
         _name(self.provider, "provider")
@@ -3148,98 +3182,10 @@ class ProviderObservation:
             raise ReportValueError(
                 "provider candidates are not in canonical identity order"
             )
-        if (
-            type(self.recording_lookup_candidates) is not tuple
-            or len(self.recording_lookup_candidates) > MAX_CANDIDATES
-            or any(
-                type(value) is not ProviderCandidate
-                for value in self.recording_lookup_candidates
-            )
-        ):
-            raise ReportValueError("recording lookup candidates are invalid")
-        lookup_identities = tuple(
-            value.identity for value in self.recording_lookup_candidates
-        )
-        if lookup_identities != tuple(sorted(set(lookup_identities))):
-            raise ReportValueError("recording lookup candidates are not canonical")
-        if self.recording_lookup_candidates:
-            work_lanes = tuple(
-                lane for lane in self.lanes if lane.kind is ProviderQueryKind.WORK
-            )
-            if (
-                self.authority not in AUDIOBOOK_PROVIDER_AUTHORITIES
-                or self.edition_enrichment_overflow is not None
-                or self.dispatch_lineage is not None
-                or self.transformation_lineage is not None
-                or (
-                    not self.lanes
-                    and (
-                        self.query_kind is not ProviderQueryKind.WORK
-                        or self.status is not ProviderStatus.NO_MATCH
-                        or self.candidates
-                    )
-                )
-                # Hints come from the asserted lane, which the report pins;
-                # an audiobook's alternative lane may stand beside it.
-                or (
-                    self.lanes
-                    and (
-                        not 1 <= len(work_lanes) <= 2
-                        or not any(
-                            lane.status is ProviderStatus.NO_MATCH
-                            and not lane.candidates
-                            and lane.dispatch_lineage is None
-                            and lane.transformation_lineage is None
-                            for lane in work_lanes
-                        )
-                    )
-                )
-            ):
-                raise ReportValueError("recording lookup provenance is invalid")
-        self._validate_refused_products()
-        self._validate_audio_editions()
+        self._validate_retained_side_candidates()
         if (self.status is ProviderStatus.CANDIDATES) != bool(self.candidates):
             raise ReportValueError("provider status and candidates disagree")
-        if self.edition_enrichment_overflow is not None and (
-            type(self.edition_enrichment_overflow) is not EditionEnrichmentOverflow
-            or self.status is not ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
-            or self.candidates
-            or self.convergence
-            or (
-                self.lanes
-                and len(
-                    tuple(
-                        lane
-                        for lane in self.lanes
-                        if lane.kind is ProviderQueryKind.WORK
-                        and lane.status is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
-                        and not lane.candidates
-                    )
-                )
-                != 1
-            )
-            or any(lane.candidates for lane in self.lanes)
-        ):
-            raise ReportValueError("edition overflow witness is invalid")
-        if self.edition_enrichment_overflow is not None and any(
-            author.links
-            or author
-            != ProviderClaim.create(
-                provider=self.provider,
-                candidate=self.edition_enrichment_overflow.work_identity,
-                kind=ClaimKind.CREATOR,
-                value=author.value,
-                state=author.state,
-                scope=ClaimScope.WORK,
-                applicability=author.applicability,
-                role="author",
-                raw_order=author.raw_order,
-            )
-            for author in self.edition_enrichment_overflow.authors
-        ):
-            raise ReportValueError(
-                "edition overflow witness references are inconsistent"
-            )
+        self._validate_edition_overflow()
         if self.status in _INACTIVE_PROVIDER_STATUSES and self.input_references:
             raise ReportValueError("inactive provider cannot claim inputs")
         if any(
@@ -3267,6 +3213,7 @@ class ProviderObservation:
                 *self.recording_lookup_candidates,
                 *self.refused_products,
                 *self.audio_editions,
+                *self.identity_refused_candidates,
             )
             for claim in candidate.claims
         ):
@@ -3349,6 +3296,158 @@ class ProviderObservation:
                 raise ReportValueError("provider convergence is inconsistent")
         elif expected_convergence:
             object.__setattr__(self, "convergence", expected_convergence)
+
+    def _validate_edition_overflow(self) -> None:
+        """Hold an overflow witness to the one WORK lane that overflowed."""
+        if self.edition_enrichment_overflow is not None and (
+            type(self.edition_enrichment_overflow) is not EditionEnrichmentOverflow
+            or self.status is not ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
+            or self.candidates
+            or self.convergence
+            or (
+                self.lanes
+                and len(
+                    tuple(
+                        lane
+                        for lane in self.lanes
+                        if lane.kind is ProviderQueryKind.WORK
+                        and lane.status is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
+                        and not lane.candidates
+                    )
+                )
+                != 1
+            )
+            or any(lane.candidates for lane in self.lanes)
+        ):
+            raise ReportValueError("edition overflow witness is invalid")
+        if self.edition_enrichment_overflow is not None and any(
+            author.links
+            or author
+            != ProviderClaim.create(
+                provider=self.provider,
+                candidate=self.edition_enrichment_overflow.work_identity,
+                kind=ClaimKind.CREATOR,
+                value=author.value,
+                state=author.state,
+                scope=ClaimScope.WORK,
+                applicability=author.applicability,
+                role="author",
+                raw_order=author.raw_order,
+            )
+            for author in self.edition_enrichment_overflow.authors
+        ):
+            raise ReportValueError(
+                "edition overflow witness references are inconsistent"
+            )
+
+    def _validate_retained_side_candidates(self) -> None:
+        """Validate the records kept beside `candidates`, never read as them.
+
+        Recording-lookup candidates, refused ASIN products, Hardcover audio
+        editions and refused WORK answers (#1355) each name their own
+        provenance; none is ever a candidate of the observation.
+        """
+        if (
+            type(self.recording_lookup_candidates) is not tuple
+            or len(self.recording_lookup_candidates) > MAX_CANDIDATES
+            or any(
+                type(value) is not ProviderCandidate
+                for value in self.recording_lookup_candidates
+            )
+        ):
+            raise ReportValueError("recording lookup candidates are invalid")
+        lookup_identities = tuple(
+            value.identity for value in self.recording_lookup_candidates
+        )
+        if lookup_identities != tuple(sorted(set(lookup_identities))):
+            raise ReportValueError("recording lookup candidates are not canonical")
+        if self.recording_lookup_candidates:
+            work_lanes = tuple(
+                lane for lane in self.lanes if lane.kind is ProviderQueryKind.WORK
+            )
+            if (
+                self.authority not in AUDIOBOOK_PROVIDER_AUTHORITIES
+                or self.edition_enrichment_overflow is not None
+                or self.dispatch_lineage is not None
+                or self.transformation_lineage is not None
+                or (
+                    not self.lanes
+                    and (
+                        self.query_kind is not ProviderQueryKind.WORK
+                        or self.status is not ProviderStatus.NO_MATCH
+                        or self.candidates
+                    )
+                )
+                # Hints come from the asserted lane, which the report pins;
+                # an audiobook's alternative lane may stand beside it.
+                or (
+                    self.lanes
+                    and (
+                        not 1 <= len(work_lanes) <= 2
+                        or not any(
+                            lane.status is ProviderStatus.NO_MATCH
+                            and not lane.candidates
+                            and lane.dispatch_lineage is None
+                            and lane.transformation_lineage is None
+                            for lane in work_lanes
+                        )
+                    )
+                )
+            ):
+                raise ReportValueError("recording lookup provenance is invalid")
+        self._validate_refused_products()
+        self._validate_audio_editions()
+        self._validate_identity_refused()
+
+    def _validate_identity_refused(self) -> None:
+        """Hold refused WORK answers to the lanes that refused them (#1355).
+
+        The set is kept only while no lane admitted anything, at most
+        `MAX_CANDIDATES` records in canonical identity order. Each lane names
+        the identities it added; their union is exactly the retained records
+        plus the truncated count, so a forged or dropped record never reads
+        back. A lane-less observation is one lane's qualified answer, which
+        is never truncated.
+        """
+        retained = self.identity_refused_candidates
+        truncated = self.identity_refused_truncated
+        if type(self.lanes) is not tuple or any(
+            type(value) is not ProviderLaneObservation for value in self.lanes
+        ):
+            raise ReportValueError("provider lanes are invalid")
+        if (
+            type(retained) is not tuple
+            or len(retained) > MAX_CANDIDATES
+            or any(type(value) is not ProviderCandidate for value in retained)
+            or type(truncated) is not int
+            or truncated < 0
+        ):
+            raise ReportValueError("refused work answers are invalid")
+        identities = tuple(value.identity for value in retained)
+        if identities != tuple(sorted(set(identities))):
+            raise ReportValueError("refused work answers are not canonical")
+        added = tuple(
+            identity for lane in self.lanes for identity in lane.identity_refused_new
+        )
+        if not retained and not truncated and not added:
+            return
+        if (
+            self.candidates
+            or any(lane.status is ProviderStatus.CANDIDATES for lane in self.lanes)
+            or self.query_kind
+            not in {ProviderQueryKind.WORK, ProviderQueryKind.DISCOVERY}
+        ):
+            raise ReportValueError("refused work answer provenance is invalid")
+        if not self.lanes:
+            if truncated or self.status is not ProviderStatus.NO_MATCH:
+                raise ReportValueError("refused work answer provenance is invalid")
+            return
+        if (
+            len(set(added)) != len(added)
+            or len(added) != len(retained) + truncated
+            or not set(identities).issubset(added)
+        ):
+            raise ReportValueError("refused work answers do not match their lanes")
 
     def _validate_refused_products(self) -> None:
         """Bind each refused product to the ASIN-only stub it was cut to (#1307)."""
@@ -3454,6 +3553,10 @@ class ProviderObservation:
                 value.to_data() for value in self.recording_lookup_candidates
             ],
             "refused_products": [value.to_data() for value in self.refused_products],
+            "identity_refused_candidates": [
+                value.to_data() for value in self.identity_refused_candidates
+            ],
+            "identity_refused_truncated": self.identity_refused_truncated,
             "input_references": list(self.input_references),
             "provider": self.provider,
             "query_kind": self.query_kind.value,
@@ -5057,6 +5160,107 @@ def _provider_candidate_set_work_identity_admission(
     )
 
 
+def _identity_refused_set_admitted(
+    provider: ProviderObservation, target: TargetFacts, audiobook: bool
+) -> bool:
+    """Whether exact work-identity set admission admits a retained refused set.
+
+    Read against the target's stored title and authors with the closed
+    comparison and no dispatch lineage, the way an untruncated set is checked
+    at readback (#1355): a set it admits was never a refusal, so a report
+    never keeps it as one.
+    """
+    authors = next(
+        (
+            value.value
+            for value in target.fields
+            if value.destination is TargetDestination.AUTHORS
+            and value.state is TargetFieldState.VALUE
+        ),
+        None,
+    )
+    return provider_candidate_set_exact_work_identity_admission(
+        provider.identity_refused_candidates,
+        target.current_title or "",
+        (
+            cast("tuple[str, ...]", authors)
+            if type(authors) is tuple and all(type(value) is str for value in authors)
+            else ()
+        ),
+        audiobook=audiobook,
+    ).admitted
+
+
+def _identity_refused_bytes(providers: tuple[ProviderObservation, ...]) -> int:
+    """What the retained refused WORK answers add to the canonical document."""
+    return sum(
+        len(
+            canonical_json(
+                [value.to_data() for value in provider.identity_refused_candidates]
+            ).encode("utf-8")
+        )
+        - 2
+        for provider in providers
+    )
+
+
+def _drop_identity_refused(
+    provider: ProviderObservation, count: int
+) -> ProviderObservation:
+    """Drop the last `count` retained refused answers, counting each truncated."""
+    kept = provider.identity_refused_candidates
+    return replace(
+        provider,
+        identity_refused_candidates=kept[: len(kept) - count],
+        identity_refused_truncated=provider.identity_refused_truncated + count,
+    )
+
+
+def _drop_last_identity_refused(
+    providers: tuple[ProviderObservation, ...],
+) -> tuple[ProviderObservation, ...] | None:
+    """Drop one retained refused answer, last provider and candidate first."""
+    for index in reversed(range(len(providers))):
+        if providers[index].identity_refused_candidates:
+            return (
+                *providers[:index],
+                _drop_identity_refused(providers[index], 1),
+                *providers[index + 1 :],
+            )
+    return None
+
+
+def _bounded_identity_refused(
+    providers: tuple[ProviderObservation, ...], target: TargetFacts, audiobook: bool
+) -> tuple[ProviderObservation, ...]:
+    """Keep only the refused answers a report may retain (#1355).
+
+    A lane-less observation, one lane's qualified answer handed over whole,
+    keeps none: no lane accounts for them. An untruncated set that set
+    admission would admit is truncated whole, so readback's check that no
+    retained set admits holds for every producer. Then the records are
+    dropped, last provider and candidate first, until they add at most
+    `MAX_IDENTITY_REFUSED_BYTES`; report construction drops more the same way
+    before the report would exceed `MAX_REPORT_BYTES`.
+    """
+    providers = tuple(
+        replace(provider, identity_refused_candidates=())
+        if not provider.lanes
+        else _drop_identity_refused(provider, len(provider.identity_refused_candidates))
+        if provider.identity_refused_candidates
+        and not provider.identity_refused_truncated
+        and _identity_refused_set_admitted(provider, target, audiobook)
+        else provider
+        for provider in providers
+    )
+    while _identity_refused_bytes(providers) > MAX_IDENTITY_REFUSED_BYTES:
+        fewer = _drop_last_identity_refused(providers)
+        if fewer is None:
+            break
+        providers = fewer
+    return providers
+
+
 def _target_backed_work_lookup(
     target: TargetFacts,
     provider: ProviderObservation,
@@ -5827,6 +6031,7 @@ class MetadataReport:
                 if candidate != expected:
                     raise ReportValueError("provider comparison links are inconsistent")
         self._validate_admission_bases(planned)
+        self._validate_identity_refused()
         # An observation that names a candidate is a comparison, and a
         # comparison is only readable against the thing it was made with. A
         # citation naming an identity this report does not retain would be
@@ -5850,6 +6055,40 @@ class MetadataReport:
             raise ReportValueError("report identity is inconsistent")
         if len(self.to_json().encode("utf-8")) > MAX_REPORT_BYTES:
             raise ReportValueError("report exceeds its byte limit")
+
+    def _validate_identity_refused(self) -> None:
+        """Read retained refused WORK answers back as their producer kept them.
+
+        Each is finalized against the local claims like a live candidate, the
+        records stay inside their byte budget, a lane-less observation keeps
+        none, and an untruncated set is one set admission still refuses
+        (#1355), so a forged record never reads back as a refusal.
+        """
+        if _identity_refused_bytes(self.providers) > MAX_IDENTITY_REFUSED_BYTES:
+            raise ReportValueError("refused work answers exceed their byte budget")
+        for provider in self.providers:
+            retained = provider.identity_refused_candidates
+            if not retained:
+                continue
+            if not provider.lanes or any(
+                candidate
+                != finalize_candidate_comparisons(
+                    candidate,
+                    self.local_claims,
+                    provider.provider,
+                    allow_unbound_manifestation_link=(
+                        _target_backed_work_lookup(self.target, provider)
+                    ),
+                )
+                for candidate in retained
+            ):
+                raise ReportValueError("refused work answers are inconsistent")
+            if not provider.identity_refused_truncated and (
+                _identity_refused_set_admitted(
+                    provider, self.target, self.audio is not None
+                )
+            ):
+                raise ReportValueError("refused work answers are admitted")
 
     def _validate_admission_bases(self, planned: dict[str, WorkLanePayload]) -> None:
         """Replay how each lane kept a recording, lane by lane (#1723).
@@ -6122,17 +6361,31 @@ class MetadataReport:
                     )
                     for candidate in provider.candidates
                 ),
+                identity_refused_candidates=tuple(
+                    finalize_candidate_comparisons(
+                        candidate,
+                        local_claims,
+                        provider.provider,
+                        allow_unbound_manifestation_link=(
+                            _target_backed_work_lookup(target, provider)
+                        ),
+                    )
+                    for candidate in provider.identity_refused_candidates
+                ),
             )
             for provider in providers
         )
+        providers = _bounded_identity_refused(providers, target, audio is not None)
         results = (
             field_results
             if field_results is not None
             else derive_field_results(local_claims)
         )
-        # A record of what a reading without a byte-order mark adds is the
-        # first thing the report's byte bound takes (#1796): every site that
-        # creates a report, a provider-retry successor included, comes here.
+        # Retained refused WORK answers are the first thing the report's byte
+        # bound takes (#1355), last provider and candidate first, and then a
+        # record of what a reading without a byte-order mark adds (#1796):
+        # every site that creates a report, a provider-retry successor
+        # included, comes here.
         rungs = (audio,) if audio is None else audio_record_rungs(audio)
         for rung in rungs:
             identifiers = (
@@ -6140,29 +6393,34 @@ class MetadataReport:
                 if identifier_evidence is not None
                 else derive_identifier_evidence(local_claims, providers, target, rung)
             )
-            data = _report_data(
-                "",
-                target,
-                file,
-                local_claims,
-                local_status,
-                local_reasons,
-                providers,
-                results,
-                identifiers,
-                cover_sources,
-                rung,
-                companion,
-                library_languages,
-                cover_recovery,
-            )
-            data.pop("report_id")
-            address = report_content_address(data)
-            if (
-                rung is rungs[-1]
-                or len(canonical_json({**data, "report_id": address}).encode("utf-8"))
-                <= MAX_REPORT_BYTES
-            ):
+            while True:
+                data = _report_data(
+                    "",
+                    target,
+                    file,
+                    local_claims,
+                    local_status,
+                    local_reasons,
+                    providers,
+                    results,
+                    identifiers,
+                    cover_sources,
+                    rung,
+                    companion,
+                    library_languages,
+                    cover_recovery,
+                )
+                data.pop("report_id")
+                address = report_content_address(data)
+                within = (
+                    len(canonical_json({**data, "report_id": address}).encode("utf-8"))
+                    <= MAX_REPORT_BYTES
+                )
+                fewer = None if within else _drop_last_identity_refused(providers)
+                if fewer is None:
+                    break
+                providers = fewer
+            if rung is rungs[-1] or within:
                 break
         return cls(
             address,
@@ -8286,6 +8544,8 @@ def _provider_from_data(value: object) -> ProviderObservation:
             "diagnostics",
             "dispatch_lineage",
             "edition_enrichment_overflow",
+            "identity_refused_candidates",
+            "identity_refused_truncated",
             "input_references",
             "lanes",
             "provider",
@@ -8347,6 +8607,11 @@ def _provider_from_data(value: object) -> ProviderObservation:
             _candidate_from_data(candidate)
             for candidate in _list(item["audio_editions"])
         ),
+        identity_refused_candidates=tuple(
+            _candidate_from_data(candidate)
+            for candidate in _list(item["identity_refused_candidates"])
+        ),
+        identity_refused_truncated=item["identity_refused_truncated"],
     )
 
 
@@ -8389,6 +8654,7 @@ def _provider_lane_from_data(value: object) -> ProviderLaneObservation:
             "dispatch",
             "exhausted_dispatch",
             "identity",
+            "identity_refused_new",
             "input_references",
             "kind",
             "matched_family",
@@ -8437,6 +8703,7 @@ def _provider_lane_from_data(value: object) -> ProviderLaneObservation:
             if item["dispatch"] is None
             else _provider_lane_dispatch_from_data(item["dispatch"])
         ),
+        tuple(_strings(item["identity_refused_new"])),
     )
 
 

@@ -368,6 +368,8 @@ def _augment_provider(provider: dict[str, object]) -> None:
     provider["recording_lookup_candidates"] = []
     provider["refused_products"] = []
     provider["audio_editions"] = []
+    provider["identity_refused_candidates"] = []
+    provider["identity_refused_truncated"] = 0
     provider["dispatch_lineage"] = None
     provider["transformation_lineage"] = None
     for value in _list(provider["lanes"]):
@@ -388,6 +390,7 @@ def _augment_provider(provider: dict[str, object]) -> None:
         lane["exhausted_dispatch"] = []
         lane["recording_lookup_hints"] = []
         lane["dispatch"] = None
+        lane["identity_refused_new"] = []
 
 
 def _project_source_field_results(

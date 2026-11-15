@@ -4,7 +4,7 @@ The browser reads the content of these stored or packaged documents but never
 their `schema_version`: the bundle identity already ties the page to the
 build, and a version that reached the browser made every storage move edit the
 OpenAPI document and the browser's fixtures by hand. API response versions,
-and the four history event versions the browser tells items apart by, are the
+and the history event versions the browser tells items apart by, are the
 browser's own and stay.
 """
 

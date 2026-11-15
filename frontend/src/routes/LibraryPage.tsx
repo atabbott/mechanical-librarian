@@ -7,7 +7,6 @@ import {
   useRequiredQuery as useQuery,
 } from '../queryWork'
 import { RecordingIdentityBasis } from '../components/RecordingIdentityBasis'
-import { DescriptionAdvicePreparation } from '../components/DescriptionAdvice'
 import { StaleBuildRead } from '../components/StaleBuildRead'
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { Link, useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
@@ -23,7 +22,7 @@ import {
 import type { SyntheticEvent } from 'react'
 import type { QueryExecuteOptions, QueryKey } from '@tanstack/react-query'
 
-import { ApiError, BuildMismatchError, displayValue } from '../api/http'
+import { ApiError, BuildMismatchError } from '../api/http'
 import type {
   DecisionCommand,
   LibrarySearch,
@@ -31,7 +30,6 @@ import type {
   LibraryView,
   LibraryWorkView,
 } from '../api/http'
-import { choiceRadios, moveChoiceFocus } from '../choiceGroup'
 import { useAttentionRail } from '../attentionRail'
 import { focusFieldHeading, useRouteReadyFocus } from '../focus'
 import { destinationLabel, mediaKindLabels } from '../labels'
@@ -49,45 +47,19 @@ import {
 } from '../router'
 import { WriteReadyNotice } from '../components/WriteReadyNotice'
 import { StatusPill } from '../components/StatusPill'
-import {
-  actionable,
-  choiceAvailable,
-  requestKey,
-  useReviewDecisionController,
-} from '../reviewDecisionController'
-import { emptyUnproposed, ownerChoiceCount, primaryField, railOffers } from '../reviewChoiceCounts'
+import { actionable, requestKey, useReviewDecisionController } from '../reviewDecisionController'
+import { emptyUnproposed, primaryField, railOffers } from '../reviewChoiceCounts'
 import { advancePresentationSettled } from '../reviewAdvancePresentation'
 
-import {
-  authoredOwnerRecorded,
-  decisionValue,
-  valueText,
-  shownAdvice,
-  effectSummary,
-  commandSelected,
-  choiceSelected,
-  automaticallySelected,
-  isLongDescription,
-  decisionQuestion,
-} from '../fieldDecision'
+import { authoredOwnerRecorded, decisionValue } from '../fieldDecision'
 import type { ReviewField } from '../fieldDecision'
-import { RecordedFieldObservations, MetadataChoice } from './FieldDecisionChoices'
-import { LibraryCoverChoices } from './FieldDecisionCover'
 import { LibraryViewSwitch } from '../components/LibraryViewSwitch'
+import { CaseCheckingLine } from '../components/CaseCheckingLine'
 import { ReviewCompletion } from './ReviewCompletion'
 import { useStaleCoverReview } from './StaleCoverReview'
 import { useCoverPrepareFailure } from '../coverChoices'
-import {
-  AsinAutomaticStatement,
-  SettledFieldContext,
-  DescriptionAutomaticStatement,
-  NarratorsAutomaticStatement,
-  ProviderConsensusAutomaticStatement,
-  RecordedOutcome,
-  SeriesAutomaticStatement,
-  VerifiedManifestationIsbnAutomaticStatement,
-} from './FieldDecisionOutcome'
-import { OwnerControls } from './FieldDecisionOwner'
+import { FieldDecisionCanvas } from './FieldDecisionCanvas'
+import { fieldDecisionMode, optionalChoice, ownerOutcome } from '../fieldDecisionMode'
 import { PreparationDetail } from './PreparationDetail'
 import {
   librarySearchIdentity,
@@ -97,20 +69,10 @@ import {
 import { WorkSources, WorkSummary } from './WorkSummary'
 import { AttentionRail } from './AttentionRail'
 import { LibraryWorks } from './LibraryWorks'
-import { AutomaticHandlingPanel } from './AutomaticHandling'
 import { useAutomaticHandling } from '../automaticHandling'
 import { BookMark } from '../components/BookMark'
 import { RESTART_SENTENCE, workCount } from '../libraryWork'
-import {
-  choiceContext,
-  combinedAutomaticTags,
-  comparisonNotices,
-  contextKind,
-  fieldReason,
-  noticeText,
-  questionReason,
-  selectedAutomaticLanguageForm,
-} from '../fieldReasons'
+import { contextKind, fieldReason } from '../fieldReasons'
 const searchNavigationDelay = 150
 const noWorks: readonly LibraryWorkView[] = []
 // A pointer crossing several rows warms only the one it rests on.
@@ -144,8 +106,6 @@ const narrowWidth = () =>
   typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 760px)').matches
 
 // A recording's settled fill stays choosable without asking for review (#1249).
-const optionalChoice = (field: ReviewField) =>
-  field.classification === 'owner_choosable' && choiceAvailable(field)
 // A field tab says where its field stands in words, never a glyph: an
 // undecided optional field and a decided one both drew a check (#1290).
 const fieldStatus = (field: ReviewField) =>
@@ -160,8 +120,6 @@ const fieldStatus = (field: ReviewField) =>
           : (['unchanged', 'No change'] as const)
 const heldPhrase = (count: number, kind: 'waiting' | 'unavailable') =>
   `${String(count)} ${count === 1 ? 'field' : 'fields'} ${kind === 'waiting' ? 'waiting' : 'unavailable'}`
-const ownerOutcome = (outcome: DecisionCommand['outcome']) =>
-  outcome === 'owner_entered' || outcome === 'withdraw'
 
 export default function LibraryPage({
   data,
@@ -864,6 +822,7 @@ export default function LibraryPage({
   const controller = useReviewDecisionController({
     reviewCaseId: selectedReviewCaseId,
     fields: detail.data?.fields ?? [],
+    checking: detail.data?.checking ?? false,
     active: (destination) =>
       currentSearch.current.preview === search.preview &&
       search.preview !== undefined &&
@@ -1421,6 +1380,7 @@ export default function LibraryPage({
       proposalId: field.proposalId,
       selectedValue,
       targetFingerprint: field.targetFingerprint,
+      offerDigest: field.offerDigest,
       idempotencyKey,
       ...(field.coverConsideration
         ? {
@@ -1498,44 +1458,7 @@ export default function LibraryPage({
       return { work: selectedReviewCaseId, keys: next }
     })
 
-  const effect = selected ? effectSummary(selected) : undefined
-  const selectedRecorded =
-    selected !== undefined &&
-    (selected.humanDecision !== null ||
-      selected.automaticDecision !== null ||
-      (selected.destination === 'cover' && Boolean(selected.currentCoverSelectionId)) ||
-      Boolean(
-        selected.descriptionAdvice &&
-        (selected.descriptionAdvice.selected_advice?.current === true ||
-          selected.descriptionAdvice.application_outcome !== null) &&
-        selected.descriptionAdvice.selection,
-      ))
-  const selectedActionable = selected !== undefined && actionable(selected)
-  const selectedRevisitable =
-    selected !== undefined &&
-    selectedRecorded &&
-    selected.editable &&
-    (selected.decisionActions.length > 0 ||
-      Boolean(selected.ownerControl?.entry ?? selected.ownerControl?.subset))
-  const selectedOwnerEntry = Boolean(
-    selected?.ownerControl?.entry ?? selected?.ownerControl?.subset,
-  )
-  const ownerKey = selected ? `${selectedReviewCaseId}:${selected.destination}` : null
-  const ownerStatusShown = ownerKey !== null && ownerCommand === ownerKey
-  const selectedOptional =
-    selected !== undefined && !selectedActionable && !selectedRecorded && optionalChoice(selected)
-  const selectedAdvice = selected?.destination === 'description' ? shownAdvice(selected) : null
-  const selectedChoiceMode =
-    selectedActionable || selectedRevisitable || selectedOptional || Boolean(selectedAdvice)
-  const selectedCoverPreparation =
-    selected?.destination === 'cover' &&
-    selected.coverConsideration?.current !== true &&
-    // A kept cover asks for nothing but stays choosable (#1310).
-    (selected.needsAttention || selected.classification === 'owner_choosable')
-  const selectedCoverInspection =
-    selected?.destination === 'cover' &&
-    (selected.coverConsideration !== null || selectedCoverPreparation)
-  const selectedProgress = selected ? controller.phase(selected.destination) : null
+  const selectedMode = fieldDecisionMode(selected)
   // Attention membership comes from the authoritative exact case. A pending
   // or failed local command has not yet changed it.
   const remainingFields = attentionFields.length
@@ -1547,163 +1470,7 @@ export default function LibraryPage({
             renderedRailFields.indexOf(selected) + 1,
           )} of ${String(renderedRailFields.length)}`
         : `${String(remainingFields)} remaining · no field selected`
-  // The one-tap teaching line is for someone who has not yet seen what a tap
-  // does. It says so on the first field only, and gives way to what is actually
-  // happening once they have chosen.
-  // An owner command says what it did in its own status, once (S4).
-  const choiceProgress =
-    selectedProgress && ownerOutcome(selectedProgress.command.outcome) ? null : selectedProgress
-  const teachingLine =
-    choiceProgress?.phase === 'recording'
-      ? 'Recording choice…'
-      : choiceProgress?.phase === 'confirmed' ||
-          (!selectedProgress && selected && authoredOwnerRecorded(selected))
-        ? 'Choice recorded.'
-        : selectedActionable && frozenDestinations.indexOf(selected.destination) === 0
-          ? 'One tap records and opens the next field'
-          : ''
   const writesActive = detail.data?.writesConsented === true
-  // The direct choices in reading order, so the radio group's one Tab stop and
-  // each position come from a single list (#1290).
-  type DirectChoice = Omit<Parameters<typeof MetadataChoice>[0], 'radio'>
-  const currentChoice: DirectChoice | null = selected?.decisionActions.includes('keep_current')
-    ? {
-        automatic: automaticallySelected(selected, selectedProgress),
-        context: choiceContext(selected, null),
-        current: true,
-        disabled: false,
-        expanded: expandedChoices.has(`${selected.destination}:current`),
-        label: 'Current value',
-        longDescription: isLongDescription(selected.destination, selected.currentValue),
-        onChoose: () => choose(selected, 'keep_current'),
-        recording:
-          commandSelected(
-            selectedProgress?.command ?? null,
-            selected.destination,
-            'keep_current',
-          ) && selectedProgress?.phase === 'recording',
-        selected: choiceSelected(selected, selectedProgress, 'keep_current'),
-        toggle: () => toggleChoiceEvidence(`${selected.destination}:current`),
-        value: valueText(selected.destination, selected.currentValue),
-      }
-    : null
-  const proposedChoices: (DirectChoice & { id: string })[] =
-    selected && selected.decisionActions.includes('accept') && !selected.preservationOnly
-      ? selected.proposedValues.map((value, index) => {
-          const context = choiceContext(
-            selected,
-            selected.choiceContexts.filter((item) => item.selection === 'proposed')[index]
-              ?.alternativeId ?? null,
-          )
-          const key = `${selected.destination}:${context?.alternativeId ?? String(index)}`
-          return {
-            id: key,
-            automatic: automaticallySelected(selected, selectedProgress),
-            context,
-            current: false,
-            disabled: false,
-            // A proposed card is named by its value, never "Alternative N" (#1519).
-            evidenceName: isLongDescription(selected.destination, displayValue(value.value))
-              ? `Evidence for proposed description ${String(index + 1)}`
-              : `Evidence for proposed value: ${valueText(selected.destination, displayValue(value.value))}`,
-            expanded: expandedChoices.has(key),
-            label: '',
-            longDescription: isLongDescription(selected.destination, displayValue(value.value)),
-            onChoose: () => choose(selected, 'accept', value),
-            recording:
-              commandSelected(
-                selectedProgress?.command ?? null,
-                selected.destination,
-                'accept',
-                value,
-              ) && selectedProgress?.phase === 'recording',
-            selected: choiceSelected(selected, selectedProgress, 'accept', value),
-            toggle: () => toggleChoiceEvidence(key),
-            value: valueText(selected.destination, displayValue(value.value)),
-          }
-        })
-      : []
-  const retainedAdviceChoice: (DirectChoice & { id: string })[] =
-    selectedAdvice?.selected_advice &&
-    selectedAdvice.selected_advice.candidate.candidate_id !== selectedAdvice.candidate?.candidate_id
-      ? [
-          {
-            id: 'advice:retained',
-            advice: selectedAdvice,
-            automatic: selectedAdvice.selection?.origin === 'automatic_policy',
-            retainedAdvice: true,
-            context: undefined,
-            current: false,
-            disabled: true,
-            expanded: false,
-            label: 'Description adviser · Earlier choice',
-            longDescription: isLongDescription(
-              'description',
-              selectedAdvice.selected_advice.candidate.output.description,
-            ),
-            onChoose: () => undefined,
-            recording: false,
-            selected: Boolean(
-              selectedAdvice.selected_advice.current || selectedAdvice.application_outcome,
-            ),
-            toggle: () => undefined,
-            value: selectedAdvice.selected_advice.candidate.output.description,
-          },
-        ]
-      : []
-  const adviceCandidate = selectedAdvice?.candidate
-  const adviceChoice: (DirectChoice & { id: string })[] =
-    selected && selectedAdvice && adviceCandidate
-      ? [
-          {
-            id: 'advice:candidate',
-            advice: selectedAdvice,
-            automatic:
-              (selectedProgress === null || selectedProgress.phase === 'failed') &&
-              selectedAdvice.selection?.origin === 'automatic_policy',
-            retainedAdvice: selectedAdvice.selection?.candidate_id === adviceCandidate.candidate_id,
-            context: undefined,
-            current: false,
-            disabled:
-              !selected.editable ||
-              !selectedAdvice.current ||
-              controller.recording ||
-              selectedAdvice.state === 'requested' ||
-              selectedAdvice.state === 'running',
-            expanded: false,
-            label: 'Description adviser',
-            longDescription: isLongDescription('description', adviceCandidate.output.description),
-            onChoose: () => {
-              if (!selectedAdvice.current || !selected.editable) return
-              choose(
-                selected,
-                'accept',
-                { kind: 'text', value: adviceCandidate.output.description },
-                { candidateId: adviceCandidate.candidate_id, binding: selectedAdvice.binding },
-              )
-            },
-            recording:
-              selectedProgress?.command.authoredDescription?.candidateId ===
-                adviceCandidate.candidate_id && selectedProgress.phase === 'recording',
-            selected:
-              selectedProgress && selectedProgress.phase !== 'failed'
-                ? selectedProgress.command.authoredDescription?.candidateId ===
-                  adviceCandidate.candidate_id
-                : Boolean(
-                    (selectedAdvice.selected_advice?.current === true ||
-                      selectedAdvice.application_outcome) &&
-                    selectedAdvice.selection?.candidate_id === adviceCandidate.candidate_id,
-                  ),
-            toggle: () => undefined,
-            value: adviceCandidate.output.description,
-          },
-        ]
-      : []
-  const newChoices = [...proposedChoices, ...retainedAdviceChoice, ...adviceChoice]
-  const directChoices = choiceRadios(
-    [...(currentChoice ? [{ ...currentChoice, id: 'current' }] : []), ...newChoices],
-    (choice) => ({ checked: choice.selected, disabled: choice.disabled }),
-  )
 
   return (
     <div className="library-page variant-m-workspace">
@@ -2013,6 +1780,11 @@ export default function LibraryPage({
                   ) : null}
                 </nav>
               </section>
+              <CaseCheckingLine
+                checking={detail.data.checking}
+                givenUp={detail.data.checkGivenUp}
+                http={http}
+              />
               {staleCoverNotice}
               {complete?.id === selectedReviewCaseId && completionInspection === null ? (
                 <ReviewCompletion
@@ -2040,261 +1812,32 @@ export default function LibraryPage({
                   }}
                 />
               ) : selected ? (
-                <article
+                <FieldDecisionCanvas
                   key={selected.destination}
-                  className={`decision-canvas${controller.recording ? ' is-recording' : ''}${selectedChoiceMode ? '' : ' is-context-only'}`}
-                >
-                  {complete?.id === selectedReviewCaseId ? (
-                    <button
-                      type="button"
-                      className="decision-back"
-                      onClick={() => setCompletionInspection(null)}
-                    >
-                      ← Back to completion
-                    </button>
-                  ) : null}
-                  <header>
-                    <div>
-                      {/* Takes focus when a retry below it leaves nothing in its place. */}
-                      <h3 className="decision-question" tabIndex={-1}>
-                        {selectedActionable
-                          ? decisionQuestion(selected.destination)
-                          : destinationLabel(selected.destination)}
-                      </h3>
-                      {selectedActionable ? (
-                        // One line under the question: this field's own reason (#1519).
-                        <p
-                          className={
-                            selected.automaticWithheldReason
-                              ? 'automatic-withheld-reason'
-                              : undefined
-                          }
-                        >
-                          {questionReason(selected, detail.data.target.mediaKind)}
-                        </p>
-                      ) : selectedRevisitable ? (
-                        <p>
-                          {selected.humanDecision === null && selected.manualHold
-                            ? 'Your earlier decision still holds this field.'
-                            : 'The recorded outcome is marked below.'}{' '}
-                          You can choose another value.
-                        </p>
-                      ) : selectedOptional ? (
-                        <p>{fieldReason(selected)}</p>
-                      ) : null}
-                      {selected.automaticWithheldReason && !selectedActionable ? (
-                        <p className="automatic-withheld-reason">
-                          {selected.automaticWithheldReason}
-                        </p>
-                      ) : null}
-                    </div>
-                    {selectedActionable ? (
-                      <dl>
-                        <div>
-                          <dt>Queue position</dt>
-                          <dd>
-                            {activeQueueGroup >= 0
-                              ? `Work ${String(activeQueueGroup + 1)} of ${String(attentionGroups.length)}${attention.hasNextPage || search.attentionCursor ? ' loaded' : ''}`
-                              : 'Selected work'}
-                          </dd>
-                        </div>
-                        <div>
-                          <dt>Choices</dt>
-                          <dd>{String(ownerChoiceCount(selected))}</dd>
-                        </div>
-                      </dl>
-                    ) : null}
-                  </header>
-                  {(selectedChoiceMode || selectedCoverInspection) && !controller.reloadRequired ? (
-                    selected.destination === 'cover' ? (
-                      <LibraryCoverChoices
-                        reviewCaseId={selectedReviewCaseId}
-                        mediaKind={detail.data.target.mediaKind}
-                        field={selected}
-                        disabled={!selectedChoiceMode && !selectedCoverPreparation}
-                        expandedEvidence={expandedChoices}
-                        progress={selectedProgress}
-                        choose={(outcome, value) => choose(selected, outcome, value)}
-                        revealEvidence={toggleChoiceEvidence}
-                        prepareFailure={coverPrepareFailure}
-                      />
-                    ) : (
-                      <section
-                        className="direct-choice protected-choice"
-                        // The radio group inside is named by the question.
-                        aria-label={
-                          selectedActionable
-                            ? undefined
-                            : selectedOptional
-                              ? `${destinationLabel(selected.destination)} choices`
-                              : `${destinationLabel(selected.destination)} recorded choices`
-                        }
-                      >
-                        {selectedRevisitable ? (
-                          <>
-                            {combinedAutomaticTags(selected, detail.data.target.mediaKind) ||
-                            selectedAutomaticLanguageForm(selected) ? (
-                              <RecordedOutcome
-                                field={selected}
-                                mediaKind={detail.data.target.mediaKind}
-                                expanded={expandedChoices.has(`${selected.destination}:recorded`)}
-                                toggle={() =>
-                                  toggleChoiceEvidence(`${selected.destination}:recorded`)
-                                }
-                              />
-                            ) : null}
-                            <ProviderConsensusAutomaticStatement field={selected} />
-                            <DescriptionAutomaticStatement field={selected} />
-                            <SeriesAutomaticStatement field={selected} />
-                            <NarratorsAutomaticStatement field={selected} />
-                            <AsinAutomaticStatement field={selected} />
-                            <VerifiedManifestationIsbnAutomaticStatement field={selected} />
-                          </>
-                        ) : null}
-                        <div
-                          className={`direct-choice-grid${selected.preservationOnly ? ' preservation-only' : ''}`}
-                          role="radiogroup"
-                          aria-label={decisionQuestion(selected.destination)}
-                          onKeyDown={moveChoiceFocus}
-                        >
-                          {directChoices
-                            .filter((choice) => choice.current)
-                            .map(({ id, ...choice }) => (
-                              <MetadataChoice key={id} {...choice} />
-                            ))}
-                          {(selected.decisionActions.includes('accept') &&
-                            !selected.preservationOnly) ||
-                          selectedAdvice?.candidate ||
-                          selectedAdvice?.selected_advice ? (
-                            <div
-                              className={`proposed-choice-list${selected.proposedValues.length + (selectedAdvice?.candidate ? 1 : 0) === 1 ? ' has-one-choice' : ''}`}
-                            >
-                              <header>
-                                <strong>Choose a new value</strong>
-                                <small
-                                  aria-live="polite"
-                                  className={teachingLine ? 'is-active' : ''}
-                                >
-                                  {teachingLine}
-                                </small>
-                              </header>
-                              {directChoices
-                                .filter((choice) => !choice.current)
-                                .map(({ id, ...choice }) => (
-                                  <MetadataChoice key={id} {...choice} />
-                                ))}
-                            </div>
-                          ) : null}
-                        </div>
-                        {selectedAdvice ? (
-                          <DescriptionAdvicePreparation
-                            advice={selectedAdvice}
-                            reviewCaseId={selectedReviewCaseId}
-                            disabled={controller.recording || controller.reloadRequired}
-                          />
-                        ) : null}
-                      </section>
-                    )
-                  ) : selectedRecorded ? (
-                    <RecordedOutcome
-                      field={selected}
-                      mediaKind={detail.data.target.mediaKind}
-                      expanded={expandedChoices.has(`${selected.destination}:recorded`)}
-                      toggle={() => toggleChoiceEvidence(`${selected.destination}:recorded`)}
-                    />
-                  ) : (
-                    <SettledFieldContext
-                      field={selected}
-                      actionable={selectedActionable}
-                      ownerEntry={selectedOwnerEntry}
-                      expanded={expandedChoices.has(`${selected.destination}:context`)}
-                      toggle={() => toggleChoiceEvidence(`${selected.destination}:context`)}
-                    />
-                  )}
-                  {selected.ownerControl && !controller.reloadRequired ? (
-                    <OwnerControls
-                      key={ownerKey}
-                      field={selected}
-                      disabled={controller.recording || controller.reloadRequired}
-                      progress={selectedProgress}
-                      status={
-                        ownerNotice?.caseId === selectedReviewCaseId &&
-                        ownerNotice.destination === selected.destination
-                          ? ownerNotice.text
-                          : ownerStatusShown
-                            ? controller.statusFor(selected.destination)
-                            : ''
-                      }
-                      failed={controller.decision.isError}
-                      submit={(outcome, value) => {
-                        const key = choose(selected, outcome, value)
-                        setOwnerCommand(ownerKey)
-                        return key
-                      }}
-                    />
-                  ) : null}
-                  {selected.manualHold ? (
-                    <AutomaticHandlingPanel handling={automaticHandling} selected={selected} />
-                  ) : null}
-                  {comparisonNotices(selected).length ? (
-                    <aside className="comparison-notice" aria-label="Comparison condition">
-                      {comparisonNotices(selected).map((notice) => (
-                        <p key={notice}>
-                          {`${noticeText(selected, notice, detail.data.target.mediaKind) ?? ''}.`}
-                        </p>
-                      ))}
-                    </aside>
-                  ) : null}
-                  <RecordedFieldObservations
-                    key={selectedReviewCaseId}
-                    reviewCaseId={selectedReviewCaseId}
-                    field={selected}
-                  />
-                  {controller.canRetry && selectedProgress?.phase === 'failed' ? (
-                    <button
-                      ref={retryButton}
-                      className="decision-retry"
-                      type="button"
-                      onClick={controller.retry}
-                    >
-                      Try the same decision again
-                    </button>
-                  ) : null}
-                  {selectedChoiceMode &&
-                  !ownerStatusShown &&
-                  (controller.statusFor(selected.destination) ||
-                    controller.messageFor(selected.destination)) ? (
-                    <p
-                      role={
-                        controller.decision.isError || controller.reloadRequired
-                          ? 'alert'
-                          : 'status'
-                      }
-                    >
-                      {controller.statusFor(selected.destination) ||
-                        controller.messageFor(selected.destination)}
-                    </p>
-                  ) : null}
-                  {controller.reloadRequired ? (
-                    <button
-                      type="button"
-                      disabled={detail.isFetching}
-                      onClick={() => void controller.settle()}
-                    >
-                      {detail.isFetching ? 'Reloading current case…' : 'Reload current case'}
-                    </button>
-                  ) : null}
-                  {selectedChoiceMode && effect ? (
-                    <aside className="field-apply-context" aria-label="Writing to the library">
-                      <span className="activity-state-mark" aria-hidden="true"></span>
-                      <span>
-                        <small>Writing to the library</small>
-                        <strong>{effect.state}</strong>
-                        {effect.detail ? <em>{effect.detail}</em> : null}
-                      </span>
-                    </aside>
-                  ) : null}
-                </article>
+                  field={selected}
+                  mode={selectedMode}
+                  reviewCaseId={selectedReviewCaseId}
+                  mediaKind={detail.data.target.mediaKind}
+                  controller={controller}
+                  inspectingCompletion={complete?.id === selectedReviewCaseId}
+                  backToCompletion={() => setCompletionInspection(null)}
+                  queuePosition={
+                    activeQueueGroup >= 0
+                      ? `Work ${String(activeQueueGroup + 1)} of ${String(attentionGroups.length)}${attention.hasNextPage || search.attentionCursor ? ' loaded' : ''}`
+                      : 'Selected work'
+                  }
+                  frozenDestinations={frozenDestinations}
+                  expandedChoices={expandedChoices}
+                  toggleChoiceEvidence={toggleChoiceEvidence}
+                  choose={choose}
+                  coverPrepareFailure={coverPrepareFailure}
+                  ownerCommand={ownerCommand}
+                  setOwnerCommand={setOwnerCommand}
+                  ownerNotice={ownerNotice}
+                  automaticHandling={automaticHandling}
+                  retryButton={retryButton}
+                  reloading={detail.isFetching}
+                />
               ) : (
                 <p>This work has no fields requiring a decision.</p>
               )}
@@ -2363,7 +1906,7 @@ export default function LibraryPage({
                 </details>
               ) : null}
               <WorkSources
-                comparison={selectedChoiceMode}
+                comparison={selectedMode.choiceMode}
                 outcomes={selectedLibraryWork?.preparationOutcomes ?? []}
               />
             </>

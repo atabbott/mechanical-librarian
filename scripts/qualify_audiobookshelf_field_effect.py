@@ -390,6 +390,9 @@ def _installed_accept_payload(
         "proposal_id": field["proposal_id"],
         "selected_value": selected_value,
         "target_fingerprint": field["target_fingerprint"],
+        # The offer the field showed; a choice made against another is
+        # refused as `offer_changed` (#1355).
+        "offered_alternatives_digest": field["offer_digest"],
     }
     if cover is not None:
         consideration_id, selected_cover = cover
@@ -2141,6 +2144,7 @@ def _installed_continuous_qualification(
                         "proposal_id": automatic_field["proposal_id"],
                         "selected_value": automatic_field["proposed_values"][0],
                         "target_fingerprint": automatic_field["target_fingerprint"],
+                        "offered_alternatives_digest": automatic_field["offer_digest"],
                     },
                 )
                 if (

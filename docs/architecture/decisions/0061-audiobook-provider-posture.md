@@ -209,7 +209,8 @@ lane. Where a library connects iTunes, it still searches ebook work lanes:
 iTunes is in the ebook dispatch set below.
 
 **Clause 9 (#1247).** The set is the six named above, iTunes for its cover
-alone (#1779). Open Library and Hardcover stay, so F46a's and F54's work facts
+alone (#1779). An audiobook provider's refused WORK answers are retained for
+ADR-0096's level path alone, review-only, with no request added (#1355). Open Library and Hardcover stay, so F46a's and F54's work facts
 keep their sources (#962).
 Google Books and Inventaire leave: across #1086's retained audiobooks they
 took 843 dispatches (31.6%), backed only 2 selected alternatives (both series,

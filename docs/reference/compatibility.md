@@ -85,12 +85,14 @@ refused.
 
 | Identifier | What it is |
 | --- | --- |
-| `metadata-report-v80` | The evidence report for one item ([Metadata report](../operations/metadata-report.md)) |
+| `metadata-report-v81` | The evidence report for one item ([Metadata report](../operations/metadata-report.md)) |
 | `proposal-set-v8` | Proposed values for one report ([Proposal sets](../operations/proposal-set.md)) |
 | `fixed-conservative-v47` | The proposal policy |
 | `closed-title-creator-publication-work-identity-v6` | The work-identity comparison |
 | `metadata-policy-profile-v3` | A library's metadata policy profile |
 | `review-case-v2` | A review case built from a proposal set ([Review cases](../operations/review-case.md)) |
+| `level-proposal-set-v1` | The proposal set a wider Book matching level derives beside the live one, with its lineage ([Book matching levels](../operations/metadata-report.md#book-matching-levels-for-other-fields)) |
+| `review-case-level-offer-v1` | The manual fields of one case a wider Book matching level substitutes, with their alternatives and lineage |
 | `bibliographic-relationships-v1` | The allowed title, subtitle and series combinations inside a proposal set and review case |
 | `google-books-html-visible-text-v1` | The inert visible-text projection of Google Books descriptions |
 | `shadow-review-packet-v9` | The deterministic decision packet |
@@ -103,7 +105,7 @@ refused.
 
 | Identifier | What it is |
 | --- | --- |
-| `human-decision-v3` | An owner decision, including `owner_entered` and `withdraw` outcomes |
+| `human-decision-v4` | An owner decision, including `owner_entered` and `withdraw` outcomes; it binds the digest of the field offer it was made in (`offered_alternatives_digest`) and may name a closed `cause` (`matching_changed`) for the valueless row Book matching writes |
 | `human-decision-event-v1`, `human-decision-ack-v1` | The decision event and its acknowledgement |
 | `cover-consideration-v9` | A cover consideration, bound to its report by identity and digest and to the Book matching level it was made under; each candidate names its kind, so the original an automatic switch replaced can be put back, even one the decoder refused, which has no size or preview, and a larger copy of the current cover's own picture can replace it; it stores the would-admit note, which nothing shows |
 | `cover-identity-report-v2` | Cover identity classification under one Book matching level, with the title-and-author outcome and level reasons |

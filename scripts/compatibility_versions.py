@@ -44,6 +44,8 @@ CURRENT_VERSIONS: tuple[tuple[str, str], ...] = (
     ("mechanical_librarian.domain.metadata_report", "COMPARISON_VERSION"),
     ("mechanical_librarian.domain.metadata_policy", "POLICY_SCHEMA_VERSION"),
     ("mechanical_librarian.domain.review_case", "REVIEW_CASE_SCHEMA"),
+    ("mechanical_librarian.domain.level_proposal_set", "LEVEL_PROPOSAL_SET_SCHEMA"),
+    ("mechanical_librarian.domain.review_case", "LEVEL_OFFER_SCHEMA"),
     ("mechanical_librarian.domain.proposal_set", "BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA"),
     (
         "mechanical_librarian.adapters.providers.google_books_metadata",

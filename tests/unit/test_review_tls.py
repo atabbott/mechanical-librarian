@@ -472,6 +472,16 @@ def test_server_uses_validated_tls_before_opening_the_database(mode: str) -> Non
         assert artifacts.is_dir()
         review_application.start_dormant.assert_called_once_with()
         review_application.admit.assert_called_once_with()
+        # A file-managed server aligns every case to the file's Book matching
+        # level as the application admits its generation (#1355).
+        repository.align_book_matching.assert_not_called()
+        composed.call_args.kwargs["align_book_matching"](1_700_000_000)
+        repository.align_book_matching.assert_called_once_with(
+            review.work_identity.value, 1_700_000_000
+        )
+        # Policy reads the file's matching check from the same repository.
+        file_settings = composed.call_args.kwargs["settings"]._repository
+        assert file_settings._matching_check is repository.matching_check
 
 
 def test_missing_or_invalid_tls_fails_before_database_or_server() -> None:

@@ -545,3 +545,18 @@ identity and binds its own qualification record. A stored policy report or
 automatic decision carries the earlier meaning. Every earlier application
 database is rejected before mutation and needs a clean rebuild; no adoption is
 supplied.
+
+Issue #1355's activation B takes the clean-rebuild branch too, after #1853 and #1859, so
+each version it moves takes the next number free on main. `metadata-report-v81`
+keeps each provider's refused WORK answers (`identity_refused_candidates`,
+`identity_refused_truncated`) and each lane's `identity_refused_new`, which a
+v80 producer never read again once refused, so a v80 report is refused. Owner
+decisions move to `human-decision-v4`, which binds the digest of the field
+offer a choice was made in and a closed `cause`, both in its request digest, so
+a v3 decision is refused on readback; the `human_decisions` table does not
+change. Four tables are added for the level set, its notes, the substituted
+offer and each case's reconciled level (`level_proposal_sets`,
+`level_decision_notes`, `review_case_level_offers`,
+`review_case_level_reconciliation`), and `review_preparation_control` gains
+`work_identity_level`. Every earlier application database is rejected before
+mutation and needs a clean rebuild; no adoption is supplied.

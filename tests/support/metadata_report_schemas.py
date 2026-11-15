@@ -291,7 +291,10 @@ def retained_report_as_current(document: str) -> MetadataReport:
     the `retained` cover source, neither of which a v49 report, holding no
     automatic switch, could carry (#1363). v80 records the digest of
     Audiobookshelf cover bytes the decoder refused: null here, since a v49
-    report's sources hold none (#1853).
+    report's sources hold none (#1853). v81 added each provider's
+    `identity_refused_candidates` and `identity_refused_truncated` and each
+    lane's `identity_refused_new`: empty and zero here, since an earlier
+    producer kept nothing of a refused WORK answer (#1355).
     """
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(document)
@@ -315,10 +318,13 @@ def retained_report_as_current(document: str) -> MetadataReport:
     for provider in data["providers"]:
         provider["refused_products"] = []
         provider["audio_editions"] = []
+        provider["identity_refused_candidates"] = []
+        provider["identity_refused_truncated"] = 0
         for lane in provider["lanes"]:
             for member in lane["candidates"]:
                 member["admission_basis"] = None
             lane["exhausted_dispatch"] = []
+            lane["identity_refused_new"] = []
             lane["recording_lookup_hints"] = []
             lane["dispatch"] = None
             if data.get("audio") is not None:

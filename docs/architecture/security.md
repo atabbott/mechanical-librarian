@@ -236,6 +236,9 @@ which enabling does not restore.
   responses. [Dispatch](../reference/configuration.md#dispatch) sends
   audiobooks only to `AUDIOBOOK_DISPATCH_ADAPTERS` and ebooks only to
   `EBOOK_DISPATCH_ADAPTERS`.
+- Retained refused WORK answers serve only Book matching, never a live
+  reader, support bundle or diagnostic, and fetch no cover
+  ([refused work answers](../operations/metadata-report.md#refused-work-answers)).
 
 Per provider, where *5xx* means 500, 502, 503 and 504:
 
@@ -359,13 +362,12 @@ or `us.archive.org`.
 
 Book matching (`review.work_identity`, #1355) changes which retrieved covers
 the owner may choose, never what is fetched: a level reads only records the
-report already retained. Saving it re-checks comparisons from stored data and
-makes no file, Audiobookshelf, provider, cover image or model request: the
-cover observer's earlier output and an earlier description advice attempt
-are reused. A cover that matches only by a level's title and author predicate keeps
-`match_not_confirmed`, needs the owner's explicit unverified-match
-confirmation, and is never elected automatically until #1418 qualifies it
-([ADR-0096](decisions/0096-owner-chosen-work-identity-strictness.md)).
+report already retained. Saving it (CSRF-protected, revision-checked)
+re-checks works from stored data, reusing earlier observer and advice output,
+with no file, Audiobookshelf, provider, cover image or model request. A cover
+matching only a level's title and author predicate keeps
+`match_not_confirmed` and needs the owner's explicit unverified-match
+confirmation ([ADR-0096](decisions/0096-owner-chosen-work-identity-strictness.md)).
 
 ### Provider recovery
 
@@ -462,9 +464,8 @@ of two or more letters. Letter count and order still count, no NFKC,
 confusable mapping or other dot character applies, a fold that would merge two
 listed creators is not applied, and the fold never removes an agreement the
 unfolded comparison makes. Sidecar belonging compares creators exactly until
-#1418 (#1780). The fold is read only on ADR-0096's level path, never by a
-live comparison, and it applies at a wider `review.work_identity` level only
-(#1355). Belonging never reads the level.
+#1418 (#1780). The fold is read only on ADR-0096's level path (#1355).
+Belonging never reads the level.
 
 Incumbent description HTML is rendered by the one provider renderer, which
 drops attributes and refuses event handlers and unbalanced markup; path and
@@ -532,8 +533,8 @@ returns a fixed set of visual properties with explicit unknowns and no
 ranking, winner or identity field. The local parser needs exactly one
 observation per admitted candidate and checks every binding. The adjudicator
 makes no model call and recomputes identity from the retained report, under
-the Book matching level the comparison binds. A level change re-adjudicates
-from the observer's earlier output without sending anything (#1355).
+the Book matching level the comparison binds. A level change reuses earlier
+observer output (#1355).
 
 Each preview is verified against its report digest and re-encoded into a
 metadata-free single-frame PNG; admission requires byte equality after
@@ -583,6 +584,11 @@ reads an owner-entered value. Clearing, rollback and undo are not available
 An owner may choose a retained cover whose match is not confirmed, but not
 one with a positive contradiction.
 
+Decisions bind their offer's digest. Until its case is checked at the saved
+Book matching level, owner effects wait and new decisions refuse
+(`offer_changed`). A changed offer gets a valueless `matching_changed` row; its
+pending effect, a cover's too, closes stale.
+
 The original an automatic switch replaced is a `retained` cover source, read
 locally from the owner-only retained store, never in a reviewer packet,
 provider request or support bundle, and never served. Only the owner can
@@ -625,9 +631,7 @@ conflicts go to the owner, never to a write. The explicit flag is set only by
 an exact positive. A level admission under Book matching
 (`review.work_identity`) reaches owner review and the stored would-admit
 note only, and decides nothing automatically (no qualified option, ADR-0093
-switch or fill, or ADR-0095 automatic mode) until #1418 (#1355). Saving the setting is a CSRF-protected settings write
-with an optimistic revision; it writes no Activity row, and a pending cover effect
-chosen under another level closes stale (`matching_changed`).
+switch or fill, or ADR-0095 automatic mode) until #1418 (#1355).
 
 ### Consent and guarded effects
 
