@@ -1095,6 +1095,7 @@ def _taste_request():
         admit_taste_build_request,
         taste_transport_jpeg,
     )
+    from mechanical_librarian.domain.cover_taste import taste_budget
     from tests.support.cover_taste import canonical, stored_preview
 
     images = []
@@ -1104,6 +1105,10 @@ def _taste_request():
         images.append(TasteBuildImage(reference, png, taste_transport_jpeg(png)))
     packet = canonical_json(
         {
+            # Packet v2: an owner rule kept and a removed text (#1372 PR 2).
+            "budget": taste_budget(("Calm serif type.",)),
+            "kept": [{"section": "drawn_to", "text": "Calm serif type."}],
+            "left_out": ["Glossy finish."],
             "decisions": [
                 {
                     "images": [
