@@ -20,6 +20,9 @@ import pytest
 from mechanical_librarian.adapters.field_effect_runtime import (
     PersistedEffectDependencies,
 )
+from mechanical_librarian.adapters.persistence.level_reconciliation import (
+    case_level_unreconciled,
+)
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
 )
@@ -39,9 +42,14 @@ from mechanical_librarian.application.review_application import (
     prepare_cover_consideration,
 )
 from mechanical_librarian.domain.cover_evidence import CoverArtifact
+from mechanical_librarian.domain.human_decision import decision_actions
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
-from tests.integration.test_leaving_automatic_posture import _Library, _prepared
+from tests.integration.test_leaving_automatic_posture import (
+    _accept,
+    _Library,
+    _prepared,
+)
 from tests.unit.test_cover_packets import _preview, _source
 
 _PAYLOAD = _preview(2)
@@ -331,12 +339,20 @@ def test_reconciliation_makes_no_external_request(
     saving again stays a true remedy (re-review 1)."""
     connection = library.root._connection
     case_id = library.case_id()
+    # The fields half (#1355, B): an owner choice stands on the case.
+    case = library.case()
+    destination = next(
+        str(value["destination"]) for value in case.proposals if decision_actions(value)
+    )
+    choice = _accept(case, destination, "field-choice-0001", 30)
+    library.root.record_human_decision(choice)
     connection.execute(
         "UPDATE review_preparation_work SET " + work + " WHERE item_id='item-1'"
     )
     level.value = WorkIdentityLevel.TITLE_AND_CREATOR
     _save(library, "title_and_creator", at=40)
     assert matching_check_counts(connection, "title_and_creator") == (1, 1, 0)
+    assert case_level_unreconciled(connection, case_id)
     assert _work(library) == ("projection", "queued")
     library.now[0] = 41
     library.drain()
@@ -345,6 +361,18 @@ def test_reconciliation_makes_no_external_request(
     assert matching_check_counts(connection, "title_and_creator") == (1, 0, 0)
     assert _current_level(library) == "title_and_creator"
     assert _work(library) == ("complete", "complete")
+    # The fields are reconciled from stored data too, and an offer the level
+    # leaves alone keeps its choice.
+    assert not case_level_unreconciled(connection, case_id)
+    assert connection.execute(
+        "SELECT reconciled_level FROM review_case_level_reconciliation "
+        "WHERE review_case_id=?",
+        (case_id,),
+    ).fetchone() == ("title_and_creator",)
+    assert connection.execute(
+        "SELECT decision_id FROM human_decisions WHERE review_case_id=?",
+        (case_id,),
+    ).fetchall() == [(choice.decision_id,)]
 
 
 def test_a_case_whose_file_changed_waits_for_the_next_scan(

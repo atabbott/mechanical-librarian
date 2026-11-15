@@ -122,6 +122,8 @@ def _report(
         candidates=records,
         query_kind=ProviderQueryKind.WORK,
         lanes=lanes,
+        identity_refused_candidates=(),
+        identity_refused_truncated=0,
     )
     report = SimpleNamespace(
         audio=None,
@@ -280,6 +282,92 @@ def test_a_single_work_set_is_admitted() -> None:
         first, edition, unrelated, lanes=(_lane(first, edition, unrelated),)
     )
     assert _level(_admit(report, provider, first)) is _EXACT
+
+
+def _refused_record(
+    identity: str, work: str, *, translator: bool = False
+) -> ProviderCandidate:
+    """A real retained refused record (#1355): the level classifies its own."""
+
+    def claim(kind: ClaimKind, value: str, **values: Any) -> ProviderClaim:
+        return ProviderClaim.create(
+            provider="hardcover",
+            candidate=identity,
+            kind=kind,
+            value=value,
+            state=FieldState.VALID,
+            scope=ClaimScope.WORK,
+            applicability="not_applicable",
+            **values,
+        )
+
+    return ProviderCandidate(
+        identity,
+        work,
+        (
+            claim(ClaimKind.TITLE, "Synthetic Title"),
+            claim(ClaimKind.CREATOR, "R.F. Example", role="author", raw_order=1),
+            *(
+                (
+                    claim(
+                        ClaimKind.CONTRIBUTOR,
+                        "Tess Translator",
+                        role="translator",
+                        raw_order=2,
+                    ),
+                )
+                if translator
+                else ()
+            ),
+        ),
+    )
+
+
+def _refused_set(
+    *records: ProviderCandidate,
+) -> tuple[MetadataReport, ProviderObservation]:
+    """An observation whose lanes refused every record, so it keeps them."""
+    provider = SimpleNamespace(
+        provider="hardcover",
+        authority="hardcover",
+        candidates=(),
+        query_kind=ProviderQueryKind.WORK,
+        lanes=(),
+        identity_refused_candidates=records,
+        identity_refused_truncated=0,
+    )
+    report = SimpleNamespace(
+        audio=None,
+        target=_target("Synthetic Title", ("R. F. Example",)),
+        providers=(provider,),
+        identifier_evidence=(),
+        local_claims=(),
+    )
+    return cast("MetadataReport", report), cast("ProviderObservation", provider)
+
+
+def test_level_refuses_two_works_same_title_same_author_in_refused_set() -> None:
+    first = _refused_record("record-1", _WORK)
+    second = _refused_record("record-2", _OTHER_WORK)
+    report, provider = _refused_set(first, second)
+    alone, lone = _refused_set(first)
+
+    assert _level(provider_candidate_level_admission(alone, lone, first, _EXACT)) is (
+        _EXACT
+    )
+    for record in (first, second):
+        assert provider_candidate_level_admission(
+            report, provider, record, _EXACT
+        ) == LevelAdmissionRecord(None, "ambiguous")
+
+
+def test_level_refuses_sibling_of_vetoed_work_identity() -> None:
+    sibling = _refused_record("record-1", _WORK)
+    translated = _refused_record("record-2", _WORK, translator=True)
+    report, provider = _refused_set(sibling, translated)
+    assert provider_candidate_level_admission(
+        report, provider, sibling, _WIDE
+    ) == LevelAdmissionRecord(None, "refused")
 
 
 # --- 5. Contradiction --------------------------------------------------------

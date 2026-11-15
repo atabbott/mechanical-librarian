@@ -834,6 +834,24 @@ class GenerateProviderRetrySuccessor:
                     )
                 ),
                 admission_bases_recorded=True,
+                # A WORK lane's refused answers stay with the lane that added
+                # them (#1355): a retried lane's are its new dispatch's, and an
+                # identity whose record the observation no longer holds stays
+                # counted as truncated.
+                identity_refused_candidates=tuple(
+                    candidate
+                    for candidate in evidence.identity_refused_candidates
+                    if candidate.identity in observation.identity_refused_new
+                ),
+                identity_refused_dropped=tuple(
+                    identity
+                    for identity in observation.identity_refused_new
+                    if identity
+                    not in {
+                        candidate.identity
+                        for candidate in evidence.identity_refused_candidates
+                    }
+                ),
                 # An audio edition stays with the WORK lane that admitted its
                 # book (#962); the aggregate drops any whose work is gone.
                 audio_editions=tuple(
@@ -892,14 +910,19 @@ class GenerateProviderRetrySuccessor:
             )
         # A retry must never rewrite an unselected lane's persisted evidence,
         # except a recording-lookup hint (#1257) whose product it now retains,
-        # or a companion book whose only linking edition the merge no longer
-        # keeps (#1468): the companion rule narrows that lane, never widens it.
-        merged_lanes = {lane.identity: lane.to_data() for lane in merged.lanes}
+        # a companion book whose only linking edition the merge no longer
+        # keeps (#1468): the companion rule narrows that lane, never widens it,
+        # or a refused identity (#1355) a retried lane now adds first or whose
+        # observation now admits, which narrows its record the same way.
+        merged_lanes = {lane.identity: lane for lane in merged.lanes}
         held = candidate_asins(
             (*merged.candidates, *merged.recording_lookup_candidates)
         )
         if any(
-            merged_lanes[identity]
+            not set(merged_lanes[identity].identity_refused_new).issubset(
+                lane.identity_refused_new
+            )
+            or merged_lanes[identity].to_data()
             != replace(
                 lane,
                 recording_lookup_hints=tuple(
@@ -907,6 +930,7 @@ class GenerateProviderRetrySuccessor:
                     for hint in lane.recording_lookup_hints
                     if hint.asin not in held
                 ),
+                identity_refused_new=merged_lanes[identity].identity_refused_new,
             ).to_data()
             for identity, lane in old_lanes.items()
             if identity not in selected_ids and identity not in narrowed

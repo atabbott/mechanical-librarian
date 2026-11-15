@@ -268,6 +268,7 @@ def test_recording_a_decision_announces_the_case_its_row_and_the_write_queue(
             "proposal_id": field["proposal_id"],
             "selected_value": field["proposed_values"][0],
             "target_fingerprint": field["target_fingerprint"],
+            "offered_alternatives_digest": field["offer_digest"],
         },
     )
 
@@ -326,6 +327,7 @@ def test_a_decision_recorded_after_the_channel_closes_names_no_position(
             "proposal_id": field["proposal_id"],
             "selected_value": field["proposed_values"][0],
             "target_fingerprint": field["target_fingerprint"],
+            "offered_alternatives_digest": field["offer_digest"],
         },
     )
 

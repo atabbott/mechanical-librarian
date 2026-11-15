@@ -4,6 +4,8 @@
     "recording_identity_basis": null,
     "audiobook_review_scope": "recording",
     "comparison_notices": [],
+    "checking": false,
+    "check_given_up": false,
     "current": true,
     "fields": [
       {
@@ -53,7 +55,8 @@
             "rationale": "",
             "recommendation": "no_recommendation",
             "recommendation_reason": "",
-            "selection": "current"
+            "selection": "current",
+            "match_basis": null
           },
           {
             "alternative_id": "alternative_b082d8fa2afb229244b76a923ae5057fea057f33497c9a872c13585e9338df72",
@@ -75,7 +78,8 @@
             "rationale": "Audible, Audnexus",
             "recommendation": "no_recommendation",
             "recommendation_reason": "",
-            "selection": "proposed"
+            "selection": "proposed",
+            "match_basis": null
           },
           {
             "alternative_id": "alternative_eda0dd24896993e6b173a83433ebe5f275c1d7c75bb027b52b3a28f32f617668",
@@ -97,7 +101,8 @@
             "rationale": "Audible, Audnexus",
             "recommendation": "no_recommendation",
             "recommendation_reason": "",
-            "selection": "proposed"
+            "selection": "proposed",
+            "match_basis": null
           }
         ],
         "provenance": [
@@ -114,7 +119,8 @@
         "current_cover_selection_id": null,
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
-        "description_advice": null
+        "description_advice": null,
+        "offer_digest": "e86eea40f0c48e02cc1a0988d64466d2aa45a917705d0e8d7f100cb0dcf7def0"
       },
       {
         "classification": "needs_attention",
@@ -163,7 +169,8 @@
             "rationale": "",
             "recommendation": "no_recommendation",
             "recommendation_reason": "",
-            "selection": "current"
+            "selection": "current",
+            "match_basis": null
           },
           {
             "alternative_id": "alternative_2a328440c29fe4c45d479d1f61660daa4528d1332df50c620e901749624816c8",
@@ -179,7 +186,8 @@
             "rationale": "Audnexus",
             "recommendation": "no_recommendation",
             "recommendation_reason": "",
-            "selection": "proposed"
+            "selection": "proposed",
+            "match_basis": null
           },
           {
             "alternative_id": "alternative_4df9e8c953dd90707960d062780413630e84960acb9fd29d39f204ad27cdfb82",
@@ -195,7 +203,8 @@
             "rationale": "Audnexus",
             "recommendation": "no_recommendation",
             "recommendation_reason": "",
-            "selection": "proposed"
+            "selection": "proposed",
+            "match_basis": null
           }
         ],
         "provenance": [
@@ -210,7 +219,8 @@
         "current_cover_selection_id": null,
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
-        "description_advice": null
+        "description_advice": null,
+        "offer_digest": "aa3bd14b8c2cf7cc009cc69b8d0aab1fdb4925a048541c747261ccb6d7b8ac25"
       },
       {
         "classification": "needs_attention",
@@ -276,7 +286,8 @@
             "rationale": "",
             "recommendation": "no_recommendation",
             "recommendation_reason": "",
-            "selection": "current"
+            "selection": "current",
+            "match_basis": null
           },
           {
             "alternative_id": "alternative_f86042dc26d7453a61fc96db2b72fc459b7f209af35e2ca5d13b46c94dc59785",
@@ -298,7 +309,8 @@
             "rationale": "Audnexus",
             "recommendation": "no_recommendation",
             "recommendation_reason": "",
-            "selection": "proposed"
+            "selection": "proposed",
+            "match_basis": null
           }
         ],
         "provenance": [
@@ -313,7 +325,8 @@
         "current_cover_selection_id": null,
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
-        "description_advice": null
+        "description_advice": null,
+        "offer_digest": "ced675df0c60e3debecc34eb92f6c1ec2a77f9d5d3e2e1896deaf9fe861e7f0f"
       },
       {
         "classification": "needs_attention",
@@ -353,7 +366,8 @@
             "rationale": "",
             "recommendation": "no_recommendation",
             "recommendation_reason": "",
-            "selection": "current"
+            "selection": "current",
+            "match_basis": null
           }
         ],
         "provenance": [],
@@ -365,7 +379,8 @@
         "current_cover_selection_id": null,
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
-        "description_advice": null
+        "description_advice": null,
+        "offer_digest": "ced675df0c60e3debecc34eb92f6c1ec2a77f9d5d3e2e1896deaf9fe861e7f0f"
       },
       {
         "classification": "needs_attention",
@@ -424,7 +439,8 @@
             "rationale": "",
             "recommendation": "no_recommendation",
             "recommendation_reason": "",
-            "selection": "current"
+            "selection": "current",
+            "match_basis": null
           },
           {
             "alternative_id": "alternative_6edf6cc99c073bb07d4bf641be960738da82833e49f56883f3ac69291c8e9349",
@@ -446,7 +462,8 @@
             "rationale": "Audnexus",
             "recommendation": "no_recommendation",
             "recommendation_reason": "",
-            "selection": "proposed"
+            "selection": "proposed",
+            "match_basis": null
           }
         ],
         "provenance": [
@@ -461,7 +478,8 @@
         "current_cover_selection_id": null,
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
-        "description_advice": null
+        "description_advice": null,
+        "offer_digest": "221dc9ba25d55d99c14cb11ff69582f7ec10b908bebf2ed34cc919907fc6ec48"
       },
       {
         "classification": "needs_attention",
@@ -501,7 +519,8 @@
             "rationale": "",
             "recommendation": "no_recommendation",
             "recommendation_reason": "",
-            "selection": "current"
+            "selection": "current",
+            "match_basis": null
           }
         ],
         "provenance": [],
@@ -513,7 +532,8 @@
         "current_cover_selection_id": null,
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
-        "description_advice": null
+        "description_advice": null,
+        "offer_digest": "ced675df0c60e3debecc34eb92f6c1ec2a77f9d5d3e2e1896deaf9fe861e7f0f"
       },
       {
         "classification": "unsupported",
@@ -553,7 +573,8 @@
             "rationale": "",
             "recommendation": "no_recommendation",
             "recommendation_reason": "",
-            "selection": "current"
+            "selection": "current",
+            "match_basis": null
           }
         ],
         "provenance": [],
@@ -565,7 +586,8 @@
         "current_cover_selection_id": null,
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
-        "description_advice": null
+        "description_advice": null,
+        "offer_digest": "d8fd4421cf5a3a4ecbb1ce4ed43707700edf2fa6a2b516ebf92a2dfe716b5397"
       },
       {
         "classification": "unsupported",
@@ -605,7 +627,8 @@
             "rationale": "",
             "recommendation": "no_recommendation",
             "recommendation_reason": "",
-            "selection": "current"
+            "selection": "current",
+            "match_basis": null
           }
         ],
         "provenance": [],
@@ -617,7 +640,8 @@
         "current_cover_selection_id": null,
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
-        "description_advice": null
+        "description_advice": null,
+        "offer_digest": "b07037849fd764eebd9e49622da48433c9a11767ffb26bb02124a83b26b08426"
       },
       {
         "classification": "unsupported",
@@ -657,7 +681,8 @@
             "rationale": "",
             "recommendation": "no_recommendation",
             "recommendation_reason": "",
-            "selection": "current"
+            "selection": "current",
+            "match_basis": null
           }
         ],
         "provenance": [],
@@ -669,7 +694,8 @@
         "current_cover_selection_id": null,
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
-        "description_advice": null
+        "description_advice": null,
+        "offer_digest": "4f3effd6af47ebcce203a5aa1ebf5158b304e83c5dd9412bf471a048fd9721cf"
       },
       {
         "classification": "unsupported",
@@ -709,7 +735,8 @@
             "rationale": "",
             "recommendation": "no_recommendation",
             "recommendation_reason": "",
-            "selection": "current"
+            "selection": "current",
+            "match_basis": null
           }
         ],
         "provenance": [],
@@ -721,7 +748,8 @@
         "current_cover_selection_id": null,
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
-        "description_advice": null
+        "description_advice": null,
+        "offer_digest": "ae0663c79471a7e576694bbc3dee6a9919f7ef9059a7e05fb08a75728d121053"
       },
       {
         "classification": "manual_fallback",
@@ -761,7 +789,8 @@
             "rationale": "",
             "recommendation": "no_recommendation",
             "recommendation_reason": "",
-            "selection": "current"
+            "selection": "current",
+            "match_basis": null
           }
         ],
         "provenance": [],
@@ -773,7 +802,8 @@
         "current_cover_selection_id": null,
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
-        "description_advice": null
+        "description_advice": null,
+        "offer_digest": "774f8321936975e650ae662eaea5a4082c69979247ba5a2e8bb8f2c307e3ddd4"
       },
       {
         "classification": "unsupported",
@@ -813,7 +843,8 @@
             "rationale": "",
             "recommendation": "no_recommendation",
             "recommendation_reason": "",
-            "selection": "current"
+            "selection": "current",
+            "match_basis": null
           }
         ],
         "provenance": [],
@@ -825,7 +856,8 @@
         "current_cover_selection_id": null,
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
-        "description_advice": null
+        "description_advice": null,
+        "offer_digest": "ba86b44ae9ce20a33a6e52fb76a1ca64259ae994de764980e3ee581bd55ea0a7"
       },
       {
         "classification": "unsupported",
@@ -865,7 +897,8 @@
             "rationale": "",
             "recommendation": "no_recommendation",
             "recommendation_reason": "",
-            "selection": "current"
+            "selection": "current",
+            "match_basis": null
           }
         ],
         "provenance": [],
@@ -877,7 +910,8 @@
         "current_cover_selection_id": null,
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
-        "description_advice": null
+        "description_advice": null,
+        "offer_digest": "1b5e09d0cfed5bdebf912c3737d49ad5d50c82550afce0221e6132d3fee3aa46"
       },
       {
         "classification": "unsupported",
@@ -917,7 +951,8 @@
             "rationale": "",
             "recommendation": "no_recommendation",
             "recommendation_reason": "",
-            "selection": "current"
+            "selection": "current",
+            "match_basis": null
           }
         ],
         "provenance": [],
@@ -929,7 +964,8 @@
         "current_cover_selection_id": null,
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
-        "description_advice": null
+        "description_advice": null,
+        "offer_digest": "6fc78d7f3e493ba2a99fbd62bd5924cc1136c4621c8e13c3e804b99dbb8f2855"
       },
       {
         "classification": "unsupported",
@@ -969,7 +1005,8 @@
             "rationale": "",
             "recommendation": "no_recommendation",
             "recommendation_reason": "",
-            "selection": "current"
+            "selection": "current",
+            "match_basis": null
           }
         ],
         "provenance": [],
@@ -981,7 +1018,8 @@
         "current_cover_selection_id": null,
         "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
-        "description_advice": null
+        "description_advice": null,
+        "offer_digest": "cdc7b26c38e0016be94cfca6064993e1b58c3b3a01244e0cd64bd2094b9b6a74"
       }
     ],
     "media_health": [],

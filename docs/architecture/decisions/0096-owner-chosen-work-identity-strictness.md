@@ -259,9 +259,9 @@ title rule relies on.
 
 ## Amendment (activation, #1355 and #1780)
 
-Activation A (#1355) puts the setting and covers live; activation B carries the
-other work-scope fields and the retained refused answers, and extends this
-amendment when it lands.
+Activation A (#1355) puts the setting and covers live; activation B (#1355,
+#1780) carries the other work-scope fields and the retained refused answers.
+The bullets below are A's; "Activation B" extends them.
 
 - **The report is level-free; consumers bind the level.** A metadata report
   records no level. The cover identity document records the level it was
@@ -359,4 +359,62 @@ amendment when it lands.
   become level matches, 9 and 0 of them newly choosable because the fold
   resolves a respelled initial, and 10 and 0 depend on the fold. No automatic
   decision changes.
+
+### Activation B
+
+- **Retained refused WORK answers.** A WORK answer that set admission refuses
+  keeps its products in the provider's `identity_refused_candidates`: at most
+  five per provider and 524,288 bytes per report, dropped first when a report
+  would pass its byte limit. Each WORK lane names the identities it added, at
+  most twenty (`identity_refused_new`), and
+  `identity_refused_truncated` counts the ones dropped. Any admitting lane
+  empties the set. They are answers already received: no request is added and
+  no cover of theirs is fetched. They live and are removed with their report.
+  Only this seam reads them; the provider stays `no_match` and no live reader,
+  support bundle or diagnostic sees them. The seam runs the same identifier
+  classification for them on the level path alone, so the unrelated-identifier
+  and manifestation refusals apply, and a set that lost any record admits none
+  of it (`truncated`, counted by the ledger and never stored).
+- **Live at `identifier`; the level set beside it.** At every level the live
+  ProposalSet, live decision set and every automatic decision are derived at
+  `identifier`, byte for byte as with no level. At a wider level a level set is
+  derived from the same report, in which the level's admissions count as
+  representing the work for S7's destinations only, and stored in
+  `level_proposal_sets` (`level-proposal-set-v1`) with its lineage
+  (`work_identity:<level>` and `creator_comparison`), so the ProposalSet schema
+  does not move.
+- **Notes and substitution.** Where the level set's decision would choose for
+  a field the live decision leaves to the owner (the live `ShadowOutcomeSet`
+  disposition, whatever the posture), a would-admit note is stored in
+  `level_decision_notes`, beside the live set, with the decision engine and
+  proposal policy that formed it. A live manual field whose level alternatives
+  differ is substituted in `review_case_level_offers`
+  (`review-case-level-offer-v1`), keyed by case id, under the field's live
+  proposal id. Title, subtitle and series are substituted together or not at
+  all, and a field decided automatically keeps its live proposal. Notes are
+  shown nowhere until #1418.
+- **Offer digest and the valueless row.** An owner decision binds the digest
+  of the field offer it was made in (`human-decision-v4`,
+  `offered_alternatives_digest`). Retained validation accepts a selection from
+  the live offer, or from a stored level offer whose digest equals the bound
+  one. When reconciliation changes a field's offer under a current decision, a
+  valueless `withdraw` row with `cause: matching_changed` is appended. It adds
+  no Activity row, revokes the decision's unclaimed authority, closes its
+  pending effect stale, and History says the field asked again because Book
+  matching changed what it offers.
+- **The level gate.** `review_case_level_reconciliation` records the level
+  each case was last reconciled at; no row reads as `identifier`.
+  `review_preparation_control.work_identity_level` holds the configured level
+  in both modes; a store save and, when they differ, startup request the check.
+  Until a case is reconciled at that level, every owner decision command on it
+  is refused with `offer_changed` (`unreconciled_case`), which also asks for
+  that case's check, and owner work-scope effects wait. A non-cover choice
+  whose bound digest no longer matches is refused with `offer_changed`
+  (`digest_mismatch`). Description advice selection is not gated; its effect
+  waits. The check has no ordering promise, because every unreconciled case is
+  gated. A field that gains level alternatives where live had none counts as
+  needing the owner in the works list and Attention.
+- **Readers.** Only the retained-decision validator and its readers, the
+  executor's authority check and the review API read the stored offers; no
+  automatic decision, consent, planning or write path reads level storage.
 

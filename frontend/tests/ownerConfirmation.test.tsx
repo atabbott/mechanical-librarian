@@ -14,6 +14,7 @@ it('confirms an off-page decision despite a pre-ack read and repeated case/resyn
     proposalId: field.proposalId,
     selectedValue: null,
     targetFingerprint: field.targetFingerprint,
+    offerDigest: field.offerDigest,
     idempotencyKey: 'diagnostic',
   })
   if (!('actor' in ack)) throw new Error('Title fixture requires a field decision acknowledgement')

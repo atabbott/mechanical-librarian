@@ -1154,3 +1154,31 @@ def test_a_cue_file_value_keeps_the_whitespace_its_track_name_keeps() -> None:
     assert _one(reading, evidence=evidence).refusals == ()
     collapsed = FileAssociationEvidence((), (), frozenset(), (" ".join(track.split()),))
     assert _one(reading, evidence=collapsed).refusals == (_R.OTHER_FILE,)
+
+
+def test_sidecar_belonging_unchanged_at_every_level() -> None:
+    """S7, test 23: a Book matching level never widens what a sidecar speaks
+    for. Belonging takes no configured level and reads none, so a respelled-initials
+    sidecar stays refused, with no facts, whatever the configured level."""
+    import inspect
+
+    from mechanical_librarian.domain import audio_sidecar_association
+
+    # Belonging applies ADR-0096's fixed `title_and_creator` comparison; it
+    # never names the configured level or the level derivation.
+    source = inspect.getsource(audio_sidecar_association)
+    assert source.count("WorkIdentityLevel.") == source.count(
+        "WorkIdentityLevel.TITLE_AND_CREATOR"
+    )
+    assert "work_identity_level=" not in source
+    assert "current_work_identity_level" not in source
+    assert "level_evidence" not in source
+    assert "level" not in inspect.signature(associate_sidecars).parameters
+    outcome = _one(
+        _reading(
+            "book.opf", _OPF, _fact(_F.ASIN, _OTHER_ASIN), creators=("R.F. Example",)
+        ),
+        _context(authors=(_INITIALS,)),
+    )
+    assert outcome.refusals == (_R.INITIALS_SPELLING,)
+    assert outcome.facts == ()

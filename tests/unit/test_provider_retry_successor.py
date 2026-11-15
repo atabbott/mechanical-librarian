@@ -3840,3 +3840,37 @@ def test_a_retry_whose_merge_drops_a_companion_book_still_publishes() -> None:
         "hardcover-work-0000000010"
     }
     assert len(merged.audio_editions) == 16
+
+
+def test_a_retried_work_lane_attributes_its_refused_answers(retry: _Retry) -> None:
+    """A retried WORK lane's refused answers are its new dispatch's (#1355)."""
+    plan, work, isbn, _overflow = _overflow_source(retry)
+    original = provider_observation(
+        "catalogue",
+        (
+            ProviderLaneResult(work, ProviderStatus.UNAVAILABLE),
+            ProviderLaneResult(isbn, ProviderStatus.NO_MATCH),
+        ),
+        authority="open_library",
+    )
+    refused = ProviderCandidate("refused-work", "work", ())
+    replacement = provider_observation(
+        "catalogue",
+        (
+            ProviderLaneResult(
+                work,
+                ProviderStatus.NO_MATCH,
+                identity_refused_candidates=(refused,),
+            ),
+        ),
+        authority="open_library",
+    )
+
+    merged = retry.service(None)._merged(plan, original, (work,), replacement)
+
+    recovered = next(lane for lane in merged.lanes if lane.identity == work.identity)
+    sibling = next(lane for lane in merged.lanes if lane.identity == isbn.identity)
+    assert (refused,) == merged.identity_refused_candidates
+    assert 0 == merged.identity_refused_truncated
+    assert (refused.identity,) == recovered.identity_refused_new
+    assert () == sibling.identity_refused_new

@@ -74,10 +74,15 @@ export const MatchingSettings = ({ http }: { http: ReviewHttp }) => {
 const checkLine = (view: SettingsView, levelChanged: boolean) => {
   const check = view.matching_check
   if (check === null) return ''
+  // File mode cannot save the setting; a restart checks it again (#1355).
+  const retry =
+    view.authority === 'file'
+      ? 'Restart the Mechanical Librarian service to retry.'
+      : 'Save the setting again to retry.'
   if (check.failed === 1)
-    return '1 work could not be checked against the new setting. Save the setting again to retry.'
+    return `1 work could not be checked against the new setting. Its changes wait for that check. ${retry}`
   if (check.failed > 1)
-    return `${String(check.failed)} works could not be checked against the new setting. Save the setting again to retry.`
+    return `${String(check.failed)} works could not be checked against the new setting. Their changes wait for those checks. ${retry}`
   if (check.checking > 0) return 'Works are being checked against the new setting.'
   if (levelChanged && check.current_works === 0) return 'No works needed checking.'
   return ''
@@ -184,7 +189,10 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
         }}
       />
       {draft === 'identifier' ? null : (
-        <p>Covers from these records say “Same title and author”. None is chosen automatically.</p>
+        <p>
+          A field that needs you also offers values from these records, and covers from them say
+          “Same title and author”. Mechanical Librarian does not choose them for you.
+        </p>
       )}
       <button
         disabled={locked || stale}
