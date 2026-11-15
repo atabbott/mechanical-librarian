@@ -449,8 +449,8 @@ Foreign keys are on and writes use `BEGIN IMMEDIATE` under the store's lock. A
 claim's rollback snapshot is kept only in process; durable history is the
 source of truth after restart. Maintainer commands that only read it open it
 read-only. The throttling read behind the masthead walks each waiting scope's
-current episode of events twice, for its reason and for when its wait began,
-so it grows with how long a source has been waiting. How recovery runs is in
+current episode of events, for its reason and for when its wait began, so it
+grows with how long a source has been waiting. How recovery runs is in
 [Provider recovery](../operations/provider-recovery.md).
 
 ## Provider-response database

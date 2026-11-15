@@ -6,6 +6,7 @@ import json
 import sqlite3
 import tempfile
 import threading
+from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
@@ -22,6 +23,7 @@ from mechanical_librarian.adapters.persistence.provider_recovery import (
     ProviderRecoveryStoreError,
     SQLiteProviderRecoveryStore,
 )
+from mechanical_librarian.application.configuration import ApplicationConfiguration
 from mechanical_librarian.application.metadata_report import CredentialError
 from mechanical_librarian.application.provider_recovery_activation import (
     ProviderRecoveryActivation,
@@ -40,6 +42,7 @@ from mechanical_librarian.application.review_application import (
 from mechanical_librarian.application.review_pipeline import ReviewPipelineError
 from mechanical_librarian.bootstrap.composition import (
     _provider_recovery_jobs,
+    _provider_throttling_reader,
     _record_provider_recovery_observations,
 )
 from mechanical_librarian.domain.failure_diagnostics import (
@@ -5538,26 +5541,54 @@ def _recover(store: SQLiteProviderRecoveryStore, now: int) -> None:
 
 
 def _retry_now_view(
-    path: Path, failure: str | None, *members: str
+    path: Path,
+    failure: str | None,
+    *members: str,
+    failures: Mapping[str, str] | None = None,
+    other: tuple[str, ...] = (),
 ) -> tuple[tuple[str, int, bool], dict[str, object]]:
-    """Press Retry now over waiting lookups, run it once, and read the view."""
+    """Press Retry now over waiting lookups, run it out, and read the view.
+
+    ``failures`` names the failure of single lookups; ``other`` names lookups
+    of a second connection of the same source.
+    """
     store = SQLiteProviderRecoveryStore.open(path)
     _fail(store, "transient", 0)
-    store.enqueue_jobs(tuple(_job(member) for member in members), enqueued_at=0)
+    jobs = tuple(_job(member) for member in members)
+    if other:
+        store.observe_failure(
+            connection="other",
+            adapter="google_books",
+            scope="books",
+            generation=1,
+            failure="transient",
+            now=0,
+            retry_after=None,
+        )
+        jobs += tuple(replace(_job(member), connection="other") for member in other)
+    store.enqueue_jobs(jobs, enqueued_at=0)
     # Retry now raises the generation; the waiting jobs move into it.
-    assert 1 == store.reconcile_generation(generation=2, now=10)
+    assert len({job.connection for job in jobs}) == store.reconcile_generation(
+        generation=2, now=10
+    )
+    raised: list[str] = []
 
-    def retry(*_: object) -> None:
-        if failure is not None:
+    def retry(_: object, job: ProviderRecoveryJob, *__: object) -> None:
+        cause = (failures or {}).get(job.member_id, failure)
+        if cause is not None:
+            raised.append(cause)
             raise RuntimeError("synthetic failure")
 
-    run = ScopedProviderRecoveryRunner(
+    runner = ScopedProviderRecoveryRunner(
         store=store,
         generation=2,
         retry=retry,
-        classify_failure=lambda _: (cast("str", failure), None),
+        classify_failure=lambda _: (raised[-1], None),
         clock=lambda: 10,
-    ).run_one(now=10, token="owner")
+    )
+    run = runner.run_one(now=10, token="owner")
+    while runner.run_one(now=10, token="owner").state != "idle":
+        pass
     view = provider_throttling_view(
         store.throttling_snapshot(), {}, 2, "available", store.answered_sources()
     )
@@ -5584,6 +5615,92 @@ def test_a_retry_whose_lookups_all_went_stale_does_not_read_as_answered(
     source = {"library": "books", "adapter": "google_books"}
     assert {**nothing, "answered": []} == stale
     assert {**nothing, "answered": [source]} == one == two
+
+
+_NOTHING_WAITING = {"generation": 2, "retry": "available", "entries": []}
+_BOOKS = {"library": "books", "adapter": "google_books"}
+
+
+@pytest.mark.parametrize(
+    ("failures", "other", "answered"),
+    [
+        # One lookup answered and two went stale.
+        ({"b": "stale", "c": "stale"}, (), []),
+        # One lookup answered and one ended in a terminal failure.
+        ({"b": "terminal_failure"}, (), []),
+        # One connection answered; every lookup of the other went stale.
+        ({"x": "stale", "y": "stale"}, ("x", "y"), []),
+        # Every lookup of both connections answered.
+        ({}, ("x", "y"), [_BOOKS]),
+    ],
+)
+def test_a_source_reads_as_answered_only_when_every_lookup_was(
+    tmp_path: Path,
+    failures: dict[str, str],
+    other: tuple[str, ...],
+    answered: list[dict[str, str]],
+) -> None:
+    """Nothing waits after any of these retries, so only ``answered`` tells a
+    source whose lookups all got an answer from one where some were dropped or
+    failed (#1494)."""
+    _, view = _retry_now_view(
+        tmp_path / "mixed.sqlite", None, "a", "b", "c", failures=failures, other=other
+    )
+    assert {**_NOTHING_WAITING, "answered": answered} == view
+
+
+def test_answered_sources_stop_at_the_cap_and_leave_the_rest_unnamed(
+    tmp_path: Path,
+) -> None:
+    """A source past the cap is left out, so the reader cannot take the
+    truncated list for proof that it was answered (#1494)."""
+    store = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
+    scopes = [f"library-{index:03d}" for index in range(257)]
+    for scope in scopes:
+        store.observe_failure(
+            connection="google",
+            adapter="google_books",
+            scope=scope,
+            generation=1,
+            failure="transient",
+            now=0,
+            retry_after=None,
+        )
+    store.enqueue_jobs(
+        tuple(replace(_job("a"), scope=scope) for scope in scopes), enqueued_at=0
+    )
+    with store._connection:
+        store._connection.execute("UPDATE provider_recovery_jobs SET state='complete'")
+    answered = store.answered_sources()
+    store.close()
+    assert [(scope, "google_books") for scope in scopes[:256]] == list(answered)
+
+
+def test_the_throttling_read_takes_the_snapshot_before_the_answered_sources() -> None:
+    """A lookup answered between the two reads then shows as answered and no
+    longer waiting, never as still waiting and missing from ``answered``."""
+    reads: list[str] = []
+
+    class Recovery:
+        def throttling_snapshot(self) -> tuple[dict[str, object], ...]:
+            reads.append("snapshot")
+            return ()
+
+        def answered_sources(self) -> tuple[tuple[str, str], ...]:
+            reads.append("answered")
+            return (("books", "google_books"),)
+
+    view = _provider_throttling_reader(
+        cast("SQLiteProviderRecoveryStore", Recovery()),
+        cast(
+            "ApplicationConfiguration",
+            SimpleNamespace(providers=(), provider_recovery_generation=2),
+        ),
+        {},
+        "available",
+    )()
+    assert ["snapshot", "answered"] == reads
+    assert {**_NOTHING_WAITING, "answered": [_BOOKS]} == view
 
 
 def test_waiting_since_is_the_first_event_of_the_current_wait(tmp_path: Path) -> None:
