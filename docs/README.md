@@ -71,6 +71,7 @@ How the pipeline prepares each work, stage by stage:
   [cold-start report](operations/cold-start-report.md),
   [work-route measurement](operations/work-route-measurement.md),
   [Hardcover series sample](operations/hardcover-series-sample.md),
+  [cover observation smoke](operations/cover-observation-smoke.md),
   [provider evidence replay](development/provider-evidence-replay.md),
   [reviewer cost measurement](development/reviewer-cost-measurement.md) and
   [recoverability qualification](development/recoverability-qualification.md)
