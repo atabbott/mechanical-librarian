@@ -1290,7 +1290,8 @@ html[data-reduced-motion='always-reduced'] :is(.route-state, .settings-state, .d
 .preparation-summary strong { font:700 .86rem/1.25 Georgia,'Times New Roman',serif; }
 .preparation-summary small { overflow-wrap:anywhere; color:var(--soft); font-size:.75rem; }
 .library-works { view-transition-name:works-index; }
-.preparation-detail { display:grid; gap:1.2rem; view-transition-name:preparation-detail; }
+/* One column no wider than the workspace, so a 320 px window at 200% text never scrolls sideways (#1864). */
+.preparation-detail { display:grid; grid-template-columns:minmax(0,1fr); gap:1.2rem; view-transition-name:preparation-detail; }
 .preparation-detail > header { display:flex; justify-content:space-between; gap:1rem; align-items:start; outline:none; }
 .preparation-detail > header h2,.preparation-section-heading h3 { margin:0; font-family:Georgia,'Times New Roman',serif; }
 .preparation-detail > header h2 { font-size:clamp(1.55rem,3vw,2rem); }
@@ -1300,11 +1301,13 @@ html[data-reduced-motion='always-reduced'] :is(.route-state, .settings-state, .d
 .preparation-run-state.reported-change { animation:preparation-confirmed .34s cubic-bezier(.16,1,.3,1); }
 .preparation-run-state.state-blocked,.preparation-run-state.state-completed_with_failures { border-color:var(--danger); background:color-mix(in srgb,var(--danger) 9%,var(--surface)); color:var(--danger); }
 .preparation-provenance { margin:-.75rem 0 0; color:var(--soft); font-size:.75rem; }
-.preparation-detail > section { display:grid; gap:.7rem; padding-top:1rem; border-top:1px solid var(--line); }
+.preparation-detail > section { display:grid; min-width:0; gap:.7rem; padding-top:1rem; border-top:1px solid var(--line); container-type:inline-size; }
 .preparation-section-heading { display:flex; align-items:end; justify-content:space-between; gap:1rem; }
 .preparation-section-heading h3 { font-size:1.05rem; }
 .preparation-section-heading p { margin:.2rem 0 0; color:var(--soft); font-size:.75rem; }
 .preparation-section-heading > span,.preparation-section-heading > strong { color:var(--soft); font-size:.75rem; }
+/* Enlarged text in a narrow section puts the count under its heading rather than past the edge (#1864). */
+@container (max-width:16em) { .preparation-section-heading { flex-wrap:wrap; row-gap:.25rem; } }
 .preparation-active-books,.preparation-completions { display:grid; gap:.45rem; margin:0; padding:0; list-style:none; }
 .preparation-active-books li { display:grid; grid-template-columns:auto minmax(0,1fr); align-items:center; gap:.65rem; min-height:52px; padding:.55rem .65rem; border:1px solid var(--line); border-radius:.65rem; background:var(--page); }
 .preparation-active-books li > span:last-child { display:grid; min-width:0; gap:.1rem; }
@@ -1477,7 +1480,7 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 
 /* Library's Covers view (#1633): tabs with counts, the queue beside the open
    book, the Switched list and the All wall. On a phone the list comes first
-   and an open book replaces it, with Back to books. */
+   and an open book replaces it, with Back to works. */
 .library-view-switch { margin:0 0 .75rem; }
 .library-view-switch .cm-segmented { display:inline-flex; flex-wrap:wrap; max-width:100%; border-radius:999px; }
 /* The side padding gives way on a narrow screen with enlarged text, so the switch never widens the page. */
@@ -1503,6 +1506,8 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 .covers-queue-item > span:not(.status-pill, .covers-image-missing) { display:grid; justify-items:start; min-width:0; }
 .covers-queue-item strong { overflow-wrap:anywhere; }
 .covers-queue-item small { color:var(--soft); }
+/* A hold's pill is its own row under the title and status, so it has their width (#1866). */
+.covers-queue-item > .covers-queue-hold { grid-column:2 / -1; justify-self:start; }
 .covers-comparison { display:grid; gap:.75rem; min-width:0; }
 .covers-comparison header h2 { margin:0; font-size:1.1rem; }
 .covers-comparison header p, .covers-comparison header small { margin:0; color:var(--soft); }

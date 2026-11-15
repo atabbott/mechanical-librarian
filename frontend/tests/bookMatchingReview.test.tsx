@@ -453,8 +453,15 @@ it('labels Book matching’s Activity notes and gives only their sentences in De
         },
         {
           event_id: 'owner-asked-matching',
+          state: 'verified',
           note: 'asked_again_matching',
           work_label: 'Matching Work',
+        },
+        {
+          event_id: 'owner-asked-matching-unwritten',
+          state: 'accept',
+          note: 'asked_again_matching',
+          work_label: 'Unwritten Work',
         },
       ],
     }),
@@ -476,11 +483,21 @@ it('labels Book matching’s Activity notes and gives only their sentences in De
     ),
   ).toBeVisible()
   await user.click(within(asked).getByRole('button', { name: /asked again/u }))
+  // A choice already written and verified stays in Audiobookshelf (#1355).
   expect(
     within(asked).getByText(
+      'Book matching changed what this field offers, so this choice no longer counts and the field is asking you again. Audiobookshelf keeps the value already written.',
+    ),
+  ).toBeVisible()
+  const unwritten = await row('Unwritten Work')
+  expect(within(unwritten).getByText('Asked again')).toBeVisible()
+  await user.click(within(unwritten).getByRole('button', { name: /asked again/u }))
+  expect(
+    within(unwritten).getByText(
       'Book matching changed what this field offers, so this choice no longer counts and the field is asking you again.',
     ),
   ).toBeVisible()
+  expect(within(unwritten).queryByText(/Audiobookshelf keeps the value/u)).toBeNull()
   // No sentence repeats its label as a prefix (amendment 11).
   expect(screen.queryByText(/^Waiting for check:/u)).toBeNull()
   expect(screen.queryByText(/^Asked again:/u)).toBeNull()

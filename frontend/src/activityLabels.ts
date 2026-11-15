@@ -78,6 +78,13 @@ export const noteSentence: Record<ActivityNote, string> = {
   waiting_for_check:
     'Book matching changed, so this change waits until this work is checked again.',
 }
+// Details' sentence for a row's note. A choice Book matching no longer counts
+// that was already written and verified stays in Audiobookshelf, so Details
+// says so (#1355).
+export const noteDetail = (note: ActivityNote, state: string) =>
+  note === 'asked_again_matching' && state === 'verified'
+    ? `${noteSentence[note]} Audiobookshelf keeps the value already written.`
+    : noteSentence[note]
 // A ledger day heading; each row under it states only its time.
 export const dayHeading = (value: number | null) =>
   value === null ? 'Date not recorded' : formatDay(value)

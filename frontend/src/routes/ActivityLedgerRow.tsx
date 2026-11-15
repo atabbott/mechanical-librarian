@@ -2,7 +2,7 @@ import { useMutation } from '@tanstack/react-query'
 import { useRef, useState, type ReactNode } from 'react'
 import { BuildMismatchError } from '../api/http'
 import type { ActivityEventView, ActivityTransitionView } from '../api/http'
-import { categoryLabel, noteLabel, noteSentence, stateLabel } from '../activityLabels'
+import { categoryLabel, noteDetail, noteLabel, stateLabel } from '../activityLabels'
 import { RecordedTime } from '../components/RecordedTime'
 import { StaleBuildRead } from '../components/StaleBuildRead'
 import { formatWhen } from '../dates'
@@ -338,7 +338,7 @@ export function ActivityEventRow({
           id={`activity-evidence-${event.event_id}`}
         >
           {event.note ? (
-            <p className="cm-activity-note-detail">{noteSentence[event.note]}</p>
+            <p className="cm-activity-note-detail">{noteDetail(event.note, event.state)}</p>
           ) : null}
           {event.policy_changes.length ? (
             <section

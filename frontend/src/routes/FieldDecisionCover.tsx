@@ -437,6 +437,11 @@ function LibraryCoverChoicesContent({
     // The original a switch replaced is this book's own cover from before, so
     // it carries no match claim and is named for what it is (#1363).
     const retained = candidate.candidateKind === 'retained'
+    // A held current cover whose own source names another book reads as the
+    // contradiction, keyed on the stage so it stays keepable (#1866).
+    const contradicted =
+      candidate.contradiction !== undefined ||
+      (candidate.incumbent && stageReason === 'current_contradicted')
     return (
       <article
         className={`cover-choice${open ? ' is-evidence-open' : ''}${candidate.matchState === 'match_not_confirmed' && !retained ? ' is-unconfirmed' : ''}`}
@@ -485,7 +490,7 @@ function LibraryCoverChoicesContent({
             <strong>
               {retained
                 ? coverSourceLabels.retained
-                : candidate.contradiction
+                : contradicted
                   ? 'Contradicts this book'
                   : candidate.matchState === 'same_edition'
                     ? 'Same edition'
@@ -496,7 +501,7 @@ function LibraryCoverChoicesContent({
                         ? 'Same title and author'
                         : 'Match not confirmed'}
               {/* The identity stays unverified: only the wording names its basis (#1642). */}
-              {candidate.matchReason === 'matched_book' && !candidate.contradiction
+              {candidate.matchReason === 'matched_book' && !contradicted
                 ? ' · recording not confirmed'
                 : ''}
             </strong>
@@ -590,10 +595,14 @@ function LibraryCoverChoicesContent({
         {/* The recommended card carries its own reason, so its header has no
             caption (#1765); a suggestion's fault pill is its only reason. A
             kept cover with a fault shows the pill alone, since "no fault" would
-            contradict it (#1363). Once the owner has chosen, the stage says
-            nothing beside their choice (#1362). */}
+            contradict it (#1363), and so does a current cover whose own source
+            names another book (#1866). Once the owner has chosen, the stage
+            says nothing beside their choice (#1362). */}
         {recommendedReference !== null ||
         (!consideration.providerFetching && field.humanDecision) ||
+        (!consideration.providerFetching &&
+          stage?.outcome === 'hold' &&
+          stageReason === 'current_contradicted') ||
         (consideration.ready &&
           !consideration.providerFetching &&
           stage?.outcome === 'keep' &&
@@ -602,13 +611,11 @@ function LibraryCoverChoicesContent({
             {consideration.providerFetching
               ? 'Covers found so far are shown. You can choose when the search finishes.'
               : stage?.outcome === 'hold'
-                ? stageReason === 'current_contradicted'
-                  ? 'A source of the current cover names a different book.'
-                  : 'The title names a different book from most covers. Check the title first.'
+                ? 'The title names a different book from most covers. Check the title first.'
                 : stage?.outcome === 'keep' &&
                     stageReason === null &&
                     consideration.incumbent.state === 'unavailable'
-                  ? 'Audiobookshelf did not return the current cover. It is kept until the next scan.'
+                  ? 'Audiobookshelf did not return the current cover, so Mechanical Librarian keeps it until the next scan.'
                   : consideration.ready && stage?.outcome === 'keep'
                     ? 'The current cover has no fault, so it is kept.'
                     : 'Only confirmed matches can be recommended.'}

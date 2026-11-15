@@ -5761,8 +5761,9 @@ describe('Library route', () => {
     }
 
     // A current cover whose own source names another book is held with its
-    // own pill and sentence; a read that settled nothing says so, not "no
-    // fault"; once the owner has chosen, the stage says nothing (#1362).
+    // own pill alone, and its card says it contradicts the book (#1866); a
+    // read that settled nothing says so, not "no fault"; once the owner has
+    // chosen, the stage says nothing (#1362).
     const stageReady = {
       ...consideration,
       providerFetching: false,
@@ -5790,7 +5791,7 @@ describe('Library route', () => {
           },
         },
         "Cover's source names another book",
-        'A source of the current cover names a different book.',
+        null,
       ],
       [
         {
@@ -5801,7 +5802,7 @@ describe('Library route', () => {
           },
         },
         null,
-        'Audiobookshelf did not return the current cover. It is kept until the next scan.',
+        'Audiobookshelf did not return the current cover, so Mechanical Librarian keeps it until the next scan.',
       ],
       [
         {
@@ -5839,6 +5840,17 @@ describe('Library route', () => {
       const caption = comparison.querySelector(':scope > header > small')
       if (sentence === null) expect(caption).toBeNull()
       else expect(caption).toHaveTextContent(sentence)
+      expect(comparison).not.toHaveTextContent(
+        'A source of the current cover names a different book.',
+      )
+      // The held current card names the contradiction, with no line saying
+      // it cannot be chosen (#1866).
+      const currentCard = comparison.querySelector<HTMLElement>('.library-cover-card.is-current')
+      if (pill !== null) {
+        expect(currentCard?.querySelector('strong')).toHaveTextContent(/^Contradicts this book$/u)
+        expect(currentCard?.querySelector('.choice-recommendation')).toBeNull()
+      } else if (currentCard?.querySelector('strong'))
+        expect(currentCard.querySelector('strong')).not.toHaveTextContent('Contradicts this book')
       expect(
         within(comparison).queryByText('The current cover has no fault, so it is kept.'),
       ).not.toBeInTheDocument()
@@ -6763,6 +6775,130 @@ describe('Library route', () => {
     },
   )
 
+  // A current cover Mechanical Librarian could not read is still the owner's
+  // to keep: a transient read, a 404 and refused bytes each record the keep
+  // and show it as their choice (#1865).
+  it.each([
+    ['a transient read', { outcome: 'keep' as const, reason: null }, []],
+    [
+      'a missing image',
+      { outcome: 'suggest' as const, reason: 'unreadable' as const },
+      [{ reason: 'source_absent' }],
+    ],
+    [
+      'refused bytes',
+      { outcome: 'suggest' as const, reason: 'unreadable' as const },
+      [{ reason: 'source_decode_failed', original_digest: 'd'.repeat(64) }],
+    ],
+  ])('records a keep of an unread current cover after %s', async (_case, stage, omissions) => {
+    const user = userEvent.setup()
+    const base = detail.fields[0]
+    if (!base) throw new Error('cover fixture requires a field')
+    const reference = `cover_transport_ref_${'a'.repeat(64)}`
+    const coverField = {
+      ...base,
+      destination: 'cover' as const,
+      proposalId: 'proposal-cover',
+      targetFingerprint: 'fingerprint-cover',
+      proposedValues: [{ kind: 'cover' as const, value: `cover_${'a'.repeat(64)}` }],
+      coverConsideration: {
+        id: `cover_consideration_${'k'.repeat(64)}`,
+        choiceContexts: [],
+        current: true,
+        candidates: [
+          {
+            artifactId: `cover_${'a'.repeat(64)}`,
+            candidateKind: 'candidate' as const,
+            deterministicCitations: ['citation-a'],
+            deterministicRank: 1,
+            deterministicRankKey: [1, 0, -960000, -800, -1200, 1, reference],
+            height: 1200,
+            identity: { outcome: 'verified_work_match' },
+            incumbent: false,
+            matchState: 'same_book' as const,
+            observation: null,
+            originalSha256: 'a'.repeat(64),
+            ordinal: 1,
+            previewSha256: 'a'.repeat(64),
+            reference,
+            selectable: true,
+            manualEligible: true,
+            sourceKinds: ['open_library' as const],
+            state: 'acceptable' as const,
+            width: 800,
+          },
+        ],
+        incumbent: { reference: null, state: 'unavailable' as const },
+        omissions,
+        policy: null,
+        stage: { language: null, ...stage },
+        policyPreferences: {
+          avoidPromotionalText: false,
+          avoidTieInBranding: false,
+          preferMinimalComposition: false,
+        },
+        policyReference: `cover_policy_${'k'.repeat(64)}`,
+        providerFetching: false,
+        ready: true,
+        reviewerAccessRevision: null,
+        reviewerEngine: null,
+        reviewerModel: null,
+        reviewerStatus: 'unavailable' as const,
+        reviewerUnavailableReason: null,
+        targetFingerprint: 'fingerprint-cover',
+      },
+    }
+    const decision = {
+      actor: 'owner' as const,
+      application: 'apply' as const,
+      application_reason: null,
+      decision_id: 'decision-cover',
+      destination: 'cover' as const,
+      occurred_at: 1,
+      outcome: 'keep_current' as const,
+      proposal_id: coverField.proposalId,
+      review_case_id: 'case-1',
+      selected_value: null,
+      target_fingerprint: coverField.targetFingerprint,
+    }
+    let current: CaseDetailView = { ...detail, fields: [coverField] }
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => current),
+      recordDecision: vi.fn<ReviewHttp['recordDecision']>(async () => {
+        current = {
+          ...detail,
+          fields: [{ ...coverField, needsAttention: false, humanDecision: decision }],
+        }
+        return {
+          ...decision,
+          confirmation: { status: 'confirmed' as const, case: current },
+          invalidation_sequences: [],
+          schema_version: 'review-decision-v1' as const,
+        }
+      }),
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=cover', http)
+
+    const keep = await screen.findByRole('radio', { name: 'Keep current cover' })
+    expect(keep).toBeEnabled()
+    await user.click(keep)
+    await waitFor(() => expect(http.recordDecision).toHaveBeenCalledOnce())
+    expect(vi.mocked(http.recordDecision).mock.calls[0]?.[1]).toMatchObject({
+      destination: 'cover',
+      outcome: 'keep_current',
+      selectedValue: null,
+    })
+    // The recorded keep is the field's decision; opened again, the card
+    // shows it as the owner's choice.
+    expect(await screen.findByText(/Current value kept/u)).toBeVisible()
+    cleanup()
+    renderRoute('/library?lens=all&preview=case-1&field=cover', http)
+    const kept = await screen.findByRole('radio', { name: 'Keep current cover' })
+    expect(kept).toHaveTextContent('Your choice')
+    expect(kept).toHaveAttribute('aria-checked', 'true')
+  })
+
   it('closes cached cover evidence after client-side A to B to A work navigation', async () => {
     const user = userEvent.setup()
     const baseField = detail.fields[0]
@@ -7014,11 +7150,20 @@ describe('Library route', () => {
       'The cover comparison could not be prepared. Nothing was changed.',
     )
     expect(prepare).toBeEnabled()
+    await waitFor(() => expect(http.getAttention).toHaveBeenCalled())
+    const libraryReads = vi.mocked(http.getLibrary).mock.calls.length
+    const attentionReads = vi.mocked(http.getAttention).mock.calls.length
     await user.click(prepare)
     await waitFor(() => expect(retryCoverConsideration).toHaveBeenCalledTimes(2))
     expect(retryCoverConsideration).toHaveBeenLastCalledWith('case-1')
     expect(await screen.findByLabelText('Choose a cover')).toBeVisible()
     expect(screen.getByText('Choices').nextElementSibling).toHaveTextContent('2')
+    // A prepared comparison can change what the work asks, so Library and
+    // Attention counts are read again, as after a decision (#1866).
+    await waitFor(() => {
+      expect(vi.mocked(http.getLibrary).mock.calls.length).toBeGreaterThan(libraryReads)
+      expect(vi.mocked(http.getAttention).mock.calls.length).toBeGreaterThan(attentionReads)
+    })
   })
 
   it('offers to prepare a comparison for a kept cover that asks for nothing', async () => {

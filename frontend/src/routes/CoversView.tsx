@@ -32,14 +32,24 @@ import { LibraryCoverChoices } from './FieldDecisionCover'
 // asks of the owner. Each choice is one gesture through the book's own
 // decision command; nothing here acts on more than one book.
 
+// A cover the owner chose that is not yet written is their choice, not a kept
+// cover; it is listed only under All (#1866).
 const groupLabels = {
   proposal: 'Switch suggested',
   choice: 'Choose',
+  chosen: 'Your choice',
   kept: 'Kept',
   auto: 'Switched',
   none: 'One cover',
 } satisfies Record<CoverWorkView['group'], string>
-const groupOrder: readonly CoverWorkView['group'][] = ['proposal', 'choice', 'kept', 'auto', 'none']
+const groupOrder: readonly CoverWorkView['group'][] = [
+  'proposal',
+  'choice',
+  'chosen',
+  'kept',
+  'auto',
+  'none',
+]
 const tabLabels = {
   decide: 'To decide',
   kept: 'Kept',
@@ -53,9 +63,11 @@ const emptyCopy = {
   // All holds every work under review, so it is empty only when Works is.
   all: 'No works yet.',
 } satisfies Record<CoverTab, string>
-const staleCopy = "This book's covers changed since the page loaded. Nothing was changed."
-const lostCopy = 'No answer came back. Check whether the cover was changed before choosing again.'
-const question = 'Which cover should this book use?'
+const staleCopy = "This work's covers changed since the page loaded. Nothing was changed."
+const lostCopy =
+  'No answer came back. Check whether your choice was recorded before choosing again.'
+const refusedCopy = 'Your choice was not recorded. Choose again.'
+const question = 'Which cover should this work use?'
 // The width at and below which an open book replaces the list.
 const compactQuery = '(max-width: 1024px)'
 const wide = () =>
@@ -71,10 +83,14 @@ const rowFault = (work: CoverWorkView) =>
   work.group === 'auto'
     ? (work.switched?.reason ?? null)
     : (work.suggestion?.reason ?? work.hold?.reason ?? null)
-function FaultPill({ work }: { work: CoverWorkView }) {
+function FaultPill({ work, className }: { work: CoverWorkView; className?: string }) {
   const fault = rowFault(work)
   const label = fault === null ? null : coverFaultLabel(fault, audiobook(work))
-  return label === null ? null : <StatusPill tone="notice">{label}</StatusPill>
+  return label === null ? null : (
+    <StatusPill tone="notice" {...(className ? { className } : {})}>
+      {label}
+    </StatusPill>
+  )
 }
 const dayMonth = (seconds: number) =>
   new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short' }).format(
@@ -131,7 +147,7 @@ const failureOf = (error: unknown, field: ReviewField | undefined): Failure =>
     ? { kind: 'stale' }
     : uncertainWriteOutcome(error)
       ? { kind: 'message', text: lostCopy }
-      : { kind: 'message', text: ownerRefusalCopy(error, field) ?? refusalCopy(error, lostCopy) }
+      : { kind: 'message', text: ownerRefusalCopy(error, field) ?? refusalCopy(error, refusedCopy) }
 
 // The book's own decision command, exactly as its page sends it.
 const coverCommand = (
@@ -196,11 +212,14 @@ function CoverImage({
   cover,
   unreadable,
   alt = '',
+  missingAlt = alt,
   quiet = false,
 }: {
   cover: { url: string } | null
   unreadable: boolean
   alt?: string
+  /** The frame's name when no preview shows: what is missing, not the image. */
+  missingAlt?: string
   /** Too small to hold the words: the frame alone, the state read beside it. */
   quiet?: boolean
 }) {
@@ -219,7 +238,7 @@ function CoverImage({
     )
   const state = cover || unreadable ? 'Image unavailable' : 'No cover'
   return alt ? (
-    <span className="covers-image-missing" role="img" aria-label={alt}>
+    <span className="covers-image-missing" role="img" aria-label={missingAlt}>
       {state}
     </span>
   ) : (
@@ -313,7 +332,7 @@ function CoverComparison({
     <section className="covers-comparison" aria-labelledby={`covers-book-${work.review_case_id}`}>
       {onBack ? (
         <button className="covers-back" type="button" onClick={onBack}>
-          Back to books
+          Back to works
         </button>
       ) : null}
       <header>
@@ -386,6 +405,7 @@ const reasonLine = (work: CoverWorkView) =>
         before: work.switched.before,
         after: work.cover,
         language: work.switched.language,
+        filled: work.switched.filled,
       })
     : null
 function SwitchedRow({
@@ -490,7 +510,12 @@ function SwitchedRow({
         ) : (
           // A replacement always had a cover; with no preview to show, it is
           // unavailable, never "No cover".
-          <CoverImage cover={switched.before} unreadable alt="Previous cover" />
+          <CoverImage
+            cover={switched.before}
+            unreadable
+            alt="Previous cover"
+            missingAlt="Previous cover unavailable"
+          />
         )}
         <figcaption>
           Before
@@ -502,7 +527,14 @@ function SwitchedRow({
         →
       </span>
       <figure>
-        <CoverImage cover={work.cover} unreadable={work.unreadable_cover} alt="Cover now" />
+        <CoverImage
+          cover={work.cover}
+          unreadable={work.unreadable_cover}
+          alt="Cover now"
+          missingAlt={
+            work.cover || work.unreadable_cover ? 'Current cover unavailable' : 'No cover'
+          }
+        />
         <figcaption>
           Now
           {work.cover ? <small>{size(work.cover)}</small> : null}
@@ -625,8 +657,10 @@ function QueueItem({
         <span>
           <strong>{work.title}</strong>
           <small>{byline(work)}</small>
-          <CoverStateText work={work} />
-          {done ? null : <FaultPill work={work} />}
+          {/* The 48 px frame is too small for the words, so the state is read here. */}
+          {work.cover ? null : (
+            <small>{work.unreadable_cover ? 'Image unavailable' : 'No cover'}</small>
+          )}
         </span>
         <StatusPill
           tone={
@@ -639,6 +673,8 @@ function QueueItem({
         >
           {done ? 'Reviewed' : groupLabels[work.group]}
         </StatusPill>
+        {/* Its own row under the title and status, so a long hold stays on one line. */}
+        {done ? null : <FaultPill work={work} className="covers-queue-hold" />}
       </button>
     </li>
   )
