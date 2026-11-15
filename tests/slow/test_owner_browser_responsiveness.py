@@ -216,9 +216,10 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
                         # its cover alone. As the fixture does for cases[1],
                         # the owner has already kept every title it asks
                         # about, so each work left in attention asks about
-                        # its cover and leaves once that is answered.
+                        # its cover and leaves once that is answered. The
+                        # last case is left for the external actors.
                         for case in fixture.cases:
-                            if case is fixture.cases[1]:
+                            if case is fixture.cases[1] or case is fixture.cases[-1]:
                                 continue
                             title = next(
                                 value
