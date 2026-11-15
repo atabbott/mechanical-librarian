@@ -666,6 +666,7 @@ def test_taste_profile(tmp_path) -> None:
                 "input_sha256": "0" * 64,
                 "truncated": False,
             },
+            failure="invalid_output",
         )
         service = CoverTasteBuildService(
             repository.cover_taste_store,
@@ -676,6 +677,18 @@ def test_taste_profile(tmp_path) -> None:
         )
         with _signed_in(tmp_path, repository, access, cover_taste=service) as live:
             capture = live.call("GET", "/api/v1/covers/taste")
+            # An owner edit writes version 2 at once (#1372 PR 2).
+            edited = live.call(
+                "POST",
+                "/api/v1/covers/taste/rules",
+                {
+                    "version": 1,
+                    "action": "edit",
+                    "number": 1,
+                    "text": "Bold illustrated art, never photography.",
+                },
+            )
     finally:
         repository.close()
     _expect_wire("get-covers-taste", capture, {})
+    _expect_wire("post-covers-taste-rules", edited, {})

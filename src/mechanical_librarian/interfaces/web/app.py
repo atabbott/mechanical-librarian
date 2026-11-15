@@ -31,6 +31,7 @@ from urllib.parse import quote, urlsplit
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
 from fastapi import (
+    Body,
     Cookie,
     Depends,
     FastAPI,
@@ -116,9 +117,12 @@ from mechanical_librarian.application.reviewer_contracts import (
 from mechanical_librarian.domain.audio_health import MAX_HEALTH_OBSERVATIONS
 from mechanical_librarian.domain.cover_taste import (
     MAX_TASTE_RULE_CODE_POINTS,
+    MAX_TASTE_RULE_NUMBER,
     MAX_TASTE_RULES,
     TASTE_FIRST_BUILD_DECISIONS,
     TasteBuildFailure,
+    TasteEditRefusal,
+    TasteProvenance,
     TasteSection,
 )
 from mechanical_librarian.domain.description_advice import (
@@ -271,6 +275,10 @@ class _LoginRequest(BaseModel):
 
 
 REVIEW_SESSION_SCHEMA: Final = "review-session-v1"
+ReviewTasteProfileSchemaVersion = Literal["review-taste-profile-v2"]
+REVIEW_TASTE_PROFILE_SCHEMA: Final[ReviewTasteProfileSchemaVersion] = (
+    "review-taste-profile-v2"
+)
 MetadataPolicyNotebookSchemaVersion = Literal["metadata-policy-notebook-v2"]
 METADATA_POLICY_NOTEBOOK_SCHEMA: Final[MetadataPolicyNotebookSchemaVersion] = (
     "metadata-policy-notebook-v2"
@@ -1506,18 +1514,26 @@ class _CoverCounts(_ClosedModel):
 
 
 class _TasteRule(_ClosedModel):
-    number: StrictInt = Field(ge=1, le=MAX_TASTE_RULES)
+    number: StrictInt = Field(ge=1, le=MAX_TASTE_RULE_NUMBER)
     section: TasteSection
     text: StrictStr = Field(min_length=1, max_length=MAX_TASTE_RULE_CODE_POINTS)
+    provenance: TasteProvenance
 
 
 class _TasteVersion(_ClosedModel):
     version: StrictInt = Field(ge=1)
-    built_at: StrictInt = Field(ge=0)
+    # `edited` is a version an owner edit wrote; it keeps its build's facts.
+    kind: Literal["built", "edited"]
+    created_at: StrictInt = Field(ge=0)
     decisions: StrictInt = Field(ge=0, le=50)
 
 
-class _TasteProfileVersion(_TasteVersion):
+class _TasteProfileVersion(_ClosedModel):
+    version: StrictInt = Field(ge=1)
+    kind: Literal["built", "edited"]
+    # When the build this version keeps was written.
+    built_at: StrictInt = Field(ge=0)
+    decisions: StrictInt = Field(ge=0, le=50)
     rules: list[_TasteRule] = Field(max_length=MAX_TASTE_RULES)
 
 
@@ -1530,10 +1546,10 @@ class _TasteBuild(_ClosedModel):
 
 
 class _TasteProfileResponse(_ClosedModel):
-    """Covers → Taste profile, read-only (#1372). It never carries a path,
-    title, reference or anything the model saw."""
+    """Covers → Taste profile (#1372). It never carries a path, title,
+    reference or anything the model saw."""
 
-    schema_version: Literal["review-taste-profile-v1"]
+    schema_version: ReviewTasteProfileSchemaVersion
     configured: StrictBool
     chosen: StrictInt = Field(ge=0)
     required: Literal[25]
@@ -1547,11 +1563,43 @@ class _TasteRetryRequest(_ClosedModel):
     build_id: StrictStr = Field(pattern=r"^taste_build_[0-9a-f]{32}$")
 
 
+# One owner edit of the version shown (#1372 PR 2 S10). The pydantic models
+# bound only shape: the text rule and the profile's bounds answer closed codes
+# from the application, so `text` is capped well above 400 code points.
+class _TasteRuleEdit(_ClosedModel):
+    version: StrictInt = Field(ge=1)
+    action: Literal["edit"]
+    number: StrictInt = Field(ge=1, le=MAX_TASTE_RULE_NUMBER)
+    text: StrictStr = Field(max_length=4096)
+
+
+class _TasteRuleAdd(_ClosedModel):
+    version: StrictInt = Field(ge=1)
+    action: Literal["add"]
+    section: TasteSection
+    text: StrictStr = Field(max_length=4096)
+
+
+class _TasteRuleRemove(_ClosedModel):
+    version: StrictInt = Field(ge=1)
+    action: Literal["remove"]
+    number: StrictInt = Field(ge=1, le=MAX_TASTE_RULE_NUMBER)
+
+
+_TASTE_EDIT_REFUSALS: frozenset[TasteEditRefusal] = frozenset(
+    {"rule_empty", "rule_too_long", "rule_text", "rule_limit", "profile_full"}
+)
+
+
 def _taste_response(data: dict[str, object]) -> _TasteProfileResponse:
     versions = cast("list[tuple[int, int, dict[str, Any]]]", data["versions"])
     build = cast("dict[str, object] | None", data["build"])
+
+    def kind(document: dict[str, Any]) -> Literal["built", "edited"]:
+        return "built" if document["source"] == "build" else "edited"
+
     return _TasteProfileResponse(
-        schema_version="review-taste-profile-v1",
+        schema_version=REVIEW_TASTE_PROFILE_SCHEMA,
         configured=cast(bool, data["configured"]),
         chosen=cast(int, data["eligible"]),
         required=TASTE_FIRST_BUILD_DECISIONS,
@@ -1565,22 +1613,19 @@ def _taste_response(data: dict[str, object]) -> _TasteProfileResponse:
         if not versions
         else _TasteProfileVersion(
             version=versions[0][0],
-            built_at=versions[0][1],
+            kind=kind(versions[0][2]),
+            built_at=versions[0][2]["built_at"],
             decisions=versions[0][2]["input"]["included"],
-            rules=[
-                _TasteRule(
-                    number=rule["number"], section=rule["section"], text=rule["text"]
-                )
-                for rule in versions[0][2]["rules"]
-            ],
+            rules=[_TasteRule.model_validate(rule) for rule in versions[0][2]["rules"]],
         ),
         versions=[
             _TasteVersion(
                 version=version,
-                built_at=built_at,
+                kind=kind(document),
+                created_at=created_at,
                 decisions=document["input"]["included"],
             )
-            for version, built_at, document in versions
+            for version, created_at, document in versions
         ],
     )
 
@@ -2953,6 +2998,9 @@ _BODY_PATH_LIMITS = {
     "/api/v1/reviewer-access/description-model/test": 4096,
     "/api/v1/reviewer-access/taste-model/test": 4096,
     "/api/v1/covers/taste/retry": 2048,
+    # A 400-code-point rule, even with every code point escaped as JSON
+    # surrogate pairs, plus its version, number and framing (#1372 PR 2).
+    "/api/v1/covers/taste/rules": 8192,
     "/api/v1/reviewer-access/selection": 2048,
     "/api/v1/reviewer-access/codex/device": 2048,
     "/api/v1/reviewer-access/codex/recheck": 2048,
@@ -4756,6 +4804,44 @@ def _register_taste_routes(
             status = 409 if error.code == "stale" else 503
             raise HTTPException(status, detail={"code": error.code}) from None
         except ReviewerAccessApplicationError:
+            raise HTTPException(503, detail={"code": "unavailable"}) from None
+
+    @app.post(
+        "/api/v1/covers/taste/rules",
+        response_model=_TasteProfileResponse,
+        responses={
+            status: {"model": _ErrorResponse}
+            for status in (401, 403, 409, 413, 422, 503)
+        },
+    )
+    def edit_taste_rule(
+        request: Annotated[
+            _TasteRuleEdit | _TasteRuleAdd | _TasteRuleRemove,
+            Body(discriminator="action"),
+        ],
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> _TasteProfileResponse:
+        """Edit, add or remove one rule of the version shown; each saved
+        change is a new version at once. Errors carry only a closed code."""
+        _require_session(application, ml_session, x_csrf_token)
+        try:
+            application.edit_taste_rule(
+                request.version,
+                request.action,
+                getattr(request, "number", None),
+                getattr(request, "section", None),
+                getattr(request, "text", None),
+            )
+        except ReviewApplicationError as error:
+            if error.code == "stale":
+                raise HTTPException(409, detail={"code": "stale"}) from None
+            if error.code in _TASTE_EDIT_REFUSALS:
+                raise HTTPException(422, detail={"code": error.code}) from None
+            raise HTTPException(503, detail={"code": "unavailable"}) from None
+        try:
+            return _taste_response(application.taste_profile())
+        except (ReviewApplicationError, ReviewerAccessApplicationError):
             raise HTTPException(503, detail={"code": "unavailable"}) from None
 
 
