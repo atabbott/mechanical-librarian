@@ -14078,6 +14078,43 @@ def test_measured_cover_rules_keep_or_suggest_through_covers(
                     assert layout["pills"] == 2, layout
                     assert layout["right"] <= layout["viewport"], layout
                     assert layout["overlap"] == 0, layout
+                    # The five Covers tabs stay one row that scrolls sideways
+                    # rather than a stack of rows before the list (#1372).
+                    tabs_row = cast(
+                        "dict[str, float]",
+                        tabs.evaluate(
+                            """nav => {
+                              const buttons = [...nav.querySelectorAll('button')]
+                              const tops = new Set(buttons.map(b => Math.round(b.getBoundingClientRect().top)))
+                              const page = document.scrollingElement
+                              return {
+                                rows: tops.size,
+                                height: nav.getBoundingClientRect().height,
+                                button: buttons[0].getBoundingClientRect().height,
+                                overflow: page.scrollWidth - page.clientWidth,
+                              }
+                            }"""
+                        ),
+                    )
+                    assert tabs_row["rows"] == 1, tabs_row
+                    assert tabs_row["height"] < 2 * tabs_row["button"], tabs_row
+                    assert tabs_row["overflow"] <= 0, tabs_row
+                    # Choosing the last tab brings it into the row's view.
+                    tabs.evaluate(
+                        "nav => [...nav.querySelectorAll('button')].at(-1).click()"
+                    )
+                    expect(
+                        tabs.get_by_role("button", name="Taste profile", pressed=True)
+                    ).to_be_visible()
+                    page.wait_for_function(
+                        """() => {
+                          const nav = document.querySelector('.covers-tabs')
+                          const tab = nav.querySelector('[aria-pressed="true"]')
+                          const row = nav.getBoundingClientRect()
+                          const box = tab.getBoundingClientRect()
+                          return box.left >= row.left - 1 && box.right <= row.right + 1
+                        }"""
+                    )
                     set_root_text(page, "")
                     page.set_viewport_size({"width": 1280, "height": 900})
                     page.goto(f"{origin}/library?lens=all&view=covers&tab={tab}")

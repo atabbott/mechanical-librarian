@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { ModelPicker } from './ModelPicker'
 
@@ -115,6 +115,13 @@ function TasteModelSection({ http, view }: { http: ReviewHttp; view: ReviewerAcc
   const taste = useTasteModel(http, view)
   const { model, key, metadata, test, selection, without, latest, failureUnder } = taste
   const busy = test.isPending || selection.isPending || without.isPending
+  const saved = latest === 'selection' && selection.isSuccess
+  // The pressed button goes disabled once the test it needs is spent, so focus
+  // moves to the line that says the model was saved instead of to the page.
+  const savedLine = useRef<HTMLParagraphElement>(null)
+  useEffect(() => {
+    if (saved) savedLine.current?.focus()
+  }, [saved])
   const disclosure =
     metadata?.model === model
       ? metadata
@@ -224,8 +231,10 @@ function TasteModelSection({ http, view }: { http: ReviewHttp; view: ReviewerAcc
           </button>
           {failureUnder('selection')}
           {/* Said only for the latest action: Continue without replaces it. */}
-          {latest === 'selection' && selection.isSuccess ? (
-            <p role="status">Taste profile model saved.</p>
+          {saved ? (
+            <p ref={savedLine} role="status" tabIndex={-1}>
+              Taste profile model saved.
+            </p>
           ) : null}
         </div>
       </div>

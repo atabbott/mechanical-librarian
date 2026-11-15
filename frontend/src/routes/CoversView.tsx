@@ -769,6 +769,18 @@ export default function CoversView() {
   // Taste profile has no page of books; To decide's page keeps the counts.
   const taste = search.tab === 'taste'
   const tab: CoverTab = search.tab === undefined || search.tab === 'taste' ? 'decide' : search.tab
+  // On a phone the tabs are one row that scrolls sideways; the selected tab
+  // is brought into that row's view without scrolling the page.
+  const tabsRef = useRef<HTMLElement>(null)
+  useEffect(() => {
+    const row = tabsRef.current
+    const selectedTab = row?.querySelector<HTMLElement>('[aria-pressed="true"]')
+    if (!row || !selectedTab || row.scrollWidth <= row.clientWidth) return
+    const bounds = row.getBoundingClientRect()
+    const box = selectedTab.getBoundingClientRect()
+    if (box.left < bounds.left) row.scrollLeft -= bounds.left - box.left
+    else if (box.right > bounds.right) row.scrollLeft += box.right - bounds.right
+  }, [tab, taste])
   // As Works says it: only a confirmed snapshot with no library names the
   // way to fill the list.
   const noLibraryConnected = usePreparation().data?.libraries.length === 0
@@ -977,7 +989,7 @@ export default function CoversView() {
           Covers
         </h1>
       </header>
-      <nav className="covers-tabs" aria-label="Cover views">
+      <nav ref={tabsRef} className="covers-tabs" aria-label="Cover views">
         {(Object.keys(tabLabels) as CoverTab[]).map((value) => (
           <button
             key={value}

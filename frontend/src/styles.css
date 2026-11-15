@@ -1486,6 +1486,8 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 .covers-tabs button { min-height:44px; padding:.45rem .8rem; border:1px solid var(--line); border-radius:.65rem; color:var(--soft); background:var(--surface); }
 .covers-tabs button[aria-pressed='true'] { color:var(--surface); background:var(--accent-strong); border-color:var(--accent-strong); }
 .covers-tabs strong { margin-left:.3rem; }
+/* Phones: one row that scrolls sideways rather than a stack of tabs. The padding keeps the focus ring inside the scroller. */
+@media (max-width:760px) { .covers-tabs { flex-wrap:nowrap; overflow-x:auto; overscroll-behavior-x:contain; scrollbar-width:thin; padding:6px; margin:-6px -6px calc(.75rem - 6px); } .covers-tabs button { flex:none; white-space:nowrap; } }
 .covers-notice:empty { display:none; }
 .covers-notice, .covers-empty { color:var(--soft); }
 .covers-failure { display:flex; flex-wrap:wrap; align-items:center; gap:.6rem; color:var(--danger); }
@@ -1571,7 +1573,7 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 .taste-meta dd { margin:0; font-family:Georgia,serif; font-size:1.2rem; font-weight:700; font-variant-numeric:tabular-nums; }
 .taste-body, .taste-rules { display:grid; gap:1.25rem; min-width:0; }
 /* As the prototype's cr-taste-grid: Versions beside the rules on wide screens. */
-@media (min-width:1025px) { .taste-body { grid-template-columns:minmax(0, 1.6fr) minmax(min(18rem, 38%), 1fr); gap:1.25rem 2rem; align-items:start; } }
+@media (min-width:1025px) { .taste-body { grid-template-columns:minmax(0, 1.6fr) minmax(min(18rem, 38%), 1fr); gap:1.25rem 2rem; align-items:start; } .taste-meta { justify-content:flex-end; } }
 .taste-section { max-width:calc(70ch + 4rem); min-width:0; }
 .taste-section h2 { margin:0 0 .4rem; font-size:.75rem; font-weight:800; letter-spacing:.07em; text-transform:uppercase; color:var(--soft); }
 .taste-section ol { display:grid; margin:0; padding:0; list-style:none; border:1px solid var(--line); border-radius:12px; background:var(--surface-strong); overflow:clip; }

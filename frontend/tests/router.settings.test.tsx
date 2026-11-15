@@ -3942,9 +3942,25 @@ describe('taste profile model (#1372)', () => {
         task: 'cover_taste_build',
       }),
     )
-    expect(await within(taste).findByText('Taste profile model saved.')).toBeVisible()
+    const saved = await within(taste).findByText('Taste profile model saved.')
+    expect(saved).toBeVisible()
+    // Focus stays on the saved line rather than dropping to the page.
+    await waitFor(() => expect(saved).toHaveFocus())
     expect(
       within(taste).getByText('Selected: anthropic/claude-sonnet-5.5 on OpenRouter.'),
+    ).toBeVisible()
+  })
+
+  it('names the recommended taste model in the picker', async () => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => initial)
+    renderRoute('/settings?group=reviewer', http)
+    const user = userEvent.setup()
+    const taste = await section()
+    await user.click(within(taste).getByRole('combobox', { name: 'Taste profile model' }))
+    expect(
+      screen.getByRole('option', { name: 'Claude Sonnet 5.5 (anthropic/claude-sonnet-5.5)' }),
     ).toBeVisible()
   })
 
