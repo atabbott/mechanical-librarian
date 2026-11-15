@@ -54,9 +54,9 @@ from a checkout.
 The advice choice on the work's page is enabled only when the field is
 editable, which needs a source description that differs from the library's.
 Where every source repeats the library's description, the owner can neither
-choose the advice nor keep the current description. Automatic still admits
-and writes there, because admission checks neither the policy destination nor
-the decision actions.
+choose the advice nor keep the current description. Until #1895, Automatic
+still admitted and wrote there, because admission checked neither the policy
+destination nor the decision actions.
 
 ## Decision
 
@@ -98,12 +98,10 @@ the decision actions.
    description counts as wrong on 2026-11-15.
 6. **Fields the owner cannot choose.** Where every source repeats the
    library's description, the advice cannot be chosen, so those fields cannot
-   be labelled and qualification does not cover them. Issue #1892
-   ("Automatic description advice writes descriptions the owner cannot
-   choose") is the pending fix: once it is done, Automatic never writes a
-   description field with no decision actions, and the labelled population is the whole
-   population Automatic may write. Until then any enforcement must leave
-   those fields suggest-only.
+   be labelled and qualification does not cover them. Since #1895 (issue
+   #1892), Automatic never writes a description field with no decision
+   actions, so the labelled population is the whole population Automatic may
+   write.
 7. **Identity.** Labels are pooled by the advice's engine, model, instruction
    digest, output-schema digest and cleanup digest, as ADR-0087 binds a
    qualification to the operation it permits. Each of the eight cleanup
@@ -151,7 +149,7 @@ the decision actions.
 ### Neutral or deferred
 
 - The qualification record and the admission check are built in a later change
-  (Decision 10), and the unchoosable fields in #1892 (Decision 6).
+  (Decision 10).
 
 ## Alternatives considered
 
