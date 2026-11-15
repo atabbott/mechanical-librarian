@@ -30,6 +30,7 @@ from mechanical_librarian.adapters.reviewers.resource_budget import (
     no_process_seccomp_descriptor,
 )
 from mechanical_librarian.application.contained_reviewer_contract import (
+    REVIEWER_DESCRIPTOR_LIMIT,
     ContainedReviewerAttempt,
     ContainedReviewerError,
     ContainedReviewerIdentity,
@@ -1554,8 +1555,9 @@ class ContainedReviewerAdapter:
                         os.set_inheritable(model_catalog_descriptor, True)
                     for image in sealed_images:
                         os.set_inheritable(image.descriptor, True)
-                    self._limit_child()
-                    broker_command = _resource_command(command)
+                    descriptor_limit = REVIEWER_DESCRIPTOR_LIMIT + len(sealed_images)
+                    self._limit_child(descriptor_limit)
+                    broker_command = _resource_command(command, descriptor_limit)
                     os.execve(sys.executable, broker_command, {})
                 except BaseException:
                     os.write(failure_write, b"S")
@@ -1615,7 +1617,7 @@ class ContainedReviewerAdapter:
             elif not finished:
                 _kill_and_prove_dead(pid, pid, _safe_start_token(pid))
 
-    def _limit_child(self) -> None:
+    def _limit_child(self, descriptor_limit: int = REVIEWER_DESCRIPTOR_LIMIT) -> None:
         try:
             resource.setrlimit(
                 resource.RLIMIT_AS,
@@ -1630,7 +1632,7 @@ class ContainedReviewerAdapter:
             )
             resource.setrlimit(
                 resource.RLIMIT_NOFILE,
-                (64, 64),
+                (descriptor_limit, descriptor_limit),
             )
         except (OSError, ValueError) as error:
             raise ContainedReviewerProcessError("spawn") from error
@@ -2340,8 +2342,17 @@ def _auth_config() -> tuple[str, ...]:
     )
 
 
-def _resource_command(command: list[str]) -> tuple[str, ...]:
-    return (sys.executable, "-m", _RESOURCE_EXEC_MODULE, *command)
+def _resource_command(
+    command: list[str], descriptor_limit: int = REVIEWER_DESCRIPTOR_LIMIT
+) -> tuple[str, ...]:
+    """Start the broker, telling it the descriptor budget of this request."""
+    return (
+        sys.executable,
+        "-m",
+        _RESOURCE_EXEC_MODULE,
+        f"--descriptor-limit={descriptor_limit}",
+        *command,
+    )
 
 
 def _run_owned_command(

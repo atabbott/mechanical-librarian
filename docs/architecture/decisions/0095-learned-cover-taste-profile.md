@@ -341,6 +341,10 @@ nothing reads it. Three decisions made while building it amend the text above:
   counted request. Codex reports no per-request cost, so a Codex reply counts
   as usage reported and a Codex failure ends the build `unavailable` without
   stopping the day; `unknown_charge` stays OpenRouter only.
+  A Codex mapping counts as configured, so builds are scheduled, only
+  while the Codex profile is provisioned and its sign-in is usable, read from
+  the recorded sign-in flow or the installed sign-in files without starting a
+  process or calling the network.
 - **Closed facts (S5).** Per image: the original's decoded width and height,
   shape `fits` or `wrong_shape` against the medium, an opaque same-art group
   letter, role `chosen` or `passed_over` and the current marker; per decision,

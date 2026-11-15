@@ -100,8 +100,8 @@ recommendation, decision or write.
   most 400 code points, at most 1,200 words and 8,192 code points in all,
   admitted as inert text and only ever rendered as text. A reply that is
   not one such JSON object, including one cut at the output limit, is
-  `invalid_output`; a reply whose body cannot be read counts as
-  `unknown_charge`.
+  `invalid_output`; on OpenRouter only, a reply whose body cannot be read
+  counts as `unknown_charge`.
 - **Ceilings.** One build at a time and at most 4 scheduled a UTC day. Each
   request on either engine is counted durably before dispatch against
   `cover_taste_build_daily_requests`. On OpenRouter a timeout after sending

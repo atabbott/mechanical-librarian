@@ -2650,6 +2650,70 @@ it.each(['fresh usable', 'Check-cached usable'] as const)(
   },
 )
 
+// A Codex choice says the refusal's own words, as the cover reviewer's Codex
+// button does; anything else falls back to the task's own line (#1372).
+const usableCodexDescriptions = async (failure: unknown) => {
+  const http = createHttp()
+  http.getSettings = vi.fn(async () => view())
+  http.getReviewerAccess = vi.fn(async () => ({
+    ...reviewerView,
+    codex: { ...reviewerView.codex, state: 'usable' as const, reason: null },
+  }))
+  http.describeContainedDescription = vi.fn(async () => ({
+    model: 'contained-model',
+    profile_sha256: 'a'.repeat(64),
+  }))
+  http.selectReviewer = vi.fn(async () => {
+    throw failure
+  })
+  renderRoute('/settings?group=reviewer', http)
+  const user = userEvent.setup()
+  const use = await screen.findByRole('button', { name: 'Use Codex for descriptions' })
+  await user.click(screen.getByRole('button', { name: 'Check Codex model' }))
+  await waitFor(() => expect(use).toBeEnabled())
+  return { http, user, use }
+}
+
+it.each([
+  [
+    new ApiError(409, 'access_changed'),
+    'Reviewer settings changed elsewhere. Reload, then try again.',
+  ],
+  [
+    new ApiError(409, 'unlisted_code'),
+    'Codex was not chosen for descriptions. Reload, then try again.',
+  ],
+  [new Error('unexpected'), 'Codex was not chosen for descriptions. Reload, then try again.'],
+])('says the refusal under Use Codex for descriptions (%s)', async (failure, copy) => {
+  const { user, use } = await usableCodexDescriptions(failure)
+  await user.click(use)
+  const description = screen.getByRole('region', { name: 'Description adviser' })
+  const alert = await within(description).findByRole('alert')
+  expect(alert).toHaveTextContent(copy)
+  expect(alert.previousElementSibling).toBe(use)
+  expect(within(description).queryByText(/Check the model and key/u)).toBeNull()
+})
+
+it.each([
+  ['not_provisioned', 'Codex is not set up on this host. Reload the page to see what to fix.'],
+  ['host_unsupported', 'Codex is not supported on this host. Reload the page to see what to fix.'],
+])(
+  'keeps Use Codex for descriptions and its line when Codex leaves the host (%s)',
+  async (code, copy) => {
+    const { http, user, use } = await usableCodexDescriptions(new ApiError(409, code))
+    const readsBefore = vi.mocked(http.getReviewerAccess).mock.calls.length
+    use.focus()
+    await user.keyboard('{Enter}')
+    const description = screen.getByRole('region', { name: 'Description adviser' })
+    const alert = await within(description).findByRole('alert')
+    expect(alert).toHaveTextContent(copy)
+    expect(alert.previousElementSibling).toBe(use)
+    expect(use).toHaveFocus()
+    expect(screen.getByRole('button', { name: 'Use Codex for descriptions' })).toBe(use)
+    expect(vi.mocked(http.getReviewerAccess).mock.calls.length).toBe(readsBefore)
+  },
+)
+
 it('offers a reload, not another try, when settings meet a newer build', async () => {
   const http = createHttp()
   http.getSettings = vi.fn(async () => {
@@ -4288,7 +4352,14 @@ describe('taste profile model (#1372)', () => {
     await waitFor(() =>
       expect(http.selectReviewer).toHaveBeenCalledWith('codex', 3, undefined, 'cover_taste_build'),
     )
-    expect(await within(taste).findByText('Selected: Codex (gpt-5.6-sol).')).toBeVisible()
+    await waitFor(() =>
+      expect(within(taste).getByText(/^Selected: Codex/u)).toHaveTextContent(
+        'Selected: Codex (gpt-5.6-sol).',
+      ),
+    )
+    expect(within(taste).getByText('gpt-5.6-sol', { selector: 'span' })).toHaveClass(
+      'settings-model-name',
+    )
     expect(within(taste).queryByText('Taste profile model saved.')).toBeNull()
     expect(within(taste).queryByRole('alert')).toBeNull()
     expect(queryClient.getQueryState(['covers', 'taste'])?.isInvalidated).toBe(true)
@@ -4307,7 +4378,9 @@ describe('taste profile model (#1372)', () => {
     }))
     renderRoute('/settings?group=reviewer', http)
     const taste = await section()
-    expect(within(taste).getByText('Selected: Codex (model unavailable).')).toBeVisible()
+    expect(within(taste).getByText(/^Selected: Codex/u)).toHaveTextContent(
+      'Selected: Codex (model unavailable).',
+    )
     expect(within(taste).getByText('Model: Unavailable')).toBeVisible()
     expect(
       within(taste).getByRole('button', { name: 'Use Codex for taste profiles' }),
@@ -4327,9 +4400,7 @@ describe('taste profile model (#1372)', () => {
     const use = within(taste).getByRole('button', { name: 'Use Codex for taste profiles' })
     await user.click(use)
     const alert = await within(taste).findByRole('alert')
-    expect(alert).toHaveTextContent(
-      'Taste profile setup did not complete. Check the model and key, then try again.',
-    )
+    expect(alert).toHaveTextContent('Reviewer settings changed elsewhere. Reload, then try again.')
     expect(alert.previousElementSibling).toBe(use)
   })
 
@@ -4338,7 +4409,7 @@ describe('taste profile model (#1372)', () => {
     http.getSettings = vi.fn(async () => view())
     http.getReviewerAccess = vi
       .fn<ReviewHttp['getReviewerAccess']>()
-      .mockResolvedValueOnce(codexTaste)
+      .mockResolvedValueOnce(codexUsable)
       .mockResolvedValue({ ...initial, taste_mapping: { engine: 'codex' } })
     http.selectReviewer = vi.fn(async () => {
       throw new ApiError(409, 'credential_unavailable')
@@ -4356,5 +4427,139 @@ describe('taste profile model (#1372)', () => {
     expect(alert.previousElementSibling).toBe(use)
     await waitFor(() => expect(use).toBeDisabled())
     expect(vi.mocked(http.getReviewerAccess).mock.calls.length).toBeGreaterThan(readsBefore)
+  })
+
+  // Nothing else selects Codex, so the refused sign-in withdraws the row; focus
+  // moves to the sign-in controls, as for the cover reviewer's Codex button.
+  it('withdraws the Codex row and moves focus to the sign-in after a refused choice', async () => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi
+      .fn<ReviewHttp['getReviewerAccess']>()
+      .mockResolvedValueOnce(codexUsable)
+      .mockResolvedValue(initial)
+    http.selectReviewer = vi.fn(async () => {
+      throw new ApiError(409, 'credential_unavailable')
+    })
+    renderRoute('/settings?group=reviewer', http)
+    const user = userEvent.setup()
+    const taste = await section()
+    const use = within(taste).getByRole('button', { name: 'Use Codex for taste profiles' })
+    use.focus()
+    await user.keyboard('{Enter}')
+    await waitFor(() =>
+      expect(
+        within(taste).queryByRole('button', { name: 'Use Codex for taste profiles' }),
+      ).toBeNull(),
+    )
+    expect(within(taste).queryByRole('heading', { level: 4, name: 'Codex' })).toBeNull()
+    expect(within(taste).queryByRole('alert')).toBeNull()
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Restart device sign-in' })).toHaveFocus(),
+    )
+  })
+
+  it.each([
+    [
+      new ApiError(409, 'access_changed'),
+      'Reviewer settings changed elsewhere. Reload, then try again.',
+    ],
+    [
+      new ApiError(409, 'unlisted_code'),
+      'Codex was not chosen for taste profiles. Reload, then try again.',
+    ],
+    [new Error('unexpected'), 'Codex was not chosen for taste profiles. Reload, then try again.'],
+  ])('says the refusal under Use Codex for taste profiles (%s)', async (failure, copy) => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => codexUsable)
+    http.selectReviewer = vi.fn(async () => {
+      throw failure
+    })
+    renderRoute('/settings?group=reviewer', http)
+    const user = userEvent.setup()
+    const taste = await section()
+    const use = within(taste).getByRole('button', { name: 'Use Codex for taste profiles' })
+    await user.click(use)
+    const alert = await within(taste).findByRole('alert')
+    expect(alert).toHaveTextContent(copy)
+    expect(alert.previousElementSibling).toBe(use)
+    expect(within(taste).queryByText(/Check the model and key/u)).toBeNull()
+  })
+
+  it.each([
+    ['not_provisioned', 'Codex is not set up on this host. Reload the page to see what to fix.'],
+    [
+      'host_unsupported',
+      'Codex is not supported on this host. Reload the page to see what to fix.',
+    ],
+  ])(
+    'keeps the taste Codex row and its line when Codex leaves the host (%s)',
+    async (code, copy) => {
+      const http = createHttp()
+      http.getSettings = vi.fn(async () => view())
+      http.getReviewerAccess = vi.fn(async () => codexUsable)
+      http.selectReviewer = vi.fn(async () => {
+        throw new ApiError(409, code)
+      })
+      renderRoute('/settings?group=reviewer', http)
+      const user = userEvent.setup()
+      const taste = await section()
+      const use = within(taste).getByRole('button', { name: 'Use Codex for taste profiles' })
+      const readsBefore = vi.mocked(http.getReviewerAccess).mock.calls.length
+      use.focus()
+      await user.keyboard('{Enter}')
+      const alert = await within(taste).findByRole('alert')
+      expect(alert).toHaveTextContent(copy)
+      expect(alert.previousElementSibling).toBe(use)
+      expect(use).toHaveFocus()
+      expect(within(taste).getByRole('button', { name: 'Use Codex for taste profiles' })).toBe(use)
+      expect(vi.mocked(http.getReviewerAccess).mock.calls.length).toBe(readsBefore)
+    },
+  )
+
+  it('does not save Codex again while it is the taste profile choice', async () => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => codexTaste)
+    renderRoute('/settings?group=reviewer', http)
+    const user = userEvent.setup()
+    const taste = await section()
+    const use = within(taste).getByRole('button', { name: 'Use Codex for taste profiles' })
+    expect(use).toBeEnabled()
+    expect(use).toHaveAttribute('aria-disabled', 'true')
+    use.focus()
+    await user.keyboard('{Enter}')
+    await user.click(use)
+    expect(use).toHaveFocus()
+    expect(http.selectReviewer).not.toHaveBeenCalled()
+  })
+
+  it('clears the tested OpenRouter model once Codex is chosen', async () => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => codexUsable)
+    http.testTasteModel = vi.fn(async () => metadata)
+    http.selectReviewer = vi.fn(async () => ({ ...codexTaste, revision: 4 }))
+    renderRoute('/settings?group=reviewer', http)
+    const user = userEvent.setup()
+    const taste = await section()
+    const picker = within(taste).getByRole('combobox', { name: 'Taste profile model' })
+    await user.click(picker)
+    await user.click(screen.getByRole('option', { name: /anthropic\/claude-sonnet-5\.5/u }))
+    await user.click(
+      within(taste).getByRole('button', { name: 'Test taste profile model and prices' }),
+    )
+    await waitFor(() =>
+      expect(within(taste).getByRole('button', { name: 'Use for taste profile' })).toBeEnabled(),
+    )
+    await user.click(within(taste).getByRole('button', { name: 'Use Codex for taste profiles' }))
+    await waitFor(() =>
+      expect(within(taste).getByText(/^Selected: Codex/u)).toHaveTextContent(
+        'Selected: Codex (gpt-5.6-sol).',
+      ),
+    )
+    expect(within(taste).getByRole('button', { name: 'Use for taste profile' })).toBeDisabled()
+    expect(within(taste).getByRole('combobox', { name: 'Taste profile model' })).toHaveValue('')
   })
 })

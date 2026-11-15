@@ -48,7 +48,8 @@ description advice.
 The Codex row appears once Codex is signed in or selected for any task. It
 names the Codex model, says taste profiles count against the plan's usage
 limits, and Use Codex for taste profiles selects it; it is disabled until the
-Codex sign-in is usable. The OpenRouter row offers recommended models measured
+Codex sign-in is usable. While the Codex sign-in is not usable, no taste profile
+build is scheduled. The OpenRouter row offers recommended models measured
 for taste profiles, and Test taste profile model and prices shows the model's
 prices per input token, output token, image and request before Use for taste
 profile saves it. A failure shows under the button that met it.

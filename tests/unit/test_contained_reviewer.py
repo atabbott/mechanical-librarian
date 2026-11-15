@@ -1206,11 +1206,125 @@ def test_outer_child_limits_defer_nproc_until_after_user_namespace() -> None:
         reviewer = adapter.ContainedReviewerAdapter(_profile(Path(temporary)))
         with patch.object(adapter.resource, "setrlimit") as limit:
             reviewer._limit_child()
+            reviewer._limit_child(164)
     assert [call.args[0] for call in limit.call_args_list] == [
         adapter.resource.RLIMIT_AS,
         adapter.resource.RLIMIT_FSIZE,
         adapter.resource.RLIMIT_NOFILE,
-    ]
+    ] * 2
+    assert limit.call_args_list[2].args[1] == (64, 64)
+    assert limit.call_args_list[5].args[1] == (164, 164)
+
+
+# Stands in for Bubblewrap behind the real broker: it reports a sandbox child,
+# waits for release, then reads every --ro-bind-data descriptor it was given.
+_FAKE_BWRAP = """
+import hashlib, json, os, resource, sys
+arguments = sys.argv[1:]
+block = int(arguments[arguments.index("--block-fd") + 1])
+info = int(arguments[arguments.index("--info-fd") + 1])
+images = [int(arguments[i + 1]) for i, a in enumerate(arguments) if a == "--ro-bind-data"]
+hold_read, hold_write = os.pipe()
+child = os.fork()
+if child == 0:
+    for descriptor in (hold_write, info, block):
+        os.close(descriptor)
+    os.read(hold_read, 1)
+    os._exit(0)
+os.close(hold_read)
+names = ("cgroup", "ipc", "mnt", "pid", "uts")
+document = {"child-pid": child, **{name + "-namespace": 1 for name in names}}
+os.write(info, json.dumps(document).encode())
+os.close(info)
+if os.read(block, 1) != b"G":
+    sys.exit(3)
+digests = []
+for descriptor in images:
+    with os.fdopen(os.dup(descriptor), "rb") as image:
+        digests.append(hashlib.sha256(image.read()).hexdigest())
+os.close(hold_write)
+os.waitpid(child, 0)
+limit = resource.getrlimit(resource.RLIMIT_NOFILE)
+sys.stdout.write(json.dumps({"digests": digests, "limit": list(limit)}))
+"""
+
+
+def _run_gated_for_real(image_count: int) -> tuple[int, dict[str, Any], list[str]]:
+    """Run the real fork, broker and descriptor handoff with sealed previews."""
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        reviewer = adapter.ContainedReviewerAdapter(_profile(root))
+        bwrap = root / "fake-bwrap"
+        bwrap.write_text(f"#!{sys.executable}\n{_FAKE_BWRAP}")
+        bwrap.chmod(0o700)
+        flags = os.O_RDONLY | os.O_CLOEXEC
+        # Hold low descriptors so the previews land above 64, as in a server.
+        filler = [os.open(os.devnull, flags) for _ in range(48)]
+        held = [os.open(os.devnull, flags) for _ in range(3)]
+        try:
+            payloads = [
+                b"\xff\xd8\xff" + bytes([index]) + b"\xff\xd9"
+                for index in range(image_count)
+            ]
+            images = tuple(
+                adapter._TasteImage(
+                    "taste_image_" + hashlib.sha256(payload).hexdigest(),
+                    hashlib.sha256(payload).hexdigest(),
+                    payload,
+                )
+                for payload in payloads
+            )
+            with (
+                adapter._sealed_cover_images(images) as sealed,
+                tempfile.TemporaryFile() as stdin,
+                tempfile.TemporaryFile() as stdout,
+                tempfile.TemporaryFile() as stderr,
+            ):
+                command = [str(bwrap)]
+                for index, image in enumerate(sealed, start=1):
+                    command.extend(
+                        (
+                            "--ro-bind-data",
+                            str(image.descriptor),
+                            f"/images/{index:02d}.jpg",
+                        )
+                    )
+                returncode = reviewer._run_gated(
+                    command,
+                    adapter._BoundArtifact(held[0], f"/proc/self/fd/{held[0]}"),
+                    adapter._BoundArtifact(held[1], f"/proc/self/fd/{held[1]}"),
+                    stdin.fileno(),
+                    stdout.fileno(),
+                    stderr.fileno(),
+                    lambda *_: None,
+                    credential_descriptor=held[2],
+                    sealed_images=sealed,
+                )
+                stdout.seek(0)
+                output = stdout.read()
+                report = json.loads(output) if returncode == 0 else {}
+                if image_count:
+                    assert max(image.descriptor for image in sealed) > 64
+                return returncode, report, [image.digest for image in images]
+        finally:
+            for descriptor in (*filler, *held):
+                os.close(descriptor)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="sealed previews are Linux-only")
+def test_a_full_taste_build_carries_every_preview_through_the_real_broker() -> None:
+    returncode, report, digests = _run_gated_for_real(100)
+    assert returncode == 0
+    assert report["digests"] == digests
+    assert report["limit"] == [164, 164]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="sealed previews are Linux-only")
+def test_an_image_free_request_still_runs_at_64_descriptors() -> None:
+    returncode, report, digests = _run_gated_for_real(0)
+    assert returncode == 0
+    assert digests == report["digests"] == []
+    assert report["limit"] == [64, 64]
 
 
 def test_review_path_routes_the_exact_bwrap_command_through_the_broker() -> None:
@@ -1219,8 +1333,10 @@ def test_review_path_routes_the_exact_bwrap_command_through_the_broker() -> None
         sys.executable,
         "-m",
         "mechanical_librarian.adapters.reviewers.resource_exec",
+        "--descriptor-limit=64",
         *command,
     )
+    assert adapter._resource_command(command, 164)[3] == "--descriptor-limit=164"
     assert command == ["/sandbox", "--unshare-user", "/runtime/codex", "exec"]
 
 

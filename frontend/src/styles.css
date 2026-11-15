@@ -1396,6 +1396,8 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 .description-advice-fields .settings-field-row:last-child { border-bottom:0; }
 
 .settings-reviewer { container-type:inline-size; }
+/* The pinned Codex model name (gpt-5.6-sol) fits at 390px and 200% text; OpenRouter names stay wrappable (#1372). */
+.settings-model-name { white-space:nowrap; }
 @container (max-width:44rem) {
   .settings-reviewer .settings-field-row { grid-template-columns:minmax(0,1fr); }
 }

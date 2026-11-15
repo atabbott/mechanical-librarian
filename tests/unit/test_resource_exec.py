@@ -91,6 +91,68 @@ def test_resource_exec_applies_fixed_limits_and_preserves_exact_argv(
     assert writes == [(11, b"G")]
 
 
+def test_resource_exec_installs_and_scans_the_told_descriptor_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    installed: list[tuple[int, tuple[int, int]]] = []
+    current = {resource.RLIMIT_NOFILE: (1_024, 1_024)}
+
+    def setrlimit(limit: int, value: tuple[int, int]) -> None:
+        installed.append((limit, value))
+        current[limit] = value
+
+    monkeypatch.setattr(
+        resource,
+        "getrlimit",
+        lambda limit: current.get(limit, (resource.RLIM_INFINITY,) * 2),
+    )
+    monkeypatch.setattr(resource, "setrlimit", setrlimit)
+    scanned: list[int] = []
+
+    def get_inheritable(descriptor: int) -> bool:
+        scanned.append(descriptor)
+        return False
+
+    monkeypatch.setattr(resource_exec.os, "get_inheritable", get_inheritable)
+    spawned: list[tuple[str, ...]] = []
+
+    def refuse(command: tuple[str, ...], **_kwargs: object) -> None:
+        spawned.append(command)
+        raise OSError("stop after the scan")
+
+    monkeypatch.setattr(resource_exec.subprocess, "Popen", refuse)
+    with pytest.raises(SystemExit, match="126"):
+        resource_exec.main(("--descriptor-limit=164", "/usr/bin/bwrap", "--x"))
+    assert installed == [
+        (resource.RLIMIT_FSIZE, (1_048_576, 1_048_576)),
+        (resource.RLIMIT_NOFILE, (164, 164)),
+    ]
+    assert spawned[0][0] == "/usr/bin/bwrap"
+    assert spawned[0][-1] == "--x"
+    assert scanned == list(range(3, 164))
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    (
+        ("--descriptor-limit=63", "/usr/bin/bwrap"),
+        ("--descriptor-limit=165", "/usr/bin/bwrap"),
+        ("--descriptor-limit=0164", "/usr/bin/bwrap"),
+        ("--descriptor-limit=", "/usr/bin/bwrap"),
+        ("--descriptor-limit=1e2", "/usr/bin/bwrap"),
+        ("--descriptor-limit=164",),
+    ),
+)
+def test_resource_exec_refuses_a_descriptor_budget_outside_the_contract(
+    arguments: tuple[str, ...], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        resource, "setrlimit", lambda *_: pytest.fail("no limit before refusal")
+    )
+    with pytest.raises(SystemExit, match="64"):
+        resource_exec.main(arguments)
+
+
 @pytest.mark.parametrize("arguments", ((), ("",), ("ok", "")))
 def test_resource_exec_rejects_missing_or_empty_argv(
     arguments: tuple[str, ...],

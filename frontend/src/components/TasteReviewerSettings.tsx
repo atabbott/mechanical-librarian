@@ -6,7 +6,7 @@ import { ModelPicker } from './ModelPicker'
 import { refusalCopy, uncertainWriteOutcome } from '../api/http'
 import type { CoverModelMetadata, ReviewHttp, ReviewerAccessView } from '../api/http'
 import { invalidateForegroundQueries } from '../queryWork'
-import { credentialRefused, failureCopy } from '../reviewerAccess'
+import { codexRefusal, codexUnavailable, credentialRefused, failureCopy } from '../reviewerAccess'
 
 // Settings → Reviewer › Taste profile (#1372): the engine, Codex or an
 // OpenRouter model, that writes the owner's taste profile. The reviewer access
@@ -68,12 +68,22 @@ const useTasteModel = (
     retry: false,
     onMutate: () => setLatest('codex'),
     onSuccess: (saved) => {
+      // The OpenRouter draft no longer describes the choice, as on a fresh load.
+      setModel('')
       setMetadata(null)
+      test.reset()
       cache.setQueryData(['reviewer-access'], saved)
       void cache.invalidateQueries({ queryKey: tasteProfileKey })
     },
     // A refused Codex sign-in is recorded into reviewer access; read it (#1617).
-    onError: (error) => (credentialRefused(error) ? onCodexRefused() : rereadAfterFailedWrite()),
+    // Codex missing from the host keeps the row and its line, as the cover
+    // reviewer's Codex button does.
+    onError: (error) =>
+      credentialRefused(error)
+        ? onCodexRefused()
+        : codexUnavailable(error)
+          ? undefined
+          : rereadAfterFailedWrite(),
   })
   // Continue without a taste profile clears only this task (#1372 S11).
   const without = useMutation({
@@ -98,12 +108,17 @@ const useTasteModel = (
           : refusalCopy(error, 'The taste profile model was not cleared. Try again.')
         : (latest === 'selection' || latest === 'codex') && uncertainWriteOutcome(error)
           ? 'No answer came back. Check whether the taste profile model was saved before trying again.'
-          : credentialRefused(error)
-            ? failureCopy.credential_unavailable
-            : refusalCopy(
+          : latest === 'codex'
+            ? codexRefusal(
                 error,
-                'Taste profile setup did not complete. Check the model and key, then try again.',
+                'Codex was not chosen for taste profiles. Reload, then try again.',
               )
+            : credentialRefused(error)
+              ? failureCopy.credential_unavailable
+              : refusalCopy(
+                  error,
+                  'Taste profile setup did not complete. Check the model and key, then try again.',
+                )
   const failureUnder = (at: NonNullable<typeof latest>) =>
     failure !== null && latest === at ? <p role="alert">{failure}</p> : null
   const busy = test.isPending || selection.isPending || codex.isPending || without.isPending
@@ -153,11 +168,19 @@ export const TasteReviewerSettings = ({
         </div>
         <div className="settings-field-control">
           <p role="status">
-            {selected === null
-              ? 'No taste profile model selected.'
-              : selected.engine === 'openrouter'
-                ? `Selected: ${selected.model} on OpenRouter.`
-                : `Selected: Codex (${view.codex.model ?? 'model unavailable'}).`}
+            {selected === null ? (
+              'No taste profile model selected.'
+            ) : selected.engine === 'openrouter' ? (
+              `Selected: ${selected.model} on OpenRouter.`
+            ) : (
+              <>
+                Selected: Codex (
+                <span className="settings-model-name">
+                  {view.codex.model ?? 'model unavailable'}
+                </span>
+                ).
+              </>
+            )}
           </p>
           {/* Mirrors Continue without description advice: aria-disabled while
               it runs, so a pending press keeps focus (#1584, #1663). */}
@@ -181,11 +204,13 @@ export const TasteReviewerSettings = ({
           </div>
           <div className="settings-field-control">
             <p>Model: {view.codex.model ?? 'Unavailable'}</p>
+            {/* Already the choice: aria-disabled, so a press saves nothing
+                again and focus stays on the button. */}
             <button
               disabled={!codexUsable}
-              aria-disabled={busy || undefined}
+              aria-disabled={busy || selected?.engine === 'codex' || undefined}
               onClick={() => {
-                if (!busy) codex.mutate()
+                if (!busy && selected?.engine !== 'codex') codex.mutate()
               }}
             >
               Use Codex for taste profiles

@@ -1474,6 +1474,8 @@ def test_codex_taste_selection_needs_a_usable_credential_and_clears_prices():
     assert selected.taste_metadata is None
     assert selected.mapping is None and selected.description_mapping is None
     assert selected.codex.state == "usable"
+    # The fake does not record its recheck; the installed sign-in now reads usable.
+    auth.state = "usable"
     assert operations.current_taste_build_model() == "gpt-5.4"
     assert ("taste", "example/vision") not in openrouter
 
@@ -1485,6 +1487,33 @@ def test_codex_taste_selection_needs_a_usable_credential_and_clears_prices():
         unprovisioned.select_codex(expected_revision=1, task="cover_taste_build")
     assert refused.value.code == "not_provisioned"
     assert unprovisioned.read().taste_mapping is None
+
+
+@pytest.mark.parametrize(
+    ("state", "configured"),
+    (
+        ("usable", True),
+        ("configured", True),
+        ("expired", False),
+        ("failed", False),
+        ("ready", False),
+        ("waiting", False),
+    ),
+)
+def test_codex_taste_counts_as_configured_only_while_the_sign_in_is_usable(
+    state: DeviceAuthStatus, configured: bool
+) -> None:
+    """A lapsed Codex sign-in schedules no taste build, read without a process."""
+    operations, auth, _openrouter, _codex = _operations(auth_state="usable")
+    operations.select_codex(expected_revision=1, task="cover_taste_build")
+    auth.state = state
+
+    def no_process() -> object:
+        raise AssertionError("the configured check must not start a process")
+
+    auth.recheck_credential_status = no_process  # type: ignore[method-assign]
+    auth.start = no_process  # type: ignore[method-assign]
+    assert (operations.current_taste_build_model() == "gpt-5.4") is configured
 
 
 def test_codex_sign_in_changes_clear_only_codex_taste_and_openrouter_clear_keeps_it():

@@ -17,20 +17,43 @@ from mechanical_librarian.adapters.reviewers.resource_budget import (
 )
 from mechanical_librarian.application.contained_reviewer_contract import (
     COVER_PROCESS_LIMIT,
+    MAX_REVIEWER_DESCRIPTOR_LIMIT,
+    REVIEWER_DESCRIPTOR_LIMIT,
 )
 
-_INHERITED_LIMITS = (
-    (resource.RLIMIT_FSIZE, 1_048_576),
-    (resource.RLIMIT_NOFILE, 64),
-)
+_FILE_SIZE_LIMIT = 1_048_576
+_DESCRIPTOR_FLAG = "--descriptor-limit="
 
 
 def main(arguments: Sequence[str] | None = None) -> None:
-    """Start Bubblewrap, split the 1 GiB ceiling, release it, and relay exit."""
+    """Start Bubblewrap, split the 1 GiB ceiling, release it, and relay exit.
+
+    A leading ``--descriptor-limit=N`` carries the request's descriptor budget:
+    64 plus one per sealed image, never above 64 plus the taste image limit.
+    Without it the budget is 64.
+    """
     command = tuple(sys.argv[1:] if arguments is None else arguments)
     if not command or any(type(value) is not str or not value for value in command):
         raise SystemExit(64)
-    for limit, maximum in _INHERITED_LIMITS:
+    descriptor_limit = REVIEWER_DESCRIPTOR_LIMIT
+    if command[0].startswith(_DESCRIPTOR_FLAG):
+        value = command[0].removeprefix(_DESCRIPTOR_FLAG)
+        if (
+            not value.isascii()
+            or not value.isdigit()
+            or value != str(int(value))
+            or not REVIEWER_DESCRIPTOR_LIMIT
+            <= int(value)
+            <= MAX_REVIEWER_DESCRIPTOR_LIMIT
+            or len(command) == 1
+        ):
+            raise SystemExit(64)
+        descriptor_limit = int(value)
+        command = command[1:]
+    for limit, maximum in (
+        (resource.RLIMIT_FSIZE, _FILE_SIZE_LIMIT),
+        (resource.RLIMIT_NOFILE, descriptor_limit),
+    ):
         soft, hard = resource.getrlimit(limit)
         accepted = maximum if hard == resource.RLIM_INFINITY else min(maximum, hard)
         resource.setrlimit(limit, (accepted, accepted))
@@ -84,10 +107,18 @@ def main(arguments: Sequence[str] | None = None) -> None:
 
 
 def _inheritable_descriptors(*required: int) -> tuple[int, ...]:
-    """Preserve only descriptors explicitly inherited by this trusted broker."""
+    """Preserve only descriptors explicitly inherited by this trusted broker.
+
+    The scan covers every descriptor below the installed budget, which already
+    counts each sealed image.
+    """
     descriptors = set(required)
     soft, _hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-    maximum = 1_024 if soft == resource.RLIM_INFINITY else min(soft, 1_024)
+    maximum = (
+        MAX_REVIEWER_DESCRIPTOR_LIMIT
+        if soft == resource.RLIM_INFINITY
+        else min(soft, MAX_REVIEWER_DESCRIPTOR_LIMIT)
+    )
     for descriptor in range(3, maximum):
         try:
             if os.get_inheritable(descriptor):
