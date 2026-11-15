@@ -1616,3 +1616,30 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 .taste-versions ul { display:grid; gap:.55rem; margin:0; padding:0; list-style:none; }
 .taste-versions li { display:grid; gap:.1rem; font-size:.85rem; }
 .taste-versions li span { color:var(--soft); }
+/* Editing rules (#1372 PR 2, after the prototype's cr-rule and cr-edit): the
+   owner's pills in their own column before the pencil; under the text on
+   phones, where an empty pill column collapses. */
+.taste-editor { display:contents; }
+.taste-status { margin:0; color:var(--soft); }
+.taste-status:focus { outline-offset:4px; }
+.taste-status:empty { position:absolute; width:1px; height:1px; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); }
+.taste-section li:not(.taste-editing) { grid-template-columns:auto minmax(0,1fr) 4.6rem auto; }
+/* The pill and the 44px pencil centre on the first line's chip, as the text does. */
+.taste-section li > .taste-who { padding-top:.15rem; justify-self:end; }
+.taste-who .status-pill { margin:0; }
+.taste-pencil { display:inline-grid; place-items:center; width:2.75rem; height:2.75rem; min-height:2.75rem; margin-block:calc((1.6rem - 2.75rem) / 2); padding:0; border-color:transparent; background:transparent; color:var(--accent-strong); }
+.taste-pencil:hover { border-color:var(--line); background:var(--surface); }
+.taste-pencil svg { width:1.25rem; height:1.25rem; }
+.taste-section li.taste-editing { background:color-mix(in srgb,var(--accent-soft) 35%,var(--surface-strong)); }
+.taste-edit { display:grid; gap:.45rem; min-width:0; }
+.taste-edit input { box-sizing:border-box; width:100%; min-height:2.75rem; padding:.5rem .65rem; border:1px solid var(--field-line); border-radius:.5rem; background:var(--surface-strong); color:var(--ink); }
+.taste-edit-actions { display:flex; flex-wrap:wrap; gap:.4rem; }
+.taste-count { color:var(--soft); font-size:.75rem; font-variant-numeric:tabular-nums; }
+.taste-refusal { margin:0; color:var(--danger); font-size:.82rem; font-weight:650; }
+.taste-add { margin-top:.45rem; padding:.3rem .8rem; color:var(--accent-strong); font-size:.8rem; font-weight:650; }
+@media (max-width:760px) {
+  .taste-section li:not(.taste-editing) { grid-template-columns:auto minmax(0,1fr) auto; }
+  .taste-section li > .taste-who { grid-column:2; grid-row:2; justify-self:start; }
+  .taste-section li > .taste-who:empty { display:none; }
+  .taste-section li > .taste-pencil { grid-column:3; grid-row:1; }
+}

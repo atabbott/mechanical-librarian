@@ -1388,9 +1388,10 @@ describe('Measured cover rules (#1363)', () => {
   })
 })
 
-// Covers → Taste profile (#1372): read-only, its states from one read.
+// Covers → Taste profile (#1372): its states from one read, and the owner's
+// edits (PR 2).
 const tasteView = (value: Partial<TasteProfileView> = {}): TasteProfileView => ({
-  schema_version: 'review-taste-profile-v1',
+  schema_version: 'review-taste-profile-v2',
   configured: true,
   chosen: 0,
   required: 25,
@@ -1410,17 +1411,23 @@ const ready = tasteView({
   chosen: 31,
   profile: {
     version: 2,
+    kind: 'built',
     built_at: 1_790_000_000,
     decisions: 31,
     rules: [
-      { number: 1, section: 'drawn_to', text: 'Bold illustrated art.' },
-      { number: 2, section: 'drawn_to', text: injected },
-      { number: 3, section: 'keep_or_switch', text: 'Keeps a sharp current cover.' },
+      { number: 1, section: 'drawn_to', text: 'Bold illustrated art.', provenance: 'model' },
+      { number: 2, section: 'drawn_to', text: injected, provenance: 'model' },
+      {
+        number: 3,
+        section: 'keep_or_switch',
+        text: 'Keeps a sharp current cover.',
+        provenance: 'model',
+      },
     ],
   },
   versions: [
-    { version: 2, built_at: 1_790_000_000, decisions: 31 },
-    { version: 1, built_at: 1_789_000_000, decisions: 25 },
+    { version: 2, kind: 'built', created_at: 1_790_000_000, decisions: 31 },
+    { version: 1, kind: 'built', created_at: 1_789_000_000, decisions: 25 },
   ],
 })
 
@@ -1703,12 +1710,22 @@ describe('Covers → Taste profile (#1372)', () => {
     await waitFor(() => expect(status.closest('.taste-build')).toHaveFocus())
   })
 
-  it('shows the profile in use, hides empty sections and renders rule text literally', async () => {
+  it('shows the profile in use, all four sections and rule text literally', async () => {
     renderRoute(tasteRoute, tasteHttp(ready))
     expect(await screen.findByRole('heading', { name: 'What you’re drawn to' })).toBeVisible()
-    expect(screen.getByRole('heading', { name: 'When to keep or switch' })).toBeVisible()
-    expect(screen.queryByRole('heading', { name: 'What you avoid' })).toBeNull()
-    expect(screen.queryByRole('heading', { name: 'How you trade them off' })).toBeNull()
+    // Every section shows its heading and Add rule; an empty one has no list.
+    for (const name of [
+      'What you’re drawn to',
+      'What you avoid',
+      'How you trade them off',
+      'When to keep or switch',
+    ]) {
+      const section = screen.getByRole('heading', { name }).closest('section')
+      if (!section) throw new Error('a section is required')
+      expect(within(section).getByRole('button', { name: 'Add rule' })).toBeVisible()
+    }
+    const avoid = screen.getByRole('heading', { name: 'What you avoid' }).closest('section')
+    expect(avoid?.querySelector('ol')).toBeNull()
     const rule = screen.getByText(injected)
     expect(rule.closest('li')).toHaveAttribute('value', '2')
     expect(rule.children).toHaveLength(0)
@@ -1723,5 +1740,416 @@ describe('Covers → Taste profile (#1372)', () => {
       expect.stringMatching(/^Version 2 \(in use\) Built .+ from 31 decisions$/u),
       expect.stringMatching(/^Version 1 Built .+ from 25 decisions$/u),
     ])
+  })
+})
+
+// The owner's edits (#1372 PR 2): edit in place, Add rule and Remove.
+const owned = tasteView({
+  chosen: 31,
+  profile: {
+    version: 3,
+    kind: 'edited',
+    built_at: 1_790_000_000,
+    decisions: 31,
+    rules: [
+      { number: 1, section: 'drawn_to', text: 'Bold illustrated art.', provenance: 'model' },
+      { number: 4, section: 'drawn_to', text: 'Calm serif type.', provenance: 'owner' },
+      { number: 2, section: 'avoid', text: 'Busy type!', provenance: 'edited' },
+    ],
+  },
+  versions: [
+    { version: 3, kind: 'edited', created_at: 1_790_100_000, decisions: 31 },
+    { version: 2, kind: 'edited', created_at: 1_790_050_000, decisions: 31 },
+    { version: 1, kind: 'built', created_at: 1_790_000_000, decisions: 31 },
+  ],
+})
+type TasteProfileRule = NonNullable<TasteProfileView['profile']>['rules'][number]
+const withRules = (view: TasteProfileView, rules: readonly TasteProfileRule[], version: number) => {
+  if (!view.profile) throw new Error('a profile is required')
+  return {
+    ...view,
+    profile: { ...view.profile, version, kind: 'edited' as const, rules },
+    versions: [
+      { version, kind: 'edited' as const, created_at: 1_790_200_000, decisions: 31 },
+      ...view.versions,
+    ],
+  }
+}
+const editHttp = (
+  view: TasteProfileView,
+  editTasteRule: (version: number, edit: unknown) => Promise<TasteProfileView>,
+) => ({ ...tasteHttp(view), editTasteRule: vi.fn(editTasteRule) })
+const sectionOf = (name: string) => {
+  const section = screen.getByRole('heading', { name }).closest('section')
+  if (!section) throw new Error('a section is required')
+  return section
+}
+const statusLine = () => {
+  const line = document.querySelector('.taste-status')
+  if (!(line instanceof HTMLElement)) throw new Error('the status line is required')
+  return line
+}
+
+describe('Covers → Taste profile edits (#1372 PR 2)', () => {
+  it('names each pencil, marks the owner’s rules and lists edit versions', async () => {
+    renderRoute(tasteRoute, tasteHttp(owned))
+    const pencil = await screen.findByRole('button', { name: 'Edit rule 4' })
+    expect(pencil).toHaveAttribute('title', 'Edit')
+    expect(screen.getByRole('button', { name: 'Edit rule 1' })).toBeVisible()
+    const yours = screen.getByText('Calm serif type.').closest('li')
+    const edited = screen.getByText('Busy type!').closest('li')
+    const model = screen.getByText('Bold illustrated art.').closest('li')
+    if (!yours || !edited || !model) throw new Error('rule rows are required')
+    expect(within(yours).getByText('Yours')).toHaveClass('status-pill', 'is-accent')
+    expect(within(edited).getByText('Edited')).toHaveClass('status-pill', 'is-accent')
+    expect(model.querySelector('.status-pill')).toBeNull()
+    // The pill sits in its own column before the pencil.
+    const pill = within(yours).getByText('Yours')
+    expect(
+      pill.compareDocumentPosition(within(yours).getByRole('button')) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    expect(yours).toHaveAttribute('value', '4')
+    const versions = screen.getByRole('heading', { name: 'Versions' }).closest('section')
+    if (!versions) throw new Error('the Versions section is required')
+    expect(
+      within(versions)
+        .getAllByRole('listitem')
+        .map((row) => row.textContent),
+    ).toEqual([
+      expect.stringMatching(/^Version 3 \(in use\) Edited \S.+$/u),
+      expect.stringMatching(/^Version 2 Edited \S.+$/u),
+      expect.stringMatching(/^Version 1 Built .+ from 31 decisions$/u),
+    ])
+    expect(screen.getByText('Built').nextElementSibling?.textContent).toMatch(/\S/u)
+  })
+
+  it('opens an editor with its label, limit, counter and caret at the end', async () => {
+    const user = userEvent.setup()
+    renderRoute(tasteRoute, tasteHttp(owned))
+    await user.click(await screen.findByRole('button', { name: 'Edit rule 2' }))
+    const input = screen.getByRole('textbox', { name: 'Rule 2' })
+    expect(input).toHaveFocus()
+    expect(input).toHaveValue('Busy type!')
+    expect(input).toHaveAttribute('maxlength', '400')
+    expect((input as HTMLInputElement).selectionStart).toBe('Busy type!'.length)
+    expect(screen.getByText('10 of 400 characters')).toBeVisible()
+    // The counter counts code points, not UTF-16 units.
+    await user.type(input, ' 😀')
+    expect(screen.getByText('12 of 400 characters')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Save rule' })).toHaveClass('button-primary')
+    expect(screen.getByRole('button', { name: 'Remove' })).toHaveClass('button-danger')
+    // One rule at a time: another pencil discards the open draft.
+    await user.click(screen.getByRole('button', { name: 'Edit rule 1' }))
+    expect(screen.queryByRole('textbox', { name: 'Rule 2' })).toBeNull()
+    expect(screen.getByRole('textbox', { name: 'Rule 1' })).toHaveValue('Bold illustrated art.')
+  })
+
+  it.each([
+    ['   ', 'Write a rule first.'],
+    ['x'.repeat(399) + ' y', '400 characters at most.'],
+    ['Covers like www.example.invalid', 'No web addresses or file paths.'],
+    ['Covers like /books/covers/ do', 'No web addresses or file paths.'],
+  ])('refuses %j in the browser and keeps what was typed', async (typed, copy) => {
+    const user = userEvent.setup()
+    const http = editHttp(owned, async () => owned)
+    renderRoute(tasteRoute, http)
+    await user.click(await screen.findByRole('button', { name: 'Edit rule 1' }))
+    const input = screen.getByRole('textbox', { name: 'Rule 1' })
+    // maxLength stops typing, so a long value is set directly.
+    fireEvent.change(input, { target: { value: typed } })
+    await user.click(screen.getByRole('button', { name: 'Save rule' }))
+    expect(screen.getByRole('alert')).toHaveTextContent(copy)
+    expect(input).toHaveFocus()
+    expect(input).toHaveValue(typed.replace(/\s+/gu, ' ').trim())
+    expect(http.editTasteRule).not.toHaveBeenCalled()
+  })
+
+  it('saves an edit as the version shown, says so and returns to the pencil', async () => {
+    const user = userEvent.setup()
+    const next = withRules(
+      owned,
+      [
+        { number: 1, section: 'drawn_to', text: 'Bright art.', provenance: 'edited' },
+        ...(owned.profile?.rules.slice(1) ?? []),
+      ],
+      4,
+    )
+    const http = editHttp(owned, async () => next)
+    renderRoute(tasteRoute, http)
+    await user.click(await screen.findByRole('button', { name: 'Edit rule 1' }))
+    const input = screen.getByRole('textbox', { name: 'Rule 1' })
+    await user.clear(input)
+    // Typed text is sent in its canonical spelling.
+    await user.type(input, '  Bright   art.  ')
+    await user.click(screen.getByRole('button', { name: 'Save rule' }))
+    expect(http.editTasteRule).toHaveBeenCalledWith(3, {
+      action: 'edit',
+      number: 1,
+      text: 'Bright art.',
+    })
+    expect(await screen.findByText('Rule 1 saved.')).toBe(statusLine())
+    expect(statusLine()).toHaveAttribute('role', 'status')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Edit rule 1' })).toHaveFocus())
+    expect(screen.getByText('Bright art.').closest('li')).toHaveTextContent('Edited')
+  })
+
+  it('closes on unchanged text with no request or status', async () => {
+    const user = userEvent.setup()
+    const http = editHttp(owned, async () => owned)
+    renderRoute(tasteRoute, http)
+    await user.click(await screen.findByRole('button', { name: 'Edit rule 4' }))
+    await user.click(screen.getByRole('button', { name: 'Save rule' }))
+    expect(screen.queryByRole('textbox')).toBeNull()
+    expect(http.editTasteRule).not.toHaveBeenCalled()
+    expect(statusLine()).toHaveTextContent('')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Edit rule 4' })).toHaveFocus())
+  })
+
+  it('cancels an edit back to its pencil', async () => {
+    const user = userEvent.setup()
+    renderRoute(tasteRoute, tasteHttp(owned))
+    await user.click(await screen.findByRole('button', { name: 'Edit rule 2' }))
+    await user.type(screen.getByRole('textbox', { name: 'Rule 2' }), ' more')
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.getByText('Busy type!')).toBeVisible()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Edit rule 2' })).toHaveFocus())
+  })
+
+  it('adds a rule in an empty section and moves to its pencil', async () => {
+    const user = userEvent.setup()
+    const added = withRules(
+      owned,
+      [
+        ...(owned.profile?.rules ?? []),
+        { number: 5, section: 'trade_offs', text: 'Takes a sharper copy.', provenance: 'owner' },
+      ],
+      4,
+    )
+    const http = editHttp(owned, async () => added)
+    renderRoute(tasteRoute, http)
+    const trade = await screen.findByRole('heading', { name: 'How you trade them off' })
+    const section = trade.closest('section')
+    if (!section) throw new Error('a section is required')
+    await user.click(within(section).getByRole('button', { name: 'Add rule' }))
+    const input = within(section).getByRole('textbox', { name: 'Rule 5' })
+    expect(input).toHaveFocus()
+    expect(input).toHaveValue('')
+    // A new rule's form has no Remove.
+    expect(within(section).queryByRole('button', { name: 'Remove' })).toBeNull()
+    await user.type(input, 'Takes a sharper copy.')
+    await user.click(within(section).getByRole('button', { name: 'Save rule' }))
+    expect(http.editTasteRule).toHaveBeenCalledWith(3, {
+      action: 'add',
+      section: 'trade_offs',
+      text: 'Takes a sharper copy.',
+    })
+    expect(await screen.findByText('Rule 5 saved.')).toBeVisible()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Edit rule 5' })).toHaveFocus())
+    expect(screen.getByText('Takes a sharper copy.').closest('li')).toHaveTextContent('Yours')
+  })
+
+  it('cancels a new rule back to its section’s Add rule', async () => {
+    const user = userEvent.setup()
+    renderRoute(tasteRoute, tasteHttp(owned))
+    await screen.findByRole('heading', { name: 'What you avoid' })
+    const avoid = sectionOf('What you avoid')
+    await user.click(within(avoid).getByRole('button', { name: 'Add rule' }))
+    await user.type(within(avoid).getByRole('textbox'), 'Thin type.')
+    await user.click(within(avoid).getByRole('button', { name: 'Cancel' }))
+    expect(within(avoid).queryByRole('textbox')).toBeNull()
+    expect(screen.queryByText('Thin type.')).toBeNull()
+    await waitFor(() =>
+      expect(within(avoid).getByRole('button', { name: 'Add rule' })).toHaveFocus(),
+    )
+  })
+
+  it('removes a rule, says so and moves to its section’s Add rule', async () => {
+    const user = userEvent.setup()
+    const without = withRules(owned, owned.profile?.rules.slice(0, 2) ?? [], 4)
+    const http = editHttp(owned, async () => without)
+    renderRoute(tasteRoute, http)
+    await user.click(await screen.findByRole('button', { name: 'Edit rule 2' }))
+    await user.click(screen.getByRole('button', { name: 'Remove' }))
+    expect(http.editTasteRule).toHaveBeenCalledWith(3, { action: 'remove', number: 2 })
+    expect(await screen.findByText('Rule 2 removed.')).toBe(statusLine())
+    const avoid = sectionOf('What you avoid')
+    expect(avoid.querySelector('ol')).toBeNull()
+    await waitFor(() =>
+      expect(within(avoid).getByRole('button', { name: 'Add rule' })).toHaveFocus(),
+    )
+  })
+
+  it('says 40 rules is the limit and opens no form', async () => {
+    const user = userEvent.setup()
+    const full = withRules(
+      owned,
+      Array.from({ length: 40 }, (_unused, index) => ({
+        number: index + 1,
+        section: 'drawn_to' as const,
+        text: `Rule ${String(index + 1)}.`,
+        provenance: 'model' as const,
+      })),
+      4,
+    )
+    renderRoute(tasteRoute, tasteHttp(full))
+    await screen.findByRole('heading', { name: 'What you avoid' })
+    await user.click(within(sectionOf('What you avoid')).getByRole('button', { name: 'Add rule' }))
+    expect(statusLine()).toHaveTextContent('40 rules is the limit.')
+    expect(screen.queryByRole('textbox')).toBeNull()
+  })
+
+  it('refuses a rule the profile has no room for before sending it', async () => {
+    const user = userEvent.setup()
+    const crowded = withRules(
+      owned,
+      Array.from({ length: 30 }, (_unused, index) => ({
+        number: index + 1,
+        section: 'drawn_to' as const,
+        text: Array.from({ length: 40 }, () => 'a').join(' '),
+        provenance: 'model' as const,
+      })),
+      4,
+    )
+    const http = editHttp(crowded, async () => crowded)
+    renderRoute(tasteRoute, http)
+    await screen.findByRole('heading', { name: 'What you avoid' })
+    await user.click(within(sectionOf('What you avoid')).getByRole('button', { name: 'Add rule' }))
+    await user.type(screen.getByRole('textbox'), 'One more word.')
+    await user.click(screen.getByRole('button', { name: 'Save rule' }))
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'The taste profile has no room for this rule. Shorten it or remove another rule.',
+    )
+    expect(http.editTasteRule).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    [
+      'profile_full',
+      'The taste profile has no room for this rule. Shorten it or remove another rule.',
+    ],
+    [
+      'rule_text',
+      'Use plain words. Leave out web addresses, file paths, passwords and hidden characters.',
+    ],
+    ['invalid', 'The rule was not saved. Reload and try again.'],
+  ])('shows the server’s %s refusal and keeps the draft', async (code, copy) => {
+    const user = userEvent.setup()
+    const http = editHttp(owned, async () => {
+      throw new ApiError(422, code)
+    })
+    renderRoute(tasteRoute, http)
+    await user.click(await screen.findByRole('button', { name: 'Edit rule 1' }))
+    const input = screen.getByRole('textbox', { name: 'Rule 1' })
+    await user.clear(input)
+    await user.type(input, 'password=hunter2 style')
+    await user.click(screen.getByRole('button', { name: 'Save rule' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(copy)
+    expect(input).toHaveValue('password=hunter2 style')
+  })
+
+  it('closes on stale, says so, re-reads and moves to the status line', async () => {
+    const user = userEvent.setup()
+    const http = editHttp(owned, async () => {
+      throw new ApiError(409, 'stale')
+    })
+    renderRoute(tasteRoute, http)
+    await user.click(await screen.findByRole('button', { name: 'Edit rule 1' }))
+    await user.type(screen.getByRole('textbox', { name: 'Rule 1' }), ' now')
+    await user.click(screen.getByRole('button', { name: 'Save rule' }))
+    expect(
+      await screen.findByText(
+        'The taste profile changed since the page loaded. Nothing was changed.',
+      ),
+    ).toBe(statusLine())
+    expect(screen.queryByRole('textbox')).toBeNull()
+    await waitFor(() => expect(statusLine()).toHaveFocus())
+    await waitFor(() => expect(http.getTasteProfile.mock.calls.length).toBeGreaterThan(1))
+  })
+
+  it.each([
+    ['saved', 'Save rule', 'No answer came back. Check whether the rule was saved.'],
+    ['removed', 'Remove', 'No answer came back. Check whether the rule was removed.'],
+  ])('keeps the editor open when no answer says whether it was %s', async (_kind, button, copy) => {
+    const user = userEvent.setup()
+    const http = editHttp(owned, async () => {
+      throw new UncertainMutationError({
+        operation: 'POST /api/v1/covers/taste/rules',
+        responseStatus: 200,
+        at: '',
+        reason: 'synthetic',
+      })
+    })
+    renderRoute(tasteRoute, http)
+    await user.click(await screen.findByRole('button', { name: 'Edit rule 2' }))
+    const input = screen.getByRole('textbox', { name: 'Rule 2' })
+    await user.type(input, ' now')
+    await user.click(screen.getByRole('button', { name: button }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(copy)
+    expect(screen.getByRole('textbox', { name: 'Rule 2' })).toHaveValue('Busy type! now')
+    await waitFor(() => expect(http.getTasteProfile.mock.calls.length).toBeGreaterThan(1))
+  })
+
+  it('sends the version the editor opened on after a re-read', async () => {
+    const user = userEvent.setup()
+    // A rebuild lands while the editor is open: the read now shows version 4.
+    const rebuilt = withRules(owned, owned.profile?.rules ?? [], 4)
+    let current = owned
+    const http = {
+      ...editHttp(owned, async () => {
+        throw new ApiError(409, 'stale')
+      }),
+      getTasteProfile: vi.fn(async () => current),
+    }
+    const { queryClient } = renderRoute(tasteRoute, http)
+    await user.click(await screen.findByRole('button', { name: 'Edit rule 1' }))
+    current = rebuilt
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ['covers', 'taste'] })
+    })
+    expect(await screen.findByText('4')).toBeVisible()
+    await user.type(screen.getByRole('textbox', { name: 'Rule 1' }), ' now')
+    await user.click(screen.getByRole('button', { name: 'Save rule' }))
+    expect(http.editTasteRule).toHaveBeenCalledWith(3, {
+      action: 'edit',
+      number: 1,
+      text: 'Bold illustrated art. now',
+    })
+    expect(
+      await screen.findByText(
+        'The taste profile changed since the page loaded. Nothing was changed.',
+      ),
+    ).toBeVisible()
+  })
+
+  it('marks controls aria-disabled while a save is pending', async () => {
+    const user = userEvent.setup()
+    let release: (view: TasteProfileView) => void = () => undefined
+    const http = editHttp(
+      owned,
+      async () =>
+        await new Promise<TasteProfileView>((resolve) => {
+          release = resolve
+        }),
+    )
+    renderRoute(tasteRoute, http)
+    await user.click(await screen.findByRole('button', { name: 'Edit rule 1' }))
+    await user.type(screen.getByRole('textbox', { name: 'Rule 1' }), ' now')
+    await user.click(screen.getByRole('button', { name: 'Save rule' }))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Save rule' })).toHaveAttribute(
+        'aria-disabled',
+        'true',
+      ),
+    )
+    expect(screen.getByRole('button', { name: 'Edit rule 4' })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    )
+    await user.click(screen.getByRole('button', { name: 'Save rule' }))
+    expect(http.editTasteRule).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      release(owned)
+    })
   })
 })

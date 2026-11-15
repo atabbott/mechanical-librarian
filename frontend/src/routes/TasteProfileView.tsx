@@ -1,9 +1,25 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import type { SyntheticEvent } from 'react'
 
-import { refusalCopy, uncertainWriteOutcome } from '../api/http'
-import type { TasteBuildFailure, TasteProfileView as TasteProfile } from '../api/http'
+import {
+  ApiError,
+  normalizeTasteRule,
+  refusalCopy,
+  tasteCodePoints,
+  tasteRuleMaximum,
+  tasteRuleRefusal,
+  uncertainWriteOutcome,
+} from '../api/http'
+import type {
+  TasteBuildFailure,
+  TasteProfileView as TasteProfile,
+  TasteRuleEdit,
+  TasteRuleRefusal,
+} from '../api/http'
+import { Button } from '../components/Button'
+import { StatusPill } from '../components/StatusPill'
 import { formatClock, formatDay } from '../dates'
 import { focusAfterRetry } from '../focusAfterRetry'
 import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
@@ -11,8 +27,9 @@ import { routeFailureCopy } from '../routeFailure'
 import { useReviewContext } from '../router'
 
 // Covers → Taste profile (#1372): the profile the builder model wrote from the
-// owner's cover choices, read-only. It influences nothing yet. Rule text is
-// model output, so it is only ever rendered as React text.
+// owner's cover choices, which the owner edits rule by rule; each saved change
+// is a new version at once. It influences nothing yet. Rule text is model
+// output or the owner's, so it is only ever rendered as React text.
 
 type Rule = NonNullable<TasteProfile['profile']>['rules'][number]
 const sectionHeadings = {
@@ -188,17 +205,286 @@ function BuildState({ view }: { view: TasteProfile }) {
   )
 }
 
+// The editor's refusals, the prototype's words where it had them (#1372 PR 2).
+const refusalLines: Record<TasteRuleRefusal | 'rule_text' | 'rule_limit', string> = {
+  rule_empty: 'Write a rule first.',
+  rule_too_long: '400 characters at most.',
+  address: 'No web addresses or file paths.',
+  profile_full: 'The taste profile has no room for this rule. Shorten it or remove another rule.',
+  // Credential-shaped or hidden text passes the browser's own check.
+  rule_text:
+    'Use plain words. Leave out web addresses, file paths, passwords and hidden characters.',
+  rule_limit: '40 rules is the limit.',
+}
+const limitCopy = refusalLines.rule_limit
+const staleCopy = 'The taste profile changed since the page loaded. Nothing was changed.'
+
+// Which rule the editor is open on, and the version shown when it opened: a
+// re-read while editing makes Save stale, never an edit of a renumbered rule.
+type Editing =
+  | { kind: 'rule'; number: number; version: number }
+  | { kind: 'new'; section: Rule['section']; version: number }
+type FocusTarget = { pencil: number } | { add: Rule['section'] } | 'status'
+
+const Pencil = () => (
+  <svg
+    aria-hidden="true"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <path d="M4 20h4L19 9l-4-4L4 16z" />
+    <path d="M13 7l4 4" />
+  </svg>
+)
+
+function RuleForm({
+  number,
+  initial,
+  removable,
+  pending,
+  refusal,
+  onSave,
+  onCancel,
+  onRemove,
+}: {
+  number: number
+  initial: string
+  removable: boolean
+  pending: boolean
+  refusal: string | null
+  onSave: (text: string, setDraft: (text: string) => void) => void
+  onCancel: () => void
+  onRemove: () => void
+}) {
+  const [draft, setDraft] = useState(initial)
+  const input = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    const element = input.current
+    if (!element) return
+    element.focus()
+    element.setSelectionRange(element.value.length, element.value.length)
+  }, [])
+  const id = `taste-rule-${String(number)}`
+  const submit = (event: SyntheticEvent<HTMLFormElement, SubmitEvent>) => {
+    event.preventDefault()
+    if (!pending)
+      onSave(draft, (text) => {
+        setDraft(text)
+        input.current?.focus()
+      })
+  }
+  return (
+    <form className="taste-edit" onSubmit={submit}>
+      <label className="sr-only" htmlFor={id}>
+        {`Rule ${String(number)}`}
+      </label>
+      <input
+        ref={input}
+        id={id}
+        value={draft}
+        maxLength={tasteRuleMaximum}
+        autoComplete="off"
+        aria-describedby={`${id}-count`}
+        onChange={(event) => {
+          setDraft(event.target.value)
+        }}
+      />
+      <div className="taste-edit-actions">
+        <Button type="submit" variant="primary" aria-disabled={pending || undefined}>
+          Save rule
+        </Button>
+        <Button
+          type="button"
+          aria-disabled={pending || undefined}
+          onClick={() => {
+            if (!pending) onCancel()
+          }}
+        >
+          Cancel
+        </Button>
+        {removable ? (
+          <Button
+            type="button"
+            variant="danger"
+            aria-disabled={pending || undefined}
+            onClick={() => {
+              if (!pending) onRemove()
+            }}
+          >
+            Remove
+          </Button>
+        ) : null}
+      </div>
+      <small className="taste-count" id={`${id}-count`}>
+        {`${String(tasteCodePoints(draft))} of 400 characters`}
+      </small>
+      {refusal === null ? null : (
+        <p className="taste-refusal" role="alert">
+          {refusal}
+        </p>
+      )}
+    </form>
+  )
+}
+
 function Profile({ view }: { view: TasteProfile }) {
+  const { http } = useReviewContext()
+  const cache = useQueryClient()
+  const container = useRef<HTMLDivElement>(null)
+  const [editing, setEditing] = useState<Editing | null>(null)
+  const [refusal, setRefusal] = useState<string | null>(null)
+  const [status, setStatus] = useState('')
+  const [focus, setFocus] = useState<FocusTarget | null>(null)
+  const save = useMutation({
+    mutationFn: ({ version, edit }: { version: number; edit: TasteRuleEdit }) =>
+      http.editTasteRule(version, edit),
+    retry: false,
+  })
+  useLayoutEffect(() => {
+    if (focus === null) return
+    const root = container.current
+    const target =
+      focus === 'status'
+        ? root?.querySelector<HTMLElement>('.taste-status')
+        : 'pencil' in focus
+          ? root?.querySelector<HTMLElement>(`[data-taste-pencil="${String(focus.pencil)}"]`)
+          : root?.querySelector<HTMLElement>(`[data-taste-add="${focus.add}"]`)
+    // A new rule's pencil exists once the answer is rendered, which can be a
+    // render after the editor closed.
+    if (!target) return
+    target.focus()
+    setFocus(null)
+  }, [focus, view])
   const profile = view.profile
   if (profile === null) return null
-  const sections = (Object.keys(sectionHeadings) as Rule['section'][])
-    .map((section) => ({
-      section,
-      rules: profile.rules.filter((rule) => rule.section === section),
-    }))
-    .filter((group) => group.rules.length > 0)
+  const pending = save.isPending
+  const ruleNumbers = profile.rules.map((rule) => rule.number)
+  const nextNumber = Math.max(0, ...ruleNumbers) + 1
+  const open = (next: Editing) => {
+    if (pending) return
+    // One rule at a time: opening another editor discards the open draft.
+    setEditing(next)
+    setRefusal(null)
+  }
+  const close = (target: FocusTarget) => {
+    setEditing(null)
+    setRefusal(null)
+    setFocus(target)
+  }
+  const send = (
+    current: Editing,
+    edit: TasteRuleEdit,
+    done: (next: TasteProfile) => { status: string; focus: FocusTarget },
+  ) => {
+    const removing = edit.action === 'remove'
+    save.mutate(
+      { version: current.version, edit },
+      {
+        onSuccess: (next) => {
+          cache.setQueryData(['covers', 'taste'], next)
+          const outcome = done(next)
+          setStatus(outcome.status)
+          close(outcome.focus)
+        },
+        onError: (error) => {
+          const reread = () => void cache.invalidateQueries({ queryKey: ['covers', 'taste'] })
+          if (error instanceof ApiError && error.status === 409 && error.code === 'stale') {
+            // Numbers may have changed under a rebuild, so the draft is not kept.
+            setStatus(staleCopy)
+            close('status')
+            reread()
+            return
+          }
+          if (uncertainWriteOutcome(error)) {
+            setRefusal(
+              removing
+                ? 'No answer came back. Check whether the rule was removed.'
+                : 'No answer came back. Check whether the rule was saved.',
+            )
+            reread()
+            return
+          }
+          const named =
+            error instanceof ApiError && error.status === 422 && error.code in refusalLines
+              ? refusalLines[error.code as keyof typeof refusalLines]
+              : null
+          setRefusal(
+            named ??
+              refusalCopy(
+                error,
+                removing
+                  ? 'The rule was not removed. Reload and try again.'
+                  : 'The rule was not saved. Reload and try again.',
+              ),
+          )
+        },
+      },
+    )
+  }
+  const saveRule = (current: Editing, typed: string, setDraft: (text: string) => void) => {
+    const text = normalizeTasteRule(typed)
+    const rule =
+      current.kind === 'rule'
+        ? profile.rules.find((item) => item.number === current.number)
+        : undefined
+    if (current.kind === 'rule' && rule?.text === text) {
+      // Unchanged: nothing to save, and nothing to say.
+      close({ pencil: current.number })
+      return
+    }
+    const refused = tasteRuleRefusal(
+      text,
+      profile.rules,
+      current.kind === 'rule' ? current.number : null,
+    )
+    if (refused !== null) {
+      setDraft(text)
+      setRefusal(refusalLines[refused])
+      return
+    }
+    if (current.kind === 'rule')
+      send(current, { action: 'edit', number: current.number, text }, () => ({
+        status: `Rule ${String(current.number)} saved.`,
+        focus: { pencil: current.number },
+      }))
+    else
+      send(current, { action: 'add', section: current.section, text }, (next) => {
+        // The new rule is the last of its section in the answer.
+        const added = next.profile?.rules.filter((item) => item.section === current.section).at(-1)
+        return added === undefined
+          ? { status: '', focus: { add: current.section } }
+          : { status: `Rule ${String(added.number)} saved.`, focus: { pencil: added.number } }
+      })
+  }
+  const editorFor = (number: number, initial: string, current: Editing) => (
+    <RuleForm
+      key={current.kind === 'rule' ? `rule-${String(number)}` : `new-${current.section}`}
+      number={number}
+      initial={initial}
+      removable={current.kind === 'rule'}
+      pending={pending}
+      refusal={refusal}
+      onSave={(typed, setDraft) => {
+        saveRule(current, typed, setDraft)
+      }}
+      onCancel={() => {
+        close(current.kind === 'rule' ? { pencil: number } : { add: current.section })
+      }}
+      onRemove={() => {
+        const section = profile.rules.find((rule) => rule.number === number)?.section
+        send(current, { action: 'remove', number }, () => ({
+          status: `Rule ${String(number)} removed.`,
+          focus: section === undefined ? 'status' : { add: section },
+        }))
+      }}
+    />
+  )
   return (
-    <>
+    <div ref={container} className="taste-editor">
       <dl className="taste-meta">
         <div>
           <dt>Version</dt>
@@ -217,25 +503,81 @@ function Profile({ view }: { view: TasteProfile }) {
           <dd>{`${String(profile.rules.length)} of 40`}</dd>
         </div>
       </dl>
+      <p className="taste-status" role="status" tabIndex={-1}>
+        {status}
+      </p>
       {/* Wide screens put Versions beside the rules, as the prototype does. */}
       <div className="taste-body">
         <div className="taste-rules">
-          {sections.map(({ section, rules }) => (
-            <section key={section} className="taste-section" aria-labelledby={`taste-${section}`}>
-              <h2 id={`taste-${section}`}>{sectionHeadings[section]}</h2>
-              <ol>
-                {rules.map((rule) => (
-                  <li key={rule.number} value={rule.number}>
-                    <span>{rule.text}</span>
-                  </li>
-                ))}
-              </ol>
-            </section>
-          ))}
+          {(Object.keys(sectionHeadings) as Rule['section'][]).map((section) => {
+            const rules = profile.rules.filter((rule) => rule.section === section)
+            const adding = editing?.kind === 'new' && editing.section === section ? editing : null
+            return (
+              <section key={section} className="taste-section" aria-labelledby={`taste-${section}`}>
+                <h2 id={`taste-${section}`}>{sectionHeadings[section]}</h2>
+                {rules.length > 0 || adding !== null ? (
+                  <ol>
+                    {rules.map((rule) =>
+                      editing?.kind === 'rule' && editing.number === rule.number ? (
+                        <li key={rule.number} value={rule.number} className="taste-editing">
+                          {editorFor(rule.number, rule.text, editing)}
+                        </li>
+                      ) : (
+                        <li key={rule.number} value={rule.number}>
+                          <span>{rule.text}</span>
+                          <span className="taste-who">
+                            {rule.provenance === 'owner' ? (
+                              <StatusPill tone="accent">Yours</StatusPill>
+                            ) : rule.provenance === 'edited' ? (
+                              <StatusPill tone="accent">Edited</StatusPill>
+                            ) : null}
+                          </span>
+                          <button
+                            type="button"
+                            className="taste-pencil"
+                            data-taste-pencil={rule.number}
+                            aria-label={`Edit rule ${String(rule.number)}`}
+                            title="Edit"
+                            aria-disabled={pending || undefined}
+                            onClick={() => {
+                              open({ kind: 'rule', number: rule.number, version: profile.version })
+                            }}
+                          >
+                            <Pencil />
+                          </button>
+                        </li>
+                      ),
+                    )}
+                    {adding === null ? null : (
+                      <li value={nextNumber} className="taste-editing">
+                        {editorFor(nextNumber, '', adding)}
+                      </li>
+                    )}
+                  </ol>
+                ) : null}
+                <button
+                  type="button"
+                  className="taste-add"
+                  data-taste-add={section}
+                  aria-disabled={pending || undefined}
+                  onClick={() => {
+                    if (pending) return
+                    if (profile.rules.length >= 40) {
+                      setStatus(limitCopy)
+                      return
+                    }
+                    open({ kind: 'new', section, version: profile.version })
+                  }}
+                >
+                  Add rule
+                </button>
+              </section>
+            )
+          })}
         </div>
         <Versions view={view} />
       </div>
-    </>
+    </div>
   )
 }
 
@@ -250,7 +592,11 @@ function Versions({ view }: { view: TasteProfile }) {
               {`Version ${String(version.version)}`}
               {index === 0 ? ' (in use)' : null}
             </strong>{' '}
-            <span>{`Built ${formatDay(version.built_at)} from ${String(version.decisions)} decisions`}</span>
+            <span>
+              {version.kind === 'built'
+                ? `Built ${formatDay(version.created_at)} from ${String(version.decisions)} decisions`
+                : `Edited ${formatDay(version.created_at)}`}
+            </span>
           </li>
         ))}
       </ul>
