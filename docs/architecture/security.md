@@ -380,10 +380,12 @@ Settings write that sends no request, and no view shows a key's value.
 
 ## Parsers and hostile input
 
-No untrusted media or image byte is parsed in the server process.
+No untrusted media or image byte is parsed in the server process. Where the
+kernel allows, each parser helper is [confined](parser-confinement.md) to its
+handed files.
 
-**EPUB.** A descriptor-bound child with no credentials, network or
-persistence parses one bounded immutable snapshot
+**EPUB.** A child with no credentials or persistence parses one bounded
+immutable snapshot
 ([ADR-0011](decisions/0011-isolated-epub-inspector.md)). The parent
 revalidates file content and target identity inside the publication
 transaction, so a replaced file is refused. Digits inside non-ISBN schemes
@@ -408,10 +410,9 @@ verification of the current cover. No bound is raised. Only closed fallback
 and refusal codes reach the report; no reference, member name, wrapper text or
 image byte reaches a report, log, diagnostic, status or support bundle.
 
-**Audiobooks.** `ffprobe` runs as an isolated child over a passed descriptor
-([ADR-0063](decisions/0063-isolated-audiobook-inspector.md)): no network, no
-inherited `PATH`, a minimal environment, its own session, and CPU, memory,
-file, output and wall-clock limits installed before exec. Its output and
+**Audiobooks.** `ffprobe` runs over a passed descriptor
+([ADR-0063](decisions/0063-isolated-audiobook-inspector.md)) with no inherited
+`PATH`, and CPU, memory, file, output and wall-clock limits. Its output and
 sidecars are read in the audio child under a closed recognition grammar, never
 an XML or container parser.
 
@@ -475,7 +476,7 @@ markup never reaches a write. Markup built to hide a path is an accepted
 risk.
 
 **Images.** JPEG, PNG and static WebP are decoded only in a constrained
-child, which also computes the perceptual hash.
+child that also computes the perceptual hash.
 
 ## AI reviewer boundary
 
@@ -515,8 +516,8 @@ after the owner selects Codex again.
   no-new-privileges, with PID and memory ceilings; its seccomp profile admits
   only Bubblewrap's namespace setup
   ([deployment](../operations/deployment.md#contained-codex-reviewer)).
-- Inside, a second seccomp program denies `unshare`, `setns` and process
-  creation. No procfs is mounted.
+- Inside, a second seccomp program checks the architecture and denies
+  `unshare`, `setns` and process creation. No procfs is mounted.
 - Broker, supervisor and namespace init have 64 MiB address-space ceilings,
   Codex 832 MiB.
 - Every optional Codex tool is off (shell, agents, plugins, browser, web
