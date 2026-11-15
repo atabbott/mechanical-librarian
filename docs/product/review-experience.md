@@ -597,9 +597,8 @@ Reviewer advice allows no write
 ([ADR-0062](../architecture/decisions/0062-owner-managed-reviewer-access.md)).
 
 In Access and diagnostics, Sign out other browsers and, in store mode, Owner
-password (given the current one) apply at once outside Save settings. Both
-sign out every other browser
-([deployment](../operations/deployment.md#owner-sessions)).
+password (given the current one) apply at once and sign out every other
+browser ([deployment](../operations/deployment.md#owner-sessions)).
 
 ## Words and values
 
