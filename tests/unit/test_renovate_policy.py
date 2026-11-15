@@ -40,7 +40,7 @@ def test_managed_upgrades_use_strict_current_platform_automerge() -> None:
     assert CONFIG["lockFileMaintenance"]["automerge"]
 
 
-def test_only_majors_replacements_compatibility_and_python_lines_remain_manual() -> (
+def test_only_majors_replacements_compatibility_python_lines_and_playwright_stay_manual() -> (
     None
 ):
     restrictions = [
@@ -73,6 +73,18 @@ def test_only_majors_replacements_compatibility_and_python_lines_remain_manual()
         {
             "description": "Require approval for dependency replacements",
             "matchUpdateTypes": ["replacement"],
+            "automerge": False,
+            "dependencyDashboardApproval": True,
+        },
+        {
+            "description": (
+                "Hold Playwright out of the Python packages batch until its newer "
+                "Chromium is checked against the browser tests; approval opens its "
+                "own pull request"
+            ),
+            "matchManagers": ["pep621"],
+            "matchPackageNames": ["playwright"],
+            "groupName": "Playwright",
             "automerge": False,
             "dependencyDashboardApproval": True,
         },
@@ -127,6 +139,7 @@ def test_minor_and_patch_updates_batch_per_manager_under_the_tool_groups() -> No
         "Python runtime",
         "uv resolver",
         "npm package manager",
+        "Playwright",
     }
     assert all(
         index > last_batch
