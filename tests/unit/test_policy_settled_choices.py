@@ -327,7 +327,7 @@ def test_an_unreadable_live_policy_makes_the_case_read_unavailable(
         CurrentReviewCaseSnapshot,
         SimpleNamespace(resolved_policy_document=document),
     )
-    proposal = {"destination": "tags"}
+    proposal: dict[str, object] = {"destination": "tags"}
     with pytest.raises(ReviewWebError, match="^unavailable$"):
         _ask_destinations(snapshot, (proposal,))
     absent = cast(
