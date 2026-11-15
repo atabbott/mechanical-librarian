@@ -53,6 +53,7 @@ import sqlite3
 import stat
 import subprocess
 import sys
+import time
 from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -101,8 +102,11 @@ DEFAULT_CAP_USD = "5"
 MAX_CAP_USD = Decimal(100)
 # The stable cover reviewer posture's completion ceiling (ADR-0062).
 COMPLETION_TOKEN_CEILING = 8192
-# A generous allowance per preview; previews are at most a few hundred pixels.
-IMAGE_TOKEN_ALLOWANCE = 2000
+# Previews are at most 320 x 480 pixels (cover_packet_semantics), one 512-pixel
+# tile at full detail. The dearest listed one-tile rate is 2,833 base plus 5,667
+# per tile (8,500 tokens); every other scheme counts fewer. A model that charges
+# past its request's ceiling anyway stops the run (``charge_above_ceiling``).
+IMAGE_TOKEN_ALLOWANCE = 8500
 PROMPT_OVERHEAD_TOKENS = 1000
 CONSECUTIVE_FAILURE_LIMIT = 5
 SHEET_LIMIT = 200
@@ -111,6 +115,8 @@ _ORIGIN_HOST = "openrouter.ai"
 _ALLOWED_GETS = frozenset({"/api/v1/key", "/api/v1/models"})
 _CHAT_PATH = "/api/v1/chat/completions"
 _MAX_CHAT_CAPTURE = 1_048_576
+# The product adapter's default call deadline (OpenRouterReviewer).
+_CHAT_DEADLINE_SECONDS = 30.0
 _FREE_REFUSALS = frozenset({400, 401, 402, 403, 404, 429})
 
 # The four rare dimensions the owner labels first (ADR-0098, "Before
@@ -147,6 +153,9 @@ _STOPPED = {
     "unknown_charge": "Stopped because OpenRouter did not report what a request "
     "cost. Check the charge in your OpenRouter activity.",
     "consecutive_failures": "Stopped after five failures in a row.",
+    "charge_above_ceiling": "Stopped because a request cost more than its worst "
+    "case, so the spending cap cannot be relied on for this model. Choose "
+    "another model with --model.",
     "interrupted": "Stopped because the run was interrupted.",
 }
 
@@ -391,6 +400,7 @@ class ChargeTransport(httpx.BaseTransport):
         if not self._paid or self.posted:
             raise httpx.UnsupportedProtocol("paid request not authorised")
         self.posted = True
+        deadline = time.monotonic() + _CHAT_DEADLINE_SECONDS
         response = self._delegate.handle_request(request)
         body = bytearray()
         try:
@@ -398,6 +408,10 @@ class ChargeTransport(httpx.BaseTransport):
                 body.extend(chunk)
                 if len(body) > _MAX_CHAT_CAPTURE:
                     break
+                # The adapter's own call deadline cannot run while this
+                # transport reads the body, so enforce it here as well.
+                if time.monotonic() >= deadline:
+                    raise httpx.ReadTimeout("chat response passed its deadline")
         finally:
             response.close()
         # A refusal before generation costs nothing; any other failure may
@@ -685,6 +699,9 @@ def run_smoke(
             if attempt.charge is None:
                 stopped = "unknown_charge"
                 break
+            if attempt.charge > plan.ceiling(item):
+                stopped = "charge_above_ceiling"
+                break
             consecutive = consecutive + 1 if attempt.status == "failed" else 0
             if consecutive >= CONSECUTIVE_FAILURE_LIMIT:
                 stopped = "consecutive_failures"
@@ -827,12 +844,12 @@ def write_sheet(output: Path, plan: Plan, attempts: Sequence[Attempt]) -> None:
 QUESTIONS: tuple[tuple[str, str, tuple[tuple[str, str], ...]], ...] = (
     (
         "tie_in",
-        "Film or TV tie-in",
+        "Film, TV, game or stage tie-in",
         (
             ("absent", "None"),
             ("franchise_text_only", "Named in text only"),
             ("adaptation_sticker_or_banner", "Sticker or banner on the book's art"),
-            ("adaptation_art", "Film or TV art"),
+            ("adaptation_art", "Art from the adaptation"),
             ("unknown", "Can't tell"),
         ),
     ),

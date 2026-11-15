@@ -450,6 +450,40 @@ def test_other_failures_leave_the_charge_unknown_and_stop(
     assert result["unknown_charges"] == 1
 
 
+def test_a_charge_above_its_ceiling_stops_the_run(library: Any, tmp_path: Path) -> None:
+    fake = Fake(charge=1.0)
+    code, text, output = _run(library, tmp_path, fake)
+    assert code == 2
+    assert fake.posts == 1
+    result = json.loads((output / "result.json").read_text())
+    assert result["stopped"] == "charge_above_ceiling"
+    assert result["spent_usd"] == "1.0"
+    assert "cost more than its worst case" in text
+
+
+def test_image_allowance_covers_a_full_detail_preview_tile() -> None:
+    # The dearest listed one-tile rate for a 320 x 480 preview.
+    assert smoke.IMAGE_TOKEN_ALLOWANCE >= 2833 + 5667
+
+
+def test_a_response_past_the_deadline_stops_with_an_unknown_charge(
+    library: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = Fake()
+    _preflight, text = _main(["preflight", *_base(library)], Fake(pricing=fake.pricing))
+    monkeypatch.setattr(smoke, "_CHAT_DEADLINE_SECONDS", -1.0)
+    output = tmp_path / "run"
+    code, _run_text = _main(
+        ["run", *_base(library), "--output", str(output), "--confirm", _code(text)],
+        fake,
+    )
+    assert code == 2
+    assert fake.posts == 1
+    result = json.loads((output / "result.json").read_text())
+    assert result["stopped"] == "unknown_charge"
+    assert result["unknown_charges"] == 1
+
+
 class Interrupting(Fake):
     def respond(self, request: httpx.Request) -> httpx.Response:
         if request.method == "POST":

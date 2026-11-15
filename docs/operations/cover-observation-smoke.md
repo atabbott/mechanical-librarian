@@ -68,8 +68,9 @@ code.
 - Requests go one at a time and are never retried.
 - Before each request the run stops if that request could carry the known
   spend past the cap. The worst case uses the model's listed prices and the
-  reviewer's 8,192-token answer limit, so the cap holds unless OpenRouter
-  charges more than it lists.
+  reviewer's 8,192-token answer limit, with room for each cover at full
+  detail. If a request still costs more than its worst case, the run stops,
+  because the cap cannot be relied on for that model.
 - A request OpenRouter refuses before the model starts (statuses 400, 401,
   402, 403, 404 and 429) is counted as free. Any other failed request, or one
   whose charge is not reported, stops the run, and its charge is shown as
