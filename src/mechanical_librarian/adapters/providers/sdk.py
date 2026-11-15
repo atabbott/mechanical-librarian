@@ -390,6 +390,7 @@ class BoundedProviderSession:
             if held is not None:
                 return self._reuse_once(
                     held,
+                    digest,
                     deadline=deadline,
                     is_retry=is_retry,
                     maximum_bytes=maximum_bytes,
@@ -504,6 +505,7 @@ class BoundedProviderSession:
     def _reuse_once(
         self,
         held: tuple[bytes, int],
+        digest: str,
         *,
         deadline: float | None,
         is_retry: bool,
@@ -539,7 +541,15 @@ class BoundedProviderSession:
                 ProviderStatus.OVERSIZED, category="response_oversized"
             )
         self._consume_response_bytes(len(payload))
-        return read(payload)
+        assert self._responses is not None
+        self._responses.served(self.attempt_count, digest)
+        try:
+            return read(payload)
+        except Exception:
+            # A held body today's reader refuses is removed, so it is asked
+            # for live next time instead of failing the same way for ever.
+            self._responses.drop(self.attempt_count)
+            raise
 
     def _failure(
         self,
@@ -603,7 +613,8 @@ class BoundedProviderSession:
             outcome="terminal",
             reused=prior.reused,
         )
-        # A refused answer is never kept, even when its lane still ends clean.
+        # A refused answer is never kept, even when its lane still ends clean,
+        # and a reused one that is refused is removed from the store.
         if self._responses is not None:
             self._responses.drop(prior.ordinal)
 

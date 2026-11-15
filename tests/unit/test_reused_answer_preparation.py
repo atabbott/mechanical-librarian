@@ -54,10 +54,10 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from tests.support.metadata_report_doubles import FakeInspector, FakeTarget
-from tests.unit.test_review_pipeline import (
-    _PRODUCER,
-    _entry,
-    _install_settings_authority,
+from tests.support.preparation_pipeline import (
+    PRODUCER,
+    entry,
+    install_settings_authority,
 )
 
 _FILE = "a" * 64
@@ -68,7 +68,7 @@ def application_path() -> Iterator[Path]:
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "application.sqlite3"
         repository = open_repository(path)
-        _install_settings_authority(repository)
+        install_settings_authority(repository)
         repository.enter_shadow_preview(1, ())
         repository.close()
         yield path
@@ -164,7 +164,7 @@ def _service(
 def _pipeline(
     path: Path, wall_clock: float, now: int, extracted: list[str]
 ) -> ReviewPreparationPipeline:
-    entry = replace(_entry("item-1", _FILE), library="ebooks")
+    item = replace(entry("item-1", _FILE), library="ebooks")
 
     def extract(repository, action: PipelineAction, claim_next: bool):
         serialized = _service(
@@ -195,8 +195,8 @@ def _pipeline(
 
     return ReviewPreparationPipeline(
         repository_factory=lambda: open_repository(path),
-        libraries=(("primary", "ebooks", "lib-1", _PRODUCER),),
-        discover=lambda *_: (1, "a" * 64, (entry,)),
+        libraries=(("primary", "ebooks", "lib-1", PRODUCER),),
+        discover=lambda *_: (1, "a" * 64, (item,)),
         extract=extract,
         providers=lambda *_: (),
         propose=propose,

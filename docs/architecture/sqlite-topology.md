@@ -467,7 +467,8 @@ length and fetch time in microseconds; no request text, header or credential.
   transaction that replaces any answer held for the same request, then removes
   the answers fetched longest ago until the stored bytes are under 2 GiB. A
   covering index on fetch time and size serves that without reading payloads.
-  A hit writes nothing.
+  A hit that is read writes nothing; one the decoder or adapter refuses is
+  removed.
 - The busy timeout is 1,000 ms. A store that cannot be opened or used leaves
   every request live, with one value-free event; it never stops startup or a
   preparation. A refused file is not changed.

@@ -1369,7 +1369,9 @@ def _retry_provider(
 ) -> MetadataProvider:
     """Construct a provider retry's adapter from the configuration it was
     resolved against, or refuse one that configuration no longer supports."""
-    reuse = provider_response_reuse(responses, value.adapter, False)
+    # A retry asks live and replaces what is held: the answers held for this
+    # item are older than the failure it is retrying.
+    reuse = provider_response_reuse(responses, value.adapter, True)
     instance = _metadata_provider(
         value, configuration, credentials, marketplaces, pacers, reuse
     )

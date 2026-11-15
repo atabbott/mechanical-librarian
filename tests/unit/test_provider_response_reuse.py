@@ -56,16 +56,16 @@ from mechanical_librarian.application.provider_evidence import (
     ProviderIncompleteCauseRecord,
 )
 from mechanical_librarian.domain.metadata_report import ProviderStatus
+from tests.support.google_books import (
+    discovery_plan,
+    identifier_first_plan,
+    volume,
+)
 from tests.support.hardcover_evidence import (
     hardcover_answer,
     isbn_claim,
     isbn_lookup,
     work_lookup,
-)
-from tests.unit.test_google_books_metadata import (
-    _discovery_plan,
-    _identifier_first_plan,
-    _volume,
 )
 
 _URL = "https://provider.invalid/v1/records"
@@ -224,18 +224,18 @@ def _google(
 
 
 def _volumes(_: httpx.Request) -> httpx.Response:
-    return _json({"totalItems": 1, "items": [_volume()]})(_)
+    return _json({"totalItems": 1, "items": [volume()]})(_)
 
 
 def test_a_reused_observation_reads_exactly_as_the_live_one(tmp_path: Path) -> None:
     store = _store(tmp_path)
-    live = _google(_volumes, store).observe(_discovery_plan())
+    live = _google(_volumes, store).observe(discovery_plan())
     assert live.observation.status is ProviderStatus.CANDIDATES
     stored = _rows(store)
     assert stored == live.observation.request_accounting.initial_dispatches > 1
 
     # A later clock: everything the report keeps still comes from the answers.
-    reused = _google(_never, store, wall=_WALL + 86_400).observe(_discovery_plan())
+    reused = _google(_never, store, wall=_WALL + 86_400).observe(discovery_plan())
     assert reused.observation == live.observation
     assert reused.evidence.accessed_at == live.evidence.accessed_at
     assert provider_result_diagnostics(
@@ -291,13 +291,13 @@ def test_an_observation_with_a_failed_lane_keeps_nothing(tmp_path: Path) -> None
 
     def answer(request: httpx.Request) -> httpx.Response:
         if request.url.params["q"].startswith("isbn:"):
-            volume = _volume()
-            volume["volumeInfo"]["title"] = "Different Book"
-            volume["volumeInfo"]["authors"] = ["Other Author"]
-            return _json({"totalItems": 1, "items": [volume]})(request)
+            other = volume()
+            other["volumeInfo"]["title"] = "Different Book"
+            other["volumeInfo"]["authors"] = ["Other Author"]
+            return _json({"totalItems": 1, "items": [other]})(request)
         return httpx.Response(503, headers={"content-type": "application/json"})
 
-    result = _google(answer, store).observe(_identifier_first_plan())
+    result = _google(answer, store).observe(identifier_first_plan())
     assert result.observation.status is ProviderStatus.CANDIDATES
     assert ProviderStatus.UNAVAILABLE in {
         lane.status for lane in result.observation.lanes
@@ -325,6 +325,35 @@ def test_a_refused_answer_is_never_kept_even_when_its_lane_ends_clean(
     _ask(replay, "kept")
     _ask(replay, "refused")
     assert [value.reused for value in replay.attempt_records] == [True, False]
+    store.close()
+
+
+def test_a_held_answer_its_adapter_now_refuses_is_removed(tmp_path: Path) -> None:
+    store, reuse = _held(tmp_path)
+    session = _session(_never, reuse)
+    _ask(session)
+    session.mark_response_attempt("candidate_limit_exceeded")
+    assert session.attempt_records[-1].reused
+    assert _rows(store) == 0
+    store.close()
+
+
+def test_a_held_body_the_reader_now_refuses_is_removed(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    reuse = ProviderResponseReuse(store, "open_library", False)
+    digest = reuse.digest("GET", _URL, {"q": "value"}, None)
+    store.commit("open_library", ((digest, 1, b"not json"),))
+
+    with pytest.raises(ProviderFailure) as refused:
+        _ask(_session(_never, reuse))
+    assert refused.value.status is ProviderStatus.MALFORMED
+    assert _rows(store) == 0
+
+    # The request is asked live the next time, and its answer is kept again.
+    again = ProviderResponseReuse(store, "open_library", False)
+    assert _ask(_session(_json({"value": 2}), again)) == {"value": 2}
+    again.settle(True)
+    assert _rows(store) == 1
     store.close()
 
 
@@ -433,7 +462,7 @@ def test_a_google_books_key_never_reaches_the_digest_or_the_store(
         wire.append(request)
         return _volumes(request)
 
-    _google(answer, store, api_key=key).observe(_discovery_plan())
+    _google(answer, store, api_key=key).observe(discovery_plan())
     store.close()
     assert wire and all(
         key in str(request.url) or request.headers.get("x-goog-api-key") == key
@@ -445,7 +474,7 @@ def test_a_google_books_key_never_reaches_the_digest_or_the_store(
 
 def test_a_research_asks_live_and_replaces_the_held_answer(tmp_path: Path) -> None:
     store = _store(tmp_path)
-    _google(_volumes, store).observe(_identifier_first_plan())
+    _google(_volumes, store).observe(identifier_first_plan())
     (old,) = store._connection.execute(
         "SELECT fetched_at_us FROM provider_responses"
     ).fetchone()
@@ -457,7 +486,7 @@ def test_a_research_asks_live_and_replaces_the_held_answer(tmp_path: Path) -> No
         return _volumes(request)
 
     later = _google(answer, store, wall=_WALL + 7 * 86_400, refresh=True)
-    later.observe(_identifier_first_plan())
+    later.observe(identifier_first_plan())
     assert len(sent) == 1
     assert store._connection.execute(
         "SELECT count(*),max(fetched_at_us) FROM provider_responses"
@@ -481,7 +510,7 @@ def test_an_adapter_failure_discards_what_it_held(tmp_path: Path) -> None:
         cast(MetadataProvider, _Failing(_session(_json({"value": 1}), reuse))), reuse
     )
     with pytest.raises(RuntimeError):
-        provider.observe(_discovery_plan())
+        provider.observe(discovery_plan())
     assert _rows(store) == 0
     store.close()
 

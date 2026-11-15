@@ -168,7 +168,7 @@ Each recovery event is recorded with the job and health change it describes.
 A settled item records `outcome`, `job_attempt`, `physical_requests` (at most
 54) and `request_count_status` (`observed`, `partial` or `unknown`). A
 [held answer](metadata-report.md#held-provider-answers) served in place of a
-request is not a physical request. A failed answer is never held, so the item
-a job retries is asked live. This history is neither a complete request log
+request is not a physical request. A retry never reuses one: it asks live and
+replaces what is held. This history is neither a complete request log
 nor a billing record. The matching
 stderr lines are in [observability](observability.md#provider-logs).

@@ -247,6 +247,20 @@ class SQLiteProviderResponseStore:
             self._rollback()
             _fault("write_failed", adapter)
 
+    def discard(self, adapter: str, digest: str) -> None:
+        """Remove one held answer its adapter no longer reads."""
+        try:
+            with self._lock:
+                self._connection.execute("BEGIN IMMEDIATE")
+                self._connection.execute(
+                    "DELETE FROM provider_responses WHERE adapter=? AND digest=?",
+                    (adapter, digest),
+                )
+                self._connection.execute("COMMIT")
+        except sqlite3.Error:
+            self._rollback()
+            _fault("write_failed", adapter)
+
     def _rollback(self) -> None:
         try:
             with self._lock:

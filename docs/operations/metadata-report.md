@@ -471,12 +471,15 @@ pacing wait and the request are skipped. A miss asks the provider as before.
 
 - An answer is kept only when the provider's observation and every lane of it
   ended `candidates`, `no_match` or `insufficient_input`, and only a 200 body
-  the session and the adapter both accepted. A failed, incomplete, malformed,
-  oversized or limit-exceeded lane keeps nothing from that observation, so
-  [provider recovery](provider-recovery.md) always asks live.
+  the session read and the adapter did not mark refused. A failed, incomplete,
+  malformed, oversized or limit-exceeded lane keeps nothing from that
+  observation.
 - A held answer is reused whatever its age. The weekly
   [re-search](#after-the-report) of an audiobook that admitted no recording
-  asks every provider live and replaces what is held.
+  and every [provider recovery](provider-recovery.md) retry ask live and
+  replace what is held.
+- A held answer the decoder or the adapter refuses when it is reused is
+  removed, so that request is asked live the next time.
 - Losing or refusing the store costs only requests: every request goes live.
 
 ### Dates, titles and creators

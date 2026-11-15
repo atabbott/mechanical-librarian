@@ -94,6 +94,8 @@ class ProviderResponseReuse:
         # A re-search asks every provider live and replaces what is held.
         self._refresh = refresh
         self._held: dict[int, tuple[str, int, bytes]] = {}
+        # The dispatches served from the store, by ordinal.
+        self._served: dict[int, str] = {}
 
     def digest(
         self,
@@ -115,13 +117,25 @@ class ProviderResponseReuse:
         if 0 < len(payload) <= MAX_PAYLOAD_BYTES:
             self._held[ordinal] = (digest, fetched_at_us, payload)
 
+    def served(self, ordinal: int, digest: str) -> None:
+        self._served[ordinal] = digest
+
     def drop(self, ordinal: int) -> None:
-        """Forget the answer an adapter refused after the session accepted it."""
+        """Forget the answer a reader or adapter refused.
+
+        A live answer is no longer held for the commit. A reused one is removed
+        from the store: it was read clean when it was kept, so what reads it
+        has changed, and the next request for it goes live.
+        """
         self._held.pop(ordinal, None)
+        digest = self._served.pop(ordinal, None)
+        if digest is not None:
+            self._store.discard(self._adapter, digest)
 
     def settle(self, clean: bool) -> None:
         held = tuple(self._held.values())
         self._held.clear()
+        self._served.clear()
         if clean:
             self._store.commit(self._adapter, held)
 

@@ -1060,7 +1060,7 @@ def test_each_path_passes_its_own_pacer_for_the_adapter(adapter):
 @pytest.mark.parametrize("adapter", _ADAPTERS)
 @pytest.mark.parametrize("research", (False, True), ids=("prepare", "research"))
 def test_each_path_binds_its_adapter_to_the_response_store(adapter, research):
-    """Both paths reuse held answers; only a re-search asks live (#1064)."""
+    """Preparation reuses held answers; a re-search and a retry ask live (#1064)."""
     from mechanical_librarian.adapters.persistence.provider_responses import (
         SQLiteProviderResponseStore,
     )
@@ -1113,7 +1113,7 @@ def test_each_path_binds_its_adapter_to_the_response_store(adapter, research):
     foreground, retry, unbound = received
     assert all(type(value) is ProviderResponseReuse for value in (foreground, retry))
     assert [value._adapter for value in (foreground, retry)] == [adapter] * 2
-    assert [value._refresh for value in (foreground, retry)] == [research, False]
+    assert [value._refresh for value in (foreground, retry)] == [research, True]
     assert unbound is None
     assert [type(value) for value in built[:2]] == [RetainingProvider] * 2
     assert type(built[2]) is not RetainingProvider

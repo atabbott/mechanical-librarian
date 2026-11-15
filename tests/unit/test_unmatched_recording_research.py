@@ -200,6 +200,31 @@ def test_an_unchanged_research_keeps_the_open_case(application_path: Path) -> No
     assert 1 == _drain(_pipeline(application_path, new, later + 1, unmatched=True))
 
 
+def test_a_research_claimed_by_its_work_id_is_a_research_too(
+    application_path: Path,
+) -> None:
+    """Both claim queries name a re-search, so neither reuses a held answer."""
+    report = _report("Prepared once", "a", "b")
+    _drain(_pipeline(application_path, report, 20, unmatched=True))
+    later = 20 + _WEEK
+    entry = replace(_entry("item-1", report.file.identity), library="ebooks")
+    repository = open_repository(application_path)
+    try:
+        repository.request_review_scan("primary", "ebooks", "lib-1", _PRODUCER, later)
+        discovery = repository.claim_review_pipeline_action(later)
+        assert discovery is not None and discovery.stage == "discovery"
+        assert not discovery.research
+        repository.complete_review_discovery(discovery, 1, "a" * 64, (entry,), later)
+        (work_id,) = repository._connection.execute(
+            "SELECT work_id FROM review_preparation_work"
+        ).fetchone()
+        action = repository.claim_review_pipeline_work(work_id, later)
+    finally:
+        repository.close()
+    assert action is not None and action.stage == "extraction"
+    assert action.research is True
+
+
 def test_a_research_that_admits_a_recording_replaces_the_case(
     application_path: Path,
 ) -> None:

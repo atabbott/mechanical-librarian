@@ -55,11 +55,15 @@ answer must bring back the time it was fetched for the report to be the same.
    exception keeps nothing. The commit point is one wrapper in adapters
    around the adapter's `observe`.
 5. **Freshness.** A held answer is reused whatever its age (the owner's
-   choice, "until something asks again"). The weekly re-search of an
-   unmatched audiobook (ADR-0089) asks every provider live and replaces what
-   is held. Provider recovery needs no flag, since a failed answer was never
-   stored. A maximum age, if wanted later, is one constant and one comparison
-   at read.
+   choice, "until something asks again"). Two things ask live and replace
+   what is held. One is an extraction claimed while the item holds ADR-0089's
+   re-search mark: the weekly re-search of an unmatched audiobook, and a
+   requeue of such an item after a transient failure. The other is every
+   provider recovery retry, because the answers held for its item are older
+   than the failure it retries. A held answer the decoder or the adapter
+   refuses when it is reused is removed, so a change in how a body is read
+   costs one failed lookup, not a permanent one. A maximum age, if wanted
+   later, is one constant and one comparison at read.
 6. **Store.** `/data/private/provider-responses.sqlite`, one `STRICT`,
    `WITHOUT ROWID` table keyed by adapter and digest. It follows the private
    stores' rules (absent or exact, owner-only `0600`, no-follow open, delete
@@ -67,7 +71,7 @@ answer must bring back the time it was fetched for the report to be the same.
    share between processes, with a 1,000 ms busy timeout. Open runs no
    integrity check, which would read every payload; each row is inflated
    within its stated length and its digest compared when read, and a row
-   that fails is deleted and is a miss. Nothing is written on a hit.
+   that fails is deleted and is a miss. A hit that is read writes nothing.
 7. **Bound.** At most 2 GiB of stored payload bytes; after each commit the
    answers fetched longest ago are removed until the store is under the
    ceiling. A covering index on fetch time and size serves the sum and the
@@ -147,7 +151,8 @@ evict a full library's oldest answers and defeat reuse.
   network; a reused observation equals the live one in its observation,
   access time, diagnostics and attempt outcomes; bounds and the deadline
   apply on a hit; unclean, refused, declared-error and adapter-failure cases
-  keep nothing; a re-search asks live and replaces; each varied request fact
+  keep nothing; a re-search asks live and replaces; a held answer refused on
+  reuse is removed; each varied request fact
   is in the key; the Google Books key reaches neither the digest input nor
   the store file.
 - `tests/unit/test_provider_response_store.py`: admission, refusal without
