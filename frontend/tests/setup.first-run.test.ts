@@ -585,7 +585,11 @@ describe('shipped first-run setup script', () => {
     // refusal is shown on the password's own rule, not on the claim token.
     await waitFor(() => expect(password).toHaveAttribute('aria-invalid', 'true'))
     expect(screen.queryByRole('alert')).toBeNull()
-    expect(screen.getByText('At least 12 characters.')).toHaveClass('rule-refused')
+    // The refusal is also announced in #setup-status on the next frame, so
+    // read the rule itself, not whichever copy of the words is present.
+    expect(screen.getByText('At least 12 characters.', { selector: 'li' })).toHaveClass(
+      'rule-refused',
+    )
     expect(password).toHaveAttribute('aria-describedby', 'setup-password-rules')
     expect(claimToken).not.toHaveAttribute('aria-invalid')
     expect(password).toHaveFocus()
