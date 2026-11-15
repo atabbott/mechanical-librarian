@@ -536,6 +536,31 @@ the current cover's own picture that the stage took. Every earlier application
 database is rejected before mutation and needs a clean rebuild; no adoption is
 supplied.
 
+Issue #1362's typed current-cover read also takes the clean-rebuild branch.
+In `cover-policy-report-v5` the stage outcome follows that read (an unreadable
+cover may be switched, a read that settled nothing decides nothing) and may
+record the `current_contradicted` issue.
+`cover-automatic-decision-v5` admits the separate unconfirmed replacement
+identity and binds its own qualification record. A stored policy report or
+automatic decision carries the earlier meaning. Every earlier application
+database is rejected before mutation and needs a clean rebuild; no adoption is
+supplied.
+
+Issue #1355's activation B takes the clean-rebuild branch too, after #1853 and #1859, so
+each version it moves takes the next number free on main. `metadata-report-v81`
+keeps each provider's refused WORK answers (`identity_refused_candidates`,
+`identity_refused_truncated`) and each lane's `identity_refused_new`, which a
+v80 producer never read again once refused, so a v80 report is refused. Owner
+decisions move to `human-decision-v4`, which binds the digest of the field
+offer a choice was made in and a closed `cause`, both in its request digest, so
+a v3 decision is refused on readback; the `human_decisions` table does not
+change. Four tables are added for the level set, its notes, the substituted
+offer and each case's reconciled level (`level_proposal_sets`,
+`level_decision_notes`, `review_case_level_offers`,
+`review_case_level_reconciliation`), and `review_preparation_control` gains
+`work_identity_level`. Every earlier application database is rejected before
+mutation and needs a clean rebuild; no adoption is supplied.
+
 Issue #1372's taste profile (PR 1) takes the clean-rebuild branch.
 `reviewer-access-v4` adds the `cover_taste_build` OpenRouter task and its
 prices, so a v3 document is refused, and `reviewer-access-view-v4` carries

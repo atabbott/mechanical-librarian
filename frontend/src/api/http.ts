@@ -44,7 +44,8 @@ type DescriptionBindingDto = ResponseSchema<'DescriptionAdviceBinding'>
 type OwnerControlDto = ResponseSchema<'_OwnerControl'>
 type EvidenceDto = ResponseSchema<'_EvidenceResponse'>
 type HistoryDto = ResponseSchema<'_HistoryResponse'>
-type ChoiceContextDto = ResponseSchema<'_ChoiceContext'>
+type ChoiceContextDto = ResponseSchema<'_ChoiceContext'> &
+  Partial<Pick<ResponseSchema<'_FieldChoiceContext'>, 'match_basis'>>
 type CoverObservationDto = ResponseSchema<'_CoverObservation'>
 type CoverConsiderationDto = ResponseSchema<'_CoverConsiderationResponse'>
 type ProviderOutcomeDto = ResponseSchema<'_ProviderOutcome'>
@@ -508,6 +509,8 @@ export interface MediaHealthObservationView {
 }
 export interface PreparationFailureView {
   attempt: number
+  // The failure is the work's Book matching check, which gave up (#1355).
+  checkGivenUp: boolean
   diagnosticReference: string
   mediaHealth: readonly MediaHealthObservationView[]
   provider: string
@@ -663,6 +666,9 @@ export interface ChoiceContextView {
   recommendation: 'no_recommendation' | 'recommended'
   recommendationReason: string
   selection: 'current' | 'proposed'
+  // A value offered because its source record has the book's title and
+  // author, though not a confirmed match (#1355); null for any other.
+  matchBasis?: 'title_and_author' | null
 }
 export type DescriptionAdviceView = ResponseSchema<'_DescriptionAdviceResponse'>
 // The branch that chose a field's sentence; Library decides rows from it (#1791).
@@ -693,6 +699,9 @@ export interface ReviewFieldView {
   choiceContexts: readonly ChoiceContextView[]
   proposalId: string
   targetFingerprint: string
+  // The digest of what this field offers now; a choice sends it back so the
+  // server refuses one made against an offer that has since changed (#1355).
+  offerDigest: string
   humanDecision: ResponseSchema<'_DecisionProjection'> | null
   inventoryRole?: 'primary' | 'contextual'
   automaticDecision:
@@ -827,6 +836,12 @@ export interface CaseDetailView {
   comparisonNotices: readonly string[]
   mediaHealth: readonly MediaHealthObservationView[]
   writesConsented: boolean
+  // The work waits for its check against a changed Book matching setting:
+  // its choices are refused until the check finishes (#1355).
+  checking: boolean
+  // That check gave up: saving Book matching again, or a restart in file
+  // mode, retries it. Its choices stay disabled (#1355).
+  checkGivenUp: boolean
   fields: readonly ReviewFieldView[]
 }
 export interface EvidenceObservationView {
@@ -880,6 +895,12 @@ export type HistoryItemView = (
   | {
       category: 'preview'
       dispositions: readonly { count: number; outcome: PreviewDisposition }[]
+    }
+  | {
+      // Book matching changed what this field offers, so it asks again
+      // (#1355). The line itself lands with the History copy.
+      category: 'matching_changed'
+      destination: TargetDestination
     }
   | {
       category: 'cover'
@@ -1186,6 +1207,7 @@ export interface DecisionCommand {
   proposalId: string
   selectedValue?: Schema<'_ProposedValue'> | null
   targetFingerprint: string
+  offerDigest: string
   idempotencyKey: string
   considerationId?: string
   coverConfirmation?: { expected_selection_id: string | null; confirm_unverified_match: boolean }
@@ -1351,6 +1373,9 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     readonly code: string,
+    // Why a refusal applies, where the code has reasons: `offer_changed` says
+    // whether the work waits for its check or the field's offer changed (#1355).
+    readonly reason: string | null = null,
   ) {
     super(`Review API request failed (${String(status)}: ${code})`)
     this.name = 'ApiError'
@@ -1890,6 +1915,7 @@ export class ReviewApiClient implements ReviewHttp {
       idempotencyKey,
       proposalId,
       targetFingerprint,
+      offerDigest,
       selectedValue,
       destination,
       outcome,
@@ -1904,6 +1930,7 @@ export class ReviewApiClient implements ReviewHttp {
         proposal_id: proposalId,
         selected_value: selectedValue ?? null,
         target_fingerprint: targetFingerprint,
+        offered_alternatives_digest: offerDigest,
         consideration_id: considerationId ?? null,
         cover_confirmation: coverConfirmation ?? null,
       },
@@ -2715,6 +2742,7 @@ export const mapLibrary = (value: LibraryDto): LibraryView => ({
           ? null
           : {
               attempt: preparation.attempt,
+              checkGivenUp: preparation.check_given_up,
               diagnosticReference: preparation.diagnostic_reference,
               mediaHealth: mapMediaHealth(preparation.media_health),
               provider: preparation.provider,
@@ -2841,6 +2869,8 @@ export const mapCaseDetail = (value: CaseDetailDto): CaseDetailView => {
       value.recording_admission_basis,
     ),
     writesConsented: value.writes_consented,
+    checking: value.checking,
+    checkGivenUp: value.check_given_up,
     fields: value.fields.map(mapReviewField),
   }
 }
@@ -2872,6 +2902,7 @@ const mapReviewField = (field: ReviewFieldDto): ReviewFieldView => ({
   choiceContexts: mapChoiceContexts(field.choice_contexts, field.proposed_values.length),
   proposalId: field.proposal_id,
   targetFingerprint: field.target_fingerprint,
+  offerDigest: field.offer_digest,
   humanDecision: field.human_decision,
   inventoryRole: field.inventory_role,
   automaticDecision: field.automatic_decision,
@@ -3025,6 +3056,8 @@ const mapHistoryItem = (item: HistoryDto['items'][number], index: number): Histo
       previousValue: item.previous_value,
       selectedValue: item.selected_value,
     }
+  if (item.schema_version === 'matching-changed-history-event-v1')
+    return { category: 'matching_changed', occurredAt, destination: item.destination }
   // What is left is the preview event.
   return {
     category: 'preview',
@@ -3059,6 +3092,7 @@ const mapChoiceContexts = (
     recommendation: item.recommendation,
     recommendationReason: item.recommendation_reason,
     selection: item.selection,
+    matchBasis: item.match_basis ?? null,
   }))
   const [current, ...proposed] = contexts
   // current-first and proposed-count; X55 (the current context names no
@@ -3422,5 +3456,9 @@ const structuredError = async (response: Response) => {
   }
   if (!record(value) || !record(value.error) || typeof value.error.code !== 'string')
     return new ApiError(response.status, 'invalid_error_response')
-  return new ApiError(response.status, value.error.code)
+  return new ApiError(
+    response.status,
+    value.error.code,
+    typeof value.error.reason === 'string' ? value.error.reason : null,
+  )
 }

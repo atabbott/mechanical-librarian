@@ -20,6 +20,8 @@ import { mediaKindLabels, sourceStatusLabels } from '../labels'
 import type { PreparationPresentation } from '../libraryPreparation'
 import { authorLine, RESTART_SENTENCE, reportEvidenceUrl, workCount } from '../libraryWork'
 import { PreparationSummary } from './PreparationDetail'
+import { givenUpCopy, useBookMatchingRetry } from '../bookMatchingRetry'
+import { useReviewContext } from '../router'
 
 const lensLabels = {
   all: 'All',
@@ -63,9 +65,12 @@ const notMatchedReasons: Partial<Record<WorkSummaryState, string>> = {
   not_matched_no_match: 'No source matched',
 }
 // A failed preparation's group shares its lens's name, so a "needs attention"
-// heading never sits outside the Needs attention lens (#1413).
+// heading never sits outside the Needs attention lens (#1413). The lens reads
+// a work with an open decision as needing attention ahead of a later failure,
+// so such a work is grouped there too, as a given-up Book matching check's
+// work is (#1355); its row still says what failed.
 const providerGroup = (work: LibraryWorkView) =>
-  work.preparation
+  work.preparation && work.attentionCount === 0
     ? 'Could not finish'
     : work.attention === 'not_matched'
       ? 'Not matched'
@@ -244,6 +249,14 @@ const WorksCount = ({
 }
 
 // One work in the list, under its provider group's heading when it starts one.
+// A work whose Book matching check gave up says what its case line says, once
+// the settings read answers how to retry (#1355).
+const GivenUpCopy = () => {
+  const { http } = useReviewContext()
+  const retry = useBookMatchingRetry(http)
+  return retry.answered ? <>{[givenUpCopy, retry.retry].filter(Boolean).join(' ')}</> : null
+}
+
 const LibraryWorkRow = ({
   work,
   previousWork,
@@ -280,13 +293,15 @@ const LibraryWorkRow = ({
     (work.summary && !work.preparation ? notMatchedReasons[work.summary.state] : undefined) ??
     (recorded
       ? 'Recorded evidence available'
-      : work.preparation
-        ? 'Could not finish'
-        : needsAttention
-          ? work.attentionCount === 1
-            ? '1 field needs attention'
-            : `${String(work.attentionCount)} fields need attention`
-          : 'No attention needed')
+      : work.preparation?.checkGivenUp
+        ? 'Not checked'
+        : work.preparation
+          ? 'Could not finish'
+          : needsAttention
+            ? work.attentionCount === 1
+              ? '1 field needs attention'
+              : `${String(work.attentionCount)} fields need attention`
+            : 'No attention needed')
   const terminalFailure = work.preparation !== null && !work.reviewCaseId && !evidence
   const group = providerGroup(work)
   // Grouping follows the lens these rows were read for, not a retained URL's.
@@ -321,8 +336,12 @@ const LibraryWorkRow = ({
           </StatusPill>
           {preparation ? (
             <span id={preparationId} className="terminal-preparation-copy">
-              {preparation.reason} {preparation.recovery} Reference:{' '}
-              <code>{preparation.diagnosticReference}</code>
+              {preparation.checkGivenUp ? (
+                <GivenUpCopy />
+              ) : (
+                `${preparation.reason} ${preparation.recovery}`
+              )}{' '}
+              Reference: <code>{preparation.diagnosticReference}</code>
             </span>
           ) : null}
         </span>

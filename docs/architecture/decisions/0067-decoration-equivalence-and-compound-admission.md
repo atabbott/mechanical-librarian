@@ -523,7 +523,9 @@ The dotted-initials fold reaches ebooks only through
 under that ADR's one-work and sibling-veto set rule, and review-only until
 #1418: a level-matched cover is labelled for the owner and never elected. A
 level admission records no production or transformation lineage. The band
-production and its `initials_fold` row above are unchanged. Activation B adds
-the retained refused WORK answers (`identity_refused_candidates`) to this
-section.
+production and its `initials_fold` row above are unchanged. A WORK answer
+that set admission refuses is retained as `identity_refused_candidates`, read
+only by ADR-0096's level path under the same one-work and sibling-veto rules
+over that set; a set its bound or byte budget truncated admits nothing, and
+the records are never live evidence.
 

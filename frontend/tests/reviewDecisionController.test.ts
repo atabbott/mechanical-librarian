@@ -10,6 +10,7 @@ import {
   actionable,
   choiceAvailable,
   classifyDecisionFailure,
+  offerChangedCopy,
   retryableDecisionFailure,
 } from '../src/reviewDecisionController'
 import { detail, readCaseDetail } from './fixtures'
@@ -97,4 +98,18 @@ it('keeps a current authored choice available without treating it as a provider 
     }),
   ).toBe(false)
   expect(choiceAvailable({ ...authored, editable: false })).toBe(false)
+})
+
+it('answers a choice refused because Book matching changed without a generic refusal (#1355)', () => {
+  expect(offerChangedCopy(new ApiError(409, 'offer_changed', 'digest_mismatch'))).toBe(
+    'Not recorded: Book matching changed what this field offers. Choose again.',
+  )
+  // A work waiting for its check says so on its case line; the field adds nothing.
+  expect(offerChangedCopy(new ApiError(409, 'offer_changed', 'unreconciled_case'))).toBe('')
+  expect(offerChangedCopy(new ApiError(409, 'stale'))).toBeUndefined()
+  expect(offerChangedCopy(new Error('offer_changed'))).toBeUndefined()
+  // Neither reason is retried: the same choice would be refused again.
+  expect(classifyDecisionFailure(new ApiError(409, 'offer_changed', 'digest_mismatch'))).toBe(
+    'permanent',
+  )
 })

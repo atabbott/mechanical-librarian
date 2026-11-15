@@ -62,7 +62,7 @@ describe('Book matching', () => {
     expect(option(scope, 'Confirmed matches only')).toHaveAttribute('aria-pressed', 'true')
     expect(
       within(scope).queryByText(
-        'Covers from these records say “Same title and author”. None is chosen automatically.',
+        'A field that needs you also offers values from these records, and covers from them say “Same title and author”. Mechanical Librarian does not choose them for you.',
       ),
     ).toBeNull()
     const save = within(scope).getByRole('button', { name: 'Save book matching' })
@@ -71,7 +71,7 @@ describe('Book matching', () => {
     await user.click(option(scope, 'Same title and every author'))
     expect(
       within(scope).getByText(
-        'Covers from these records say “Same title and author”. None is chosen automatically.',
+        'A field that needs you also offers values from these records, and covers from them say “Same title and author”. Mechanical Librarian does not choose them for you.',
       ),
     ).toBeVisible()
     expect(
@@ -110,8 +110,14 @@ describe('Book matching', () => {
   })
 
   it.each([
-    [1, '1 work could not be checked against the new setting. Save the setting again to retry.'],
-    [3, '3 works could not be checked against the new setting. Save the setting again to retry.'],
+    [
+      1,
+      '1 work could not be checked against the new setting. Its changes wait for that check. Save the setting again to retry.',
+    ],
+    [
+      3,
+      '3 works could not be checked against the new setting. Their changes wait for those checks. Save the setting again to retry.',
+    ],
   ])(
     'names %i work(s) whose check gave up and retries with the same value',
     async (failed, line) => {
@@ -154,6 +160,32 @@ describe('Book matching', () => {
     expect(option(scope, 'Same title and every author')).toHaveAttribute('aria-pressed', 'true')
     expect(option(scope, 'Confirmed matches only')).toBeDisabled()
     expect(within(scope).getByRole('button', { name: 'Save book matching' })).toBeDisabled()
+  })
+
+  it.each([
+    [
+      1,
+      '1 work could not be checked against the new setting. Its changes wait for that check. Restart the Mechanical Librarian service to retry.',
+    ],
+    [
+      2,
+      '2 works could not be checked against the new setting. Their changes wait for those checks. Restart the Mechanical Librarian service to retry.',
+    ],
+  ])('shows %i stuck work(s) in file mode, retried by a restart (#1355)', async (failed, line) => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () =>
+      withMatching(view('file'), 'title_and_creator', check(4, 0, failed)),
+    )
+    renderRoute('/policy?section=curation', http)
+    const scope = await region()
+    expect(await within(scope).findByText(line)).toBeVisible()
+    expect(within(scope).queryByText(/Save the setting again/u)).toBeNull()
+    expect(within(scope).getByRole('button', { name: 'Save book matching' })).toBeDisabled()
+    expect(
+      within(scope).getByText(
+        'A field that needs you also offers values from these records, and covers from them say “Same title and author”. Mechanical Librarian does not choose them for you.',
+      ),
+    ).toBeVisible()
   })
 
   it('offers a reload after a refused save', async () => {

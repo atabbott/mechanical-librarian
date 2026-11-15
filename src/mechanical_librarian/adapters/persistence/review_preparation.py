@@ -52,6 +52,7 @@ from contextlib import AbstractContextManager, contextmanager
 from typing import cast
 
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
+from mechanical_librarian.adapters.persistence.level_sql import _reconciled_level_sql
 from mechanical_librarian.adapters.persistence.preparation_presentation import (
     record_preparation_names,
     refresh_preparation_presentation,
@@ -114,9 +115,9 @@ _COMPLETE_CASE_WORK_WHERE_SQL = (
 # consideration was classified under another level (#1355). Its work is
 # re-projected, which prepares the comparison again from stored evidence.
 _MATCHING_CONSIDERATION_SQL = (
-    "JOIN current_cover_considerations current "
+    "LEFT JOIN current_cover_considerations current "
     "ON current.review_case_id=c.review_case_id "
-    "JOIN cover_considerations consideration "
+    "LEFT JOIN cover_considerations consideration "
     "ON consideration.consideration_id=current.consideration_id "
 )
 _MATCHING_LEVEL_SQL = "json_extract(consideration.document,'$.work_identity_level')"
@@ -148,6 +149,9 @@ def requeue_projection_work(
         refresh_preparation_presentation(connection, updated_at)
 
 
+# A current case is unchecked while its cover comparison was made, or its
+# fields reconciled, under another level than the configured one (#1355,
+# amendment 5). The two parameters are that level.
 _MATCHING_UNCHECKED_SQL = (
     "FROM current_review_case_lineages c "
     + _MATCHING_CONSIDERATION_SQL
@@ -161,7 +165,12 @@ _MATCHING_UNCHECKED_SQL = (
     "JOIN current_metadata_reports f ON f.connection_name=c.connection_name "
     "AND f.library_name=c.library_name AND f.item_id=c.item_id "
     "AND f.file_identity=w.file_identity AND f.report_id=c.report_id "
-    "WHERE c.review_case_id IS NOT NULL AND " + _MATCHING_LEVEL_SQL + "<>? "
+    "WHERE c.review_case_id IS NOT NULL AND ((consideration.consideration_id "
+    "IS NOT NULL AND "
+    + _MATCHING_LEVEL_SQL
+    + "<>?) OR "
+    + _reconciled_level_sql("c.review_case_id")
+    + "<>?) "
 )
 
 
@@ -170,6 +179,7 @@ def request_matching_check(
     work_identity_level: str,
     *,
     updated_at: int,
+    review_case_id: str | None = None,
 ) -> None:
     """Check current cover comparisons against Book matching (#1355).
 
@@ -186,14 +196,27 @@ def request_matching_check(
     projected again, as `_schedule_current_shadow_work` does. A work already
     queued or running is left to finish. Every save runs this, so saving
     again retries whatever gave up.
+
+    The level is first written where every gate reads it, so a case whose
+    fields were reconciled at another level waits for this check, which
+    reconciles it (#1355, amendment 5). ``review_case_id`` checks only that
+    case: a refused decision asks for its own case's check again, ahead of
+    nothing (amendment 4).
     """
+    connection.execute(
+        "UPDATE review_preparation_control SET work_identity_level=? WHERE singleton=1",
+        (work_identity_level,),
+    )
     rows = connection.execute(
         "SELECT DISTINCT w.work_id,w.scan_id,w.stage,w.state,"
         "w.review_case_id=c.review_case_id AND w.proposal_set_id=c.proposal_set_id "
         "AND w.report_id=c.report_id,c.review_case_id,c.proposal_set_id,c.report_id "
         + _MATCHING_UNCHECKED_SQL
-        + "AND w.state IN ('complete','failed','stale') ORDER BY w.work_id",
-        (work_identity_level,),
+        + "AND w.state IN ('complete','failed','stale') "
+        + ("" if review_case_id is None else "AND c.review_case_id=? ")
+        + "ORDER BY w.work_id",
+        (work_identity_level, work_identity_level)
+        + (() if review_case_id is None else (review_case_id,)),
     ).fetchall()
     projections: list[tuple[str, str]] = []
     for work_id, scan_id, stage, state, same_case, case_id, proposal, report in rows:
@@ -241,13 +264,31 @@ def _retry_failed_stage(
     )
 
 
+def matching_check_given_up(
+    connection: sqlite3.Connection, work_identity_level: str, review_case_id: str
+) -> bool:
+    """Whether one case's check against Book matching gave up.
+
+    The case is one ``matching_check_counts`` counts as could not be checked:
+    unchecked, and its item's work neither queued, delayed nor running.
+    """
+    unchecked, checking = connection.execute(
+        "SELECT count(*),coalesce(sum(w.state IN ('queued','delayed','running')),0) "
+        + _MATCHING_UNCHECKED_SQL
+        + "AND c.review_case_id=?",
+        (work_identity_level, work_identity_level, review_case_id),
+    ).fetchone()
+    return int(unchecked) > 0 and int(checking) == 0
+
+
 def matching_check_counts(
     connection: sqlite3.Connection, work_identity_level: str
 ) -> tuple[int, int, int]:
     """Current works, works being checked, and works whose check gave up.
 
-    A current case is checked once its current cover consideration was made
-    under the configured Book matching level (#1355). One that is not is
+    A current case is checked once its current cover consideration was made,
+    and its fields reconciled, under the configured Book matching level
+    (#1355). One that is not is
     being checked while its item's work is queued, delayed or running, and
     otherwise could not be checked; saving the setting again retries it. A
     case whose item has no preparation work, because it left the library and
@@ -263,7 +304,7 @@ def matching_check_counts(
     unchecked, checking = connection.execute(
         "SELECT count(*),coalesce(sum(w.state IN ('queued','delayed','running')),0) "
         + _MATCHING_UNCHECKED_SQL,
-        (work_identity_level,),
+        (work_identity_level, work_identity_level),
     ).fetchone()
     return int(current), int(checking), int(unchecked) - int(checking)
 

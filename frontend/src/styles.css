@@ -986,6 +986,7 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .choice-description-value { cursor:pointer; }
 .choice-description-value:focus-visible { outline:2px solid var(--accent-strong); outline-offset:3px; }
 .comparison-notice { margin-top:14px; padding:12px 14px; border:1px solid var(--notice); border-radius:8px; background:var(--notice-soft); color:var(--ink); }
+.case-checking-line { margin:0 0 14px; padding:10px 14px; border:1px solid var(--notice); border-radius:8px; background:var(--notice-soft); color:var(--ink); }
 .comparison-notice p { margin:0; overflow-wrap:anywhere; font-size:.75rem; line-height:1.45; }
 .comparison-notice p + p { margin-top:5px; }
 .library-cover-comparison { display: grid; min-width: 0; gap: 10px; }
@@ -1512,7 +1513,11 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 .covers-show { display:flex; gap:.5rem; align-items:center; margin:0 0 .5rem; }
 .covers-switched-row { display:grid; grid-template-columns:5rem auto 5rem minmax(0,1fr) auto; gap:.75rem; align-items:center; padding:.75rem 0; border-bottom:1px solid var(--line); }
 .covers-switched-row figure { margin:0; display:grid; gap:.25rem; }
-.covers-switched-row img, .covers-switched-row .covers-image-missing { width:5rem; aspect-ratio:2 / 3; object-fit:contain; }
+/* Only the row's own Before and Now frames are thumbnails; an open comparison
+   inside the row keeps its own sizes. */
+.covers-switched-row > figure img, .covers-switched-row > figure .covers-image-missing { width:5rem; aspect-ratio:2 / 3; object-fit:contain; }
+/* The Before frame is narrow at enlarged text: break its words at syllables. */
+.covers-switched-row > figure:first-child .covers-image-missing { hyphens:auto; }
 .covers-switched-row figure { min-width:0; }
 .covers-switched-row figcaption { display:grid; font-size:.75rem; overflow-wrap:anywhere; }
 .covers-switched-row figcaption small { color:var(--soft); }
@@ -1537,7 +1542,7 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
   .covers-page.has-selection .covers-back { display:inline-flex; }
   .covers-switched-row { grid-template-columns:minmax(0,4rem) auto minmax(0,4rem) minmax(0,1fr); }
   /* The images fill their columns, so neither runs into the title. */
-  .covers-switched-row img, .covers-switched-row .covers-image-missing { width:100%; }
+  .covers-switched-row > figure img, .covers-switched-row > figure .covers-image-missing { width:100%; }
   .covers-switched-actions { grid-column:1 / -1; }
 }
 /* On a phone, and at enlarged text, the Before and Now pair sits above the

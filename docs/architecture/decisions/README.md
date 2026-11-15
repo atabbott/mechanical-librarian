@@ -65,7 +65,7 @@ preference; supersede or amend it.
 | [0056](0056-edition-overflow-work-witness.md) | accepted | Keep a work-only witness when editions overflow |
 | [0057](0057-sustain-explicit-sqlite-aggregate-topology.md) | accepted | Keep the explicit SQLite aggregate topology |
 | [0058](0058-settings-authority-and-first-boot.md) | accepted | Make the settings store authoritative after first boot |
-| [0059](0059-deterministic-cover-election.md) | accepted; partly superseded by 0093 | Elect covers deterministically, apart from reviewer advice |
+| [0059](0059-deterministic-cover-election.md) | accepted; partly superseded by 0093 and 0094 | Elect covers deterministically, apart from reviewer advice |
 | [0060](0060-dedicated-review-session-database.md) | accepted | Keep review sessions in a dedicated database |
 | [0061](0061-audiobook-provider-posture.md) | accepted | Admit keyless audiobook providers, Audible catalog first |
 | [0062](0062-owner-managed-reviewer-access.md) | accepted | Keep reviewer access owner-managed and task-scoped |
@@ -100,7 +100,7 @@ preference; supersede or amend it.
 | [0091](0091-decode-browser-responses-and-report-uncertain-writes.md) | proposed | Decode every browser response and report uncertain writes truthfully |
 | [0092](0092-keep-the-automatic-decision-abstention-gate.md) | proposed | Keep the automatic-decision abstention gate and define the would-admit note |
 | [0093](0093-measured-cover-rules-and-current-cover-protection.md) | accepted | Choose covers by measured rules, protect fault-free current covers, and keep replaced covers for revert |
-| [0094](0094-unconfirmed-current-covers-take-part.md) | proposed | Let an unconfirmed current cover take part in cover election |
+| [0094](0094-unconfirmed-current-covers-take-part.md) | accepted | Let an unconfirmed current cover take part in cover election |
 | [0095](0095-learned-cover-taste-profile.md) | proposed | Learn the owner's cover taste as a readable profile and let a closed judge verdict choose covers |
 | [0096](0096-owner-chosen-work-identity-strictness.md) | proposed | Let the owner choose how strictly title and creator agreement establishes work identity |
 | [0097](0097-keep-the-bibliographic-combination-gate.md) | proposed | Keep the bibliographic combination gate and extend the would-admit note to rich-preview fields |

@@ -2356,6 +2356,9 @@ def compose_store_runtime_generation(
                     review,
                     reviewer_access,
                 ),
+                align_book_matching=partial(
+                    repository.align_book_matching, review.work_identity.value
+                ),
                 settings_activation=None if activation is None else activation.activate,
                 first_boot=first_boot,
                 acknowledge_first_boot=repository.acknowledge_first_boot_preparation,
@@ -2758,7 +2761,7 @@ def run_review_server(
             )
             projection = file_settings_projection(configuration, credentials)
             settings = OwnerSettingsOperations(
-                FileOwnerSettingsRepository(projection.document, projection.secrets)
+                FileOwnerSettingsRepository.of(projection, repository.matching_check)
             )
             password_binding = load_owner_password_binding(
                 Path(review.owner_password_hash_file)
@@ -2907,6 +2910,9 @@ def run_review_server(
                         provider_recovery, configuration, credentials, "managed_by_file"
                     ),
                     provider_recovery=provider_recovery,
+                    align_book_matching=partial(
+                        repository.align_book_matching, review.work_identity.value
+                    ),
                 )
                 active_review_application = review_application
                 app = create_review_app(review_application, review)

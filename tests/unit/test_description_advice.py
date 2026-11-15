@@ -19,7 +19,11 @@ from mechanical_librarian.domain.description_advice import (
     automatic_description_floor_met,
     description_document,
 )
+from mechanical_librarian.domain.metadata_report import TargetDestination
+from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 from tests.support.automatic_no_change import _automatic_no_change_inputs
+from tests.unit.test_level_proposal_sets import SYNOPSIS, _refused, _report, _synopsis
 
 
 def test_populated_target_projects_only_provider_descriptions() -> None:
@@ -132,3 +136,21 @@ def test_output_is_exactly_bounded_description_and_disposition(
 )
 def test_automatic_description_floor(text: str, met: bool) -> None:
     assert automatic_description_floor_met(text) is met
+
+
+def test_description_advice_never_reads_a_level_admitted_synopsis() -> None:
+    """S7, test 23: description advice reads live evidence only. A refused
+    answer's synopsis the wider levels offer in review never reaches the
+    reviewer's input, whatever the configured level."""
+    report = _report(_refused(_synopsis()))
+    # Its only description is the refused one, so there is nothing to advise on.
+    with pytest.raises(ValidationError, match="at least 1 item"):
+        DescriptionAdviceInput.from_report(report, DescriptionPreferences())
+    for level in WorkIdentityLevel:
+        offered = {
+            alternative.value.value
+            for result in evaluate_report(report, work_identity_level=level).results
+            if result.destination is TargetDestination.DESCRIPTION
+            for alternative in result.alternatives
+        }
+        assert (SYNOPSIS in offered) is (level is not WorkIdentityLevel.IDENTIFIER)

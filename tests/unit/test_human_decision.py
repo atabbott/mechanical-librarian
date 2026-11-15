@@ -11,7 +11,9 @@ from mechanical_librarian.domain.human_decision import (
     OwnerSuggestion,
     admitted_applications,
     decision_actions,
+    identity_contradicts,
     list_union,
+    manual_cover_eligible,
     owner_text,
     owner_value_suggestions,
 )
@@ -328,7 +330,11 @@ def test_retained_preservation_accept_remains_readable_without_reopening_command
         {
             "review_case_id": case.review_case_id,
             "target_fingerprint": case.target_fingerprint,
-            "proposals": (preserved,),
+            # The other fields stay: a choice binds its field's whole offer.
+            "proposals": tuple(
+                preserved if value["proposal_id"] == preserved["proposal_id"] else value
+                for value in case.proposals
+            ),
             "media_kind": case.media_kind,
         },
     )()
@@ -362,7 +368,11 @@ def test_retained_nonaccept_keeps_the_command_validator_error_identity(
         {
             "review_case_id": case.review_case_id,
             "target_fingerprint": case.target_fingerprint,
-            "proposals": (resolved,),
+            # The other fields stay: a choice binds its field's whole offer.
+            "proposals": tuple(
+                resolved if value["proposal_id"] == resolved["proposal_id"] else value
+                for value in case.proposals
+            ),
             "media_kind": case.media_kind,
         },
     )()
@@ -581,3 +591,35 @@ def test_unicode_guards_withhold_a_length_changing_case_map() -> None:
     assert owner_value_suggestions("title", "ßtraße der träume", ()) == (
         OwnerSuggestion("title_case", "ßtraße Der Träume"),
     )
+
+
+@pytest.mark.parametrize(
+    ("identity", "contradicts"),
+    [
+        ({"outcome": "conflict", "reasons": ["edition_work_contradiction"]}, True),
+        (
+            {
+                "outcome": "unknown",
+                "reasons": ["retained_creator_or_contributor_disagreement"],
+            },
+            True,
+        ),
+        ({"outcome": "unknown", "reasons": ["work_identity_level_refused"]}, False),
+        ({"outcome": "plausible_match", "reasons": []}, False),
+        ({"outcome": "verified_work_match", "reasons": []}, False),
+    ],
+    ids=[
+        "conflict",
+        "creator_disagreement",
+        "level_refused",
+        "plausible",
+        "verified",
+    ],
+)
+def test_identity_contradiction_is_shared_with_owner_cover_eligibility(
+    identity: dict[str, object], contradicts: bool
+) -> None:
+    """One predicate: the stage holds what owner choice refuses (ADR-0094 S6)."""
+    assert identity_contradicts(identity) is contradicts
+    candidate = {"incumbent": False, "identity": identity}
+    assert manual_cover_eligible(candidate) is not contradicts

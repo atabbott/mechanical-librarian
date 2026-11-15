@@ -41,6 +41,12 @@ from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.field_effect_validation import (
     _automatic_decision_value,
 )
+from mechanical_librarian.adapters.persistence.level_reconciliation import (
+    case_level_unreconciled,
+    current_level_offer,
+    stored_level_offer_documents,
+    target_level,
+)
 from mechanical_librarian.adapters.persistence.review_cases import (
     ReviewAttentionPage,
     ReviewLibraryPage,
@@ -48,6 +54,9 @@ from mechanical_librarian.adapters.persistence.review_cases import (
 from mechanical_librarian.adapters.persistence.review_covers import (
     read_cover_page,
     read_switch_previews,
+)
+from mechanical_librarian.adapters.persistence.review_preparation import (
+    matching_check_given_up,
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
     _ATTENTION_FACT_CURRENT_SQL,
@@ -263,7 +272,18 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 earlier_documents,
                 source_documents,
             )
+            checking = case_level_unreconciled(self._connection, review_case_id)
             snapshot = CurrentReviewCaseSnapshot(
+                level_offer_document=current_level_offer(
+                    self._connection, review_case_id
+                ),
+                checking=checking,
+                check_given_up=checking
+                and matching_check_given_up(
+                    self._connection,
+                    target_level(self._connection).value,
+                    review_case_id,
+                ),
                 description_advice=self.description_advice(review_case_id),
                 case_document=case_document,
                 report_document=report.to_json(),
@@ -656,6 +676,13 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                     else _canonical_json(
                         {
                             "attempt": terminal[2],
+                            "check_given_up": case_id is not None
+                            and case_level_unreconciled(self._connection, case_id)
+                            and matching_check_given_up(
+                                self._connection,
+                                target_level(self._connection).value,
+                                case_id,
+                            ),
                             "connection": target["connection"],
                             "failure_root": terminal[6],
                             "item": target["item"],
@@ -738,17 +765,30 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         ).fetchall()
         documents: list[str] = []
         scope: DecisionScope | None = None
+        # A level offer can be stored after the case, so the cached scope is
+        # keyed by the case's bytes and every stored offer's (#1355, AC1).
+        offer_documents = (
+            stored_level_offer_documents(self._connection, review_case_id)
+            if human_rows
+            else ()
+        )
         try:
             for row in human_rows:
                 if len(row) != 11 or type(row[10]) is not str:
                     raise MetadataReportError("review library is unavailable")
                 decision = HumanDecision.from_json(row[10])
                 if scope is None and validated is not None:
-                    scope = validated.reused(BROWSE_SCOPE_REUSE, case_document)
+                    scope = validated.reused(
+                        BROWSE_SCOPE_REUSE, case_document, *offer_documents
+                    )
                 if scope is None:
-                    scope = DecisionScope.of_browse_case(review_case_id, case)
+                    scope = DecisionScope.of_browse_case(
+                        review_case_id, case, offer_documents
+                    )
                     if validated is not None:
-                        validated.retain(BROWSE_SCOPE_REUSE, scope, case_document)
+                        validated.retain(
+                            BROWSE_SCOPE_REUSE, scope, case_document, *offer_documents
+                        )
                 decision.validate_in(scope)
                 if (
                     decision.decision_id,

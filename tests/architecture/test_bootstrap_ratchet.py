@@ -70,14 +70,15 @@ CEILING = {
     # guarded application: straight-line construction and keyword arguments.
     # The currentness check also skips a retained source, whose original is
     # in the retained store only (one import). 3245 since #1363's activation
-    # passed the two Current covers settings into the cover preferences.
-    # 3277 since #1372 wired the taste profile build service into the
+    # passed the two Current covers settings into the cover preferences. 3250
+    # since #1355 passed each generation's Book matching alignment to the
+    # review application: one keyword argument per mode, straight-line wiring.
+    # 3286 since #1372 wired the taste profile build service into the
     # preparation runner's background lane and both review applications, and
     # passed its daily limit to reviewer access: construction and keywords,
-    # with its artifact store opened on first read. 3280 since its lane's
-    # repository is leased and closed when the supervisor stops (one import
-    # and two keyword lines).
-    "composition.py": 3280,
+    # with its artifact store opened on first read, and its lane's repository
+    # leased and closed when the supervisor stops.
+    "composition.py": 3286,
     "contained_reviewer.py": 124,
     **ENTRY_POINTS,
 }
@@ -125,13 +126,13 @@ RESIDUAL: dict[str, int | None] = {
     _C + "run_cover_review": 105,
     # Build the whole store and setup runtimes from adapters (wiring kept by
     # A-U4); a feature split of composition is A-U6, deferred to stage 7.
-    # 244 since #1372 passed the taste build service to the review application.
-    _C + "compose_store_runtime_generation": 244,
+    # 247 since #1372 passed the taste build service to the review application.
+    _C + "compose_store_runtime_generation": 247,
     _C + "_compose_setup_runtime_generation": 145,
     # Server entry. Its file-authority branch still duplicates
     # compose_store_runtime_generation: the residual A-U4 kept.
-    # 357 since #1372 passed the taste build service to the review application.
-    _C + "run_review_server": 357,
+    # 360 since #1372 passed the taste build service to the review application.
+    _C + "run_review_server": 360,
     # Constructs the Codex device-auth manager, which tests replace on
     # composition, and the reviewer access around it.
     # 168 since #1372 passed the taste profile daily limit.

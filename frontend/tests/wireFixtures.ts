@@ -55,6 +55,11 @@ export const choiceContext = (overrides: Overrides = {}) => ({
   ...overrides,
 })
 
+// `_FieldChoiceContext`: a field's choice context also says whether Book
+// matching offered the choice (#1355).
+export const fieldChoiceContext = (overrides: Overrides = {}) =>
+  choiceContext({ match_basis: null, ...overrides })
+
 // `_TargetIdentity`.
 export const targetIdentity = (overrides: Overrides = {}) => ({
   authors: ['Ada Example'],
@@ -81,7 +86,7 @@ export const reviewField = (overrides: Overrides = {}) => ({
   automatic_selection_sources: [],
   automatic_withheld_reason: null,
   automatic_withheld_condition: null,
-  choice_contexts: [choiceContext()],
+  choice_contexts: [fieldChoiceContext()],
   classification: 'needs_attention',
   classification_cause: 'review_needed',
   classification_reason: 'This field needs your review.',
@@ -106,6 +111,7 @@ export const reviewField = (overrides: Overrides = {}) => ({
   navigation_role: 'attention',
   needs_attention: true,
   notices: [],
+  offer_digest: 'd'.repeat(64),
   owner_control: null,
   preservation_only: false,
   proposal_id: 'proposal-1',
@@ -119,6 +125,8 @@ export const reviewField = (overrides: Overrides = {}) => ({
 // `GET /api/v1/review-cases/{review_case_id}` 200.
 export const caseDetail = (overrides: Overrides = {}) => ({
   audiobook_review_scope: null,
+  check_given_up: false,
+  checking: false,
   comparison_notices: [],
   current: true,
   fields: [reviewField()],

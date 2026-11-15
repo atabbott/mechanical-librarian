@@ -453,6 +453,7 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(
                 "proposal_id": cover["proposal_id"],
                 "selected_value": None,
                 "target_fingerprint": cover["target_fingerprint"],
+                "offered_alternatives_digest": cover["offer_digest"],
             },
         )
     assert 200 == decision.status_code, decision.text
@@ -1722,6 +1723,7 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
                 "provider": "hardcover-main",
                 "authority": "hardcover",
                 "recording_lookup_candidates": [],
+                "identity_refused_candidates": [],
                 "audio_editions": [],
                 "candidates": [
                     {
@@ -1740,6 +1742,7 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
             {
                 "provider": "open-library-main",
                 "recording_lookup_candidates": [],
+                "identity_refused_candidates": [],
                 "audio_editions": [],
                 "authority": "open_library",
                 "candidates": [
@@ -2450,6 +2453,7 @@ def _decide(web: ReviewWebContext[_CloseRecordingRepository]) -> str:
             "proposal_id": field["proposal_id"],
             "selected_value": field["proposed_values"][0],
             "target_fingerprint": field["target_fingerprint"],
+            "offered_alternatives_digest": field["offer_digest"],
         },
     )
     assert recorded.status_code == 200, recorded.text

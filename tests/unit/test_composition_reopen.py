@@ -220,6 +220,13 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover(
     runtime.admit()
     reviewer_access.activate_codex_lease.assert_called_once_with()
     review_application.admit.assert_called_once_with()
+    # The application aligns every case to the configured Book matching level
+    # as it admits the generation (#1355, amendment 5).
+    repository.align_book_matching.assert_not_called()
+    compose_application.call_args.kwargs["align_book_matching"](1_700_000_000)
+    repository.align_book_matching.assert_called_once_with(
+        review.work_identity.value, 1_700_000_000
+    )
     preparation.request_library_addition.assert_not_called()
     preparation.request.assert_not_called()
     preparation.progress.assert_not_called()

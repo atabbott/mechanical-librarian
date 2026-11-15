@@ -690,6 +690,7 @@ class _CoverPolicyPreferences(_StoredDocumentCopy):
 
 _CoverStageReason = Literal[
     "title_names_other_work",
+    "current_contradicted",
     "unreadable",
     "wrong_shape",
     "below_floor",
@@ -719,13 +720,14 @@ class _CoverStage(_ClosedModel):
     issues: list[
         Literal[
             "title_names_other_work",
+            "current_contradicted",
             "unreadable",
             "wrong_shape",
             "below_floor",
             "edition_language",
             "sharper_copy",
         ]
-    ] = Field(max_length=6)
+    ] = Field(max_length=7)
     # The edition language a reason names, only when that is an issue.
     language: str | None = Field(max_length=280)
     outcome: Literal["keep", "replace", "suggest", "hold", "fill", "empty"]
@@ -902,10 +904,12 @@ class _ReviewField(_ClosedModel):
     notices: list[str]
     owner_control: _OwnerControl | None
     proposed_values: list[_ProposedValue]
-    choice_contexts: list["_ChoiceContext"]
+    choice_contexts: list["_FieldChoiceContext"]
     provenance: list[str]
     preservation_only: bool
     corroboration_sources: list[str]
+    # The digest a choice on this field binds (#1355, S10).
+    offer_digest: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
     proposal_id: str
     target_fingerprint: str
     uncertainty: list[str]
@@ -930,6 +934,12 @@ class _ChoiceContext(_ClosedModel):
     recommendation: Literal["no_recommendation", "recommended"]
     recommendation_reason: str
     selection: Literal["current", "proposed"]
+
+
+class _FieldChoiceContext(_ChoiceContext):
+    # A choice Book matching offers names its basis; the copy stays in the
+    # browser (#1355).
+    match_basis: Literal["title_and_author"] | None
 
 
 class _TargetIdentity(_ClosedModel):
@@ -1017,6 +1027,12 @@ class _CaseDetailResponse(_ClosedModel):
     audiobook_review_scope: Literal["work", "recording"] | None
     comparison_notices: list[str]
     current: bool
+    # The case waits for its Book matching check: choices are refused and
+    # owner writes wait until it is reconciled (#1355, S10).
+    checking: bool
+    # That check gave up, as Policy counts it: saving Book matching again, or
+    # a restart in file mode, retries it (#1355, review round 1).
+    check_given_up: bool
     fields: list[_ReviewField]
     # The same section the recorded-evidence view carries, under the same
     # bound: a work with a review case is the one an owner opens first, and a
@@ -1162,6 +1178,18 @@ class _HistoryAutomaticItem(_ClosedModel):
     selected_value: _ProposedValue | None
 
 
+class _HistoryMatchingChangedItem(_ClosedModel):
+    """A field asked again because Book matching changed its offer (#1355)."""
+
+    decision_id: str
+    destination: _TargetDestination
+    kind: Literal["asked_again_matching"]
+    occurred_at: _Instant
+    origin: Literal["book_matching"]
+    review_case_id: str
+    schema_version: Literal["matching-changed-history-event-v1"]
+
+
 class _HistoryCoverItem(_StoredDocumentCopy):
     consideration_id: str
     consideration: _CoverConsiderationResponse
@@ -1216,6 +1244,7 @@ class _HistoryResponse(_ClosedModel):
         | _HistoryDecisionItem
         | _HistoryPreviewItem
         | _HistoryAutomaticItem
+        | _HistoryMatchingChangedItem
         | _HistoryCoverItem
         | _HistoryDescriptionItem
     ] = Field(max_length=150)
@@ -1234,6 +1263,8 @@ class _SessionResponse(_ClosedModel):
 class _ErrorCode(_ClosedModel):
     code: str
     managed_by_file: Literal["/data/config.json"] | None = None
+    # Only `offer_changed` says why (#1355).
+    reason: Literal["unreconciled_case", "digest_mismatch"] | None = None
 
 
 class _ErrorResponse(_ClosedModel):
@@ -1291,6 +1322,9 @@ class _MediaHealthObservation(_ClosedModel):
 
 class _PreparationFailure(_ClosedModel):
     attempt: _Count
+    # The failure is a Book matching check that gave up: the row says how to
+    # retry it, as the case's own line does (#1355).
+    check_given_up: bool
     diagnostic_reference: str
     media_health: list[_MediaHealthObservation] = Field(max_length=512)
     provider: str
@@ -1843,9 +1877,14 @@ class _ActivityEvent(_ClosedModel):
     )
     library: str = Field(max_length=512)
     # What current state adds to a row without changing its result: an owner
-    # choice that no longer counts, so the field asks again, or a planned
-    # automatic write held while Automatic is off (#1711).
-    note: Literal["asked_again", "held_back"] | None = None
+    # choice that no longer counts, so the field asks again (after the work
+    # came back, or after Book matching changed its offer), a planned
+    # automatic write held while Automatic is off (#1711), or a planned owner
+    # write waiting for its work's Book matching check (#1355).
+    note: (
+        Literal["asked_again", "asked_again_matching", "held_back", "waiting_for_check"]
+        | None
+    ) = None
     occurred_at: int | None = Field(default=None, ge=0)
     origin: str = Field(max_length=512)
     state: str = Field(max_length=512)
@@ -2171,6 +2210,8 @@ class _DecisionRequest(_ClosedModel):
     consideration_id: StrictStr | None = Field(
         default=None, pattern=r"^cover_consideration_[0-9a-f]{64}$"
     )
+    # The field's `offer_digest` as the page showed it (#1355, S10).
+    offered_alternatives_digest: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class _DecisionAcknowledgement(_DecisionProjection):
@@ -3090,7 +3131,13 @@ def create_review_app(
             and detail.get("managed_by_file") == "/data/config.json"
             else None
         )
-        return _error(error.status_code, str(code), managed_by_file)
+        reason = detail.get("reason") if type(detail) is dict else None
+        return _error(
+            error.status_code,
+            str(code),
+            managed_by_file,
+            reason if code == "offer_changed" and type(reason) is str else None,
+        )
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(
@@ -4338,6 +4385,7 @@ def _register_case_and_effect_routes(
                     cover_confirmation=None
                     if payload.cover_confirmation is None
                     else payload.cover_confirmation.model_dump(mode="json"),
+                    offered_alternatives_digest=payload.offered_alternatives_digest,
                 )
             )
         )
@@ -5627,20 +5675,36 @@ def _decision_call(call: Callable[[], dict[str, object]]) -> dict[str, object]:
             "nothing_to_withdraw": 409,
             "automatic_hold": 409,
             "decision_written": 409,
+            # Distinct from `stale`: the case stands, its field's offer moved
+            # (#1355).
+            "offer_changed": 409,
         }.get(error.code, 503)
-        raise HTTPException(status, detail={"code": error.code}) from None
+        reason = getattr(error, "reason", None)
+        raise HTTPException(
+            status,
+            detail={
+                "code": error.code,
+                **(
+                    {"reason": reason}
+                    if error.code == "offer_changed" and type(reason) is str
+                    else {}
+                ),
+            },
+        ) from None
 
 
 def _error(
     status_code: int,
     code: str,
     managed_by_file: Literal["/data/config.json"] | None = None,
+    reason: str | None = None,
 ) -> JSONResponse:
     return JSONResponse(
         {
             "error": {
                 "code": code,
                 **({"managed_by_file": managed_by_file} if managed_by_file else {}),
+                **({"reason": reason} if reason else {}),
             },
             "schema_version": "review-error-v1",
         },

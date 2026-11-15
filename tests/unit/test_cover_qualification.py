@@ -17,7 +17,23 @@ from mechanical_librarian.domain.cover_qualification import (
 )
 from mechanical_librarian.domain.cover_qualification_policy import (
     MEASURED_REPLACEMENT_IDENTITY,
+    REPLACEMENT_TARGET_STATES,
+    UNCONFIRMED_REPLACEMENT_IDENTITY,
     measured_replacement_record,
+    unconfirmed_replacement_record,
+)
+from mechanical_librarian.domain.cover_rules import (
+    COLOUR_BINS,
+    COVER_FLOOR_SHORT_EDGE,
+    LAYOUT_VALUES,
+    CoverIssue,
+    CoverMeasures,
+    CoverOutcome,
+    CoverProtection,
+    CoverRuleCandidate,
+    CurrentCover,
+    CurrentCoverRead,
+    elect_measured_covers,
 )
 from mechanical_librarian.domain.deterministic_cover_election import (
     CoverActualTargetState,
@@ -25,6 +41,7 @@ from mechanical_librarian.domain.deterministic_cover_election import (
 )
 from tests.support.audiobook_covers import (
     SYNTHETIC_MEASURED_RECORD,
+    SYNTHETIC_UNCONFIRMED_RECORD,
     audiobook_cover_environment,
 )
 
@@ -334,3 +351,160 @@ def test_retained_audiobook_cover_replacement_stays_refused():
                 "reason": "below_floor",
             }
         )
+
+
+def _art(art: int) -> CoverMeasures:
+    colour = [0] * COLOUR_BINS
+    colour[2 * art] = 100
+    block = 0 if art == 0 else ((1 << 16) - 1) << (16 * (art - 1))
+    return CoverMeasures(
+        f"{block:016x}", f"{block:016x}", tuple(colour), (0,) * LAYOUT_VALUES
+    )
+
+
+def _unconfirmed(
+    size: tuple[int, int] | None,
+    *,
+    edition: bool = False,
+    contradicted: bool = False,
+    retainable: bool = True,
+) -> CurrentCover:
+    if size is None:
+        return CurrentCover(
+            "current", None, CurrentCoverRead.UNREADABLE, retainable=retainable
+        )
+    return CurrentCover(
+        "current",
+        None,
+        CurrentCoverRead.READABLE,
+        retainable=True,
+        width=size[0],
+        height=size[1],
+        measures=_art(0),
+        edition_outside_library_languages=edition,
+        contradicted=contradicted,
+    )
+
+
+_SMALL = COVER_FLOOR_SHORT_EDGE - 1
+# Each prospective check over a current cover whose identity is not confirmed:
+# the medium, the current cover, the candidates, the outcome and the reason.
+_PROSPECTIVE_CHECKS = {
+    "wrong_shape": (
+        "ebook",
+        _unconfirmed((500, 500)),
+        (CoverRuleCandidate("other", "verified_work_match", 400, 600, 0, _art(1)),),
+        CoverOutcome.REPLACE,
+        CoverIssue.WRONG_SHAPE,
+    ),
+    "below_floor": (
+        "ebook",
+        _unconfirmed((_SMALL, 2 * _SMALL)),
+        (CoverRuleCandidate("other", "verified_work_match", 400, 600, 0, _art(1)),),
+        CoverOutcome.REPLACE,
+        CoverIssue.BELOW_FLOOR,
+    ),
+    "edition_language": (
+        "ebook",
+        _unconfirmed((400, 600), edition=True),
+        (CoverRuleCandidate("other", "verified_work_match", 400, 600, 0, _art(1)),),
+        CoverOutcome.REPLACE,
+        CoverIssue.EDITION_LANGUAGE,
+    ),
+    "sharper_copy": (
+        "ebook",
+        _unconfirmed((400, 600)),
+        (CoverRuleCandidate("copy", "verified_work_match", 800, 1200, 0, _art(0)),),
+        CoverOutcome.REPLACE,
+        CoverIssue.SHARPER_COPY,
+    ),
+    "unreadable": (
+        "audiobook",
+        _unconfirmed(None),
+        (CoverRuleCandidate("other", "verified_work_match", 600, 600, 0, _art(1)),),
+        CoverOutcome.REPLACE,
+        CoverIssue.UNREADABLE,
+    ),
+    "contradicted": (
+        "ebook",
+        _unconfirmed((500, 500), contradicted=True),
+        (CoverRuleCandidate("other", "verified_work_match", 400, 600, 0, _art(1)),),
+        CoverOutcome.HOLD,
+        CoverIssue.CURRENT_CONTRADICTED,
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    "protection",
+    (CoverProtection.PROTECTED, CoverProtection.UNPROTECTED),
+    ids=("protected", "unprotected"),
+)
+@pytest.mark.parametrize(
+    "check", list(_PROSPECTIVE_CHECKS), ids=list(_PROSPECTIVE_CHECKS)
+)
+def test_prospective_unconfirmed_current_cover_checks(
+    check: str, protection: CoverProtection
+) -> None:
+    """A11 (#1362): each issue check and the contradiction, under both settings.
+
+    A replacement of a current cover that is not confirmed is admitted only
+    under the unconfirmed identity, whose record no build carries yet.
+    """
+    medium, current, candidates, outcome, reason = _PROSPECTIVE_CHECKS[check]
+    election = elect_measured_covers(
+        candidates,
+        medium=medium,
+        current=current,
+        protection=protection,
+        prefer_edition=False,
+        title_conflict=False,
+        omnibus=False,
+    )
+
+    assert (election.outcome, election.reason) == (outcome, reason)
+    assert (election.choice is None) is (outcome is CoverOutcome.HOLD)
+    assert REPLACEMENT_TARGET_STATES[UNCONFIRMED_REPLACEMENT_IDENTITY] == "unknown"
+    assert unconfirmed_replacement_record() is None
+
+
+def test_an_unconfirmed_switch_is_admitted_only_under_its_own_record(tmp_path):
+    """A10 (#1362): the measured record admits nothing over an unconfirmed cover."""
+    with audiobook_cover_environment(
+        tmp_path / "measured",
+        [(200, 200), (600, 600)],
+        unknown_incumbent=True,
+        measured_record=SYNTHETIC_MEASURED_RECORD,
+    ) as state:
+        assert (_stage(state)["outcome"], _stage(state)["reason"]) == (
+            "replace",
+            "below_floor",
+        )
+        assert state.decisions == []
+    with audiobook_cover_environment(
+        tmp_path / "unconfirmed",
+        [(200, 200), (600, 600)],
+        unknown_incumbent=True,
+        unconfirmed_record=SYNTHETIC_UNCONFIRMED_RECORD,
+    ) as state:
+        (decision,) = state.decisions
+        assert decision.qualification_identity == UNCONFIRMED_REPLACEMENT_IDENTITY
+        assert decision.policy_option == "fixed_source_order:unconfirmed_replacement"
+        assert decision.qualification_manifest_sha256 == SYNTHETIC_UNCONFIRMED_RECORD
+        assert decision.reason == "below_floor"
+        assert state.snapshots[0].pre_value is not None
+
+
+def test_unconfirmed_identity_is_absent_from_every_shipped_manifest():
+    root = Path(__file__).parents[2]
+    for path in (
+        path
+        for folder in ("docs/reference", "src")
+        for path in (root / folder).rglob("*.json")
+    ):
+        assert UNCONFIRMED_REPLACEMENT_IDENTITY not in path.read_text(encoding="utf-8")
+    assert UNCONFIRMED_REPLACEMENT_IDENTITY not in F46_PASSING_AUTOMATIC_OPTIONS
+    assert all(
+        UNCONFIRMED_REPLACEMENT_IDENTITY not in identities
+        for identities in F46_IDENTITIES_BY_DESTINATION.values()
+    )

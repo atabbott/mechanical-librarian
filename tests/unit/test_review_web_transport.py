@@ -1617,6 +1617,7 @@ def test_absent_decision_case_is_not_a_persistence_outage(
         "proposal_id": field["proposal_id"],
         "selected_value": field["proposed_values"][0],
         "target_fingerprint": field["target_fingerprint"],
+        "offered_alternatives_digest": field["offer_digest"],
     }
     url = "/api/v1/review-cases/review_case_" + "f" * 64 + "/decisions"
     headers = {
@@ -1668,6 +1669,7 @@ def test_one_explicit_decision_requires_csrf_and_is_server_authoritative(
         "proposal_id": field["proposal_id"],
         "selected_value": field["proposed_values"][0],
         "target_fingerprint": field["target_fingerprint"],
+        "offered_alternatives_digest": field["offer_digest"],
     }
     denied = web.client.post(
         f"/api/v1/review-cases/{web.case.review_case_id}/decisions",
@@ -1757,6 +1759,7 @@ def test_decision_replay_after_post_commit_failure_confirms_the_recorded_decisio
         "proposal_id": field["proposal_id"],
         "selected_value": field["proposed_values"][0],
         "target_fingerprint": field["target_fingerprint"],
+        "offered_alternatives_digest": field["offer_digest"],
     }
     headers = {
         **web.origin,
@@ -2328,6 +2331,7 @@ def test_review_page_rotates_one_memory_only_csrf_token(
         "proposal_id": field["proposal_id"],
         "selected_value": None,
         "target_fingerprint": field["target_fingerprint"],
+        "offered_alternatives_digest": field["offer_digest"],
     }
     stale = web.client.post(
         f"/api/v1/review-cases/{web.case.review_case_id}/decisions",

@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Literal, cast
 
 from mechanical_librarian.domain.cover_evidence import (
+    DECODER_REJECTED_STATES,
     CoverArtifact,
     CoverContextField,
     CoverDesignation,
@@ -26,6 +27,7 @@ from mechanical_librarian.domain.cover_rules import (
     CoverProtection,
     CoverRuleCandidate,
     CurrentCover,
+    CurrentCoverRead,
     MeasuredCoverElection,
     elect_measured_covers,
     same_art,
@@ -40,6 +42,7 @@ from mechanical_librarian.domain.field_outcomes import (
     language_outcomes_compatible,
 )
 from mechanical_librarian.domain.field_value_comparison import values_match
+from mechanical_librarian.domain.human_decision import identity_contradicts
 from mechanical_librarian.domain.metadata_report import (
     AUDIO_FILE_FORMATS,
     ClaimKind,
@@ -86,8 +89,8 @@ from .cover_observation import (
 from .cover_packet_semantics import bind_cover_packet, canonical_packet_json
 from .cover_packets import cover_source_reference
 
-CoverPolicyReportSchemaVersion = Literal["cover-policy-report-v4"]
-SCHEMA_VERSION: Final[CoverPolicyReportSchemaVersion] = "cover-policy-report-v4"
+CoverPolicyReportSchemaVersion = Literal["cover-policy-report-v5"]
+SCHEMA_VERSION: Final[CoverPolicyReportSchemaVersion] = "cover-policy-report-v5"
 CoverPolicySchemaVersion = Literal["cover-policy-v2"]
 POLICY_SCHEMA_VERSION: Final[CoverPolicySchemaVersion] = "cover-policy-v2"
 _IDENTITY_OUTCOMES = frozenset(
@@ -102,7 +105,8 @@ _IDENTITY_OUTCOMES = frozenset(
 )
 _REFERENCE = re.compile(r"[a-z][a-z0-9_]{0,63}_[0-9a-f]{64}")
 # A current cover the target states but no retrieved image shows has no
-# packet reference, so the stage names it with this one.
+# packet reference, so the stage names it with this one, whether its read was
+# terminal or settled nothing.
 _UNREAD_CURRENT = "current_cover"
 _REPORT_REASONS = frozenset(
     {
@@ -234,7 +238,7 @@ def adjudicate_cover_policy(
     )
     classifier_reference = identity["classifier_reference"]
     identity_by_reference = {
-        value["candidate_reference"]: value
+        cast("str", value["candidate_reference"]): value
         for value in cast("list[dict[str, object]]", identity["candidates"])
     }
     observation_taxonomy_reference = TAXONOMY_REFERENCE
@@ -307,7 +311,7 @@ def adjudicate_cover_policy(
     acceptable = tuple(item.candidate.reference for item in election.ranked)
     owner_ready = election.ready
     rule_candidates, medium, current, current_language = _measured_inputs(
-        report, candidates, election_candidates
+        report, candidates, election_candidates, identity_by_reference
     )
 
     def stage_over(
@@ -483,11 +487,18 @@ def _measured_inputs(
     report: MetadataReport,
     candidates: list[dict[str, object]],
     election_candidates: tuple[CoverElectionCandidate, ...],
+    identity_by_reference: dict[str, dict[str, object]],
 ) -> tuple[tuple[CoverRuleCandidate, ...], str, CurrentCover | None, str | None]:
     """Build the stage's candidates, medium and current cover from the report.
 
     The last value names the current cover's edition language when it is
     outside the library's, for the reason the owner reads.
+
+    The current cover's read is typed from its Audiobookshelf source
+    (ADR-0094): the retrieved incumbent is readable, and contradicted when its
+    identity row names another work; a 404 over a declared cover, or bytes the
+    decoder refused, are unreadable, retainable when there is nothing to keep
+    or the bytes are bound by digest; any other read is unknown.
 
     Each candidate's measures and size come from the artifact the packet's
     dimensions name; its edition and title facts come from the provider
@@ -535,11 +546,13 @@ def _measured_inputs(
             current = CurrentCover(
                 reference=reference,
                 identity=None if election is None else election.identity,
-                readable=True,
+                read=CurrentCoverRead.READABLE,
+                retainable=True,
                 width=artifact.width,
                 height=artifact.height,
                 measures=artifact.measures,
                 edition_outside_library_languages=current_language is not None,
+                contradicted=identity_contradicts(identity_by_reference[reference]),
             )
             continue
         election = eligible.get(reference)
@@ -581,9 +594,31 @@ def _measured_inputs(
         TargetFieldState.EMPTY,
     }:
         # The target states a cover that no retrieved image shows.
-        current = CurrentCover(reference=_UNREAD_CURRENT, identity=None, readable=False)
+        read, retainable = _unread_current(report, target.state)
+        current = CurrentCover(
+            reference=_UNREAD_CURRENT, identity=None, read=read, retainable=retainable
+        )
     medium = "audiobook" if report.file.format in AUDIO_FILE_FORMATS else "ebook"
     return tuple(rule_candidates), medium, current, current_language
+
+
+def _unread_current(
+    report: MetadataReport, target_state: TargetFieldState
+) -> tuple[CurrentCoverRead, bool]:
+    """Type a stated current cover that no retrieved image shows (ADR-0094 S2).
+
+    Only a terminal answer over a declared cover is unreadable: a 404, which
+    leaves nothing to keep, or bytes the decoder refused, which can be kept
+    only when their digest was recorded. A transient answer, a target value
+    that could not be read, or no Audiobookshelf read at all is unknown.
+    """
+    sources = [s for s in report.cover_sources if s.kind is CoverSourceKind.ABS]
+    if target_state is TargetFieldState.VALUE and len(sources) == 1:
+        if sources[0].state is CoverSourceState.ABSENT:
+            return CurrentCoverRead.UNREADABLE, True
+        if sources[0].state in DECODER_REJECTED_STATES:
+            return CurrentCoverRead.UNREADABLE, sources[0].original_digest is not None
+    return CurrentCoverRead.UNKNOWN, False
 
 
 def larger_copy_source(

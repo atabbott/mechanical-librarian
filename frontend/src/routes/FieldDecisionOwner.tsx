@@ -187,12 +187,28 @@ export function OwnerControls({
       ) : null}
       {writing ? <p className="owner-note">{withdrawCopy.in_progress}</p> : null}
       {entry && mode !== 'entry' && !writing ? (
-        <button ref={trigger} type="button" className="owner-trigger" onClick={openEntry}>
+        <button
+          ref={trigger}
+          type="button"
+          className="owner-trigger"
+          aria-disabled={blocked}
+          onClick={() => {
+            if (!blocked) openEntry()
+          }}
+        >
           {changing ? 'Change' : 'Enter a value'}
         </button>
       ) : null}
       {subset && mode !== 'subset' && !writing ? (
-        <button ref={trigger} type="button" className="owner-trigger" onClick={openSubset}>
+        <button
+          ref={trigger}
+          type="button"
+          className="owner-trigger"
+          aria-disabled={blocked}
+          onClick={() => {
+            if (!blocked) openSubset()
+          }}
+        >
           {changing ? 'Change' : 'Choose genres'}
         </button>
       ) : null}

@@ -320,6 +320,30 @@ An admitted production records its `production` and its `applications`
 (family, field, ordinal and side) beside the dispatch lineage. Replay
 recomputes admission and refuses lineage that is not a production.
 
+### Refused work answers
+
+A work answer that set admission refuses keeps its products whole in the
+provider's `identity_refused_candidates`, for the Book matching levels alone
+([ADR-0096](../architecture/decisions/0096-owner-chosen-work-identity-strictness.md)):
+the union over the rungs and lanes that refused, de-duplicated in rung order,
+at most five per provider. `identity_refused_truncated` counts the records
+dropped, and each work lane's `identity_refused_new` names the identities it
+added that no earlier lane had. Any lane that admits anything leaves both
+empty; an overflowing, malformed or failed answer keeps nothing. They are the
+answers already received: no request is added and no cover of theirs is
+fetched.
+
+The records add at most 524,288 bytes to a report and never take it past its
+2,097,152-byte limit. Report construction drops them first, last provider and
+record first, and only then the byte-order-mark readings an audio section
+keeps. A set the closed title-and-author comparison would admit is kept only
+as a count. No live reader uses them: the provider stays `no_match`, and
+identifier evidence and proposals ignore them. Only the level seam and the
+[level derivation](#book-matching-levels-for-other-fields) read them, and a provider whose set lost any record admits none of it. They live and are
+removed with their report, superseded reports included, and never reach a
+support bundle or a diagnostic. Readback refuses a record set admission would
+admit and any count the lanes do not account for.
+
 ### Recording admission
 
 The runtime corroboration gate is a tight band of 90 seconds; the loose band
@@ -505,6 +529,38 @@ they agree on one local image or else one closed code (for example
 image, and no cover comparison, packet or decision reads it. It is null on
 every other EPUB report and on audiobooks; the boundary is in
 [security](../architecture/security.md#parsers-and-hostile-input).
+
+## Book matching levels for other fields
+
+At a wider Book matching level a review case keeps its live proposals, its
+live decision set and every automatic decision exactly as at `identifier`.
+Beside them, from the same stored report and with no request, a level set is
+derived in which the level's admissions count as describing the work for the
+title, subtitle, authors, description, genres, tags, series and cover.
+Narrators, dates, publisher, identifiers, language and the explicit flag
+never read the level.
+
+Where the live decision for a field is left to the owner, and the level would
+offer other alternatives, review shows the level's alternatives under the
+live proposal, each naming the rule that admitted it
+(`work_identity:<level>`). Title, subtitle and series are offered together or
+not at all. A field decided automatically keeps its live proposal. Where the
+level would have decided a field the live set leaves to the owner, a
+would-admit note records the rule and the alternative beside the live
+decision set, with the decision engine and proposal policy that wrote it; a
+note from another engine is refused on readback.
+
+A case is written with its level set, notes, offer and the level it was
+reconciled at, in one transaction. Level storage is read by no automatic
+decision, consent, planning or write path.
+
+A saved level change re-derives every current case from its stored report,
+with no request. Until a case is reconciled at the saved level,
+owner choices on it are refused and its owner work-scope effects wait. A
+choice whose field offer changed gets a valueless `matching_changed` decision,
+so the field asks again. A case whose check fails stays unreconciled and is
+counted on Policy; saving again, or in file mode a restart, retries it
+([configuration](../reference/configuration.md#book-matching)).
 
 ## After the report
 

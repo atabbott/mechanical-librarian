@@ -869,7 +869,7 @@ def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
         clock=lambda: case.now + 1,
     )
     assert model_free.replay_reference == (
-        "cover_replay_85b2f5c5d006c8eac9cf334217d78d5e982dcf210ab67e4732602b487b2b3063"
+        "cover_replay_70c3a70322858f9d6f93f8c9fbbf8ded657267fbc355b1972529f7d936397b7a"
     )
     assert (
         model_free.ensure(case_id, case.report.to_json(), case.proposal)[
@@ -912,7 +912,7 @@ def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
     assert len(dispatches) == 1
     replayed_qualified = qualified()
     assert replayed_qualified.replay_reference == (
-        "cover_replay_63b20e341b9ceaa303d58bcf3180f3ff025ea971a3b256c07bee79922afb2be4"
+        "cover_replay_73b01d2baf8a7fb189f70eefa85d5caa722f877510d524d8012e4f8d25c151f8"
     )
     assert (
         replayed_qualified.ensure(
@@ -2683,3 +2683,187 @@ def test_arts_counts_distinct_art_after_same_art_collapse(tmp_path) -> None:
     assert _arts_of(tmp_path / "two") == 2
     shared = CoverMeasures("0" * 16, "0" * 16, (1,) * COLOUR_BINS, (0,) * LAYOUT_VALUES)
     assert _arts_of(tmp_path / "same", shared_measures=shared) == 1
+
+
+def _policy_over(tmp_path, policy: CoverPolicy = CoverPolicy(), **options: Any):
+    """The policy report a consideration records over a qualified cover report."""
+    from mechanical_librarian.adapters.persistence.cover_artifacts import (
+        CoverArtifactStore,
+    )
+    from tests.support.cover_producers import _qualified_cover_report
+
+    report, _ = _qualified_cover_report(tmp_path, **options)
+    artifacts = CoverArtifactStore(tmp_path / "artifacts")
+    service = CoverConsiderationService(
+        _Store(),
+        read_preview=lambda artifact_id, _variant: artifacts.read_preview_digest(
+            next(
+                source.artifact.preview_digest
+                for source in report.cover_sources
+                if source.artifact is not None
+                and source.artifact.artifact_id == artifact_id
+            )
+        ),
+        read_preview_digest=artifacts.read_preview_digest,
+        clock=lambda: 10,
+        policy=policy,
+    )
+    projection = service.ensure(
+        "review_case_" + "e" * 64,
+        report.to_json(),
+        {"proposal_id": "review_proposal_" + "f" * 64},
+    )
+    return cast("dict[str, Any]", projection["policy"])
+
+
+_DIGEST = hashlib.sha256(b"refused bytes").hexdigest()
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"abs_state": CoverSourceState.TIMEOUT},
+        {"abs_state": CoverSourceState.UNAVAILABLE},
+        {"abs_state": CoverSourceState.SOURCE_CHANGED},
+        {"abs_state": CoverSourceState.REJECTED},
+        {},
+        {"target_state": TargetFieldState.MALFORMED},
+        {"target_state": TargetFieldState.OVERSIZED},
+        {"target_state": TargetFieldState.UNLOADED},
+        {
+            "target_state": TargetFieldState.MALFORMED,
+            "abs_state": CoverSourceState.DECODE_FAILED,
+            "abs_digest": _DIGEST,
+        },
+    ],
+    ids=[
+        "timeout",
+        "unavailable",
+        "source_changed",
+        "other_state",
+        "no_abs_source",
+        "malformed_target",
+        "oversized_target",
+        "unloaded_target",
+        "refused_over_malformed_target",
+    ],
+)
+def test_a_read_that_settled_nothing_keeps_the_current_cover(
+    tmp_path, options: dict[str, object]
+) -> None:
+    """ADR-0094 S2 and S3: an unknown read decides nothing, in every mode."""
+    for index, protection in enumerate(("protected", "unprotected", "proposals_only")):
+        policy = _policy_over(
+            tmp_path / str(index),
+            CoverPolicy(current_protection=protection),
+            readable_current=False,
+            **options,
+        )
+        assert policy["stage"]["outcome"] == "keep"
+        assert policy["stage"]["issues"] == []
+        assert policy["stage"]["choice"] is None
+        assert policy["recommended_candidate_reference"] is None
+        assert policy["reasons"] == ["current_cover_kept"]
+        assert policy["actual_target_state"] == "unknown"
+
+
+@pytest.mark.parametrize(
+    ("options", "outcome"),
+    [
+        (
+            {"abs_state": CoverSourceState.DECODE_FAILED, "abs_digest": _DIGEST},
+            "replace",
+        ),
+        (
+            {
+                "abs_state": CoverSourceState.ANIMATED_OR_MULTIFRAME,
+                "abs_digest": _DIGEST,
+            },
+            "replace",
+        ),
+        ({"abs_state": CoverSourceState.OVERSIZED, "abs_digest": _DIGEST}, "replace"),
+        (
+            {"abs_state": CoverSourceState.UNSUPPORTED_FORMAT, "abs_digest": _DIGEST},
+            "replace",
+        ),
+        ({"abs_state": CoverSourceState.ABSENT}, "replace"),
+        ({"abs_state": CoverSourceState.DECODE_FAILED}, "suggest"),
+        ({"abs_state": CoverSourceState.OVERSIZED}, "suggest"),
+        ({"abs_state": CoverSourceState.UNSUPPORTED_FORMAT}, "suggest"),
+    ],
+    ids=[
+        "decode_failed_bound",
+        "animated_bound",
+        "oversized_bound",
+        "unsupported_bound",
+        "absent_404",
+        "decode_failed_unbound",
+        "oversized_unbound",
+        "unsupported_unbound",
+    ],
+)
+def test_a_terminal_unreadable_read_is_switched_only_when_it_can_be_kept(
+    tmp_path, options: dict[str, object], outcome: str
+) -> None:
+    """ADR-0094 S2 and S4: bound bytes or a 404 may switch; anything else suggests."""
+    policy = _policy_over(tmp_path, readable_current=False, **options)
+
+    assert policy["stage"]["outcome"] == outcome
+    assert policy["stage"]["reason"] == "unreadable"
+    assert policy["stage"]["issues"] == ["unreadable"]
+    assert policy["stage"]["choice"] is not None
+    assert policy["recommended_candidate_reference"] == policy["stage"]["choice"]
+    assert policy["actual_target_state"] == "unknown"
+
+    proposals_only = _policy_over(
+        tmp_path / "proposals_only",
+        CoverPolicy(current_protection="proposals_only"),
+        readable_current=False,
+        **options,
+    )
+    assert proposals_only["stage"]["outcome"] == "suggest"
+
+
+@pytest.mark.parametrize(
+    ("identity", "outcome"),
+    [
+        (("conflict", ("edition_work_contradiction",)), "hold"),
+        (("unknown", ("retained_creator_or_contributor_disagreement",)), "hold"),
+        (("unknown", ("work_identity_level_refused",)), "keep"),
+        (("plausible_match", ()), "keep"),
+    ],
+    ids=["conflict", "creator_disagreement", "level_refused", "plausible_match"],
+)
+def test_a_current_cover_whose_sources_name_another_book_is_held(
+    tmp_path, identity: tuple[str, tuple[str, ...]], outcome: str
+) -> None:
+    """ADR-0094 S6: a positive contradiction holds the field; nothing else does."""
+    from tests.support.cover_producers import incumbent_identity
+
+    for index, protection in enumerate(("protected", "unprotected", "proposals_only")):
+        with incumbent_identity(*identity):
+            # A square ebook cover has a fault, which the hold overrides.
+            policy = _policy_over(
+                tmp_path / str(index),
+                CoverPolicy(current_protection=protection),
+                incumbent_size=(500, 500),
+            )
+        held = outcome == "hold"
+        assert policy["stage"]["outcome"] == (
+            "hold" if held else "suggest" if index == 2 else "replace"
+        )
+        assert policy["stage"]["issues"] == (
+            ["current_contradicted"] if held else ["wrong_shape"]
+        )
+        assert policy["stage"]["reason"] == (
+            "current_contradicted" if held else "wrong_shape"
+        )
+        assert (policy["recommended_candidate_reference"] is None) is held
+        assert policy["actual_target_state"] == "unknown"
+
+    with incumbent_identity(*identity):
+        fault_free = _policy_over(tmp_path / "fault_free")
+    assert fault_free["stage"]["outcome"] == outcome
+    assert fault_free["stage"]["issues"] == (
+        ["current_contradicted"] if outcome == "hold" else []
+    )

@@ -331,8 +331,8 @@ def test_current_authority_and_predecessor_refusal_without_history(
         with closing(open_repository(old_path)) as repository:
             # The producer predates #1199's report browse facts, #1202's
             # history indexes, #1204's indexes, #1211's case indexes, #1232's
-            # attention facts, #1363's retained cover tables and #1372's taste
-            # tables.
+            # attention facts, #1363's retained cover tables, #1355's level
+            # storage and #1372's taste tables.
             repository._connection.executescript(
                 "".join(
                     f"DROP {kind.upper()} {name};"
@@ -361,6 +361,11 @@ def test_current_authority_and_predecessor_refusal_without_history(
                 "DROP INDEX current_review_case_lineages_case;"
                 "DROP INDEX current_review_packages_case;"
                 "DROP TABLE review_case_episodes;"
+                "DROP TABLE review_case_level_offers;"
+                "DROP TABLE level_decision_notes;"
+                "DROP TABLE level_proposal_sets;"
+                "DROP TABLE review_case_level_reconciliation;"
+                "ALTER TABLE review_preparation_control DROP COLUMN work_identity_level;"
             )
             rows = repository._connection.execute(
                 "SELECT type,name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"

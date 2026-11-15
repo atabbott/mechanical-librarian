@@ -65,12 +65,18 @@ export const categoryLabel: Record<ActivityCategory, string> = {
 export type ActivityNote = NonNullable<ActivityEventView['note']>
 export const noteLabel: Record<ActivityNote, string> = {
   asked_again: 'Asked again',
+  asked_again_matching: 'Asked again',
   held_back: 'Held back',
+  waiting_for_check: 'Waiting for check',
 }
 export const noteSentence: Record<ActivityNote, string> = {
   asked_again:
     'This choice was made before the book came back for review, so the field asks you again.',
+  asked_again_matching:
+    'Book matching changed what this field offers, so this choice no longer counts and the field is asking you again.',
   held_back: 'Automatic is off, so this is not written until you turn it on again.',
+  waiting_for_check:
+    'Book matching changed, so this change waits until this work is checked again.',
 }
 // A ledger day heading; each row under it states only its time.
 export const dayHeading = (value: number | null) =>
