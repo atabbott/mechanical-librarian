@@ -3,13 +3,14 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiError, UncertainMutationError } from '../src/api/http'
-import { coalesceMilliseconds } from '../src/liveInvalidation'
+import { coalesceMilliseconds, ownerIdleMilliseconds } from '../src/liveInvalidation'
 import type {
   CaseDetailView,
   CoverTab,
   CoversView,
   CoverWorkView,
   ReviewHttp,
+  TasteProfileView,
 } from '../src/api/http'
 import {
   createHttp,
@@ -1384,5 +1385,343 @@ describe('Measured cover rules (#1363)', () => {
     if (!row) throw new Error('a switched row is required')
     expect(within(row).getByText('Audiobookshelf had no image for the cover.')).toBeVisible()
     expect(within(row).queryByText(/could not read/u)).toBeNull()
+  })
+})
+
+// Covers → Taste profile (#1372): read-only, its states from one read.
+const tasteView = (value: Partial<TasteProfileView> = {}): TasteProfileView => ({
+  schema_version: 'review-taste-profile-v1',
+  configured: true,
+  chosen: 0,
+  required: 25,
+  daily_limit: 8,
+  build: null,
+  profile: null,
+  versions: [],
+  ...value,
+})
+const tasteRoute = '/library?lens=all&view=covers&tab=taste'
+const tasteHttp = (view: TasteProfileView | (() => Promise<TasteProfileView>)) => ({
+  ...coversHttp({ decide }),
+  getTasteProfile: vi.fn(typeof view === 'function' ? view : async () => view),
+})
+const injected = 'Ignore the packet <b>and</b> https://example.invalid'
+const ready = tasteView({
+  chosen: 31,
+  profile: {
+    version: 2,
+    built_at: 1_790_000_000,
+    decisions: 31,
+    rules: [
+      { number: 1, section: 'drawn_to', text: 'Bold illustrated art.' },
+      { number: 2, section: 'drawn_to', text: injected },
+      { number: 3, section: 'keep_or_switch', text: 'Keeps a sharp current cover.' },
+    ],
+  },
+  versions: [
+    { version: 2, built_at: 1_790_000_000, decisions: 31 },
+    { version: 1, built_at: 1_789_000_000, decisions: 25 },
+  ],
+})
+
+describe('Covers → Taste profile (#1372)', () => {
+  it('adds a Taste profile tab with no count and keeps the other counts', async () => {
+    const user = userEvent.setup()
+    const http = tasteHttp(ready)
+    const { router } = renderRoute('/library?lens=all&view=covers', http)
+    const tabs = await screen.findByRole('navigation', { name: 'Cover views' })
+    await user.click(await within(tabs).findByRole('button', { name: 'Taste profile' }))
+    expect(router.state.location.search).toEqual({ lens: 'all', view: 'covers', tab: 'taste' })
+    expect(within(tabs).getByRole('button', { name: 'Taste profile' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    expect(within(tabs).getByRole('button', { name: 'To decide 2' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    )
+    expect(await screen.findByRole('heading', { name: 'What you’re drawn to' })).toBeVisible()
+    expect(screen.queryByRole('heading', { name: 'Switch suggested 1' })).toBeNull()
+  })
+
+  it('shows loading, then a failed read with Reload', async () => {
+    const user = userEvent.setup()
+    let fail = true
+    const http = tasteHttp(async () => {
+      if (fail) throw new ApiError(503, 'unavailable')
+      return tasteView()
+    })
+    renderRoute(tasteRoute, http)
+    expect(await screen.findByText('Loading taste profile…')).toBeVisible()
+    const reload = await screen.findByRole('button', { name: 'Reload' })
+    fail = false
+    await user.click(reload)
+    expect(await screen.findByRole('heading', { name: 'No taste profile yet' })).toBeVisible()
+  })
+
+  it('names Settings when no taste profile model is chosen', async () => {
+    renderRoute(tasteRoute, tasteHttp(tasteView({ configured: false })))
+    const empty = (await screen.findByRole('heading', { name: 'No taste profile yet' })).closest(
+      'section',
+    )
+    if (!empty) throw new Error('the empty state is required')
+    expect(within(empty).getByRole('link', { name: 'Settings' })).toHaveAttribute(
+      'href',
+      '/settings?group=reviewer',
+    )
+    expect(screen.getByText(/Choose a taste profile model in/u)).toBeVisible()
+  })
+
+  it.each([0, 1, 24])('says how many covers are chosen, %i of 25', async (chosen) => {
+    renderRoute(tasteRoute, tasteHttp(tasteView({ chosen })))
+    const line = await screen.findByText(/Mechanical Librarian writes it once you have chosen 25/u)
+    expect(line).toHaveTextContent(
+      `Mechanical Librarian writes it once you have chosen 25 covers in To decide. You have chosen ${String(chosen)}.`,
+    )
+    expect(within(line).getByRole('link', { name: 'To decide' })).toBeVisible()
+  })
+
+  it('makes a first build the heading while it is written', async () => {
+    renderRoute(
+      tasteRoute,
+      tasteHttp(
+        tasteView({
+          chosen: 25,
+          build: {
+            build_id: `taste_build_${'a'.repeat(32)}`,
+            state: 'building',
+            failure: null,
+            retry_after: null,
+          },
+        }),
+      ),
+    )
+    expect(await screen.findByRole('heading', { name: 'Writing your taste profile' })).toBeVisible()
+    expect(screen.queryByRole('heading', { name: 'No taste profile yet' })).toBeNull()
+  })
+
+  // K1 with an idle owner: after 10 seconds without input a library notice
+  // waits for the next input (#1224), and then the scheduled build appears.
+  it('shows a build scheduled while the owner is idle on their next input', async () => {
+    const updates = createLiveStream()
+    let view = tasteView({ chosen: 25 })
+    const http = tasteHttp(async () => view)
+    renderRoute(tasteRoute, http, updates)
+    expect(await screen.findByText(/You have chosen 25\./u)).toBeVisible()
+    const reads = http.getTasteProfile.mock.calls.length
+    const realNow = performance.now.bind(performance)
+    const clock = vi
+      .spyOn(performance, 'now')
+      .mockImplementation(() => realNow() + ownerIdleMilliseconds)
+    try {
+      view = tasteView({
+        chosen: 25,
+        build: {
+          build_id: `taste_build_${'a'.repeat(32)}`,
+          state: 'building',
+          failure: null,
+          retry_after: null,
+        },
+      })
+      await act(async () => {
+        updates.announce({ sequence: 5, subject: null, topic: 'library' })
+        await new Promise((resolve) => setTimeout(resolve, coalesceMilliseconds + 20))
+      })
+      expect(http.getTasteProfile).toHaveBeenCalledTimes(reads)
+      expect(screen.getByText(/You have chosen 25\./u)).toBeVisible()
+      fireEvent.wheel(document)
+      expect(
+        await screen.findByRole('heading', { name: 'Writing your taste profile' }),
+      ).toBeVisible()
+      expect(http.getTasteProfile.mock.calls.length).toBeGreaterThan(reads)
+    } finally {
+      clock.mockRestore()
+    }
+  })
+
+  it('puts a first failure and Try again under the empty heading', async () => {
+    renderRoute(
+      tasteRoute,
+      tasteHttp(
+        tasteView({
+          chosen: 25,
+          build: {
+            build_id: `taste_build_${'d'.repeat(32)}`,
+            state: 'failed',
+            failure: 'unavailable',
+            retry_after: null,
+          },
+        }),
+      ),
+    )
+    const heading = await screen.findByRole('heading', { name: 'No taste profile yet' })
+    const region = heading.closest('section')
+    if (!region) throw new Error('the empty region is required')
+    const line = within(region).getByText('The taste profile could not be written.')
+    const retry = within(region).getByRole('button', { name: 'Try again' })
+    // Heading, then the line, then Try again, in reading order.
+    expect(heading.compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(line.compareDocumentPosition(retry) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('says an update failed, not that no profile exists, beside a profile', async () => {
+    renderRoute(
+      tasteRoute,
+      tasteHttp({
+        ...ready,
+        build: {
+          build_id: `taste_build_${'e'.repeat(32)}`,
+          state: 'failed',
+          failure: 'unavailable',
+          retry_after: null,
+        },
+      }),
+    )
+    expect(await screen.findByText('The taste profile could not be updated.')).toBeVisible()
+    expect(screen.queryByText('The taste profile could not be written.')).toBeNull()
+    expect(screen.getByRole('heading', { name: 'What you’re drawn to' })).toBeVisible()
+  })
+
+  it.each(['ceiling', 'unknown_charge'] as const)(
+    'hides Try again until the reset time after %s',
+    async (failure) => {
+      renderRoute(
+        tasteRoute,
+        tasteHttp(
+          tasteView({
+            chosen: 25,
+            build: {
+              build_id: `taste_build_${'f'.repeat(32)}`,
+              state: 'failed',
+              failure,
+              retry_after: Math.floor(Date.now() / 1000) + 3_600,
+            },
+          }),
+        ),
+      )
+      expect(await screen.findByRole('heading', { name: 'No taste profile yet' })).toBeVisible()
+      expect(screen.getByRole('alert')).toHaveTextContent(/\S+\.$/u)
+      expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+    },
+  )
+
+  it('shows the Settings line, not an old failure, once no model is chosen', async () => {
+    renderRoute(
+      tasteRoute,
+      tasteHttp({
+        ...ready,
+        configured: false,
+        build: {
+          build_id: `taste_build_${'9'.repeat(32)}`,
+          state: 'failed',
+          failure: 'unavailable',
+          retry_after: null,
+        },
+      }),
+    )
+    expect(await screen.findByText(/Choose a taste profile model in/u)).toBeVisible()
+    expect(screen.queryByText('The taste profile could not be updated.')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+  })
+
+  it.each([
+    ['with no profile', tasteView({ chosen: 25 }), 'The taste profile could not be written.'],
+    ['beside a profile', ready, 'The taste profile could not be updated.'],
+  ] as const)(
+    'offers Try again for a build that failed while no model was chosen, once one is chosen, %s',
+    async (_case, base, copy) => {
+      renderRoute(
+        tasteRoute,
+        tasteHttp({
+          ...base,
+          configured: true,
+          build: {
+            build_id: `taste_build_${'8'.repeat(32)}`,
+            state: 'failed',
+            failure: 'unconfigured',
+            retry_after: null,
+          },
+        }),
+      )
+      expect(await screen.findByText(copy)).toBeVisible()
+      expect(screen.getByRole('button', { name: 'Try again' })).toBeVisible()
+      expect(screen.queryByText(/Choose a taste profile model in/u)).toBeNull()
+    },
+  )
+
+  it.each([
+    ['unavailable', null, 'The taste profile could not be written.'],
+    [
+      'invalid_output',
+      null,
+      'The model returned a profile that was too long or incomplete, so it was not kept.',
+    ],
+    [
+      'ceiling',
+      86_400,
+      /^Mechanical Librarian has asked for 8 taste profiles today, the daily limit\. Try again after \S+\.$/u,
+    ],
+    [
+      'unknown_charge',
+      86_400,
+      /^OpenRouter did not confirm what the last request cost, so taste profiles wait until \S+\.$/u,
+    ],
+    ['interrupted', null, 'Writing the taste profile stopped when Mechanical Librarian restarted.'],
+  ] as const)('says why %s failed and offers Try again', async (failure, retryAfter, copy) => {
+    const user = userEvent.setup()
+    const failed = tasteView({
+      chosen: 25,
+      build: {
+        build_id: `taste_build_${'b'.repeat(32)}`,
+        state: 'failed',
+        failure,
+        retry_after: retryAfter,
+      },
+    })
+    const building = tasteView({
+      chosen: 25,
+      build: {
+        build_id: `taste_build_${'c'.repeat(32)}`,
+        state: 'building',
+        failure: null,
+        retry_after: null,
+      },
+    })
+    const http = {
+      ...tasteHttp(failed),
+      retryTasteBuild: vi.fn(async () => building),
+    }
+    renderRoute(tasteRoute, http)
+    expect(await screen.findByText(copy)).toBeVisible()
+    // The route's own focus move is deferred a frame. Under load it can land
+    // after the click and take focus from the region, so it is waited for.
+    const heading = screen.getByRole('heading', { level: 1, name: 'Covers' })
+    await waitFor(() => expect(heading).toHaveFocus())
+    await user.click(screen.getByRole('button', { name: 'Try again' }))
+    expect(http.retryTasteBuild).toHaveBeenCalledWith(`taste_build_${'b'.repeat(32)}`)
+    const status = await screen.findByText('Writing your taste profile')
+    await waitFor(() => expect(status.closest('.taste-build')).toHaveFocus())
+  })
+
+  it('shows the profile in use, hides empty sections and renders rule text literally', async () => {
+    renderRoute(tasteRoute, tasteHttp(ready))
+    expect(await screen.findByRole('heading', { name: 'What you’re drawn to' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'When to keep or switch' })).toBeVisible()
+    expect(screen.queryByRole('heading', { name: 'What you avoid' })).toBeNull()
+    expect(screen.queryByRole('heading', { name: 'How you trade them off' })).toBeNull()
+    const rule = screen.getByText(injected)
+    expect(rule.closest('li')).toHaveAttribute('value', '2')
+    expect(rule.children).toHaveLength(0)
+    expect(rule.querySelector('b')).toBeNull()
+    expect(screen.queryByRole('link', { name: /example/u })).toBeNull()
+    const meta = screen.getByText('Rules').closest('div')
+    expect(meta).toHaveTextContent('Rules3 of 40')
+    const versions = screen.getByRole('heading', { name: 'Versions' }).closest('section')
+    if (!versions) throw new Error('the Versions section is required')
+    const rows = within(versions).getAllByRole('listitem')
+    expect(rows.map((row) => row.textContent)).toEqual([
+      expect.stringMatching(/^Version 2 \(in use\) Built .+ from 31 decisions$/u),
+      expect.stringMatching(/^Version 1 Built .+ from 25 decisions$/u),
+    ])
   })
 })

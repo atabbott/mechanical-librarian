@@ -72,7 +72,7 @@ def _facts(item: str, fetching: bool = False, replay: str = _REPLAY) -> str:
             "manual_ready": True,
             "replay_reference": replay,
             # The measured stage's outcome, which attention reads (#1363).
-            "cover_stage": {"outcome": "keep", "reason": None},
+            "cover_stage": {"arts": 2, "outcome": "keep", "reason": None},
         }
     )
 
@@ -95,6 +95,9 @@ _REFUSED = (
     _facts("a").replace('"manual_ready":true', '"manual_ready":1'),
     _facts("a")[:-1] + ',"extra":1}',
     _facts("a").replace('"outcome":"keep"', '"outcome":"other"'),
+    _facts("a").replace('"arts":2', '"arts":"2"'),
+    _facts("a").replace('"arts":2,', ""),
+    _facts("a").replace('"arts":2', '"arts":65'),
 )
 
 
@@ -128,7 +131,7 @@ def _pre_1237_currentness(
                 "replay_reference",
                 "cover_stage",
             }
-            or value["cover_stage"] != {"outcome": "keep", "reason": None}
+            or value["cover_stage"] != {"arts": 2, "outcome": "keep", "reason": None}
             or any(
                 type(value[key]) is not str or not value[key]
                 for key in (

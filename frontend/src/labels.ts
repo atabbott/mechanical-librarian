@@ -656,6 +656,7 @@ const coverReviewerNames: Record<string, string> = {
   'mistralai/ministral-3b-2512': 'Ministral 3B',
   'openai/gpt-5.6-luna': 'GPT-5.6 Luna',
   'mistralai/mistral-small-2603': 'Mistral Small 4',
+  'anthropic/claude-sonnet-5.5': 'Claude Sonnet 5.5',
 }
 
 export const coverReviewerLabel = (model: string) =>

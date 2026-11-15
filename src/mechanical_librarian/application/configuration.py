@@ -31,8 +31,8 @@ from mechanical_librarian.domain.validation import (
 )
 from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 
-ConfigSchemaVersion = Literal["config-v11"]
-CONFIG_SCHEMA: Final[ConfigSchemaVersion] = "config-v11"
+ConfigSchemaVersion = Literal["config-v12"]
+CONFIG_SCHEMA: Final[ConfigSchemaVersion] = "config-v12"
 
 _NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 _CONTACT_EMAIL = re.compile(
@@ -138,6 +138,8 @@ class ReviewWebConfiguration:
     # ADR-0096's Book matching level (#1355): which provider records count as
     # the same book when the owner reviews. Review-only until #1418.
     work_identity: WorkIdentityLevel = WorkIdentityLevel.IDENTIFIER
+    # The taste profile builder's durable daily request ceiling (#1372 R4).
+    cover_taste_build_daily_requests: int = 8
 
     def __post_init__(self) -> None:
         if (
@@ -192,6 +194,8 @@ class ReviewWebConfiguration:
                 )
             )
             or type(self.work_identity) is not WorkIdentityLevel
+            or type(self.cover_taste_build_daily_requests) is not int
+            or not 1 <= self.cover_taste_build_daily_requests <= 100
         ):
             raise ConfigurationError("review web configuration is invalid")
         try:

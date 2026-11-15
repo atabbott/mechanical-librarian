@@ -45,7 +45,7 @@ def _store() -> ReviewerAccessStore:
     connection.execute(
         "INSERT INTO reviewer_access(singleton,revision,document) VALUES(1,1,?)",
         (
-            f'{{"cover_metadata":null,"cover_observation":null,"description_metadata":null,"description_rewrite":null,"revision":1,"schema_version":"{REVIEWER_ACCESS_SCHEMA}"}}',
+            f'{{"cover_metadata":null,"cover_observation":null,"cover_taste_build":null,"description_metadata":null,"description_rewrite":null,"revision":1,"schema_version":"{REVIEWER_ACCESS_SCHEMA}","taste_metadata":null}}',
         ),
     )
     return ReviewerAccessStore(connection)
@@ -111,7 +111,7 @@ def _connection_store() -> Iterator[tuple[sqlite3.Connection, ReviewerAccessStor
     connection.execute(
         "INSERT INTO reviewer_access(singleton,revision,document) VALUES(1,1,?)",
         (
-            f'{{"cover_metadata":null,"cover_observation":null,"description_metadata":null,"description_rewrite":null,"revision":1,"schema_version":"{REVIEWER_ACCESS_SCHEMA}"}}',
+            f'{{"cover_metadata":null,"cover_observation":null,"cover_taste_build":null,"description_metadata":null,"description_rewrite":null,"revision":1,"schema_version":"{REVIEWER_ACCESS_SCHEMA}","taste_metadata":null}}',
         ),
     )
     try:
@@ -194,7 +194,7 @@ def test_reviewer_replace_commit_release_propagates_process_control(
     connection.execute(
         "INSERT INTO reviewer_access(singleton,revision,document) VALUES(1,1,?)",
         (
-            f'{{"cover_metadata":null,"cover_observation":null,"description_metadata":null,"description_rewrite":null,"revision":1,"schema_version":"{REVIEWER_ACCESS_SCHEMA}"}}',
+            f'{{"cover_metadata":null,"cover_observation":null,"cover_taste_build":null,"description_metadata":null,"description_rewrite":null,"revision":1,"schema_version":"{REVIEWER_ACCESS_SCHEMA}","taste_metadata":null}}',
         ),
     )
     fault = fault_type("private reviewer commit release")
@@ -229,7 +229,7 @@ def test_nested_reviewer_read_release_preserves_outer_authority(
     connection.execute(
         "INSERT INTO reviewer_access(singleton,revision,document) VALUES(1,1,?)",
         (
-            f'{{"cover_metadata":null,"cover_observation":null,"description_metadata":null,"description_rewrite":null,"revision":1,"schema_version":"{REVIEWER_ACCESS_SCHEMA}"}}',
+            f'{{"cover_metadata":null,"cover_observation":null,"cover_taste_build":null,"description_metadata":null,"description_rewrite":null,"revision":1,"schema_version":"{REVIEWER_ACCESS_SCHEMA}","taste_metadata":null}}',
         ),
     )
     fault = fault_type("private nested reviewer read release")
@@ -273,7 +273,7 @@ def test_compare_and_swap_refuses_a_lost_writer() -> None:
         "DELETE FROM reviewer_access",
         "UPDATE reviewer_access SET revision=x'31'",
         "UPDATE reviewer_access SET document='{}'",
-        f'INSERT INTO reviewer_access VALUES(1,1,\'{{"cover_metadata":null,"cover_observation":null,"description_metadata":null,"description_rewrite":null,"revision":1,"schema_version":"{REVIEWER_ACCESS_SCHEMA}"}}\')',
+        f'INSERT INTO reviewer_access VALUES(1,1,\'{{"cover_metadata":null,"cover_observation":null,"cover_taste_build":null,"description_metadata":null,"description_rewrite":null,"revision":1,"schema_version":"{REVIEWER_ACCESS_SCHEMA}","taste_metadata":null}}\')',
     ),
 )
 def test_corrupt_duplicate_or_missing_singleton_state_fails_closed(
@@ -408,12 +408,13 @@ def test_exact_predecessor_empty_reviewer_table_is_rejected_without_mutation():
 
 def test_predecessor_description_price_document_reads_as_current() -> None:
     predecessor = (
-        '{"cover_metadata":null,"cover_observation":null,"description_metadata":'
+        '{"cover_metadata":null,"cover_observation":null,"cover_taste_build":null,'
+        '"description_metadata":'
         '{"completion_price":"0.000002","model":"example/b","observed_at":1,'
         '"prompt_price":"0.000001","request_price":"0","structured_outputs":true,'
         '"text_input":true,"text_output":true},"description_rewrite":'
         '{"engine":"openrouter","model":"example/b"},"revision":2,'
-        f'"schema_version":"{REVIEWER_ACCESS_SCHEMA}"}}'
+        f'"schema_version":"{REVIEWER_ACCESS_SCHEMA}","taste_metadata":null}}'
     )
     unpriced = predecessor.replace('"request_price":"0"', '"request_price":null')
     keyless = predecessor.replace('"request_price":"0",', "")
@@ -440,3 +441,48 @@ def test_predecessor_description_price_document_reads_as_current() -> None:
         assert _canonical_json(document.model_dump()) == payload
     with pytest.raises(ReviewerAccessStoreError, match="unavailable"):
         stored(keyless).read()
+
+
+def _store_with(payload: str) -> ReviewerAccessStore:
+    connection = sqlite3.connect(":memory:", isolation_level=None)
+    connection.execute(
+        "CREATE TABLE reviewer_access (singleton INTEGER PRIMARY KEY CHECK(singleton=1),revision INTEGER NOT NULL,document TEXT NOT NULL)"
+    )
+    connection.execute(
+        "CREATE TABLE reviewer_access_secrets (field_id TEXT PRIMARY KEY,value TEXT NOT NULL)"
+    )
+    connection.execute(
+        "INSERT INTO reviewer_access(singleton,revision,document) VALUES(1,2,?)",
+        (payload,),
+    )
+    return ReviewerAccessStore(connection)
+
+
+def test_taste_selection_round_trips_and_v3_is_refused() -> None:
+    """reviewer-access-v4 stores the taste task and its prices (#1372)."""
+    current = (
+        '{"cover_metadata":null,"cover_observation":null,"cover_taste_build":'
+        '{"engine":"openrouter","model":"example/vision"},"description_metadata":null,'
+        '"description_rewrite":null,"revision":2,'
+        f'"schema_version":"{REVIEWER_ACCESS_SCHEMA}","taste_metadata":'
+        '{"completion_price":null,"image_price":"0.0048","model":"example/vision",'
+        '"observed_at":1,"prompt_price":"0.000003","request_price":null}}'
+    )
+    document, _configured = _store_with(current).read()
+    assert document.cover_taste_build is not None
+    assert document.cover_taste_build.model == "example/vision"
+    assert _canonical_json(document.model_dump()) == current
+    v3 = (
+        '{"cover_metadata":null,"cover_observation":null,"description_metadata":null,'
+        '"description_rewrite":null,"revision":2,"schema_version":"reviewer-access-v3"}'
+    )
+    with pytest.raises(ReviewerAccessStoreError, match="unavailable"):
+        _store_with(v3).read()
+    # Taste prices for another model than the selected one are refused.
+    with pytest.raises(ReviewerAccessStoreError, match="unavailable"):
+        _store_with(
+            current.replace(
+                '"model":"example/vision","observed_at"',
+                '"model":"example/other","observed_at"',
+            )
+        ).read()

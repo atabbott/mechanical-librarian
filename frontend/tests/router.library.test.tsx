@@ -6759,7 +6759,11 @@ describe('Library route', () => {
         ] as const) {
           cleanup()
           const access: ReviewerAccessView = {
-            schema_version: 'reviewer-access-view-v3',
+            schema_version: 'reviewer-access-view-v4',
+            taste_mapping: null,
+            taste_metadata: null,
+            taste_daily_requests: 8,
+            taste_recommendations: ['anthropic/claude-sonnet-5.5'],
             cover_metadata: null,
             cost_evidence: {
               models: [],
@@ -7345,7 +7349,11 @@ describe('Library route', () => {
     const base = detail.fields[0]
     if (!base) throw new Error('cover fixture requires a field')
     const access: ReviewerAccessView = {
-      schema_version: 'reviewer-access-view-v3',
+      schema_version: 'reviewer-access-view-v4',
+      taste_mapping: null,
+      taste_metadata: null,
+      taste_daily_requests: 8,
+      taste_recommendations: ['anthropic/claude-sonnet-5.5'],
       cover_metadata: null,
       cost_evidence: { models: [] },
       revision: 9,
@@ -7457,7 +7465,11 @@ describe('Library route', () => {
 
   // A retry-capable reviewer for the #1595 cover alert tests below.
   const retryAccess: ReviewerAccessView = {
-    schema_version: 'reviewer-access-view-v3',
+    schema_version: 'reviewer-access-view-v4',
+    taste_mapping: null,
+    taste_metadata: null,
+    taste_daily_requests: 8,
+    taste_recommendations: ['anthropic/claude-sonnet-5.5'],
     cover_metadata: null,
     cost_evidence: { models: [] },
     revision: 9,

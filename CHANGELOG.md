@@ -84,6 +84,11 @@ brackets are GitHub issues.
 
 ## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
 
+- **Clean rebuild required.** Covers has a Taste profile tab. Once you have
+  chosen 25 covers, an OpenRouter vision model you pick in Settings → Reviewer
+  writes rules about the covers you choose and pass over. The profile is shown
+  read-only and changes nothing yet. `review.cover_taste_build_daily_requests`
+  (default 8) caps its requests a day (#1372).
 - **Clean rebuild required.** Choosing, putting back or automatically
   switching a cover over one Audiobookshelf already holds no longer fails
   before it writes. The write binds the current cover's exact bytes, even when
@@ -357,6 +362,11 @@ brackets are GitHub issues.
   often Hardcover's and Open Library's exact book matches agree with admitted
   recordings and owner decisions, the evidence for letting the work route fill
   empty fields without asking (#1642).
+- Tooling: the cold-start report also reads an install whose settings are
+  saved in the app, given a copy of its `review-bootstrap.json`, and a new
+  read-only workbench script runs the cold-start report, the work-route
+  measurement and the Hardcover series sample over one folder of copies,
+  saving each result in a new owner-only folder (#1875).
 - **Clean rebuild required.** An audiobook asks AudioSilo only when neither
   Audible nor Audnexus has already matched its recording by running time;
   otherwise Sources shows AudioSilo as **Not needed**. Open Library gets one

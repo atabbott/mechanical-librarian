@@ -95,7 +95,9 @@ const libraryLens = (value: unknown): LibraryLens =>
     ? value
     : 'all'
 const coverTab = (value: unknown) =>
-  value === 'kept' || value === 'switched' || value === 'all' ? value : 'decide'
+  value === 'kept' || value === 'switched' || value === 'all' || value === 'taste'
+    ? value
+    : 'decide'
 export const normalizeLibrarySearch = (search: Record<string, unknown>): LibrarySearch => {
   const lens = libraryLens(search.lens)
   // The Covers view keeps its own tab and open book; Works ignores both.

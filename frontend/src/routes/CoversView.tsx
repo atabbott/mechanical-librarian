@@ -6,6 +6,7 @@ import type { ReactNode, RefObject } from 'react'
 import { ApiError, refusalCopy, uncertainWriteOutcome } from '../api/http'
 import type {
   CoverTab,
+  CoversTab,
   CoversView as CoversPage,
   CoverWorkView,
   DecisionCommand,
@@ -27,6 +28,7 @@ import { Dropdown } from '../components/Dropdown'
 import { LibraryViewSwitch } from '../components/LibraryViewSwitch'
 import { StatusPill } from '../components/StatusPill'
 import { LibraryCoverChoices } from './FieldDecisionCover'
+import TasteProfileView from './TasteProfileView'
 
 // Library's Covers view (#1633, #1363): every book's cover, grouped by what it
 // asks of the owner. Each choice is one gesture through the book's own
@@ -837,12 +839,39 @@ const withRetained = (listed: CoverWorkView[], retained: readonly Retained[]) =>
   return merged
 }
 
+// Brings a tab fully into its sideways row, with room for its focus ring
+// (3 px with a 3 px offset), except where the row's own ends prevent it.
+const tabRingRoom = 6
+function revealTab(row: HTMLElement, tab: Element) {
+  if (row.scrollWidth <= row.clientWidth || tab === row) return
+  const bounds = row.getBoundingClientRect()
+  const box = tab.getBoundingClientRect()
+  if (box.left - tabRingRoom < bounds.left) row.scrollLeft -= bounds.left - box.left + tabRingRoom
+  else if (box.right + tabRingRoom > bounds.right)
+    row.scrollLeft += box.right + tabRingRoom - bounds.right
+}
+
 export default function CoversView() {
   const search = libraryRoute.useSearch()
   const navigate = useNavigate({ from: '/library' })
   const { http } = useReviewContext()
   const queryClient = useQueryClient()
-  const tab: CoverTab = search.tab ?? 'decide'
+  // Taste profile has no page of books; To decide's page keeps the counts.
+  const taste = search.tab === 'taste'
+  const tab: CoverTab = search.tab === undefined || search.tab === 'taste' ? 'decide' : search.tab
+  // On a phone the tabs are one row that scrolls sideways; the selected tab
+  // is brought into that row's view without scrolling the page. The router
+  // restores the row's old scroll position once a navigation has rendered,
+  // after this view's effects, so the selected tab is brought back after it.
+  const tabsRef = useRef<HTMLElement>(null)
+  const revealSelectedTab = () => {
+    const row = tabsRef.current
+    const selectedTab = row?.querySelector('[aria-pressed="true"]')
+    if (row && selectedTab) revealTab(row, selectedTab)
+  }
+  useEffect(revealSelectedTab, [tab, taste])
+  const router = useRouter()
+  useEffect(() => router.subscribe('onRendered', revealSelectedTab), [router])
   // As Works says it: only a confirmed snapshot with no library names the
   // way to fill the list.
   const noLibraryConnected = usePreparation().data?.libraries.length === 0
@@ -931,13 +960,13 @@ export default function CoversView() {
   // A selection the tab no longer holds is dropped, so a phone never shows
   // neither the list nor a book.
   useEffect(() => {
-    if (selectedId && !listed && linked.isSuccess && linked.data.items.length === 0)
+    if (!taste && selectedId && !listed && linked.isSuccess && linked.data.items.length === 0)
       select(undefined, true)
   })
   // On a wide screen To decide and Kept open their first undecided book
   // beside the list, so the first tap already chooses.
   useEffect(() => {
-    if (!selectedId && (tab === 'decide' || tab === 'kept') && firstOpen && wide())
+    if (!taste && !selectedId && (tab === 'decide' || tab === 'kept') && firstOpen && wide())
       select(firstOpen.review_case_id, true)
   })
   // Each decision asks for the counts again. Only the newest read is shown:
@@ -966,7 +995,6 @@ export default function CoversView() {
   // An acknowledgement can arrive after the owner has opened another book
   // or tab: the outcome is still recorded, but only the book still open
   // moves on, so a slow answer never takes over the comparison in use.
-  const router = useRouter()
   const stillShown = (work: CoverWorkView) => {
     const current = router.state.location.search as { tab?: CoverTab; cover?: string }
     return (current.tab ?? 'decide') === tab && current.cover === work.review_case_id
@@ -999,7 +1027,7 @@ export default function CoversView() {
     setNotice(null)
     select(reviewCaseId, true)
   }
-  const changeTab = (next: CoverTab) => {
+  const changeTab = (next: CoversTab) => {
     setNotice(null)
     void navigate({ search: { lens: 'all', view: 'covers', tab: next } })
   }
@@ -1051,20 +1079,37 @@ export default function CoversView() {
           Covers
         </h1>
       </header>
-      <nav className="covers-tabs" aria-label="Cover views">
+      <nav
+        ref={tabsRef}
+        className="covers-tabs"
+        aria-label="Cover views"
+        // Chromium scrolls a focused tab into the row only when it is fully
+        // hidden, so a partly hidden tab reached with Tab is brought in here.
+        onFocus={(event) => revealTab(event.currentTarget, event.target)}
+      >
         {(Object.keys(tabLabels) as CoverTab[]).map((value) => (
           <button
             key={value}
             type="button"
-            aria-pressed={value === tab}
+            aria-pressed={!taste && value === tab}
             onClick={() => {
-              if (value !== tab) changeTab(value)
+              if (taste || value !== tab) changeTab(value)
             }}
           >
             {tabLabels[value]} <strong>{counts ? String(counts[value]) : '…'}</strong>
           </button>
         ))}
+        <button
+          type="button"
+          aria-pressed={taste}
+          onClick={() => {
+            if (!taste) changeTab('taste')
+          }}
+        >
+          Taste profile
+        </button>
       </nav>
+      {taste ? <TasteProfileView /> : null}
       <p className="covers-notice" role="status">
         {notice}
       </p>
@@ -1077,7 +1122,7 @@ export default function CoversView() {
           </button>
         </div>
       ) : null}
-      <div className="covers-list">
+      <div className="covers-list" hidden={taste}>
         {pages.isPending ? (
           <p role="status">Loading covers…</p>
         ) : pages.isError ? (
@@ -1174,7 +1219,7 @@ export default function CoversView() {
           </div>
         )}
       </div>
-      {pages.hasNextPage ? (
+      {!taste && pages.hasNextPage ? (
         <button
           className="covers-more"
           type="button"
