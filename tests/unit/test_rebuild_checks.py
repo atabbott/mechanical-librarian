@@ -8,6 +8,7 @@ partial-author replay seam and the refusals before anything is created.
 
 from __future__ import annotations
 
+import inspect
 import io
 import json
 import socket
@@ -391,8 +392,11 @@ def test_an_unreadable_bootstrap_stops_only_the_checks_that_need_it(
 def test_partial_author_replay_runs_when_present_and_is_skipped_otherwise(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # This checkout has no replay script, so the real seam finds none.
-    assert rebuild_checks._partial_author_replay() is None
+    # The real seam finds this checkout's replay script, whose entry point
+    # takes the arguments and output stream the check passes it.
+    real = rebuild_checks._partial_author_replay()
+    assert real is not None and real.__name__.endswith("partial_author_replay")
+    assert list(inspect.signature(real.main).parameters)[:2] == ["argv", "stdout"]
 
     calls: dict[str, list[list[str]]] = {}
     _record_checks(monkeypatch, calls)
