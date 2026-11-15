@@ -1,6 +1,6 @@
 # ADR-0091: Decode every browser response and report uncertain writes truthfully
 
-- Status: proposed
+- Status: accepted (accepted by the owner on 2026-11-15)
 - Date: 2026-11-01
 - Owners: project maintainers
 - Issues: #1577 (stage 1), #1571 (client half of uncertain outcomes), #1669

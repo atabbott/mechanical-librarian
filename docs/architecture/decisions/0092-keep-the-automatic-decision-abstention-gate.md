@@ -1,6 +1,6 @@
 # ADR-0092: Keep the automatic-decision abstention gate
 
-- Status: proposed
+- Status: accepted (accepted by the owner on 2026-11-15)
 - Date: 2026-11-07
 - Owners: project maintainers
 - Issues: #1745 (row A6 of the admission-rule ledger, #1350)
