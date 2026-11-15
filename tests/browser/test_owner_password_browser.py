@@ -2,14 +2,14 @@
 signs out every other browser in either mode.
 
 The change keeps the browser that made it signed in on a new session, and
-ends every other session: a second browser context signed in beforehand is
-sent to sign-in on its next request. The new password signs in afterwards and
-the old one is refused. File mode keeps its hash file and shows no row.
+ends every other session: a second browser context signed in beforehand has
+its cookie refused and lands on sign-in. The new password signs in afterwards
+and the old one is refused. File mode keeps its hash file and shows no row.
 
 Sign out other browsers keeps the browser that pressed it signed in on the
-same session and CSRF token, and sends a second browser context to sign-in on
-its next request. Its row fits a 320 px window at 200% text in both themes and
-is reached with the keyboard.
+same session and CSRF token, and sends a second browser context to sign-in.
+Its row fits a 320 px window at 200% text in both themes and is reached with
+the keyboard.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from typing import Literal
 
 import pytest
 from argon2 import PasswordHasher
-from playwright.sync_api import Browser, Page, expect, sync_playwright
+from playwright.sync_api import Browser, BrowserContext, Page, expect, sync_playwright
 
 from tests.browser.test_review_browser import (
     _PASSWORD,
@@ -38,6 +38,7 @@ from tests.support.ports import ReservedPort
 
 _NEW_PASSWORD = "synthetic replacement password"
 _LIBRARY = re.compile(r".*/library(\?.*)?$")
+_SIGN_IN = re.compile(r".*/login(\?.*)?$")
 _SIGNED_OUT = "Every other browser was signed out."
 
 
@@ -77,6 +78,24 @@ def _sign_in(page: Page, origin: str, password: str) -> None:
     page.get_by_role("button", name="Sign in").click()
 
 
+def _session_read(context: BrowserContext, origin: str) -> int:
+    """The status of one read made with the browser's own cookie."""
+    return context.request.get(f"{origin}/api/v1/review-preparation").status
+
+
+def _expect_signed_out(context: BrowserContext, page: Page, origin: str) -> None:
+    """The browser's cookie is refused and the next page it loads is sign-in.
+
+    An open page of a signed-out browser also reaches sign-in by itself, once
+    its live stream and then a background refresh are refused, which takes
+    from about twelve seconds to half a minute. So this loads a page instead
+    of pressing a link that may already be gone.
+    """
+    assert _session_read(context, origin) == 401
+    page.goto(f"{origin}/settings")
+    page.wait_for_url(_SIGN_IN)
+
+
 def _access(page: Page, origin: str) -> None:
     page.goto(f"{origin}/settings?group=access")
     page.get_by_role("heading", name="Access and diagnostics", exact=True).wait_for()
@@ -105,6 +124,7 @@ def test_store_mode_changes_the_password_and_signs_out_every_other_browser() -> 
             _login(page, origin)
             elsewhere = other.new_page()
             _login(elsewhere, origin)
+            assert _session_read(other, origin) == 200
 
             _access(page, origin)
             titles = page.locator(".settings-sheet .settings-field-title")
@@ -187,9 +207,7 @@ def test_store_mode_changes_the_password_and_signs_out_every_other_browser() -> 
             _access(page, origin)
             expect(page.get_by_text("Owner password")).to_be_visible()
 
-            # The other browser is sent to sign-in on its next request.
-            elsewhere.get_by_role("link", name="Settings", exact=True).click()
-            elsewhere.wait_for_url(re.compile(r".*/login(\?.*)?$"))
+            _expect_signed_out(other, elsewhere, origin)
 
             # The old password is refused and the new one signs in.
             _sign_in(elsewhere, origin, _PASSWORD)
@@ -217,6 +235,7 @@ def test_signing_out_other_browsers_keeps_this_one(
             _login(page, origin)
             elsewhere = other.new_page()
             _login(elsewhere, origin)
+            assert _session_read(other, origin) == 200
 
             _access(page, origin)
             titles = page.locator(".settings-sheet .settings-field-title")
@@ -255,9 +274,7 @@ def test_signing_out_other_browsers_keeps_this_one(
                 expect(status).to_be_visible()
                 expect(status).to_be_focused()
 
-            # The other browser is sent to sign-in on its next request.
-            elsewhere.get_by_role("link", name="Settings", exact=True).click()
-            elsewhere.wait_for_url(re.compile(r".*/login(\?.*)?$"))
+            _expect_signed_out(other, elsewhere, origin)
 
 
 def test_other_browsers_row_fits_320_px_and_200_percent_text_in_both_themes() -> None:
