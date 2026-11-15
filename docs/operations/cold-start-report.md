@@ -2,7 +2,8 @@
 
 `scripts/cold_start_report.py` measures preparation on a real library. It is
 a workbench tool, not part of the installed product. Run it from a checkout
-against the configuration and copies of the databases:
+against copies of the databases and of the install's settings. If the install
+has `/data/config.json`, give a copy of it with `--config`:
 
 ```
 uv run python scripts/cold_start_report.py \
@@ -14,12 +15,30 @@ uv run python scripts/cold_start_report.py \
     --recovery-database /copy/provider-recovery.sqlite
 ```
 
-It writes nothing, can run at any time, and prints one
-`cold-start-report-v10` JSON document.
+If the settings are saved in the app, give a copy of the `review-bootstrap.json`
+beside `compose.yaml` with `--bootstrap` instead. The report reads the saved
+settings from the `--database` copy and the media mounts from the bootstrap:
+
+```
+uv run python scripts/cold_start_report.py \
+    --bootstrap /copy/review-bootstrap.json \
+    --database /copy/application.sqlite3 \
+    --catalogue /copy/catalogue.sqlite3
+```
+
+It changes none of the copies, can run at any time, and prints one
+`cold-start-report-v10` JSON document. Reading a catalogue copy can leave
+`catalogue.sqlite3-shm` and `catalogue.sqlite3-wal` beside it. Give `--config`
+or `--bootstrap`, not both. With `--bootstrap`, a copy that holds no finished
+setup, or a library whose media mount the bootstrap does not list, stops the
+report.
+
+[Rebuild checks](rebuild-checks.md) runs this report and the other read-only
+checks over one folder of copies.
 
 - `--mount-root NAME=PATH` (optional, repeatable) maps a configured mount to a
-  host path, because the configuration records container paths; without it
-  the container path is walked.
+  host path, because the configuration or bootstrap records container paths;
+  without it the container path is walked.
 - `--stage-timings` (optional) is a copy of the diagnostic stage-timing file,
   mode 0600 in a 0700 directory owned by the user running the report.
 - `--recovery-database` (optional) is a copy of the provider recovery
@@ -34,6 +53,10 @@ The report is aggregate-only: configured names, destinations, reason codes,
 file extensions and counts. It never holds a title, author, filename, media
 path or item identifier. Attention reuses the Attention surface's own SQL, so
 the report agrees with the interface.
+
+With `--bootstrap`, the application database copy also holds the keys saved in
+the app. The report never prints them. Keep the copy owner-only and delete it
+after the run.
 
 ## Per-library blocks
 

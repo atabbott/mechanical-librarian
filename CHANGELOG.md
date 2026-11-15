@@ -350,6 +350,11 @@ brackets are GitHub issues.
   often Hardcover's and Open Library's exact book matches agree with admitted
   recordings and owner decisions, the evidence for letting the work route fill
   empty fields without asking (#1642).
+- Tooling: the cold-start report also reads an install whose settings are
+  saved in the app, given a copy of its `review-bootstrap.json`, and a new
+  read-only workbench script runs the cold-start report, the work-route
+  measurement and the Hardcover series sample over one folder of copies,
+  saving each result in a new owner-only folder (#ISSUE).
 - **Clean rebuild required.** An audiobook asks AudioSilo only when neither
   Audible nor Audnexus has already matched its recording by running time;
   otherwise Sources shows AudioSilo as **Not needed**. Open Library gets one
