@@ -229,8 +229,15 @@ def test_the_documented_check_set_matches_the_gate_workflow() -> None:
     # The weekly audit reruns one gate scan on `main` and gates nothing: it is
     # started by the clock or by hand, never by a pull request or a push.
     scheduled = (directory / "scheduled-audit.yml").read_text(encoding="utf-8")
-    triggers = scheduled.split("\non:\n", 1)[1].split("\n\n", 1)[0]
-    assert triggers == '  schedule:\n    - cron: "23 5 * * 1"\n  workflow_dispatch:'
+    # The whole block up to the next top-level key, blank lines included, and
+    # no second or quoted `on` key beside it.
+    triggers = re.search(r"^on:\n((?:[ \t].*\n|\n)*)", scheduled, re.M)
+    assert triggers is not None
+    assert (
+        triggers[1].strip("\n")
+        == '  schedule:\n    - cron: "23 5 * * 1"\n  workflow_dispatch:'
+    )
+    assert len(re.findall(r"^[\"']?on[\"']?\s*:", scheduled, re.M)) == 1
     # Automation under `.github/` is invoked by that workflow or it is nothing.
     for path in (ROOT / ".github").rglob("*"):
         if path.is_file() and path.suffix in {".py", ".sh"}:
