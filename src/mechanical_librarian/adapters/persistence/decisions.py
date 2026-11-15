@@ -853,13 +853,16 @@ class SQLiteDecisionRepository(ConnectionScoped):
     def _clear_pin(self, decision: HumanDecision) -> None:
         """Take the pin off the case's hold, keeping the hold and its token.
 
-        The update time moves to the unpin, so the work's latest hold is this
-        one and no pin is carried to its later cases: the latest hold is
-        chosen by update time before rowid, and a re-admitted case keeps its
-        old rowid.
+        The update time moves to the unpin and the row is written again, so
+        the work's latest hold is this one and no pin is carried to its later
+        cases. The latest hold is chosen by update time, then rowid: the
+        re-inserted row takes a fresh rowid, so it outranks a pinned copy
+        carried to a sibling case in the same second, which an in-place update
+        would not, since a re-admitted case keeps its old row. The explicit
+        DELETE fires the attention delete trigger.
         """
-        (document,) = self._connection.execute(
-            "SELECT document FROM field_effect_manual_holds "
+        active, document = self._connection.execute(
+            "SELECT active,document FROM field_effect_manual_holds "
             "WHERE review_case_id=? AND destination=?",
             (decision.review_case_id, decision.destination),
         ).fetchone()
@@ -867,13 +870,19 @@ class SQLiteDecisionRepository(ConnectionScoped):
         hold["pin"] = None
         hold["updated_at"] = decision.occurred_at
         self._connection.execute(
-            "UPDATE field_effect_manual_holds SET updated_at=?,document=? "
+            "DELETE FROM field_effect_manual_holds "
             "WHERE review_case_id=? AND destination=?",
+            (decision.review_case_id, decision.destination),
+        )
+        self._connection.execute(
+            "INSERT INTO field_effect_manual_holds(review_case_id,destination,"
+            "active,updated_at,document) VALUES(?,?,?,?,?)",
             (
-                decision.occurred_at,
-                canonical_effect_json(hold),
                 decision.review_case_id,
                 decision.destination,
+                active,
+                decision.occurred_at,
+                canonical_effect_json(hold),
             ),
         )
 

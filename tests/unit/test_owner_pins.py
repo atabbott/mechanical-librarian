@@ -622,6 +622,84 @@ def test_a_return_request_never_releases_a_pinned_hold(tmp_path: Path) -> None:
     store.close()
 
 
+# Codex P2 on #1911: clocks are whole seconds and a re-admitted case keeps its
+# old hold row, so an owner write on the returned case must still outrank the
+# copy carried to a sibling case in the same second.
+@pytest.mark.parametrize("ending", ["unpin", "keep_current"])
+def test_an_owner_write_in_the_same_second_outranks_a_carried_pin(
+    tmp_path: Path, ending: str
+) -> None:
+    store, report, _ = _store(tmp_path, title="ask")
+    ticks = store.ticks
+
+    def fixed_clock() -> int:
+        return ticks
+
+    def advance() -> None:
+        # The idempotency key follows the tick counter; the clock stays put.
+        store.ticks += 1
+
+    store.clock = fixed_clock  # type: ignore[method-assign]  # reason: one clock value throughout reproduces the whole-second tie.
+    first = store.publish(report).review_case_id
+    advance()
+    store.decide("pin")
+    second = store.publish(rewritten(report, publisher="Changed Elsewhere"))
+    assert second.review_case_id != first
+    assert _pin(store) is not None
+    assert store.publish(report).review_case_id == first
+    advance()
+    decision = store.decide(ending)
+    third = store.publish(rewritten(report, publisher="Changed Once More"))
+    assert third.review_case_id not in {first, second.review_case_id}
+    assert _pin(store) is None
+    if ending == "unpin":
+        assert _asked(store) is True
+    else:
+        assert _hold(store) == decision.decision_id
+    store.close()
+
+
+# The two Resume writers take a fresh rowid too, so a Resume asked or
+# completed on the returned case in the same second is not undone by the
+# active copy carried to a sibling case.
+@pytest.mark.parametrize("resume", ["requested", "released"])
+def test_a_resume_in_the_same_second_outranks_a_carried_hold(
+    tmp_path: Path, resume: str
+) -> None:
+    store, report, _ = _store(tmp_path, title="ask")
+    ticks = store.ticks
+
+    def fixed_clock() -> int:
+        return ticks
+
+    store.clock = fixed_clock  # type: ignore[method-assign]  # reason: one clock value throughout reproduces the whole-second tie.
+    first = store.publish(report).review_case_id
+    store.ticks += 1
+    held = store.decide("keep_current")
+    store.publish(rewritten(report, publisher="Changed Elsewhere"))
+    assert _hold(store) == held.decision_id
+    assert store.publish(report).review_case_id == first
+    if resume == "requested":
+        scan = store.repository.request_review_scan(
+            report.target.connection,
+            report.target.library,
+            "library-ebooks",
+            "a" * 64,
+            ticks,
+        )
+        assert store.repository.request_field_effect_manual_return(
+            first, "title", held.decision_id, scan.scan_id, ticks, ticks
+        )
+    else:
+        assert store.repository.clear_field_effect_manual_hold(
+            first, "title", ticks, held.decision_id
+        )
+    store.publish(rewritten(report, publisher="Changed Once More"))
+    assert store.case.review_case_id != first
+    assert _hold(store) is None
+    store.close()
+
+
 # AC9 and AC16.
 def test_a_pinned_field_reads_pinned_and_offers_unpin(genres: OwnerStore) -> None:
     assert _field(genres, "title")["pin_control"] == {"pin": True, "unpin": False}

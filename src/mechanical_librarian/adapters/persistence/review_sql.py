@@ -243,7 +243,12 @@ def _active_generation_automatic_sql(decision: str) -> str:
 # The latest manual hold per destination across one work's cases, given its
 # connection, library and item: the owner's hold follows the work, not the
 # case (ADR-0085). Admission carries it to each case; a withdrawal restores it
-# where the withdrawn answer's own hold stood.
+# where the withdrawn answer's own hold stood. Equal update times (clocks are
+# whole seconds) fall to rowid, which is sound because every owner write
+# re-inserts its row and so takes a fresh rowid. Admission's carry copies the
+# latest state, so a copy that outranks its source changes nothing, and on a
+# re-admitted case it updates the old row in place, never outranking a later
+# owner write.
 _WORK_LATEST_MANUAL_HOLDS_SQL = (
     "SELECT destination,active,document FROM (SELECT hold.destination,"
     "hold.active,hold.document,row_number() OVER (PARTITION BY "

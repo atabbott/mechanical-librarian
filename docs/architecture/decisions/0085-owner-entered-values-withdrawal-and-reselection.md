@@ -280,7 +280,8 @@ instruction that one field of one work is finished.
   that shows the pinned value again puts the pin back in force.
 - **Unpin keeps the hold.** `unpin` removes the pin from the case's hold and
   leaves an ordinary hold with the same token, its update time moved to the
-  unpin, so the work's latest hold carries no pin to later cases. Like a
+  unpin and its row written afresh, so the work's latest hold carries no pin
+  to later cases even when a carried copy shares that second. Like a
   withdrawal an unpin row settles nothing, so the field can be asked again;
   Automatic stays off it until Resume automatic handling, as for any answer.
 - **Another answer ends the pin.** A later `accept`, `keep_current` or

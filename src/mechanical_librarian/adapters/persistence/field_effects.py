@@ -760,10 +760,18 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 "updated_at": changed_at,
             }
         )
+        # An owner's hold write re-inserts its row, so it takes a fresh rowid
+        # and outranks, on an equal update time, a copy carried to a sibling
+        # case earlier (_WORK_LATEST_MANUAL_HOLDS_SQL). The explicit DELETE
+        # fires the attention delete trigger, as INSERT OR REPLACE would not.
+        self._connection.execute(
+            "DELETE FROM field_effect_manual_holds "
+            "WHERE review_case_id=? AND destination=?",
+            (review_case_id, destination),
+        )
         self._connection.execute(
             "INSERT INTO field_effect_manual_holds(review_case_id,destination,active,updated_at,document) "
-            "VALUES(?,?,1,?,?) ON CONFLICT(review_case_id,destination) DO UPDATE SET "
-            "active=1,updated_at=excluded.updated_at,document=excluded.document",
+            "VALUES(?,?,1,?,?)",
             (review_case_id, destination, changed_at, document),
         )
 
@@ -861,14 +869,21 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             }
             raw["updated_at"] = changed_at
             document = canonical_effect_json(raw)
+            # Re-inserted under the same document guard, so the request takes a
+            # fresh rowid like every owner hold write (_set_field_effect_manual_hold).
             updated = self._connection.execute(
-                "UPDATE field_effect_manual_holds SET updated_at=?,document=? "
+                "DELETE FROM field_effect_manual_holds "
                 "WHERE review_case_id=? AND destination=? AND active=1 AND document=?",
-                (changed_at, document, review_case_id, destination, active_document),
+                (review_case_id, destination, active_document),
             ).rowcount
             if updated != 1:
                 transaction.rollback()
                 return False
+            self._connection.execute(
+                "INSERT INTO field_effect_manual_holds(review_case_id,destination,"
+                "active,updated_at,document) VALUES(?,?,1,?,?)",
+                (review_case_id, destination, changed_at, document),
+            )
             if scan[0] == "completed_with_failures":
                 requeued = self._connection.execute(
                     "UPDATE review_preparation_scans SET state='queued',"
@@ -940,11 +955,19 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                     "updated_at": changed_at,
                 }
             )
+            # Re-inserted under the same document guard, so the release takes a
+            # fresh rowid like every owner hold write (_set_field_effect_manual_hold).
             updated = self._connection.execute(
-                "UPDATE field_effect_manual_holds SET active=0,updated_at=?,document=? "
+                "DELETE FROM field_effect_manual_holds "
                 "WHERE review_case_id=? AND destination=? AND active=1 AND document=?",
-                (changed_at, document, review_case_id, destination, active_document),
+                (review_case_id, destination, active_document),
             ).rowcount
+            if updated == 1:
+                self._connection.execute(
+                    "INSERT INTO field_effect_manual_holds(review_case_id,destination,"
+                    "active,updated_at,document) VALUES(?,?,0,?,?)",
+                    (review_case_id, destination, changed_at, document),
+                )
             # Only the active generation's decision is held (#1573).
             automatic = self._connection.execute(
                 "SELECT decision_id FROM automatic_decisions "
