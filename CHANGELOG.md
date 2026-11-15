@@ -69,6 +69,12 @@ brackets are GitHub issues.
   and their response versions start with `preview-`. A script that calls the
   old paths gets 404. Stored outcome sets keep `shadow-outcome-set-v11`; no
   rebuild is needed (#1739).
+- Every request but `GET`, `HEAD` and `OPTIONS` now has its body size limited
+  before sign-in, at 2 KiB unless its route needs more, with `413
+  body_too_large` above it, and a body that has not arrived 30 seconds after
+  its headers closes the connection. The Google Books key now travels in a
+  header instead of the address, and the dependency audit also runs weekly on
+  `main` (#1887).
 
 ## 0.33.0 — First library (in progress)
 
@@ -275,6 +281,11 @@ brackets are GitHub issues.
   other lists empty description, genres and narrators fields that Hardcover or
   Open Library offers a value for. The admission-rule ledger's A6 analysis now
   counts your decisions on each relaxation's fields (#1876).
+- Tooling: a read-only workbench script lists Library links to the
+  descriptions where the adviser's text could be written automatically, and
+  scores your decisions on them per adviser against your bar of a Wilson 95%
+  lower limit of 0.90. ADR-0099 proposes using automatic description advice
+  only once an adviser passes (#1886).
 - **Clean rebuild required.** Nothing is taken from Audiobookshelf's own
   `metadata.json` or `metadata.abs`. A sidecar is set aside if its folder holds
   another audio or ebook file, or it lacks the audiobook's title and an author

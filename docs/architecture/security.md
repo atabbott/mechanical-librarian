@@ -105,13 +105,15 @@ only to compare with mount mappings, and those checks never read media.
   deletes the cookie only after revocation is durable.
 - In store mode, Settings changes the password given the session, CSRF token
   and current password, whose check spends a sign-in attempt. One transaction
-  stores the new verifier only while the stored one is the one checked. That
-  browser gets a new session and every other session ends. File mode
+  stores the new verifier only while the stored one is the one checked. The
+  changing browser gets a new session and every other session ends. File mode
   answers `409`.
-- Without a session, a workspace page sends the browser to sign-in with that
-  page as `next`, which returns only to a workspace route with a URL-safe
-  query on this origin, checked by server and page; anything else, including
-  a scheme, host, `//` or backslash, returns to Library.
+- A workspace page opened without a session sends the browser to sign-in with
+  that page as `next`. Sign-in returns only to a workspace page on this
+  origin: the server matches `next` against the workspace routes and a
+  URL-safe query, and the page checks the origin again before it navigates.
+  Anything else, including a scheme, host, `//` or backslash, returns to
+  Library.
 
 Sign-in allows five attempts per client in any five minutes, under a global
 ceiling of 100; a refusal is `429 throttled`. A granted session clears only
@@ -119,26 +121,31 @@ its own client's attempts; a password change clears every client's, since
 client keys are keyed by the verifier. The client key is an HMAC, never a
 stored address.
 
-The client is an untrusted peer's socket address, whatever its
-`X-Forwarded-For` says, or for a peer in `trusted_proxy_ips` the rightmost
-entry of its single `X-Forwarded-For` line (none, several or unparsable lines
-share one key); an IPv6 address counts as its /64. A trusted proxy that
-passes a client's header through lets that client choose its key.
+The client comes from the transport: an untrusted peer is its socket
+address, whatever its `X-Forwarded-For` says, and a peer in
+`trusted_proxy_ips` is the rightmost entry of its single `X-Forwarded-For`
+line (none, several or unparsable lines share one key). An IPv6 address
+counts as its /64. A trusted proxy that passes a client's header through,
+rather than appending or overwriting, lets that client choose its key.
 
-Twenty IPv4 addresses or IPv6 /64s can hold sign-in at the global ceiling
-for everyone, a gap only an allow list or owner lockout would close; forced
-Argon2 work stays near one verification every three seconds.
+The bound holds per identity: twenty IPv4 addresses or IPv6 /64s can hold
+sign-in at the global ceiling for everyone, an accepted gap that only an
+allow list or owner lockout would close. Forced Argon2 work stays near one
+verification every three seconds.
 
 ### Requests and CSRF
 
 - Exact Host is enforced on every request, exact Origin on every unsafe one.
   Forwarded Host or scheme is honoured only from a trusted proxy; Uvicorn's
   own proxy handling is off.
+- Every request but `GET`, `HEAD` and `OPTIONS` has its body bounded before
+  routing, at 2 KiB unless its route needs more (`413 body_too_large`).
 - Every unsafe request needs the session, the CSRF token and an
   `x-ml-build-identity` header matching the installed build.
-- The build identity is a non-secret version gate, sent only as a header on
-  `/api/v1` responses to owner-authenticated requests: never on a 401,
-  sign-in, asset recovery or an early Host, Origin or body-size refusal
+- The build identity is a non-secret version gate. It is sent only as a
+  response header to owner-authenticated `/api/v1` requests: never on a 401,
+  sign-in, asset recovery, an early Host, Origin or body-size refusal, or
+  without a valid session
   ([ADR-0091](decisions/0091-decode-browser-responses-and-report-uncertain-writes.md)).
 - Serving an authenticated page rotates the CSRF digest. The raw token lives
   only in that no-store HTML and page memory.
@@ -161,8 +168,8 @@ vendored. Errors are fixed value-free codes.
 
 Everything is `private, no-store` except content-hashed assets and
 session-checked cover previews addressed by digest
-(`private, max-age=31536000, immutable`), so after logout that browser
-profile can still show a viewed cover for up to a year. The library
+(`private, max-age=31536000, immutable`). Logout does not clear the browser
+cache, so that profile can show a viewed cover for up to a year. The library
 cover route serves only the preview the current report binds to the item's
 cover, digest-verified and never decoded.
 
@@ -192,12 +199,12 @@ Transport modes and their rules are in
 [origin, TLS and proxies](../reference/configuration.md#origin-tls-and-proxies)
 and [network access](../operations/deployment.md#network-access)
 ([ADR-0072](decisions/0072-explicit-local-transport.md)). HTTP carries
-everything in plaintext, so it is for an owner-controlled network or VPN
-only. There is no TLS-disable flag. Direct TLS validates certificate and key
-as one identity before the database or listener opens and limits TLS 1.2 to
-ECDHE AEAD ciphers. The edge admits at
-most 100 connections, limits incomplete events to 16 KiB and closes
-incomplete headers after 10 seconds.
+credentials, sessions and metadata in plaintext, so it is for an
+owner-controlled network or VPN only. There is no TLS-disable flag. Direct
+TLS validates certificate and key as one identity before the database or
+listener opens and limits TLS 1.2 to ECDHE AEAD ciphers. The edge admits at
+most 100 connections, limits incomplete events to 16 KiB and closes a
+request whose headers take over 10 seconds or whose body takes 30 more.
 
 ## Credentials and egress
 
@@ -276,7 +283,8 @@ Per provider, where *5xx* means 500, 502, 503 and 504:
   User-Agent to its fixed origins and is stored nowhere else. Retries 5xx,
   never 429.
 - **Google Books**: fixed-origin `GET` with an optional API key that only the
-  credential-bearing controller reads. Retries 503 only.
+  credential-bearing controller reads, sent in a header, never the URL.
+  Retries 503 only.
 - **Inventaire**: fixed-origin `GET`, no credential. Retries 5xx, and 429
   only with a bounded `Retry-After`; at most three attempts per request.
 - **Audible catalog**: `GET` to ten hosts from a closed marketplace map, so no
@@ -759,19 +767,5 @@ None of these has target-write, media-write or startup authority.
 
 ## Automated scanning boundary
 
-`dependency-audit`, a required public-gate job, scans `uv.lock` with a
-digest-pinned OSV-Scanner on every pull request and push to `main`, failing
-on any known advisory in runtime or development dependencies;
-`.github/workflows/public-gate.yml` has the command. Frontend checks are in
-[what merging proves](../../CONTRIBUTING.md#what-merging-proves).
-
-The only way to hold a failure open is an `osv-scanner.toml` entry naming one
-advisory, a reason and an expiry at most 90 days out; there is no severity
-floor or package exclusion.
-`tests/unit/test_security_scanning_contract.py` enforces the register and
-checks that every workflow has `contents: read`, pins actions to commits and
-sets `persist-credentials: false`.
-
-Not covered: triage and fixes, source static analysis, pull-request
-dependency review (these need GitHub Code Security), extra secret scanning,
-SBOMs and container image scanning.
+Dependency audits, CodeQL and what scanning does not cover are in
+[automated scanning](../development/dependencies.md#automated-scanning).

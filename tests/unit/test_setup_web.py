@@ -42,7 +42,9 @@ from mechanical_librarian.domain.setup_state import (
     claim_token_digest,
     claim_token_matches,
 )
+from mechanical_librarian.interfaces.web import setup as setup_web
 from mechanical_librarian.interfaces.web.app import (
+    BodyLimitMiddleware,
     owner_password_binding,
     owner_password_verifier,
     reviewer_failure_response,
@@ -691,6 +693,30 @@ def test_setup_json_bodies_are_bounded_before_parsing_or_authentication(
 
     assert response.status_code == 413
     assert response.json()["error"]["code"] == "body_too_large"
+
+
+def test_every_unsafe_setup_route_is_bounded_before_parsing_or_authentication() -> None:
+    """A setup route needs no entry in the table to be bounded (default 2,048)."""
+    client, _state, _connection = _client(reviewer_access=Mock())
+    limits = BodyLimitMiddleware(
+        cast(Any, None), path_limits=setup_web._SETUP_BODY_LIMITS
+    )
+    unsafe = sorted(
+        (method, route.path)
+        for route in client.app.routes
+        if isinstance(route, APIRoute)
+        for method in (route.methods or set()) - {"GET", "HEAD", "OPTIONS"}
+    )
+    assert ("POST", "/api/setup/reviewer/codex/recheck") in unsafe
+    for method, path in unsafe:
+        response = client.request(
+            method,
+            path,
+            content=b"x" * (limits.limit_for(path) + 1),
+            headers={"content-type": "application/json"},
+        )
+        assert response.status_code == 413, (method, path)
+        assert response.json()["error"]["code"] == "body_too_large"
 
 
 def test_oversized_setup_login_does_not_consume_the_login_throttle() -> None:
