@@ -105,8 +105,8 @@ only to compare with mount mappings, and those checks never read media.
   deletes the cookie only after revocation is durable.
 - In store mode, Settings changes the password given the session, CSRF token
   and current password, whose check spends a sign-in attempt. One transaction
-  stores the new verifier only while the stored one is the one checked. The
-  changing browser gets a new session and every other session ends. File mode
+  stores the new verifier only while the stored one is the one checked. That
+  browser gets a new session and every other session ends. File mode
   answers `409`.
 - Without a session, a workspace page sends the browser to sign-in with that
   page as `next`, which returns only to a workspace route with a URL-safe
