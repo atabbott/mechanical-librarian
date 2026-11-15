@@ -2353,7 +2353,7 @@ describe('shipped first-run setup script', () => {
     vi.stubGlobal('fetch', fetch)
     runSetup()
 
-    expect(await screen.findByText('GPT-6 Luna: about $4.2 per 1,000 works.')).toBeVisible()
+    expect(await screen.findByText('GPT-6 Luna: about $4.20 per 1,000 works.')).toBeVisible()
     expect(
       screen.getByText(
         'An AI model can look at cover images and tell you what it sees. It only advises, and you still choose. You can set this up later in Settings.',

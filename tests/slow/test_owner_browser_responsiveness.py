@@ -441,7 +441,7 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
                                     "choice_confirmation",
                                     lambda page=page: page.get_by_role(
                                         "radio",
-                                        name="Choose Current cover",
+                                        name="Keep current cover",
                                         exact=True,
                                     ).click(),
                                     lambda page=page: expect(

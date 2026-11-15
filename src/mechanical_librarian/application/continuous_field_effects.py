@@ -1508,6 +1508,7 @@ class ContinuousGuardedApplication:
             not in {
                 "asked_again",
                 "asked_again_matching",
+                "asked_again_matching_written",
                 "held_back",
                 "waiting_for_check",
             }

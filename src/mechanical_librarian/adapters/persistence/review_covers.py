@@ -13,6 +13,9 @@ records a cover decision after it, or a later cover write lands. A Put back
 of the switch is the one answer that keeps it listed: its copy is released
 only when the Put back's write verifies, and until then the row carries that
 write's state, so a Put back the target refused can say so (#1363, Q18).
+
+A proposed cover the owner chose whose write has not verified is `chosen`,
+listed only under All, never as kept (#1866).
 """
 
 from __future__ import annotations
@@ -165,6 +168,24 @@ _CHOOSABLE_SQL = (
     "WHERE result.review_case_id=ml.review_case_id "
     "AND result.destination='cover'),0)"
 )
+# The owner's current selection chose a proposed cover and its write has not
+# verified yet, so the cover Audiobookshelf holds is not the one kept (#1866).
+# The selection stays the owner's choice when a later comparison is prepared
+# (a policy change), so it is read from the current selection, not the
+# current comparison. A Put back stays with its switch, which the CASE reads
+# first; once the write verifies, the work reads as kept.
+_CHOSEN_SQL = (
+    "EXISTS (SELECT 1 FROM current_cover_selection_authorities current "
+    "JOIN cover_selection_authorities answered "
+    "ON answered.selection_id=current.selection_id "
+    "WHERE current.connection_name=ml.connection_name "
+    "AND current.library_name=ml.library_name AND current.item_id=ml.item_id "
+    "AND answered.kind='owner' "
+    "AND json_extract(answered.document,'$.candidate_kind') IS NOT NULL "
+    "AND NOT EXISTS (SELECT 1 FROM field_effects effect "
+    "WHERE effect.decision_id=answered.decision_id "
+    "AND effect.destination='cover' AND effect.state='verified'))"
+)
 _WORKS_SQL = (
     "WITH "
     + _SWITCH_SQL
@@ -190,6 +211,8 @@ _WORKS_SQL = (
     + _CHOOSABLE_SQL
     + "=1 THEN 'proposal' "
     "WHEN switch.plan_id IS NOT NULL THEN 'auto' WHEN "
+    + _CHOSEN_SQL
+    + " THEN 'chosen' WHEN "
     + _CHOOSABLE_SQL
     + "=1 THEN 'kept' ELSE 'none' END AS cover_group "
     "FROM (SELECT staged.*,CASE WHEN json_extract(staged.cover_stage,'$[0]') "

@@ -204,6 +204,19 @@ def owner_cover_selection_kind(
     return "candidate", None
 
 
+def keeps_unread_cover(consideration: Mapping[str, object]) -> bool:
+    """Whether a keep may name no candidate over this cover comparison.
+
+    When Mechanical Librarian could not read the current cover (a transient
+    read, a 404 or bytes the decoder refused), the comparison holds no current
+    candidate and its incumbent reads ``unavailable``. The owner's keep then
+    names the stated cover by its comparison and target alone, so it protects
+    that cover like any keep (#1865).
+    """
+    incumbent = consideration.get("incumbent")
+    return type(incumbent) is dict and incumbent.get("state") == "unavailable"
+
+
 def validate_cover_confirmation(value: object) -> dict[str, object]:
     """Read the closed explicit owner confirmation without coercion."""
     if (

@@ -3158,6 +3158,9 @@ it('separates measured cover cost from observed rates and never lends prices to 
     cover.getByText('Cover review: about $0.64, including about 2.7 cover images per work.'),
   ).toBeVisible()
   expect(cover.getByText('Description advice: not measured for this model.')).toBeVisible()
+  // Covers are counted per work, as the cost is (#1863).
+  expect(screen.getByText('A vision model reviews each work’s covers.')).toBeVisible()
+  expect(screen.queryByText(/each book’s covers/u)).toBeNull()
   expect(
     cover.getByText(/0.000001 per input token, Unavailable per output token, 0 per image/u),
   ).toBeVisible()
@@ -3168,6 +3171,42 @@ it('separates measured cover cost from observed rates and never lends prices to 
   expect(cover.getByText('Validate this model to see its prices.')).toBeVisible()
   expect(cover.getByText('Cover review: not measured for this model.')).toBeVisible()
   expect(cover.queryByText(/0.000001 per input token/u)).toBeNull()
+})
+
+it('rounds a measured cover cost under a cent to under $0.01 (#1863)', async () => {
+  const http = createHttp()
+  http.getSettings = vi.fn(async () => view())
+  http.getReviewerAccess = vi.fn(async () => ({
+    ...reviewerView,
+    mapping: { engine: 'openrouter' as const, model: 'openai/gpt-6-luna' },
+    cost_evidence: {
+      models: [
+        {
+          model: 'openai/gpt-6-luna',
+          task: 'cover' as const,
+          requests_selected: 100,
+          requests_attempted: 100,
+          requests_completed: 100,
+          requests_failed: 0,
+          works: 100,
+          distinct_images: 270,
+          total_cost_usd: '0.000400000',
+          per_1000_usd: '0.004000000',
+          measured_run: {
+            source_head: 'a'.repeat(40),
+            cohort_sha256: 'b'.repeat(64),
+            observed_at: 1700000000,
+          },
+        },
+      ],
+    },
+  }))
+  renderRoute('/settings?group=reviewer', http)
+  const cover = within(await screen.findByRole('region', { name: 'Cover reviewer' }))
+  expect(
+    cover.getByText('Cover review: under $0.01, including about 2.7 cover images per work.'),
+  ).toBeVisible()
+  expect(cover.queryByText(/about \$0\.00/u)).toBeNull()
 })
 
 // #1584: a pending reviewer command keeps its button focused. The button is

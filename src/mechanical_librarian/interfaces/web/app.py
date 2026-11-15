@@ -1485,7 +1485,7 @@ class _CoverWork(_ClosedModel):
     authors: list[str]
     choosable: bool
     cover: _CoverPreview | None
-    group: Literal["proposal", "choice", "kept", "auto", "none"]
+    group: Literal["proposal", "choice", "kept", "chosen", "auto", "none"]
     # Why the measured rules hold this cover's switch (#1363).
     hold: _CoverRuleReason | None
     media_kind: _MediaKind
@@ -1880,9 +1880,17 @@ class _ActivityEvent(_ClosedModel):
     # choice that no longer counts, so the field asks again (after the work
     # came back, or after Book matching changed its offer), a planned
     # automatic write held while Automatic is off (#1711), or a planned owner
-    # write waiting for its work's Book matching check (#1355).
+    # write waiting for its work's Book matching check (#1355). A choice Book
+    # matching asked again that was already written and verified reads
+    # `asked_again_matching_written`, since Audiobookshelf keeps its value.
     note: (
-        Literal["asked_again", "asked_again_matching", "held_back", "waiting_for_check"]
+        Literal[
+            "asked_again",
+            "asked_again_matching",
+            "asked_again_matching_written",
+            "held_back",
+            "waiting_for_check",
+        ]
         | None
     ) = None
     occurred_at: int | None = Field(default=None, ge=0)
