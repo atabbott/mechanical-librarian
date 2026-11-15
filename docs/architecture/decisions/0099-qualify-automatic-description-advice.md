@@ -12,9 +12,9 @@
 
 ## Context
 
-With **Automatically apply ready description advice** on, the app writes the
-description adviser's text without asking and may replace a description the
-owner already has. Nothing yet measures how often that text is the one the
+With **Automatically apply ready description advice** on, the app would write
+the description adviser's text without asking and could replace a description
+the owner already has. Nothing yet measures how often that text is the one the
 owner would have chosen.
 
 The owner's decisions on descriptions are already stored. On a description,

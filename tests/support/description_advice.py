@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import itertools
-from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
-from unittest import mock
 
 import pytest
 
@@ -356,7 +353,7 @@ SYNTHETIC_DESCRIPTION_SCORE_SHA256 = "7" * 64
 
 
 def synthetic_description_record(
-    *models: str, engine: str = "codex"
+    *models: str,
 ) -> MappingProxyType[DescriptionAdviserIdentity, str]:
     """A record naming each model with this checkout's contract and every cleanup.
 
@@ -366,7 +363,7 @@ def synthetic_description_record(
     return MappingProxyType(
         {
             DescriptionAdviserIdentity(
-                engine,
+                "codex",
                 model,
                 hashlib.sha256(DESCRIPTION_INSTRUCTION.encode()).hexdigest(),
                 hashlib.sha256(DESCRIPTION_OUTPUT_SCHEMA.encode()).hexdigest(),
@@ -384,23 +381,10 @@ def synthetic_description_record(
     )
 
 
-def qualify_description_advice(
-    monkeypatch: pytest.MonkeyPatch, *models: str, engine: str = "codex"
-) -> None:
+def qualify_description_advice(monkeypatch: pytest.MonkeyPatch, *models: str) -> None:
     """Record the synthetic advisers for the rest of one test."""
     monkeypatch.setattr(
         description_advice_domain,
         "QUALIFIED_DESCRIPTION_ADVISERS",
-        synthetic_description_record(*models, engine=engine),
+        synthetic_description_record(*models),
     )
-
-
-@contextlib.contextmanager
-def qualified_description_advice(*models: str, engine: str = "codex") -> Iterator[None]:
-    """Record the synthetic advisers inside one block."""
-    with mock.patch.object(
-        description_advice_domain,
-        "QUALIFIED_DESCRIPTION_ADVISERS",
-        synthetic_description_record(*models, engine=engine),
-    ):
-        yield
