@@ -81,14 +81,14 @@ The last lines say whether the smoke passed and what it spent:
 | Result | Meaning |
 | --- | --- |
 | `passed` | Every request was sent and every answer was a valid report. |
-| `failed` | At least one answer was rejected or a request failed. The line under the result counts each failure code. If any is `output_rejected`, the model cannot be relied on for the revised schema. For any other code, fix what its row below says and run again. |
+| `failed` | At least one answer was rejected or a request failed. The line under the result counts each failure code. If any is `output_rejected`, the model cannot be relied on for the revised schema. For any other code, deal with the cause its row below names (your key, credit, privacy settings, the model or the connection) and run again. |
 | `incomplete` | The run stopped early. The line under the result says why. If the cap stopped it, raise `--spend-cap-usd` or lower `--requests`. Then run again. |
 
 To run again, move the earlier run aside so the next steps use the new one,
 then run the preflight and paste its command as above:
 
 ```
-mv "$OUT/cover-smoke" "$OUT/cover-smoke-1"
+mv "$OUT/cover-smoke" "$OUT/cover-smoke-$(date +%Y%m%d-%H%M%S)"
 ```
 
 Failure codes:

@@ -564,7 +564,7 @@ def _make_private_folder(path: Path) -> None:
         path.mkdir(mode=0o700, parents=False, exist_ok=False)
     except FileExistsError as error:
         raise SmokeRefused(
-            f"{path} already exists. Choose a new folder for each run."
+            f"{path} already exists. Move the earlier run aside, as the guide shows, and run again."
         ) from error
     except FileNotFoundError as error:
         raise SmokeRefused(f"The folder above {path} does not exist.") from error
@@ -1190,7 +1190,7 @@ def main(
     }[result["status"]]
     spend = f"Spent {_money(spent)} of {_money(cap)}."
     if result["unknown_charges"]:
-        spend = f"Spent at least {_money(spent)} of {_money(cap)}. " + (
+        spend = f"Reported spend: {_money(spent)} of {_money(cap)}. " + (
             "One request's charge is unknown."
             if result["unknown_charges"] == 1
             else f"{result['unknown_charges']} requests' charges are unknown."
