@@ -1700,8 +1700,8 @@ def create_review_pipeline(
         pipeline,
         polling_interval_seconds=review_configuration.library_polling_interval_seconds,
         graceful_shutdown_seconds=review_configuration.graceful_shutdown_seconds,
-        # The supervisor discards the run summary this returns.
-        recovery_wake=cast("Callable[[int], None]", recover_provider),
+        # The supervisor reads the run summary to refresh preparation (#1494).
+        recovery_wake=recover_provider,
         recovery_drain=recovery_cancel.set,
         recovery_resume=recovery_cancel.clear,
         on_stop=provider_recovery.close,

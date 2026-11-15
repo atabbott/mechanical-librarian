@@ -13081,3 +13081,28 @@ def test_projection_reconciles_the_case_level_before_its_shadow_outcome() -> Non
         ("reconcile", "case-1", 7),
         ("persist", "case-1", 7, ("staged_action",)),
     ]
+
+
+@pytest.mark.parametrize(
+    ("fanout", "announced"),
+    (
+        pytest.param(0, 0, id="held-before-anything-settled"),
+        pytest.param(2, 1, id="held-after-fanout-members-completed"),
+    ),
+)
+def test_a_target_hold_announces_preparation_only_after_fanout_completions(
+    fanout: int, announced: int
+) -> None:
+    """Fanout members completed before a target hold lower the waiting count,
+    so that hold refreshes preparation; a hold with none stays silent (#1494)."""
+    from mechanical_librarian.application.provider_recovery_runner import RecoveryRun
+
+    topics: list[str] = []
+    supervisor = ReviewPreparationSupervisor(
+        _ScheduledPipeline(),
+        clock=lambda: 41,
+        recovery_wake=lambda _now: RecoveryRun("target_held", fanout),
+    )
+    supervisor._announce = lambda topic, _subject: topics.append(topic)
+    supervisor.recover_provider_once()
+    assert ["preparation"] * announced == topics

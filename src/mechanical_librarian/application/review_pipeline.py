@@ -1764,9 +1764,11 @@ class ReviewPreparationSupervisor:
     def _recover(self, wake: Callable[[int], object]) -> None:
         """Run recovery once and say when its run changed what preparation shows.
 
-        A run that found nothing due or was held by its target changed nothing
-        durable and can repeat every second, so only another run state refreshes
-        the preparation read (#1494).
+        A run that found nothing due, or was held by its target before it
+        settled anything, changed nothing durable and can repeat every second,
+        so it stays silent. Any other run refreshes the preparation read,
+        including a target hold after fanout members completed, since those
+        completions lower the waiting count (#1494).
         """
         # Imported here: the recovery runner's evidence module imports this
         # module's error type, so a module-level import would be a cycle.
@@ -1775,8 +1777,11 @@ class ReviewPreparationSupervisor:
         )
 
         run = wake(self._clock())
-        if type(run) is RecoveryRun and run.state not in {"idle", "target_held"}:
-            self._announce("preparation", None)
+        if type(run) is not RecoveryRun:
+            return
+        if run.state == "idle" or (run.state == "target_held" and run.fanout == 0):
+            return
+        self._announce("preparation", None)
 
     def _schedule_due(self) -> None:
         with self._schedule_lock:
