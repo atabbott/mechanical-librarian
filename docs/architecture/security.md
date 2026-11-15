@@ -131,6 +131,12 @@ verification every three seconds.
 - Exact Host is enforced on every request, exact Origin on every unsafe one.
   Forwarded Host or scheme is honoured only from a trusted proxy; Uvicorn's
   own proxy handling is off.
+- Every request other than `GET`, `HEAD` or `OPTIONS` has its body bounded
+  before routing, parsing or the session check, because FastAPI reads a
+  route's body before its dependencies run. The bound is 2 KiB unless the
+  route's largest valid body needs more; the table of larger bounds is beside
+  `BodyLimitMiddleware`. A larger body is refused with `413 body_too_large`.
+  The setup surface works the same way.
 - Every unsafe request needs the session, the CSRF token and an
   `x-ml-build-identity` header matching the installed build.
 - The build identity is a non-secret version gate, not a credential. It is
@@ -195,8 +201,10 @@ credentials, sessions and metadata in plaintext, so it is for an
 owner-controlled network or VPN only. There is no TLS-disable flag. Direct
 TLS validates certificate and key as one identity before the database or
 listener opens and limits TLS 1.2 to ECDHE AEAD ciphers. The edge admits at
-most 100 connections, limits incomplete events to 16 KiB and closes
-incomplete headers after 10 seconds.
+most 100 connections and limits incomplete events to 16 KiB. It closes a
+connection whose request headers have not arrived within 10 seconds, or whose
+request body has not arrived in full within 30 seconds of its headers, even
+after the app has answered.
 
 ## Credentials and egress
 
@@ -275,7 +283,8 @@ Per provider, where *5xx* means 500, 502, 503 and 504:
   User-Agent to its fixed origins and is stored nowhere else. Retries 5xx,
   never 429.
 - **Google Books**: fixed-origin `GET` with an optional API key that only the
-  credential-bearing controller reads. Retries 503 only.
+  credential-bearing controller reads. The key goes in the `X-Goog-Api-Key`
+  header, never the URL. Retries 503 only.
 - **Inventaire**: fixed-origin `GET`, no credential. Retries 5xx, and 429
   only with a bounded `Retry-After`; at most three attempts per request.
 - **Audible catalog**: `GET` to ten hosts from a closed marketplace map, so no
@@ -759,7 +768,9 @@ None of these has target-write, media-write or startup authority.
 `dependency-audit`, a required public-gate job, scans `uv.lock` with a
 digest-pinned OSV-Scanner on every pull request and push to `main`, failing
 on any known advisory in runtime or development dependencies;
-`.github/workflows/public-gate.yml` has the command. Frontend checks are in
+`.github/workflows/public-gate.yml` has the command. The same scan runs
+weekly on `main` from `.github/workflows/scheduled-audit.yml`, so an advisory
+published against a quiet release still fails a run. Frontend checks are in
 [what merging proves](../../CONTRIBUTING.md#what-merging-proves).
 
 The only way to hold a failure open is an `osv-scanner.toml` entry naming one
@@ -769,6 +780,11 @@ floor or package exclusion.
 checks that every workflow has `contents: read`, pins actions to commits and
 sets `persist-credentials: false`.
 
-Not covered: triage and fixes, source static analysis, pull-request
-dependency review (these need GitHub Code Security), extra secret scanning,
-SBOMs and container image scanning.
+CodeQL (GitHub's default setup) analyses the Python, the TypeScript and the
+workflows on every pull request and push to `main`. Renovate watches the
+image's digest-pinned bases and toolchain, and lists new FFmpeg and Codex
+releases on its dependency dashboard for approval, because their checksums
+in the `Dockerfile` are refreshed by hand.
+
+Not covered: triage and fixes, pull-request dependency review, extra secret
+scanning, SBOMs and container image scanning.

@@ -4,6 +4,7 @@ import json
 import re
 import subprocess
 import tomllib
+from typing import cast
 from pathlib import Path
 
 import pytest
@@ -40,7 +41,7 @@ def test_managed_upgrades_use_strict_current_platform_automerge() -> None:
     assert CONFIG["lockFileMaintenance"]["automerge"]
 
 
-def test_only_majors_replacements_compatibility_python_lines_and_playwright_stay_manual() -> (
+def test_only_majors_replacements_compatibility_python_lines_playwright_and_hand_checked_pins_stay_manual() -> (
     None
 ):
     restrictions = [
@@ -85,6 +86,17 @@ def test_only_majors_replacements_compatibility_python_lines_and_playwright_stay
             "matchManagers": ["pep621"],
             "matchPackageNames": ["playwright"],
             "groupName": "Playwright",
+            "automerge": False,
+            "dependencyDashboardApproval": True,
+        },
+        {
+            "description": (
+                "List new FFmpeg and Codex releases on the dependency dashboard; "
+                "approval opens a pull request whose Dockerfile checksums are "
+                "refreshed by hand"
+            ),
+            "matchManagers": ["custom.regex"],
+            "matchDepNames": ["ffmpeg", "@openai/codex"],
             "automerge": False,
             "dependencyDashboardApproval": True,
         },
@@ -255,23 +267,74 @@ def test_native_managed_toolchain_declarations_agree(
     assert len(set(values)) == 1
 
 
-def test_osv_custom_manager_is_narrow_and_digest_bound() -> None:
-    assert CONFIG["ignorePresets"] == ["customManagers:tsconfigNodeVersions"]
-    (manager,) = CONFIG["customManagers"]
-    assert manager["managerFilePatterns"] == [
-        r"/^\.github/workflows/public-gate\.yml$/"
+def _custom_manager(dep_name: str) -> dict[str, object]:
+    (manager,) = [
+        manager
+        for manager in CONFIG["customManagers"]
+        if manager["depNameTemplate"] == dep_name
     ]
-    assert manager["depNameTemplate"] == "ghcr.io/google/osv-scanner"
+    return manager
+
+
+def _matches(manager: dict[str, object], path: str) -> list[re.Match[str]]:
+    (pattern,) = cast("list[str]", manager["matchStrings"])
+    return list(re.finditer(pattern.replace("(?<", "(?P<"), (ROOT / path).read_text()))
+
+
+def test_custom_managers_are_exactly_the_osv_ffmpeg_and_codex_pins() -> None:
+    assert CONFIG["ignorePresets"] == ["customManagers:tsconfigNodeVersions"]
+    assert sorted(m["depNameTemplate"] for m in CONFIG["customManagers"]) == [
+        "@openai/codex",
+        "ffmpeg",
+        "ghcr.io/google/osv-scanner",
+    ]
+
+
+def test_osv_custom_manager_is_narrow_and_digest_bound() -> None:
+    manager = _custom_manager("ghcr.io/google/osv-scanner")
+    assert manager["managerFilePatterns"] == [
+        r"/^\.github/workflows/(?:public-gate|scheduled-audit)\.yml$/"
+    ]
     assert manager["datasourceTemplate"] == "docker"
-    (pattern,) = manager["matchStrings"]
-    python_pattern = pattern.replace("(?<", "(?P<")
-    matches = list(
-        re.finditer(
-            python_pattern, (ROOT / ".github/workflows/public-gate.yml").read_text()
-        )
-    )
-    assert len(matches) == 1
-    assert re.fullmatch(r"sha256:[a-f0-9]{64}", matches[0]["currentDigest"])
+    pins = set()
+    for path in (
+        ".github/workflows/public-gate.yml",
+        ".github/workflows/scheduled-audit.yml",
+    ):
+        (match,) = _matches(manager, path)
+        assert re.fullmatch(r"sha256:[a-f0-9]{64}", match["currentDigest"])
+        pins.add(match[0])
+    # Both workflows run one scanner, so Renovate moves them together.
+    assert len(pins) == 1
+
+
+@pytest.mark.parametrize(
+    ("dep_name", "datasource", "version_source"),
+    (
+        ("ffmpeg", "github-tags", r"ARG FFMPEG_VERSION=([0-9.]+)\n"),
+        ("@openai/codex", "npm", r'"codex-cli ([0-9.]+)"'),
+    ),
+    ids=("ffmpeg", "codex"),
+)
+def test_hand_checksummed_image_pins_are_each_watched_once(
+    dep_name: str, datasource: str, version_source: str
+) -> None:
+    """New FFmpeg and Codex releases reach the dashboard (security review, 1.0)."""
+    manager = _custom_manager(dep_name)
+    assert manager["managerFilePatterns"] == ["/^Dockerfile$/"]
+    assert manager["datasourceTemplate"] == datasource
+    (match,) = _matches(manager, "Dockerfile")
+    pinned = re.findall(version_source, (ROOT / "Dockerfile").read_text())
+    assert pinned == [match["currentValue"]]
+
+
+def test_ffmpeg_release_tags_read_as_versions() -> None:
+    manager = _custom_manager("ffmpeg")
+    assert manager["packageNameTemplate"] == "FFmpeg/FFmpeg"
+    extract = cast("str", manager["extractVersionTemplate"]).replace("(?<", "(?P<")
+    assert re.fullmatch(extract, "n7.1.6")["version"] == "7.1.6"  # type: ignore[index]  # reason: fullmatch is asserted to match by the subscript itself
+    assert re.fullmatch(extract, "n8.0")["version"] == "8.0"  # type: ignore[index]  # reason: as above
+    assert re.fullmatch(extract, "n8.1-dev") is None
 
 
 @pytest.mark.parametrize("index", range(7))

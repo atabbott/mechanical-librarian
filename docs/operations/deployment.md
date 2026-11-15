@@ -157,6 +157,20 @@ Open Library covers also need `archive.org` and `*.us.archive.org`, which
 serve its older covers. What each client contacts is in
 [security](../architecture/security.md#credentials-and-egress).
 
+### Host name and sign-in limits
+
+Give the service a host name of its own rather than a port on a host name
+another web app uses. Browsers send a cookie to every port on a host name, so
+if the service ran at `nas.local:8080` beside Audiobookshelf at
+`nas.local:13378`, Audiobookshelf would receive the service's session cookie.
+
+Sign-in allows five attempts per client address in any five minutes. The
+address is the one the container sees. If Docker's port publishing hands every
+connection the same gateway address, as its userland proxy and rootless Docker
+can, all browsers share one allowance, and someone guessing passwords locks you
+out for up to five minutes at a time. A reverse proxy listed in
+`trusted_proxy_ips` keeps clients apart through `X-Forwarded-For`.
+
 ## First-run setup
 
 An empty `/data` volume starts guided setup. Until setup finishes, the service

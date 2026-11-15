@@ -197,6 +197,18 @@
       "groupName": "Playwright",
       "automerge": false,
       "dependencyDashboardApproval": true
+    },
+    {
+      "description": "List new FFmpeg and Codex releases on the dependency dashboard; approval opens a pull request whose Dockerfile checksums are refreshed by hand",
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "matchDepNames": [
+        "ffmpeg",
+        "@openai/codex"
+      ],
+      "automerge": false,
+      "dependencyDashboardApproval": true
     }
   ],
   "updateNotScheduled": true,
@@ -204,13 +216,38 @@
     {
       "customType": "regex",
       "managerFilePatterns": [
-        "/^\\.github/workflows/public-gate\\.yml$/"
+        "/^\\.github/workflows/(?:public-gate|scheduled-audit)\\.yml$/"
       ],
       "matchStrings": [
         "ghcr\\.io/google/osv-scanner:(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)@(?<currentDigest>sha256:[a-f0-9]{64})"
       ],
       "depNameTemplate": "ghcr.io/google/osv-scanner",
       "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^Dockerfile$/"
+      ],
+      "matchStrings": [
+        "ARG FFMPEG_VERSION=(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)\\n"
+      ],
+      "depNameTemplate": "ffmpeg",
+      "packageNameTemplate": "FFmpeg/FFmpeg",
+      "datasourceTemplate": "github-tags",
+      "extractVersionTemplate": "^n(?<version>[0-9]+\\.[0-9]+(?:\\.[0-9]+)?)$",
+      "versioningTemplate": "semver-coerced"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^Dockerfile$/"
+      ],
+      "matchStrings": [
+        "codex --version\\)\" = \"codex-cli (?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)\""
+      ],
+      "depNameTemplate": "@openai/codex",
+      "datasourceTemplate": "npm"
     }
   ]
 }
