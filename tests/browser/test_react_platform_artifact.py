@@ -4846,6 +4846,156 @@ def test_compact_and_enlarged_masthead_never_covers_content() -> None:
                 expect(trigger).to_be_focused()
 
 
+# The open tooltip of the icon `selector`: its box, whether it takes the
+# pointer, and the destinations it lies over.
+_OPEN_TOOLTIP = """selector => {
+  const tip = document.querySelector(`.masthead ${selector} .masthead-tooltip`);
+  const box = tip.getBoundingClientRect();
+  const over = [...document.querySelectorAll('.masthead nav a')].filter((link) => {
+    const own = link.getBoundingClientRect();
+    return Math.min(box.right, own.right) - Math.max(box.left, own.left) > 0 &&
+      Math.min(box.bottom, own.bottom) - Math.max(box.top, own.top) > 0;
+  }).map((link) => link.textContent.trim());
+  return {
+    shown: getComputedStyle(tip).visibility === 'visible',
+    events: getComputedStyle(tip).pointerEvents,
+    left: box.left, right: box.right, top: box.top, bottom: box.bottom, over,
+  };
+}"""
+_MASTHEAD_ICONS = (".status-trigger", ".theme-toggle", ".sign-out")
+
+
+def test_masthead_tooltips_never_take_a_destinations_click() -> None:
+    """Where the destinations sit below the masthead icons (two rows, and the
+    three rows of a 19rem shell), each icon's tooltip stays on the screen,
+    lies over no destination and never takes the pointer, and a destination
+    takes its click while a tooltip is open. In the one-row masthead the
+    tooltip falls below the masthead and can be hovered, across the gap above
+    it, without closing (#1494, Amendment 4)."""
+    styles = {"100%": "", "200%": "html { font-size: 200% !important; }"}
+    text = "100%"
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 390, "height": 844}, locale="en-US")
+        page.add_init_script(_LIVE_UPDATE_STREAM)
+        _serve_cohort(page, stylesheet=lambda: styles[text])
+        for text, width in (
+            ("100%", 320),
+            ("200%", 320),
+            ("100%", 390),
+            ("100%", 761),
+            ("100%", 900),
+            ("100%", 1024),
+        ):
+            where = f"{text} text at {width}px"
+            page.set_viewport_size({"width": width, "height": 844})
+            page.goto("https://react-platform.invalid/settings?group=connection")
+            page.get_by_role("heading", name="Settings", exact=True).wait_for()
+            for icon in _MASTHEAD_ICONS:
+                page.locator(f".masthead {icon}").hover()
+                tip = page.evaluate(_OPEN_TOOLTIP, icon)
+                assert tip["shown"] and tip["events"] == "none", (
+                    f"{where} {icon}: {tip}"
+                )
+                assert tip["over"] == [], f"{where} {icon}: {tip}"
+                assert tip["left"] >= 0 and tip["right"] <= width, (
+                    f"{where} {icon}: {tip}"
+                )
+            # With the theme switch's tooltip open, a destination takes its click.
+            page.locator(".masthead .theme-toggle").hover()
+            link = page.get_by_role("navigation").get_by_role(
+                "link", name="Activity", exact=True
+            )
+            box = link.bounding_box()
+            assert box is not None
+            page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+            expect(link).to_have_attribute("aria-current", "page")
+        text = "100%"
+        page.set_viewport_size({"width": 1440, "height": 900})
+        page.goto("https://react-platform.invalid/settings?group=connection")
+        page.get_by_role("heading", name="Settings", exact=True).wait_for()
+        for icon in _MASTHEAD_ICONS:
+            page.locator(f".masthead {icon}").hover()
+            tip = page.evaluate(_OPEN_TOOLTIP, icon)
+            assert tip["shown"] and tip["events"] == "auto", f"1440px {icon}: {tip}"
+            assert tip["over"] == [] and tip["right"] <= 1440, f"1440px {icon}: {tip}"
+        page.locator(".masthead .theme-toggle").hover()
+        toggle = page.locator(".masthead .theme-toggle").bounding_box()
+        tip = page.evaluate(_OPEN_TOOLTIP, ".theme-toggle")
+        assert toggle is not None
+        x = toggle["x"] + toggle["width"] / 2
+        assert tip["left"] < x < tip["right"], (toggle, tip)
+        page.mouse.move(x, toggle["y"] + toggle["height"] / 2)
+        page.mouse.move(x, (tip["top"] + tip["bottom"]) / 2, steps=12)
+        assert page.evaluate(_OPEN_TOOLTIP, ".theme-toggle")["shown"], tip
+
+
+# The popover's own controls and its end, against the finish tray: the end of
+# the scrolled popover, and each control scrolled into view, lie above the
+# tray and take a press there.
+_POPOVER_ABOVE_TRAY = """() => {
+  const popover = document.querySelector('.preparation-popover');
+  const tray = document.querySelector('.cm-finish-tray').getBoundingClientRect();
+  const controls = [...popover.querySelectorAll('button')].map((node) => {
+    node.scrollIntoView({block: 'nearest'});
+    const box = node.getBoundingClientRect();
+    const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+    return [node.textContent.trim(), Math.round(box.bottom), !!hit && node.contains(hit)];
+  });
+  return {
+    trayTop: Math.round(tray.top),
+    end: Math.round(popover.getBoundingClientRect().bottom),
+    controls,
+  };
+}"""
+
+
+def test_preparation_popover_ends_above_the_finish_tray() -> None:
+    """With Source lookups listed, the popover on Settings and on Policy ends
+    above the floating finish tray, so Pause and Close stay in view and take a
+    press (#1494, Amendment 4)."""
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 390, "height": 844}, locale="en-US")
+        page.add_init_script(_LIVE_UPDATE_STREAM)
+        _serve_cohort(page)
+        for route, (width, height) in (
+            ("/settings?group=providers", (390, 844)),
+            ("/settings?group=providers", (375, 667)),
+            # On a phone Policy's tray is taller than a third of the window,
+            # so it settles into the page; it floats on these.
+            ("/policy?section=identity", (1024, 768)),
+            ("/policy?section=identity", (884, 600)),
+        ):
+            where = f"{route} at {width}x{height}"
+            page.set_viewport_size({"width": width, "height": height})
+            page.goto(f"https://react-platform.invalid{route}")
+            tray = page.locator(".cm-finish-tray")
+            expect(tray).to_be_visible()
+            assert tray.evaluate("node => getComputedStyle(node).position") == (
+                "sticky"
+            ), where
+            page.locator(".masthead .preparation-activity > button").click()
+            popover = page.get_by_role("region", name="Background activity")
+            expect(
+                popover.get_by_role("region", name="Source lookups", exact=True)
+            ).to_be_visible()
+            page.evaluate(_TWO_FRAMES)
+            found = page.evaluate(_POPOVER_ABOVE_TRAY)
+            assert found["end"] <= found["trayTop"], f"{where}: {found}"
+            names = [name for name, _, _ in found["controls"]]
+            assert {"Pause", "Close"} <= set(names), f"{where}: {found}"
+            for name, bottom, pressable in found["controls"]:
+                assert bottom <= found["trayTop"] and pressable, (
+                    f"{where}: {name} {found}"
+                )
+            page.keyboard.press("Escape")
+
+
 # The words an owner reads as interface: headings, controls, labels and the
 # pager's status. The #1290 review choices, covers and works rows are proved
 # by their own tests; works rows are walked here too, at desktop widths, where
