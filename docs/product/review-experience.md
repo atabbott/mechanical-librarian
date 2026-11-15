@@ -265,7 +265,7 @@ loaded only when that read fails.
 
 Attention is the queue of undecided fields inside Library. Each work appears
 once with its field count, and its fields follow. The open work shows its
-Needs you and Automatic counts above its fields. The queue follows the search,
+Needs you and Automatic counts. The queue follows the search,
 reading `Matching: f of a works needing a decision`, and keeps its own place.
 Load more attention moves focus to the first new row.
 
@@ -296,11 +296,9 @@ and their names. The heading counts any field waiting or unavailable
 separately, and each row gives its value and why nothing changed.
 
 The canvas shows the question, one line under it with the field's own reason,
-and its choices in one panel: Keep current value heads the current value and
-Choose a new value the proposed values. On a phone the two sides are two boxes,
-each under its heading. The current value's card shows only its value. A
-proposed card shows its value and, when known, the sources it came from, but
-no `Alternative N` label. Each card's Evidence control sits directly under its
+and its choices under Keep current value and Choose a new value: one panel,
+or two boxes on a phone. The current value's card shows only its value. A
+proposed card shows its value and, when known, its sources. Each card's Evidence control sits directly under its
 value. `Recommended` and its reason appear only on the value your settings
 choose, and the canvas says nothing when they choose none. Other source values
 appear only when the field has some or they could not be read. The Writing to
@@ -433,7 +431,7 @@ an outdated comparison shows the current one.
 
 ### Covers view
 
-Works and Covers, beside Library's title, switch Library between its two views. Covers
+Works and Covers, beside Library's title, switch between its two views. Covers
 groups every work with a case by what its cover asks of you, under four counted
 tabs. To decide lists suggested switches under Switch suggested, then open
 choices under Choose. Kept lists works keeping their current cover while you
