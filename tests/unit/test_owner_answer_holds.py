@@ -6,8 +6,9 @@ where an automatic decision sat on the same case as the answer, so an answer
 given after Automatic's write had been read back, in Preview, while automatic
 decisions were paused, or while the field was Ask me set no hold, and
 Automatic wrote over it on a later read of the work. Each test here failed on
-main 5c3606d: the audit of automatic decision paths proved them there.
-Synthetic fixtures only.
+main 5c3606d, where the audit of automatic decision paths proved the defect,
+except the two marked as kept green and the withdrawal cases that hold
+nothing. Synthetic fixtures only.
 """
 
 from __future__ import annotations
@@ -350,3 +351,48 @@ def test_resume_releases_an_answer_held_without_an_automatic_decision(
     assert _hold(store) is None
     assert _queued(store) is not None
     store.close()
+
+
+# A withdrawal keeps the answer's hold while a Resume it requested is still
+# out, so the return finishes or fails on the hold it named.
+def test_a_withdrawal_keeps_a_hold_with_a_return_pending(tmp_path: Path) -> None:
+    store, report, _ = _store(tmp_path, title="ask")
+    store.publish(report)
+    decision = store.decide("keep_current", destination="title")
+    scan = store.repository.request_review_scan(
+        report.target.connection,
+        report.target.library,
+        "library-ebooks",
+        "a" * 64,
+        store.clock(),
+    )
+    at = store.clock()
+    assert store.repository.request_field_effect_manual_return(
+        store.case.review_case_id, "title", decision.decision_id, scan.scan_id, at, at
+    )
+    store.decide("withdraw", destination="title")
+    assert _hold(store) == decision.decision_id
+    store.close()
+
+
+# Cover keeps the earlier rule: a cover answer holds only over an automatic
+# cover decision, since a held cover refuses an automatic replacement outright
+# and would never show Resume.
+def test_a_cover_answer_without_an_automatic_cover_decision_sets_no_hold(
+    tmp_path: Path,
+) -> None:
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        open_repository,
+    )
+    from tests.support.cover_taste import record_owner_cover_decisions
+
+    repository = open_repository(tmp_path / "covers.sqlite")
+    record_owner_cover_decisions(tmp_path, repository, 1)
+    connection = repository._connection
+    assert connection.execute(
+        "SELECT count(*) FROM human_decisions WHERE destination='cover'"
+    ).fetchone() == (1,)
+    assert connection.execute(
+        "SELECT count(*) FROM field_effect_manual_holds"
+    ).fetchone() == (0,)
+    repository.close()

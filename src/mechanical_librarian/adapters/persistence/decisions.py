@@ -699,11 +699,14 @@ class SQLiteDecisionRepository(ConnectionScoped):
             )
         if decision.outcome == "withdraw":
             self._withdraw_manual_hold(decision, previous)
-        else:
+        elif decision.destination != "cover" or automatic is not None:
             # Every owner answer holds its field from Automatic, whether or
             # not an automatic decision is on this case: the owner's choice
             # wins over Automatic until the owner resumes it, and the hold
             # follows the work to its later cases (ADR-0085, Amendment 1).
+            # A cover answer still holds only over an automatic cover
+            # decision: a held cover refuses a replacement decision outright,
+            # so the field would never show Resume to release it.
             self._set_field_effect_manual_hold(
                 decision.review_case_id,
                 decision.destination,
