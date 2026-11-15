@@ -210,6 +210,38 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
                 with running_owner_fixture(
                     tmp_path, 2300 if cold == 0 else 0, prepare=True
                 ) as (fixture, origin):
+                    if cold == 4:
+                        # A readable current cover asks only while the title
+                        # names another book (#1362), so no work asks about
+                        # its cover alone. As the fixture does for cases[1],
+                        # the owner has already kept every title it asks
+                        # about, so each work left in attention asks about
+                        # its cover and leaves once that is answered. The
+                        # last case is left for the external actors.
+                        for case in fixture.cases:
+                            if case is fixture.cases[1] or case is fixture.cases[-1]:
+                                continue
+                            title = next(
+                                value
+                                for value in case.proposals
+                                if value["destination"] == "title"
+                            )
+                            title_result = title["result"]
+                            assert type(title_result) is dict
+                            if title_result["outcome"] != "unresolved_choice":
+                                continue
+                            proposal_id = title["proposal_id"]
+                            assert type(proposal_id) is str
+                            fixture.application.record_decision(
+                                case.review_case_id,
+                                proposal_id=proposal_id,
+                                target_fingerprint=case.target_fingerprint,
+                                destination="title",
+                                actor="owner",
+                                outcome="keep_current",
+                                selected_value=None,
+                                idempotency_key="owner-title-" + case.review_case_id,
+                            )
                     with closing(
                         browser.new_context(viewport={"width": 1440, "height": 900})
                     ) as context:
@@ -455,8 +487,16 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
                                 page.get_by_role(
                                     "link", name="History", exact=True
                                 ).click()
+                                # The work may hold an earlier kept field, so
+                                # the cover's own entry is the one read here.
                                 expect(
-                                    page.get_by_text(
+                                    page.locator("article.diagnostic-entry")
+                                    .filter(
+                                        has=page.get_by_role(
+                                            "heading", name="Cover", exact=True
+                                        )
+                                    )
+                                    .get_by_text(
                                         "You kept the current value.", exact=True
                                     )
                                 ).to_be_visible()

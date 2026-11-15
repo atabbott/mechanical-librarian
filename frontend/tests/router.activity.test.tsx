@@ -1,7 +1,7 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { focusManager } from '@tanstack/react-query'
-import { describe, expect, it, onTestFinished, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   AmbiguousMutationError,
@@ -5352,7 +5352,6 @@ describe('Library progress on Activity', () => {
         .map((link) => link.getAttribute('href')),
     ).toEqual([
       '/library?lens=no_attention_needed',
-      '/library?lens=all',
       '/library?lens=needs_attention',
       '/library?lens=preparation_failed',
       '/library?lens=not_matched',
@@ -5360,7 +5359,7 @@ describe('Library progress on Activity', () => {
     expect(within(region).getByText('By library')).toBeVisible()
     expect(within(region).getByText('Fields that need you')).toBeVisible()
     // Only the totals link; the library and field rows are plain text.
-    expect(within(region).getAllByRole('link')).toHaveLength(5)
+    expect(within(region).getAllByRole('link')).toHaveLength(4)
   })
 
   it('shows placeholders while counting, then a retry line after a failed read', async () => {
@@ -5428,107 +5427,5 @@ describe('Library progress on Activity', () => {
       expect(document.querySelector('.cm-activity-route [data-route-focus]')).toHaveFocus(),
     )
     expect(region).not.toHaveFocus()
-  })
-})
-
-// On a phone the card keeps the Ledger's first row on the first screen: its
-// lists fold under their sub-headings, closed at first (#1335).
-describe('Library progress on a phone', () => {
-  const compact = (matches: boolean) => {
-    const original = Object.getOwnPropertyDescriptor(window, 'matchMedia')
-    Object.defineProperty(window, 'matchMedia', {
-      configurable: true,
-      writable: true,
-      value: (query: string) => ({
-        matches: matches && query === '(max-width: 760px)',
-        media: query,
-        onchange: null,
-        addEventListener: () => undefined,
-        removeEventListener: () => undefined,
-        addListener: () => undefined,
-        removeListener: () => undefined,
-        dispatchEvent: () => false,
-      }),
-    })
-    onTestFinished(() => {
-      if (original) Object.defineProperty(window, 'matchMedia', original)
-      else Reflect.deleteProperty(window, 'matchMedia')
-    })
-  }
-  const twoLibraries = () => {
-    const http = createHttp()
-    http.getLibraryProgress = vi.fn(async () => ({
-      totals: { all: 2026, attention: 174, clear: 1840, notMatched: 9, failed: 3, flagged: 0 },
-      libraries: [
-        {
-          connection: 'primary',
-          library: 'fiction',
-          libraryDisplayName: 'Fiction',
-          counts: { all: 26, attention: 6, clear: 20, notMatched: 0, failed: 0, flagged: 0 },
-        },
-        {
-          connection: 'primary',
-          library: 'audiobooks',
-          libraryDisplayName: 'audiobooks',
-          counts: { all: 2000, attention: 168, clear: 1820, notMatched: 9, failed: 3, flagged: 0 },
-        },
-      ],
-      fields: [{ destination: 'cover' as const, needYou: 120 }],
-    }))
-    return http
-  }
-
-  it('folds both lists under their sub-headings, closed, and opens one at a time', async () => {
-    compact(true)
-    const user = userEvent.setup()
-    renderRoute('/activity', twoLibraries())
-    const region = await screen.findByRole('region', { name: 'Library progress' })
-    await waitFor(() => expect(region).toHaveTextContent('1,840 of 2,026 works settled'))
-    const folds = Array.from(region.querySelectorAll('details'))
-    expect(folds.map((fold) => fold.querySelector('summary')?.textContent)).toEqual([
-      'By library',
-      'Fields that need you',
-    ])
-    for (const fold of folds) expect(fold).not.toHaveAttribute('open')
-    // No sub-heading besides the summaries, and the totals still link.
-    expect(within(region).queryAllByRole('heading', { level: 3 })).toEqual([])
-    expect(within(region).getAllByRole('link')).toHaveLength(5)
-    const [libraries, fields] = folds
-    if (!libraries || !fields) throw new Error('no folds')
-    const summary = libraries.querySelector('summary')
-    if (!summary) throw new Error('no summary')
-    // Keyboard activation of a summary is the browser's; the artifact test
-    // presses Enter on it in Chromium.
-    await user.click(summary)
-    await waitFor(() => expect(libraries).toHaveAttribute('open'))
-    expect(
-      within(libraries)
-        .getAllByRole('listitem')
-        .map((item) => item.textContent),
-    ).toEqual([
-      'Fiction 20 of 26 works settled · 6 need you',
-      'audiobooks 1,820 of 2,000 works settled · 168 need you · 3 could not finish · 9 not matched',
-    ])
-    expect(fields).not.toHaveAttribute('open')
-  })
-
-  it('shows both lists in full above the phone width', async () => {
-    compact(false)
-    renderRoute('/activity', twoLibraries())
-    const region = await screen.findByRole('region', { name: 'Library progress' })
-    await within(region).findByRole('heading', { name: 'By library' })
-    expect(within(region).getByRole('heading', { name: 'Fields that need you' })).toBeVisible()
-    expect(region.querySelector('details')).toBeNull()
-  })
-
-  it('still takes focus when Activity opens at its hash', async () => {
-    compact(true)
-    renderRoute(
-      '/activity?eventType=all&rangeDays=30&page=1&pageSize=25#activity-library-progress',
-      twoLibraries(),
-    )
-    const region = await screen.findByRole('region', { name: 'Library progress' })
-    await waitFor(() => expect(region).toHaveFocus())
-    expect(region.querySelectorAll('details:not([open])')).toHaveLength(2)
   })
 })

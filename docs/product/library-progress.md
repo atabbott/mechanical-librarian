@@ -14,17 +14,20 @@ only when they are not zero, so the parts add up to All. A single work reads
 as every count of works does, including the Works count beside Library's
 heading.
 
-Where the line links, each number that is not zero opens its Library lens. A
-zero is plain text, because its lens would be empty. A count not yet known
-reads `…`, never 0.
+Where the line links, each phrase whose count is not zero is the link to its
+Library lens: "1,840 of 2,026 works settled" opens No attention needed, "174
+need you" Needs attention, "3 could not finish" Could not finish and "9 not
+matched" Not matched. A phrase whose count is zero is plain text, because its
+lens would be empty. A count not yet known reads `…`, never 0.
 
 ## In Library
 
 When a preparation run finishes, cleanly or with failures, its box at the top
-of Works gains the line under the run's button, then Open in Activity, which
-opens Activity at the Library progress card. The line and its links sit beside
-the button, never inside it, so the button keeps its name and still opens the
-run. The line counts the whole library, not the run.
+of Works gains the line under the run's button, within one frame and below a
+rule, then Open in Activity on its own line, which opens Activity at the
+Library progress card. The line and its links sit beside the button, never
+inside it, so the button keeps its name and still opens the run. The line
+counts the whole library, not the run.
 
 The line is hidden while a run is starting, running or paused, and while the
 service needs a restart. It returns when a run finishes, and it goes when you
@@ -42,10 +45,8 @@ name. "Fields that need you" lists each field with works that need you, most
 first, such as "Cover 120 works". These rows are plain text, because Library
 has no filter by library or field.
 
-At 760 pixels and narrower the card comes first, directly above the ledger,
-and "By library" and "Fields that need you" are each folded under their own
-name, closed at first, so the ledger's first row stays on the first screen.
-Wider screens show both in full.
+At 760 pixels and narrower the ledger comes first, so the card follows the
+ledger and the status box, shown in full.
 
 While the counts load, the card says "Counting works…" and the line reads `…`.
 A failed read says "Library progress could not be loaded." with Try again, and

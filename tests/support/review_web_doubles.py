@@ -179,6 +179,8 @@ class FakeReviewRepository:
         self.capability_suspensions: dict[tuple[str, str], str] = {}
         self.revoke_failure = False
         self.revoke_result = "revoked"
+        self.end_others_failure = False
+        self.end_others_result = "ended"
         self.rotate_failure = False
         self.rotate_result = "rotated"
         self.existence_failure = False
@@ -475,6 +477,25 @@ class FakeReviewRepository:
         }
         self.failures = []
         return ended
+
+    def end_other_review_sessions(
+        self, session_digest: str, csrf_digest: str, now: int
+    ) -> tuple[str, int]:
+        if self.end_others_failure:
+            raise RuntimeError
+        if self.end_others_result != "ended":
+            return self.end_others_result, 0
+        session = self.sessions.get(session_digest)
+        if session is None:
+            return "unauthorized", 0
+        _actor, csrf, expires, revoked = session
+        if revoked is not None or expires <= now:
+            return "unauthorized", 0
+        if csrf != csrf_digest:
+            return "csrf", 0
+        ended = len(self.sessions) - 1
+        self.sessions = {session_digest: session}
+        return "ended", ended
 
     def review_case_exists(self, review_case_id: str) -> bool:
         if self.existence_failure:
