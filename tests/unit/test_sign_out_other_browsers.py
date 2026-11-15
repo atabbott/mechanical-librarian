@@ -273,18 +273,19 @@ def test_signing_out_other_browsers_waits_for_a_password_change_in_flight(
             signed_out.append(error)
 
     changer_thread = threading.Thread(target=change)
+    other_thread = threading.Thread(target=sign_out_others)
     changer_thread.start()
     try:
         # The change has stored its new session and has not finished.
         assert entered.wait(5)
-        other_thread = threading.Thread(target=sign_out_others)
         other_thread.start()
         other_thread.join(0.2)
         assert other_thread.is_alive(), signed_out
     finally:
         release.set()
         changer_thread.join(5)
-    other_thread.join(5)
+        if other_thread.ident is not None:
+            other_thread.join(5)
 
     assert not changer_thread.is_alive() and not other_thread.is_alive()
     (tokens,) = changed

@@ -165,10 +165,24 @@ def _oversized_body(web: Web, csrf: str) -> httpx2.Response:
     )
 
 
+def _oversized_body_without_cookie(web: Web, _csrf: str) -> httpx2.Response:
+    return _browser(web, "127.0.0.5", 45678).post(
+        _PATH,
+        headers={**web.origin, "x-ml-build-identity": TEST_REACT_BUILD_IDENTITY},
+        content=b"x" * 2049,
+    )
+
+
 @pytest.mark.parametrize(
     ("send", "status", "code"),
     [
         pytest.param(_wrong_origin_without_cookie, 403, "origin", id="wrong_origin"),
+        pytest.param(
+            _oversized_body_without_cookie,
+            413,
+            "body_too_large",
+            id="oversized_body_before_the_session",
+        ),
         pytest.param(_no_cookie_and_no_csrf, 401, "unauthorized", id="no_cookie"),
         pytest.param(_ended_cookie, 401, "unauthorized", id="ended_cookie"),
         pytest.param(
