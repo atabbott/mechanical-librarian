@@ -1248,6 +1248,51 @@ def _attention() -> dict[str, object]:
     }
 
 
+def _library_progress() -> dict[str, object]:
+    """Library progress over the same works and fields as the two above (#1335)."""
+    libraries: dict[str, list[dict[str, object]]] = {}
+    for work in LIBRARY_WORKS:
+        libraries.setdefault(str(work["library"]), []).append(work)
+
+    def counts(works: list[dict[str, object]]) -> object:
+        return {
+            "needs_attention": sum(
+                int(cast(int, item["attention_count"])) > 0 for item in works
+            ),
+            "all": len(works),
+            "no_attention_needed": sum(_clear(item) for item in works),
+            "not_matched": sum(
+                item["attention_state"] == "not_matched" for item in works
+            ),
+            "preparation_failed": sum(
+                item["attention_state"] == "preparation_failed" for item in works
+            ),
+        }
+
+    fields: dict[str, int] = {}
+    for item in cast(list[dict[str, object]], _attention()["items"]):
+        destination = str(item["destination"])
+        fields[destination] = fields.get(destination, 0) + 1
+    return {
+        "totals": counts(list(LIBRARY_WORKS)),
+        "libraries": [
+            {
+                "connection": "primary",
+                "library": library,
+                "library_display_name": library,
+                "counts": counts(works),
+            }
+            for library, works in sorted(libraries.items())
+        ],
+        "fields": [
+            {"destination": destination, "need_you": count}
+            for destination, count in sorted(
+                fields.items(), key=lambda item: (-item[1], item[0])
+            )
+        ],
+    }
+
+
 # The value shapes an Activity row has to survive: a scalar, a joined list, a
 # series membership with an index, an opaque cover identity, an unbounded
 # description, and a policy setting. Each carries the compact form the row
@@ -1900,6 +1945,8 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
         }
     if path == "/api/v1/library":
         return _library(query)
+    if path == "/api/v1/library/progress":
+        return _library_progress()
     if path == "/api/v1/attention":
         return _attention()
     if path.startswith("/api/v1/review-cases/"):

@@ -151,6 +151,7 @@ from mechanical_librarian.application.review_web import (
     LibraryLabels,
     LibraryLensFilter,
     ReviewAttentionSnapshot,
+    ReviewLibraryProgress,
     ReviewLibrarySnapshot,
     ValidatedDocumentCache,
 )
@@ -593,6 +594,11 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                     self.read_current_attention_page(
                         search, limit, offset, library_labels
                     )
+                )
+            ),
+            read_current_library_progress=(
+                lambda library_labels: self.read_current_library_progress(
+                    library_labels
                 )
             ),
             current_cover_authority=(lambda: self._cover_read_authority()),
@@ -1747,6 +1753,26 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 search, limit, offset, library_labels
             )
 
+    def read_review_library_progress(
+        self, library_labels: LibraryLabels = ()
+    ) -> ReviewLibraryProgress:
+        # Attached as `read_review_library` attaches it, so the terminal
+        # failures Library counts are the ones counted here (#1335).
+        try:
+            with (
+                self.browse_observation(),
+                (
+                    self._library_catalogue.attach(self._connection)
+                    if self._library_catalogue is not None
+                    else nullcontext()
+                ),
+            ):
+                return self._review_projections.read_review_library_progress(
+                    library_labels
+                )
+        except (CatalogueError, OSError, sqlite3.Error) as error:
+            raise MetadataReportError("review library is unavailable") from error
+
     def read_review_covers(
         self,
         view: CoverView,
@@ -1799,6 +1825,12 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             return self._review_cases.read_current_attention_page(
                 search, limit, offset, library_labels
             )
+
+    def read_current_library_progress(
+        self, library_labels: LibraryLabels = ()
+    ) -> ReviewLibraryProgress:
+        with self.browse_observation():
+            return self._review_cases.read_current_library_progress(library_labels)
 
     def list_current_review_case_documents(
         self,

@@ -66,7 +66,7 @@ const roundTrip = (decode: D<unknown>, body: unknown) => {
 
 describe('captured wire fixtures', () => {
   it('has a capture for every operation 2a-i records', () => {
-    expect(Object.keys(captures)).toHaveLength(22)
+    expect(Object.keys(captures)).toHaveLength(23)
   })
 
   it.each(Object.entries(captures))('%s decodes by operation and status', (_file, wire) => {

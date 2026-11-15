@@ -372,6 +372,23 @@ class ReviewAttentionSnapshot:
     total: int
 
 
+@dataclass(frozen=True, slots=True)
+class ReviewLibraryProgress:
+    """Library's counts and Attention's fields, per library, from one snapshot.
+
+    Computed on request and never stored (#1335). Each library row carries the
+    totals Library's page carries, so the works with no attention needed are
+    derived the same way.
+    """
+
+    # (connection, library, all, needs_attention, not_matched,
+    # preparation_failed), one row per library that has works.
+    libraries: tuple[tuple[str, str, int, int, int, int], ...]
+    # (connection, library, destination, works whose field needs the owner),
+    # one row per field with at least one such work.
+    fields: tuple[tuple[str, str, str, int], ...]
+
+
 class ReviewSessionStore(Protocol):
     def begin_login(
         self,
@@ -428,6 +445,22 @@ _LIBRARY_LENSES: dict[str, LibraryLensFilter | None] = {
 }
 
 _Validated = TypeVar("_Validated")
+
+
+def _library_counts(
+    total: int, needs_attention: int, not_matched: int, preparation_failed: int
+) -> dict[str, int]:
+    """Library's lens counts: what is left of All is the no-attention lens."""
+    return {
+        "all": total,
+        "needs_attention": needs_attention,
+        "no_attention_needed": total
+        - needs_attention
+        - not_matched
+        - preparation_failed,
+        "not_matched": not_matched,
+        "preparation_failed": preparation_failed,
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -567,6 +600,9 @@ class ReviewLibraryStore(Protocol):
         offset: int,
         library_labels: LibraryLabels = (),
     ) -> ReviewAttentionSnapshot: ...
+    def read_review_library_progress(
+        self, library_labels: LibraryLabels = ()
+    ) -> ReviewLibraryProgress: ...
     def read_current_report_document(
         self, connection: str, library: str, item: str
     ) -> str | None: ...
@@ -2204,16 +2240,12 @@ class BrowseReviewLibrary:
             # the page rather than silently dropping a work from the library.
             raise ReviewWebError("unavailable") from error
         return {
-            "counts": {
-                "all": snapshot.total,
-                "needs_attention": snapshot.attention_total,
-                "no_attention_needed": snapshot.total
-                - snapshot.attention_total
-                - snapshot.not_matched_total
-                - snapshot.preparation_failed_total,
-                "not_matched": snapshot.not_matched_total,
-                "preparation_failed": snapshot.preparation_failed_total,
-            },
+            "counts": _library_counts(
+                snapshot.total,
+                snapshot.attention_total,
+                snapshot.not_matched_total,
+                snapshot.preparation_failed_total,
+            ),
             "items": items,
             "lens": lens,
             "next_cursor": (
@@ -2235,6 +2267,55 @@ class BrowseReviewLibrary:
             "page": offset // bounded_limit + 1,
             "query": normalized,
             "schema_version": REVIEW_LIBRARY_SCHEMA,
+        }
+
+    def progress(self, library_labels: LibraryLabels = ()) -> dict[str, object]:
+        """Library's counts in total and per library, and Attention's fields.
+
+        Libraries follow the active settings, then any stable name they no
+        longer configure alphabetically. Fields come most-needed first.
+        """
+        try:
+            snapshot = self._repository.read_review_library_progress(library_labels)
+        except Exception as error:
+            raise ReviewWebError("unavailable") from error
+        order = {
+            (connection, library): index
+            for index, (connection, library, _label) in enumerate(library_labels)
+        }
+        labels = {
+            (connection, library): label
+            for connection, library, label in library_labels
+        }
+        libraries = sorted(
+            snapshot.libraries,
+            key=lambda row: (order.get((row[0], row[1]), len(order)), row[1], row[0]),
+        )
+        fields: dict[str, int] = {}
+        for _connection, _library, destination, works in snapshot.fields:
+            fields[destination] = fields.get(destination, 0) + works
+        return {
+            "totals": _library_counts(
+                sum(row[2] for row in libraries),
+                sum(row[3] for row in libraries),
+                sum(row[4] for row in libraries),
+                sum(row[5] for row in libraries),
+            ),
+            "libraries": [
+                {
+                    "connection": connection,
+                    "library": library,
+                    "library_display_name": labels.get((connection, library), library),
+                    "counts": _library_counts(*counts),
+                }
+                for connection, library, *counts in libraries
+            ],
+            "fields": [
+                {"destination": destination, "need_you": works}
+                for destination, works in sorted(
+                    fields.items(), key=lambda item: (-item[1], item[0])
+                )
+            ],
         }
 
     def attention(

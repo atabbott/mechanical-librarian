@@ -1,0 +1,46 @@
+{
+  "method": "GET",
+  "path": "/api/v1/library/progress",
+  "status": 200,
+  "body": {
+    "fields": [
+      {
+        "destination": "title",
+        "need_you": 1
+      }
+    ],
+    "libraries": [
+      {
+        "connection": "primary",
+        "counts": {
+          "all": 1,
+          "needs_attention": 0,
+          "no_attention_needed": 0,
+          "not_matched": 1,
+          "preparation_failed": 0
+        },
+        "library": "audiobooks",
+        "library_display_name": "audiobooks"
+      },
+      {
+        "connection": "primary",
+        "counts": {
+          "all": 1,
+          "needs_attention": 1,
+          "no_attention_needed": 0,
+          "not_matched": 0,
+          "preparation_failed": 0
+        },
+        "library": "ebooks",
+        "library_display_name": "ebooks"
+      }
+    ],
+    "totals": {
+      "all": 2,
+      "needs_attention": 1,
+      "no_attention_needed": 0,
+      "not_matched": 1,
+      "preparation_failed": 0
+    }
+  }
+}
