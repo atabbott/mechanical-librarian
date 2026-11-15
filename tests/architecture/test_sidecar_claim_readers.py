@@ -64,6 +64,7 @@ _READERS: dict[str, str] = {
     "domain/proposal_set.py::_observations": "beside_target",
     "domain/proposal_set.py::_narrator_corroboration_guard": "tightens",
     "domain/proposal_set.py::_list_observations": "beside_target",
+    "domain/proposal_set.py::_local_list_observations": "beside_target",
     "domain/proposal_set.py::provider_candidate_represents_target_work": (
         "asin_by_basis"
     ),
