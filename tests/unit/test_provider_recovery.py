@@ -28,6 +28,7 @@ from mechanical_librarian.application.provider_recovery_activation import (
     ProviderRecoveryRepository,
 )
 from mechanical_librarian.application.provider_recovery_runner import (
+    RecoveryRun,
     ScopedProviderRecoveryRunner,
 )
 from mechanical_librarian.application.provider_retry_successor import (
@@ -1225,7 +1226,9 @@ def test_target_hold_canary_restores_exact_health_job_and_event_snapshot() -> No
             classify_failure=lambda _: ("target_held", None),
             blocked_targets=blocked_targets,
         )
-        assert "target_held" == runner.run_one(now=1, token="owner").state
+        run = runner.run_one(now=1, token="owner")
+        # A hold that settled nothing reports so, and stays silent (#1494).
+        assert ("target_held", 0, False) == (run.state, run.fanout, run.settled)
         after = (
             tuple(store._connection.execute("SELECT * FROM provider_recovery_health")),
             tuple(store._connection.execute("SELECT * FROM provider_recovery_jobs")),
@@ -1285,7 +1288,8 @@ def test_target_hold_fanout_restores_exact_health_job_and_event_snapshot() -> No
             classify_failure=lambda _: ("target_held", None),
             blocked_targets=blocked_targets,
         )
-        assert "target_held" == runner.run_one(now=2, token="owner").state
+        run = runner.run_one(now=2, token="owner")
+        assert ("target_held", 0, False) == (run.state, run.fanout, run.settled)
         after = (
             tuple(store._connection.execute("SELECT * FROM provider_recovery_health")),
             tuple(store._connection.execute("SELECT * FROM provider_recovery_jobs")),
@@ -1294,6 +1298,67 @@ def test_target_hold_fanout_restores_exact_health_job_and_event_snapshot() -> No
         assert before == after
         assert 1 == samples
         store.close()
+
+
+def _held_after(failures: tuple[str, ...], *, fanout: bool) -> RecoveryRun:
+    """Run one recovery whose members fail as `failures` name, in order, the
+    last being a target hold; with `fanout`, the canary succeeds first."""
+    with tempfile.TemporaryDirectory() as directory:
+        store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+        store.record(
+            ProviderRecovery.failed(
+                connection="google",
+                adapter="google_books",
+                scope="books",
+                generation=1,
+                failure="transient",
+                now=0,
+                retry_after=1,
+            ),
+            occurred_at=0,
+        )
+        names = ("canary",) * fanout + tuple(
+            f"member-{i}" for i in range(len(failures))
+        )
+        store.enqueue_jobs(tuple(_job(name) for name in names), enqueued_at=0)
+        outcomes = iter(failures)
+        calls = 0
+
+        def retry(*_: object) -> None:
+            nonlocal calls
+            calls += 1
+            if fanout and calls == 1:
+                return None
+            raise RuntimeError("synthetic failure")
+
+        runner = ScopedProviderRecoveryRunner(
+            store=store,
+            generation=1,
+            retry=retry,
+            classify_failure=lambda _: (next(outcomes), None),
+        )
+        try:
+            return runner.run_one(now=1, token="owner")
+        finally:
+            store.close()
+
+
+@pytest.mark.parametrize(
+    ("failures", "fanout"),
+    (
+        pytest.param(("stale", "target_held"), False, id="canary-stale-then-held"),
+        pytest.param(("stale", "target_held"), True, id="fanout-stale-then-held"),
+        pytest.param(("terminal", "target_held"), True, id="fanout-failed-then-held"),
+        pytest.param(("target_held",), True, id="canary-completed-then-held"),
+    ),
+)
+def test_a_hold_after_settled_members_reports_them(
+    failures: tuple[str, ...], fanout: bool
+) -> None:
+    """Members settled before a target hold change the waiting count, so the
+    run says it settled them though no fanout member succeeded (#1494)."""
+    run = _held_after(failures, fanout=fanout)
+    assert ("target_held", 0, True) == (run.state, run.fanout, run.settled)
 
 
 def test_non_target_outcomes_append_checking_before_the_terminal_event() -> None:

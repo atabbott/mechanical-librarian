@@ -85,7 +85,7 @@ const useQueryClientFromContext = () => {
   return contextClient
 }
 
-const renderActivity = (http: ReviewHttp, { notice = false } = {}) => {
+const renderActivity = (http: ReviewHttp, { notice = false, start = '/' } = {}) => {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   contextClient = queryClient
   const Harness = () => {
@@ -118,7 +118,7 @@ const renderActivity = (http: ReviewHttp, { notice = false } = {}) => {
   ])
   const router = createRouter({
     routeTree,
-    history: createMemoryHistory({ initialEntries: ['/'] }),
+    history: createMemoryHistory({ initialEntries: [start] }),
   })
   render(
     <QueryClientProvider client={queryClient}>
@@ -215,6 +215,22 @@ describe('BackgroundActivity popover (#1494 acceptance 5)', () => {
     expect(screen.queryByRole('region', { name: 'Background activity' })).toBeNull()
   })
 
+  it('hands focus to the route when the key link leads to the Settings already shown', async () => {
+    const user = userEvent.setup()
+    const http = {
+      ...createHttp(),
+      getPreparation: vi.fn(async () => preparation([entry({ remedy: 'add_api_key' })])),
+    }
+    const { router } = renderActivity(http, { start: '/settings?group=connection' })
+    const heading = await screen.findByRole('heading', { name: 'Settings' })
+    const popover = await openPopover(user)
+    await user.click(within(popover).getByRole('link', { name: 'Add a Google Books API key' }))
+    await waitFor(() => expect(router.state.location.search).toEqual({ group: 'providers' }))
+    // The route did not remount, so nothing else would move focus off the body.
+    expect(screen.getByRole('heading', { name: 'Settings' })).toBe(heading)
+    await waitFor(() => expect(heading).toHaveFocus())
+  })
+
   it('is hidden when there are no libraries', async () => {
     const http = {
       ...createHttp(),
@@ -247,6 +263,8 @@ describe('Retry now outcome (#1494 acceptance 6)', () => {
     current = preparation([entry({ state: 'checking' })], {}, 5)
     await user.click(within(popover).getByRole('button', { name: 'Retry now' }))
     await waitFor(() => expect(status).toHaveTextContent('Every waiting lookup is retrying now.'))
+    // Only the outcome that every lookup got an answer is ticked (#1494).
+    expect(status).not.toHaveAttribute('data-outcome')
     expect(http.retryProviderRecovery).toHaveBeenCalledWith(4)
     current = preparation(
       [
@@ -263,6 +281,7 @@ describe('Retry now outcome (#1494 acceptance 6)', () => {
     await act(() => queryClient.invalidateQueries({ queryKey: ['review-preparation'] }))
     const outcome = 'Retried. Hardcover refused the API key again, so 31 lookups did not run.'
     await waitFor(() => expect(status).toHaveTextContent(outcome))
+    expect(status).not.toHaveAttribute('data-outcome')
     // A later refetch with another state does not rewrite it; the region is the same.
     current = preparation([], {}, 5)
     await act(() => queryClient.invalidateQueries({ queryKey: ['review-preparation'] }))
@@ -302,6 +321,105 @@ describe('Retry now outcome (#1494 acceptance 6)', () => {
     // The popover says it too, as plain text: only the notice announces.
     const copy = within(popover).getByText(outcome)
     expect(copy).not.toHaveAttribute('role')
+  })
+
+  it('keeps a second press when the popover closes before its outcome', async () => {
+    const user = userEvent.setup()
+    let current = preparation([entry()])
+    let release: (value: ReturnType<typeof settingsView>) => void = () => undefined
+    let calls = 0
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi.fn(async () => current),
+      retryProviderRecovery: vi.fn(() => {
+        calls += 1
+        if (calls === 1) return Promise.resolve(settingsView())
+        return new Promise<ReturnType<typeof settingsView>>((resolve) => (release = resolve))
+      }),
+    }
+    const { queryClient } = renderActivity(http)
+    const popover = await openPopover(user)
+    current = preparation([entry()], {}, 5)
+    await user.click(within(popover).getByRole('button', { name: 'Retry now' }))
+    const first =
+      'Retried. Google Books is still limiting requests, so 214 lookups are waiting again.'
+    await waitFor(() => expect(within(popover).getByRole('status')).toHaveTextContent(first))
+    // A second press, then the popover closes before the server answers.
+    await user.click(within(popover).getByRole('button', { name: 'Retry now' }))
+    await user.click(within(popover).getByRole('button', { name: 'Close' }))
+    current = preparation([], {}, 6)
+    await act(async () => release(settingsView()))
+    await act(() => queryClient.invalidateQueries({ queryKey: ['review-preparation'] }))
+    await user.click(await trigger())
+    const reopened = await screen.findByRole('region', { name: 'Background activity' })
+    await waitFor(() =>
+      expect(reopened).toHaveTextContent('Retried. Every waiting lookup got an answer.'),
+    )
+  })
+
+  it('keeps a press made on the notice when the popover closes after showing an outcome', async () => {
+    const user = userEvent.setup()
+    let current = preparation([entry()])
+    let release: (value: ReturnType<typeof settingsView>) => void = () => undefined
+    let calls = 0
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi.fn(async () => current),
+      retryProviderRecovery: vi.fn(() => {
+        calls += 1
+        if (calls === 1) return Promise.resolve(settingsView())
+        return new Promise<ReturnType<typeof settingsView>>((resolve) => (release = resolve))
+      }),
+    }
+    const { queryClient } = renderActivity(http, { notice: true })
+    const popover = await openPopover(user)
+    current = preparation([entry()], {}, 5)
+    await user.click(within(popover).getByRole('button', { name: 'Retry now' }))
+    await waitFor(() =>
+      expect(within(popover).getByRole('status')).toHaveTextContent('are waiting again.'),
+    )
+    const notice = screen.getByRole('region', { name: 'Notice stand-in' })
+    await user.click(within(notice).getByRole('button', { name: 'Notice retry' }))
+    await user.click(within(popover).getByRole('button', { name: 'Close' }))
+    current = preparation([], {}, 6)
+    await act(async () => release(settingsView()))
+    await act(() => queryClient.invalidateQueries({ queryKey: ['review-preparation'] }))
+    await waitFor(() =>
+      expect(within(notice).getByRole('status')).toHaveTextContent(
+        'Retried. Every waiting lookup got an answer.',
+      ),
+    )
+  })
+
+  it('moves focus to the outcome line when Retry now leaves while focused', async () => {
+    const user = userEvent.setup()
+    let current = preparation([entry()])
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi.fn(async () => current),
+      retryProviderRecovery: vi.fn(async () => settingsView()),
+    }
+    const { queryClient } = renderActivity(http)
+    const popover = await openPopover(user)
+    const command = within(popover).getByRole('button', { name: 'Retry now' })
+    await user.click(command)
+    await waitFor(() =>
+      expect(within(popover).getByRole('status')).toHaveTextContent('retrying now'),
+    )
+    expect(command).toHaveFocus()
+    current = preparation([], {}, 5)
+    await act(() => queryClient.invalidateQueries({ queryKey: ['review-preparation'] }))
+    const status = within(popover).getByRole('status')
+    await waitFor(() =>
+      expect(status).toHaveTextContent('Retried. Every waiting lookup got an answer.'),
+    )
+    expect(within(popover).queryByRole('button', { name: /Retry now|Retrying/ })).toBeNull()
+    expect(status).toHaveFocus()
+    expect(status).toHaveAttribute('data-outcome', 'recovered')
+    // Focus is inside the popover, so Escape still closes it onto the trigger.
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('region', { name: 'Background activity' })).toBeNull()
+    expect(screen.getByRole('button', { expanded: false })).toHaveFocus()
   })
 
   it('says a refusal where Retry now was pressed', async () => {
@@ -416,6 +534,24 @@ describe('ThemeControl (#1494 acceptance 8)', () => {
       'true',
     )
     expect(document.documentElement.dataset.theme).toBe('dark')
+  })
+
+  it('hides a tooltip shown by the pointer on Escape, wherever focus is', async () => {
+    const user = userEvent.setup()
+    render(
+      <>
+        <ThemeControl />
+        <input aria-label="Elsewhere" />
+      </>,
+    )
+    const button = screen.getByRole('button', { name: /Use (dark|light) mode/ })
+    await user.click(screen.getByRole('textbox', { name: 'Elsewhere' }))
+    await user.hover(button)
+    await user.keyboard('{Escape}')
+    expect(button).not.toHaveFocus()
+    expect(button).toHaveAttribute('data-tooltip', 'dismissed')
+    await user.unhover(button)
+    expect(button).not.toHaveAttribute('data-tooltip')
   })
 
   it('hides its tooltip on Escape until focus leaves', async () => {

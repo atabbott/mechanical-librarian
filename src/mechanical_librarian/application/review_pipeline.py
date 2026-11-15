@@ -1765,10 +1765,11 @@ class ReviewPreparationSupervisor:
         """Run recovery once and say when its run changed what preparation shows.
 
         A run that found nothing due, or was held by its target before it
-        settled anything, changed nothing durable and can repeat every second,
-        so it stays silent. Any other run refreshes the preparation read,
-        including a target hold after fanout members completed, since those
-        completions lower the waiting count (#1494).
+        settled any member, changed nothing durable and can repeat every
+        second, so it stays silent. Any other run refreshes the preparation
+        read, and so does any run that settled a member -- stale, failed or
+        completed -- whatever its final state, since that changes the waiting
+        count (#1494).
         """
         # Imported here: the recovery runner's evidence module imports this
         # module's error type, so a module-level import would be a cycle.
@@ -1779,7 +1780,7 @@ class ReviewPreparationSupervisor:
         run = wake(self._clock())
         if type(run) is not RecoveryRun:
             return
-        if run.state == "idle" or (run.state == "target_held" and run.fanout == 0):
+        if run.state in {"idle", "target_held"} and not run.settled:
             return
         self._announce("preparation", None)
 

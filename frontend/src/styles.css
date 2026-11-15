@@ -94,14 +94,17 @@ h2 { margin-bottom:.35rem; }
   .masthead nav { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,4.25rem),1fr)); width:100%; overflow:visible; }
   .masthead nav a { min-width:44px; justify-content:center; padding:.4rem .55rem; text-align:center; white-space:normal; overflow-wrap:normal; }
   /* The reconnect line wraps inside the slot; the status icon keeps its place at its end. */
-  .shell-status { display:flex; justify-content:flex-end; gap:.35rem; min-width:0; font-size:.75rem; }
+  .shell-status { display:flex; justify-content:flex-end; gap:.35rem; min-width:0; }
+  /* Only the reconnect line is small; the popover keeps body text. */
+  .shell-status > .live-state { font-size:.75rem; }
   .preparation-popover { right:.75rem; }
   /* The tooltips hang from the masthead's edge, as the popover does, so a
      status icon away from that edge never pushes one off the screen. */
   :is(.shell-status, .shell-actions) .icon-button { position:static; }
   .masthead .masthead-tooltip { right:max(.75rem,16px); }
   .shell-actions { display:grid; grid-template-columns:repeat(2,44px); min-width:0; justify-content:end; }
-  :is(.shell-status, .shell-actions) button { padding-inline:.55rem; font-size:.75rem; }
+  /* :where() keeps the masthead's own icon buttons above this rule, as before. */
+  :is(.shell-status, .shell-actions) button:not(:where(.preparation-popover *)) { padding-inline:.55rem; font-size:.75rem; }
 }
 /* Narrower than any screen at ordinary text: the status takes a row of its own,
    held open whether or not anything is in it, and the destinations pair up so
@@ -162,8 +165,11 @@ h2 { margin-bottom:.35rem; }
 .provider-throttle-outcome { margin:0; font-size:.82rem; font-weight:650; line-height:1.4; }
 .provider-throttle-outcome:not(:empty) { margin-top:.45rem; }
 .provider-throttle-outcome:not(:empty)::before { display:inline-block; margin-right:.4rem; }
-.provider-throttle-status:not(:empty) { color:var(--accent-strong); }
-.provider-throttle-status:not(:empty)::before { content:'\2713'; content:'\2713' / ''; }
+/* Only "Every waiting lookup got an answer." is ticked in the accent; pending
+   and the outcomes that say a retry did not work stay ink (#1494). */
+.provider-throttle-status { color:var(--ink); }
+.provider-throttle-status[data-outcome='recovered']:not(:empty) { color:var(--accent-strong); }
+.provider-throttle-status[data-outcome='recovered']:not(:empty)::before { content:'\2713'; content:'\2713' / ''; }
 .provider-throttle-refusal:not(:empty) { color:var(--danger); }
 .provider-throttle-refusal:not(:empty)::before { content:'\26A0'; content:'\26A0' / ''; }
 .preparation-popover > small { display:block; margin:.35rem 0 .7rem; }
@@ -1787,10 +1793,11 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
   html:not([data-reduced-motion='always-reduced']) .status-icon-turn circle { animation:status-icon-turn 1.6s linear infinite; }
 }
 .masthead-tooltip { position:absolute; z-index:40; top:calc(100% + .35rem); right:0; width:max-content; max-width:min(18rem,calc(100vw - 1.5rem)); padding:.35rem .55rem; border-radius:.35rem; color:var(--surface); background:var(--ink); font-size:.75rem; font-weight:600; line-height:1.35; white-space:normal; text-align:left; pointer-events:none; display:none; visibility:hidden; }
-.icon-button:is(:hover, :focus-visible):not([data-tooltip='dismissed']) > .masthead-tooltip { display:block; visibility:visible; }
+/* The status icon's tooltip stays hidden while its popover is open below it. */
+.icon-button:is(:hover, :focus-visible):not([data-tooltip='dismissed'], [aria-expanded='true']) > .masthead-tooltip { display:block; visibility:visible; }
 .masthead-tooltip::before { position:absolute; inset:-.35rem 0 100%; content:''; }
 @container shell (min-width:64.0625rem) {
-  .icon-button:hover:not([data-tooltip='dismissed']) > .masthead-tooltip { pointer-events:auto; }
+  .icon-button:hover:not([data-tooltip='dismissed'], [aria-expanded='true']) > .masthead-tooltip { pointer-events:auto; }
 }
 .preparation-popover .source-lookups { display:grid; gap:.5rem; padding:.7rem 0; border-bottom:1px solid var(--line); }
 .preparation-popover .source-lookups h3 { margin:0; font:inherit; font-weight:700; }
@@ -1799,10 +1806,13 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 .preparation-popover .source-lookups li span { color:var(--soft); }
 .preparation-popover .source-lookups li.needs-you span { color:var(--ink); }
 .preparation-popover .source-lookups li a { justify-self:start; padding-block:.6rem; color:var(--accent-strong); font-weight:650; }
-.preparation-popover .source-lookups button { justify-self:start; font-weight:650; }
 .source-lookups-file { margin:.2rem 0 0; color:var(--soft); font-size:.78rem; line-height:1.4; }
-/* The Retry result reads as the page notice's status line: regular weight, the accent tick. */
-.source-lookups-outcome { margin:0; color:var(--accent-strong); font-size:.86rem; font-weight:400; line-height:1.4; }
-.source-lookups-outcome:not([role='alert']):not(:empty)::before { display:inline-block; margin-right:.4rem; content:'\2713'; content:'\2713' / ''; }
+/* The Retry result in regular weight and ink; only "Every waiting lookup got an
+   answer." takes the accent and the tick, as on the page notice. */
+.source-lookups-outcome { margin:0; color:var(--ink); font-size:.86rem; font-weight:400; line-height:1.4; }
+.source-lookups-outcome:focus { outline:none; }
+.source-lookups-outcome:focus-visible { outline:3px solid var(--focus); outline-offset:2px; }
+.source-lookups-outcome[data-outcome='recovered']:not(:empty) { color:var(--accent-strong); }
+.source-lookups-outcome[data-outcome='recovered']:not(:empty)::before { display:inline-block; margin-right:.4rem; content:'\2713'; content:'\2713' / ''; }
 .source-lookups-outcome:empty { position:absolute; width:1px; height:1px; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); }
 .source-lookups-outcome[role='alert'] { color:var(--danger); }

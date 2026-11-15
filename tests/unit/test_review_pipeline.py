@@ -13084,24 +13084,27 @@ def test_projection_reconciles_the_case_level_before_its_shadow_outcome() -> Non
 
 
 @pytest.mark.parametrize(
-    ("fanout", "announced"),
+    ("state", "settled", "announced"),
     (
-        pytest.param(0, 0, id="held-before-anything-settled"),
-        pytest.param(2, 1, id="held-after-fanout-members-completed"),
+        pytest.param("target_held", False, 0, id="held-before-anything-settled"),
+        pytest.param("target_held", True, 1, id="held-after-members-settled"),
+        pytest.param("idle", False, 0, id="nothing-due"),
+        pytest.param("waiting", False, 1, id="a-state-change-without-members"),
     ),
 )
-def test_a_target_hold_announces_preparation_only_after_fanout_completions(
-    fanout: int, announced: int
+def test_a_run_announces_preparation_when_it_settled_a_member(
+    state: str, settled: bool, announced: int
 ) -> None:
-    """Fanout members completed before a target hold lower the waiting count,
-    so that hold refreshes preparation; a hold with none stays silent (#1494)."""
+    """Members settled before a target hold -- stale, failed or completed --
+    change the waiting count, so that hold refreshes preparation; a hold that
+    settled nothing, like an idle run, stays silent (#1494)."""
     from mechanical_librarian.application.provider_recovery_runner import RecoveryRun
 
     topics: list[str] = []
     supervisor = ReviewPreparationSupervisor(
         _ScheduledPipeline(),
         clock=lambda: 41,
-        recovery_wake=lambda _now: RecoveryRun("target_held", fanout),
+        recovery_wake=lambda _now: RecoveryRun(state, settled=settled),
     )
     supervisor._announce = lambda topic, _subject: topics.append(topic)
     supervisor.recover_provider_once()

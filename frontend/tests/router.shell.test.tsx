@@ -643,64 +643,67 @@ describe('Application shell', () => {
     expect(screen.queryByRole('heading', { name: 'Background activity' })).toBeNull()
   })
 
-  it('hands focus to the Settings route when the popover key link is followed (#1494 R4)', async () => {
-    const user = userEvent.setup()
-    const { view: settingsView } = await import('./settingsFixtures')
-    const http: ReviewHttp = {
-      ...createHttp(),
-      getSettings: vi.fn(async () => settingsView()),
-      getPreparation: vi.fn(async (): Promise<PreparationView> => ({
-        ...idlePreparation,
-        libraries: [
-          {
-            stages: [],
-            blocked: 0,
-            recorded: 0,
-            not_matched: 0,
-            checked: 2,
-            connection: 'primary',
-            library: 'Books',
-            library_id: 'books',
-            ready: 2,
-            rescan_requested: false,
-            scan_id: null,
-            state: 'completed',
-            total: 2,
-          },
-        ],
-        provider_throttling: {
-          generation: 1,
-          retry: 'available',
-          entries: [
+  it.each(['/library?lens=all', '/settings?group=connection'])(
+    'hands focus to the Settings route when the popover key link is followed from %s (#1494 R4)',
+    async (start) => {
+      const user = userEvent.setup()
+      const { view: settingsView } = await import('./settingsFixtures')
+      const http: ReviewHttp = {
+        ...createHttp(),
+        getSettings: vi.fn(async () => settingsView()),
+        getPreparation: vi.fn(async (): Promise<PreparationView> => ({
+          ...idlePreparation,
+          libraries: [
             {
+              stages: [],
+              blocked: 0,
+              recorded: 0,
+              not_matched: 0,
+              checked: 2,
+              connection: 'primary',
               library: 'Books',
-              adapter: 'google_books',
-              state: 'waiting',
-              reasons: ['quota_exhausted'],
-              deferred: 5,
-              next_retry_at: null,
-              remedy: 'add_api_key',
-              notice_at: null,
+              library_id: 'books',
+              ready: 2,
+              rescan_requested: false,
+              scan_id: null,
+              state: 'completed',
+              total: 2,
             },
           ],
-        },
-      })),
-    }
-    renderRoute('/library?lens=all', http)
-    await user.click(
-      await screen.findByRole('button', { name: 'Preparation idle. A source needs you.' }),
-    )
-    const popover = await screen.findByRole('region', { name: 'Background activity' })
-    await user.click(within(popover).getByRole('link', { name: 'Add a Google Books API key' }))
-    expect(screen.queryByRole('region', { name: 'Background activity' })).toBeNull()
-    const main = document.getElementById('main-content')
-    await waitFor(() => expect(main).toHaveAttribute('data-restored-path', '/settings'))
-    await waitFor(() => {
-      const active = document.activeElement
-      expect(active).not.toBe(document.body)
-      expect(main?.contains(active)).toBe(true)
-    })
-  })
+          provider_throttling: {
+            generation: 1,
+            retry: 'available',
+            entries: [
+              {
+                library: 'Books',
+                adapter: 'google_books',
+                state: 'waiting',
+                reasons: ['quota_exhausted'],
+                deferred: 5,
+                next_retry_at: null,
+                remedy: 'add_api_key',
+                notice_at: null,
+              },
+            ],
+          },
+        })),
+      }
+      renderRoute(start, http)
+      await user.click(
+        await screen.findByRole('button', { name: 'Preparation idle. A source needs you.' }),
+      )
+      const popover = await screen.findByRole('region', { name: 'Background activity' })
+      await user.click(within(popover).getByRole('link', { name: 'Add a Google Books API key' }))
+      expect(screen.queryByRole('region', { name: 'Background activity' })).toBeNull()
+      const main = document.getElementById('main-content')
+      await waitFor(() => expect(main).toHaveAttribute('data-restored-path', '/settings'))
+      await waitFor(() => {
+        const active = document.activeElement
+        expect(active).not.toBe(document.body)
+        expect(main?.contains(active)).toBe(true)
+      })
+    },
+  )
 
   it('closes the preparation panel when focus tabs off either end of it', async () => {
     const user = userEvent.setup()

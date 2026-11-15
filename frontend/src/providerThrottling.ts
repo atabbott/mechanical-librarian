@@ -102,6 +102,8 @@ const outcomeTail: Readonly<Record<Settled, readonly [string, string]>> = {
   dormant: ['did not run', 'did not run'],
   exhausted: ['has no automatic retry left', 'have no automatic retry left'],
 }
+/** The one outcome that says Retry now worked; only it carries the tick (#1494). */
+export const retryRecovered = 'Retried. Every waiting lookup got an answer.'
 export type RetryClass = 'recovered' | 'failed' | 'waiting_again' | 'pending'
 export type PressedEntry = Pick<ProviderThrottleEntry, 'library' | 'adapter'>
 
@@ -119,7 +121,7 @@ export const retryClass = (current: ProviderThrottleEntry | undefined): RetryCla
  * The sentence Retry now's outcome is said in, or null while the snapshot has
  * not reached the raised generation or any pressed entry is still pending.
  * Recovered sources are not named; each other source gets one sentence, its
- * counts summed over libraries.
+ * count summed over the libraries in the state the sentence names.
  */
 export const retryOutcome = (
   pressed: readonly PressedEntry[],
@@ -135,13 +137,12 @@ export const retryOutcome = (
     if (settled === 'pending') return null
     if (entry !== undefined && settled !== 'recovered') unsettled.push(entry)
   }
-  if (unsettled.length === 0) return 'Retried. Every waiting lookup got an answer.'
+  if (unsettled.length === 0) return retryRecovered
   const sources = [...new Set(unsettled.map((entry) => entry.adapter))]
   return [
     'Retried.',
     ...sources.map((adapter) => {
       const members = unsettled.filter((entry) => entry.adapter === adapter)
-      const count = members.reduce((sum, entry) => sum + entry.deferred, 0)
       const reason =
         throttleReasonCopy.find(([code]) =>
           members.some((entry) => entry.reasons.includes(code)),
@@ -152,6 +153,12 @@ export const retryOutcome = (
         : members.some((entry) => entry.state === 'exhausted')
           ? 'exhausted'
           : 'waiting'
+      // The count is of the libraries in that state alone, so a source that
+      // did not run in one library and waits again in another says only the
+      // first count.
+      const count = members
+        .filter((entry) => entry.state === state)
+        .reduce((sum, entry) => sum + entry.deferred, 0)
       const [one, many] = outcomeTail[state]
       const lookups = count === 1 ? `1 lookup ${one}` : `${count.toLocaleString()} lookups ${many}`
       return `${providerLabels[adapter] ?? adapter} ${outcomeClause[reason]}, so ${lookups}.`

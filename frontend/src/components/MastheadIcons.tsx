@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { ComponentPropsWithRef, ReactNode } from 'react'
 
 import type { StatusCentre } from '../providerThrottling'
@@ -119,7 +119,8 @@ export const StatusIcon = ({
 /**
  * A 44 px masthead button that shows only an icon. Its name is the accessible
  * label, and the same words show as a tooltip on hover and keyboard focus that
- * screen readers skip; Escape hides it until the pointer or focus leaves.
+ * screen readers skip; Escape hides it until the pointer or focus leaves,
+ * wherever focus is while the pointer rests on it.
  */
 export const IconButton = ({
   label,
@@ -127,10 +128,22 @@ export const IconButton = ({
   children,
   onKeyDown,
   onBlur,
+  onMouseEnter,
   onMouseLeave,
   ...props
 }: Omit<ComponentPropsWithRef<'button'>, 'aria-label'> & { label: string }) => {
   const [dismissed, setDismissed] = useState(false)
+  const [hovered, setHovered] = useState(false)
+  // A tooltip shown by the pointer is dismissed by Escape from anywhere, so
+  // neither the pointer nor focus has to move (WCAG 1.4.13).
+  useEffect(() => {
+    if (!hovered) return
+    const dismiss = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setDismissed(true)
+    }
+    document.addEventListener('keydown', dismiss)
+    return () => document.removeEventListener('keydown', dismiss)
+  }, [hovered])
   return (
     <button
       {...props}
@@ -146,7 +159,12 @@ export const IconButton = ({
         setDismissed(false)
         onBlur?.(event)
       }}
+      onMouseEnter={(event) => {
+        setHovered(true)
+        onMouseEnter?.(event)
+      }}
       onMouseLeave={(event) => {
+        setHovered(false)
         setDismissed(false)
         onMouseLeave?.(event)
       }}

@@ -189,6 +189,34 @@ describe('retryOutcome (#1494 acceptance 6)', () => {
         'Hardcover refused the API key again, so 31 lookups did not run.',
     )
   })
+
+  it('counts only the libraries in the state the sentence names', () => {
+    const audio = { library: 'Synthetic audio', adapter: 'hardcover' } as const
+    const outcome = retryOutcome(
+      [hardcover, audio],
+      4,
+      throttling(
+        [
+          entry({
+            adapter: 'hardcover',
+            state: 'dormant',
+            reasons: ['authentication'],
+            deferred: 31,
+          }),
+          entry({
+            library: 'Synthetic audio',
+            adapter: 'hardcover',
+            state: 'waiting',
+            reasons: ['authentication'],
+            deferred: 214,
+          }),
+        ],
+        5,
+      ),
+    )
+    // 214 lookups wait again in the other library; they did not "not run".
+    expect(outcome).toBe('Retried. Hardcover refused the API key again, so 31 lookups did not run.')
+  })
 })
 
 const library = (

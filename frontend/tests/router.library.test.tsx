@@ -15600,6 +15600,8 @@ describe('library provider throttling notice (#1282)', () => {
     }
     await user.click(within(region).getByRole('button', { name: 'Retry now' }))
     await waitFor(() => expect(status).toHaveTextContent('Every waiting lookup is retrying now.'))
+    // Pending is not done: no tick (#1494).
+    expect(status).not.toHaveAttribute('data-outcome')
     current = {
       ...throttled([]),
       provider_throttling: { generation: 5, retry: 'available', entries: [] },
@@ -15608,8 +15610,33 @@ describe('library provider throttling notice (#1282)', () => {
     await waitFor(() =>
       expect(status).toHaveTextContent('Retried. Every waiting lookup got an answer.'),
     )
+    expect(status).toHaveAttribute('data-outcome', 'recovered')
     // The notice emptied, but its status line is the same mounted region.
     expect(container()?.querySelector('[role="status"]')).toBe(status)
+  })
+
+  it('marks no outcome that says Retry now did not work (#1494)', async () => {
+    const user = userEvent.setup()
+    let current = throttled([entry({ remedy: 'add_api_key' })])
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi.fn(async () => current),
+      retryProviderRecovery: vi.fn(async () => settingsView()),
+    }
+    renderRoute('/library?lens=all', http)
+    const region = await notice()
+    const status = within(region).getByRole('status')
+    current = {
+      ...throttled([entry({ remedy: 'add_api_key' })]),
+      provider_throttling: {
+        generation: 5,
+        retry: 'available',
+        entries: [entry({ remedy: 'add_api_key' })],
+      },
+    }
+    await user.click(within(region).getByRole('button', { name: 'Retry now' }))
+    await waitFor(() => expect(status).toHaveTextContent(/^Retried\. .+ again\.$/))
+    expect(status).not.toHaveAttribute('data-outcome')
   })
 
   it('hands the Retry now settings to the Settings cache from Library (#1282 R3 F2)', async () => {

@@ -67,6 +67,7 @@ import {
   nextNoticeAt,
   providerLabels,
   remedyLabel,
+  retryRecovered,
   throttleLine,
   timerDelay,
   useProviderRetry,
@@ -710,7 +711,11 @@ export const ProviderThrottleNotice = () => {
           ) : entries.length > 0 && throttling.retry === 'managed_by_file' ? (
             <p className="provider-throttle-file">{fileManagedRetry}</p>
           ) : null}
-          <p className="provider-throttle-outcome provider-throttle-status" role="status">
+          <p
+            className="provider-throttle-outcome provider-throttle-status"
+            role="status"
+            data-outcome={status === retryRecovered ? 'recovered' : undefined}
+          >
             {status}
           </p>
           <p className="provider-throttle-outcome provider-throttle-refusal" role="alert">

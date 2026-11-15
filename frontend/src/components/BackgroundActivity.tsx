@@ -1,7 +1,7 @@
 import { useMutation } from '@tanstack/react-query'
 import type { QueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import { refusalCopy, uncertainWriteOutcome } from '../api/http'
 import type {
@@ -21,6 +21,7 @@ import {
   providerLabels,
   remedyLabel,
   retryOutcome,
+  retryRecovered,
   runScanIds,
   throttleLine,
   timerDelay,
@@ -48,6 +49,18 @@ const SourceLookups = ({
 }) => {
   const entries = throttling?.entries ?? []
   const refusal = retry.press?.origin === 'popover' ? retry.press.refusal : ''
+  const command = useRef<HTMLButtonElement>(null)
+  const outcomeLine = useRef<HTMLParagraphElement>(null)
+  const commandFocused = useRef(false)
+  // Retry now leaves when every pressed lookup got an answer; if it held
+  // focus, the outcome line takes it, so the popover keeps focus and its keys.
+  useLayoutEffect(() => {
+    if (!commandFocused.current || command.current) return
+    commandFocused.current = false
+    const active = document.activeElement
+    if (active && active !== document.body) return
+    outcomeLine.current?.focus({ preventScroll: true })
+  })
   if (!throttling || (!entries.length && !retry.status && !refusal)) return null
   const ordered = [
     ...entries.filter((entry) => needsYou(entry, now)),
@@ -76,24 +89,38 @@ const SourceLookups = ({
       ) : null}
       {entries.length > 0 && throttling.retry === 'available' ? (
         <button
+          ref={command}
           type="button"
           aria-disabled={retry.busy || undefined}
           aria-busy={retry.busy || undefined}
           onClick={retry.start}
+          onFocus={() => {
+            commandFocused.current = true
+          }}
+          onBlur={() => {
+            // Still mounted a frame later, focus really moved; a button that
+            // left keeps the flag for the hand-off above.
+            requestAnimationFrame(() => {
+              if (command.current) commandFocused.current = false
+            })
+          }}
         >
           {retry.busy ? 'Retrying…' : 'Retry now'}
         </button>
       ) : entries.length > 0 && throttling.retry === 'managed_by_file' ? (
         <p className="source-lookups-file">{fileManagedRetry}</p>
       ) : null}
-      {/* Only the place Retry now was pressed announces; the other copy is text. */}
-      {live ? (
-        <p className="source-lookups-outcome" role="status">
-          {retry.status}
-        </p>
-      ) : (
-        <p className="source-lookups-outcome">{retry.status}</p>
-      )}
+      {/* Only the place Retry now was pressed announces; the other copy is
+          text. Only the outcome that says every lookup got an answer is ticked. */}
+      <p
+        ref={outcomeLine}
+        className="source-lookups-outcome"
+        role={live ? 'status' : undefined}
+        tabIndex={-1}
+        data-outcome={retry.status === retryRecovered ? 'recovered' : undefined}
+      >
+        {retry.status}
+      </p>
       {refusal ? (
         <p className="source-lookups-outcome" role="alert">
           {refusal}
@@ -201,9 +228,12 @@ export const BackgroundActivity = ({
     const outcome = retryOutcome(press.pressed, press.expected, throttling)
     if (outcome !== null) retry.update({ outcome })
   })
-  // Closing the popover after it showed an outcome clears that outcome.
+  // Closing the popover after it showed an outcome clears that outcome. A new
+  // press has shown nothing yet, so closing during it keeps it, wherever it
+  // was pressed.
   useEffect(() => {
-    if (open && press?.outcome) shown.current = true
+    if (!press?.outcome) shown.current = false
+    else if (open) shown.current = true
     if (!open && shown.current) {
       shown.current = false
       retry.clear()
@@ -313,8 +343,20 @@ export const BackgroundActivity = ({
             retry={retry}
             name={names.name}
             now={now}
-            // Following the key link closes the popover, so the route takes focus.
-            onNavigate={() => setOpen(false)}
+            // Following the key link closes the popover and the route takes
+            // focus. A link to the route already shown remounts nothing, so
+            // focus left on the body goes to the route's focus target.
+            onNavigate={() => {
+              setOpen(false)
+              requestAnimationFrame(() => {
+                const active = document.activeElement
+                if (active && active !== document.body) return
+                const main = document.getElementById('main-content')
+                ;(main?.querySelector<HTMLElement>('[data-route-focus]') ?? main)?.focus({
+                  preventScroll: true,
+                })
+              })
+            }}
           />
           <button
             type="button"
