@@ -97,7 +97,8 @@ def classify_review_field(
     """Classify a field consistently for queue, detail, and navigation use.
 
     `owner_choosable` is an undecided choice that no shared reason queues: a
-    recording's fill (#1249) or a kept readable cover (#1310). It stays
+    recording's fill (#1249), a kept readable cover (#1310), or a field set to
+    Ask me (#1707). It stays
     editable in its case but is never attention.
     Every other input decides first. `changeable` says whether any owner
     control could replace a recorded decision, and `owner_entry` whether the

@@ -504,6 +504,7 @@ def _server(
     genre_destination: str = "automatic",
     genre_current: tuple[str, ...] | None = None,
     genre_others: str = "ask",
+    genre_tags_option: str | None = None,
     owner_write: bool = False,
     owner_recur: bool = False,
     owner_library_change: bool = False,
@@ -1162,7 +1163,11 @@ def _server(
 
         report = genre_report(genres=genre_fixture, current=genre_current)
         case_id, proposal_set = publish_genre_case(
-            repository, report, genre_destination, genre_others
+            repository,
+            report,
+            genre_destination,
+            genre_others,
+            tags_option=genre_tags_option,
         )
         if owner_write:
             case_id, report = _seed_owner_write(
@@ -11569,6 +11574,50 @@ def test_owner_enters_a_title_at_enlarged_text():
             _LONG_TITLE
         )
         _owner_layout_holds(page)
+
+
+def test_an_ebook_tags_fill_under_ask_is_an_optional_choice():
+    """An ebook's Tags fill set to Ask me is optional, as on a recording (#1707)."""
+    with _owner_page(
+        genre_fixture=("Fantasy",), genre_others="ask", genre_tags_option="fill_empty"
+    ) as (page, origin, case_id):
+        page.goto(f"{origin}/library?lens=all&preview={case_id}&field=tags")
+        needs_you = page.locator("dt", has_text=re.compile("^Needs you$")).locator(
+            "xpath=following-sibling::dd[1]"
+        )
+        expect(needs_you).to_be_visible()
+        counted = needs_you.inner_text()
+        tags = page.get_by_role("button", name=re.compile("^Tags")).first
+        expect(tags).to_have_accessible_name(re.compile("Optional$"))
+        expect(tags).not_to_have_accessible_name(re.compile("Needs you"))
+        canvas = page.locator(".decision-canvas")
+        expect(
+            canvas.get_by_text(
+                "No review is needed. You can still keep the current value or "
+                "choose a proposed one.",
+                exact=True,
+            )
+        ).to_be_visible()
+        expect(canvas).not_to_contain_text("Nothing to decide for this field.")
+        accept = page.get_by_role(
+            "radio", name=re.compile("^Choose proposed value: ")
+        ).first
+        with page.expect_response(
+            lambda response: (
+                response.request.method == "POST"
+                and response.url.endswith(f"/review-cases/{case_id}/decisions")
+            )
+        ) as recorded:
+            accept.click()
+        assert recorded.value.ok, recorded.value.status
+        page.goto(f"{origin}/library?lens=all&preview={case_id}&field=tags")
+        expect(
+            page.get_by_role("button", name=re.compile("^Tags")).first
+        ).to_have_accessible_name("Tags Decided")
+        expect(
+            page.get_by_role("radio", name=re.compile("^Choose proposed value: ")).first
+        ).to_have_attribute("aria-checked", "true")
+        expect(needs_you).to_have_text(counted)
 
 
 def test_owner_chooses_a_genre_subset_then_withdraws_it():

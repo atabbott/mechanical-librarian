@@ -755,6 +755,46 @@ class OwnerSessionService:
             )
 
 
+# The policy category each destination's posture is read under; any other
+# destination is its own category.
+_POLICY_CATEGORY_BY_DESTINATION: Mapping[str, str] = MappingProxyType(
+    {
+        "description": "description_fill",
+        "isbn": "isbn_form",
+        "title": "title_layout",
+        "authors": "contributor_names",
+        "narrators": "contributor_names",
+        "language": "language_rendering",
+        "publishedDate": "date_precision",
+        "publisher": "publisher_preference",
+        "cover": "cover_order",
+    }
+)
+
+
+def _ask_destinations(
+    snapshot: CurrentReviewCaseSnapshot, proposals: tuple[dict[str, object], ...]
+) -> frozenset[str]:
+    """The proposed destinations the live policy sets to Ask me (#1707)."""
+    if snapshot.resolved_policy_document is None:
+        return frozenset()
+    try:
+        postures = dict(
+            ResolvedMetadataPolicy.from_data(
+                json.loads(snapshot.resolved_policy_document)
+            ).destinations
+        )
+    except Exception as error:
+        raise ReviewWebError("unavailable") from error
+    destinations = (str(proposal["destination"]) for proposal in proposals)
+    return frozenset(
+        destination
+        for destination in destinations
+        if postures.get(_POLICY_CATEGORY_BY_DESTINATION.get(destination, destination))
+        == "ask"
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class _ReviewCaseReadContext:
     """What every field of one current case is projected from."""
@@ -775,6 +815,7 @@ class _ReviewCaseReadContext:
     cover_is_current: bool
     cover_refresh_required: bool
     cover_undecided: bool
+    ask_destinations: frozenset[str]
 
 
 def _automatic_field_decision(
@@ -994,6 +1035,9 @@ def _classify_field(
                     context.case.media_kind == "audiobook"
                     or policy_settled
                     or single_source
+                    # An ebook field set to Ask me that the queue does not ask
+                    # about is the owner's optional choice too (#1707).
+                    or destination in context.ask_destinations
                     # A suggested switch is the owner's optional choice (S9),
                     # as is a cover kept with no fault (#1362).
                     or cover_optional
@@ -1171,6 +1215,7 @@ class InspectCurrentReviewCase:
             cover_is_current=cover_is_current,
             cover_refresh_required=cover_refresh_required,
             cover_undecided=cover_undecided,
+            ask_destinations=_ask_destinations(snapshot, proposals),
         )
         for proposal in proposals:
             projected = self._field(context, proposal)
@@ -1472,17 +1517,7 @@ class InspectCurrentReviewCase:
                 assert type(field) is dict
                 destination = str(field["destination"])
                 outcome = recorded.get(destination)
-                category = {
-                    "description": "description_fill",
-                    "isbn": "isbn_form",
-                    "title": "title_layout",
-                    "authors": "contributor_names",
-                    "narrators": "contributor_names",
-                    "language": "language_rendering",
-                    "publishedDate": "date_precision",
-                    "publisher": "publisher_preference",
-                    "cover": "cover_order",
-                }.get(destination, destination)
+                category = _POLICY_CATEGORY_BY_DESTINATION.get(destination, destination)
                 if outcome is not None and outcome.policy_category is not None:
                     category = (
                         "title_layout"

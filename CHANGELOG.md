@@ -594,6 +594,10 @@ brackets are GitHub issues.
 - Remote cover downloads now refuse a host whose IPv6 answer carries a
   private, loopback or link-local IPv4 address, such as a NAT64 address, or
   lies outside public unicast space (#1758).
+- On an ebook, a field set to Ask me with a proposed value the queue does not
+  ask about, such as an ASIN or a tag list for empty Tags, is now an optional
+  choice you can take, as on an audiobook, instead of reading "Nothing to
+  decide for this field." (#1707).
 
 ## 0.29.2 — Delivery reliability and hygiene
 
