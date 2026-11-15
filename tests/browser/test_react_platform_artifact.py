@@ -5601,43 +5601,118 @@ def test_library_handoff_arrives_with_the_works() -> None:
 
 def test_library_progress_sits_above_the_ledger_and_beside_the_run_box() -> None:
     """The Activity card follows the status box on a wide screen and comes
-    first above the Ledger on a phone; a finished run's line sits beside its
+    first above the Ledger on a phone, its lists folded so the Ledger's first
+    row stays on the first screen; a finished run's line sits beside its
     button, never in it, and no width scrolls sideways (#1335)."""
+
+    def progress(page: Page, state: str) -> None:
+        def fulfill(route: Route) -> None:
+            if state == "loading":
+                return
+            if state == "failed":
+                route.fulfill(
+                    status=503,
+                    content_type="application/json",
+                    body=json.dumps(
+                        {
+                            "error": {"code": "unavailable"},
+                            "schema_version": "review-error-v1",
+                        }
+                    ),
+                )
+                return
+            route.fulfill(
+                content_type="application/json",
+                body=json.dumps(LIBRARY_PROGRESS_STATES[state]),
+            )
+
+        page.route("**/api/v1/library/progress", fulfill)
+
+    def no_sideways_scroll(page: Page, width: int) -> None:
+        assert page.evaluate(
+            "() => document.documentElement.scrollWidth"
+            " <= document.documentElement.clientWidth"
+        ), width
+
+    activity = (
+        "https://react-platform.invalid/activity"
+        "?eventType=all&rangeDays=30&page=1&pageSize=25"
+    )
     with ExitStack() as stack:
         playwright = stack.enter_context(sync_playwright())
         browser = playwright.chromium.launch(headless=True)
         stack.callback(browser.close)
         for width in (320, 390, 1280):
             page = browser.new_page(
-                viewport={"width": width, "height": 900}, locale="en-US"
+                viewport={"width": width, "height": 844}, locale="en-US"
             )
             _serve_cohort(page)
-            page.route(
-                "**/api/v1/library/progress",
-                lambda route: route.fulfill(
-                    content_type="application/json",
-                    body=json.dumps(LIBRARY_PROGRESS_STATES["two_libraries"]),
-                ),
-            )
-            page.goto(
-                "https://react-platform.invalid/activity"
-                "?eventType=all&rangeDays=30&page=1&pageSize=25"
-            )
+            progress(page, "two_libraries")
+            page.goto(activity)
             card = page.get_by_role("region", name="Library progress")
             expect(card).to_contain_text("1,840 of 2,026 works settled")
+            folds = card.locator("details")
+            ledger = page.locator(".cm-activity-ledger")
+            if width <= 760:
+                expect(folds).to_have_count(2)
+                expect(folds.locator("summary")).to_have_text(
+                    ["By library", "Fields that need you"]
+                )
+                for index in range(2):
+                    expect(folds.nth(index)).not_to_have_attribute("open", "")
+                first_row = ledger.locator("article").first
+                expect(first_row).to_be_visible()
+                row = first_row.bounding_box()
+                assert row is not None and row["y"] + 24 <= 844, (width, row)
+            else:
+                expect(folds).to_have_count(0)
+                expect(card.get_by_role("heading", name="By library")).to_be_visible()
             mine = card.bounding_box()
-            ledger = page.locator(".cm-activity-ledger").bounding_box()
+            ledger_box = ledger.bounding_box()
             status = page.locator(".cm-activity-status").bounding_box()
-            assert mine is not None and ledger is not None and status is not None
-            assert mine["y"] + mine["height"] <= ledger["y"] + 1, (width, mine, ledger)
+            assert mine is not None and ledger_box is not None and status is not None
+            assert mine["y"] + mine["height"] <= ledger_box["y"] + 1, (width, mine)
             if width > 760:
                 assert mine["y"] >= status["y"] + status["height"] - 1, (width, mine)
             else:
                 # The phone puts the Ledger before the status box; the card
                 # is directly above the Ledger.
-                assert status["y"] >= ledger["y"], (width, status, ledger)
+                assert status["y"] >= ledger_box["y"], (width, status, ledger_box)
+                # Each summary is a 44 px target that the keyboard opens.
+                for index in range(2):
+                    summary = folds.nth(index).locator("summary")
+                    box = summary.bounding_box()
+                    assert box is not None and box["height"] >= 44, (width, box)
+                    summary.focus()
+                    page.keyboard.press("Enter")
+                    expect(folds.nth(index)).to_have_attribute("open", "")
+                expect(card.get_by_role("listitem")).to_have_count(6)
             _fits_its_container(page, ".activity-library-progress", width)
+            no_sideways_scroll(page, width)
+            page.close()
 
+            # One library, a read still counting and a failed read all fit.
+            for state, words in (
+                ("one_library", "184 of 184 works settled"),
+                ("loading", "Counting works…"),
+                ("failed", "Library progress could not be loaded."),
+            ):
+                page = browser.new_page(
+                    viewport={"width": width, "height": 844}, locale="en-US"
+                )
+                _serve_cohort(page)
+                progress(page, state)
+                page.goto(activity)
+                card = page.get_by_role("region", name="Library progress")
+                expect(card).to_contain_text(words)
+                _fits_its_container(page, ".activity-library-progress", width)
+                no_sideways_scroll(page, width)
+                page.close()
+
+            page = browser.new_page(
+                viewport={"width": width, "height": 844}, locale="en-US"
+            )
+            _serve_cohort(page)
             page.route(
                 "**/api/v1/review-preparation",
                 lambda route: route.fulfill(
@@ -5660,8 +5735,5 @@ def test_library_progress_sits_above_the_ledger_and_beside_the_run_box() -> None
                 page.get_by_role("button", name=re.compile("^Preparation completed"))
             ).to_be_visible()
             _fits_its_container(page, ".preparation-summary-box", width)
-            assert page.evaluate(
-                "() => document.documentElement.scrollWidth"
-                " <= document.documentElement.clientWidth"
-            ), width
+            no_sideways_scroll(page, width)
             page.close()

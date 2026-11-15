@@ -2,7 +2,8 @@
 // in total, per library and per field (#1335). It owns its read, its states
 // and its hash handoff, so the Activity page only places it.
 import { useRouterState } from '@tanstack/react-router'
-import { useEffect, useRef } from 'react'
+import type { ReactNode } from 'react'
+import { useEffect, useRef, useSyncExternalStore } from 'react'
 
 import { BuildMismatchError } from '../api/http'
 import type { LibraryProgressView, ReviewHttp } from '../api/http'
@@ -15,6 +16,21 @@ import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
 // The hash a link to the card carries: /activity#activity-library-progress.
 const libraryProgressHash = 'activity-library-progress'
 const headingId = 'activity-library-progress-heading'
+// At the phone width the Ledger's first row stays on the first screen, so the
+// card's lists fold under their own sub-headings (#1335).
+const compactQuery = '(max-width: 760px)'
+const useCompact = () =>
+  useSyncExternalStore(
+    (change) => {
+      if (typeof window.matchMedia !== 'function') return () => undefined
+      const media = window.matchMedia(compactQuery)
+      media.addEventListener('change', change)
+      return () => {
+        media.removeEventListener('change', change)
+      }
+    },
+    () => typeof window.matchMedia === 'function' && window.matchMedia(compactQuery).matches,
+  )
 
 export const ActivityLibraryProgress = ({ http }: { http: ReviewHttp }) => {
   // Under Library's key, so a live Library update refreshes it as it does
@@ -90,39 +106,63 @@ export const ActivityLibraryProgress = ({ http }: { http: ReviewHttp }) => {
   )
 }
 
-const LibraryProgress = ({ view }: { view: LibraryProgressView }) => (
-  <>
-    <p>
-      <LibraryProgressLine counts={view.totals} linked />
-    </p>
-    {/* Only the totals link: Library has no exact library or field slice. */}
-    {view.libraries.length > 1 ? (
-      <>
-        <h3>By library</h3>
-        <ul className="activity-library-progress-libraries">
-          {view.libraries.map((library) => (
-            <li key={`${library.connection}:${library.library}`}>
-              <strong>{library.libraryDisplayName}</strong>{' '}
-              <LibraryProgressLine counts={library.counts} linked={false} />
-            </li>
-          ))}
-        </ul>
-      </>
-    ) : null}
-    {view.fields.length > 0 ? (
-      <>
-        <h3>Fields that need you</h3>
-        <ul className="activity-library-progress-fields">
-          {view.fields.map((field) => (
-            <li key={field.destination}>
-              {destinationLabel(field.destination)}{' '}
-              <span className="count-pair">
-                {field.needYou.toLocaleString('en-US')} {field.needYou === 1 ? 'work' : 'works'}
-              </span>
-            </li>
-          ))}
-        </ul>
-      </>
-    ) : null}
-  </>
-)
+// A list under its sub-heading: in full on a wide screen, and on a phone a
+// disclosure, closed at first, whose summary is the sub-heading.
+const ProgressList = ({
+  title,
+  compact,
+  children,
+}: {
+  title: string
+  compact: boolean
+  children: ReactNode
+}) =>
+  compact ? (
+    <details className="activity-library-progress-fold">
+      <summary>{title}</summary>
+      {children}
+    </details>
+  ) : (
+    <>
+      <h3>{title}</h3>
+      {children}
+    </>
+  )
+
+const LibraryProgress = ({ view }: { view: LibraryProgressView }) => {
+  const compact = useCompact()
+  return (
+    <>
+      <p>
+        <LibraryProgressLine counts={view.totals} linked />
+      </p>
+      {/* Only the totals link: Library has no exact library or field slice. */}
+      {view.libraries.length > 1 ? (
+        <ProgressList title="By library" compact={compact}>
+          <ul className="activity-library-progress-libraries">
+            {view.libraries.map((library) => (
+              <li key={`${library.connection}:${library.library}`}>
+                <strong>{library.libraryDisplayName}</strong>{' '}
+                <LibraryProgressLine counts={library.counts} linked={false} />
+              </li>
+            ))}
+          </ul>
+        </ProgressList>
+      ) : null}
+      {view.fields.length > 0 ? (
+        <ProgressList title="Fields that need you" compact={compact}>
+          <ul className="activity-library-progress-fields">
+            {view.fields.map((field) => (
+              <li key={field.destination}>
+                {destinationLabel(field.destination)}{' '}
+                <span className="count-pair">
+                  {field.needYou.toLocaleString('en-US')} {field.needYou === 1 ? 'work' : 'works'}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </ProgressList>
+      ) : null}
+    </>
+  )
+}

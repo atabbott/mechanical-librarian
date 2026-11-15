@@ -1779,6 +1779,11 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 .activity-library-progress ul { display:grid; gap:.3rem; margin:0; padding:0; list-style:none; overflow-wrap:anywhere; line-height:1.45; }
 .activity-library-progress > p[role='status'] { color:var(--soft); }
 .activity-library-progress [role='alert'] button { margin-top:.5rem; }
+.activity-library-progress-fold { margin:0; }
+.activity-library-progress-fold > summary { display:block; min-height:44px; padding:.7rem 0; font-size:.875rem; font-weight:700; line-height:1.25; cursor:pointer; list-style:none; }
+.activity-library-progress-fold > summary::-webkit-details-marker { display:none; }
+.activity-library-progress-fold > summary::after { content:'\25B8'; margin-left:.4rem; color:var(--soft); }
+.activity-library-progress-fold[open] > summary::after { content:'\25BE'; }
 .preparation-summary-box { margin:0 0 1rem; }
 .preparation-summary-box > .preparation-summary { margin:0; }
 .preparation-summary-progress { margin:.4rem 0 0; padding-inline:.75rem; color:var(--soft); font-size:.8rem; line-height:1.45; overflow-wrap:anywhere; }
