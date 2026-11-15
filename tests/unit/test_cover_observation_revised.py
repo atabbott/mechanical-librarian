@@ -44,7 +44,13 @@ REVISED_TAXONOMY_REFERENCE = (
 REVISED_FIXTURE_SCHEMA_SHA256 = (
     "e151fe631ba5f439f165e1ec88d5945155f3383aa1dcfbea10eaccc905a90b72"
 )
-# Today's instruction (cover-observation-report-v3), unchanged by this work.
+# Today's identities, unchanged by this work.
+CURRENT_TAXONOMY_REFERENCE = (
+    "cover_taxonomy_2d0840acea1a8fadc096cf3f66749e3e089b69fb56e583b3f00c6124154ea081"
+)
+CURRENT_FIXTURE_SCHEMA_SHA256 = (
+    "19218f63770004a1255b60838fde7ba8bf4451f675a6d68f52a4dfb35966e18b"
+)
 CURRENT_INSTRUCTION_SHA256 = (
     "d872692b3aca75ee0f81fbc436680a001f823e8f560d2e27a66c903b04a8e176"
 )
@@ -114,6 +120,12 @@ def test_current_contract_is_unchanged() -> None:
         == cover_observation.OUTPUT_SCHEMA_VERSION
     )
     assert CURRENT_CONTRACT.instruction_sha256 == CURRENT_INSTRUCTION_SHA256
+    assert CURRENT_CONTRACT.taxonomy_reference == CURRENT_TAXONOMY_REFERENCE
+    schema = _output_schema(("cover_ref_" + "a" * 64, "cover_ref_" + "b" * 64))
+    assert (
+        hashlib.sha256(schema.encode("utf-8")).hexdigest()
+        == CURRENT_FIXTURE_SCHEMA_SHA256
+    )
 
 
 def test_no_product_module_reads_the_revised_contract() -> None:

@@ -238,7 +238,7 @@ def test_preflight_prices_the_plan_and_sends_nothing(library: Any) -> None:
     assert set(fake.exchanges) == {("GET", "/api/v1/key"), ("GET", "/api/v1/models")}
     assert f"Model: {MODEL} (your saved cover reviewer)" in text
     assert "Requests: 2, with 3 covers (3 works in the library; 1 skipped" in text
-    assert "Spending cap: $5.0000." in text
+    assert "Spending cap: $5.00." in text
     assert REVISED_CONTRACT.instruction_sha256 in text
     assert f"--confirm {_code(text)}" in text
     assert KEY not in text
@@ -291,9 +291,7 @@ def test_run_passes_with_valid_bound_reports(library: Any, tmp_path: Path) -> No
     code, text, output = _run(library, tmp_path, fake)
     assert code == 0
     assert fake.posts == 2
-    assert text.startswith(
-        "Smoke passed: 2 of 2 reports valid. Spent $0.0020 of $5.0000."
-    )
+    assert text.startswith("Smoke passed: 2 of 2 reports valid. Spent $0.002 of $5.00.")
     result = json.loads((output / "result.json").read_text())
     assert result["status"] == "passed"
     assert result["reports_valid"] == 2
@@ -352,6 +350,7 @@ def test_result_json_holds_aggregates_only(library: Any, tmp_path: Path) -> None
         "status",
         "stopped",
         "taxonomy_reference",
+        "unknown_charges",
         "value_counts",
     }
 
@@ -367,7 +366,7 @@ def test_rejected_output_fails_the_smoke(library: Any, tmp_path: Path) -> None:
     result = json.loads((output / "result.json").read_text())
     assert result["status"] == "failed"
     assert result["failures"] == {"output_rejected": 2}
-    assert "Failures: output_rejected 2" in text
+    assert "Failures: 2 output_rejected. The guide says what each means." in text
     assert not (output / "labelling").exists()
 
 
@@ -379,7 +378,9 @@ def test_unknown_charge_stops_the_run(library: Any, tmp_path: Path) -> None:
     result = json.loads((output / "result.json").read_text())
     assert result["status"] == "incomplete"
     assert result["stopped"] == "unknown_charge"
-    assert "Stopped early: unknown charge." in text
+    assert "Stopped because OpenRouter did not report what a request cost." in text
+    assert "Spent at least $0.00 of $5.00; 1 request's charge is unknown." in text
+    assert result["unknown_charges"] == 1
 
 
 def test_cap_stops_before_a_request_that_could_pass_it(
@@ -396,36 +397,114 @@ def test_cap_stops_before_a_request_that_could_pass_it(
     assert result["requests_sent"] == 1
 
 
-def test_five_failures_in_a_row_stop_the_run(tmp_path: Path) -> None:
-    attempts = [
-        smoke.Attempt(
-            index, smoke.Item("r", "{}", ()), "failed", "transport", Decimal(0), None
-        )
-        for index in range(5)
-    ]
-    assert smoke.CONSECUTIVE_FAILURE_LIMIT == 5
-    plan = smoke.Plan(
-        MODEL,
-        True,
-        smoke.Prices(Decimal(0), Decimal(0), Decimal(0), Decimal(0)),
-        Decimal(1),
-        smoke.Population(tuple(attempt.item for attempt in attempts) * 2, 10, 0),
+def _repeated_plan(library: Any, fake: Fake, copies: int) -> tuple[Any, str]:
+    database, artifacts, _ = library
+    plan, key = smoke.build_plan(
+        database,
+        artifacts,
+        requests=1,
+        cap=Decimal(5),
+        model=None,
+        transport=Fake(pricing=fake.pricing),
     )
-    summary = smoke.summarise(plan, attempts, Decimal(0), "consecutive_failures")
-    assert summary["status"] == "failed"
-    assert summary["failures"] == {"transport": 5}
+    population = smoke.Population(plan.population.items * copies, 3, 0)
+    return replace(plan, population=population), key
 
 
-def test_refusal_from_openrouter_is_recorded_without_charge(
-    library: Any, tmp_path: Path
+def test_five_failures_in_a_row_stop_the_run(library: Any, tmp_path: Path) -> None:
+    fake = Fake(status=429)
+    plan, key = _repeated_plan(library, fake, 7)
+    result = smoke.run_smoke(plan, key, tmp_path / "run", transport=fake)
+    assert fake.posts == smoke.CONSECUTIVE_FAILURE_LIMIT == 5
+    assert result["stopped"] == "consecutive_failures"
+    assert result["failures"] == {"rate_limited": 5}
+    assert result["status"] == "failed"
+    assert result["spent_usd"] == "0"
+    assert len(list((tmp_path / "run" / "requests").iterdir())) == 5
+
+
+@pytest.mark.parametrize("status", [400, 401, 402, 403, 404, 429])
+def test_refusals_before_generation_cost_nothing(
+    library: Any, tmp_path: Path, status: int
 ) -> None:
-    fake = Fake(status=400)
+    fake = Fake(status=status)
     code, _text, output = _run(library, tmp_path, fake)
     assert code == 2
     result = json.loads((output / "result.json").read_text())
     assert result["status"] == "failed"
     assert result["spent_usd"] == "0"
+    assert result["unknown_charges"] == 0
     assert sum(result["failures"].values()) == 2
+
+
+@pytest.mark.parametrize("status", [408, 500, 502, 503])
+def test_other_failures_leave_the_charge_unknown_and_stop(
+    library: Any, tmp_path: Path, status: int
+) -> None:
+    fake = Fake(status=status)
+    code, _text, output = _run(library, tmp_path, fake)
+    assert code == 2
+    assert fake.posts == 1
+    result = json.loads((output / "result.json").read_text())
+    assert result["stopped"] == "unknown_charge"
+    assert result["unknown_charges"] == 1
+
+
+class Interrupting(Fake):
+    def respond(self, request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            self.exchanges.append((request.method, request.url.path))
+            raise KeyboardInterrupt
+        return super().respond(request)
+
+
+def test_ctrl_c_mid_request_is_recorded_with_an_unknown_charge(
+    library: Any, tmp_path: Path
+) -> None:
+    fake = Interrupting()
+    plan, key = _repeated_plan(library, fake, 3)
+    result = smoke.run_smoke(plan, key, tmp_path / "run", transport=fake)
+    assert fake.posts == 1
+    assert result["stopped"] == "interrupted"
+    assert result["status"] == "incomplete"
+    assert result["requests_sent"] == 1
+    assert result["unknown_charges"] == 1
+    assert result["failures"] == {}
+    record = json.loads((tmp_path / "run" / "requests" / "0000.json").read_text())
+    assert record["paid_request_sent"] is True
+    assert record["charge_usd"] is None
+    assert record["failure"] == "interrupted"
+
+
+def test_a_missing_preview_is_counted_not_fatal(library: Any) -> None:
+    database, artifacts, _ = library
+    # item-b's only cover is preview 3; without it item-b cannot be prepared.
+    previews = [
+        path
+        for path in artifacts.rglob("*")
+        if path.is_file() and path.read_bytes() == _preview(3)
+    ]
+    assert len(previews) == 1
+    previews[0].unlink()
+    population = smoke.load_population(database, artifacts, 10)
+    assert population.unprepared == 2
+    assert len(population.items) == 1
+
+
+@pytest.mark.parametrize(
+    ("value", "text"),
+    [
+        ("0", "$0.00"),
+        ("0.002", "$0.002"),
+        ("0.00015", "$0.0002"),
+        ("0.13", "$0.13"),
+        ("5", "$5.00"),
+        ("1234.5", "$1,234.50"),
+    ],
+    ids=["zero", "fraction", "tiny", "cents", "whole", "thousands"],
+)
+def test_money_reads_as_dollars_and_cents(value: str, text: str) -> None:
+    assert smoke._money(Decimal(value)) == text
 
 
 def test_wrong_code_and_existing_folder_are_refused(
@@ -633,3 +712,29 @@ def test_score_counts_owner_against_model(library: Any, tmp_path: Path) -> None:
     )
     with pytest.raises(smoke.SmokeRefused, match="not in this run"):
         _main(["score", "--run", str(output), "--labels", str(labels)], Fake())
+
+
+def test_score_refuses_malformed_rows_plainly(library: Any, tmp_path: Path) -> None:
+    _code_value, _text, output = _run(
+        library, tmp_path, Fake(values={"tie_in": "adaptation_art"})
+    )
+    sheet = json.loads((output / "labelling" / "sheet.json").read_text())
+    labels = tmp_path / "labels.json"
+    for row in ({"cover": ["x"]}, {"cover": {"a": 1}}, "text"):
+        labels.write_text(
+            json.dumps(
+                {
+                    "schema_version": "cover-owner-labels-v1",
+                    "plan_code": sheet["plan_code"],
+                    "labels": [row],
+                }
+            )
+        )
+        with pytest.raises(smoke.SmokeRefused):
+            smoke.score(output, labels)
+    (output / "labelling" / "sheet.json").chmod(0o600)
+    other = tmp_path / "other"
+    (other / "labelling").mkdir(parents=True)
+    (other / "labelling" / "sheet.json").write_text('{"covers": 1}')
+    with pytest.raises(smoke.SmokeRefused, match="not a smoke run folder"):
+        smoke.score(other, labels)

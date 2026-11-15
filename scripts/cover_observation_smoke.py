@@ -111,6 +111,7 @@ _ORIGIN_HOST = "openrouter.ai"
 _ALLOWED_GETS = frozenset({"/api/v1/key", "/api/v1/models"})
 _CHAT_PATH = "/api/v1/chat/completions"
 _MAX_CHAT_CAPTURE = 1_048_576
+_FREE_REFUSALS = frozenset({400, 401, 402, 403, 404, 429})
 
 # The four rare dimensions the owner labels first (ADR-0098, "Before
 # activation"). A value marks a cover when it is neither the ordinary value nor
@@ -124,6 +125,29 @@ RARE_ORDINARY: dict[str, frozenset[str]] = {
 REVISED_VALUES: dict[str, tuple[str, ...]] = {
     name: tuple(value for value, _definition in values)
     for name, values in REVISED_CONTRACT.taxonomy
+}
+
+
+_REFUSAL_REMEDIES = {
+    "invalid_key": "Check the OpenRouter key in Settings, then copy the database "
+    "again.",
+    "quota_exhausted": "Add credit to your OpenRouter account, then run the "
+    "preflight again.",
+    "rate_limited": "Wait a minute, then run the preflight again.",
+    "model_unavailable": "Check the model id on OpenRouter, or choose another "
+    "model with --model.",
+    "model_text_only": "This model cannot read images. Choose another model with "
+    "--model.",
+    "data_policy_refused": "Allow this model in your OpenRouter privacy settings, "
+    "or choose another model with --model.",
+}
+_STOPPED = {
+    "spending_cap": "Stopped before a request that could pass the spending cap. "
+    "Raise --spend-cap-usd or lower --requests, then run the preflight again.",
+    "unknown_charge": "Stopped because OpenRouter did not report what a request "
+    "cost. Check the charge in your OpenRouter activity.",
+    "consecutive_failures": "Stopped after five failures in a row.",
+    "interrupted": "Stopped because the run was interrupted.",
 }
 
 
@@ -271,7 +295,14 @@ def load_population(database: Path, artifacts: Path, limit: int) -> Population:
             "your install was built from, or copy the database again with the "
             "app stopped."
         ) from error
-    store = CoverArtifactStore(artifacts, create=False)
+    try:
+        store = CoverArtifactStore(artifacts, create=False)
+    except Exception as error:
+        reader.close()
+        raise SmokeRefused(
+            f"{artifacts} is not a copy of /data/artifacts. Copy it again with the "
+            "app stopped."
+        ) from error
     items: list[Item] = []
     unprepared = 0
     try:
@@ -293,7 +324,7 @@ def load_population(database: Path, artifacts: Path, limit: int) -> Population:
 
             try:
                 packet = prepare_cover_packet(document, read_preview)
-            except (OSError, ValueError):
+            except (MetadataReportError, OSError, ValueError):
                 unprepared += 1
                 continue
             items.append(
@@ -369,10 +400,14 @@ class ChargeTransport(httpx.BaseTransport):
                     break
         finally:
             response.close()
-        # OpenRouter charges only a completed request; a refusal costs nothing.
-        self.charge = (
-            _charge(bytes(body)) if response.status_code == 200 else Decimal(0)
-        )
+        # A refusal before generation costs nothing; any other failure may
+        # have been billed, so its charge is unknown and stops the run.
+        if response.status_code == 200:
+            self.charge = _charge(bytes(body))
+        elif response.status_code in _FREE_REFUSALS:
+            self.charge = Decimal(0)
+        else:
+            self.charge = None
         headers = response.headers.copy()
         for name in ("content-encoding", "content-length", "transfer-encoding"):
             headers.pop(name, None)
@@ -434,7 +469,10 @@ def build_plan(
     try:
         OpenRouterTaskSelection(engine="openrouter", model=model)
     except ValueError as error:
-        raise SmokeRefused(f"{model!r} is not an OpenRouter model id.") from error
+        raise SmokeRefused(
+            f"{model!r} is not an OpenRouter model id. Copy the id from the "
+            "model's OpenRouter page, such as vendor/model-name."
+        ) from error
     if key is None:
         raise SmokeRefused(
             "No OpenRouter key is saved in this copy. Add one in Settings, then "
@@ -449,7 +487,8 @@ def build_plan(
         status = client.probe()
     except OpenRouterReviewerError as error:
         raise SmokeRefused(
-            f"OpenRouter refused the model check ({error.code}). Nothing was sent."
+            f"OpenRouter refused the model check ({error.code}). Nothing was sent. "
+            + _REFUSAL_REMEDIES.get(error.code, "Try the preflight again later.")
         ) from error
     finally:
         client.close()
@@ -460,7 +499,15 @@ def build_plan(
 
 
 def _money(value: Decimal) -> str:
-    return f"${value.quantize(Decimal('0.0001')):,}"
+    """Dollars and cents, with up to four places for amounts under a cent."""
+    if value != 0 and abs(value) < Decimal("0.01"):
+        text = f"{value.quantize(Decimal('0.0001')):f}".rstrip("0")
+        return "$" + (text if not text.endswith(".") else text + "00")
+    return f"${value.quantize(Decimal('0.01')):,}"
+
+
+def _price(value: Decimal) -> str:
+    return "$" + f"{value.normalize():f}" if value else "$0"
 
 
 def print_plan(plan: Plan, run_command: str, out: TextIO) -> None:
@@ -474,21 +521,23 @@ def print_plan(plan: Plan, run_command: str, out: TextIO) -> None:
     lines = [
         f"Model: {plan.model} ({whose})",
         "Prices: "
-        f"{_money(plan.prices.prompt * million)} per million prompt tokens, "
-        f"{_money(plan.prices.completion * million)} per million completion tokens, "
-        f"{_money(plan.prices.image)} per image, {_money(plan.prices.request)} "
-        "per request",
-        f"Requests: {len(population.items)}, with {images} covers "
-        f"({population.current_items} works in the library; "
-        f"{population.unprepared} skipped because no cover could be prepared)",
-        f"Most one request can cost: {_money(max(ceilings))}",
-        f"All requests at that most: {_money(sum(ceilings, Decimal(0)))}",
+        f"{_price(plan.prices.prompt * million)} per million prompt tokens, "
+        f"{_price(plan.prices.completion * million)} per million completion "
+        f"tokens, {_price(plan.prices.image)} per image, "
+        f"{_price(plan.prices.request)} per request",
+        f"Requests: {len(population.items):,}, with {images:,} covers "
+        f"({population.current_items:,} works in the library; "
+        f"{population.unprepared:,} skipped because no cover could be prepared)",
+        f"Worst case per request: {_money(max(ceilings))}",
+        f"Worst case for all {len(population.items):,} requests: "
+        f"{_money(sum(ceilings, Decimal(0)))}",
         f"Spending cap: {_money(plan.cap)}. The run stops before any request "
         "that could pass it.",
-        f"Instruction: {REVISED_CONTRACT.instruction_sha256}",
+        f"Instruction digest: {REVISED_CONTRACT.instruction_sha256}",
         f"Confirmation code: {plan.code}",
         "",
-        "Nothing has been sent to the model. To run it:",
+        "Nothing has been sent to the model. To run it, replace NEW_FOLDER "
+        "with a folder that does not exist yet:",
         f"  {run_command}",
     ]
     out.write("\n".join(lines) + "\n")
@@ -540,19 +589,18 @@ def _source_head() -> str | None:
     return head if len(head) == 40 else None
 
 
-@dataclass
+@dataclass(frozen=True)
 class Attempt:
-    ordinal: int
     item: Item
-    status: str  # "valid" | "failed" | "not_sent"
+    status: str  # "valid" | "failed"
     failure: str | None
-    charge: Decimal | None
+    charge: Decimal | None  # None: sent, but its charge is unknown
+    posted: bool
     report: dict[str, Any] | None
 
 
-def _observe(
-    plan: Plan, item: Item, key: str, transport: TransportFactory
-) -> tuple[str, str | None, Decimal | None, bool, dict[str, Any] | None]:
+def _observe(plan: Plan, item: Item, key: str, transport: TransportFactory) -> Attempt:
+    """Send one request; Ctrl-C is recorded with whatever was already paid."""
     recorder = ChargeTransport(transport(), paid=True)
     client = OpenRouterReviewer(key, plan.model, transport=recorder)
     report: dict[str, Any] | None = None
@@ -574,11 +622,18 @@ def _observe(
         failure = "output_rejected"
     except httpx.HTTPError:
         failure = "transport"
+    except KeyboardInterrupt:
+        failure = "interrupted"
     finally:
         client.close()
-    status = "valid" if report is not None else "failed"
-    charge = recorder.charge if recorder.posted else Decimal(0)
-    return status, failure, charge, recorder.posted, report
+    return Attempt(
+        item,
+        "valid" if report is not None else "failed",
+        failure,
+        recorder.charge if recorder.posted else Decimal(0),
+        recorder.posted,
+        report,
+    )
 
 
 def run_smoke(
@@ -604,28 +659,31 @@ def run_smoke(
             if spent + plan.ceiling(item) > plan.cap:
                 stopped = "spending_cap"
                 break
-            status, failure, charge, posted, report = _observe(
-                plan, item, key, transport
-            )
-            attempt = Attempt(ordinal, item, status, failure, charge, report)
+            attempt = _observe(plan, item, key, transport)
             attempts.append(attempt)
             _save_json(
                 requests_folder / f"{ordinal:04d}.json",
                 {
-                    "charge_usd": None if charge is None else str(charge),
-                    "failure": failure,
+                    "charge_usd": None
+                    if attempt.charge is None
+                    else str(attempt.charge),
+                    "failure": attempt.failure,
                     "ordinal": ordinal,
-                    "paid_request_sent": posted,
-                    "report": report,
+                    "paid_request_sent": attempt.posted,
+                    "report": attempt.report,
                     "report_id": item.report_id,
-                    "status": status,
+                    "status": attempt.status,
                 },
             )
-            if charge is None:
+            if attempt.charge is not None:
+                spent += attempt.charge
+            if attempt.failure == "interrupted":
+                stopped = "interrupted"
+                break
+            if attempt.charge is None:
                 stopped = "unknown_charge"
                 break
-            spent += charge
-            consecutive = consecutive + 1 if status == "failed" else 0
+            consecutive = consecutive + 1 if attempt.status == "failed" else 0
             if consecutive >= CONSECUTIVE_FAILURE_LIMIT:
                 stopped = "consecutive_failures"
                 break
@@ -643,7 +701,9 @@ def summarise(
 ) -> dict[str, Any]:
     valid = [attempt for attempt in attempts if attempt.report is not None]
     failures = Counter(
-        attempt.failure for attempt in attempts if attempt.failure is not None
+        attempt.failure
+        for attempt in attempts
+        if attempt.failure not in (None, "interrupted")
     )
     counts: dict[str, Counter[str]] = {name: Counter() for name in REVISED_VALUES}
     covers = 0
@@ -653,6 +713,7 @@ def summarise(
             covers += 1
             for name in REVISED_VALUES:
                 counts[name][row[name]] += 1
+    unknown = sum(attempt.charge is None for attempt in attempts)
     selected = len(plan.population.items)
     if stopped is None and len(attempts) == selected and not failures:
         status = "passed"
@@ -679,6 +740,7 @@ def summarise(
         "status": status,
         "stopped": stopped,
         "taxonomy_reference": REVISED_CONTRACT.taxonomy_reference,
+        "unknown_charges": unknown,
         "value_counts": {
             name: dict(sorted(counts[name].items())) for name in REVISED_VALUES
         },
@@ -810,8 +872,9 @@ _SHEET_STYLE = """
 @media (prefers-color-scheme:dark){:root{--bg:#171614;--fg:#ece8e1;
 --muted:#a8a197;--line:#3a3732;--card:#211f1c;--accent:#8db7e0;--accent-fg:#10202f}}
 *{box-sizing:border-box}
+html{scroll-padding-top:8rem}
 body{margin:0;background:var(--bg);color:var(--fg);
-font:16px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+font:100%/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
 header{position:sticky;top:0;z-index:1;background:var(--bg);
 border-bottom:1px solid var(--line);padding:12px 16px;display:flex;flex-wrap:wrap;
 gap:8px 16px;align-items:center;justify-content:space-between}
@@ -820,20 +883,23 @@ header p{margin:0;color:var(--muted);flex-basis:100%}
 .status{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
 button{font:inherit;padding:8px 14px;border-radius:6px;border:1px solid var(--accent);
 background:var(--accent);color:var(--accent-fg);cursor:pointer}
+#next{background:transparent;color:var(--accent)}
 button:focus-visible,input:focus-visible+span{outline:3px solid var(--accent);
 outline-offset:2px}
 main{max-width:1100px;margin:0 auto;padding:16px;display:grid;gap:16px}
 article{background:var(--card);border:1px solid var(--line);border-radius:8px;
-padding:16px;display:grid;grid-template-columns:minmax(120px,240px) 1fr;gap:16px}
-@media (max-width:640px){article{grid-template-columns:1fr}
-figure{max-width:240px}}
+padding:16px;display:grid;grid-template-columns:minmax(120px,320px) 1fr;gap:16px}
 figure{margin:0}
-figure img{display:block;max-width:100%;height:auto;border:1px solid var(--line)}
+figure img{display:block;width:320px;max-width:100%;height:auto;
+border:1px solid var(--line)}
 figcaption{color:var(--muted);margin-top:4px}
 fieldset{border:0;margin:0 0 12px;padding:0}
 legend{font-weight:600;margin-bottom:4px}
 label{display:inline-flex;align-items:center;gap:6px;margin:2px 14px 2px 0;
 min-height:32px}
+@media (max-width:640px){article{grid-template-columns:1fr}label{min-height:44px}}
+@media (max-width:640px),(max-height:600px){header{position:static}
+html{scroll-padding-top:0}}
 """
 
 _SHEET_SCRIPT = """
@@ -849,10 +915,22 @@ function done() {
   return COVERS.filter(c => QUESTIONS.every(q => labels[c.cover] &&
     labels[c.cover][q])).length;
 }
+function complete(c) {
+  return QUESTIONS.every(q => labels[c.cover] && labels[c.cover][q]);
+}
 function show() {
   document.getElementById("progress").textContent =
     done() + " of " + total + " labelled";
 }
+document.getElementById("next").addEventListener("click", () => {
+  const index = COVERS.findIndex(c => !complete(c));
+  if (index < 0) return;
+  const article = document.getElementById("cover-" + (index + 1));
+  const open = Array.from(article.querySelectorAll("fieldset")).find(
+    set => !set.querySelector("input:checked"));
+  article.scrollIntoView();
+  (open || article).querySelector("input").focus();
+});
 document.querySelectorAll("input[type=radio]").forEach(input => {
   const saved = labels[input.dataset.cover];
   if (saved && saved[input.dataset.question] === input.value) input.checked = true;
@@ -860,6 +938,7 @@ document.querySelectorAll("input[type=radio]").forEach(input => {
     labels[input.dataset.cover] = labels[input.dataset.cover] || {};
     labels[input.dataset.cover][input.dataset.question] = input.value;
     if (store) { try { store.setItem(key, JSON.stringify(labels)); } catch (e) {} }
+    document.getElementById("saved").textContent = "";
     show();
   });
 });
@@ -896,10 +975,11 @@ def render_sheet(plan_code: str, entries: Sequence[dict[str, object]]) -> str:
             fieldsets.append(
                 f"<fieldset><legend>{html.escape(legend)}</legend>{choices}</fieldset>"
             )
+        image = html.escape(str(entry["image"]), quote=True)
         articles.append(
-            f'<article aria-label="Cover {number}"><figure>'
-            f'<img src="{html.escape(str(entry["image"]), quote=True)}" '
-            f'alt="Cover {number}" loading="lazy">'
+            f'<article id="cover-{number}"><figure>'
+            f'<a href="{image}" target="_blank">'
+            f'<img src="{image}" alt="Cover {number}" loading="lazy"></a>'
             f"<figcaption>Cover {number}</figcaption></figure>"
             f"<div>{''.join(fieldsets)}</div></article>"
         )
@@ -915,6 +995,7 @@ def render_sheet(plan_code: str, entries: Sequence[dict[str, object]]) -> str:
         f"<title>Label covers</title><style>{_SHEET_STYLE}</style></head><body>"
         '<header><h1>Label covers</h1><div class="status">'
         '<span id="progress" aria-live="polite"></span>'
+        '<button type="button" id="next">Next unanswered</button>'
         '<button type="button" id="save">Save labels</button>'
         '<span id="saved" aria-live="polite"></span></div>'
         "<p>Answer from the image alone. Your answers save in this browser as you "
@@ -933,20 +1014,59 @@ def _read_json_file(path: Path, maximum: int) -> Any:
             raise ValueError
         return json.loads(path.read_bytes(), object_pairs_hook=unique_json_object)
     except (OSError, ValueError, UnicodeError) as error:
-        raise SmokeRefused(f"{path} is not a readable JSON file.") from error
+        raise SmokeRefused(
+            f"{path} could not be read. Check the path, and use the file the "
+            "labelling sheet saved."
+        ) from error
+
+
+_EDITED_LABELS = (
+    "The labels file has been changed since the sheet saved it. Save the labels "
+    "again from the sheet."
+)
+
+
+def _valid_sheet(sheet: object) -> bool:
+    return (
+        type(sheet) is dict
+        and type(sheet.get("plan_code")) is str
+        and type(sheet.get("covers")) is list
+        and all(
+            type(entry) is dict
+            and type(entry.get("cover")) is str
+            and entry.get("stratum") in ("marked", "control")
+            and type(entry.get("model")) is dict
+            and all(
+                entry["model"].get(name) in REVISED_VALUES[name]
+                for name in RARE_ORDINARY
+            )
+            for entry in sheet["covers"]
+        )
+    )
 
 
 def score(run: Path, labels_path: Path) -> dict[str, Any]:
     sheet = _read_json_file(run / "labelling" / "sheet.json", 4_194_304)
+    if not _valid_sheet(sheet):
+        raise SmokeRefused(
+            f"{run} is not a smoke run folder with a labelling sheet. Pass the "
+            "folder given to --output."
+        )
     labels = _read_json_file(labels_path, 4_194_304)
     if (
         type(labels) is not dict
         or labels.get("schema_version") != LABELS_SCHEMA
         or type(labels.get("labels")) is not list
     ):
-        raise SmokeRefused(f"{labels_path} is not a saved cover labels file.")
+        raise SmokeRefused(
+            f"{labels_path} is not a labels file. Use the cover-labels.json that "
+            "Save labels downloaded."
+        )
     if labels.get("plan_code") != sheet["plan_code"]:
-        raise SmokeRefused("These labels belong to a different run.")
+        raise SmokeRefused(
+            "These labels belong to a different run. Pass the run folder whose "
+            "sheet you labelled."
+        )
     covers = {entry["cover"]: entry for entry in sheet["covers"]}
     tables: dict[str, dict[str, Counter[tuple[str, str]]]] = {
         name: {"marked": Counter(), "control": Counter()} for name in RARE_ORDINARY
@@ -954,10 +1074,17 @@ def score(run: Path, labels_path: Path) -> dict[str, Any]:
     labelled = 0
     seen: set[str] = set()
     for row in labels["labels"]:
-        if type(row) is not dict or row.get("cover") not in covers:
-            raise SmokeRefused("The labels name a cover that is not in this run.")
+        if (
+            type(row) is not dict
+            or type(row.get("cover")) is not str
+            or row["cover"] not in covers
+        ):
+            raise SmokeRefused(
+                "The labels name a cover that is not in this run. Pass the run "
+                "folder whose sheet you labelled."
+            )
         if row["cover"] in seen or set(row) - {"cover", *RARE_ORDINARY}:
-            raise SmokeRefused("The labels file is not one this sheet saved.")
+            raise SmokeRefused(_EDITED_LABELS)
         seen.add(row["cover"])
         entry = covers[row["cover"]]
         answered = False
@@ -966,7 +1093,7 @@ def score(run: Path, labels_path: Path) -> dict[str, Any]:
             if owner is None:
                 continue
             if owner not in REVISED_VALUES[name]:
-                raise SmokeRefused("The labels file is not one this sheet saved.")
+                raise SmokeRefused(_EDITED_LABELS)
             tables[name][entry["stratum"]][(owner, entry["model"][name])] += 1
             answered = True
         labelled += answered
@@ -1048,18 +1175,24 @@ def main(
         "failed": "Smoke failed",
         "incomplete": "Smoke incomplete",
     }[result["status"]]
+    spend = f"Spent {_money(spent)} of {_money(cap)}."
+    if result["unknown_charges"]:
+        spend = (
+            f"Spent at least {_money(spent)} of {_money(cap)}; "
+            f"{result['unknown_charges']} request's charge is unknown."
+        )
     out.write(
         f"{verdict}: {result['reports_valid']} of {result['requests_selected']} "
-        f"reports valid. Spent {_money(spent)} of {_money(cap)}.\n"
+        f"reports valid. {spend}\n"
     )
     if result["failures"]:
         out.write(
             "Failures: "
-            + ", ".join(f"{code} {count}" for code, count in result["failures"].items())
-            + "\n"
+            + ", ".join(f"{count} {code}" for code, count in result["failures"].items())
+            + ". The guide says what each means.\n"
         )
     if result["stopped"] is not None:
-        out.write(f"Stopped early: {result['stopped'].replace('_', ' ')}.\n")
+        out.write(_STOPPED[result["stopped"]] + "\n")
     if (arguments.output / "labelling" / "index.html").exists():
         out.write(f"Labelling sheet: {arguments.output / 'labelling' / 'index.html'}\n")
     return 0 if result["status"] == "passed" else 2
