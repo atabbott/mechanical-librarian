@@ -10,6 +10,15 @@ existing `/data` volume must be rebuilt; [upgrades](docs/operations/upgrades.md)
 says how. Sections marked "in progress" are still open. The numbers in
 brackets are GitHub issues.
 
+## 0.37.0 — Provider economy (in progress)
+
+- Mechanical Librarian keeps each source's answers and reuses them when it asks
+  the same question again, so preparing a book again sends far fewer requests.
+  A failed lookup keeps nothing and is asked again, and the weekly search for
+  an unmatched audiobook always asks live. The answers are kept in
+  `/data/private/provider-responses.sqlite`; losing it only means asking again
+  (#1064).
+
 ## 0.36.1 — Persistence health (in progress)
 
 - Stopping writes for a library, or granting them again for a changed set of

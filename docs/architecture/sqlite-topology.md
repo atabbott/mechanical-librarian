@@ -1,8 +1,8 @@
 # SQLite topology
 
-Mechanical Librarian keeps its state in four SQLite databases under the `/data`
+Mechanical Librarian keeps its state in five SQLite databases under the `/data`
 volume. Each database has one owner, its own connections and its own exact
-schema. The application database holds all review state; the other three hold
+schema. The application database holds all review state; the other four hold
 state that must not queue behind it or that can be rebuilt.
 
 | Database | Path | Holds | If it is lost |
@@ -10,6 +10,7 @@ state that must not queue behind it or that can be rebuilt.
 | Application | `/data/application.sqlite3` | Reports, proposals, review cases, decisions, policy, cover and description work, guarded field effects, preparation work, controls, reviewer access and (in store mode) owner settings and their secrets | Restore a verified database and artifact-store pair, or start clean and regenerate reports |
 | Session | `/data/private/review-sessions.sqlite` | Owner session token digests and the failed-login throttle | The owner signs in again |
 | Provider recovery | `/data/private/provider-recovery.sqlite` | Provider retry health, recovery jobs and their append-only events | A fresh empty store is created on start; pending recovery jobs, retry backoff and recovery history are lost |
+| Provider responses | `/data/private/provider-responses.sqlite` | Provider answers kept for reuse | A fresh empty store is created on start; providers are asked again |
 | Catalogue | `/data/catalogue.sqlite3` | The current bounded Audiobookshelf catalogue generation | A refresh rebuilds it |
 
 Cover originals and previews live in the artifact store at `/data/artifacts`,
@@ -29,16 +30,17 @@ tables stay separate is recorded in
 - **Absent or exact.** A store accepts only a missing file, which it creates
   with the exact schema, or its exact current schema. An earlier schema, an
   extra object, altered SQL or a failed integrity check refuses before any
-  mutation. Nothing is migrated, imported or repaired
+  mutation; the provider-response store checks each row's integrity when it
+  reads it instead. Nothing is migrated, imported or repaired
   ([ADR-0013](decisions/0013-pre-release-clean-schema.md)). What open-time
   admission checks is stated once in
   [Schema admission](security.md#schema-admission); recovery from a refusal
   is a clean rebuild, described in [Upgrades](../operations/upgrades.md).
-- **Owner-only files.** The application, session and catalogue databases are
-  created `0600` and must be owned by the runtime user. The application and
-  catalogue databases refuse a parent directory other users can access. The
-  session and provider-recovery databases live in `/data/private`, which must
-  be a private directory.
+- **Owner-only files.** The application, session, provider-response and
+  catalogue databases are created `0600` and must be owned by the runtime
+  user. The application and catalogue databases refuse a parent directory
+  other users can access. The session, provider-recovery and provider-response
+  databases live in `/data/private`, which must be a private directory.
 - **Serialised writes.** Every connection has its own serialisation lock, and
   every write starts with `BEGIN IMMEDIATE`, so a writer takes SQLite's write
   lock up front instead of failing part-way through. The application database
@@ -50,7 +52,9 @@ tables stay separate is recorded in
   Audiobookshelf call never holds a write lock.
 - **Never edit rows.** There is no repair, purge, selective restore or
   pruning command. Editing rows, pointers or schema by hand is refused at the
-  next open or produces state the runtime will not trust.
+  next open or produces state the runtime will not trust. Only the
+  provider-response store removes rows itself: the oldest answers past its
+  ceiling, a row that fails its check, and an answer a re-search replaces.
 
 ## Application database
 
@@ -358,8 +362,8 @@ they were validated from; the limits are in
 
 ### Other stores
 
-The session, provider-recovery and catalogue databases each have their own
-connection and lock and never wait on the application database. Their
+The session, provider-recovery, provider-response and catalogue databases each
+have their own connection and lock and never wait on the application database. Their
 admission is independent; a recovery call that enters the application
 repository uses the application coordinator.
 
@@ -367,8 +371,8 @@ repository uses the application coordinator.
 
 ### Journal and sync
 
-Application and session databases use a rollback journal (`DELETE` mode) with
-`synchronous=FULL`. A committed transaction is on disk before commit returns.
+Application, session and provider-response databases use a rollback journal
+(`DELETE` mode) with `synchronous=FULL`. A committed transaction is on disk before commit returns.
 The catalogue uses WAL. No other store uses WAL, and the application opener
 refuses `-wal` and `-shm` files.
 
@@ -446,6 +450,30 @@ claim's rollback snapshot is kept only in process; durable history is the
 source of truth after restart. Maintainer commands that only read it open it
 read-only. How recovery runs is in
 [Provider recovery](../operations/provider-recovery.md).
+
+## Provider-response database
+
+`/data/private/provider-responses.sqlite` holds one `STRICT`, `WITHOUT ROWID`
+table, `provider_responses`, keyed by adapter kind and the SHA-256 of a
+request's method, URL, sorted query, body and adapter revision
+([ADR-0099](decisions/0099-reuse-stored-provider-answers.md)). Each row is one
+success body a clean observation accepted, compressed, with its SHA-256,
+length and fetch time in microseconds; no request text, header or credential.
+
+- Open checks the file, header and exact schema but runs no integrity check,
+  which would read every payload. A read inflates a row within its stated
+  length and compares its digest; a row that fails is deleted and is a miss.
+- A clean observation's answers are written in one `BEGIN IMMEDIATE`
+  transaction that replaces any answer held for the same request, then removes
+  the answers fetched longest ago until the stored bytes are under 2 GiB. A
+  covering index on fetch time and size serves that without reading payloads.
+  A hit writes nothing.
+- The busy timeout is 1,000 ms. A store that cannot be opened or used leaves
+  every request live, with one value-free event; it never stops startup or a
+  preparation. A refused file is not changed.
+
+Several processes may share it. Two Settings generations, or the server and
+a recovery command, can hold it at once.
 
 ## Catalogue database
 

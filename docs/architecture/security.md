@@ -200,11 +200,10 @@ incomplete headers after 10 seconds.
 
 ## Credentials and egress
 
-Secrets are read only in infrastructure while building their named client;
-a disabled provider's stored key builds nothing.
+Secrets are read only in infrastructure while building their named client.
 Every HTTP client ignores ambient proxy settings, follows no redirect itself,
 verifies certificate and host name on HTTPS, and uses an explicit timeout and
-one connection. No endpoint is arbitrary and nothing is cached.
+one connection. No endpoint is arbitrary.
 
 ### Target (Audiobookshelf)
 
@@ -236,6 +235,10 @@ which enabling does not restore.
   responses. [Dispatch](../reference/configuration.md#dispatch) sends
   audiobooks only to `AUDIOBOOK_DISPATCH_ADAPTERS` and ebooks only to
   `EBOOK_DISPATCH_ADAPTERS`.
+- Clean observations' success bodies are kept owner-only for reuse, never
+  request text or credentials; each is verified when read, not at open, and
+  decoded and bounded as live
+  ([ADR-0099](decisions/0099-reuse-stored-provider-answers.md)).
 - Retained refused WORK answers serve only Book matching, never a live
   reader, support bundle or diagnostic, and fetch no cover
   ([refused work answers](../operations/metadata-report.md#refused-work-answers)).
@@ -313,9 +316,8 @@ Allowed cover origins:
 - Audiobookshelf's raw cover route, with no credential, cookie or referrer.
 - Hardcover, only on `assets.hardcover.app`, with no redirect.
 - Inventaire, on constructed fixed-origin URLs.
-- Open Library, on constructed fixed-origin URLs, with one closed redirect
-  route: `archive.org`, then an `ia<N>.us.archive.org` datanode, each hop
-  bound to the requested cover id.
+- Open Library, on constructed fixed-origin URLs, with the closed redirect
+  route below.
 - Audible on `m.media-amazon.com`, and iTunes on `is1-ssl` to
   `is5-ssl.mzstatic.com`.
 
@@ -534,8 +536,7 @@ returns a fixed set of visual properties with explicit unknowns and no
 ranking, winner or identity field. The local parser needs exactly one
 observation per admitted candidate and checks every binding. The adjudicator
 makes no model call and recomputes identity from the retained report, under
-the Book matching level the comparison binds. A level change reuses earlier
-observer output (#1355).
+the Book matching level the comparison binds.
 
 Each preview is verified against its report digest and re-encoded into a
 metadata-free single-frame PNG; admission requires byte equality after
@@ -681,8 +682,8 @@ claims with closed provenance and comparison facts, never a credential,
 private path, rejected provider value, response body or arbitrary EPUB text
 ([data privacy](data-privacy.md)). When Audiobookshelf names no author, an
 ebook's own EPUB creators may leave the host as query text: one to four
-distinct package creators with no role or an author role. Through the shared
-ebook plan, every enabled ebook metadata provider receives them: Google Books, Hardcover, Inventaire, iTunes and Open Library.
+distinct package creators with no role or an author role. Every enabled ebook
+provider receives them through the shared plan: Google Books, Hardcover, Inventaire, iTunes and Open Library.
 
 ### Publication
 
