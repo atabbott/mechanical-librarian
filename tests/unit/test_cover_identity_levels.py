@@ -328,6 +328,33 @@ def test_an_exact_record_beside_a_nested_one_is_not_met_at_the_exact_level() -> 
     )
 
 
+def test_an_overlapping_record_beside_an_exact_one_refuses_the_wide_level() -> None:
+    """The overlap veto holds at a configured wide level even when another
+    bound record meets the exact level; the exact level is unchanged."""
+    equal = _real_candidate(_TWO_AUTHORS)
+    overlapping = _candidate(
+        creators=("Ada Author", "Cy Author"), identity="hardcover-edition-0000000012"
+    )
+    report = _report(
+        cast("Any", equal), overlapping, target=_target(authors=_TWO_AUTHORS)
+    )
+    assert _classify_sources(report, (_listed_source(),), _IDENTIFIER) == (
+        "unknown",
+        _MET_EXACT,
+        [],
+    )
+    assert _classify_sources(report, (_listed_source(),), _EXACT) == (
+        "title_creator_work_match",
+        _MET_EXACT,
+        [],
+    )
+    assert _classify_sources(report, (_listed_source(),), _WIDE) == (
+        "unknown",
+        ["work_identity_level_refused"],
+        [],
+    )
+
+
 def test_the_level_rules_rotate_the_classifier_reference() -> None:
     assert {
         "listed-edition-work-identity-binding:level-outcome",

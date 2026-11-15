@@ -449,7 +449,9 @@ chosen automatically until #1418.
   where `title_and_creator` is configured. A record met at the exact level
   beside one the exact level refuses is met only at `title_and_creator`, so a
   configured exact level keeps the identifier outcome. A cover bound to an
-  overlapping record is refused at every level.
+  overlapping record is refused at `title_and_creator`, and where
+  `title_and_creator` is configured that refusal stands even beside another
+  bound record met at the exact level.
 - **Unchanged.** The `title_and_creator` predicate still asks for one shared
   creator, and sidecar belonging (ADR-0061) does not change. At
   `title_and_creator` the authors field may offer a subset record's shorter

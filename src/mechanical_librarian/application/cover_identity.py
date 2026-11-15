@@ -666,7 +666,9 @@ def _level_outcome(
     records are one work and meet the predicate, so they say what a
     configured level would admit: met at the exact level, else the wide
     level's verdict (met, ambiguous or refused). At the configured wide level
-    an ambiguous set is recorded as ambiguous. When the configured level is
+    a wide verdict that is not met (ambiguous, or refused by a contradiction
+    only the wide level reads) is recorded as it is, even beside a record met
+    at the exact level. When the configured level is
     at or wider than the level met, the outcome is ``title_creator_work_match``
     and a creator disagreement the initials fold resolves is no longer a
     reason; otherwise the identifier outcome and its reasons stand, beside
@@ -702,9 +704,12 @@ def _level_outcome(
             exact_refused=exact[0] == "refused",
         )
     )
+    # At a configured wide level the wide verdict stands whenever it is not
+    # met: an ambiguous set, or a contradiction only the wide level reads (an
+    # overlapping author list), refuses even beside a record met exactly.
     state, met, folded = (
         wide
-        if level is WorkIdentityLevel.TITLE_AND_CREATOR and wide[0] == "ambiguous"
+        if level is WorkIdentityLevel.TITLE_AND_CREATOR and wide[0] != "met"
         else exact
         if exact[0] == "met"
         else wide
