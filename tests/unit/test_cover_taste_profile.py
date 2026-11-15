@@ -8,6 +8,7 @@ from mechanical_librarian.domain.cover_taste import (
     MAX_TASTE_PROFILE_CODE_POINTS,
     MAX_TASTE_PROFILE_WORDS,
     MAX_TASTE_RULE_CODE_POINTS,
+    MAX_TASTE_RULE_NUMBER,
     MAX_TASTE_RULES,
     TASTE_SECTIONS,
     CoverTasteError,
@@ -165,39 +166,60 @@ def test_digest_is_deterministic_and_stored_rules_round_trip() -> None:
     assert changed.digest != profile.digest
 
 
+def _stored(number: int, section: str, text: str, provenance: str = "model"):
+    return {
+        "number": number,
+        "provenance": provenance,
+        "section": section,
+        "text": text,
+    }
+
+
+@pytest.mark.parametrize("provenance", ["model", "edited", "owner"])
+def test_each_provenance_round_trips(provenance: str) -> None:
+    rules = [_stored(1, "drawn_to", "Bold art.", provenance)]
+    profile = TasteProfile.from_rules(rules)
+    assert profile.rules[0].provenance == provenance
+    assert profile.rules_data() == rules
+
+
+def test_stored_numbers_may_have_gaps_within_their_bounds() -> None:
+    """An edit keeps its number, Add takes max+1 and Remove leaves a gap (S2)."""
+    rules = [
+        _stored(3, "drawn_to", "Bold art."),
+        _stored(MAX_TASTE_RULE_NUMBER, "drawn_to", "Calm type.", "owner"),
+        _stored(1, "avoid", "Busy type.", "edited"),
+    ]
+    assert [rule.number for rule in TasteProfile.from_rules(rules).rules] == [
+        3,
+        MAX_TASTE_RULE_NUMBER,
+        1,
+    ]
+
+
 @pytest.mark.parametrize(
     "rules",
     [
-        [
-            {
-                "number": 2,
-                "provenance": "model",
-                "section": "drawn_to",
-                "text": "Bold art.",
-            }
-        ],
-        [
-            {
-                "number": 1,
-                "provenance": "owner",
-                "section": "drawn_to",
-                "text": "Bold art.",
-            }
-        ],
+        [_stored(1, "drawn_to", "Bold art.", "builder")],
         [{"number": 1, "provenance": "model", "section": "drawn_to"}],
-        [{"number": 1, "provenance": "model", "section": "style", "text": "Bold art."}],
-        [
-            {"number": 1, "provenance": "model", "section": "avoid", "text": "Busy."},
-            {
-                "number": 2,
-                "provenance": "model",
-                "section": "drawn_to",
-                "text": "Bold.",
-            },
-        ],
+        [_stored(1, "style", "Bold art.")],
+        [_stored(1, "avoid", "Busy."), _stored(2, "drawn_to", "Bold.")],
+        [_stored(1, "drawn_to", "Bold."), _stored(1, "drawn_to", "Calm.")],
+        [_stored(0, "drawn_to", "Bold.")],
+        [_stored(MAX_TASTE_RULE_NUMBER + 1, "drawn_to", "Bold.")],
+        [{**_stored(1, "drawn_to", "Bold."), "number": True}],
     ],
-    ids=["gap", "provenance", "missing-text", "section", "section-order"],
+    ids=[
+        "provenance",
+        "missing-text",
+        "section",
+        "section-order",
+        "duplicate-number",
+        "number-0",
+        "number-10000",
+        "number-bool",
+    ],
 )
-def test_stored_rules_a_build_could_not_write_are_refused(rules: object) -> None:
+def test_stored_rules_no_build_or_edit_could_write_are_refused(rules: object) -> None:
     with pytest.raises(CoverTasteError):
         TasteProfile.from_rules(rules)

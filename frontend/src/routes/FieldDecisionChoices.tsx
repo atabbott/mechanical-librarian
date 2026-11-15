@@ -8,7 +8,12 @@ import type { ChoiceContextView, EvidenceView } from '../api/http'
 import { StaleBuildRead } from '../components/StaleBuildRead'
 import type { choiceRadios } from '../choiceGroup'
 import { focusAfterRetry, retryInPlace } from '../focusAfterRetry'
-import { evidenceRoleLabel, observationText, materialReasonLabel } from '../labels'
+import {
+  evidenceRoleLabel,
+  fieldObservationText,
+  observationText,
+  materialReasonLabel,
+} from '../labels'
 import { useReviewContext } from '../router'
 
 import type { ReviewField } from '../fieldDecision'
@@ -32,10 +37,13 @@ export function ChoiceEvidencePanel({
   context,
   evidenceId,
   label,
+  name,
 }: {
   context: ChoiceContextView | undefined
   evidenceId: string
   label: string
+  /** The region's name when it should match the Evidence control that opens it. */
+  name?: string
 }) {
   // A record offered for the book's title and author offers its value; it
   // confirms nothing, so it counts toward no "sources confirm" line (#1355).
@@ -48,7 +56,7 @@ export function ChoiceEvidencePanel({
           .map((row) => row.source),
       ).size
   return (
-    <section className="choice-evidence" id={evidenceId} aria-label={`${label} evidence`}>
+    <section className="choice-evidence" id={evidenceId} aria-label={name ?? `${label} evidence`}>
       {corroboratingSources ? (
         <p>
           {corroboratingSources}{' '}
@@ -156,7 +164,7 @@ export function RecordedFieldObservations({
         <ul className="evidence-values" ref={list}>
           {observations.map((item, index) => (
             <li key={`${item.source}:${item.observation}:${String(index)}`} tabIndex={-1}>
-              <p>{observationText(item)}</p>
+              <p>{fieldObservationText(item, field.destination)}</p>
               <small>
                 {item.source} · {evidenceRoleLabel(item.role)}
               </small>
@@ -325,7 +333,12 @@ export function MetadataChoice({
         </button>
       ) : null}
       {expanded ? (
-        <ChoiceEvidencePanel context={context} evidenceId={evidenceId} label={label} />
+        <ChoiceEvidencePanel
+          context={context}
+          evidenceId={evidenceId}
+          label={label}
+          name={evidenceLabel}
+        />
       ) : null}
     </article>
   )

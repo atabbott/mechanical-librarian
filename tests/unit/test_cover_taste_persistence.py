@@ -19,12 +19,16 @@ import pytest
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.adapters.persistence.cover_taste import (
     _ELIGIBLE,
+    _INHERITED,
     SQLiteCoverTasteRepository,
+    validate_cover_taste_versions,
 )
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
     open_repository,
 )
+from mechanical_librarian.adapters.persistence.schema import _COVER_TASTE_TABLES
+from mechanical_librarian.application.contained_reviewer_contract import canonical_json
 from mechanical_librarian.application.cover_taste_build import CoverTasteBuildService
 from mechanical_librarian.application.cover_taste_contract import (
     TasteBuildReply,
@@ -40,7 +44,12 @@ from mechanical_librarian.application.reviewer_access import (
 from mechanical_librarian.domain.cover_automatic_decision import (
     SCHEMA_VERSION as COVER_AUTOMATIC_DECISION_SCHEMA,
 )
-from mechanical_librarian.domain.cover_taste import TasteProfile
+from mechanical_librarian.domain.cover_taste import (
+    COVER_TASTE_PROFILE_SCHEMA,
+    TasteEditError,
+    TasteProfile,
+    TasteRule,
+)
 from mechanical_librarian.domain.human_decision import COVER_SELECTION_AUTHORITY_SCHEMA
 from tests.support.cover_taste import canonical, stored_preview
 
@@ -263,7 +272,7 @@ def test_versions_are_append_only(repository) -> None:
     build = store.pending()
     assert build is not None
     assert store.claim(build, NOW, "example/vision", LIMIT) is None
-    assert store.succeed(build, NOW, PROFILE, RECORD) == 1
+    assert store.succeed(build, NOW, PROFILE, RECORD, failure="invalid_output") == 1
     connection = repository._connection
     with pytest.raises(sqlite3.DatabaseError, match="append-only"):
         connection.execute("UPDATE cover_taste_profile_versions SET created_at=0")
@@ -291,7 +300,7 @@ def test_one_build_in_flight_and_at_most_four_scheduled_a_day(repository) -> Non
         assert store.claim(build, NOW, "example/vision", LIMIT) is None
         store.schedule(NOW, True, LIMIT)
         assert len(_state(repository)) == round_ + 1
-        store.succeed(build, NOW, PROFILE, RECORD)
+        store.succeed(build, NOW, PROFILE, RECORD, failure="invalid_output")
         seed.many(10, start=25 + 10 * round_)
         store.schedule(NOW, True, LIMIT)
         if round_ >= 3:
@@ -310,7 +319,7 @@ def test_rebuild_waits_for_ten_new_decisions(repository) -> None:
     store.schedule(NOW, True, LIMIT)
     build = store.pending()
     assert build is not None and store.claim(build, NOW, "m/x", LIMIT) is None
-    store.succeed(build, NOW, PROFILE, RECORD)
+    store.succeed(build, NOW, PROFILE, RECORD, failure="invalid_output")
     seed.many(9, start=25)
     store.schedule(NOW, True, LIMIT)
     assert store.pending() is None
@@ -335,7 +344,7 @@ def test_an_unconfigured_failure_does_not_consume_the_cadence_watermark(
     second = store.pending()
     assert second is not None and second != first
     assert store.claim(second, NOW, "m/x", LIMIT) is None
-    store.succeed(second, NOW, PROFILE, RECORD)
+    store.succeed(second, NOW, PROFILE, RECORD, failure="invalid_output")
     seed.many(10, start=25)
     store.schedule(NOW, True, LIMIT)
     third = store.pending()
@@ -416,7 +425,9 @@ def test_restart_ends_a_running_build_interrupted(repository) -> None:
     assert _state(repository) == [("cadence", "failed", "interrupted")]
     assert store.pending() is None
     # A late answer for the interrupted build writes nothing.
-    assert store.succeed(build, NOW + 6, PROFILE, RECORD) is None
+    assert (
+        store.succeed(build, NOW + 6, PROFILE, RECORD, failure="invalid_output") is None
+    )
     assert store.read()["versions"] == []
 
 
@@ -783,3 +794,436 @@ def test_a_lost_write_after_claim_never_leaves_the_build_running(
     assert repository._connection.execute(
         "SELECT requests,stopped FROM reviewer_task_requests"
     ).fetchall() == [(1, stopped)]
+
+
+def _built_version(repository, rules: dict[str, list[str]] | None = None) -> str:
+    """Schedule, claim and write one build from 25 seeded decisions."""
+    seen = repository._connection.execute(
+        "SELECT count(*) FROM cover_selection_authorities"
+    ).fetchone()[0]
+    _Seed(repository).many(25, start=1000 + seen)
+    store = _store(repository)
+    store.schedule(NOW, True, LIMIT)
+    build = store.pending()
+    assert build is not None and store.claim(build, NOW, "m/x", LIMIT) is None
+    profile = PROFILE if rules is None else _output(**rules)
+    assert isinstance(
+        store.succeed(build, NOW, profile, RECORD, failure="invalid_output"), int
+    )
+    return build
+
+
+def _output(**sections: list[str]) -> TasteProfile:
+    return TasteProfile.from_output(
+        {
+            "sections": {
+                name: sections.get(name, [])
+                for name in ("drawn_to", "avoid", "trade_offs", "keep_or_switch")
+            }
+        }
+    )
+
+
+def _versions(repository) -> list[tuple[int, str | None, dict[str, Any]]]:
+    return [
+        (version, build_id, json.loads(document))
+        for version, build_id, document in repository._connection.execute(
+            "SELECT version,build_id,document FROM cover_taste_profile_versions "
+            "ORDER BY version"
+        )
+    ]
+
+
+def test_an_edit_appends_a_version_inheriting_the_builds_facts(repository) -> None:
+    build = _built_version(repository)
+    store = _store(repository)
+    assert store.edit(1, "edit", 1, None, "Bright art.", NOW + 5) == 2
+    assert store.edit(2, "add", None, "avoid", "Busy type.", NOW + 6) == 3
+    assert store.edit(3, "remove", 1, None, None, NOW + 7) == 4
+    [first, edited, added, removed] = _versions(repository)
+    assert first[1] == build and first[2]["source"] == "build"
+    assert first[2]["built_at"] == NOW and first[2]["left_out"] == 0
+    for version, build_id, document in (edited, added, removed):
+        assert build_id is None
+        assert document["source"] == "edit"
+        assert document["version"] == version
+        assert {key: document[key] for key in _INHERITED} == {
+            key: first[2][key] for key in _INHERITED
+        }
+    assert edited[2]["rules"] == [
+        {
+            "number": 1,
+            "provenance": "edited",
+            "section": "drawn_to",
+            "text": "Bright art.",
+        }
+    ]
+    assert edited[2]["removed"] == ["Bold art."]
+    assert added[2]["rules"][-1] == {
+        "number": 2,
+        "provenance": "owner",
+        "section": "avoid",
+        "text": "Busy type.",
+    }
+    assert removed[2]["rules"] == [added[2]["rules"][-1]]
+    assert removed[2]["removed"] == ["Bright art.", "Bold art."]
+    # The unchanged text writes nothing.
+    assert store.edit(4, "edit", 2, None, "Busy type.", NOW + 8) is None
+    assert len(_versions(repository)) == 4
+    validate_cover_taste_versions(repository._connection)
+    with pytest.raises(sqlite3.DatabaseError, match="append-only"):
+        repository._connection.execute(
+            "UPDATE cover_taste_profile_versions SET version=9"
+        )
+    with pytest.raises(sqlite3.DatabaseError, match="append-only"):
+        repository._connection.execute("DELETE FROM cover_taste_profile_versions")
+    repository._connection.rollback()
+
+
+@pytest.mark.parametrize(
+    ("args", "code"),
+    [
+        ((2, "edit", 1, None, "Bright art."), "stale"),
+        ((1, "edit", 7, None, "Bright art."), "stale"),
+        ((1, "remove", 7, None, None), "stale"),
+        ((2, "edit", 1, None, ""), "rule_empty"),
+    ],
+    ids=["old-version", "missing-number", "remove-missing", "text-before-stale"],
+)
+def test_a_refused_edit_writes_no_version(repository, args, code) -> None:
+    _built_version(repository)
+    version, action, number, section, text = args
+    with pytest.raises(TasteEditError) as raised:
+        _store(repository).edit(version, action, number, section, text, NOW)
+    assert raised.value.code == code
+    assert len(_versions(repository)) == 1
+    assert not repository._connection.in_transaction
+
+
+def test_an_edit_with_no_profile_is_stale(repository) -> None:
+    with pytest.raises(TasteEditError) as raised:
+        _store(repository).edit(1, "add", None, "avoid", "Busy type.", NOW)
+    assert raised.value.code == "stale"
+    assert _versions(repository) == []
+
+
+def test_add_at_40_rules_is_rule_limit(repository) -> None:
+    _built_version(repository, {"drawn_to": [f"Rule {n}." for n in range(40)]})
+    with pytest.raises(TasteEditError) as raised:
+        _store(repository).edit(1, "add", None, "avoid", "Busy type.", NOW)
+    assert raised.value.code == "rule_limit"
+    assert len(_versions(repository)) == 1
+
+
+def test_a_rebuild_keeps_edits_and_leaves_out_repeats(repository) -> None:
+    _built_version(repository, {"drawn_to": ["Bold art."], "avoid": ["Busy type."]})
+    store = _store(repository)
+    store.edit(1, "edit", 1, None, "Bright art.", NOW)
+    store.edit(2, "add", None, "avoid", "Thin type.", NOW)
+    store.edit(3, "remove", 2, None, None, NOW)
+    assert store.kept() == (
+        (
+            TasteRule(1, "drawn_to", "Bright art.", "edited"),
+            TasteRule(3, "avoid", "Thin type.", "owner"),
+        ),
+        ("Busy type.", "Bold art."),
+    )
+    _built_version(
+        repository,
+        {
+            "drawn_to": ["Bold art.", "Calm type."],
+            "avoid": ["busy type", "THIN TYPE.", "Glossy finish."],
+        },
+    )
+    [*_, (version, build_id, document)] = _versions(repository)
+    assert version == 5 and build_id is not None
+    assert [
+        (rule["number"], rule["text"], rule["provenance"]) for rule in document["rules"]
+    ] == [
+        (1, "Bright art.", "edited"),
+        (2, "Calm type.", "model"),
+        (3, "Thin type.", "owner"),
+        (4, "Glossy finish.", "model"),
+    ]
+    assert document["left_out"] == 3
+    assert document["removed"] == ["Busy type.", "Bold art."]
+    validate_cover_taste_versions(repository._connection)
+
+
+def test_an_edit_during_a_build_is_merged_from_another_handle(tmp_path) -> None:
+    """Dry proof c: the merge reads the newest version as `succeed` writes."""
+    path = tmp_path / "edit-during-build.sqlite"
+    builder = open_repository(path)
+    owner = open_repository(path, authority=builder.authority)
+    try:
+        _built_version(builder, {"drawn_to": ["Bold art."]})
+        seed = _Seed(builder)
+        seed.many(10, start=5000)
+        store = builder.cover_taste_store()
+        store.schedule(NOW + DAY, True, LIMIT)
+        build = store.pending()
+        assert build is not None
+        assert store.claim(build, NOW + DAY, "m/x", LIMIT) is None
+        assert (
+            owner.cover_taste_store().edit(
+                1, "add", None, "avoid", "Busy type.", NOW + DAY
+            )
+            == 2
+        )
+        assert (
+            store.succeed(
+                build,
+                NOW + DAY,
+                _output(drawn_to=["Calm type."]),
+                RECORD,
+                failure="invalid_output",
+            )
+            == 3
+        )
+        rules = _versions(builder)[-1][2]["rules"]
+        assert [(rule["text"], rule["provenance"]) for rule in rules] == [
+            ("Calm type.", "model"),
+            ("Busy type.", "owner"),
+        ]
+        # Negative control: an edit naming the pre-build version is stale.
+        with pytest.raises(TasteEditError) as raised:
+            owner.cover_taste_store().edit(2, "edit", 2, None, "Busy art.", NOW + DAY)
+        assert raised.value.code == "stale"
+    finally:
+        owner.close()
+        builder.close()
+
+
+@pytest.mark.parametrize(
+    ("usage", "failure", "stopped"),
+    [(True, "invalid_output", None), (False, "unknown_charge", "unknown_charge")],
+    ids=["usage", "no-usage"],
+)
+def test_a_merge_over_a_bound_fails_the_build_and_keeps_the_version(
+    repository, usage, failure, stopped
+) -> None:
+    _built_version(repository)
+    store = _store(repository)
+    for index in range(20):
+        store.edit(index + 1, "add", None, "avoid", f"Owner rule {index}.", NOW)
+    _Seed(repository).many(10, start=7000)
+    reply = TasteBuildReply(
+        {
+            "sections": {
+                "drawn_to": [f"Model rule {n}." for n in range(21)],
+                "avoid": [],
+                "trade_offs": [],
+                "keep_or_switch": [],
+            }
+        },
+        usage,
+    )
+    _service(repository, _Client(reply), NOW + DAY).wake(NOW + DAY)
+    assert _state(repository)[-1] == ("cadence", "failed", failure)
+    assert len(_versions(repository)) == 21
+    assert repository._connection.execute(
+        "SELECT stopped FROM reviewer_task_requests WHERE day=11"
+    ).fetchall() == [(stopped,)]
+
+
+def test_kept_rules_that_leave_no_budget_schedule_no_cadence_build(
+    repository,
+) -> None:
+    """S9: a build that could add nothing is not requested; Try again still is."""
+    _built_version(repository)
+    store = _store(repository)
+    store.edit(1, "remove", 1, None, None, NOW)
+    for index in range(40):
+        store.edit(index + 2, "add", None, "avoid", f"Owner rule {index}.", NOW)
+    _Seed(repository).many(10, start=8000)
+    assert store.schedule(NOW + DAY, True, LIMIT) is False
+    assert store.pending() is None
+    store.edit(42, "remove", 1, None, None, NOW)
+    assert store.schedule(NOW + DAY, True, LIMIT) is True
+
+
+def test_the_version_table_admits_an_edit_row_only_without_a_build(
+    repository,
+) -> None:
+    build = _built_version(repository)
+    [(_version, _build, document)] = _versions(repository)
+    connection = repository._connection
+    edit = canonical_json({**document, "source": "edit", "version": 2})
+    with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
+        connection.execute(
+            "INSERT INTO cover_taste_profile_versions VALUES(2,?,?,?)",
+            (build, NOW, edit),
+        )
+    build_row = canonical_json({**document, "version": 2})
+    with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
+        connection.execute(
+            "INSERT INTO cover_taste_profile_versions VALUES(2,NULL,?,?)",
+            (NOW, build_row),
+        )
+    v1 = canonical_json(
+        {**document, "schema_version": "cover-taste-profile-v1", "version": 2}
+    )
+    with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
+        connection.execute(
+            "INSERT INTO cover_taste_profile_versions VALUES(2,NULL,?,?)",
+            (NOW, v1),
+        )
+    connection.rollback()
+
+
+def _worst_document(version: int, build_id: str) -> dict[str, object]:
+    """Dry proof b: 40 rules of 8,192 four-byte code points and 100 removed
+    texts of 16,384, under the closed v2 keys."""
+
+    def astral(count: int, start: int) -> str:
+        return "".join(
+            chr(0x20000 + (start * 401 + index) % 42_720) for index in range(count)
+        )
+
+    sizes = [400] * 20 + [10] * 19 + [2]
+    sections = ("drawn_to", "avoid", "trade_offs", "keep_or_switch")
+    return {
+        "build_id": build_id,
+        "built_at": NOW,
+        "input": RECORD,
+        "left_out": 0,
+        "model": "m/x",
+        "removed": [
+            astral(163 if index < 16 else 164, 100 + index) for index in range(100)
+        ],
+        "rules": [
+            {
+                "number": index + 1,
+                "provenance": "owner",
+                "section": sections[index // 10],
+                "text": astral(size, index),
+            }
+            for index, size in enumerate(sizes)
+        ],
+        "schema_version": COVER_TASTE_PROFILE_SCHEMA,
+        "source": "build",
+        "version": version,
+    }
+
+
+def test_the_worst_version_document_fits_and_would_not_at_the_old_cap(
+    repository,
+) -> None:
+    build = _built_version(repository)
+    connection = repository._connection
+    connection.execute("PRAGMA foreign_keys=OFF")
+    connection.execute(
+        "INSERT INTO cover_taste_builds SELECT 'taste_build_' || "
+        "printf('%032x', 1),trigger,NULL,state,failure,model,day+1,"
+        "selection_watermark,requested_at,updated_at FROM cover_taste_builds "
+        "WHERE build_id=?",
+        (build,),
+    )
+    other = "taste_build_" + "%032x" % 1
+    document = canonical_json(_worst_document(2, other))
+    assert 65_536 < len(document.encode()) <= 262_144
+    connection.execute(
+        "INSERT INTO cover_taste_profile_versions VALUES(2,?,?,?)",
+        (other, NOW, document),
+    )
+    validate_cover_taste_versions(connection)
+    # Negative control: the same document breaks the old 65,536-byte cap.
+    old = (
+        _COVER_TASTE_TABLES["cover_taste_profile_versions"]
+        .replace("cover_taste_profile_versions", "old_versions", 1)
+        .replace("262144", "65536")
+    )
+    connection.execute(old)
+    with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
+        connection.execute(
+            "INSERT INTO old_versions VALUES(2,?,?,?)", (other, NOW, document)
+        )
+    connection.rollback()
+
+
+def _rewrite(repository, version: int, change: dict[str, object]) -> None:
+    """Replace one stored document, as only a direct database edit could."""
+    connection = repository._connection
+    rows = connection.execute(
+        "SELECT version,build_id,created_at,document FROM cover_taste_profile_versions"
+    ).fetchall()
+    for name in ("update", "delete"):
+        connection.execute(f"DROP TRIGGER cover_taste_profile_versions_no_{name}")
+    connection.execute("DELETE FROM cover_taste_profile_versions")
+    for number, build_id, created_at, document in rows:
+        value = json.loads(document)
+        if number == version:
+            value = {**value, **change}
+            for key in [key for key, item in change.items() if item is None]:
+                del value[key]
+        connection.execute(
+            "INSERT INTO cover_taste_profile_versions VALUES(?,?,?,?)",
+            (number, build_id, created_at, canonical_json(value)),
+        )
+
+
+@pytest.mark.parametrize(
+    ("version", "change"),
+    [
+        (2, {"model": "other/model"}),
+        (2, {"left_out": 4}),
+        (2, {"built_at": NOW + 1}),
+        (1, {"notes": "x"}),
+        (1, {"removed": [f"Rule {index}." for index in range(101)]}),
+        (1, {"removed": ["Bold art.", "bold art"]}),
+        (1, {"built_at": NOW + 1}),
+        (
+            1,
+            {
+                "rules": [
+                    {
+                        "number": 2,
+                        "provenance": "model",
+                        "section": "drawn_to",
+                        "text": "Bold art.",
+                    }
+                ]
+            },
+        ),
+        (1, {"source": "owner"}),
+    ],
+    ids=[
+        "edit-model-differs",
+        "edit-left-out-differs",
+        "edit-built-at-differs",
+        "extra-key",
+        "removed-over-100",
+        "removed-repeat",
+        "build-built-at",
+        "build-not-numbered-from-1",
+        "source",
+    ],
+)
+def test_validation_refuses_a_version_no_build_or_edit_wrote(
+    repository, version, change
+) -> None:
+    _built_version(repository)
+    _store(repository).edit(1, "edit", 1, None, "Bright art.", NOW)
+    _rewrite(repository, version, change)
+    with pytest.raises(ValueError):
+        validate_cover_taste_versions(repository._connection)
+    repository._connection.rollback()
+
+
+def test_validation_refuses_an_edit_at_version_1(repository) -> None:
+    _built_version(repository)
+    _store(repository).edit(1, "edit", 1, None, "Bright art.", NOW)
+    connection = repository._connection
+    rows = connection.execute(
+        "SELECT created_at,document FROM cover_taste_profile_versions WHERE version=2"
+    ).fetchone()
+    for name in ("update", "delete"):
+        connection.execute(f"DROP TRIGGER cover_taste_profile_versions_no_{name}")
+    connection.execute("DELETE FROM cover_taste_profile_versions")
+    connection.execute(
+        "INSERT INTO cover_taste_profile_versions VALUES(1,NULL,?,?)",
+        (rows[0], canonical_json({**json.loads(rows[1]), "version": 1})),
+    )
+    with pytest.raises(ValueError):
+        validate_cover_taste_versions(connection)
+    connection.rollback()

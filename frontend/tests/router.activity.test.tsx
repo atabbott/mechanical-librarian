@@ -189,7 +189,7 @@ describe('Activity route', () => {
     await user.click(within(asked).getByRole('button', { name: /asked again/u }))
     expect(
       within(asked).getByText(
-        'This choice was made before the book came back for review, so the field asks you again.',
+        'This choice was made before the work came back for review, so the field asks you again.',
       ),
     ).toBeVisible()
     expect(
@@ -2890,6 +2890,76 @@ describe('Activity route', () => {
       }
     },
   )
+
+  it.each([
+    ['hides', 1, 1, false],
+    ['shows', 1, 2, true],
+    ['shows', 2, 1, true],
+  ] as const)('%s the pager on page %i of %i', async (_verb, page, pageCount, shown) => {
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn((search: ActivitySearch) =>
+        Promise.resolve(
+          activity({
+            ledger: {
+              event_type: search.eventType,
+              page,
+              page_count: pageCount,
+              page_size: search.pageSize,
+              query: search.q ?? null,
+              range_days: search.rangeDays,
+              total: pageCount,
+            },
+          }),
+        ),
+      ),
+    }
+    renderRoute(`/activity?page=${String(page)}`, http)
+    await screen.findByRole('heading', { name: 'Activity' })
+    await waitFor(() => expect(http.getActivity).toHaveBeenCalled())
+    // One page needs no page controls; a later page keeps them to go back.
+    expect(await screen.findByText(`of ${String(pageCount)} events`)).toBeVisible()
+    const pager = screen.queryByRole('navigation', { name: 'Activity pages' })
+    if (shown) expect(pager).toBeVisible()
+    else expect(pager).toBeNull()
+  })
+
+  it('hands focus to the page size when a refetch leaves one page and the pager goes', async () => {
+    let pageCount = 2
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn((search: ActivitySearch) =>
+        Promise.resolve(
+          activity({
+            ledger: {
+              event_type: search.eventType,
+              page: 1,
+              page_count: pageCount,
+              page_size: search.pageSize,
+              query: search.q ?? null,
+              range_days: search.rangeDays,
+              total: pageCount,
+            },
+          }),
+        ),
+      ),
+    }
+    const { queryClient } = renderRoute('/activity', http)
+    const pager = await screen.findByRole('navigation', { name: 'Activity pages' })
+    const next = within(pager).getByRole('button', { name: 'Next' })
+    next.focus()
+    expect(next).toHaveFocus()
+
+    pageCount = 1
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ['activity'] })
+    })
+    await waitFor(() =>
+      expect(screen.queryByRole('navigation', { name: 'Activity pages' })).toBeNull(),
+    )
+    // Focus stays beside where it was, never on the document.
+    expect(screen.getByRole('combobox', { name: 'Events per activity page' })).toHaveFocus()
+  })
 
   it('preserves the next query debounce when the prior response is acknowledged', async () => {
     let resolveFirst!: (value: ActivityView) => void

@@ -1323,3 +1323,55 @@ def test_login_ignores_application_database_writer_and_gate(tmp_path: Path) -> N
         client.close()
         session_store.close()
         repository.close()
+
+
+def _session_digest(index: int) -> str:
+    return f"{index:064x}"
+
+
+def test_ending_other_sessions_keeps_only_the_named_session_and_clears_attempts() -> (
+    None
+):
+    store = SQLiteReviewSessionRepository.open_ephemeral()
+    for index in range(1, 4):
+        store.create_review_session(
+            _session_digest(index), "c" * 64, 10, 1_000, "a" * 64
+        )
+    store.revoke_review_session(_session_digest(3), "c" * 64, 20)
+    for client in ("a", "b"):
+        assert store.begin_login(30, client * 64, 300, 5, 100) is True
+
+    assert store.end_review_sessions_except(_session_digest(2)) == 2
+
+    connection = store._connection
+    assert connection.execute(
+        "SELECT session_digest FROM review_sessions"
+    ).fetchall() == [(_session_digest(2),)]
+    assert connection.execute(
+        "SELECT count(*) FROM review_login_failures"
+    ).fetchone() == (0,)
+    assert store.authenticate_review_session(_session_digest(2), 40)[0] == "owner"
+    assert not connection.in_transaction
+
+
+def test_ending_other_sessions_rolls_back_on_a_sqlite_fault() -> None:
+    store = SQLiteReviewSessionRepository.open_ephemeral()
+    for index in (1, 2):
+        store.create_review_session(
+            _session_digest(index), "c" * 64, 10, 1_000, "a" * 64
+        )
+    assert store.begin_login(30, "b" * 64, 300, 5, 100) is True
+    store._connection.execute(
+        "CREATE TRIGGER refuse_attempt_purge BEFORE DELETE ON review_login_failures "
+        "BEGIN SELECT RAISE(ABORT,'synthetic'); END"
+    )
+
+    with pytest.raises(MetadataReportError, match="review session is unavailable"):
+        store.end_review_sessions_except(_session_digest(1))
+
+    connection = store._connection
+    assert not connection.in_transaction
+    assert connection.execute("SELECT count(*) FROM review_sessions").fetchone() == (2,)
+    assert connection.execute(
+        "SELECT count(*) FROM review_login_failures"
+    ).fetchone() == (1,)

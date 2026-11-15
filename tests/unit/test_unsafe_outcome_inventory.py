@@ -222,6 +222,21 @@ INVENTORY: dict[tuple[str, str], Row] = {
         (401, "unauthorized"): "pre-commit",
         (503, "persistence"): "post-commit",
     },
+    ("POST", "/api/v1/session/password"): {
+        # `OwnerSessionService.change_password`: the missing change port, the
+        # snapshot re-authentication and the rule check all precede the
+        # throttle; `_replace_password` refuses before `adopt` commits, and a
+        # lost or failed compare-and-set revokes its own new session. The
+        # swap and the purge after the commit cannot raise into the caller.
+        (409, "settings_managed_by_file"): "pre-commit",
+        (401, "unauthorized"): "pre-commit",
+        (403, "csrf"): "pre-commit",
+        (422, "invalid_password"): "pre-commit",
+        (429, "throttled"): "pre-commit",
+        (403, "current_password_invalid"): "pre-commit",
+        (500, "runtime"): "pre-commit",
+        (503, "persistence"): "pre-commit",
+    },
     ("POST", "/api/v1/operations/support/export"): {
         (503, "support_unavailable"): "no-commit",
     },
@@ -384,6 +399,18 @@ INVENTORY: dict[tuple[str, str], Row] = {
     # the committed retry can answer `unavailable` (#1372).
     ("POST", "/api/v1/covers/taste/retry"): {
         (409, "stale"): "pre-commit",
+        (503, "unavailable"): "post-commit",
+    },
+    # `edit_taste_rule`: every refusal is raised inside the edit transaction,
+    # which rolls back; the profile read after the committed version can
+    # answer `unavailable` (#1372 PR 2).
+    ("POST", "/api/v1/covers/taste/rules"): {
+        (409, "stale"): "pre-commit",
+        (422, "rule_empty"): "pre-commit",
+        (422, "rule_too_long"): "pre-commit",
+        (422, "rule_text"): "pre-commit",
+        (422, "rule_limit"): "pre-commit",
+        (422, "profile_full"): "pre-commit",
         (503, "unavailable"): "post-commit",
     },
     # --- review preparation -----------------------------------------------------

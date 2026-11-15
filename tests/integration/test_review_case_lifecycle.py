@@ -491,7 +491,12 @@ def test_reselecting_the_previous_value_on_the_successor_writes_it_back(tmp_path
         store.close()
 
 
-def test_description_advice_uses_real_persisted_admission_and_guarded_installed_lifecycle():
+def test_description_advice_uses_real_persisted_admission_and_guarded_installed_lifecycle(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from tests.support.description_advice import qualify_description_advice
+
+    qualify_description_advice(monkeypatch)
     from mechanical_librarian.adapters.field_effect_authority import (
         PersistedFieldEffectAuthority,
     )

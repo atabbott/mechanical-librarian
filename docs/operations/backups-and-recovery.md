@@ -87,6 +87,11 @@ is invalid, the container runs in file mode and ignores the restored settings.
 Restore the whole database, never parts of it: records such as cover
 considerations are refused if the reports and artifacts they cite are missing.
 
+Restoring an application database older than the last owner password change
+brings back the earlier password, and any unexpired session issued under it
+that the restored session database holds. Change the password after such a
+restore ([changing the owner password](deployment.md#changing-the-owner-password)).
+
 Restoring does not change Audiobookshelf. On restart, consent, pause and
 authority are reloaded from the restored state, and interrupted writes recover
 as described below.

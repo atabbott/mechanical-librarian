@@ -123,7 +123,7 @@ address while signed in goes straight to Library. Attention has no page of its
 own: an old `/attention` address opens Library with Attention open.
 
 The masthead holds still while the live-update and preparation status change.
-It stays at the top only while it takes at most a quarter of the window. When
+It stays at the top only while it takes at most a sixth of the window. When
 it is taller, it scrolls away, so it never covers content or focus. The
 masthead marks the current destination, and Library stays marked while a
 review or Attention is open.
@@ -264,8 +264,8 @@ loaded only when that read fails.
 ## Attention
 
 Attention is the queue of undecided fields inside Library. Each work appears
-once with its field count, and its fields follow. The current work, field and
-position (`Work g of G`) stay beside the canvas. The queue follows the search,
+once with its field count, and its fields follow. The open work shows its
+Needs you and Automatic counts. The queue follows the search,
 reading `Matching: f of a works needing a decision`, and keeps its own place.
 Load more attention moves focus to the first new row.
 
@@ -296,9 +296,9 @@ and their names. The heading counts any field waiting or unavailable
 separately, and each row gives its value and why nothing changed.
 
 The canvas shows the question, one line under it with the field's own reason,
-and current against proposed. The current value's card shows only its value. A
-proposed card shows its value and, when known, the sources it came from, but
-no `Alternative N` label. Each card's Evidence control sits directly under its
+and its choices under Keep current value and Choose a new value: one panel,
+or two boxes on a phone. The current value's card shows only its value. A
+proposed card shows its value and, when known, its sources. Each card's Evidence control sits directly under its
 value. `Recommended` and its reason appear only on the value your settings
 choose, and the canvas says nothing when they choose none. Other source values
 appear only when the field has some or they could not be read. The Writing to
@@ -431,7 +431,7 @@ an outdated comparison shows the current one.
 
 ### Covers view
 
-A control above each heading switches Library between Works and Covers. Covers
+Works and Covers, beside Library's title, switch between its two views. Covers
 groups every work with a case by what its cover asks of you, under four counted
 tabs. To decide lists suggested switches under Switch suggested, then open
 choices under Choose. Kept lists works keeping their current cover while you
@@ -556,8 +556,8 @@ The ledger shows one row per change: the work or setting, the field, the exact
 before and after, who chose it, and whether Audiobookshelf confirmed it.
 Categories are your choice, automatic choice, policy change and recovery.
 Values come from the record made at the time, so later changes never alter
-history. A record that was not a change, such as a paused preparation, says
-what happened instead. Automatic checks with nothing to write gather into one
+history. A record that was no change, such as a paused preparation, says
+what happened. Automatic checks with nothing to write gather into one
 row, "Checked N fields, no changes". Each Details control names its row's
 field, work, result and time. Search, filters, a 7, 30 or 90-day range and 25,
 50 or 100-row pages run on the server. An unknown filter shows every event and
@@ -567,12 +567,11 @@ says so.
 
 Settings has seven sections: Audiobookshelf, Libraries, Metadata sources,
 Reviewer, Background work, Access and diagnostics, and Appearance. The section
-is the `?group=` URL value. A message elsewhere that names Settings → Reviewer
-or Settings → Audiobookshelf links to that section. Wider than 760 pixels, a
-section index sits beside the page, and at 760 or narrower a selector replaces
-it.
+is the `?group=` URL value. A message naming Settings → Reviewer or Settings →
+Audiobookshelf links there. A section index sits beside the page above 760
+pixels; at 760 or narrower a selector replaces it.
 
-The page edits one draft of all settings, and each section counts its changes,
+The page edits one draft of all settings; each section counts its changes,
 indirect ones too. While anything is unsaved, a bottom tray shared with Policy
 lists before and after values and offers Discard all and Save settings. A tray
 taller than a third of the window scrolls with the page. Save settings checks
@@ -586,17 +585,21 @@ edits ([configuration](../reference/configuration.md),
 
 Secrets show only as `Configured · ····xxxx` or `Not configured`. Turning a
 source off keeps its key, turns off its cover evidence and removes it from its
-libraries. Turning it back on does not add it to those libraries again.
+libraries. Turning it back on does not re-add it.
 
 Each library lists its languages by name, the first marked Preferred, with
-buttons to move or remove each and a picker to add one, up to eight. In a
-file-managed deployment the list is read only.
+buttons to move or remove each and a picker to add one, up to eight.
 
-Reviewer sign-in, validation and tests take effect at once, outside Save
+Reviewer sign-in, validation and tests apply at once, outside Save
 settings. Cover and description pickers show cost per 1,000 works. One
 OpenRouter key serves all three tasks; replacing it keeps every choice.
 Reviewer advice allows no write
 ([ADR-0062](../architecture/decisions/0062-owner-managed-reviewer-access.md)).
+
+In store mode, Access and diagnostics has Owner password. It takes the current
+password, applies at once outside Save settings and signs out every other
+browser
+([deployment](../operations/deployment.md#changing-the-owner-password)).
 
 ## Words and values
 
@@ -604,8 +607,8 @@ The voice is the one `DESIGN.md` states under Voice. Mechanical Librarian
 never turns a code into words: it refuses an unknown code instead of
 sentence-casing it. Acronyms stay capitalised, languages read by name with
 their tag ("English (en)"), and sizes use MB. Times within the past hour are
-relative, others on the same day show the clock time, and other days add the
-date. A time still ahead is never relative.
+relative, others today show the clock time, and other days add the date. A
+time still ahead is never relative.
 
 ## Responsive and accessible behaviour
 

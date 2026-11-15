@@ -67,6 +67,7 @@ from mechanical_librarian.application.review_web import (
     HumanDecisionStore,
     InspectCurrentReviewCase,
     LibraryLabels,
+    OwnerPasswordChange,
     OwnerSessionService,
     ProviderRecoverySchedule,
     RecordHumanDecision,
@@ -81,6 +82,11 @@ from mechanical_librarian.domain.audiobook_corroboration import (
     admitted_audiobook_identity,
 )
 from mechanical_librarian.domain.automatic_decision import AutomaticSafetyState
+from mechanical_librarian.domain.cover_taste import (
+    TasteEditAction,
+    TasteEditError,
+    TasteSection,
+)
 from mechanical_librarian.domain.description_advice import DescriptionAdviceBinding
 from mechanical_librarian.domain.field_effect import SUPPORTED_DESTINATIONS
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
@@ -691,6 +697,24 @@ class ReviewApplication:
             raise ReviewApplicationError("stale") from None
         self._updates.publish("library")
 
+    def edit_taste_rule(
+        self,
+        version: int,
+        action: TasteEditAction,
+        number: int | None,
+        section: TasteSection | None,
+        text: str | None,
+    ) -> None:
+        """One owner edit of the taste profile (#1372 PR 2); a refusal is its
+        closed code and writes nothing."""
+        if self._cover_taste is None:
+            raise ReviewApplicationError("unavailable")
+        try:
+            self._cover_taste.edit(version, action, number, section, text)
+        except TasteEditError as error:
+            raise ReviewApplicationError(error.code) from None
+        self._updates.publish("library")
+
     def owner_settings(self) -> object:
         if self._settings is None:
             raise ReviewApplicationError("settings_unavailable")
@@ -925,7 +949,7 @@ class ReviewApplication:
     def ready(self) -> bool:
         return self._operations is None or self._operations.ready()
 
-    # The four session operations below deliberately bypass ``serialized``:
+    # The five session operations below deliberately bypass ``serialized``:
     # the session store owns its dedicated database and lock (#912), so owner
     # sign-in and session checks never queue behind an operation that holds
     # the application gate while it waits on a scan's write transaction.
@@ -941,6 +965,24 @@ class ReviewApplication:
 
     def logout(self, session_token: str, csrf_token: str) -> None:
         self._sessions.logout(session_token, csrf_token)
+
+    def change_owner_password(
+        self,
+        session_token: str,
+        csrf_token: str,
+        current_password: str,
+        new_password: str,
+        confirmation: str,
+        client: str,
+    ) -> SessionTokens:
+        return self._sessions.change_password(
+            session_token,
+            csrf_token,
+            current_password,
+            new_password,
+            confirmation,
+            client,
+        )
 
     def operations_status(self) -> dict[str, object]:
         if self._operations is None:
@@ -1883,6 +1925,7 @@ def compose_review_application(
     graceful_shutdown_seconds: int,
     session_digest: Callable[[str], str],
     client_digest: Callable[[str], str],
+    owner_password_change: OwnerPasswordChange | None = None,
     close_state_owner: bool = False,
     preparation: ReviewPreparationSupervisor | None = None,
     policy_libraries: tuple[tuple[str, dict[str, object] | None], ...] = (),
@@ -1968,6 +2011,7 @@ def compose_review_application(
             clock,
             session_lifetime_seconds,
             client_digest=client_digest,
+            password_change=owner_password_change,
         ),
         cases=InspectCurrentReviewCase(case_store, cover_considerations),
         decisions=RecordHumanDecision(decision_store, clock, timing),

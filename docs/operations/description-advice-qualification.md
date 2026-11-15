@@ -1,9 +1,10 @@
 # Description advice qualification
 
-With **Automatically apply ready description advice** on, the app writes the
-adviser's text without asking and may replace a description you have.
-[ADR-0099](../architecture/decisions/0099-qualify-automatic-description-advice.md)
-uses it only once your decisions show the adviser is right often enough. This
+**Automatically apply ready description advice** writes the adviser's text
+without asking, and may replace a description you have, only once a release
+shows, from your decisions, that the adviser is right often enough
+([ADR-0099](../architecture/decisions/0099-qualify-automatic-description-advice.md)).
+Until then it only suggests. This
 tool lists the descriptions to decide and scores your decisions. It sends
 nothing to a model and writes nothing. Run it from the checkout you built the
 install from.
@@ -15,17 +16,30 @@ install from.
    app asks the adviser once for each work that has a source description.
 2. In Policy → Curation → Description advice, set the cleanup choices you
    would use and leave the automatic switch off. Labels count only for the
-   cleanup choices they were made under.
+   cleanup choices they were made under. If your settings come from
+   `config.json`, set them there instead, with the
+   [description fields](../reference/configuration.md#description-advice) of
+   its `review` section, and restart the service.
 3. Wait until the app shows "Preparation idle".
 
 ## List the descriptions
 
 Copy the database as [owner labels](owner-labels.md#copy-the-database)
-describes, then:
+describes. If your settings come from `config.json`, copy it too:
+
+```
+docker cp "$(docker compose ps -aq mechanical-librarian)":/data/config.json ~/ml-labels/
+CONFIG=~/ml-labels/config.json
+```
+
+Then:
 
 ```
 uv run python scripts/description_advice_labels.py sample --database "$COPY"
 ```
+
+With settings from `config.json`, add `--config "$CONFIG"` to this command and
+to both `score` commands below.
 
 It prints the adviser, then one count per line:
 
@@ -49,8 +63,9 @@ It prints the adviser, then one count per line:
 - The last two lines give your labels for this adviser and the labels the bar
   still needs.
 
-A copy whose settings are not saved in the app, made by another version, with
-no adviser chosen, or with the automatic switch on is refused with the reason.
+A copy made by another version, with no adviser chosen, or with the automatic
+switch on is refused with the reason, as is a copy whose settings are not saved
+in the app when `--config` is missing.
 
 ## Decide each description
 
@@ -77,8 +92,10 @@ uv run python scripts/description_advice_labels.py score --database "$COPY" \
 For each adviser identity, the score shows your right and wrong labels, the
 Wilson 95% lower limit, and whether it meets your bar of 0.90: 35 labels with
 no error, 53 with one, 69 with two. The JSON holds counts, digests, engine and
-model only. Attach `description-advice-score.json` to #1886. Then delete the
-folder, which also holds the copy:
+model only. Attach `description-advice-score.json` to #1886. A release that
+records an identity meeting the bar lets the automatic switch write that
+adviser's text with those cleanup choices. Then delete the folder, which also
+holds the copy:
 
 ```
 rm -r ~/ml-labels

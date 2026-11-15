@@ -518,13 +518,18 @@ def test_description_advice_activity(tmp_path) -> None:
     _expect_wire("get-attention", attention, placeholders)
 
 
-def test_description_advice_preservation(tmp_path) -> None:
+def test_description_advice_preservation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Retained automatic advice on a preservation-only field during a retry.
 
     Automatic advice is admitted only while the field offers the owner a
     choice, so the selection is made while it did, as one from before that
     rule or before a narrower offer, and the field then offers none.
     """
+    from tests.support.description_advice import qualify_description_advice
+
+    qualify_description_advice(monkeypatch)
     with _description_case(
         tmp_path, report_override=_preserved_description_report()
     ) as (live, binding):
@@ -666,6 +671,7 @@ def test_taste_profile(tmp_path) -> None:
                 "input_sha256": "0" * 64,
                 "truncated": False,
             },
+            failure="invalid_output",
         )
         service = CoverTasteBuildService(
             repository.cover_taste_store,
@@ -676,6 +682,18 @@ def test_taste_profile(tmp_path) -> None:
         )
         with _signed_in(tmp_path, repository, access, cover_taste=service) as live:
             capture = live.call("GET", "/api/v1/covers/taste")
+            # An owner edit writes version 2 at once (#1372 PR 2).
+            edited = live.call(
+                "POST",
+                "/api/v1/covers/taste/rules",
+                {
+                    "version": 1,
+                    "action": "edit",
+                    "number": 1,
+                    "text": "Bold illustrated art, never photography.",
+                },
+            )
     finally:
         repository.close()
     _expect_wire("get-covers-taste", capture, {})
+    _expect_wire("post-covers-taste-rules", edited, {})

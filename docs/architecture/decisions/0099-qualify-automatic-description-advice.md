@@ -12,9 +12,9 @@
 
 ## Context
 
-With **Automatically apply ready description advice** on, the app writes the
-description adviser's text without asking and may replace a description the
-owner already has. Nothing yet measures how often that text is the one the
+With **Automatically apply ready description advice** on, the app would write
+the description adviser's text without asking and could replace a description
+the owner already has. Nothing yet measures how often that text is the one the
 owner would have chosen.
 
 The owner's decisions on descriptions are already stored. On a description,
@@ -131,8 +131,17 @@ destination nor the decision actions.
     admission refuses unless a shipped qualification record names the
     advice's engine, model, instruction digest, schema digest and cleanup
     choices. The switch stays choosable but only proposes until then. The
-    owner chose this on 2026-11-15; it is built in a separate change. This
-    decision changes no behaviour now.
+    owner chose this on 2026-11-15. The record is
+    `QUALIFIED_DESCRIPTION_ADVISERS` in `domain/description_advice.py`: each
+    key copies one passing identity's five fields from the score JSON
+    (`engine`, `model`, `instruction_sha256`, `output_schema_sha256`,
+    `preferences_digest`), and its value is the SHA-256 of that JSON as
+    attached to #1886. It is empty until such a score is attached. Admission
+    and write authority read it on each ask, so an automatic decision stored
+    before a record, or after one is removed, never writes. A change to the
+    instruction or output schema drops or requalifies the records, which a
+    test enforces. Policy → Curation says ready advice is only suggested; the
+    first record also makes that line name the advisers that write.
 
 ## Consequences
 
@@ -152,8 +161,7 @@ destination nor the decision actions.
 
 ### Neutral or deferred
 
-- The qualification record and the admission check are built in a later change
-  (Decision 10).
+- The first qualification record waits for a passing score (Decision 10).
 
 ## Alternatives considered
 
@@ -183,5 +191,8 @@ Rejected: it changes with every CLI update and would reset the labels.
 
 `tests/unit/test_description_advice_labels.py` proves the refusals, every
 `sample` count, the label rule, the identity groups and the manifest relation
-on product-built stores. The owner's score JSON from the run is the
-qualification evidence.
+on product-built stores. `tests/unit/test_description_advice_qualification.py`
+proves the enforcement: an unrecorded identity is refused at admission and at
+write time, a record names one exact identity, a record copied from the score
+JSON admits the advice, and every record names this checkout's instruction and
+schema. The owner's score JSON from the run is the qualification evidence.

@@ -302,6 +302,14 @@ class _Sessions:
         del self.records[token]
         return "revoked"
 
+    def end_review_sessions_except(self, token: str) -> int:
+        ended = len(self.records) - (token in self.records)
+        self.records = {
+            key: value for key, value in self.records.items() if key == token
+        }
+        self.failures = []
+        return ended
+
 
 _CLAIM_TOKEN = "deployment-held-claim-token-0123456789abcdef"
 
@@ -585,6 +593,33 @@ def test_setup_surface_exposes_only_health_shell_session_and_redacted_state() ->
         "mounts": [],
     }
     assert "bootstrap_verifier" not in state.text
+
+
+def test_setup_app_does_not_change_the_owner_password() -> None:
+    client, state, _connection = _client()
+    login = _claim(client)
+    verifier = state.owner_verifier
+
+    refused = client.post(
+        "/api/v1/session/password",
+        json={
+            "current_password": "correct horse battery staple",
+            "new_password": "a replacement passphrase",
+            "confirmation": "a replacement passphrase",
+        },
+        headers={
+            "cookie": _session_cookie(login),
+            "origin": "https://setup.invalid",
+            "x-csrf-token": "x" * 32,
+        },
+    )
+
+    assert refused.status_code == 404
+    assert state.owner_verifier == verifier
+    assert not any(
+        isinstance(route, APIRoute) and route.path == "/api/v1/session/password"
+        for route in cast(Any, client.app).routes
+    )
 
 
 def test_wrong_setup_password_is_rate_limited() -> None:

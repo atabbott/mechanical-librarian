@@ -17,12 +17,14 @@ import { Disclosure } from '../components/Disclosure'
 import { Dropdown } from '../components/Dropdown'
 import { FieldInput, FieldRow } from '../components/FieldRow'
 import { FinishTray } from '../components/FinishTray'
+import { OwnerPasswordSettings } from '../components/OwnerPasswordSettings'
 import { ReviewerAccessPanel } from '../components/ReviewerAccessPanel'
 import { SegmentedControl } from '../components/SegmentedControl'
 import { ReloadApplication, StaleBuildRead } from '../components/StaleBuildRead'
 import { StatusPill } from '../components/StatusPill'
 import { controlId, descriptionId, errorId, offOn, unitId } from '../fieldControls'
 import { focusAfterRetry } from '../focusAfterRetry'
+import { useOwnerPasswordForm } from '../ownerPasswordForm'
 import { languageName } from '../labels'
 import { ProviderThrottleNotice, settingsRoute, useReviewContext } from '../router'
 import {
@@ -305,6 +307,8 @@ export default function SettingsPage() {
     retry: false,
   })
   const [saved, setSaved] = useState(false)
+  // Held here because the editor below remounts on every save.
+  const passwordForm = useOwnerPasswordForm()
   // `stale`: the reload met a newer build, so only reloading the tab can show the settings.
   const [reconciliation, setReconciliation] = useState<
     'idle' | 'checking' | 'failed' | 'stale' | 'checked'
@@ -384,6 +388,7 @@ export default function SettingsPage() {
       <SettingsEditor
         key={`${query.data.authority}:${String(recoveryGeneration)}:${String(savedGeneration)}`}
         view={query.data}
+        passwordForm={passwordForm}
         saveBlocked={
           reconciliation === 'checking' || reconciliation === 'failed' || reconciliation === 'stale'
         }
@@ -410,6 +415,7 @@ export default function SettingsPage() {
 
 const SettingsEditor = ({
   view,
+  passwordForm,
   saveBlocked,
   reloadEnded,
   onSaved,
@@ -418,6 +424,7 @@ const SettingsEditor = ({
   onUncertain,
 }: {
   view: SettingsView
+  passwordForm: ReturnType<typeof useOwnerPasswordForm>
   saveBlocked: boolean
   /** The reload after an uncertain save failed or met a newer build: nothing is still coming. */
   reloadEnded: boolean
@@ -1127,6 +1134,7 @@ const SettingsEditor = ({
             ) : null}
             {active === 'access' ? (
               <>
+                {locked ? null : <OwnerPasswordSettings http={http} form={passwordForm} />}
                 {sectionNumbers('access', false)}
                 <FieldRow
                   {...recordRow('server.diagnostic_timings_enabled')}

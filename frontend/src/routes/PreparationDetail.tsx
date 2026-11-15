@@ -19,7 +19,7 @@ const runOutcomes = (presentation: PreparationPresentation) => preparationOutcom
 const preparationStateLine = (presentation: PreparationPresentation) => {
   switch (presentation.state) {
     case 'starting':
-      return 'Waiting for the first book to begin'
+      return 'Waiting for the first work to begin'
     case 'running':
       return 'Prepared works can be reviewed while the rest of the run finishes.'
     case 'blocked':
@@ -329,8 +329,8 @@ export const PreparationDetail = ({
           ) : (
             <p>
               {recoveryRequired
-                ? 'No book was in progress when preparation stopped.'
-                : 'No book is being prepared right now.'}
+                ? 'No work was in progress when preparation stopped.'
+                : 'No work is being prepared right now.'}
             </p>
           )}
           {presentation.active_overflow ? (

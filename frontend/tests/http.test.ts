@@ -53,6 +53,8 @@ import {
   uncertainWriteOutcome,
   ResponseDecodeError,
   UncertainMutationError,
+  normalizeTasteRule,
+  tasteRuleRefusal,
 } from '../src/api/http'
 import { matchOperation, responseDecoders } from '../src/generated/review-decoders'
 import type { OperationKey } from '../src/generated/review-decoders'
@@ -6355,7 +6357,7 @@ const readTasteProfile = (document: unknown) =>
     fetch: vi.fn<typeof fetch>(async () => Response.json(document)),
   }).getTasteProfile()
 const tasteDocument = {
-  schema_version: 'review-taste-profile-v1',
+  schema_version: 'review-taste-profile-v2',
   configured: true,
   chosen: 30,
   required: 25,
@@ -6363,16 +6365,34 @@ const tasteDocument = {
   build: null,
   profile: {
     version: 2,
+    kind: 'built',
     built_at: 20,
     decisions: 30,
     rules: [
-      { number: 1, section: 'drawn_to', text: 'Bold art.' },
-      { number: 2, section: 'avoid', text: 'Busy type.' },
+      { number: 1, section: 'drawn_to', text: 'Bold art.', provenance: 'model' },
+      { number: 2, section: 'avoid', text: 'Busy type.', provenance: 'owner' },
     ],
   },
   versions: [
-    { version: 2, built_at: 20, decisions: 30 },
-    { version: 1, built_at: 10, decisions: 25 },
+    { version: 2, kind: 'built', created_at: 20, decisions: 30 },
+    { version: 1, kind: 'built', created_at: 10, decisions: 25 },
+  ],
+}
+// An edit version keeps its build's facts and its rules' numbers, with gaps.
+const editedTasteDocument = {
+  ...tasteDocument,
+  profile: {
+    ...tasteDocument.profile,
+    version: 3,
+    kind: 'edited',
+    rules: [
+      { number: 4, section: 'drawn_to', text: 'Calm type.', provenance: 'owner' },
+      { number: 2, section: 'avoid', text: 'Busy type!', provenance: 'edited' },
+    ],
+  },
+  versions: [
+    { version: 3, kind: 'edited', created_at: 30, decisions: 30 },
+    ...tasteDocument.versions,
   ],
 }
 const failedBuild = (failure: string, retryAfter: number | null) => ({
@@ -6413,13 +6433,46 @@ describe('taste profile decoder (#1372)', () => {
       },
     ],
     [
+      'a built profile not built when its version was',
+      { profile: { ...tasteDocument.profile, built_at: 19 } },
+    ],
+    [
+      'a profile of another kind than its version',
+      { profile: { ...tasteDocument.profile, kind: 'edited' } },
+    ],
+    [
+      'a built profile not numbered from 1',
+      {
+        profile: {
+          ...tasteDocument.profile,
+          rules: [
+            { number: 1, section: 'drawn_to', text: 'Bold art.', provenance: 'model' },
+            { number: 3, section: 'avoid', text: 'Busy type.', provenance: 'model' },
+          ],
+        },
+      },
+    ],
+    [
       'rules numbered out of order',
       {
         profile: {
           ...tasteDocument.profile,
           rules: [
-            { number: 2, section: 'drawn_to', text: 'Bold art.' },
-            { number: 1, section: 'avoid', text: 'Busy type.' },
+            { number: 2, section: 'drawn_to', text: 'Bold art.', provenance: 'model' },
+            { number: 1, section: 'avoid', text: 'Busy type.', provenance: 'model' },
+          ],
+        },
+      },
+    ],
+    [
+      'an edited profile repeating a number',
+      {
+        ...editedTasteDocument,
+        profile: {
+          ...editedTasteDocument.profile,
+          rules: [
+            { number: 2, section: 'drawn_to', text: 'Calm type.', provenance: 'owner' },
+            { number: 2, section: 'avoid', text: 'Busy type!', provenance: 'edited' },
           ],
         },
       },
@@ -6430,8 +6483,8 @@ describe('taste profile decoder (#1372)', () => {
         profile: {
           ...tasteDocument.profile,
           rules: [
-            { number: 1, section: 'avoid', text: 'Busy type.' },
-            { number: 2, section: 'drawn_to', text: 'Bold art.' },
+            { number: 1, section: 'avoid', text: 'Busy type.', provenance: 'model' },
+            { number: 2, section: 'drawn_to', text: 'Bold art.', provenance: 'model' },
           ],
         },
       },
@@ -6453,6 +6506,77 @@ describe('taste profile decoder (#1372)', () => {
     await expect(
       readTasteProfile({ ...tasteDocument, references: ['taste_image_0'] }),
     ).rejects.toBeInstanceOf(Error)
+  })
+
+  it('admits an edited profile whose rules keep their numbers with gaps', async () => {
+    expect(await readTasteProfile(editedTasteDocument)).toEqual(editedTasteDocument)
+  })
+
+  it.each([
+    [{ action: 'edit', number: 4, text: 'Calm serif type.' }],
+    [{ action: 'add', section: 'trade_offs', text: 'Takes a sharper copy.' }],
+    [{ action: 'remove', number: 2 }],
+  ] as const)('posts one rule edit with the version shown: %j', async (edit) => {
+    const fetchMock = vi.fn<typeof fetch>(async () => Response.json(editedTasteDocument))
+    const client = new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) })
+    await expect(client.editTasteRule(3, edit)).resolves.toEqual(editedTasteDocument)
+    const [url, init] = fetchMock.mock.calls[0] ?? []
+    expect(url).toBe('/api/v1/covers/taste/rules')
+    expect(init?.method).toBe('POST')
+    expect(JSON.parse(init?.body as string)).toEqual({ version: 3, ...edit })
+  })
+
+  it('treats an unreadable answer to a rule edit as an uncertain write', async () => {
+    const client = new ReviewApiClient({
+      csrf,
+      fetch: vi.fn<typeof fetch>(async () =>
+        Response.json({ ...editedTasteDocument, versions: [] }),
+      ),
+      buildIdentity: 'c'.repeat(64),
+    })
+    const error = await client
+      .editTasteRule(3, { action: 'remove', number: 2 })
+      .catch((e: unknown) => e)
+    expect(uncertainWriteOutcome(error)).toBe(true)
+  })
+
+  it('sends a rule in the spelling the server admits', () => {
+    expect(normalizeTasteRule('  Bold\u00a0 art\n\tnow  ')).toBe('Bold art now')
+    expect(normalizeTasteRule('Cafe\u0301')).toBe('Caf\u00e9')
+  })
+
+  it.each([
+    ['', 'rule_empty'],
+    ['é'.repeat(401), 'rule_too_long'],
+    ['😀'.repeat(400), null],
+    ['See https://example.invalid', 'address'],
+    ['Covers like www.example.invalid', 'address'],
+    ['Covers in /books/covers/ here', 'address'],
+    // The browser lets these through; the server refuses the second (S13).
+    ['and/or both', null],
+    ['password=hunter2 style', null],
+  ] as const)('refuses %j as %s', (text, refusal) => {
+    expect(tasteRuleRefusal(text, [], null)).toBe(refusal)
+  })
+
+  it('refuses words past the profile’s bound unless they replace a rule', () => {
+    // 30 rules of 40 words is 1,200; ten more words refuses.
+    const rules = Array.from({ length: 30 }, (_unused, index) => ({
+      number: index + 1,
+      text: Array.from({ length: 40 }, () => 'a').join(' '),
+    }))
+    const ten = Array.from({ length: 10 }, () => 'w').join(' ')
+    expect(tasteRuleRefusal(ten, rules, null)).toBe('profile_full')
+    expect(tasteRuleRefusal(ten, rules, 1)).toBeNull()
+  })
+
+  it('counts the profile’s characters in code points', () => {
+    const rules = Array.from({ length: 20 }, (_unused, index) => ({
+      number: index + 1,
+      text: '😀'.repeat(400),
+    }))
+    expect(tasteRuleRefusal('😀'.repeat(192), rules, null)).toBeNull()
+    expect(tasteRuleRefusal('😀'.repeat(193), rules, null)).toBe('profile_full')
   })
 
   it('binds taste prices to the saved taste profile model', async () => {
@@ -6491,5 +6615,176 @@ describe('taste profile decoder (#1372)', () => {
         taste_mapping: { engine: 'codex', model: 'gpt-5.6-sol' },
       }),
     ).rejects.toBeInstanceOf(Error)
+  })
+})
+
+describe('changePassword', () => {
+  const build = 'c'.repeat(64)
+  const body = {
+    current_password: 'old horse battery',
+    new_password: 'correct horse battery staple',
+    confirmation: 'correct horse battery staple',
+  }
+  const changed = () => new Response(null, { status: 204 })
+  const gone = () => Response.json({ error: { code: 'unauthorized' } }, { status: 401 })
+  const refused = (status: number, code: string) => Response.json({ error: { code } }, { status })
+  const flush = () => new Promise<void>((resolve) => window.setTimeout(resolve, 0))
+  const client = (
+    fetchMock: typeof fetch,
+    tokens: { current: () => string; renew: () => Promise<string> } = {
+      current: () => token,
+      renew: vi.fn(async () => renewedToken),
+    },
+  ) => {
+    const expired = vi.fn()
+    return {
+      expired,
+      tokens,
+      client: new ReviewApiClient({
+        csrf: tokens,
+        fetch: fetchMock,
+        buildIdentity: build,
+        onSessionExpired: expired,
+      }),
+    }
+  }
+  // The change is held in flight while another request is answered.
+  const holding = () => {
+    let release: (response: Response) => void = () => undefined
+    const fetchMock = vi.fn<typeof fetch>()
+    fetchMock.mockImplementationOnce(() => new Promise<Response>((resolve) => (release = resolve)))
+    fetchMock.mockResolvedValue(gone())
+    return { fetchMock, release: (response: Response) => release(response) }
+  }
+
+  it('posts the three passwords with the build identity and CSRF token, then renews the token', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => changed())
+    const { client: http, tokens } = client(fetchMock)
+
+    await expect(http.changePassword(body)).resolves.toBeUndefined()
+
+    const [path, init] = fetchMock.mock.calls[0] ?? []
+    expect(path).toBe('/api/v1/session/password')
+    expect(init?.method).toBe('POST')
+    expect(JSON.parse(init?.body as string)).toEqual(body)
+    const headers = new Headers(init?.headers)
+    expect(headers.get('x-ml-build-identity')).toBe(build)
+    expect(headers.get('x-csrf-token')).toBe(token)
+    expect(headers.get('content-type')).toBe('application/json')
+    expect(tokens.renew).toHaveBeenCalledOnce()
+  })
+
+  it('succeeds although the token renewal after the change fails', async () => {
+    const renew = vi.fn(async () => {
+      throw new SessionExpiredError()
+    })
+    const { client: http, expired } = client(
+      vi.fn<typeof fetch>(async () => changed()),
+      { current: () => token, renew },
+    )
+
+    await expect(http.changePassword(body)).resolves.toBeUndefined()
+    expect(renew).toHaveBeenCalledOnce()
+    await flush()
+    expect(expired).not.toHaveBeenCalled()
+  })
+
+  it('never sends the change again after a CSRF challenge', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => refused(403, 'csrf'))
+    const { client: http, tokens } = client(fetchMock)
+
+    await expect(http.changePassword(body)).rejects.toBeInstanceOf(CsrfRenewedError)
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(tokens.renew).toHaveBeenCalledOnce()
+  })
+
+  it('discards a 401 a parallel request got while the change succeeded', async () => {
+    const { fetchMock, release } = holding()
+    const { client: http, expired } = client(fetchMock)
+
+    const change = http.changePassword(body)
+    await expect(http.getAttention({})).rejects.toBeInstanceOf(SessionExpiredError)
+    await flush()
+    expect(expired).not.toHaveBeenCalled()
+    release(changed())
+    await change
+    await flush()
+    expect(expired).not.toHaveBeenCalled()
+    // The mark clears: a later 401 goes to sign-in.
+    await expect(http.getLibrary({ lens: 'all' })).rejects.toBeInstanceOf(SessionExpiredError)
+    await vi.waitFor(() => expect(expired).toHaveBeenCalledOnce())
+  })
+
+  it('ignores a 401 answered after the change for a request that left before it', async () => {
+    const answers: ((response: Response) => void)[] = []
+    const fetchMock = vi.fn<typeof fetch>(
+      () => new Promise<Response>((resolve) => answers.push(resolve)),
+    )
+    const { client: http, expired } = client(fetchMock)
+
+    const change = http.changePassword(body)
+    const earlier = http.getAttention({})
+    answers[0]?.(changed())
+    await change
+    // The earlier request carried the replaced session's cookie.
+    answers[1]?.(gone())
+    await expect(earlier).rejects.toBeInstanceOf(SessionExpiredError)
+    await flush()
+    expect(expired).not.toHaveBeenCalled()
+    // A request that leaves on the new session and answers 401 goes to sign-in.
+    const later = http.getLibrary({ lens: 'all' })
+    answers[2]?.(gone())
+    await expect(later).rejects.toBeInstanceOf(SessionExpiredError)
+    await vi.waitFor(() => expect(expired).toHaveBeenCalledOnce())
+  })
+
+  it.each([
+    ['a refusal', refused(403, 'current_password_invalid'), { status: 403 }],
+    ['a lost answer', undefined, { name: 'AmbiguousMutationError' }],
+  ])('replays a 401 held back during the change after %s', async (_, answer, failure) => {
+    const { fetchMock, release } = holding()
+    const { client: http, expired } = client(fetchMock)
+
+    const change = http.changePassword(body)
+    await expect(http.getAttention({})).rejects.toBeInstanceOf(SessionExpiredError)
+    await flush()
+    expect(expired).not.toHaveBeenCalled()
+    if (answer === undefined)
+      release(Promise.reject(new TypeError('network')) as unknown as Response)
+    else release(answer)
+    await expect(change).rejects.toMatchObject(failure)
+    await vi.waitFor(() => expect(expired).toHaveBeenCalledOnce())
+  })
+
+  it('goes to sign-in when the change itself answers 401', async () => {
+    const { client: http, expired } = client(vi.fn<typeof fetch>(async () => gone()))
+
+    await expect(http.changePassword(body)).rejects.toBeInstanceOf(SessionExpiredError)
+    await vi.waitFor(() => expect(expired).toHaveBeenCalledOnce())
+  })
+
+  it('reports a lost answer as uncertain, and a refusal as itself', async () => {
+    const lost = client(
+      vi.fn<typeof fetch>(async () => {
+        throw new TypeError('network')
+      }),
+    )
+    await expect(lost.client.changePassword(body)).rejects.toBeInstanceOf(AmbiguousMutationError)
+    expect(lost.tokens.renew).not.toHaveBeenCalled()
+    const wrong = client(vi.fn<typeof fetch>(async () => refused(429, 'throttled')))
+    await expect(wrong.client.changePassword(body)).rejects.toMatchObject({
+      status: 429,
+      code: 'throttled',
+    })
+    expect(wrong.tokens.renew).not.toHaveBeenCalled()
+  })
+
+  it('names a 204-only operation that answers nothing', () => {
+    expectTypeOf<RequestAnswer<'POST', '/api/v1/session/password'>>().toEqualTypeOf<undefined>()
+    expectTypeOf<'/api/v1/session/password'>().toExtend<RoutablePath<'POST'>>()
+    expectTypeOf<Parameters<ReviewApiClient['changePassword']>[0]>().toEqualTypeOf<
+      components['schemas']['_PasswordChangeRequest']
+    >()
+    expect(matchOperation('POST', '/api/v1/session/password')).toBeUndefined()
   })
 })

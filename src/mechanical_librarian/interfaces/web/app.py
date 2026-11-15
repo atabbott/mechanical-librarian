@@ -31,6 +31,7 @@ from urllib.parse import quote, urlsplit
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
 from fastapi import (
+    Body,
     Cookie,
     Depends,
     FastAPI,
@@ -92,6 +93,8 @@ from mechanical_librarian.application.review_application import (
 )
 from mechanical_librarian.application.review_web import (
     AutomaticWithheldCondition,
+    OwnerCredential,
+    OwnerVerifierStore,
     ReviewAttentionSchemaVersion,
     ReviewCaseDetailSchemaVersion,
     ReviewCaseEvidenceSchemaVersion,
@@ -116,9 +119,12 @@ from mechanical_librarian.application.reviewer_contracts import (
 from mechanical_librarian.domain.audio_health import MAX_HEALTH_OBSERVATIONS
 from mechanical_librarian.domain.cover_taste import (
     MAX_TASTE_RULE_CODE_POINTS,
+    MAX_TASTE_RULE_NUMBER,
     MAX_TASTE_RULES,
     TASTE_FIRST_BUILD_DECISIONS,
     TasteBuildFailure,
+    TasteEditRefusal,
+    TasteProvenance,
     TasteSection,
 )
 from mechanical_librarian.domain.description_advice import (
@@ -270,7 +276,20 @@ class _LoginRequest(BaseModel):
     password: StrictStr = Field(min_length=1, max_length=1024)
 
 
+class _PasswordChangeRequest(BaseModel):
+    # No minimum on the new password or its confirmation: every rule failure
+    # reaches the service and answers `invalid_password`.
+    model_config = ConfigDict(extra="forbid", strict=True)
+    current_password: StrictStr = Field(min_length=1, max_length=1024)
+    new_password: StrictStr = Field(max_length=1024)
+    confirmation: StrictStr = Field(max_length=1024)
+
+
 REVIEW_SESSION_SCHEMA: Final = "review-session-v1"
+ReviewTasteProfileSchemaVersion = Literal["review-taste-profile-v2"]
+REVIEW_TASTE_PROFILE_SCHEMA: Final[ReviewTasteProfileSchemaVersion] = (
+    "review-taste-profile-v2"
+)
 MetadataPolicyNotebookSchemaVersion = Literal["metadata-policy-notebook-v2"]
 METADATA_POLICY_NOTEBOOK_SCHEMA: Final[MetadataPolicyNotebookSchemaVersion] = (
     "metadata-policy-notebook-v2"
@@ -1506,18 +1525,26 @@ class _CoverCounts(_ClosedModel):
 
 
 class _TasteRule(_ClosedModel):
-    number: StrictInt = Field(ge=1, le=MAX_TASTE_RULES)
+    number: StrictInt = Field(ge=1, le=MAX_TASTE_RULE_NUMBER)
     section: TasteSection
     text: StrictStr = Field(min_length=1, max_length=MAX_TASTE_RULE_CODE_POINTS)
+    provenance: TasteProvenance
 
 
 class _TasteVersion(_ClosedModel):
     version: StrictInt = Field(ge=1)
-    built_at: StrictInt = Field(ge=0)
+    # `edited` is a version an owner edit wrote; it keeps its build's facts.
+    kind: Literal["built", "edited"]
+    created_at: StrictInt = Field(ge=0)
     decisions: StrictInt = Field(ge=0, le=50)
 
 
-class _TasteProfileVersion(_TasteVersion):
+class _TasteProfileVersion(_ClosedModel):
+    version: StrictInt = Field(ge=1)
+    kind: Literal["built", "edited"]
+    # When the build this version keeps was written.
+    built_at: StrictInt = Field(ge=0)
+    decisions: StrictInt = Field(ge=0, le=50)
     rules: list[_TasteRule] = Field(max_length=MAX_TASTE_RULES)
 
 
@@ -1530,10 +1557,10 @@ class _TasteBuild(_ClosedModel):
 
 
 class _TasteProfileResponse(_ClosedModel):
-    """Covers → Taste profile, read-only (#1372). It never carries a path,
-    title, reference or anything the model saw."""
+    """Covers → Taste profile (#1372). It never carries a path, title,
+    reference or anything the model saw."""
 
-    schema_version: Literal["review-taste-profile-v1"]
+    schema_version: ReviewTasteProfileSchemaVersion
     configured: StrictBool
     chosen: StrictInt = Field(ge=0)
     required: Literal[25]
@@ -1547,11 +1574,43 @@ class _TasteRetryRequest(_ClosedModel):
     build_id: StrictStr = Field(pattern=r"^taste_build_[0-9a-f]{32}$")
 
 
+# One owner edit of the version shown (#1372 PR 2 S10). The pydantic models
+# bound only shape: the text rule and the profile's bounds answer closed codes
+# from the application, so `text` is capped well above 400 code points.
+class _TasteRuleEdit(_ClosedModel):
+    version: StrictInt = Field(ge=1)
+    action: Literal["edit"]
+    number: StrictInt = Field(ge=1, le=MAX_TASTE_RULE_NUMBER)
+    text: StrictStr = Field(max_length=4096)
+
+
+class _TasteRuleAdd(_ClosedModel):
+    version: StrictInt = Field(ge=1)
+    action: Literal["add"]
+    section: TasteSection
+    text: StrictStr = Field(max_length=4096)
+
+
+class _TasteRuleRemove(_ClosedModel):
+    version: StrictInt = Field(ge=1)
+    action: Literal["remove"]
+    number: StrictInt = Field(ge=1, le=MAX_TASTE_RULE_NUMBER)
+
+
+_TASTE_EDIT_REFUSALS: frozenset[TasteEditRefusal] = frozenset(
+    {"rule_empty", "rule_too_long", "rule_text", "rule_limit", "profile_full"}
+)
+
+
 def _taste_response(data: dict[str, object]) -> _TasteProfileResponse:
     versions = cast("list[tuple[int, int, dict[str, Any]]]", data["versions"])
     build = cast("dict[str, object] | None", data["build"])
+
+    def kind(document: dict[str, Any]) -> Literal["built", "edited"]:
+        return "built" if document["source"] == "build" else "edited"
+
     return _TasteProfileResponse(
-        schema_version="review-taste-profile-v1",
+        schema_version=REVIEW_TASTE_PROFILE_SCHEMA,
         configured=cast(bool, data["configured"]),
         chosen=cast(int, data["eligible"]),
         required=TASTE_FIRST_BUILD_DECISIONS,
@@ -1565,22 +1624,19 @@ def _taste_response(data: dict[str, object]) -> _TasteProfileResponse:
         if not versions
         else _TasteProfileVersion(
             version=versions[0][0],
-            built_at=versions[0][1],
+            kind=kind(versions[0][2]),
+            built_at=versions[0][2]["built_at"],
             decisions=versions[0][2]["input"]["included"],
-            rules=[
-                _TasteRule(
-                    number=rule["number"], section=rule["section"], text=rule["text"]
-                )
-                for rule in versions[0][2]["rules"]
-            ],
+            rules=[_TasteRule.model_validate(rule) for rule in versions[0][2]["rules"]],
         ),
         versions=[
             _TasteVersion(
                 version=version,
-                built_at=built_at,
+                kind=kind(document),
+                created_at=created_at,
                 decisions=document["input"]["included"],
             )
-            for version, built_at, document in versions
+            for version, created_at, document in versions
         ],
     )
 
@@ -2961,11 +3017,16 @@ _BODY_PATH_LIMITS = {
     "/api/v1/reviewer-access/description-model/test": 4_096,
     "/api/v1/reviewer-access/taste-model/test": 4_096,
     "/api/v1/covers/taste/retry": DEFAULT_BODY_LIMIT_BYTES,
+    # A 400-code-point rule, even with every code point escaped as JSON
+    # surrogate pairs, plus its version, number and framing (#1372 PR 2).
+    "/api/v1/covers/taste/rules": 8_192,
     "/api/v1/reviewer-access/selection": DEFAULT_BODY_LIMIT_BYTES,
     "/api/v1/reviewer-access/codex/device": DEFAULT_BODY_LIMIT_BYTES,
     "/api/v1/reviewer-access/codex/recheck": DEFAULT_BODY_LIMIT_BYTES,
     "/api/v1/reviewer-access/codex/device/cancel": DEFAULT_BODY_LIMIT_BYTES,
     "/api/v1/reviewer-access/codex": DEFAULT_BODY_LIMIT_BYTES,
+    # Three maximum passwords may each expand sixfold under JSON escaping.
+    "/api/v1/session/password": 3 * 1_024 * 6 + 128,
 }
 _BODY_PATTERN_LIMITS = ((re.compile(r"/api/v1/review-cases/[^/]+/decisions"), 8_192),)
 
@@ -3757,6 +3818,58 @@ def _register_session_and_operations_routes(
             secure=configuration.canonical_origin.startswith("https://"),
             httponly=True,
             samesite="strict",
+        )
+        response.status_code = 204
+        return response
+
+    @app.post(
+        "/api/v1/session/password",
+        status_code=204,
+        responses={
+            status: {"model": _ErrorResponse}
+            for status in (400, 401, 403, 409, 413, 422, 429, 503)
+        },
+    )
+    def change_password(
+        payload: _PasswordChangeRequest,
+        request: Request,
+        response: Response,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> Response:
+        _require_session(sessions, ml_session, x_csrf_token)
+        try:
+            tokens = sessions.change_owner_password(
+                ml_session,
+                x_csrf_token,
+                payload.current_password,
+                payload.new_password,
+                payload.confirmation,
+                client_identity(request, configuration.trusted_proxy_ips),
+            )
+        except ReviewWebError as error:
+            if error.code == "settings_managed_by_file":
+                raise HTTPException(
+                    409,
+                    detail={"code": error.code, "managed_by_file": "/data/config.json"},
+                ) from None
+            status = {
+                "csrf": 403,
+                "current_password_invalid": 403,
+                "invalid_password": 422,
+                "persistence": 503,
+                "throttled": 429,
+                "unauthorized": 401,
+            }.get(error.code, 500)
+            raise HTTPException(status, detail={"code": error.code}) from None
+        response.set_cookie(
+            _COOKIE_NAME,
+            tokens.session_token,
+            httponly=True,
+            secure=configuration.canonical_origin.startswith("https://"),
+            samesite="strict",
+            max_age=configuration.session_lifetime_seconds,
+            path="/",
         )
         response.status_code = 204
         return response
@@ -4767,6 +4880,44 @@ def _register_taste_routes(
         except ReviewerAccessApplicationError:
             raise HTTPException(503, detail={"code": "unavailable"}) from None
 
+    @app.post(
+        "/api/v1/covers/taste/rules",
+        response_model=_TasteProfileResponse,
+        responses={
+            status: {"model": _ErrorResponse}
+            for status in (401, 403, 409, 413, 422, 503)
+        },
+    )
+    def edit_taste_rule(
+        request: Annotated[
+            _TasteRuleEdit | _TasteRuleAdd | _TasteRuleRemove,
+            Body(discriminator="action"),
+        ],
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> _TasteProfileResponse:
+        """Edit, add or remove one rule of the version shown; each saved
+        change is a new version at once. Errors carry only a closed code."""
+        _require_session(application, ml_session, x_csrf_token)
+        try:
+            application.edit_taste_rule(
+                request.version,
+                request.action,
+                getattr(request, "number", None),
+                getattr(request, "section", None),
+                getattr(request, "text", None),
+            )
+        except ReviewApplicationError as error:
+            if error.code == "stale":
+                raise HTTPException(409, detail={"code": "stale"}) from None
+            if error.code in _TASTE_EDIT_REFUSALS:
+                raise HTTPException(422, detail={"code": error.code}) from None
+            raise HTTPException(503, detail={"code": "unavailable"}) from None
+        try:
+            return _taste_response(application.taste_profile())
+        except (ReviewApplicationError, ReviewerAccessApplicationError):
+            raise HTTPException(503, detail={"code": "unavailable"}) from None
+
 
 def _register_cover_routes(
     app: FastAPI, application: ReviewApplication, session_cookie: APIKeyCookie
@@ -5533,6 +5684,94 @@ def owner_password_binding(encoded: str) -> OwnerPasswordBinding:
         ).hexdigest()
 
     return verify, session_digest, client_digest
+
+
+class _StoreOwnerCredential:
+    """One encoded owner verifier and the binding derived from it."""
+
+    __slots__ = ("_binding", "encoded")
+
+    def __init__(self, encoded: str) -> None:
+        self._binding = owner_password_binding(encoded)
+        self.encoded = encoded
+
+    def verify(self, password: str) -> bool:
+        return self._binding[0](password)
+
+    def session_digest(self, token: str) -> str:
+        return self._binding[1](token)
+
+    def client_digest(self, identity: str) -> str:
+        return self._binding[2](identity)
+
+
+class StoreOwnerPassword:
+    """The live owner verifier of a store deployment, shared by its generations.
+
+    Every store generation in one process reads the verifier here, so a
+    password change takes effect in all of them at once, and no Settings
+    cutover can bring back a verifier it composed before the change. The first
+    generation seeds it from the stored verifier; after that only ``adopt``
+    moves it, and only once the store has committed the replacement.
+    """
+
+    def __init__(self, store: OwnerVerifierStore) -> None:
+        self._store = store
+        self._lock = threading.Lock()
+        self._current: _StoreOwnerCredential | None = None
+
+    def seed(self, encoded: str) -> None:
+        with self._lock:
+            if self._current is None:
+                self._current = _StoreOwnerCredential(encoded)
+
+    def current(self) -> _StoreOwnerCredential:
+        current = self._current
+        if current is None:
+            raise ReviewWebError("password_hash")
+        return current
+
+    def verify(self, password: str) -> bool:
+        return self.current().verify(password)
+
+    def session_digest(self, token: str) -> str:
+        return self.current().session_digest(token)
+
+    def client_digest(self, identity: str) -> str:
+        return self.current().client_digest(identity)
+
+    def successor(self, password: str) -> _StoreOwnerCredential:
+        return _StoreOwnerCredential(PasswordHasher().hash(password))
+
+    def adopt(
+        self,
+        expected: OwnerCredential,
+        successor: OwnerCredential,
+        committed: Callable[[], None] | None = None,
+    ) -> bool:
+        """Commit ``successor`` and swap to it, only while ``expected`` is live.
+
+        ``committed`` runs after the commit and before the swap, still under
+        the lock: until the swap no request is checked against the successor,
+        so no session of its own can exist for ``committed`` to remove. The
+        swap follows whatever ``committed`` does.
+        """
+        if (
+            type(expected) is not _StoreOwnerCredential
+            or type(successor) is not _StoreOwnerCredential
+        ):
+            raise TypeError("owner credential was not issued here")
+        with self._lock:
+            if self._current is not expected or not self._store.replace_owner_verifier(
+                expected.encoded, successor.encoded
+            ):
+                return False
+            try:
+                if committed is not None:
+                    committed()
+            finally:
+                self._current = successor
+            return True
 
 
 # The one key every client the server cannot resolve shares: no peer, or a

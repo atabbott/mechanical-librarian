@@ -58,7 +58,10 @@ from mechanical_librarian.application.metadata_report import (
     MetadataLookup,
     qualify_provider_observation,
 )
-from mechanical_librarian.application.owner_settings import OwnerSettingsOperations
+from mechanical_librarian.application.owner_settings import (
+    FileOwnerSettingsRepository,
+    OwnerSettingsOperations,
+)
 from mechanical_librarian.application.review_application import (
     REVIEW_PREPARATION_SCHEMA,
 )
@@ -103,6 +106,7 @@ from mechanical_librarian.domain.setup_state import (
     claim_token_digest,
 )
 from mechanical_librarian.infrastructure.settings_authority import BootstrapMount
+from mechanical_librarian.interfaces.web import StoreOwnerPassword
 from mechanical_librarian.interfaces.web.react_assets import ReactAssetLoader
 from mechanical_librarian.interfaces.web.setup import create_setup_app
 from tests.browser.text_size import set_root_text
@@ -550,6 +554,7 @@ def _server(
     audiobook_tranche: bool = False,
     settings_document: OwnerSettingsDocument | None = _DEFAULT_SETTINGS_DOCUMENT,
     on_app: Callable[[Any], None] | None = None,
+    owner_password: Literal["file", "store"] | None = None,
     write_consent: Callable[[Any], tuple[str, ...]] | None = None,
 ):
     repository = open_repository(database, create=True, cross_thread=True)
@@ -597,11 +602,26 @@ def _server(
             [
                 (f"connection.{item.name}.key", f"synthetic-{item.name}-secret")
                 for item in settings_document.connections
-            ],
+            ]
+            # A store deployment keeps the verifier beside the settings, and
+            # Settings can change it there.
+            + (
+                [("owner.password.verifier", hash_path.read_text(encoding="utf-8"))]
+                if owner_password == "store"
+                else []
+            ),
         )
         connection.commit()
         connection.close()
-        settings = OwnerSettingsOperations(repository.owner_settings_store())
+        settings = OwnerSettingsOperations(
+            FileOwnerSettingsRepository(settings_document)
+            if owner_password == "file"
+            else repository.owner_settings_store()
+        )
+    store_password = None
+    if owner_password == "store":
+        store_password = StoreOwnerPassword(repository.owner_settings_store())
+        store_password.seed(hash_path.read_text(encoding="utf-8"))
     if audiobook_tranche:
         # The tranche's policy has to reach the automatic posture before any
         # other case exists, because confirmation requires a settled
@@ -1849,6 +1869,7 @@ def _server(
         cover_considerations=cover_considerations,
         settings=settings,
         reviewer_access=reviewer_access,
+        owner_password=store_password,
     )
     if owner_library_change:
         owner_changed = False
@@ -3088,6 +3109,11 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 if not page.locator(".cm-policy-mode").evaluate("node => node.open"):
                     page.locator(".cm-policy-mode summary").click()
                 page.get_by_role("button", name="Enter Preview mode").wait_for()
+                # Measured at the page's end, with the sidebar held below the
+                # masthead. The phone masthead now scrolls away (#1894), so the
+                # theme click above scrolled to the top rather than leaving the
+                # page at its end as it used to.
+                page.evaluate("scrollTo(0, document.documentElement.scrollHeight)")
                 sidebar_box = page.locator(".cm-policy-sidebar").bounding_box()
                 tray_box = page.locator(".cm-finish-tray").bounding_box()
                 assert sidebar_box is not None and tray_box is not None
@@ -4090,10 +4116,14 @@ def test_library_search_scopes_the_list_and_leaves_global_counts() -> None:
             expect(page).to_have_url(re.compile(r"q=Retained"))
             expect(status).to_have_text(announced)
             assert status.evaluate(shown) == visible
-            # It stays on the Works heading's line.
+            # It keeps its own line directly under the Works heading, starting
+            # where the heading starts (#1894).
             heading = page.locator("#library-works-title").bounding_box()
             line = status.bounding_box()
-            assert heading and line and line["y"] < heading["y"] + heading["height"]
+            assert heading and line
+            bottom = heading["y"] + heading["height"]
+            assert bottom - 0.5 <= line["y"] <= bottom + 8, (heading, line)
+            assert abs(line["x"] - heading["x"]) <= 1, (heading, line)
         expect(badge).to_have_text("1 work")
 
 
@@ -4513,6 +4543,27 @@ _SOURCES_SUMMARY_GEOMETRY = """() => {
 }"""
 
 
+# The ring of each long description choice, from its value's rect and the
+# ring's own computed offset and size, beside the choice it belongs to (#1894).
+_LONG_DESCRIPTION_RING_GEOMETRY = """() =>
+  [...document.querySelectorAll('.description-choice-content + .choice-select > strong')]
+    .filter(strong => strong.getClientRects().length)
+    .map(strong => {
+      const value = strong.getBoundingClientRect();
+      const ring = getComputedStyle(strong, '::before');
+      const box = strong.closest('.choice-select').getBoundingClientRect();
+      const left = value.left + strong.clientLeft + parseFloat(ring.left);
+      const top = value.top + strong.clientTop + parseFloat(ring.top);
+      const width = parseFloat(ring.width);
+      const height = parseFloat(ring.height);
+      return {
+        left, top, width, right: left + width, bottom: top + height,
+        boxLeft: box.left, boxRight: box.right, boxTop: box.top, boxBottom: box.bottom,
+        viewport: document.documentElement.clientWidth,
+      };
+    })"""
+
+
 @pytest.mark.parametrize("identity", [False, True])
 @pytest.mark.parametrize("dark", [False, True])
 def test_library_description_controls_preserve_words_at_enlarged_text(
@@ -4617,6 +4668,29 @@ def test_library_description_controls_preserve_words_at_enlarged_text(
                         sources,
                     )
                 if not identity:
+                    # A long description's radio ring sits inside its own
+                    # choice and inside the window, not on or past the card's
+                    # edge (#1894).
+                    set_root_text(page, "100%")
+                    for width in (1280, 900, 320):
+                        page.set_viewport_size({"width": width, "height": 900})
+                        page.evaluate(
+                            "() => new Promise(resolve => requestAnimationFrame(() => "
+                            "requestAnimationFrame(resolve)))"
+                        )
+                        rings = page.evaluate(_LONG_DESCRIPTION_RING_GEOMETRY)
+                        assert rings, width
+                        for ring in rings:
+                            assert ring["width"] == 20, (width, ring)
+                            assert (
+                                ring["left"] >= ring["boxLeft"] - 0.5
+                                and ring["right"] <= ring["boxRight"] + 0.5
+                                and ring["top"] >= ring["boxTop"] - 0.5
+                                and ring["bottom"] <= ring["boxBottom"] + 0.5
+                            ), (width, ring)
+                            assert (
+                                ring["left"] >= 0 and ring["right"] <= ring["viewport"]
+                            ), (width, ring)
                     disclosure = page.get_by_role(
                         "button", name="Read full description"
                     ).first
@@ -4689,7 +4763,12 @@ def test_configured_cover_reviewer_keeps_failed_advice_retryable() -> None:
                 expect(retry).to_have_count(0)
                 # A readable current cover is kept without asking, and the
                 # owner can still choose another one (#1310).
-                expect(page.get_by_text("0 remaining · field 1 of 1")).to_be_visible()
+                expect(
+                    page.locator("dt", has_text=re.compile("^Needs you$")).locator(
+                        "xpath=following-sibling::dd[1]"
+                    )
+                ).to_have_text("0")
+                expect(page.get_by_text(re.compile("remaining ·"))).to_have_count(0)
                 expect(
                     page.get_by_text(
                         "Your current cover is kept, so no review is needed. "
@@ -4981,11 +5060,23 @@ def test_protected_cover_comparison_contains_every_image_without_cropping() -> N
                 assert last["y"] >= max(
                     box["y"] + box["height"] for box in (first, second, third)
                 )
+                # The current cover is the same size as the other covers and
+                # level with them. Its evidence is closed first, so only the
+                # card itself is measured.
+                disclosure.click()
+                expect(disclosure).to_have_attribute("aria-expanded", "false")
+                page.set_viewport_size({"width": 1280, "height": 900})
+                page.evaluate("() => document.documentElement.offsetWidth")
                 current_box = page.locator(
                     ".library-cover-pinned > aside .cover-choice"
                 ).bounding_box()
-                assert current_box is not None
-                assert current_box["height"] > first["height"]
+                first = cards.nth(0).bounding_box()
+                assert current_box is not None and first is not None
+                assert abs(current_box["height"] - first["height"]) <= 1, (
+                    current_box,
+                    first,
+                )
+                assert abs(current_box["y"] - first["y"]) <= 1, (current_box, first)
 
                 # 200% zoom is a halved CSS-pixel viewport at twice the device
                 # scale, which is exactly the layout the owner gets when they
@@ -5018,7 +5109,13 @@ def test_protected_cover_comparison_contains_every_image_without_cropping() -> N
                     track.evaluate("node => getComputedStyle(node).overscrollBehaviorX")
                     == "contain"
                 )
-                expect(page.locator(".cover-track-hint")).to_be_visible()
+                # The row scrolls without a hint telling the owner so.
+                expect(page.locator(".cover-track-hint")).to_have_count(0)
+                expect(
+                    page.get_by_text(
+                        "Every cover is shown whole in one row", exact=False
+                    )
+                ).to_have_count(0)
 
                 for width, size in ((390, "100%"), (390, "200%"), (320, "200%")):
                     page.set_viewport_size({"width": width, "height": 844})
@@ -5799,7 +5896,10 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
                     """() => {
                       const card = document.activeElement?.closest('.metadata-choice')
                       const probe = document.createElement('div')
-                      probe.style.background = 'var(--surface-strong)'
+                      // The current value rests on its lightly tinted side (#1894).
+                      probe.style.background = card?.closest('.current-choice-list')
+                        ? 'color-mix(in srgb, var(--surface) 70%, var(--surface-strong))'
+                        : 'var(--surface-strong)'
                       document.body.append(probe)
                       const result = {
                         background: card && getComputedStyle(card).backgroundColor,
@@ -5993,7 +6093,14 @@ def test_compact_lower_choice_reveals_only_the_next_focused_control() -> None:
                             """button => {
                                 const masthead = document.querySelector('.masthead');
                                 const top = button.getBoundingClientRect().top + scrollY;
-                                window.scrollTo(0, top - masthead.getBoundingClientRect().bottom - 24);
+                                // A masthead taller than a sixth of the window scrolls
+                                // away (#1894), so its live bottom is no clearance;
+                                // the tab keeps its place below where it rests.
+                                const box = masthead.getBoundingClientRect();
+                                const clearance = document.documentElement.dataset.masthead === 'static'
+                                    ? box.height
+                                    : box.bottom;
+                                window.scrollTo(0, top - clearance - 24);
                             }"""
                         )
                         if keyboard:
@@ -6168,6 +6275,18 @@ def test_review_choice_group_keyboard_model(width: int) -> None:
                 )
                 assert len(toggle_heights) >= 2, toggle_heights
                 assert min(toggle_heights) >= 44, (width, toggle_heights)
+                # The current value's own choice stays a 44px target beside a
+                # one-line value, side by side and stacked (#1894).
+                for target_width in (1280, 390):
+                    page.set_viewport_size({"width": target_width, "height": 900})
+                    current_select = page.locator(
+                        ".current-choice-list .choice-select"
+                    ).evaluate_all(
+                        "nodes => nodes.map((node) => node.getBoundingClientRect().height)"
+                    )
+                    assert len(current_select) == 1, (target_width, current_select)
+                    assert current_select[0] >= 44, (target_width, current_select)
+                page.set_viewport_size({"width": width, "height": 900})
                 radios = group.get_by_role("radio")
                 count = radios.count()
                 assert count >= 2, snapshot
@@ -6456,7 +6575,7 @@ def test_an_admitted_audiobook_is_decided_like_any_other_case(
                         "xpath=following-sibling::dd[1]"
                     )
                 ).to_have_text("0")
-                expect(page.get_by_text(re.compile("^0 remaining"))).to_be_visible()
+                expect(page.get_by_text(re.compile("remaining ·"))).to_have_count(0)
                 for name in ("ASIN", "Narrators"):
                     button = page.get_by_role(
                         "button", name=re.compile(f"^{name}")
@@ -10851,7 +10970,12 @@ def test_provider_recovery_rail_explains_exact_automatic_withholding():
 @pytest.mark.parametrize(
     "state", ("ready", "needs_review", "failed", "automatic", "no_change")
 )
-def test_description_advice_displays_real_persisted_outcomes(state):
+def test_description_advice_displays_real_persisted_outcomes(state, monkeypatch):
+    if state in {"automatic", "no_change"}:
+        from tests.support.description_advice import qualify_description_advice
+
+        # The server runs in this process, so the record holds for its life.
+        qualify_description_advice(monkeypatch, "synthetic-contained-model")
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         root.chmod(0o700)
@@ -11456,6 +11580,9 @@ def test_generated_authors_fixture_reaches_library_choice_and_evidence(
             browser.close()
 
 
+_UNKNOWN_LANGUAGE_EVIDENCE = "UND. Not offered as a choice. The language is not known."
+
+
 @pytest.mark.parametrize("audio", (False, True))
 @pytest.mark.parametrize(
     # A tag reads by name beside the tag itself, so it never reads like the
@@ -11499,11 +11626,13 @@ def test_language_observed_form_and_unknown_evidence_in_owner_workspace(
             page.get_by_text(
                 "Not offered as a choice. The language is not known.", exact=False
             ).wait_for()
-            expect(page.get_by_text("Language: UND.", exact=False)).to_be_visible()
-            # The page names the language beside its tag, as Library does (#1286 L1).
+            # A value is shown without its own field's prefix: the Language
+            # heading names the field once (#1894).
             expect(
-                page.get_by_text("Language: English (en)", exact=True).first
+                page.get_by_text(_UNKNOWN_LANGUAGE_EVIDENCE, exact=True)
             ).to_be_visible()
+            # The page names the language beside its tag, as Library does (#1286 L1).
+            expect(page.get_by_text("English (en)", exact=True).first).to_be_visible()
             page.get_by_role("link", name="History", exact=True).click()
             expect(page.get_by_text(f"To {expected}", exact=True)).to_be_visible()
             page.get_by_role("link", name="Activity", exact=True).click()
@@ -11579,7 +11708,9 @@ def test_language_ask_owner_choice_is_reachable_and_durable(audio):
                 )
             ).to_have_attribute("aria-checked", "true")
             page.get_by_role("link", name="Evidence", exact=True).click()
-            expect(page.get_by_text("Language: UND.", exact=False)).to_be_visible()
+            expect(
+                page.get_by_text(_UNKNOWN_LANGUAGE_EVIDENCE, exact=True)
+            ).to_be_visible()
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         browser.close()
 
@@ -12563,7 +12694,12 @@ def test_audiobook_work_series_title_owner_journey():
             expect(title).to_have_attribute("aria-checked", "true")
             # Only the book's own fields are offered; the subtitle, cover and
             # recording rows stay out.
-            expect(page.get_by_text("field 2 of 4", exact=False)).to_be_visible()
+            rail_fields = page.get_by_role("navigation", name="Review fields").locator(
+                "button:not(.field-more)"
+            )
+            expect(rail_fields).to_have_count(4)
+            expect(rail_fields.nth(1)).to_have_attribute("aria-current", "true")
+            expect(rail_fields.nth(1)).to_contain_text("Title")
             for field, count in (
                 ("Description", 1),
                 ("Title", 1),
@@ -14651,6 +14787,27 @@ def _check_cover_tabs_after_swipe_back_and_tab(page: Page, origin: str) -> None:
         page.wait_for_function(_COVER_TAB_IN_VIEW, arg=":focus", timeout=5_000)
 
 
+# A To decide row's status and hold pills, read from their shared row (#1894).
+_COVERS_QUEUE_PILLS_ROW = """item => {
+  const row = item.querySelector('.covers-queue-pills')
+  const [status, hold] = [...row.children].map(pill => pill.getBoundingClientRect())
+  const title = item.querySelector(
+    ':scope > span:not(.covers-image-missing, .covers-queue-pills)').getBoundingClientRect()
+  const gap = parseFloat(getComputedStyle(row).columnGap) || 0
+  const width = row.getBoundingClientRect().width
+  return {
+    count: row.children.length,
+    status: [status.left, status.top, status.width],
+    hold: [hold.left, hold.top, hold.width],
+    row: width,
+    fits: status.width + gap + hold.width <= width + 0.5,
+    sameRow: Math.abs(status.top - hold.top) <= 1,
+    sameLeft: Math.abs(status.left - hold.left) <= 1,
+    belowTitle: status.top >= title.bottom - 1,
+  }
+}"""
+
+
 @pytest.mark.parametrize(
     ("journey", "incumbent"),
     (
@@ -14858,13 +15015,15 @@ def test_measured_cover_rules_keep_or_suggest_through_covers(
                                 node => node.textContent === 'Image unavailable')
                               return {
                                 lines: lines.size,
-                                parent: hold.parentElement === item ? 1 : 0,
+                                // It shares the pills' row inside the item.
+                                parent: hold.closest('.covers-queue-item') === item
+                                  && hold.parentElement.classList.contains('covers-queue-pills') ? 1 : 0,
                                 frame: frame.textContent.length,
                                 stateWidth: state.getBoundingClientRect().width,
                                 // The pill sits just under the text, not
                                 // under the taller thumbnail.
                                 gap: hold.getBoundingClientRect().top
-                                  - item.querySelector(':scope > span:not(.status-pill, .covers-image-missing)').getBoundingClientRect().bottom,
+                                  - item.querySelector(':scope > span:not(.covers-image-missing, .covers-queue-pills)').getBoundingClientRect().bottom,
                                 radius: parseFloat(getComputedStyle(hold).borderTopLeftRadius),
                                 height: hold.getBoundingClientRect().height,
                               }
@@ -14898,6 +15057,45 @@ def test_measured_cover_rules_keep_or_suggest_through_covers(
                     assert wrapped["height"] > 2 * wrapped["lineHeight"], wrapped
                     assert wrapped["radius"] * 2 < wrapped["height"], wrapped
                     set_root_text(page, "")
+                    # #1894: at 390 px the status and hold pills share one
+                    # wrapping row under the title. A short hold sits beside
+                    # the status; the longest hold moves whole under it only
+                    # because the two do not fit side by side.
+                    for reason, fits in (
+                        ("below_floor", True),
+                        ("current_contradicted", False),
+                    ):
+
+                        def hold_reason(reason: str) -> Callable[[Any], None]:
+                            def fulfil(route: Any) -> None:
+                                listed = route.fetch().json()
+                                listed["items"][0].update(
+                                    group="choice",
+                                    suggestion=None,
+                                    hold={"reason": reason},
+                                    cover=None,
+                                    unreadable_cover=True,
+                                )
+                                route.fulfill(json=listed)
+
+                            return fulfil
+
+                        page.unroute("**/api/v1/covers?*")
+                        page.route("**/api/v1/covers?*", hold_reason(reason))
+                        page.goto(f"{origin}/library?lens=all&view=covers&tab=decide")
+                        expect(hold).to_be_visible()
+                        pills_row = cast(
+                            "dict[str, Any]",
+                            item.evaluate(_COVERS_QUEUE_PILLS_ROW),
+                        )
+                        assert pills_row["count"] == 2, (reason, pills_row)
+                        assert pills_row["belowTitle"], (reason, pills_row)
+                        assert pills_row["fits"] is fits, (reason, pills_row)
+                        if fits:
+                            assert pills_row["sameRow"], (reason, pills_row)
+                        else:
+                            assert not pills_row["sameRow"], (reason, pills_row)
+                            assert pills_row["sameLeft"], (reason, pills_row)
                     page.unroute("**/api/v1/covers?*")
                     page.set_viewport_size({"width": 1280, "height": 900})
                     page.goto(f"{origin}/library?lens=all&view=covers&tab={tab}")

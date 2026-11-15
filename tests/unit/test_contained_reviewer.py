@@ -1810,6 +1810,7 @@ def _taste_request(count: int = 2) -> Any:
         admit_taste_build_request,
         taste_transport_jpeg,
     )
+    from mechanical_librarian.domain.cover_taste import taste_budget
 
     images = []
     for index in range(count):
@@ -1825,6 +1826,10 @@ def _taste_request(count: int = 2) -> Any:
         )
     packet = canonical_json(
         {
+            # Packet v2: an owner rule kept and a removed text (#1372 PR 2).
+            "budget": taste_budget(("Calm serif type.",)),
+            "kept": [{"section": "drawn_to", "text": "Calm serif type."}],
+            "left_out": ["Glossy finish."],
             "decisions": [
                 {
                     "images": [

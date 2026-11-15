@@ -37,6 +37,15 @@ export type CoverTab = CoversView['view']
 export type CoversTab = CoverTab | 'taste'
 export type TasteProfileView = ResponseSchema<'_TasteProfileResponse'>
 export type TasteBuildFailure = NonNullable<NonNullable<TasteProfileView['build']>['failure']>
+export type TasteSection = ResponseSchema<'_TasteRule'>['section']
+type TasteRuleRequest =
+  Schema<'_TasteRuleEdit'> | Schema<'_TasteRuleAdd'> | Schema<'_TasteRuleRemove'>
+// One owner edit of the version the editor opened on (#1372 PR 2 S12).
+export type TasteRuleEdit = TasteRuleRequest extends infer R
+  ? R extends TasteRuleRequest
+    ? Omit<R, 'version'>
+    : never
+  : never
 type CaseDetailDto = ResponseSchema<'_CaseDetailResponse'>
 type ReviewFieldDto = ResponseSchema<'_ReviewField'>
 type DescriptionCandidateDto = ResponseSchema<'DescriptionAdviceCandidate'>
@@ -57,6 +66,7 @@ type DecisionAcknowledgementDto =
   | ResponseSchema<'_DescriptionSelectionAcknowledgement'>
 export type SettingsView = ResponseSchema<'SettingsView'>
 export type SettingsWrite = Schema<'_SettingsWriteRequest'>
+export type PasswordChange = Schema<'_PasswordChangeRequest'>
 export type AppearanceView = ResponseSchema<'_AppearanceResponse'>
 // The closed OpenRouter failures an owner may see, each with its own remedy.
 const reviewerFailureCodes = [
@@ -1276,6 +1286,12 @@ export interface ReviewHttp {
   getTasteProfile(signal?: AbortSignal, workClass?: ReadWorkClass): Promise<TasteProfileView>
   /** Try again after the failed build `buildId`; it counts against the daily limit. */
   retryTasteBuild(buildId: string, signal?: AbortSignal): Promise<TasteProfileView>
+  /** Covers → Taste profile: save one rule edit as a new version at once. */
+  editTasteRule(
+    version: number,
+    edit: TasteRuleEdit,
+    signal?: AbortSignal,
+  ): Promise<TasteProfileView>
   getCaseDetail(
     reviewCaseId: string,
     signal?: AbortSignal,
@@ -1355,6 +1371,7 @@ export interface ReviewHttp {
     signal?: AbortSignal,
   ): Promise<ActivityView | undefined>
   logout(signal?: AbortSignal): Promise<void>
+  changePassword(value: PasswordChange, signal?: AbortSignal): Promise<void>
 }
 
 export interface CsrfTokenStore {
@@ -1519,6 +1536,15 @@ export class ReviewApiClient implements ReviewHttp {
   private signingOut = false
   private signedOut = false
   private expiryWhileSigningOut = false
+  // Set while a password change is in flight: the change ends every other
+  // session, so a parallel request may answer 401 although this browser stays
+  // signed in on its new session. Unlike the sign-out mark it always clears:
+  // success discards a held expiry, and any failure replays it.
+  private changingPassword = false
+  private expiryWhileChangingPassword = false
+  // Moves when a password change gives this browser its new session. A 401
+  // for a request that left before then answers the replaced session.
+  private sessionGeneration = 0
   constructor(private readonly options: HttpClientOptions) {
     this.fetch = options.fetch ?? globalThis.fetch.bind(globalThis)
     this.onSessionExpired =
@@ -1765,6 +1791,18 @@ export class ReviewApiClient implements ReviewHttp {
     return this.mutate(
       '/api/v1/covers/taste/retry',
       { build_id: buildId },
+      signal,
+      undefined,
+      'POST',
+      false,
+      false,
+      mapTasteProfile,
+    )
+  }
+  async editTasteRule(version: number, edit: TasteRuleEdit, signal?: AbortSignal) {
+    return this.mutate(
+      '/api/v1/covers/taste/rules',
+      { version, ...edit } satisfies TasteRuleRequest,
       signal,
       undefined,
       'POST',
@@ -2109,6 +2147,28 @@ export class ReviewApiClient implements ReviewHttp {
     }
   }
 
+  // Never sent again after a CSRF challenge: the owner presses again. The new
+  // session's token is not in the answer, so the page token is renewed after
+  // the change; a failed renewal is left to the next unsafe request.
+  async changePassword(value: PasswordChange, signal?: AbortSignal) {
+    this.changingPassword = true
+    try {
+      await this.mutate('/api/v1/session/password', value, signal)
+    } catch (error) {
+      const held = this.expiryWhileChangingPassword
+      this.changingPassword = this.expiryWhileChangingPassword = false
+      if (held) this.reportSessionExpiry()
+      throw error
+    }
+    this.changingPassword = this.expiryWhileChangingPassword = false
+    this.sessionGeneration += 1
+    try {
+      await this.options.csrf.renew(signal)
+    } catch {
+      // The next unsafe request renews the token itself.
+    }
+  }
+
   private async read<P extends RoutablePath<'GET'>>(
     path: P,
     signal?: AbortSignal,
@@ -2203,6 +2263,7 @@ export class ReviewApiClient implements ReviewHttp {
         this.fetch(path, { ...init, headers, credentials: 'same-origin', cache: 'no-store' }),
       )
     }
+    const session = this.sessionGeneration
     let response = await send(unsafe ? this.options.csrf.current() : undefined)
     if (unsafe && response.status === 403 && (await challengeCode(response)) === 'csrf') {
       let token: string
@@ -2223,7 +2284,7 @@ export class ReviewApiClient implements ReviewHttp {
       throw new BuildMismatchError()
     }
     if (response.status === 401) {
-      this.reportSessionExpiry()
+      this.reportSessionExpiry(session)
       throw new SessionExpiredError()
     }
     if (!response.ok) {
@@ -2291,9 +2352,14 @@ export class ReviewApiClient implements ReviewHttp {
     }
   }
 
-  private reportSessionExpiry() {
+  private reportSessionExpiry(session = this.sessionGeneration) {
+    if (session !== this.sessionGeneration) return
     if (this.signingOut) {
       this.expiryWhileSigningOut = true
+      return
+    }
+    if (this.changingPassword) {
+      this.expiryWhileChangingPassword = true
       return
     }
     if (this.sessionExpiryReported) return
@@ -2414,22 +2480,33 @@ const mapCoverMetadata = (value: CoverModelMetadata): CoverModelMetadata => {
   return value
 }
 
-// The profile shown is the newest version, its rules are numbered from 1 in
-// section order, and a failure is named exactly when the build failed (#1372).
-const tasteSections = ['drawn_to', 'avoid', 'trade_offs', 'keep_or_switch'] as const
+// The profile shown is the newest version, kept as its first row; a built
+// profile's rules are numbered from 1 in section order, an edited one's keep
+// their numbers with gaps; a failure is named exactly when the build failed
+// (#1372).
+const tasteSections = lits<TasteSection>()([
+  'drawn_to',
+  'avoid',
+  'trade_offs',
+  'keep_or_switch',
+] as const)
 export const mapTasteProfile = (value: TasteProfileView): TasteProfileView => {
   const { profile, versions, build } = value
   const rules = profile?.rules ?? []
+  const first = versions[0]
   if (
-    (profile === null) !== (versions.length === 0) ||
+    (profile === null) !== (first === undefined) ||
     (profile !== null &&
-      (profile.version !== versions[0]?.version || profile.built_at !== versions[0].built_at)) ||
+      (profile.version !== first?.version ||
+        profile.kind !== first.kind ||
+        (profile.kind === 'built' && profile.built_at !== first.created_at))) ||
     versions.some(
       (row, index) => index > 0 && row.version >= (versions[index - 1]?.version ?? 0),
     ) ||
+    new Set(rules.map((rule) => rule.number)).size !== rules.length ||
     rules.some(
       (rule, index) =>
-        rule.number !== index + 1 ||
+        (profile?.kind === 'built' && rule.number !== index + 1) ||
         tasteSections.indexOf(rule.section) <
           tasteSections.indexOf(rules[index - 1]?.section ?? 'drawn_to'),
     ) ||
@@ -2440,6 +2517,32 @@ export const mapTasteProfile = (value: TasteProfileView): TasteProfileView => {
   )
     throw new ApiError(502, 'invalid_taste_profile')
   return value
+}
+
+// The editor's request-side checks (#1372 PR 2 S12): the server is the
+// authority and refuses anything these let through, such as hidden characters.
+export const tasteRuleMaximum = 400
+export const tasteCodePoints = (value: string) => Array.from(value).length
+// The canonical spelling the server admits: NFC, whitespace collapsed, trimmed.
+export const normalizeTasteRule = (value: string) =>
+  value.normalize('NFC').replace(/\s+/gu, ' ').trim()
+const tasteAddress = /(https?:|www\.|:\/\/|[\\/][\w-]+[\\/])/i
+export type TasteRuleRefusal = 'rule_empty' | 'rule_too_long' | 'address' | 'profile_full'
+// What a normalised rule text is refused for, if anything, beside the other
+// rules it would join (`replacing` is the rule it rewrites, if any).
+export const tasteRuleRefusal = (
+  text: string,
+  rules: readonly { number: number; text: string }[],
+  replacing: number | null,
+): TasteRuleRefusal | null => {
+  if (text === '') return 'rule_empty'
+  if (tasteCodePoints(text) > tasteRuleMaximum) return 'rule_too_long'
+  if (tasteAddress.test(text)) return 'address'
+  const kept = rules.filter((rule) => rule.number !== replacing).map((rule) => rule.text)
+  const all = [...kept, text]
+  const words = all.reduce((total, rule) => total + rule.split(' ').length, 0)
+  const characters = all.reduce((total, rule) => total + tasteCodePoints(rule), 0)
+  return words > 1_200 || characters > 8_192 ? 'profile_full' : null
 }
 
 // The measured-cost accounting (X44), its prices (X45) and one row per model

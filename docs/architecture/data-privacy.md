@@ -63,8 +63,9 @@ profile identities, and one locally admitted closed observation or a typed,
 value-free failure. Description advice keeps each attempt and the one bounded
 description the reviewer authored. The taste profile keeps each build's
 state and closed failure code, the daily request count, and each admitted
-profile version with its model and the counts and one digest of the inputs
-it was built from.
+profile version with its model, the counts and one digest of the inputs it
+was built from, whether each rule is the model's, edited or the owner's, and
+the texts the owner removed or replaced.
 None keeps prompts, raw model streams, reasoning or unadmitted output. A
 clean rebuild discards the profile with all derived state.
 
@@ -158,7 +159,8 @@ The product sends no telemetry. It contacts only:
   provider-backed description texts and the three cleanup choices. The taste
   profile sends up to 100 previews of covers the owner chose and passed over,
   as JPEGs, with each cover's size, shape, same-art group and role and the
-  book's format; never a title, author, identifier, path or provider text.
+  book's format, and the rules the owner wrote or edited and the texts the
+  owner removed; never a title, author, identifier, path or provider text.
   With Codex selected, those covers go to OpenAI through the owner's ChatGPT
   sign-in, as cover review's do. OpenRouter cover and taste profile requests
   ask providers to deny data collection; description requests do not. Read the model provider's data
@@ -170,8 +172,8 @@ All owner surfaces need a session and are `private, no-store`.
 
 - **Library, Attention and review** show the owner's own metadata and evidence.
 - **Covers → Taste profile** shows the profile's rules, versions and build
-  state. Rule text is model output, shown as text only, and never reaches a
-  log, status, diagnostic or support bundle.
+  state. Rule text is model output or the owner's, shown as text only, and
+  never reaches a log, status, diagnostic or support bundle.
 - **Preparation status** shows only connection and library names, an opaque
   scan identifier, a closed state, counts and whether a request was
   coalesced: never titles, file names, queries, failure text or values.
