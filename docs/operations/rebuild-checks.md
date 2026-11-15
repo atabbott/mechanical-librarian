@@ -33,12 +33,13 @@ docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{if .Na
 ```
 
 Stop the app with `docker compose down` (without `-v`) so the databases are
-complete, then, from the same folder, copy the files, replacing
+complete, then, from the same folder, copy the files into a folder outside
+the checkout (here `~/ml-copies`), so no copy can end up in a commit, replacing
 `<volume-or-folder>` with what the command above printed:
 
 ```
-mkdir -m 700 copies
-docker run --rm -v <volume-or-folder>:/data:ro -v "$PWD/review-bootstrap.json":/in/review-bootstrap.json:ro -v "$PWD/copies":/out debian:bookworm-slim sh -c "cp /data/application.sqlite3 /data/catalogue.sqlite3 /out/; cp /data/config.json /out/ 2>/dev/null; cp /in/review-bootstrap.json /out/; cp /data/private/provider-recovery.sqlite /out/ 2>/dev/null; chown -R $(id -u):$(id -g) /out && chmod 600 /out/*"
+mkdir -m 700 ~/ml-copies
+docker run --rm -v <volume-or-folder>:/data:ro -v "$PWD/review-bootstrap.json":/in/review-bootstrap.json:ro -v ~/ml-copies:/out debian:bookworm-slim sh -c "cp /data/application.sqlite3 /data/catalogue.sqlite3 /out/; cp /data/config.json /out/ 2>/dev/null; cp /in/review-bootstrap.json /out/; cp /data/private/provider-recovery.sqlite /out/ 2>/dev/null; chown -R $(id -u):$(id -g) /out && chmod 600 /out/*"
 ```
 
 Start the app again with `docker compose up -d`. If there is no
@@ -56,7 +57,7 @@ for the results:
 
 ```
 uv run python scripts/rebuild_checks.py \
-    --copies copies --output results \
+    --copies ~/ml-copies --output ~/ml-results \
     [--mount-root books=/host/path/to/mount ...] [--limit 50]
 ```
 
