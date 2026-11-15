@@ -430,8 +430,8 @@ chosen automatically until #1418.
 - **Nested lists.** At `title_and_creator` only, a record whose author list
   contains the target's stored AUTHORS, or is contained in them, is compared
   against its own author list, so its title, provider work identity and
-  variant checks still run. Its classifier verdict is never more than not
-  contradicted.
+  variant checks still run. The classifier then returns only an explicit
+  contradiction or an unavailable verdict, never "not contradicted".
 - **Overlapping lists.** Two lists that share a creator while each names one
   the other lacks are a level-path contradiction at `title_and_creator`,
   whatever claim set the record states, including a record with no complete

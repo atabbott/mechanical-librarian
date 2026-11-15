@@ -693,6 +693,20 @@ _SECOND = "Bea Example"
         (("J. R. Example",), ("J.R. Example", "Co Author"), True, "nested"),
         (("J. R. Example",), ("J.R. Example", "Co Author"), False, "disjoint"),
         ((_FIRST, _SECOND), (_FIRST, "Cy Example"), True, "overlap"),
+        # One-to-one pairing: one record author agreeing with two of the
+        # book's is matched once, so the lists overlap rather than agree.
+        (
+            ("John Q. Public", "John R. Public"),
+            ("John Public", "Cy Fox"),
+            True,
+            "overlap",
+        ),
+        (
+            ("John Q. Public", _SECOND),
+            ("John Public", "John R. Public"),
+            True,
+            "overlap",
+        ),
         ((_FIRST,), ("Other Author",), True, "disjoint"),
         # The collapse guard: a fold merging two of one side's creators is not
         # tried, so no folded pairing is made.
@@ -711,6 +725,8 @@ _SECOND = "Bea Example"
         "folded_nested",
         "unfolded_disjoint",
         "overlap",
+        "one_record_author_for_two_book_authors",
+        "one_book_author_for_two_record_authors",
         "disjoint",
         "fold_without_collapse",
         "collapse_guard",
