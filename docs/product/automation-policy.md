@@ -49,7 +49,12 @@ An Automatic decision only records a choice
 Writing it to the library is a separate step. It needs write permission,
 unchanged evidence and library values, a backup and a read-back check
 ([ADR-0037](../architecture/decisions/0037-origin-neutral-guarded-field-effects.md)).
-Your decision on a field always overrides Automatic for that field.
+Your decision on a field always overrides Automatic for that field. It holds
+the field, whatever the mode or setting when you gave it: Automatic leaves the
+field alone on every later read of the work until you choose Resume automatic
+handling, which the field offers once Automatic has a decision for it
+([ADR-0085](../architecture/decisions/0085-owner-entered-values-withdrawal-and-reselection.md),
+Amendment 1). Withdrawing a decision removes the hold it set.
 
 ### Built-in policy
 

@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import random
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
@@ -61,11 +62,14 @@ def record_owner_cover_decisions(
     count: int,
     *,
     start: int = 0,
+    before_decision: Callable[[str], None] | None = None,
 ) -> None:
     """Record `count` owner cover choices through the real decision command.
 
     Each item's consideration offers its current cover and one larger
     candidate of another art; the owner chooses the candidate.
+    `before_decision`, when given, runs with each case id just before its
+    decision is recorded.
     """
     base, _ = _qualified_cover_report(root, candidate_size=(1200, 1800))
     artifacts = CoverArtifactStore(root / "artifacts")
@@ -115,6 +119,8 @@ def record_owner_cover_decisions(
             if not candidate["incumbent"] and candidate["selectable"]
         )
         decided_at = 200 + index
+        if before_decision is not None:
+            before_decision(case_id)
         RecordHumanDecision(repository, lambda: decided_at).run(  # noqa: B023 - run now
             case_id,
             proposal_id=str(proposal["proposal_id"]),

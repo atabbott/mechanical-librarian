@@ -90,6 +90,7 @@ def _run(context: dict[str, object]) -> list[AudioInspection]:
     with (
         patch.object(child, "_install_parent_guard"),
         patch.object(child, "_apply_limits"),
+        patch.object(child, "confine_interpreter"),
         patch.object(child, "_read_context", return_value=context),
         patch.object(child, "_write_report", side_effect=written.append),
         patch.object(child.signal, "signal"),
@@ -183,6 +184,7 @@ def test_exhausted_memory_is_a_resource_limit_terminal() -> None:
     with (
         patch.object(child, "_install_parent_guard"),
         patch.object(child, "_apply_limits"),
+        patch.object(child, "confine_interpreter"),
         patch.object(child, "_read_context", side_effect=MemoryError),
         patch.object(child, "_write_report", side_effect=written.append),
         patch.object(child.signal, "signal"),
@@ -219,6 +221,7 @@ def test_the_child_holds_its_own_deadline_over_the_interpretation() -> None:
     with (
         patch.object(child, "_install_parent_guard"),
         patch.object(child, "_apply_limits"),
+        patch.object(child, "confine_interpreter"),
         patch.object(child, "_read_context", return_value=_context()),
         patch.object(child, "_write_report", side_effect=written.append),
         patch.object(child, "interpret", side_effect=child._Expired),
@@ -246,6 +249,7 @@ def test_the_deadline_is_lifted_before_a_complete_report_is_written() -> None:
     with (
         patch.object(child, "_install_parent_guard"),
         patch.object(child, "_apply_limits"),
+        patch.object(child, "confine_interpreter"),
         patch.object(child, "_read_context", return_value=_context()),
         patch.object(child, "_write_report", side_effect=record),
         patch.object(child.signal, "signal"),
@@ -438,12 +442,39 @@ def test_the_probe_is_never_bounded_between_a_fork_and_an_exec() -> None:
 
 
 def test_the_shim_bounds_itself_and_then_becomes_the_binary_it_was_given() -> None:
+    # A real ELF binary, because the shim confines the exec to one and its
+    # loader, and a regular file as the media, as the parent always passes;
+    # the shell's builtins report the limits it inherited.
+    with tempfile.NamedTemporaryFile() as media:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-B",
+                "-m",
+                "mechanical_librarian.bootstrap.probe_shim",
+                str(media.fileno()),
+                "/bin/sh",
+                "-c",
+                'ulimit -c; ulimit -n; ulimit -t; echo "argv:$*"',
+                "sh",
+                "-of",
+                "json",
+            ],
+            pass_fds=(media.fileno(),),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+    assert completed.returncode == 0
+    assert completed.stdout.splitlines() == ["0", "64", "30", "argv:-of json"]
+
+
+def test_the_shim_refuses_to_become_anything_but_an_elf_binary() -> None:
     with tempfile.TemporaryDirectory() as temporary:
         binary = Path(temporary) / "stub"
-        binary.write_text(
-            '#!/bin/sh\nulimit -c; ulimit -n; ulimit -t; echo "argv:$*"\n',
-            encoding="utf-8",
-        )
+        binary.write_text('#!/bin/sh\necho "ran"\n', encoding="utf-8")
         binary.chmod(0o755)
         read, write = os.pipe()
         try:
@@ -456,8 +487,6 @@ def test_the_shim_bounds_itself_and_then_becomes_the_binary_it_was_given() -> No
                     "mechanical_librarian.bootstrap.probe_shim",
                     str(read),
                     str(binary),
-                    "-of",
-                    "json",
                 ],
                 pass_fds=(read,),
                 capture_output=True,
@@ -468,8 +497,8 @@ def test_the_shim_bounds_itself_and_then_becomes_the_binary_it_was_given() -> No
             os.close(read)
             os.close(write)
 
-    assert completed.returncode == 0
-    assert completed.stdout.splitlines() == ["0", "64", "30", "argv:-of json"]
+    assert sys.platform != "linux" or completed.returncode == 71
+    assert sys.platform != "linux" or completed.stdout == ""
 
 
 def test_the_shim_that_cannot_become_a_probe_exits_non_zero() -> None:
@@ -491,12 +520,10 @@ def test_the_shim_that_cannot_become_a_probe_exits_non_zero() -> None:
 
 
 def test_the_descriptor_the_parent_passed_survives_the_shim_exec() -> None:
+    # Read through `/dev/fd/N`, exactly as the probe opens its input.
     with tempfile.TemporaryDirectory() as temporary:
-        binary = Path(temporary) / "stub"
-        binary.write_text("#!/bin/sh\ncat /dev/fd/$1\n", encoding="utf-8")
-        binary.chmod(0o755)
         media = Path(temporary) / "book.m4b"
-        media.write_text("recorded bytes", encoding="utf-8")
+        media.write_text("recorded bytes\n", encoding="utf-8")
         descriptor = os.open(media, os.O_RDONLY)
         try:
             completed = subprocess.run(
@@ -507,7 +534,10 @@ def test_the_descriptor_the_parent_passed_survives_the_shim_exec() -> None:
                     "-m",
                     "mechanical_librarian.bootstrap.probe_shim",
                     str(descriptor),
-                    str(binary),
+                    "/bin/sh",
+                    "-c",
+                    'IFS= read -r line < "/dev/fd/$1"; printf %s "$line"',
+                    "sh",
                     str(descriptor),
                 ],
                 pass_fds=(descriptor,),

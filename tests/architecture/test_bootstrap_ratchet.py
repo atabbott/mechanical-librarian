@@ -53,13 +53,13 @@ SLACK = 10
 # Child, probe and container entry points stay in bootstrap by design. They
 # are exempt from the construct rules but pinned by ncnc size.
 ENTRY_POINTS = {
-    "audio_child.py": 267,
-    # 150 since #1363 moved the hash into adapters/cover_measures.py beside
-    # the same-art measures, which the child imports and calls, and reports
-    # the oriented size the preview and measures read.
-    "cover_child.py": 150,
-    "epub_child.py": 667,
-    "probe_shim.py": 66,
+    # The four parser children each gained one import and one call when
+    # confinement moved into adapters/child_confinement.py; the cover child
+    # shrank because its own network filter moved there.
+    "audio_child.py": 269,
+    "cover_child.py": 116,
+    "epub_child.py": 669,
+    "probe_shim.py": 70,
     "container.py": 77,
     "container_health.py": 110,
 }

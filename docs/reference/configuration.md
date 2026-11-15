@@ -614,10 +614,13 @@ not truncated. What is and is not sent is in
 
 With `description_automatic_application` off, ordinary description fill
 still applies. With it on, a current `ready` result that passes the
-description floor is admitted through the normal policy and write rules, and
-may replace a populated description. The floor is valid plain text with no
-markup or visible cut-off, not a placeholder and not mostly quoted praise. The
-owner can still choose a result below it.
+description floor is admitted through the normal policy and write rules on a
+field that offers the owner a choice, and may replace a populated description.
+The floor is valid plain text with no markup or visible cut-off, not a
+placeholder and not mostly quoted praise. The owner can still choose a result
+below it. A field that offers no choice, such as one whose sources all repeat
+the current description, keeps its current value and shows the result for
+reference only.
 
 - An owner's final choice wins, and in-flight effects are not raced.
 - Identical text records no change and sends no PATCH or Attention item.
