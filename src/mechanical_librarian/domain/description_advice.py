@@ -171,6 +171,21 @@ DESCRIPTION_OUTPUT_SCHEMA = description_document(
 )
 
 
+def description_qualification_manifest(preferences: DescriptionPreferences) -> str:
+    """The qualification manifest an authored description decision records.
+
+    It binds this checkout's instruction, output schema and the cleanup
+    choices, never the engine or model (ADR-0099).
+    """
+    return description_digest(
+        {
+            "instruction": DESCRIPTION_INSTRUCTION,
+            "schema": DESCRIPTION_OUTPUT_SCHEMA,
+            "preferences": preferences.model_dump(),
+        }
+    )
+
+
 Digest = Annotated[StrictStr, Field(pattern=r"^[0-9a-f]{64}$")]
 
 
