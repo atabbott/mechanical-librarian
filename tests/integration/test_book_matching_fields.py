@@ -368,6 +368,31 @@ def test_level_change_reasks_only_changed_offer(tmp_path: Path, case: str) -> No
         store.close()
 
 
+@pytest.mark.parametrize("written", [True, False], ids=["written", "unwritten"])
+def test_asked_again_notes_whether_the_choice_was_written(
+    tmp_path: Path, written: bool
+) -> None:
+    """Amendment A1.1: Activity says a choice Book matching asked again was
+    already written and verified, so Audiobookshelf keeps its value. The row
+    is the decision's own event, so the store decides it from the write."""
+    store, standing, changed_to = _reask_store(tmp_path, "substituted_offer_changed")
+    try:
+        operation = store.plan(standing)
+        if written:
+            assert store.service.apply(operation.plan.plan_id).state == "verified"
+        _change(store, changed_to, 60)
+        assert _check(store, 61) == "reconciled"
+        *_, cause = _decisions(store)
+        assert cause.cause == "matching_changed"
+        with owner_client(store, tmp_path) as (client, _csrf):
+            notes = {event["event_id"]: event["note"] for event in _activity(client)}
+        assert notes[_event_id(standing)] == (
+            "asked_again_matching_written" if written else "asked_again_matching"
+        )
+    finally:
+        store.close()
+
+
 # --- 17b guard: automatic effects on unsubstituted fields ----------------------
 
 

@@ -446,7 +446,9 @@ not be decoded. When Audiobookshelf did not return the cover this time, it is
 kept until the next scan. A title that names a different book from most covers
 holds the cover until the title is settled, and so does a current cover whose
 own source names a different book, until you choose. Size alone never replaces
-a readable cover that has no fault.
+a readable cover that has no fault. You can keep a current cover Mechanical
+Librarian could not read, whichever of these happened, and like any cover you
+kept it is never replaced automatically.
 
 Policy → Curation → Current covers says what happens to a current cover today,
 while no release can replace one automatically (below):

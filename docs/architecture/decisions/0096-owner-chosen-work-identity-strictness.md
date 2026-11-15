@@ -1,6 +1,6 @@
 # ADR-0096: Let the owner choose how strictly title and creator agreement establishes work identity
 
-- Status: proposed
+- Status: accepted (accepted by the owner on 2026-11-15)
 - Date: 2026-11-07
 - Owners: project maintainers
 - Issues: #1355
@@ -418,3 +418,51 @@ The bullets below are A's; "Activation B" extends them.
   executor's authority check and the review API read the stored offers; no
   automatic decision, consent, planning or write path reads level storage.
 
+## Amendment: partial author lists at `title_and_creator` (2026-11-15, #1355)
+
+The owner accepted this ADR on 2026-11-15 and decided that at
+`title_and_creator` a record counts when one author list contains the other,
+in either direction, while two lists that each name a co-author the other
+lacks do not. `identifier` and `title_and_creator_exact` are unchanged, the
+label "Same title and any author" stays, and nothing a wider level admits is
+chosen automatically until #1418.
+
+- **Nested lists.** At `title_and_creator` only, a record whose author list
+  contains the target's stored AUTHORS, or is contained in them, is compared
+  against its own author list, so its title, provider work identity and
+  variant checks still run. The classifier then returns only an explicit
+  contradiction or an unavailable verdict, never "not contradicted".
+- **Overlapping lists.** Two lists that share a creator while each names one
+  the other lacks are a level-path contradiction at `title_and_creator`,
+  whatever claim set the record states, including a record with no complete
+  claim set that the classifier cannot read.
+- **Creator by creator.** Lists are compared creator by creator under the
+  comparisons the classifier already accepts for equal lists (the closed
+  creator key and comparison, and a middle name or initial stated on one side
+  only), with the initials fold and its collapse guard, by a one-to-one
+  matching. The Decision table's "shares at least one creator" therefore
+  reads, for provider records, "one author list contains the other", and the
+  activation amendment's "Set rule and contradictions" holds per level.
+- **Covers.** Cover level facts gate each level by that level's own
+  contradictions. A cover bound to a nested record is met at
+  `title_and_creator` at every configured level, and its outcome changes only
+  where `title_and_creator` is configured. A record met at the exact level
+  beside one the exact level refuses is met only at `title_and_creator`, so a
+  configured exact level keeps the identifier outcome. A cover bound to an
+  overlapping record is refused at `title_and_creator`, and where
+  `title_and_creator` is configured that refusal stands even beside another
+  bound record met at the exact level.
+- **Unchanged.** The `title_and_creator` predicate still asks for one shared
+  creator, and sidecar belonging (ADR-0061) does not change. At
+  `title_and_creator` the authors field may offer a subset record's shorter
+  author list, or a superset record's longer one; it is only offered.
+- **Evidence.** On the #744 and #1294 snapshot copies a replay of the
+  composition admits 15 and 1 more records at `title_and_creator` (6 distinct
+  provider records over 4 books, and 1 record of 1 book), loses none and adds
+  no one-work ambiguity. The 2 overlapping translator credits on #1294 stay
+  refused.
+- **Versions.** `level-proposal-set-v2` and `review-case-level-offer-v2`
+  replace v1, and the cover classifier reference rotates: a clean rebuild
+  under ADR-0013. Live decisions are unchanged at every level, so the
+  metadata report, proposal policy, shadow decision policy and decision-set
+  versions do not move.

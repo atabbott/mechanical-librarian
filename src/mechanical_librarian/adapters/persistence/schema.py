@@ -24,10 +24,10 @@ import re
 import sqlite3
 import sys
 import unicodedata
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote
 
 from mechanical_librarian.adapters.persistence.activity_documents import (
@@ -38,6 +38,9 @@ from mechanical_librarian.adapters.persistence.binding import (
 )
 from mechanical_librarian.adapters.persistence.cover_consideration_documents import (
     expand_cover_consideration,
+)
+from mechanical_librarian.adapters.persistence.cover_taste import (
+    validate_cover_taste_versions,
 )
 from mechanical_librarian.adapters.persistence.description_advice import (
     validate_description_history,
@@ -72,11 +75,13 @@ from mechanical_librarian.domain.cover_automatic_decision import (
 from mechanical_librarian.domain.cover_automatic_decision import (
     CoverAutomaticDecision,
 )
+from mechanical_librarian.domain.cover_taste import COVER_TASTE_PROFILE_SCHEMA
 from mechanical_librarian.domain.human_decision import (
     AUTOMATIC_COVER_SELECTION_AUTHORITY_SCHEMA,
     COVER_SELECTION_AUTHORITY_SCHEMA,
     HumanDecision,
     HumanDecisionError,
+    keeps_unread_cover,
     manual_cover_eligible,
     owner_cover_selection_kind,
     validate_cover_confirmation,
@@ -98,7 +103,7 @@ from mechanical_librarian.domain.proposal_set import (
     ProposalSet,
     evaluate_report,
 )
-from mechanical_librarian.domain.review_case import ReviewCase
+from mechanical_librarian.domain.review_case import LEVEL_OFFER_SCHEMA, ReviewCase
 from mechanical_librarian.domain.reviewer_access import REVIEWER_ACCESS_SCHEMA
 from mechanical_librarian.domain.shadow_decision import (
     DECISION_POLICY_SHA256,
@@ -1322,7 +1327,7 @@ _REVIEW_CASE_LEVEL_OFFERS_SQL = (
     "level_proposal_set_id TEXT NOT NULL REFERENCES level_proposal_sets(level_proposal_set_id), "
     "reconciled_level TEXT NOT NULL CHECK(reconciled_level=work_identity_level), "
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 2097152 "
-    "AND json_extract(document,'$.schema_version')='review-case-level-offer-v1'), "
+    "AND json_extract(document,'$.schema_version')='" + LEVEL_OFFER_SCHEMA + "'), "
     "UNIQUE(review_case_id,work_identity_level))"
 )
 _REVIEW_CASE_LEVEL_RECONCILIATION_SQL = (
@@ -1395,6 +1400,21 @@ _DESCRIPTION_ADVICE_TABLES = {
 _DESCRIPTION_ADVICE_TRIGGERS = {
     f"{table}_no_{operation}": f"CREATE TRIGGER {table}_no_{operation} BEFORE {operation.upper()} ON {table} BEGIN SELECT RAISE(ABORT, 'description history is immutable'); END"
     for table in ("description_advice_candidates", "description_decisions")
+    for operation in ("update", "delete")
+}
+# #1372: the taste profile's builds, its append-only versions and the durable
+# per-task, per-UTC-day request count every reviewer ceiling reads.
+_COVER_TASTE_FAILURES = "'unavailable','invalid_output','ceiling','unknown_charge','interrupted','unconfigured'"
+_COVER_TASTE_TABLES = {
+    "reviewer_task_requests": "CREATE TABLE reviewer_task_requests (task TEXT NOT NULL CHECK(task IN ('cover_taste_build')), day INTEGER NOT NULL CHECK(typeof(day)='integer' AND day>=0), requests INTEGER NOT NULL CHECK(typeof(requests)='integer' AND requests>=0), stopped TEXT CHECK(stopped IS NULL OR stopped='unknown_charge'), PRIMARY KEY(task,day))",
+    "cover_taste_builds": "CREATE TABLE cover_taste_builds (build_id TEXT PRIMARY KEY NOT NULL CHECK(typeof(build_id)='text' AND build_id GLOB 'taste_build_[0-9a-f]*' AND length(build_id)=44), trigger TEXT NOT NULL CHECK(trigger IN ('cadence','retry')), retry_of TEXT UNIQUE REFERENCES cover_taste_builds(build_id), state TEXT NOT NULL CHECK(state IN ('requested','running','succeeded','failed')), "
+    f"failure TEXT CHECK(failure IN ({_COVER_TASTE_FAILURES})), "
+    "model TEXT CHECK(model IS NULL OR length(model) BETWEEN 1 AND 256), day INTEGER NOT NULL CHECK(typeof(day)='integer' AND day>=0), selection_watermark INTEGER NOT NULL CHECK(typeof(selection_watermark)='integer' AND selection_watermark>=0), requested_at INTEGER NOT NULL CHECK(typeof(requested_at)='integer' AND requested_at>=0), updated_at INTEGER NOT NULL CHECK(typeof(updated_at)='integer' AND updated_at>=requested_at), CHECK((state='failed')=(failure IS NOT NULL)), CHECK(trigger='retry' OR retry_of IS NULL))",
+    "cover_taste_profile_versions": "CREATE TABLE cover_taste_profile_versions (version INTEGER PRIMARY KEY CHECK(typeof(version)='integer' AND version>=1), build_id TEXT NOT NULL UNIQUE REFERENCES cover_taste_builds(build_id), created_at INTEGER NOT NULL CHECK(typeof(created_at)='integer' AND created_at>=0), "
+    f"document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 65536 AND json_valid(document) AND json_extract(document,'$.schema_version')='{COVER_TASTE_PROFILE_SCHEMA}'))",
+}
+_COVER_TASTE_TRIGGERS = {
+    f"cover_taste_profile_versions_no_{operation}": f"CREATE TRIGGER cover_taste_profile_versions_no_{operation} BEFORE {operation.upper()} ON cover_taste_profile_versions BEGIN SELECT RAISE(ABORT, 'taste profile versions are append-only'); END"
     for operation in ("update", "delete")
 }
 # A corrective keep_current's predecessor and an authored description's both
@@ -1649,6 +1669,8 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     for statement in (
         *_DESCRIPTION_ADVICE_TABLES.values(),
         *_DESCRIPTION_ADVICE_TRIGGERS.values(),
+        *_COVER_TASTE_TABLES.values(),
+        *_COVER_TASTE_TRIGGERS.values(),
     ):
         connection.execute(statement)
     """Build the exact schema and seed its singleton rows.
@@ -1847,6 +1869,24 @@ def _validate_existing_read_only(
                 connection.close()
 
 
+def _named_objects(
+    kind: str, statements: dict[str, str]
+) -> Iterator[tuple[str, str, str | None]]:
+    return ((kind, name, statement) for name, statement in statements.items())
+
+
+def _cover_taste_objects() -> tuple[tuple[str, str, str | None], ...]:
+    """The taste profile's tables, their key indexes and triggers (#1372)."""
+    return (
+        *_named_objects("table", _COVER_TASTE_TABLES),
+        ("index", "sqlite_autoindex_reviewer_task_requests_1", None),
+        ("index", "sqlite_autoindex_cover_taste_builds_1", None),
+        ("index", "sqlite_autoindex_cover_taste_builds_2", None),
+        ("index", "sqlite_autoindex_cover_taste_profile_versions_1", None),
+        *_named_objects("trigger", _COVER_TASTE_TRIGGERS),
+    )
+
+
 def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
     """Return the one exact-current SQLite object contract."""
     return sorted(
@@ -1865,10 +1905,8 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
                 "description_decisions_case",
                 _DESCRIPTION_DECISIONS_CASE_INDEX_SQL,
             ),
-            *(
-                ("trigger", name, statement)
-                for name, statement in _DESCRIPTION_ADVICE_TRIGGERS.items()
-            ),
+            *_named_objects("trigger", _DESCRIPTION_ADVICE_TRIGGERS),
+            *_cover_taste_objects(),
             ("index", "sqlite_autoindex_current_metadata_reports_1", None),
             ("index", "sqlite_autoindex_current_metadata_report_lineages_1", None),
             ("index", "sqlite_autoindex_current_review_case_lineages_1", None),
@@ -2482,6 +2520,7 @@ def _validate_schema_contents_without_review_field_facts(
         raise MetadataReportError("database is unavailable or incompatible")
     try:
         validate_description_history(connection)
+        validate_cover_taste_versions(connection)
     except ValueError as error:
         raise MetadataReportError("database is unavailable or incompatible") from error
     _validate_metadata_policy_documents(connection)
@@ -2551,6 +2590,7 @@ def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> Non
             target = case.target
             expected_artifact = None
             expected_rank = None
+            owner_facts: dict[str, object] = {}
             if row[4] == "automatic":
                 automatic_decision = CoverAutomaticDecision.from_json(decision_document)
                 candidate = next(
@@ -2578,43 +2618,15 @@ def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> Non
                 expected_artifact = automatic_decision.artifact_id
                 expected_rank = list(automatic_decision.rank_key)
             else:
-                human_decision = HumanDecision.from_json(decision_document)
-                human = connection.execute(
-                    "SELECT document FROM human_decisions WHERE decision_id=?",
-                    (row[5],),
-                ).fetchone()
-                if (
-                    human_decision.decision_id != row[5]
-                    or human_decision.destination != "cover"
-                    or human_decision.review_case_id != consideration_row[1]
-                    or human_decision.occurred_at != row[8]
-                    or human != (decision_document,)
-                ):
-                    raise ValueError
-                candidate = next(
-                    (
-                        value
-                        for value in consideration["candidates"]
-                        if (
-                            human_decision.outcome == "accept"
-                            and human_decision.selected_value
-                            == {"kind": "cover", "value": value.get("artifact_id")}
-                        )
-                        or (
-                            human_decision.outcome == "keep_current"
-                            and value.get("incumbent") is True
-                        )
-                    ),
-                    None,
+                candidate, owner_facts = _owner_selection_facts(
+                    connection,
+                    row,
+                    document,
+                    consideration,
+                    cast(str, consideration_row[1]),
+                    expanded_document,
+                    case,
                 )
-                if human_decision.outcome == "reject":
-                    if (
-                        human_decision.selected_value is not None
-                        or candidate is not None
-                    ):
-                        raise ValueError
-                elif candidate is None:
-                    raise ValueError
                 if candidate is not None:
                     expected_artifact = candidate.get("artifact_id")
                     expected_rank = candidate.get("deterministic_rank_key")
@@ -2622,44 +2634,6 @@ def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> Non
                 "cover_selection_"
                 + hashlib.sha256(decision_document.encode("utf-8")).hexdigest()
             )
-            owner_facts = {}
-            if row[4] == "owner":
-                confirmation = validate_cover_confirmation(document.get("confirmation"))
-                if confirmation["expected_selection_id"] != row[7]:
-                    raise ValueError
-                if human_decision.outcome == "accept" and (
-                    candidate is None
-                    or not manual_cover_eligible(candidate)
-                    or (
-                        candidate["match_state"] == "match_not_confirmed"
-                        and confirmation["confirm_unverified_match"] is not True
-                    )
-                ):
-                    raise ValueError
-                candidate_kind, retained_plan_id = owner_cover_selection_kind(
-                    human_decision.outcome, candidate
-                )
-                owner_facts = {
-                    "candidate_kind": candidate_kind,
-                    "retained_plan_id": retained_plan_id,
-                    "confirmation": confirmation,
-                    "observed_identity": None
-                    if candidate is None
-                    else candidate["identity"],
-                    "candidate_reference": None
-                    if candidate is None
-                    else candidate["reference"],
-                    "original_sha256": None
-                    if candidate is None
-                    else candidate["original_sha256"],
-                    "preview_sha256": None
-                    if candidate is None
-                    else candidate["preview_sha256"],
-                    "consideration_digest": hashlib.sha256(
-                        expanded_document.encode()
-                    ).hexdigest(),
-                    "target": dict(case.target),
-                }
             expected_document = _canonical_json(
                 {
                     **owner_facts,
@@ -2727,6 +2701,86 @@ def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> Non
         json.JSONDecodeError,
     ) as error:
         raise MetadataReportError("database is unavailable or incompatible") from error
+
+
+def _owner_selection_facts(
+    connection: sqlite3.Connection,
+    row: tuple[Any, ...],
+    document: dict[str, object],
+    consideration: dict[str, Any],
+    review_case_id: str,
+    expanded_document: str,
+    case: ReviewCase,
+) -> tuple[dict[str, Any] | None, dict[str, object]]:
+    """The candidate one owner selection row names, and its owner facts.
+
+    Accept names one manually eligible candidate; keep names the current
+    cover, or nothing when the comparison could not read it (#1865); reject
+    names nothing. Raise ``ValueError`` for any other row.
+    """
+    decision_document = cast(str, document["decision_document"])
+    human_decision = HumanDecision.from_json(decision_document)
+    human = connection.execute(
+        "SELECT document FROM human_decisions WHERE decision_id=?",
+        (row[5],),
+    ).fetchone()
+    if (
+        human_decision.decision_id != row[5]
+        or human_decision.destination != "cover"
+        or human_decision.review_case_id != review_case_id
+        or human_decision.occurred_at != row[8]
+        or human != (decision_document,)
+    ):
+        raise ValueError
+    candidate = next(
+        (
+            value
+            for value in consideration["candidates"]
+            if (
+                human_decision.outcome == "accept"
+                and human_decision.selected_value
+                == {"kind": "cover", "value": value.get("artifact_id")}
+            )
+            or (
+                human_decision.outcome == "keep_current"
+                and value.get("incumbent") is True
+            )
+        ),
+        None,
+    )
+    if human_decision.outcome == "reject":
+        if human_decision.selected_value is not None or candidate is not None:
+            raise ValueError
+    elif candidate is None and not (
+        human_decision.outcome == "keep_current" and keeps_unread_cover(consideration)
+    ):
+        raise ValueError
+    confirmation = validate_cover_confirmation(document.get("confirmation"))
+    if confirmation["expected_selection_id"] != row[7]:
+        raise ValueError
+    if human_decision.outcome == "accept" and (
+        candidate is None
+        or not manual_cover_eligible(candidate)
+        or (
+            candidate["match_state"] == "match_not_confirmed"
+            and confirmation["confirm_unverified_match"] is not True
+        )
+    ):
+        raise ValueError
+    candidate_kind, retained_plan_id = owner_cover_selection_kind(
+        human_decision.outcome, candidate
+    )
+    return candidate, {
+        "candidate_kind": candidate_kind,
+        "retained_plan_id": retained_plan_id,
+        "confirmation": confirmation,
+        "observed_identity": None if candidate is None else candidate["identity"],
+        "candidate_reference": None if candidate is None else candidate["reference"],
+        "original_sha256": None if candidate is None else candidate["original_sha256"],
+        "preview_sha256": None if candidate is None else candidate["preview_sha256"],
+        "consideration_digest": hashlib.sha256(expanded_document.encode()).hexdigest(),
+        "target": dict(case.target),
+    }
 
 
 def _validate_review_field_facts(connection: sqlite3.Connection) -> None:

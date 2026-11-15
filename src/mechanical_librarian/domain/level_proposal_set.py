@@ -48,7 +48,7 @@ from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
 from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
 from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 
-LEVEL_PROPOSAL_SET_SCHEMA: Final = "level-proposal-set-v1"
+LEVEL_PROPOSAL_SET_SCHEMA: Final = "level-proposal-set-v2"
 MAX_LEVEL_PROPOSAL_SET_BYTES: Final = 2_097_152
 # The non-cover destinations a level substitutes (S7; covers are A's).
 LEVEL_OFFER_DESTINATIONS: Final = (

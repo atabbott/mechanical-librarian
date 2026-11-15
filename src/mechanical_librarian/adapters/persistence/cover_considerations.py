@@ -14,7 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any, cast
 
 from mechanical_librarian.adapters.persistence.cover_consideration_documents import (
@@ -71,6 +71,7 @@ from mechanical_librarian.domain.human_decision import (
     COVER_SELECTION_AUTHORITY_SCHEMA,
     HumanDecision,
     HumanDecisionError,
+    keeps_unread_cover,
     manual_cover_eligible,
     owner_cover_selection_kind,
     validate_cover_confirmation,
@@ -918,9 +919,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
                 or consideration["target_fingerprint"] != decision.target_fingerprint
             ):
                 raise HumanDecisionError("stale")
-            selected, valid_choice = _owner_selected_candidate(
-                decision, cast("list[dict[str, object]]", consideration["candidates"])
-            )
+            selected, valid_choice = _owner_selected_candidate(decision, consideration)
         except (KeyError, TypeError, json.JSONDecodeError) as error:
             raise MetadataReportError("cover consideration is unavailable") from error
         target = case.target
@@ -1048,14 +1047,16 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
 
 
 def _owner_selected_candidate(
-    decision: HumanDecision, candidates: list[dict[str, object]]
+    decision: HumanDecision, consideration: Mapping[str, object]
 ) -> tuple[dict[str, object] | None, bool]:
     """The candidate an owner cover decision names, and whether it may name it.
 
     Accept names one manually eligible candidate that is not the current
-    cover, which may be the retained original; keep names the current cover;
-    reject names nothing.
+    cover, which may be the retained original; keep names the current cover,
+    or nothing when the comparison could not read it (#1865); reject names
+    nothing.
     """
+    candidates = cast("list[dict[str, object]]", consideration["candidates"])
     if decision.outcome == "accept":
         selected = next(
             (
@@ -1076,7 +1077,9 @@ def _owner_selected_candidate(
             (candidate for candidate in candidates if candidate["incumbent"] is True),
             None,
         )
-        return selected, selected is not None and decision.selected_value is None
+        return selected, decision.selected_value is None and (
+            selected is not None or keeps_unread_cover(consideration)
+        )
     return None, decision.selected_value is None
 
 

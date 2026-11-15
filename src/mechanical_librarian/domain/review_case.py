@@ -41,7 +41,7 @@ MAX_REVIEW_CASE_BYTES = 2_097_152
 # A case's level offer (#1355, S10): which manual fields a wider Book matching
 # level substitutes, and with which level alternatives. It is stored beside
 # the case, never in it, so case ids and documents do not move.
-LEVEL_OFFER_SCHEMA = "review-case-level-offer-v1"
+LEVEL_OFFER_SCHEMA = "review-case-level-offer-v2"
 MAX_LEVEL_OFFER_BYTES = 2_097_152
 WIDER_WORK_IDENTITY_LEVELS = frozenset({"title_and_creator_exact", "title_and_creator"})
 LEVEL_COMBINATION_DESTINATIONS = (

@@ -42,9 +42,11 @@ from mechanical_librarian.domain.human_decision import (
     validate_decision_action,
 )
 from mechanical_librarian.domain.level_proposal_set import (
+    LEVEL_PROPOSAL_SET_SCHEMA,
     LevelDecisionNote,
     LevelProposalSetError,
     derive_level,
+    validate_level_proposal_set,
 )
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyProfile,
@@ -63,6 +65,9 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderEvidenceKind,
     TargetDestination,
     TargetFacts,
+    WorkIdentityContradiction,
+    canonical_json,
+    target_work_identity_context,
 )
 from mechanical_librarian.domain.proposal_set import (
     ProposalAlternative,
@@ -73,9 +78,14 @@ from mechanical_librarian.domain.proposal_set import (
     level_evidence,
 )
 from mechanical_librarian.domain.review_case import (
+    LEVEL_OFFER_SCHEMA,
     ReviewCase,
+    ReviewCaseValueError,
     current_offer,
     is_actionable,
+)
+from mechanical_librarian.domain.rich_metadata_preview import (
+    select_automatic_taxonomy_candidate,
 )
 from mechanical_librarian.domain.shadow_decision import decide_shadow_packet
 from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
@@ -128,10 +138,14 @@ def _synopsis(identity: str = "refused-1") -> ProviderClaim:
 
 
 def _report(
-    *refused: ProviderCandidate, content: str = "a", actionable: bool = True
+    *refused: ProviderCandidate,
+    content: str = "a",
+    actionable: bool = True,
+    authors: tuple[str, ...] = (retained.AUTHOR,),
 ) -> MetadataReport:
     """An ebook whose title the opening matter disputes, so the case exists,
-    and whose only provider answer was refused and kept for the level."""
+    and whose only provider answer was refused and kept for the level.
+    `authors` are the item's stored authors."""
     opening = LocalClaim.create(
         kind=ClaimKind.TITLE,
         observed="Example Book",
@@ -143,7 +157,17 @@ def _report(
         scope=ClaimScope.WORK,
     )
     report = MetadataReport.create(
-        target=TargetFacts("primary", "ebooks", "item-1", retained._fields()),
+        target=TargetFacts(
+            "primary",
+            "ebooks",
+            "item-1",
+            tuple(
+                replace(field, value=authors)
+                if field.destination is TargetDestination.AUTHORS
+                else field
+                for field in retained._fields()
+            ),
+        ),
         file=FileFacts(0, content * 64, "b" * 64),
         local_claims=(
             *retained._plan().local_claims,
@@ -361,6 +385,125 @@ def test_refused_description_offered_at_level_with_would_admit_note(
     assert offer_digest(case.proposals, "description") != offer_digest(
         tuple(offer.values()), "description"
     )
+
+
+_SECOND_AUTHOR = "Bea Example"
+
+
+def test_a_nested_author_description_is_offered_only_at_the_wide_level() -> None:
+    """A refused answer naming one of the item's two authors is offered at
+    `title_and_creator` with its lineage and note, and not at the exact
+    level; the live set is unchanged (#1355)."""
+    report = _report(_refused(_synopsis()), authors=(retained.AUTHOR, _SECOND_AUTHOR))
+    live, case = _sources(report)
+    before = live.to_json()
+    exact = derive_level(
+        report,
+        live,
+        case,
+        _policy(report),
+        1,
+        WorkIdentityLevel.TITLE_AND_CREATOR_EXACT,
+    )
+    assert "description" not in _offered(exact)
+    assert not [value for value in exact.notes if value.field == "description"]
+    wide = derive_level(
+        report, live, case, _policy(report), 1, WorkIdentityLevel.TITLE_AND_CREATOR
+    )
+    offer = {value["destination"]: value for value in current_offer(case, wide.offer)}
+    description = offer["description"]
+    (alternative,) = description["result"]["alternatives"]
+    assert alternative["value"]["value"] == SYNOPSIS
+    assert description["lineage"] == {
+        alternative["alternative_id"]: {
+            "creator_comparison": "initials_fold",
+            "rule": "work_identity:title_and_creator",
+        }
+    }
+    (note,) = (value for value in wide.notes if value.field == "description")
+    assert note.rule == "work_identity:title_and_creator"
+    assert note.alternative_reference == alternative["alternative_id"]
+    assert live.to_json() == before
+    assert live.to_json() == evaluate_report(report, live.resolved_policy_id).to_json()
+    assert "work_identity:" not in live.to_json()
+
+
+def test_level_genre_evidence_keeps_a_nested_record_only_at_the_wide_level() -> None:
+    """S6: the level classifier reads partial author lists at the wide level
+    only, so a nested record's genres back the wide level set's genre
+    alternative and not the exact one's."""
+    genre = _claim("refused-1", ClaimKind.GENRE, "Fantasy", raw_order=3)
+    report = _report(
+        _refused(_synopsis(), genre), authors=(retained.AUTHOR, _SECOND_AUTHOR)
+    )
+    record = report.providers[0].identity_refused_candidates[0]
+    context = target_work_identity_context(report.target)
+    assert context is not None
+    expected = {
+        WorkIdentityLevel.TITLE_AND_CREATOR_EXACT: (
+            WorkIdentityContradiction.EXPLICIT,
+            set(),
+        ),
+        WorkIdentityLevel.TITLE_AND_CREATOR: (
+            WorkIdentityContradiction.UNAVAILABLE,
+            {genre.reference},
+        ),
+    }
+    for level, (verdict, cited) in expected.items():
+        evidence = level_evidence(report, level)
+        assert evidence is not None
+        assert evidence.contradiction(record, *context) is verdict
+        level_set = evaluate_report(
+            report, _policy(report).resolved_id, work_identity_level=level
+        )
+        _candidate, automatic = select_automatic_taxonomy_candidate(
+            report,
+            _result(level_set, TargetDestination.GENRES),
+            "genres",
+            "fill_empty",
+            evidence,
+        )
+        assert {
+            reference
+            for references in automatic.references.values()
+            for reference in references
+        } == cited
+
+
+def test_the_v2_level_documents_read_back_and_v1_is_refused() -> None:
+    """S10: a level set or offer of the previous version is refused, so a
+    stored one can never carry the old meaning of `title_and_creator`."""
+    level = WorkIdentityLevel.TITLE_AND_CREATOR
+    report = _report(_refused(_synopsis()))
+    live, case = _sources(report)
+    derivation = derive_level(report, live, case, _policy(report), 1, level)
+    assert derivation.offer is not None
+    document = json.loads(derivation.document)
+    assert document["schema_version"] == LEVEL_PROPOSAL_SET_SCHEMA
+    validate_level_proposal_set(
+        derivation.level_proposal_set_id,
+        live.proposal_set_id,
+        report.report_id,
+        level.value,
+        derivation.document,
+    )
+    previous = canonical_json({**document, "schema_version": "level-proposal-set-v1"})
+    with pytest.raises(LevelProposalSetError, match="level proposal set is invalid"):
+        validate_level_proposal_set(
+            "level_proposal_set_" + hashlib.sha256(previous.encode()).hexdigest(),
+            live.proposal_set_id,
+            report.report_id,
+            level.value,
+            previous,
+        )
+    offer = json.loads(derivation.offer)
+    assert offer["schema_version"] == LEVEL_OFFER_SCHEMA
+    assert current_offer(case, derivation.offer)
+    with pytest.raises(ReviewCaseValueError, match="review case level offer"):
+        current_offer(
+            case,
+            canonical_json({**offer, "schema_version": "review-case-level-offer-v1"}),
+        )
 
 
 # --- Test 20: substitution touches manual fields only ------------------------

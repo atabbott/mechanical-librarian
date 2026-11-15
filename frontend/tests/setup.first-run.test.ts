@@ -2309,7 +2309,11 @@ describe('shipped first-run setup script', () => {
     const fetch = vi.fn(async (request: RequestInfo | URL) => {
       if (requestUrl(request) === '/api/setup/reviewer-access')
         return response({
-          schema_version: 'reviewer-access-view-v3',
+          schema_version: 'reviewer-access-view-v4',
+          taste_mapping: null,
+          taste_metadata: null,
+          taste_daily_requests: 8,
+          taste_recommendations: ['anthropic/claude-sonnet-5.5'],
           cover_metadata: null,
           cost_evidence: {
             models: [{ model: 'openai/gpt-6-luna', task: 'cover', per_1000_usd: '4.2' }],
@@ -2349,7 +2353,7 @@ describe('shipped first-run setup script', () => {
     vi.stubGlobal('fetch', fetch)
     runSetup()
 
-    expect(await screen.findByText('GPT-6 Luna: about $4.2 per 1,000 works.')).toBeVisible()
+    expect(await screen.findByText('GPT-6 Luna: about $4.20 per 1,000 works.')).toBeVisible()
     expect(
       screen.getByText(
         'An AI model can look at cover images and tell you what it sees. It only advises, and you still choose. You can set this up later in Settings.',
@@ -2558,7 +2562,11 @@ describe('shipped first-run setup script', () => {
 })
 
 const reviewerAccess = (state: string, reason: string | null = null) => ({
-  schema_version: 'reviewer-access-view-v3',
+  schema_version: 'reviewer-access-view-v4',
+  taste_mapping: null,
+  taste_metadata: null,
+  taste_daily_requests: 8,
+  taste_recommendations: ['anthropic/claude-sonnet-5.5'],
   cover_metadata: null,
   cost_evidence: { models: [] },
   revision: 3,
