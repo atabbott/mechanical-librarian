@@ -722,3 +722,39 @@ def test_attention_visible_successor_remains_at_next_cursor(
     assert second["next_cursor"] is None
     assert 3 == second["total"]
     assert [0, 2, 2] == repository.offsets
+
+
+def test_a_repeated_description_says_every_source_repeats_it() -> None:
+    """The sentence for a description its sources all repeat (#1905)."""
+    value = classify_review_field(
+        **_BASE_INPUTS,
+        current_value="Text",
+        proposed_values=("Text",),
+        owner_choosable=True,
+        repeated_description=True,
+        # The new sentence is chosen before every other optional reason.
+        immaterial_alternatives=True,
+        kept_by_fill_policy=True,
+        single_source=True,
+    )
+
+    assert value.state == "owner_choosable"
+    assert value.cause == "owner_choosable"
+    assert value.reason == (
+        "Every source repeats your current description, so no review is "
+        "needed. You can still keep it or choose the adviser's text."
+    )
+    assert value.needs_attention is False
+    assert value.editable is True
+    assert value.navigation_role == "inspect"
+    assert value.preservation_only is True
+    # Without the optional state the flag changes nothing.
+    assert (
+        classify_review_field(
+            **_BASE_INPUTS,
+            current_value="Text",
+            proposed_values=("Text",),
+            repeated_description=True,
+        ).reason
+        == "Nothing to decide for this field."
+    )

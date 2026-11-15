@@ -96,6 +96,7 @@ def classify_review_field(
     kept_by_tags_off: bool = False,
     single_source: bool = False,
     pin: Literal["in_force", "changed"] | None = None,
+    repeated_description: bool = False,
 ) -> ReviewFieldClassification:
     """Classify a field consistently for queue, detail, and navigation use.
 
@@ -117,6 +118,8 @@ def classify_review_field(
     source proposes a value (#1310). `pin` says the owner pinned the field:
     in force it is recorded and never attention, and changed it asks again
     unless the field is suspended (ADR-0085, Amendment 2).
+    `repeated_description` says it is a description every source repeats,
+    offered beside description advice (#1905).
     """
     preservation_only = bool(proposed_values) and all(
         _canonical_value(value) == _canonical_value(current_value)
@@ -221,7 +224,10 @@ def classify_review_field(
         return ReviewFieldClassification(
             "owner_choosable",
             (
-                "The proposed values only shorten or extend the current one, so "
+                "Every source repeats your current description, so no review is "
+                "needed. You can still keep it or choose the adviser's text."
+                if repeated_description
+                else "The proposed values only shorten or extend the current one, so "
                 "no review is needed. You can still keep the current value or "
                 "choose a proposed one."
                 if immaterial_alternatives

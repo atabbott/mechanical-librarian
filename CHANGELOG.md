@@ -377,6 +377,11 @@ brackets are GitHub issues.
   with those cleanup choices. No release does yet, so the adviser's text is
   offered on the work's page as with the switch off, and an automatic choice
   stored before this change is not written (ADR-0099, #1886).
+- A description whose sources all repeat the current text now offers the
+  adviser's text and Keep current while description advice is shown for it.
+  The field reads Optional and stays out of Attention, Keep current undoes
+  your choice of the adviser's text, and once an adviser qualifies Automatic
+  may write it there too (#1905).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 

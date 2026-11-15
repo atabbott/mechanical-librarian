@@ -290,6 +290,27 @@ def decision_actions(proposal: Mapping[str, object]) -> tuple[HumanDecisionActio
     return ("keep_current", "accept") if eligible else ()
 
 
+def preserved_description(proposal: Mapping[str, object]) -> bool:
+    """Whether every source this description proposal offers repeats its text.
+
+    Such a field offers no choice of its own. Beside description advice the
+    owner may still keep the current text, so ``keep_current`` stays valid on
+    it whatever the advice later does (#1905).
+    """
+    result = proposal.get("result")
+    alternatives = result.get("alternatives") if type(result) is dict else None
+    return (
+        proposal.get("destination") == "description"
+        and type(alternatives) is list
+        and bool(alternatives)
+        and all(
+            type(alternative) is dict
+            and alternative.get("assessment") == "preserves_target"
+            for alternative in alternatives
+        )
+    )
+
+
 def validate_decision_action(
     proposal: Mapping[str, object],
     outcome: str,
@@ -315,7 +336,9 @@ def validate_decision_action(
         if selected_value is not None:
             raise HumanDecisionError("invalid_selection")
         return
-    if outcome not in decision_actions(proposal):
+    if outcome not in decision_actions(proposal) and not (
+        outcome == "keep_current" and preserved_description(proposal)
+    ):
         raise HumanDecisionError("unsupported")
     if outcome == "accept":
         result = proposal["result"]
