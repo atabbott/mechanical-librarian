@@ -2495,6 +2495,18 @@ def _choice(
         ),
         ([(1, "pin", None)], None, None, (0, 0, None)),
         ([(1, "pin", None), (2, "unpin", None)], None, None, (0, 0, None)),
+        (
+            [(1, "keep_current", None), (2, "pin", None)],
+            None,
+            None,
+            (1, 0, "keep_current"),
+        ),
+        (
+            [(1, "keep_current", None), (2, "pin", None), (3, "unpin", None)],
+            None,
+            None,
+            (1, 0, "keep_current"),
+        ),
         ([(3, "accept", "alternative_a")], None, 3, (0, 0, None)),
         ([(3, "accept", "alternative_a")], None, 2, (1, 1, "accept")),
         (
@@ -2514,6 +2526,8 @@ def _choice(
         "withdraw-labels-nothing",
         "pin-labels-nothing",
         "unpin-labels-nothing",
+        "keep-current-then-pin-labels-as-keep-current",
+        "keep-current-then-unpin-labels-as-keep-current",
         "decision-at-the-episode-floor-labels-nothing",
         "decision-above-the-episode-floor-labels",
         "the-latest-ordinal-wins",

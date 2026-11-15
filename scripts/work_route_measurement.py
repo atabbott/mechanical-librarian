@@ -27,8 +27,9 @@ compared, and it counts against every field of that provider.
 
 The description, genres and narrators are measured from the owner's own
 decisions on work-route offers made while the field was strictly empty: the
-latest decision per item and field, with a withdrawn one excluded and a pin
-or unpin labelling nothing. Accepting
+latest decision per item and field, with a withdrawn one excluded. A pin or
+unpin is not a decision on the offer and is left out before the latest is
+chosen, so the decision before it stands. Accepting
 the provider's value agrees; rejecting it, entering another value, keeping the
 empty field or accepting another source's value disagrees. The cover is not
 measured: no identity basis compares a cover yet.
@@ -733,10 +734,6 @@ def _label(
     if outcome == "withdraw":
         labels["withdrawn"] += 1
         return
-    if outcome in STANDING_OUTCOMES:
-        # A pin or unpin is a standing instruction, not a label on an
-        # offered value (ADR-0085, Amendment 2).
-        return
     alternatives = _alternatives(_proposal_result(proposal, destination))
     accepted = next(
         (
@@ -785,11 +782,15 @@ def latest_labels(connection: sqlite3.Connection) -> tuple[LatestLabels, Counter
     Each key is (connection, library, item, field); each value the outcome,
     the selected value and the report and proposals decided on. The latest
     decision is chosen only among those that qualify, so a later decision
-    elsewhere cannot hide a label.
+    elsewhere cannot hide a label. A pin or unpin is a standing instruction,
+    not a label on an offered value (ADR-0085, Amendment 2): it is left out
+    before the latest is chosen, so the decision before it stands.
     """
     latest: LatestLabels = {}
     outside: Counter[str] = Counter()
     for row in connection.execute(_DECISIONS_SQL):
+        if row[4] in STANDING_OUTCOMES:
+            continue
         destination = cast("str", row[3])
         report = _load_report(row[6])
         if not _qualifies(destination, report):

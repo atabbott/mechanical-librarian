@@ -2079,8 +2079,9 @@ def _owner_decisions(connection: sqlite3.Connection) -> OwnerDecisions | None:
     The table is optional, as ``automatic_decisions`` is (#1747): a source
     that predates it, or a copy without it, reports "not stored" rather than
     refusing. A field's latest decision by ordinal counts unless it is at or
-    below the case's episode floor (history, #1358), withdrawn, or a pin or
-    unpin, which labels no offered value. One item
+    below the case's episode floor (history, #1358) or withdrawn. A pin or
+    unpin labels no offered value and is left out before the latest is
+    chosen, so the decision before it stands. One item
     gets one label per field: across a superseded case and its successor
     only the latest decision counts. The item is the library item the case
     is for, the case document's ``target.connection``, ``target.library``
@@ -2101,6 +2102,10 @@ def _owner_decisions(connection: sqlite3.Connection) -> OwnerDecisions | None:
         "SELECT ordinal,review_case_id,destination,outcome,selected_value_document "
         "FROM human_decisions ORDER BY ordinal"
     ):
+        # A pin or unpin is a standing instruction, not a label on an offered
+        # value (ADR-0085, Amendment 2).
+        if outcome in {"pin", "unpin"}:
+            continue
         latest[(case_id, destination)] = (ordinal, outcome, selected)
     items = _case_items(connection, _DECIDED_SQL)
     winners: dict[tuple[object, ...], tuple[int, str, str, str]] = {}
@@ -2118,9 +2123,7 @@ def _owner_decisions(connection: sqlite3.Connection) -> OwnerDecisions | None:
         outcome,
         selected,
     ) in winners.items():
-        # A pin or unpin is a standing instruction, not a label on an offered
-        # value (ADR-0085, Amendment 2).
-        if outcome in {"withdraw", "pin", "unpin"}:
+        if outcome == "withdraw":
             continue
         try:
             value: object = json.loads(selected) if isinstance(selected, str) else None

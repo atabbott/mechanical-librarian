@@ -184,6 +184,30 @@ def test_a_withdrawn_or_pinned_decision_lists_the_field_again(
     ]
 
 
+@pytest.mark.parametrize(
+    "outcomes",
+    [("keep_current",), ("keep_current", "pin"), ("keep_current", "pin", "unpin")],
+    ids=["keep", "keep-then-pin", "keep-then-unpin"],
+)
+def test_a_pin_after_a_decision_leaves_the_field_decided(
+    tmp_path: Path, outcomes: tuple[str, ...]
+) -> None:
+    """The decision before a pin or unpin settles the field as it would
+    alone."""
+    database = tmp_path / "application.sqlite3"
+
+    def build(repository: SQLiteMetadataReportRepository) -> dict[str, str]:
+        case_id = _publish(repository, _unmatched("u1"))
+        for outcome in outcomes:
+            _decide(repository, case_id, outcome, outcome, destination="genres")
+        return {"case": case_id}
+
+    _store(database, build)
+    assert _block(_run(database), "Genres") == [
+        "Genres: 0 to decide, 1 already decided."
+    ]
+
+
 def test_a_recording_admitted_audiobook_is_not_listed(tmp_path: Path) -> None:
     database = tmp_path / "application.sqlite3"
 
