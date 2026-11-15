@@ -286,9 +286,9 @@ Each tab names the field's status:
 - No change means the field is there for reference. Keeping the current value
   is a choice only beside another eligible value or description advice. Each
   such field shows its value and a reason, never a selectable `Not set`. In
-  Preview, a field that Automatic chose before you entered Preview mode reads
-  No change. It shows that choice beside the current value and says turning on
-  Automatic decides it again.
+  Preview, a field Automatic chose before Preview mode reads No change. It
+  shows that choice beside the current value and says turning on Automatic
+  decides it again.
 
 Fields that are empty and have no proposal sit behind one `Show N more fields`
 tab. Fields with nothing to decide sit in one closed panel headed `No change:`
