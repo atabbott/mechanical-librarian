@@ -43,8 +43,10 @@ at most 400 characters with a counter, Save rule, Cancel and Remove. Add rule
 opens an empty rule at the end of its section, with no Remove. One rule is
 open at a time. Each saved change, an edit, an added rule or a removal, is a
 new version at once, and "Rule {n} saved." or "Rule {n} removed." confirms it.
-A rule you wrote is marked "Yours", a model rule you changed "Edited"; both
-keep their numbers, and a removed rule's number is not reused.
+A rule you wrote is marked "Yours", a model rule you changed "Edited". An edit
+keeps a rule's number; an added rule takes the next number above the highest,
+and a rebuild numbers rules from 1 again. Escape closes a rule as Cancel does.
+At 40 rules, Add rule says "40 rules is the limit." beside it.
 
 A rule must have text, at most 400 characters, and no web address or file
 path; the browser refuses these first, and the server also refuses passwords

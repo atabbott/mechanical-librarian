@@ -355,9 +355,9 @@ nothing reads it. Three decisions made while building it amend the text above:
 ## Note: owner edits (#1372 PR 2)
 
 - **Edits are versions (Q15).** Each owner edit, addition or removal is one
-  new append-only version at once, with no draft. An edit version names the
-  version it was made from and keeps that version's build, model, inputs and
-  time; it is never a build and sends nothing to a model.
+  new append-only version at once, with no draft. An edit version's base is
+  always the version before it; it keeps that version's build, model, inputs
+  and time, is never a build and sends nothing to a model.
 - **Owner rules survive rebuilds (S7).** A rebuild keeps the owner's and
   edited rules word for word, ahead of the model's in each section, and leaves
   out a model rule whose key equals a kept or removed text. The merge runs in
@@ -369,8 +369,8 @@ nothing reads it. Three decisions made while building it amend the text above:
   leave; the pinned instruction says not to repeat, reword or contradict
   them. Owner text is held to the same rule-text rule as model output.
 - **Numbers.** A rule keeps its number through edits; an added rule takes the
-  next number above the highest, at most 9,999, so numbers may have gaps and
-  are never reused. A build numbers its rules from 1 again.
+  next number above the highest, or the lowest free number once that would
+  pass 9,999, so numbers may have gaps. A build numbers its rules from 1 again.
 - **Body cap.** The edit route takes at most 8 KiB, under the same session,
   CSRF, Origin and build-identity checks as the profile's Try again, and
   answers a version that is no longer newest as `stale`.
