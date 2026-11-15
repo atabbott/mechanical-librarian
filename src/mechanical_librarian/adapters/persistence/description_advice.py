@@ -417,14 +417,15 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
     def _description_choosable(self, case_id: str) -> bool:
         """Whether the description offers the owner a choice with its advice.
 
-        The field's facts say so, or every source in its current offer
-        repeats the current text, where the field offers the adviser's text
-        and Keep current only beside advice (#1905). Advice exists only for
-        an admitted case, so the read needs no recording check.
+        The field's facts say so, or every source repeats the current text,
+        where the field offers the adviser's text and Keep current only beside
+        advice (#1905). The live proposal stands for the current offer without
+        reading level storage (ADR-0096 "Readers"): a level never substitutes
+        a description whose alternatives all repeat it, and a substituted one
+        has a differing alternative, so its facts already say choosable
+        (amendment 24). Advice exists only for an admitted case, so the read
+        needs no recording check.
         """
-        from mechanical_librarian.adapters.persistence.level_reconciliation import (
-            current_level_offer,
-        )
         from mechanical_librarian.domain.human_decision import preserved_description
         from mechanical_librarian.domain.review_case import ReviewCase, current_offer
 
@@ -435,10 +436,7 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
         ).fetchone()
         return row is not None and any(
             preserved_description(proposal)
-            for proposal in current_offer(
-                ReviewCase.from_json(row[0]),
-                current_level_offer(self._connection, case_id),
-            )
+            for proposal in current_offer(ReviewCase.from_json(row[0]), None)
         )
 
     @local_operation
