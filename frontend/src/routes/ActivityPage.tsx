@@ -1069,45 +1069,48 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               />
             </label>
           </div>
-          <nav className="cm-activity-pagination-nav" aria-label="Activity pages">
-            <button
-              data-activity-focus="first"
-              disabled={ledger.page === 1}
-              onClick={() => goToPage(1, 'first')}
-            >
-              First
-            </button>
-            <button
-              data-activity-focus="previous"
-              disabled={ledger.page === 1}
-              onClick={() => goToPage((page) => page - 1, 'previous')}
-            >
-              Previous
-            </button>
-            <PageJump
-              shownFor={`${String(ledger.page)}:${search.q ?? ''}:${search.eventType}:${String(search.rangeDays)}:${String(search.pageSize)}`}
-              page={ledger.page}
-              pageCount={ledger.page_count}
-              onCommit={goToPage}
-              onEdit={() => {
-                ++focusVersion.current
-              }}
-            />
-            <button
-              data-activity-focus="next"
-              disabled={ledger.page >= ledger.page_count}
-              onClick={() => goToPage((page) => page + 1, 'next')}
-            >
-              Next
-            </button>
-            <button
-              data-activity-focus="last"
-              disabled={ledger.page >= ledger.page_count}
-              onClick={() => goToPage(ledger.page_count, 'last')}
-            >
-              Last
-            </button>
-          </nav>
+          {/* One page needs no page controls. */}
+          {ledger.page_count > 1 || ledger.page > 1 ? (
+            <nav className="cm-activity-pagination-nav" aria-label="Activity pages">
+              <button
+                data-activity-focus="first"
+                disabled={ledger.page === 1}
+                onClick={() => goToPage(1, 'first')}
+              >
+                First
+              </button>
+              <button
+                data-activity-focus="previous"
+                disabled={ledger.page === 1}
+                onClick={() => goToPage((page) => page - 1, 'previous')}
+              >
+                Previous
+              </button>
+              <PageJump
+                shownFor={`${String(ledger.page)}:${search.q ?? ''}:${search.eventType}:${String(search.rangeDays)}:${String(search.pageSize)}`}
+                page={ledger.page}
+                pageCount={ledger.page_count}
+                onCommit={goToPage}
+                onEdit={() => {
+                  ++focusVersion.current
+                }}
+              />
+              <button
+                data-activity-focus="next"
+                disabled={ledger.page >= ledger.page_count}
+                onClick={() => goToPage((page) => page + 1, 'next')}
+              >
+                Next
+              </button>
+              <button
+                data-activity-focus="last"
+                disabled={ledger.page >= ledger.page_count}
+                onClick={() => goToPage(ledger.page_count, 'last')}
+              >
+                Last
+              </button>
+            </nav>
+          ) : null}
         </footer>
       </section>
       {consentActionable && names.ready ? (

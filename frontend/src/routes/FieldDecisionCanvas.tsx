@@ -27,7 +27,6 @@ import {
   selectedAutomaticLanguageForm,
 } from '../fieldReasons'
 import { destinationLabel } from '../labels'
-import { ownerChoiceCount } from '../reviewChoiceCounts'
 import type { useReviewDecisionController } from '../reviewDecisionController'
 import { AutomaticHandlingPanel } from './AutomaticHandling'
 import { MetadataChoice, RecordedFieldObservations } from './FieldDecisionChoices'
@@ -65,8 +64,6 @@ export function FieldDecisionCanvas({
   controller,
   inspectingCompletion,
   backToCompletion,
-  queuePosition,
-  frozenDestinations,
   expandedChoices,
   toggleChoiceEvidence,
   choose,
@@ -86,8 +83,6 @@ export function FieldDecisionCanvas({
   /** The work is complete and the owner opened this field from its summary. */
   inspectingCompletion: boolean
   backToCompletion: () => void
-  queuePosition: string
-  frozenDestinations: readonly string[]
   expandedChoices: { has: (key: string) => boolean }
   toggleChoiceEvidence: (key: string) => void
   choose: Choose
@@ -124,10 +119,8 @@ export function FieldDecisionCanvas({
     selected.destination === 'cover' &&
     (selected.coverConsideration !== null || selectedCoverPreparation)
   const selectedProgress = controller.phase(selected.destination)
-  // The one-tap teaching line is for someone who has not yet seen what a tap
-  // does. It says so on the first field only, and gives way to what is actually
-  // happening once they have chosen.
-  // An owner command says what it did in its own status, once (S4).
+  // The line beside "Choose a new value" says what a tap is doing once there is
+  // something to say. An owner command says what it did in its own status, once (S4).
   const choiceProgress =
     selectedProgress && ownerOutcome(selectedProgress.command.outcome) ? null : selectedProgress
   const teachingLine =
@@ -136,9 +129,7 @@ export function FieldDecisionCanvas({
       : choiceProgress?.phase === 'confirmed' ||
           (!selectedProgress && authoredOwnerRecorded(selected))
         ? 'Choice recorded.'
-        : selectedActionable && frozenDestinations.indexOf(selected.destination) === 0
-          ? 'One tap records and opens the next field'
-          : ''
+        : ''
   // The direct choices in reading order, so the radio group's one Tab stop and
   // each position come from a single list (#1290).
   type DirectChoice = Omit<Parameters<typeof MetadataChoice>[0], 'radio'>
@@ -148,8 +139,13 @@ export function FieldDecisionCanvas({
         context: choiceContext(selected, null),
         current: true,
         disabled: controller.checking,
+        // The column's header names this card, so the card carries no label
+        // of its own and starts level with the first proposed value.
+        evidenceName: isLongDescription(selected.destination, selected.currentValue)
+          ? 'Evidence for Current value description'
+          : `Evidence for Current value: ${valueText(selected.destination, selected.currentValue)}`,
         expanded: expandedChoices.has(`${selected.destination}:current`),
-        label: 'Current value',
+        label: '',
         longDescription: isLongDescription(selected.destination, selected.currentValue),
         onChoose: () => choose(selected, 'keep_current'),
         recording:
@@ -321,18 +317,6 @@ export function FieldDecisionCanvas({
             <p className="automatic-withheld-reason">{selected.automaticWithheldReason}</p>
           ) : null}
         </div>
-        {selectedActionable ? (
-          <dl>
-            <div>
-              <dt>Queue position</dt>
-              <dd>{queuePosition}</dd>
-            </div>
-            <div>
-              <dt>Choices</dt>
-              <dd>{String(ownerChoiceCount(selected))}</dd>
-            </div>
-          </dl>
-        ) : null}
       </header>
       {(selectedChoiceMode || selectedCoverInspection) && !controller.reloadRequired ? (
         selected.destination === 'cover' ? (
@@ -384,11 +368,18 @@ export function FieldDecisionCanvas({
               aria-label={decisionQuestion(selected.destination)}
               onKeyDown={moveChoiceFocus}
             >
-              {directChoices
-                .filter((choice) => choice.current)
-                .map(({ id, ...choice }) => (
-                  <MetadataChoice key={id} {...choice} />
-                ))}
+              {currentChoice ? (
+                <div className="current-choice-list">
+                  <header>
+                    <strong>Keep current value</strong>
+                  </header>
+                  {directChoices
+                    .filter((choice) => choice.current)
+                    .map(({ id, ...choice }) => (
+                      <MetadataChoice key={id} {...choice} />
+                    ))}
+                </div>
+              ) : null}
               {(selected.decisionActions.includes('accept') && !selected.preservationOnly) ||
               selectedAdvice?.candidate ||
               selectedAdvice?.selected_advice ? (

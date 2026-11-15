@@ -8,7 +8,12 @@ import type { ChoiceContextView, EvidenceView } from '../api/http'
 import { StaleBuildRead } from '../components/StaleBuildRead'
 import type { choiceRadios } from '../choiceGroup'
 import { focusAfterRetry, retryInPlace } from '../focusAfterRetry'
-import { evidenceRoleLabel, observationText, materialReasonLabel } from '../labels'
+import {
+  evidenceRoleLabel,
+  fieldObservationText,
+  observationText,
+  materialReasonLabel,
+} from '../labels'
 import { useReviewContext } from '../router'
 
 import type { ReviewField } from '../fieldDecision'
@@ -156,7 +161,7 @@ export function RecordedFieldObservations({
         <ul className="evidence-values" ref={list}>
           {observations.map((item, index) => (
             <li key={`${item.source}:${item.observation}:${String(index)}`} tabIndex={-1}>
-              <p>{observationText(item)}</p>
+              <p>{fieldObservationText(item, field.destination)}</p>
               <small>
                 {item.source} · {evidenceRoleLabel(item.role)}
               </small>

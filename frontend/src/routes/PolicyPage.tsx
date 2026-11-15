@@ -478,6 +478,15 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
     return sentences.join(' ')
   }
 
+  const automaticEffect = (
+    field: FieldDefinition,
+    option: string,
+    media: 'ebook' | 'audiobook',
+  ) => {
+    const effect = mediaQualification(field, option, media)
+    return effect === 'No automatic effect. Needs you.' ? 'Not offered.' : effect
+  }
+
   const mediaBehavior = (field: FieldDefinition, option: string, media: 'ebook' | 'audiobook') => {
     const destination =
       draft.destinations[field.key] ?? fieldDefaults[field.key]?.destination ?? 'ask'
@@ -725,50 +734,61 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                       {changed ? <StatusPill tone="notice">Draft changed</StatusPill> : null}
                     </span>
                     <p>{field.meaning}</p>
+                    {/* The setting beside it says what is chosen; this says
+                        what Automatic does, for each kind of book. */}
                     <p className="cm-policy-media-scope">
-                      <strong>Ebooks:</strong> {mediaBehavior(field, option, 'ebook')}
+                      <strong>Automatic on ebooks:</strong>{' '}
+                      {automaticEffect(field, option, 'ebook')}
                       <br />
-                      <strong>Audiobooks:</strong> {mediaBehavior(field, option, 'audiobook')}
+                      <strong>Automatic on audiobooks:</strong>{' '}
+                      {automaticEffect(field, option, 'audiobook')}
                     </p>
-                    {data.state.audiobook_qualification.some(
-                      (entry) => entry.field === field.key && entry.option === option,
-                    ) ? (
-                      <Disclosure summary="Audiobook operations">
+                    <div className="cm-policy-disclosures">
+                      {data.state.audiobook_qualification.some(
+                        (entry) => entry.field === field.key && entry.option === option,
+                      ) ? (
+                        <Disclosure summary="Audiobook operations">
+                          <ul>
+                            {data.state.audiobook_qualification
+                              .filter(
+                                (entry) => entry.field === field.key && entry.option === option,
+                              )
+                              .map((entry) => (
+                                <li
+                                  key={entry.identity}
+                                  data-qualification-identity={entry.identity}
+                                >
+                                  {destinationLabel(entry.destination)}:{' '}
+                                  {audiobookOperationLabels[entry.operation]}.{' '}
+                                  {entry.automatic_available
+                                    ? 'Automatic offered.'
+                                    : 'Automatic not offered.'}
+                                </li>
+                              ))}
+                          </ul>
+                        </Disclosure>
+                      ) : null}
+                      <Disclosure summary="What this changes">
+                        {field.key === 'series' ? (
+                          <p>
+                            One source can be enough for a series. Its number comes from that source
+                            and is not checked for each book.
+                          </p>
+                        ) : null}
                         <ul>
-                          {data.state.audiobook_qualification
-                            .filter((entry) => entry.field === field.key && entry.option === option)
-                            .map((entry) => (
-                              <li key={entry.identity} data-qualification-identity={entry.identity}>
-                                {destinationLabel(entry.destination)}:{' '}
-                                {audiobookOperationLabels[entry.operation]}.{' '}
-                                {entry.automatic_available
-                                  ? 'Automatic offered.'
-                                  : 'Automatic not offered.'}
-                              </li>
-                            ))}
+                          {field.options.map((value) => (
+                            <li key={value}>
+                              {field.optionLabels[value] ?? value}:{' '}
+                              <span>
+                                {representationConsequence(
+                                  policyRepresentationGuidance[`${field.key}:${value}`],
+                                )}
+                              </span>
+                            </li>
+                          ))}
                         </ul>
                       </Disclosure>
-                    ) : null}
-                    <Disclosure summary="What this changes">
-                      {field.key === 'series' ? (
-                        <p>
-                          One source can be enough for a series. Its number comes from that source
-                          and is not checked for each book.
-                        </p>
-                      ) : null}
-                      <ul>
-                        {field.options.map((value) => (
-                          <li key={value}>
-                            {field.optionLabels[value] ?? value}:{' '}
-                            <span>
-                              {representationConsequence(
-                                policyRepresentationGuidance[`${field.key}:${value}`],
-                              )}
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    </Disclosure>
+                    </div>
                   </header>
                   {field.unsupported ? (
                     <div className="cm-policy-unavailable">

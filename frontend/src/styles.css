@@ -32,7 +32,8 @@ button, input, select { max-width:100%; font:inherit; }
 button, a { touch-action:manipulation; }
 a { color:var(--accent-strong); }
 a.button-primary { display:inline-flex; align-items:center; justify-content:center; text-decoration:none; }
-button, .button-primary { min-height:2.75rem; padding:.6rem .85rem; color:var(--ink); background:var(--surface); border:1px solid var(--line); border-radius:.5rem; cursor:pointer; }
+/* Controls share one text size unless a component sets its own; fields keep 1rem so phones do not zoom into them. */
+button, .button-primary { min-height:2.75rem; padding:.6rem .85rem; color:var(--ink); background:var(--surface); border:1px solid var(--line); border-radius:.5rem; font-size:.875rem; cursor:pointer; }
 button:disabled { cursor:not-allowed; opacity:.55; }
 /* Every disclosure summary is a 44px target; its own display keeps or drops the marker. */
 summary { min-height:2.75rem; align-content:center; }
@@ -42,6 +43,8 @@ summary { min-height:2.75rem; align-content:center; }
 .status-pill.is-notice { color:color-mix(in srgb,var(--notice) 80%,var(--ink)); background:var(--notice-soft); }.status-pill.is-accent { color:var(--accent-strong); background:var(--accent-soft); }.status-pill.is-danger { color:var(--danger); background:var(--danger-soft); }
 :focus-visible { outline:3px solid var(--focus); outline-offset:3px; }
 h1, h2, h3, p { margin-top:0; }
+/* A heading that wraps shares its words between its lines rather than leaving one alone. */
+h1, h2, h3 { text-wrap:balance; }
 h1, h2 { color:var(--ink); }
 h1 { margin-bottom:.25rem; font-family:Georgia,"Times New Roman",serif; font-size:clamp(1.65rem,3vw,2.5rem); line-height:1.12; letter-spacing:-.025em; }
 h2 { margin-bottom:.35rem; }
@@ -83,7 +86,7 @@ h2 { margin-bottom:.35rem; }
 }
 @container shell (max-width:47.5rem) {
   /* Brand and actions, a status row held open whether or not anything is in it, then the destinations. */
-  .masthead { grid-template-columns:minmax(0,1fr) auto; grid-template-areas:'brand actions' 'status status' 'nav nav'; align-items:start; padding:.5rem .75rem; }
+  .masthead { grid-template-columns:minmax(0,1fr) auto; grid-template-areas:'brand actions' 'status status' 'nav nav'; align-items:start; padding:.5rem 1rem; }
   .brand { justify-self:start; }
   .brand > span:last-child { display:none; }
   /* Four equal links in one row; enlarged text drops to fewer columns rather than splitting a word. */
@@ -178,7 +181,7 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .library-workspace { display:grid; grid-template-columns:minmax(310px,380px) minmax(0,1fr); align-items:start; gap:1.1rem; }
 .library-works, .selected-work-surface > aside, .library-selection { min-width:0; border:1px solid var(--line); border-radius:1rem; background:var(--surface); }
 .library-works { position:sticky; top:var(--sticky-top); max-height:calc(100vh - var(--sticky-top) - 1.625rem); overflow:auto; padding:1.05rem; }
-.library-works-heading { display:flex; flex-wrap:wrap; align-items:end; justify-content:space-between; gap:0 1rem; }
+.library-works-heading { display:flex; flex-direction:column; align-items:start; gap:.2rem; }
 .library-works-heading h2 { margin:0; font-family:Georgia,serif; font-size:1.45rem; overflow-wrap:normal; }
 .library-works-heading > span { color:var(--soft); font-size:.75rem; }
 /* One row that scrolls sideways when the panel is narrow; lenses keep their width, so the next one is cut at the edge,
@@ -334,7 +337,7 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .cm-page-heading { display:flex; align-items:end; justify-content:space-between; gap:2rem; }
 .cm-page-heading h1, .cm-page-heading p { margin:0; }
 .cm-page-heading p { max-width:72ch; margin-top:.35rem; color:var(--soft); font-size:.8rem; line-height:1.5; }
-.cm-policy-route .cm-page-heading { margin-bottom:1rem; padding-bottom:1rem; border-bottom:1px solid var(--line-strong); }
+.cm-policy-route .cm-page-heading { margin-bottom:1.25rem; padding-bottom:1.25rem; border-bottom:2px solid var(--ink); }
 .cm-policy-editor { display:grid; grid-template-columns:minmax(230px,270px) minmax(0,1fr); align-items:start; overflow:clip; border:1px solid var(--line); border-radius:1rem; background:var(--surface); box-shadow:var(--shadow); }
 /* The rail is bounded and scrolls itself. Unbounded it grew past the viewport,
    and the sticky finish tray then floated across its safety controls. */
@@ -347,7 +350,7 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
 .cm-policy-sidebar > header strong { overflow-wrap:anywhere; font:700 1.08rem/1.25 Georgia,serif; }
 .cm-policy-sidebar > header small { color:var(--notice); }
 .cm-policy-sidebar nav { display:grid; padding:.45rem; }
-.cm-policy-chapter-legend { margin:.1rem .65rem .55rem; color:var(--soft); font-size:.75rem; font-weight:700; text-align:right; }
+.cm-policy-chapter-legend { margin:.1rem .65rem .55rem; color:var(--soft); font-size:.75rem; font-weight:700; }
 .cm-policy-sidebar nav button { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:.6rem; min-height:68px; padding:.55rem .6rem; border-color:transparent; background:transparent; text-align:left; }
 .cm-policy-sidebar nav button:hover:not(:disabled) { background:color-mix(in srgb,var(--accent-soft) 42%,transparent); }
 .cm-policy-sidebar nav button[aria-current='page'] { border-color:var(--accent); background:var(--accent-soft); }
@@ -360,7 +363,7 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
 .cm-change-count { flex:none; display:grid; width:26px; height:26px; place-items:center; border:1px solid var(--line-strong); border-radius:50%; color:var(--soft); font-size:.75rem; }
 [aria-current='page'] > .cm-change-count { border-color:var(--accent-strong); color:var(--surface); background:var(--accent-strong); }
 .cm-policy-mode { margin:auto .65rem .65rem; padding:.7rem .55rem; border-top:1px solid var(--line); }
-.cm-policy-mode summary { display:flex; flex-wrap:wrap; align-items:center; gap:.25rem .55rem; color:var(--accent-strong); cursor:pointer; list-style:none; }
+.cm-policy-mode summary { display:flex; flex-wrap:nowrap; align-items:center; gap:.25rem .55rem; color:var(--accent-strong); cursor:pointer; list-style:none; }
 .cm-policy-mode summary::-webkit-details-marker { display:none; }
 .cm-policy-mode summary::after { width:6px; height:6px; border-right:1.5px solid currentColor; border-bottom:1.5px solid currentColor; content:''; transform:translateY(-2px) rotate(45deg); transition:transform 160ms ease-out; }
 .cm-policy-mode[open] summary::after { transform:translateY(2px) rotate(225deg); }
@@ -375,13 +378,13 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
 .cm-policy-content > header > div { max-width:62ch; }
 .cm-policy-content > header h2 { margin:0 0 .18rem; font:700 1.6rem/1.15 Georgia,serif; }
 .cm-policy-field-list { display:grid; border-top:1px solid var(--line); }
-.cm-policy-field { display:grid; grid-template-columns:minmax(190px,.84fr) minmax(260px,1.15fr) minmax(190px,.86fr); align-items:center; gap:.75rem; margin:0; padding:.75rem 1.35rem; border:0; border-bottom:1px solid var(--line); transition:background 160ms ease-out; }
+.cm-policy-field { display:grid; grid-template-columns:minmax(190px,1.1fr) minmax(250px,1fr) minmax(170px,.8fr); align-items:center; gap:.75rem; margin:0; padding:.75rem 1.35rem; border:0; border-bottom:1px solid var(--line); transition:background 160ms ease-out; }
 .cm-policy-field.is-changed { background:var(--notice-soft); }
 .cm-policy-field:focus-within:not(.is-changed) { background:color-mix(in srgb,var(--accent-soft) 24%,transparent); }
 .cm-policy-field > header { display:grid; align-content:center; gap:.3rem; min-width:0; }
 .cm-policy-field > header > span { display:flex; align-items:center; gap:.45rem; flex-wrap:wrap; }
 .cm-policy-field > header strong { font:700 1rem/1.25 Georgia,serif; }
-.cm-policy-field > header p { max-width:32ch; margin:0; color:var(--soft); font-size:.75rem; line-height:1.35; }
+.cm-policy-field > header p { max-width:44ch; margin:0; color:var(--soft); font-size:.75rem; line-height:1.35; }
 .cm-policy-mode-control { display:grid; min-width:0; align-self:stretch; align-content:center; gap:.25rem; overflow:hidden; }
 .cm-policy-control-heading { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:.15rem .5rem; min-width:0; color:var(--soft); font-size:.75rem; line-height:1.2; }
 .cm-policy-control-heading strong { color:var(--soft); font-size:inherit; }
@@ -642,7 +645,7 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
   .build-mismatch { align-items:flex-start; flex-direction:column; }
 }
 @media (max-width:390px) {
-  main { padding:1rem .75rem 4rem; }
+  main { padding:1rem 1rem 4rem; }
   .cm-policy-sidebar > header { grid-template-columns:minmax(0,1fr); align-items:start; }
   .cm-policy-sidebar > header small { grid-column:1; grid-row:auto; max-width:none; text-align:left; }
   .masthead nav a { padding-inline:.45rem; }
@@ -828,7 +831,7 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 }
 @media (prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto!important; animation-duration:.01ms!important; transition-property:none!important; transition-duration:.01ms!important; }.cm-policy-validation-spinner,.cm-policy-validation li > span,.cm-policy-validation,.cm-policy-result,.cm-dropdown-menu { animation:none!important; }.cm-dropdown-trigger svg { transition:none!important; } }
 /* Variant M workspace: regular widths keep work, decision and attention in one operating surface. */
-.variant-m-workspace .library-header { container-type:inline-size; display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:1rem; max-width:1480px; margin-inline:auto; }
+.variant-m-workspace .library-header { container-type:inline-size; display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:1rem; max-width:1480px; margin-inline:auto; }
 .library-header .cm-library-handoff { flex:1 1 32rem; grid-template-columns:minmax(0,1fr) auto; margin:0; }
 /* Below about 64rem of toolbar the notice's action column stacks under its text rather than squeezing it. */
 @container (max-width:64rem) { .library-header .cm-library-handoff { grid-template-columns:minmax(0,1fr); } }
@@ -851,7 +854,7 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .workspace-utilities { display:flex; flex-wrap:wrap; gap:6px 18px; margin:8px 0 14px; }
 .workspace-detail .direct-choice-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }.workspace-detail .value-choice { min-width: 0; overflow-wrap: anywhere; }.workspace-detail .value-choice span { overflow-wrap: break-word; }.workspace-detail .value-choice strong { overflow-wrap: anywhere; line-height: 1.28; }
 .workspace-detail { min-width: 0; min-height: 72vh; padding: 32px clamp(24px, 3vw, 48px) 56px; background: var(--surface-strong); }
-.selected-work-header { display: flex; flex-wrap:wrap; align-items: center; gap: 17px; padding-bottom: 18px; border-bottom: 1px solid var(--line); }.selected-work-header > div { flex:1 1 min-content; min-width:0; }.selected-work-header .library-book-mark { flex: 0 0 auto; }.selected-work-header h2 { margin: 2px 0 5px; font-size: clamp(1.45rem,2.4vw,1.95rem); overflow-wrap:break-word; }.selected-work-header p { margin: 0; color: var(--soft); overflow-wrap:anywhere; }.selected-work-status { display:flex; gap:14px; margin:0; text-align:right; }.selected-work-status div { display:grid; gap:2px; }.selected-work-status dt { color:var(--soft); font-size:.75rem; }.selected-work-status dd { margin:0; font-family:Georgia,'Times New Roman',serif; font-size:1.3rem; font-weight:700; }
+.selected-work-header { display: flex; flex-wrap:wrap; align-items: center; gap: 17px; padding-bottom: 18px; border-bottom: 1px solid var(--line); }.selected-work-header > div { flex:1 1 min-content; min-width:0; }.selected-work-header .library-book-mark { flex: 0 0 auto; }.selected-work-header h2 { margin: 2px 0 5px; font-size: clamp(1.45rem,2.4vw,1.95rem); overflow-wrap:break-word; }.selected-work-header p { margin: 0; color: var(--soft); overflow-wrap:anywhere; }.selected-work-status { display:flex; gap:20px; margin:0; text-align:left; }.selected-work-status div { display:grid; gap:2px; }.selected-work-status dt { color:var(--soft); font-size:.75rem; }.selected-work-status dd { margin:0; font-family:Georgia,'Times New Roman',serif; font-size:1.3rem; font-weight:700; }
 .field-map { display: grid; min-width: 0; gap: 6px; }
 .field-map > header { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
 .field-map > header strong { color: var(--soft); font-size: .75rem; font-weight: 650; }
@@ -905,7 +908,7 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
   .variant-m-workspace .library-workspace.attention-open .attention-rail { grid-column:2; border-left:0; border-top:1px solid var(--line); }
 } }
 @media (min-width:761px) and (max-width:1024px) { .variant-m-workspace .library-workspace,.variant-m-workspace .library-workspace.attention-open { grid-template-columns:minmax(0,1fr); }.variant-m-workspace .library-workspace.has-selection .library-works { display:none; }.compact-workspace-back { display:inline-flex; }.variant-m-workspace .library-workspace.attention-open .attention-rail { top:var(--masthead-clearance,122px); } }
-@media (max-width:760px) { .library-header > .attention-toggle { flex:1 1 auto; }.library-header .cm-library-handoff { flex-basis:100%; }.variant-m-workspace .library-workspace, .variant-m-workspace .library-workspace.attention-open { grid-template-columns: minmax(0, 1fr); border-radius: 0; } .workspace-detail, .attention-rail { border-left: 0; border-top: 1px solid var(--line); } .variant-m-workspace .library-works { min-height: auto; border-right: 0; } .variant-m-workspace .library-workspace:not(.has-selection) .workspace-detail, .variant-m-workspace .library-workspace.has-selection .library-works, .variant-m-workspace .library-workspace.attention-open .library-works, .variant-m-workspace .library-workspace.attention-open .workspace-detail { display: none; } .variant-m-workspace .library-workspace.attention-open .attention-rail { display: block; order: initial; } .lenses a { min-height:44px; }.compact-workspace-back { display:inline-flex; }.workspace-detail { padding:22px 16px 46px; }.selected-work-header { display:flex; flex-wrap:wrap; align-items:start; }.selected-work-header > div { flex:1 1 min-content; min-width:0; }.selected-work-header h2 { overflow-wrap:break-word; }.context-value { padding-inline:8px; }.selected-work-status { grid-column:1 / -1; width:100%; justify-content:space-between; text-align:left; }.selected-work-header h2 { font-size:1.45rem; }.direct-choice-grid { align-items: start; }.workspace-detail .direct-choice-grid { grid-template-columns:1fr; }.value-choice { min-width: 0; overflow-wrap: anywhere; }.value-choice strong { max-width: 100%; overflow-wrap: anywhere; font-size: clamp(.95rem, 4vw, 1.15rem); line-height: 1.25; }.decision-canvas > header { display:grid; }.decision-canvas dl { justify-content:space-between; }.queue-movement { justify-content:stretch; }.queue-movement button { flex:1; }.automatic-handling-actions { display:grid; grid-template-columns:minmax(0,1fr); }.automatic-handling-panel button { width:100%; }.attention-destination { display: none; } }
+@media (max-width:760px) { .library-header > .attention-toggle { flex:1 1 auto; }.library-header .cm-library-handoff { flex-basis:100%; }.variant-m-workspace .library-workspace, .variant-m-workspace .library-workspace.attention-open { grid-template-columns: minmax(0, 1fr); border-radius: 0; } .workspace-detail, .attention-rail { border-left: 0; border-top: 1px solid var(--line); } .variant-m-workspace .library-works { min-height: auto; border-right: 0; } .variant-m-workspace .library-workspace:not(.has-selection) .workspace-detail, .variant-m-workspace .library-workspace.has-selection .library-works, .variant-m-workspace .library-workspace.attention-open .library-works, .variant-m-workspace .library-workspace.attention-open .workspace-detail { display: none; } .variant-m-workspace .library-workspace.attention-open .attention-rail { display: block; order: initial; } .lenses a { min-height:44px; }.compact-workspace-back { display:inline-flex; }.workspace-detail { padding:22px 16px 46px; }.selected-work-header { display:flex; flex-wrap:wrap; align-items:start; }.selected-work-header > div { flex:1 1 min-content; min-width:0; }.selected-work-header h2 { overflow-wrap:break-word; }.context-value { padding-inline:8px; }.selected-work-status { grid-column:1 / -1; width:100%; justify-content:flex-start; text-align:left; }.selected-work-header h2 { font-size:1.45rem; }.direct-choice-grid { align-items: start; }.workspace-detail .direct-choice-grid { grid-template-columns:1fr; }.value-choice { min-width: 0; overflow-wrap: anywhere; }.value-choice strong { max-width: 100%; overflow-wrap: anywhere; font-size: clamp(.95rem, 4vw, 1.15rem); line-height: 1.25; }.decision-canvas > header { display:grid; }.decision-canvas dl { justify-content:space-between; }.queue-movement { justify-content:stretch; }.queue-movement button { flex:1; }.automatic-handling-actions { display:grid; grid-template-columns:minmax(0,1fr); }.automatic-handling-panel button { width:100%; }.attention-destination { display: none; } }
 @media (max-width:390px) { .workspace-utilities { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); }.full-review-link { justify-content:center; text-align:center; }.automatic-resolution-details summary { align-items:flex-start; flex-direction:column; gap:2px; }.field-filmstrip button { min-width:min(78vw,260px); }.decision-canvas:not(.is-context-only) > header { margin-bottom:12px; } }
 
 .cover-consideration { display:grid; gap:1rem; }
@@ -943,24 +946,29 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .decision-confirmed p { margin: 3px 0 0; color: var(--ink); }
 .protected-choice .direct-choice-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; overflow: hidden; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--surface-strong); }
 .protected-choice .value-choice { min-height: 0; border: 0; border-radius: 0; background: transparent; }
-.protected-choice .current-value { display: grid; align-content: center; min-height: 190px; padding: 24px; }
+.protected-choice .current-value { display: grid; align-content: start; }
 .protected-choice .metadata-choice { min-height: 100%; }
 .protected-choice .current-value strong { font-family: Georgia, 'Times New Roman', serif; font-size: clamp(1.08rem, 2vw, 1.4rem); }
 .protected-choice .proposed-choice-list { display: grid; align-content: start; padding: 0; background: transparent; }
-.protected-choice .proposed-choice-list > header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 10px 24px 0; }
+.protected-choice .proposed-choice-list > header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 16px 20px 0 52px; }
 .protected-choice .proposed-choice-list > header strong { font-size: .75rem; }
 .protected-choice .proposed-choice-list > header small { color: var(--soft); font-size: .75rem; text-align: right; }
 .protected-choice .proposed-choice-list > header small.is-active { color: var(--accent-strong); font-weight: 700; }
 .protected-choice .proposed-choice-list.has-one-choice { position:relative; align-content:center; }
 .protected-choice .proposed-choice-list.has-one-choice > header { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); clip-path:inset(50%); white-space:nowrap; }
-.protected-choice .proposed-value { min-height: 76px; text-align: left; }
+.protected-choice .proposed-value { text-align: left; }
 .protected-choice .proposed-value + .proposed-value { border-top: 1px solid var(--line); border-radius: 0; }
 .metadata-choice { position:relative; display:grid; align-content:start; min-width:0; border:1px solid transparent; background:var(--surface-strong); }
 .metadata-choice.is-current { border-right-color:var(--line); }
 /* Every card has the same padding, and its Evidence control sits directly under its value (#1519). */
-.metadata-choice .choice-select { min-height:0; padding:20px 24px; }
+/* The radio sits beside the value, in a gutter of its own, so a choice is as tall as its words. */
+.metadata-choice .choice-select { position:relative; min-height:0; gap:.25rem; padding:16px 20px 16px 52px; }
 .metadata-choice .choice-select:has(+ .choice-evidence-toggle) { padding-bottom:0; }
-.metadata-choice .choice-evidence-toggle { position:static; justify-self:start; margin:12px 24px 20px; min-height:44px; padding:0 10px; border:1px solid var(--line-strong); border-radius:6px; background:var(--surface); color:var(--accent-strong); font-size:.75rem; font-weight:700; }
+/* The ring is centred on the value's first line, whatever its size or length. */
+.metadata-choice .choice-select > strong { position:relative; }
+.metadata-choice .choice-select > strong::before { position:absolute; top:calc((1lh - 20px) / 2); left:-32px; }
+/* Evidence reads as a quiet link under the source line; its 44px target overlaps the card's padding. */
+.metadata-choice .choice-evidence-toggle { position:static; justify-self:start; margin:-6px 20px 2px 42px; min-height:44px; padding:0 10px; border:0; border-radius:6px; background:transparent; color:var(--accent-strong); font-size:.75rem; font-weight:700; text-decoration:underline; text-underline-offset:3px; }
 .metadata-choice.is-evidence-open { padding-bottom:0; }
 .metadata-choice:hover, .metadata-choice:has(:focus-visible) { background:color-mix(in srgb, var(--accent-soft) 45%, var(--surface-strong)); }
 .metadata-choice:hover .choice-select, .metadata-choice:has(:focus-visible) .choice-select { background:transparent; }
@@ -968,10 +976,10 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
    previews on a lighter wash than chosen. Chosen fills the ring beside a 2px
    edge and the words "Your choice"; recommended keeps only its words (#1290). */
 .metadata-choice .choice-select > small { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; }
-.metadata-choice .choice-select > small::before { content:''; flex:none; box-sizing:border-box; width:20px; height:20px; border:2px solid var(--field-line); border-radius:50%; background:var(--surface-strong); }
-.metadata-choice:hover .choice-select:not(:disabled) > small::before { border-color:var(--accent); box-shadow:inset 0 0 0 4px var(--surface-strong), inset 0 0 0 10px color-mix(in srgb, var(--accent) 30%, var(--surface-strong)); }
+.metadata-choice .choice-select > strong::before { content:''; flex:none; box-sizing:border-box; width:20px; height:20px; border:2px solid var(--field-line); border-radius:50%; background:var(--surface-strong); }
+.metadata-choice:hover .choice-select:not(:disabled) > strong::before { border-color:var(--accent); box-shadow:inset 0 0 0 4px var(--surface-strong), inset 0 0 0 10px color-mix(in srgb, var(--accent) 30%, var(--surface-strong)); }
 .metadata-choice.is-selected, .metadata-choice.is-selected:hover { background:var(--accent-soft); box-shadow:inset 0 0 0 2px var(--accent); }
-.metadata-choice.is-selected .choice-select > small::before { border-color:var(--accent-strong); background:var(--accent-strong); box-shadow:inset 0 0 0 4px var(--surface-strong); }
+.metadata-choice.is-selected .choice-select > strong::before { border-color:var(--accent-strong); background:var(--accent-strong); box-shadow:inset 0 0 0 4px var(--surface-strong); }
 .choice-chosen { margin-left:auto; color:var(--accent-strong); }
 /* Focus is drawn inside the card, so the panel's rounded clipping cannot cut it. */
 .metadata-choice .choice-select:focus-visible { outline:3px solid var(--focus); outline-offset:-7px; border-radius:12px; }
@@ -996,7 +1004,6 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .comparison-notice p { margin:0; overflow-wrap:anywhere; font-size:.75rem; line-height:1.45; }
 .comparison-notice p + p { margin-top:5px; }
 .library-cover-comparison { display: grid; min-width: 0; gap: 10px; }
-.cover-track-hint { display: none; margin: 0; color: var(--soft); font-size: .75rem; }
 .reviewer-unavailable-detail { margin: 0; padding: 10px 12px; border-left: 3px solid var(--notice); background: var(--notice-soft); color: var(--ink); font-size: .78rem; line-height: 1.45; overflow-wrap: anywhere; }
 .library-cover-comparison > header { display: flex; align-items: end; justify-content: space-between; gap: 14px; }
 .library-cover-comparison > header strong { overflow-wrap: normal; }
@@ -1049,7 +1056,7 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .review-complete > p, .review-complete footer { grid-column: 1 / -1; }.review-complete footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: .75rem; }.review-complete footer button { min-height: 44px; padding: 0 14px; }
 @keyframes library-field-arrive { from { opacity: .28; transform: translateX(8px); } to { opacity: 1; transform: translateX(0); } }
 @keyframes library-complete-arrive { from { opacity: .15; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-@media (max-width: 1024px) { .protected-choice .direct-choice-grid { grid-template-columns: 1fr; }.metadata-choice.is-current { border-right:0; border-bottom:1px solid var(--line); }.metadata-choice .choice-evidence-toggle, .cover-choice .choice-evidence-toggle { min-height:44px; }.cover-track-hint { display: block; }.library-cover-layout, .library-cover-pinned { grid-auto-flow: column; grid-auto-columns: minmax(min(11.875rem, 100%), 62%); grid-template-columns: none; align-items: start; overflow-x: auto; padding-bottom: 6px; overscroll-behavior-x: contain; scroll-snap-type: x proximity; scrollbar-width: thin; }.library-cover-pinned > aside, .library-cover-gallery, .library-cover-gallery > div { display: contents; }.library-cover-pinned > aside > strong, .library-cover-gallery > header { display: none; }.library-cover-pinned .library-cover-card { position: static; width: auto; }.library-cover-layout > .cover-choice, .library-cover-pinned > .cover-choice, .library-cover-pinned .cover-choice { scroll-snap-align: start; } }
+@media (max-width: 1024px) { .protected-choice .direct-choice-grid { grid-template-columns: 1fr; }.metadata-choice.is-current { border-right:0; border-bottom:1px solid var(--line); }.metadata-choice .choice-evidence-toggle, .cover-choice .choice-evidence-toggle { min-height:44px; }.library-cover-layout, .library-cover-pinned { grid-auto-flow: column; grid-auto-columns: minmax(min(11.875rem, 100%), 62%); grid-template-columns: none; align-items: start; overflow-x: auto; padding-bottom: 6px; overscroll-behavior-x: contain; scroll-snap-type: x proximity; scrollbar-width: thin; }.library-cover-pinned > aside, .library-cover-gallery, .library-cover-gallery > div { display: contents; }.library-cover-pinned > aside > strong, .library-cover-gallery > header { display: none; }.library-cover-pinned .library-cover-card { position: static; width: auto; }.library-cover-layout > .cover-choice, .library-cover-pinned > .cover-choice, .library-cover-pinned .cover-choice { scroll-snap-align: start; } }
 @media (max-width: 760px) { .variant-m-workspace .field-filmstrip button { flex: 0 0 auto; min-width: 86px; }.variant-m-workspace .library-work-row { grid-template-columns: 42px minmax(0, 1fr); }:root .library-work-row > .library-book-mark.has-cover { width: 42px; max-height: 63px; }.library-cover-comparison > header { align-items:start; flex-direction:column; gap:4px; }.library-cover-comparison > header small { text-align:left; }.library-cover-layout, .library-cover-pinned { grid-auto-columns: minmax(min(10.625rem, 100%), 58%); }.cover-observation-details dl > div { display:grid; gap:1px; }.cover-observation-details dd { text-align:left; overflow-wrap:break-word; }.review-complete { grid-template-columns: 1fr; }.review-complete-mark { width: 42px; height: 42px; }.review-complete ol, .review-complete > p, .review-complete footer { grid-column: 1; }.review-complete footer { flex-direction: column; align-items: stretch; }.review-complete footer button { width: 100%; } }
 /* An outcome list too narrow for its label column beside a value, as enlarged text makes it on a phone, stacks each value whole under its label. */
 @container review-outcomes (max-width: 14rem) { .review-complete li button { grid-template-columns: minmax(0, 1fr); gap: 2px; }.review-complete li strong { white-space: normal; overflow-wrap: anywhere; } }
@@ -1076,8 +1083,8 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .cm-activity-ledger { overflow:hidden; border:1px solid var(--line); border-radius:.75rem; background:var(--surface); }.cm-activity-ledger-heading { display:flex; align-items:end; justify-content:space-between; gap:1.5rem; padding:1.15rem 1.25rem .85rem; }.cm-activity-ledger-heading h2 { margin:0; }.cm-activity-ledger-heading h2 { font:700 1.25rem/1.25 Georgia,serif; }
 .cm-activity-range { display:grid; flex:0 0 10rem; gap:.25rem; color:var(--soft); font-size:.75rem; font-weight:650; }.cm-activity-search input { min-height:44px; padding:.6rem .7rem; border:1px solid var(--field-line); border-radius:.5rem; color:var(--ink); background:var(--surface-strong); }.cm-activity-tools { display:flex; align-items:end; gap:1rem; padding:.75rem 1.25rem 1rem; border-bottom:1px solid var(--line); background:color-mix(in srgb,var(--surface-strong) 55%,transparent); }.cm-activity-search { display:grid; width:min(22rem,100%); gap:.25rem; color:var(--soft); font-size:.75rem; font-weight:650; }
 .cm-activity-filters { display:flex; flex-wrap:wrap; gap:.35rem; }.cm-activity-filters button { min-height:2.75rem; flex:0 0 auto; border-radius:999px; background:var(--surface); white-space:nowrap; }.cm-activity-filters button[aria-pressed='true'] { border-color:var(--accent); color:var(--accent-strong); background:var(--accent-soft); font-weight:700; }
-.cm-activity-columns { display:grid; grid-template-columns:64px 126px minmax(180px,1.05fr) minmax(220px,1.35fr) 94px minmax(112px,auto); gap:1rem; padding:.55rem 1.25rem; border-bottom:1px solid var(--line); color:var(--soft); background:var(--surface-strong); font-size:.75rem; font-weight:700; letter-spacing:.02em; text-transform:uppercase; }.cm-activity-event-group > h3 { margin:0; padding:.55rem 1.25rem .35rem; color:var(--soft); background:color-mix(in srgb,var(--surface-strong) 45%,transparent); font-size:.75rem; }
-.cm-activity-event-group article { display:grid; grid-template-columns:64px 126px minmax(180px,1.05fr) minmax(220px,1.35fr) 94px minmax(112px,auto); align-items:center; gap:1rem; min-height:72px; padding:.65rem 1.25rem; border-bottom:1px solid var(--line); }.cm-activity-event-group article.is-expanded { background:color-mix(in srgb,var(--accent-soft) 20%,var(--surface)); }.cm-activity-event-group time { color:var(--soft); font-variant-numeric:tabular-nums; white-space:normal; overflow-wrap:normal; word-break:normal; }.cm-activity-category { justify-self:start; min-width:max-content; padding:.3rem .45rem; border:1px solid var(--line); border-radius:.35rem; color:var(--soft); background:var(--surface-strong); font-size:.75rem; font-weight:700; white-space:nowrap; overflow-wrap:normal; }.cm-activity-category.is-recovery { color:var(--notice); background:var(--notice-soft); }
+.cm-activity-columns { display:grid; grid-template-columns:64px 126px minmax(180px,1.05fr) minmax(200px,1.2fr) minmax(140px,.7fr) minmax(96px,auto); gap:1rem; padding:.55rem 1.25rem; border-bottom:1px solid var(--line); color:var(--soft); background:var(--surface-strong); font-size:.75rem; font-weight:700; letter-spacing:.02em; text-transform:uppercase; }.cm-activity-event-group > h3 { margin:0; padding:.55rem 1.25rem .35rem; color:var(--soft); background:color-mix(in srgb,var(--surface-strong) 45%,transparent); font-size:.75rem; }
+.cm-activity-event-group article { display:grid; grid-template-columns:64px 126px minmax(180px,1.05fr) minmax(200px,1.2fr) minmax(140px,.7fr) minmax(96px,auto); align-items:center; gap:1rem; min-height:72px; padding:.65rem 1.25rem; border-bottom:1px solid var(--line); }.cm-activity-event-group article.is-expanded { background:color-mix(in srgb,var(--accent-soft) 20%,var(--surface)); }.cm-activity-event-group time { color:var(--soft); font-variant-numeric:tabular-nums; white-space:normal; overflow-wrap:normal; word-break:normal; }.cm-activity-category { justify-self:start; min-width:max-content; padding:.3rem .45rem; border:1px solid var(--line); border-radius:.35rem; color:var(--soft); background:var(--surface-strong); font-size:.75rem; font-weight:700; white-space:nowrap; overflow-wrap:normal; }.cm-activity-category.is-recovery { color:var(--notice); background:var(--notice-soft); }
 .cm-activity-work { display:grid; gap:.2rem; min-width:0; }.cm-activity-work > strong,.cm-activity-work > span,.cm-activity-change,.cm-activity-change > span:not(.sr-only) { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }.cm-activity-work > strong { font-size:.875rem; line-height:1.142857; }.cm-activity-work > span { color:var(--soft); font-size:.76rem; }.cm-activity-change { min-width:0; color:var(--ink); font-size:.8rem; font-weight:700; }.cm-activity-event-group article > b { min-width:0; overflow:hidden; color:var(--accent-strong); font-size:.75rem; text-overflow:ellipsis; }.cm-activity-note { display:block; margin-top:.15rem; font-size:.75rem; color:var(--notice); font-weight:650; white-space:normal; }.cm-activity-note-detail { margin:0 0 .75rem; color:var(--notice); font-weight:650; }.cm-activity-event-group article > button { width:100%; min-width:7rem; min-height:2.75rem; padding:.5rem .85rem; line-height:1.25; background:transparent; white-space:nowrap; }
 .cm-activity-evidence { display:block; width:100%; min-width:0; grid-column:1 / -1; padding:.85rem 0 .25rem; border-top:1px solid var(--line); }.cm-activity-evidence.has-policy-changes { display:grid; grid-template-columns:minmax(0,1fr); gap:.85rem; }.cm-activity-evidence.has-policy-changes > * { grid-column:1; min-width:0; }.cm-activity-evidence.has-policy-changes > dl { grid-template-columns:repeat(auto-fit,minmax(12rem,1fr)); padding-top:.65rem; border-top:1px solid var(--line); }.cm-activity-evidence dl { display:grid; width:100%; grid-template-columns:repeat(4,minmax(0,1fr)); margin:0; }.cm-activity-evidence dl div { display:grid; gap:.15rem; min-width:0; padding:.1rem .8rem .7rem; border-left:1px solid var(--line); }.cm-activity-evidence dl div:first-child { border-left:0; }.cm-activity-evidence dt { color:var(--soft); font-size:.75rem; font-weight:650; }.cm-activity-evidence dd { margin:0; overflow-wrap:anywhere; font-size:.8rem; font-weight:700; line-height:1.4; }
 .cm-activity-policy-changes { display:grid; gap:.4rem; min-width:0; }.cm-activity-policy-changes > header,.cm-activity-policy-changes li { display:grid; grid-template-columns:minmax(0,1.4fr) minmax(0,.8fr) minmax(0,.8fr); gap:1rem; align-items:center; }.cm-activity-policy-changes > header { padding-inline:.8rem; color:var(--soft); font-size:.75rem; font-weight:650; }.cm-activity-policy-changes > header strong { grid-column:1 / -1; color:var(--ink); font-size:.78rem; }.cm-activity-policy-changes ul { margin:0; padding:0; list-style:none; }.cm-activity-policy-changes li { min-height:48px; padding:.55rem .8rem; border-top:1px solid var(--line); }.cm-activity-policy-changes li > span { display:grid; gap:.1rem; min-width:0; }.cm-activity-policy-changes li small { color:var(--soft); font-size:.75rem; }.cm-activity-policy-changes li > b,.cm-activity-policy-changes li strong { min-width:0; overflow-wrap:anywhere; }.cm-activity-policy-changes li > b { font-size:.78rem; }
@@ -1094,7 +1101,7 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 /* Medium desktop keeps all six columns and the whole disclosure label: the
    two flexible columns give way, the fixed ones do not, so the action never
    leaves the row or loses its word (#636). */
-@media (max-width:1199px) and (min-width:761px) { .cm-activity-columns,.cm-activity-event-group article { grid-template-columns:52px 116px minmax(0,1fr) minmax(0,1.15fr) 82px minmax(104px,auto); gap:.65rem; padding-inline:.9rem; }.cm-activity-event-group article > button { min-width:0; padding-inline:.65rem; }.cm-activity-evidence dl { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media (max-width:1199px) and (min-width:761px) { .cm-activity-columns,.cm-activity-event-group article { grid-template-columns:52px 116px minmax(0,1fr) minmax(0,1.15fr) minmax(112px,.7fr) minmax(96px,auto); gap:.65rem; padding-inline:.9rem; }.cm-activity-event-group article > button { min-width:0; padding-inline:.65rem; }.cm-activity-evidence dl { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 @media (max-width:760px) { .cm-activity-route { display:flex; flex-direction:column; }.cm-activity-route > .cm-page-heading { order:1; align-items:start; flex-direction:column; gap:.55rem; margin-bottom:.75rem; padding-bottom:.75rem; }.cm-activity-route > .cm-activity-ledger { order:2; }.cm-activity-route > .cm-write-consent,.cm-activity-route > .activity-consent-ledger,.cm-activity-route > .cm-activity-status { order:3; }.cm-activity-route > .cm-page-heading h1 { font-size:1.65rem; }.cm-activity-status { grid-template-columns:minmax(0,1fr); gap:.75rem; padding:.9rem; }.cm-activity-status dl div { padding:.15rem .5rem; }.cm-activity-status dl div:first-child { border-left:0; }.cm-activity-waiting { grid-column:1; }.cm-activity-authority > summary { padding-top:.45rem; }.cm-activity-authority-actions { align-items:stretch; flex-direction:column; }.cm-activity-authority-actions > button { width:100%; }.cm-activity-ledger-heading { align-items:stretch; flex-direction:column; padding:1rem .9rem .75rem; }.cm-activity-range { flex-basis:auto; }.cm-activity-tools { align-items:stretch; flex-direction:column; gap:.35rem; padding:.75rem .9rem; }.cm-activity-search { width:100%; }.cm-activity-filters { min-width:0; max-width:100%; flex-wrap:nowrap; overflow-x:auto; overscroll-behavior-x:contain; scrollbar-width:thin; }.cm-activity-filter-notice { padding-inline:.9rem; }.cm-activity-pagination { align-items:stretch; flex-direction:column; padding:.75rem .9rem; }.cm-activity-pagination-summary { justify-content:space-between; }.cm-activity-pagination-nav { display:grid; grid-template-columns:auto auto minmax(0,1fr) auto auto; }.cm-activity-page-jump { justify-content:center; }.cm-activity-page-jump input,.cm-activity-pagination button { min-height:2.75rem; } }
 /* Narrower than any screen at ordinary text: the status strip and the recovery card inside it tighten their
    insets, so its words keep the line the column allows. */
@@ -1248,7 +1255,9 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .diagnostic-load-more { min-height:44px; margin-top:.8rem; padding:.55rem .8rem; color:var(--accent-strong); background:var(--surface-strong); }
 .diagnostic-route .diagnostic-list { max-width:72ch; }
 .evidence-fields { grid-template-columns:repeat(auto-fit,minmax(min(100%,20rem),1fr)); column-gap:2rem; }
-.evidence-field { break-inside:avoid; }
+/* Each field starts at its row's top edge, so the columns line up. */
+.evidence-fields { row-gap:1.15rem; }
+.evidence-fields > .evidence-field { padding:0 0 1.15rem; border-bottom:1px solid var(--line); }
 .evidence-values { display:grid; gap:.65rem; margin:.75rem 0 0; padding:0; list-style:none; }
 .evidence-values li { min-width:0; padding:.75rem .85rem; background:color-mix(in srgb,var(--surface-strong) 72%,transparent); }
 .evidence-values p { margin:0; }
@@ -1425,7 +1434,8 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 .description-value button { margin-top:12px; min-height:44px; padding-inline:min(.85rem,3vw); overflow-wrap:normal; }
 .description-choice-content + .choice-select { padding-inline:clamp(12px,3vw,24px); }
 .recorded-field-observations { margin-block:24px; padding-block:16px; border-block:1px solid var(--line); }
-.recorded-field-observations h3 { font-size:1rem; line-height:1.3; }
+.recorded-field-observations { font-size:.82rem; }
+.recorded-field-observations .evidence-values li { padding-inline:0; background:none; }
 .recorded-field-observations > p { max-width:68ch; }
 .recorded-outcome .choice-evidence { margin:0; }
 
@@ -1494,11 +1504,13 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 /* Library's Covers view (#1633): tabs with counts, the queue beside the open
    book, the Switched list and the All wall. On a phone the list comes first
    and an open book replaces it, with Back to works. */
-.library-view-switch { margin:0 0 .75rem; }
+.library-view-switch { margin:0; }
+/* Library's page title, with Works and Covers beside it as the page's two views. */
+.library-title { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem 1.25rem; min-width:0; }
+.library-title h1 { margin:0; }
 .library-view-switch .cm-segmented { display:inline-flex; flex-wrap:wrap; max-width:100%; border-radius:999px; }
 /* The side padding gives way on a narrow screen with enlarged text, so the switch never widens the page. */
 .library-view-switch .cm-segmented button { flex:1 1 auto; padding:.4rem min(1rem, 3vw); border-radius:999px; font-size:.85rem; }
-.covers-header h1 { margin:0; font-size:1.6rem; }
 .covers-tabs { display:flex; flex-wrap:wrap; gap:.4rem; margin-bottom:.75rem; }
 .covers-tabs button { min-height:44px; padding:.45rem .8rem; border:1px solid var(--line); border-radius:.65rem; color:var(--soft); background:var(--surface); }
 .covers-tabs button[aria-pressed='true'] { color:var(--surface); background:var(--accent-strong); border-color:var(--accent-strong); }
@@ -1518,17 +1530,23 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 .covers-queue-item { display:grid; grid-template-columns:3rem minmax(0,1fr) auto; gap:.6rem; align-items:center; width:100%; min-height:44px; padding:.4rem; border:1px solid transparent; border-radius:.5rem; text-align:left; color:var(--ink); background:transparent; }
 .covers-queue-item.is-selected { border-color:var(--accent); background:var(--accent-soft); }
 .covers-queue-item img, .covers-queue-item .covers-image-missing { width:3rem; aspect-ratio:2 / 3; object-fit:contain; }
-.covers-queue-item > span:not(.status-pill, .covers-image-missing) { display:grid; justify-items:start; min-width:0; }
+.covers-queue-pills { display:contents; }
+.covers-queue-item > span:not(.status-pill, .covers-image-missing, .covers-queue-pills) { display:grid; justify-items:start; min-width:0; }
 .covers-queue-item strong { overflow-wrap:anywhere; }
 .covers-queue-item small { color:var(--soft); }
 /* A hold's pill is its own row under the title and status, so it has their width (#1866). */
-.covers-queue-item > .covers-queue-hold { grid-column:2 / -1; justify-self:start; align-self:start; border-radius:1rem; }
+.covers-queue-pills > .covers-queue-hold { grid-column:2 / -1; justify-self:start; align-self:start; border-radius:1rem; }
 /* A held row's thumbnail spans the pill's row too, so the pill sits just under the byline. */
-.covers-queue-item:has(> .covers-queue-hold) > :first-child { grid-row:span 2; }
-.covers-queue-item:has(> .covers-queue-hold) > span:not(.status-pill, .covers-image-missing) { align-self:end; }
+.covers-queue-item:has(.covers-queue-hold) > :first-child { grid-row:span 2; }
+.covers-queue-item:has(.covers-queue-hold) > span:not(.status-pill, .covers-image-missing, .covers-queue-pills) { align-self:end; }
 .covers-comparison { display:grid; gap:.75rem; min-width:0; }
-.covers-comparison header h2 { margin:0; font-size:1.1rem; }
-.covers-comparison header p, .covers-comparison header small { margin:0; color:var(--soft); }
+/* The work's title, then one line of facts and the way to its fields. Focus
+   moved to the heading by a selection draws no ring: it is not a control. */
+.covers-comparison > header { display:flex; flex-wrap:wrap; align-items:baseline; gap:.25rem 1rem; }
+.covers-comparison > header h2 { flex-basis:100%; }
+.covers-comparison > header h2:focus { outline:none; }
+.covers-comparison header p { margin:0; color:var(--soft); font-size:.82rem; }
+.covers-comparison > header a { display:inline-flex; min-height:44px; align-items:center; font-size:.82rem; font-weight:700; }
 .covers-back { display:none; justify-self:start; min-height:44px; }
 .covers-skip, .covers-more { justify-self:start; min-height:44px; }
 .covers-show { display:flex; gap:.5rem; align-items:center; margin:0 0 .5rem; }
@@ -1573,7 +1591,8 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
   .covers-switched-text { grid-column:1 / -1; }
   /* A To decide row's group pill goes under its title. */
   .covers-queue-item { grid-template-columns:3rem minmax(0,1fr); }
-  .covers-queue-item > .status-pill { grid-column:2; justify-self:start; }
+  .covers-queue-pills { display:flex; flex-wrap:wrap; grid-column:2; gap:.35rem; }
+  .covers-queue-pills > .covers-queue-hold { grid-column:auto; }
 }
 /* Covers → Taste profile (#1372), after the prototype: the meta in one row,
    numbered rules in bordered lists at a readable measure, versions as a panel. */
@@ -1616,3 +1635,104 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 .taste-versions ul { display:grid; gap:.55rem; margin:0; padding:0; list-style:none; }
 .taste-versions li { display:grid; gap:.1rem; font-size:.85rem; }
 .taste-versions li span { color:var(--soft); }
+/* The heading scale. Every screen uses the same three steps below its page
+   title, whatever element carries them:
+   - a section heading names a region the owner moves between: serif, 1.45rem
+     (1.25rem below 761px);
+   - a sub-section heading names a block inside a section: sans, .875rem, bold;
+   - a group label heads a run of rows in a list: sans, .75rem, uppercase. */
+:is(.library-works-heading h2, .cm-activity-ledger-heading h2, .cm-policy-content > header h2, .covers-comparison > header h2) { margin:0; font:700 1.45rem/1.2 Georgia,'Times New Roman',serif; letter-spacing:-.015em; }
+:is(.recorded-field-observations h3, .library-cover-comparison > header strong, .activity-recovery h3, .cm-activity-authority > summary strong, .policy-cutover h2) { margin:0 0 .35rem; color:var(--ink); font:700 .875rem/1.3 Inter,ui-sans-serif,system-ui,sans-serif; letter-spacing:0; }
+:is(.library-provider-group h3, .covers-queue-list h2) { margin:0; color:var(--soft); font:800 .75rem/1.2 Inter,ui-sans-serif,system-ui,sans-serif; letter-spacing:.08em; text-transform:uppercase; }
+@media (max-width:760px) { :is(.library-works-heading h2, .cm-activity-ledger-heading h2, .cm-policy-content > header h2, .covers-comparison > header h2) { font-size:1.25rem; } }
+/* A cover card frames its Evidence control too, so the control reads as the
+   card's own. The frame carries the card's states; the choice inside it keeps
+   its focus ring. The current cover's column is as tall as its card. */
+.library-cover-pinned { align-items:start; }
+.cover-choice { gap:0; align-content:start; border:1px solid var(--line); border-radius:11px; background:var(--surface-strong); }
+.cover-choice > .library-cover-card, .cover-choice > .library-cover-card:hover:not(:disabled), .cover-choice > .library-cover-card.is-selected, .cover-choice > .library-cover-card.is-selected:hover:not(:disabled) { border:0; border-radius:11px; background:transparent; box-shadow:none; }
+.cover-choice:has(> .library-cover-card.is-current) { border-style:dashed; }
+.cover-choice:has(> .library-cover-card.is-recommended), .cover-choice:has(> .library-cover-card:hover:not(:disabled)) { border-color:var(--accent); }
+.cover-choice:has(> .library-cover-card:hover:not(:disabled)) { background:color-mix(in srgb, var(--accent-soft) 45%, var(--surface-strong)); }
+.cover-choice:has(> .library-cover-card.is-selected) { border-color:var(--accent); background:var(--accent-soft); box-shadow:inset 0 0 0 1px var(--accent); }
+.cover-choice > .choice-evidence-toggle { margin:-6px 0 2px; padding:0 10px; border:0; background:transparent; text-decoration:underline; text-underline-offset:3px; }
+.library-cover-pinned > aside { padding:0; border:0; background:none; }
+.library-cover-pinned > aside { grid-row:2; }
+/* Current and proposed sit side by side as equals: the current value and the
+   first proposed value start on one line under headers of one style, and the
+   current cover is the same size as the other covers and level with them. */
+.protected-choice .current-choice-list { display:grid; align-content:start; }
+.protected-choice :is(.current-choice-list, .proposed-choice-list) > header { display:flex; align-items:baseline; justify-content:space-between; gap:12px; padding:16px 20px 2px 52px; }
+/* One panel holds the whole question: the current value on one side, the
+   proposed values as rows on the other, split by a line. */
+.protected-choice .direct-choice-grid { gap:0; }
+.protected-choice :is(.current-choice-list, .proposed-choice-list) { gap:0; }
+.protected-choice .current-choice-list { border-right:1px solid var(--line); }
+/* The current value's side is lightly tinted: what you have now, beside what you could choose. */
+.protected-choice .current-choice-list { background:color-mix(in srgb, var(--surface) 70%, var(--surface-strong)); }
+.protected-choice .current-choice-list > .metadata-choice { background:transparent; }
+.protected-choice .metadata-choice, .protected-choice .metadata-choice.is-current { min-height:0; border:0; border-radius:0; }
+.protected-choice .proposed-choice-list > .metadata-choice + .metadata-choice { border-top:1px solid var(--line); }
+/* Side by side, the panel keeps one frame and its two headings sit above it,
+   one over each side. */
+@media (min-width:1025px) {
+  .protected-choice .direct-choice-grid { overflow:visible; border:0; border-radius:0; background:transparent; margin-top:14px; }
+  .protected-choice :is(.current-choice-list, .proposed-choice-list) > header { padding:0 2px 8px; }
+  .protected-choice .current-choice-list { grid-template-rows:auto 1fr; border-right:0; background:transparent; }
+  .protected-choice .current-choice-list > .metadata-choice { border:1px solid var(--line-strong); border-right-color:var(--line); border-radius:12px 0 0 12px; background:color-mix(in srgb, var(--surface) 70%, var(--surface-strong)); }
+  .protected-choice .direct-choice-grid:not(:has(> .proposed-choice-list)) .current-choice-list > .metadata-choice { border-right-color:var(--line-strong); border-radius:12px; }
+  .protected-choice .proposed-choice-list > .metadata-choice { border-right:1px solid var(--line-strong); background:var(--surface-strong); }
+  .protected-choice .proposed-choice-list > header + .metadata-choice { border-top:1px solid var(--line-strong); border-top-right-radius:12px; }
+  .protected-choice .proposed-choice-list > .metadata-choice:last-child { border-bottom:1px solid var(--line-strong); border-bottom-right-radius:12px; }
+  .protected-choice .direct-choice-grid:not(:has(> .current-choice-list)) .proposed-choice-list > .metadata-choice { border-left:1px solid var(--line-strong); }
+  .protected-choice .direct-choice-grid:not(:has(> .current-choice-list)) .proposed-choice-list > header + .metadata-choice { border-top-left-radius:12px; }
+  .protected-choice .direct-choice-grid:not(:has(> .current-choice-list)) .proposed-choice-list > .metadata-choice:last-child { border-bottom-left-radius:12px; }
+}
+/* Where the two sides stack, they become two boxes, each under its own heading. */
+@media (max-width:1024px) {
+  .protected-choice .direct-choice-grid { row-gap:20px; overflow:visible; border:0; border-radius:0; background:transparent; }
+  .protected-choice :is(.current-choice-list, .proposed-choice-list) > header { padding:0 2px 8px; }
+  .protected-choice .current-choice-list { border:0; background:transparent; }
+  .protected-choice :is(.current-choice-list, .proposed-choice-list) > .metadata-choice { border-inline:1px solid var(--line-strong); }
+  .protected-choice :is(.current-choice-list, .proposed-choice-list) > header + .metadata-choice { border-top:1px solid var(--line-strong); border-radius:12px 12px 0 0; }
+  .protected-choice :is(.current-choice-list, .proposed-choice-list) > .metadata-choice:last-child { border-bottom:1px solid var(--line-strong); border-bottom-left-radius:12px; border-bottom-right-radius:12px; }
+  .protected-choice .current-choice-list > .metadata-choice { background:color-mix(in srgb, var(--surface) 70%, var(--surface-strong)); }
+}
+.protected-choice :is(.current-choice-list, .proposed-choice-list) > header strong { font-size:.75rem; }
+.protected-choice .direct-choice-grid:has(> .current-choice-list) > .proposed-choice-list.has-one-choice { align-content:start; }
+.protected-choice .direct-choice-grid:has(> .current-choice-list) > .proposed-choice-list.has-one-choice > header { position:static; width:auto; height:auto; overflow:visible; clip:auto; clip-path:none; white-space:normal; }
+@media (min-width:1025px) {
+  .library-cover-pinned { grid-template-columns:repeat(4,minmax(0,1fr)); grid-template-rows:auto auto; column-gap:10px; row-gap:7px; }
+  .library-cover-gallery { grid-column:2 / -1; grid-row:1 / span 2; grid-template-columns:subgrid; grid-template-rows:subgrid; }
+  .library-cover-gallery > header, .library-cover-gallery > div { grid-column:1 / -1; }
+  .library-cover-gallery > div { grid-template-columns:subgrid; }
+}
+/* Activity: the six counts in two even rows of three, the status beside them
+   from the top, and the recovery box across the section in the page's text
+   size. The ledger heading shares one row with its date range. */
+.cm-activity-status { align-items:start; }
+/* The status pill sits level with the Activity title. */
+@media (min-width:761px) { .cm-activity-route > .cm-page-heading { align-items:center; } .cm-activity-route > .cm-page-heading h1 { margin-bottom:0; } }
+.cm-activity-status dl { grid-template-columns:repeat(3,minmax(0,1fr)); row-gap:.75rem; }
+.cm-activity-status > .activity-recovery { grid-column:1 / -1; margin:0; font-size:.82rem; }
+@media (min-width:761px) { .cm-activity-ledger-heading { align-items:center; } .cm-activity-range { display:flex; flex:none; align-items:center; gap:.6rem; } .cm-activity-range > span { white-space:nowrap; } }
+.cm-activity-event-group time { font-size:.82rem; }
+/* Policy: the three settings stay on one row at ordinary text sizes, and a
+   field's two disclosures sit side by side as quiet links; an open one takes
+   the row so its text reads beneath it. */
+.cm-policy-mode-control .cm-segmented { grid-template-columns:repeat(auto-fit,minmax(min(100%,5.25rem),1fr)); }
+.cm-policy-disclosures { display:flex; flex-wrap:wrap; column-gap:1.1rem; min-width:0; }
+.cm-policy-disclosures > .cm-disclosure[open] { flex-basis:100%; }
+.cm-policy-disclosures > .cm-disclosure > summary { padding:0; border:0; background:none; text-decoration:underline; text-underline-offset:3px; }
+@media (max-width:760px) {
+  /* Phones: the workspace is the page, not a card inside it, and each ledger row's Details is one width. */
+  .variant-m-workspace .library-workspace { border:0; border-radius:0; background:transparent; }
+  .variant-m-workspace .workspace-detail { padding-inline:0; border-top:0; background:transparent; }
+  .variant-m-workspace .compact-workspace-back { margin-inline:0; }
+  /* The counts sit under the title beside the cover, which can then be larger. */
+  .selected-work-header { display:grid; grid-template-columns:84px minmax(0,1fr); column-gap:16px; row-gap:12px; align-items:start; }
+  :root .selected-work-header > .library-book-mark.has-cover { grid-row:1 / span 2; width:84px; max-height:132px; align-self:stretch; }
+  .selected-work-header > div, .selected-work-header > .selected-work-status { grid-column:2; width:auto; }
+  .selected-work-header > .selected-work-diagnostics { grid-column:1 / -1; }
+  .cm-activity-event-group article > button { justify-self:end; width:6.5rem; }
+}

@@ -339,12 +339,15 @@ function CoverComparison({
       ) : null}
       <header>
         <h2 id={`covers-book-${work.review_case_id}`} ref={heading} tabIndex={-1}>
-          <Link to="/library" search={bookSearch(work.review_case_id)}>
-            {work.title}
-          </Link>
+          {work.title}
         </h2>
-        <p>{byline(work)}</p>
-        {count ? <small>{count === 1 ? '1 cover' : `${String(count)} covers`}</small> : null}
+        <p>
+          {byline(work)}
+          {count ? ` · ${count === 1 ? '1 cover' : `${String(count)} covers`}` : ''}
+        </p>
+        <Link to="/library" search={bookSearch(work.review_case_id)}>
+          Open in Works
+        </Link>
       </header>
       {failure?.kind === 'stale' ? (
         <div className="covers-failure" role="alert">
@@ -705,19 +708,22 @@ function QueueItem({
             <small>{work.unreadable_cover ? 'Image unavailable' : 'No cover'}</small>
           )}
         </span>
-        <StatusPill
-          tone={
-            done
-              ? 'accent'
-              : work.group === 'proposal' || work.group === 'choice'
-                ? 'notice'
-                : 'neutral'
-          }
-        >
-          {done ? 'Reviewed' : groupLabels[work.group]}
-        </StatusPill>
-        {/* Its own row under the title and status, so a long hold stays on one line. */}
-        {done ? null : <FaultPill work={work} className="covers-queue-hold" />}
+        {/* On a phone the two pills share one row under the title. */}
+        <span className="covers-queue-pills">
+          <StatusPill
+            tone={
+              done
+                ? 'accent'
+                : work.group === 'proposal' || work.group === 'choice'
+                  ? 'notice'
+                  : 'neutral'
+            }
+          >
+            {done ? 'Reviewed' : groupLabels[work.group]}
+          </StatusPill>
+          {/* Its own row under the title and status, so a long hold stays on one line. */}
+          {done ? null : <FaultPill work={work} className="covers-queue-hold" />}
+        </span>
       </button>
     </li>
   )
@@ -1073,11 +1079,13 @@ export default function CoversView() {
   )
   return (
     <div className={`covers-page${selected ? ' has-selection' : ''}`}>
-      <LibraryViewSwitch view="covers" />
       <header className="library-header covers-header">
-        <h1 data-route-focus tabIndex={-1}>
-          Covers
-        </h1>
+        <div className="library-title">
+          <h1 data-route-focus tabIndex={-1}>
+            Library
+          </h1>
+          <LibraryViewSwitch view="covers" />
+        </div>
       </header>
       <nav
         ref={tabsRef}

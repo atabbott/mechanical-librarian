@@ -953,10 +953,6 @@ function LibraryCoverChoicesContent({
           Covers
         </Link>
       ) : null}
-      <p className="cover-track-hint">
-        Every cover is shown whole in one row. Scroll the row, or move between covers with the arrow
-        keys, to compare them.
-      </p>
       {reviewerUnavailable && canRetryReviewer ? (
         <Button
           className="secondary-action"

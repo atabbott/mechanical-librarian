@@ -1128,13 +1128,13 @@ const Shell = () => {
     const mastheadElement = masthead.current
     if (!mastheadElement) return
     const root = document.documentElement
-    // The masthead sticks only while it takes at most a quarter of the
+    // The masthead sticks only while it takes at most a sixth of the
     // viewport. Taller -- a phone, a short window, enlarged text -- it scrolls
     // away with the page, so it never covers what the owner reads or focuses.
     const updateMastheadClearance = () => {
       const height = mastheadElement.getBoundingClientRect().height
       root.style.setProperty('--masthead-clearance', `${(height + 8).toString()}px`)
-      if (height > window.innerHeight / 4) root.dataset.masthead = 'static'
+      if (height > window.innerHeight / 6) root.dataset.masthead = 'static'
       else delete root.dataset.masthead
     }
     updateMastheadClearance()
