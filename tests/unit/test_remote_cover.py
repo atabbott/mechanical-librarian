@@ -132,6 +132,64 @@ def test_rejects_mixed_and_reserved_dns_answers_and_url_smuggling() -> None:
             _pinned_address(value)
 
 
+def _answer(address: str) -> tuple[object, ...]:
+    if ":" in address:
+        return (socket.AF_INET6, socket.SOCK_STREAM, 6, "", (address, 443, 0, 0))
+    return (socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, 443))
+
+
+@pytest.mark.parametrize(
+    "answers",
+    (
+        ("64:ff9b::7f00:1",),
+        ("64:ff9b::a00:1",),
+        ("64:ff9b::a9fe:a9fe",),
+        ("64:ff9b::6440:1",),
+        ("64:ff9b:1::808:808",),
+        ("::127.0.0.1",),
+        ("::8.8.8.8",),
+        ("::ffff:0:7f00:1",),
+        ("::ffff:127.0.0.1",),
+        ("5f00::1",),
+        ("8.8.8.8", "64:ff9b::a00:1"),
+    ),
+    ids=(
+        "nat64_loopback",
+        "nat64_private",
+        "nat64_link_local",
+        "nat64_shared_space",
+        "local_use_nat64",
+        "compatible_loopback",
+        "compatible_public",
+        "siit_loopback",
+        "mapped_loopback",
+        "reserved_5f00",
+        "mixed_nat64_private",
+    ),
+)
+def test_ipv6_answers_standing_for_non_public_addresses_are_refused(
+    answers: tuple[str, ...],
+) -> None:
+    lookup = [_answer(address) for address in answers]
+    with patch("socket.getaddrinfo", return_value=lookup):
+        with pytest.raises(RemoteCoverError, match="^unsafe remote cover$"):
+            _pinned_address("https://example.com/a.jpg")
+
+
+@pytest.mark.parametrize(
+    "address",
+    ("64:ff9b::808:808", "::ffff:8.8.8.8", "2606:4700::1111"),
+    ids=("nat64_public", "mapped_public", "global_unicast"),
+)
+def test_public_ipv6_answers_are_allowed_and_kept_as_their_own_literal(
+    address: str,
+) -> None:
+    with patch("socket.getaddrinfo", return_value=[_answer(address)]):
+        assert ("example.com", address, "/a.jpg") == _pinned_address(
+            "https://example.com/a.jpg"
+        )
+
+
 @pytest.mark.parametrize(
     "unresolvable",
     ("https://example.com:99999/cover.png", "https://[::1/cover.png"),
@@ -729,8 +787,17 @@ def test_archive_route_missing_location_stays_unavailable(
         ("100.64.0.1",),
         ("8.8.8.8", "192.168.1.1"),
         ("::1",),
+        ("64:ff9b::7f00:1",),
     ),
-    ids=("private", "loopback", "link_local", "shared_space", "mixed", "ipv6_loopback"),
+    ids=(
+        "private",
+        "loopback",
+        "link_local",
+        "shared_space",
+        "mixed",
+        "ipv6_loopback",
+        "nat64_loopback",
+    ),
 )
 @pytest.mark.parametrize("position", (1, 2), ids=("archive_org", "datanode"))
 def test_archive_route_refuses_non_global_answers_at_each_hop(

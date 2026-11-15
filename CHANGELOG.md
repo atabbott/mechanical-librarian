@@ -591,6 +591,9 @@ brackets are GitHub issues.
   longer reads as having no other value: the case shows that earlier choice
   beside the current value and says Automatic doesn’t write in Preview and
   decides the field again when you turn it on (#1575).
+- Remote cover downloads now refuse a host whose IPv6 answer carries a
+  private, loopback or link-local IPv4 address, such as a NAT64 address, or
+  lies outside public unicast space (#1758).
 
 ## 0.29.2 — Delivery reliability and hygiene
 

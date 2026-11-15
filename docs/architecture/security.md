@@ -321,7 +321,10 @@ Allowed cover origins:
 
 No other provider follows a redirect. Any other host is a typed `unsafe_remote` outcome and no socket
 opens. Remote covers use their own address-pinned transport with
-bounded bytes, attempts and deadline. Embedded audiobook art is never
+bounded bytes, attempts and deadline. Each DNS answer must be a public
+address: an IPv6 answer must be global unicast (`2000::/3`), and an
+IPv4-mapped or well-known NAT64 (`64:ff9b::/96`) answer is judged by the IPv4
+address it carries. Embedded audiobook art is never
 acquired. Reports never keep the remote URL.
 
 A Hardcover edition row becomes a listed-edition descriptor only after a
