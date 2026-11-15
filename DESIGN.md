@@ -301,10 +301,10 @@ single-column, sticky side regions become inline or compact pickers, the
 masthead becomes three rows—identity and actions, a status row held open
 whether or not anything is in it, and the four destinations in equal
 columns—page padding becomes `1rem 1rem 4rem`, a 16px margin on both sides
-that 390px keeps, and Library's workspace drops its card frame so the work
-sits on the page. Focused refinements at
-390px preserve controls and ledger reading order. Nothing assumes a viewport
-wider than 320px.
+that 390px keeps (enlarged text keeps its `.75rem` there), and Library's
+workspace drops its card frame so the work sits on the page. Focused
+refinements at 390px preserve controls and ledger reading order. Nothing
+assumes a viewport wider than 320px.
 
 The masthead's arrangements follow the shell's width in rem at the same
 steps, through container queries rather than width media queries, so enlarged
@@ -370,10 +370,13 @@ One `Button` carries three variants: primary, secondary, and danger. It sets no
 default type, so every call site states its own.
 
 - **Shape:** compact rounded rectangle (`0.5rem`) with `0.6rem 0.85rem` default
-  padding. A button that sets no size of its own uses `0.875rem` (14px) text. Primary task and touch targets are at least `2.75rem`/44px; dense
-  desktop inspection and pagination controls may use 40px before returning to
-  44px at compact widths. Disclosure summaries and owner-authority controls
-  take no dense exception: they are 44px at every width.
+  padding. A button that sets no size of its own uses `0.875rem` (14px) text;
+  the Activity pager's buttons take the pager's smaller text so its five
+  controls fit one row. Primary task and touch targets are at least
+  `2.75rem`/44px; dense desktop inspection and pagination controls may use
+  40px before returning to 44px at compact widths. Disclosure summaries and
+  owner-authority controls take no dense exception: they are 44px at every
+  width.
 - **Primary link:** a link styled as the primary action takes the primary
   button's type, weight, and 44px target, without an underline, so the two
   read as one control.
@@ -518,9 +521,10 @@ event. At compact widths both surfaces preserve document order rather than
 compressing their desktop columns. A Policy field says what Automatic does on
 ebooks and on audiobooks ("Not offered." when nothing applies), and its
 disclosures sit side by side as underlined links. Activity's six counts sit in
-two rows of three beside its status, its status pill is level with the title,
-the ledger heading shares a row with its date range, and the pager appears only
-when there is more than one page.
+two rows of three beside its status (fewer a row when enlarged text leaves no
+room), its status pill is level with the title, the ledger heading shares a row
+with its date range, and the pager appears only when there is more than one
+page.
 
 Settings shares the notebook's controls rather than restyling copies:
 segmented Off/On choices, dropdowns, native disclosures, change-count badges
