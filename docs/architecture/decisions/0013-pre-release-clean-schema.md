@@ -588,3 +588,11 @@ Issue #1372's Codex taste profile (PR 1c) takes the clean-rebuild branch.
 v4 reader refuses, so a v4 document is refused, and `reviewer-access-view-v5`
 carries that choice to the browser. Every earlier application database is
 rejected before mutation and needs a clean rebuild; no adoption is supplied.
+
+Issue #1372's taste profile edits (PR 2) take the clean-rebuild branch.
+`cover-taste-profile-v2` versions say whether each was a build or an owner
+edit, carry each rule's provenance and the removed texts, and allow
+documents up to 262,144 bytes. Their `build_id` is null exactly for an edit
+version, held by a `CHECK` against the document's `source`. A v1 document is
+refused on readback, so every earlier application database is rejected before
+mutation and needs a clean rebuild; no adoption is supplied.

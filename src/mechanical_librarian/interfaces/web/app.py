@@ -9,7 +9,7 @@ import os
 import re
 import stat
 import threading
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager, suppress
 from contextvars import ContextVar
 from ipaddress import IPv6Address, IPv6Network, ip_address
@@ -31,6 +31,7 @@ from urllib.parse import quote, urlsplit
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
 from fastapi import (
+    Body,
     Cookie,
     Depends,
     FastAPI,
@@ -116,9 +117,12 @@ from mechanical_librarian.application.reviewer_contracts import (
 from mechanical_librarian.domain.audio_health import MAX_HEALTH_OBSERVATIONS
 from mechanical_librarian.domain.cover_taste import (
     MAX_TASTE_RULE_CODE_POINTS,
+    MAX_TASTE_RULE_NUMBER,
     MAX_TASTE_RULES,
     TASTE_FIRST_BUILD_DECISIONS,
     TasteBuildFailure,
+    TasteEditRefusal,
+    TasteProvenance,
     TasteSection,
 )
 from mechanical_librarian.domain.description_advice import (
@@ -271,6 +275,10 @@ class _LoginRequest(BaseModel):
 
 
 REVIEW_SESSION_SCHEMA: Final = "review-session-v1"
+ReviewTasteProfileSchemaVersion = Literal["review-taste-profile-v2"]
+REVIEW_TASTE_PROFILE_SCHEMA: Final[ReviewTasteProfileSchemaVersion] = (
+    "review-taste-profile-v2"
+)
 MetadataPolicyNotebookSchemaVersion = Literal["metadata-policy-notebook-v2"]
 METADATA_POLICY_NOTEBOOK_SCHEMA: Final[MetadataPolicyNotebookSchemaVersion] = (
     "metadata-policy-notebook-v2"
@@ -1506,18 +1514,26 @@ class _CoverCounts(_ClosedModel):
 
 
 class _TasteRule(_ClosedModel):
-    number: StrictInt = Field(ge=1, le=MAX_TASTE_RULES)
+    number: StrictInt = Field(ge=1, le=MAX_TASTE_RULE_NUMBER)
     section: TasteSection
     text: StrictStr = Field(min_length=1, max_length=MAX_TASTE_RULE_CODE_POINTS)
+    provenance: TasteProvenance
 
 
 class _TasteVersion(_ClosedModel):
     version: StrictInt = Field(ge=1)
-    built_at: StrictInt = Field(ge=0)
+    # `edited` is a version an owner edit wrote; it keeps its build's facts.
+    kind: Literal["built", "edited"]
+    created_at: StrictInt = Field(ge=0)
     decisions: StrictInt = Field(ge=0, le=50)
 
 
-class _TasteProfileVersion(_TasteVersion):
+class _TasteProfileVersion(_ClosedModel):
+    version: StrictInt = Field(ge=1)
+    kind: Literal["built", "edited"]
+    # When the build this version keeps was written.
+    built_at: StrictInt = Field(ge=0)
+    decisions: StrictInt = Field(ge=0, le=50)
     rules: list[_TasteRule] = Field(max_length=MAX_TASTE_RULES)
 
 
@@ -1530,10 +1546,10 @@ class _TasteBuild(_ClosedModel):
 
 
 class _TasteProfileResponse(_ClosedModel):
-    """Covers → Taste profile, read-only (#1372). It never carries a path,
-    title, reference or anything the model saw."""
+    """Covers → Taste profile (#1372). It never carries a path, title,
+    reference or anything the model saw."""
 
-    schema_version: Literal["review-taste-profile-v1"]
+    schema_version: ReviewTasteProfileSchemaVersion
     configured: StrictBool
     chosen: StrictInt = Field(ge=0)
     required: Literal[25]
@@ -1547,11 +1563,43 @@ class _TasteRetryRequest(_ClosedModel):
     build_id: StrictStr = Field(pattern=r"^taste_build_[0-9a-f]{32}$")
 
 
+# One owner edit of the version shown (#1372 PR 2 S10). The pydantic models
+# bound only shape: the text rule and the profile's bounds answer closed codes
+# from the application, so `text` is capped well above 400 code points.
+class _TasteRuleEdit(_ClosedModel):
+    version: StrictInt = Field(ge=1)
+    action: Literal["edit"]
+    number: StrictInt = Field(ge=1, le=MAX_TASTE_RULE_NUMBER)
+    text: StrictStr = Field(max_length=4096)
+
+
+class _TasteRuleAdd(_ClosedModel):
+    version: StrictInt = Field(ge=1)
+    action: Literal["add"]
+    section: TasteSection
+    text: StrictStr = Field(max_length=4096)
+
+
+class _TasteRuleRemove(_ClosedModel):
+    version: StrictInt = Field(ge=1)
+    action: Literal["remove"]
+    number: StrictInt = Field(ge=1, le=MAX_TASTE_RULE_NUMBER)
+
+
+_TASTE_EDIT_REFUSALS: frozenset[TasteEditRefusal] = frozenset(
+    {"rule_empty", "rule_too_long", "rule_text", "rule_limit", "profile_full"}
+)
+
+
 def _taste_response(data: dict[str, object]) -> _TasteProfileResponse:
     versions = cast("list[tuple[int, int, dict[str, Any]]]", data["versions"])
     build = cast("dict[str, object] | None", data["build"])
+
+    def kind(document: dict[str, Any]) -> Literal["built", "edited"]:
+        return "built" if document["source"] == "build" else "edited"
+
     return _TasteProfileResponse(
-        schema_version="review-taste-profile-v1",
+        schema_version=REVIEW_TASTE_PROFILE_SCHEMA,
         configured=cast(bool, data["configured"]),
         chosen=cast(int, data["eligible"]),
         required=TASTE_FIRST_BUILD_DECISIONS,
@@ -1565,22 +1613,19 @@ def _taste_response(data: dict[str, object]) -> _TasteProfileResponse:
         if not versions
         else _TasteProfileVersion(
             version=versions[0][0],
-            built_at=versions[0][1],
+            kind=kind(versions[0][2]),
+            built_at=versions[0][2]["built_at"],
             decisions=versions[0][2]["input"]["included"],
-            rules=[
-                _TasteRule(
-                    number=rule["number"], section=rule["section"], text=rule["text"]
-                )
-                for rule in versions[0][2]["rules"]
-            ],
+            rules=[_TasteRule.model_validate(rule) for rule in versions[0][2]["rules"]],
         ),
         versions=[
             _TasteVersion(
                 version=version,
-                built_at=built_at,
+                kind=kind(document),
+                created_at=created_at,
                 decisions=document["input"]["included"],
             )
-            for version, built_at, document in versions
+            for version, created_at, document in versions
         ],
     )
 
@@ -2836,60 +2881,49 @@ def _policy_problem(error: MetadataPolicyError) -> str:
     }.get(str(error), "policy_validation")
 
 
+# A safe method's body is never read by any route, so only these pass unread.
+# Every other method, including one no route declares, is bounded.
+_UNREAD_BODY_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+DEFAULT_BODY_LIMIT_BYTES: Final = 2_048
+
+
 class BodyLimitMiddleware:
+    """Bound every unsafe request body before routing, parsing or sign-in.
+
+    FastAPI reads and validates a route's body before its session dependency
+    runs, so the bound has to sit in front of routing. The default applies to
+    every path; ``path_limits`` and ``pattern_limits`` only raise it where a
+    route's largest valid body needs more, so a new route is bounded without
+    being listed.
+    """
+
     def __init__(
         self,
         app: Callable[[Scope, Receive, Send], Awaitable[None]],
-        maximum_bytes: int,
-        decision_maximum_bytes: int,
-        path_limits: dict[str, int] | None = None,
+        path_limits: Mapping[str, int],
+        pattern_limits: Sequence[tuple[re.Pattern[str], int]] = (),
         hsts: bool = True,
     ) -> None:
         self._hsts = hsts
         self._app = app
-        self._maximum_bytes = maximum_bytes
-        self._decision_maximum_bytes = decision_maximum_bytes
-        self._path_limits = {} if path_limits is None else dict(path_limits)
+        self._path_limits = dict(path_limits)
+        self._pattern_limits = tuple(pattern_limits)
+
+    def limit_for(self, path: str) -> int:
+        """The body ceiling for one request path, never above its route's need."""
+        configured = self._path_limits.get(path)
+        if configured is not None:
+            return configured
+        for pattern, maximum in self._pattern_limits:
+            if pattern.fullmatch(path):
+                return maximum
+        return DEFAULT_BODY_LIMIT_BYTES
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        path = scope.get("path", "")
-        is_login = path == "/api/v1/session/login"
-        is_decision = bool(
-            re.fullmatch(
-                r"/api/v1/review-cases/[^/]+/decisions",
-                path,
-            )
-        )
-        is_policy_draft = path in {
-            "/api/v1/metadata-policy/activate",
-            "/api/v1/metadata-policy/drafts",
-            "/api/v1/metadata-policy/validate",
-            "/api/v1/metadata-policy/preview",
-        }
-        is_settings = path == "/api/v1/settings"
-        configured_maximum = self._path_limits.get(path)
-        if scope["type"] != "http" or not (
-            configured_maximum is not None
-            or is_login
-            or is_decision
-            or is_policy_draft
-            or is_settings
-        ):
+        if scope["type"] != "http" or scope.get("method") in _UNREAD_BODY_METHODS:
             await self._app(scope, receive, send)
             return
-        maximum = (
-            configured_maximum
-            if configured_maximum is not None
-            else (
-                self._maximum_bytes
-                if is_login
-                else (
-                    (262_144 if is_settings else 16_384)
-                    if is_policy_draft or is_settings
-                    else self._decision_maximum_bytes
-                )
-            )
-        )
+        maximum = self.limit_for(scope.get("path", ""))
         declared = next(
             (
                 value
@@ -2914,7 +2948,7 @@ class BodyLimitMiddleware:
             message = await receive()
             messages.append(message)
             if message["type"] == "http.disconnect":
-                await self._app(scope, _replay(messages), send)
+                await self._app(scope, _replay(messages, receive), send)
                 return
             size += len(message.get("body", b""))
             if size > maximum:
@@ -2922,16 +2956,22 @@ class BodyLimitMiddleware:
                 return
             if not message.get("more_body", False):
                 break
-        await self._app(scope, _replay(messages), send)
+        await self._app(scope, _replay(messages, receive), send)
 
 
-def _replay(messages: list[Message]) -> Receive:
-    async def receive() -> Message:
+def _replay(messages: list[Message], receive: Receive) -> Receive:
+    """Hand the buffered body to the app, then the connection's own events.
+
+    Falling through to the server's ``receive`` keeps a real disconnect a
+    disconnect: answering one invented here would end a streamed response.
+    """
+
+    async def replay() -> Message:
         if messages:
             return messages.pop(0)
-        return {"type": "http.disconnect"}
+        return await receive()
 
-    return receive
+    return replay
 
 
 async def _oversized_body_response(
@@ -2942,23 +2982,40 @@ async def _oversized_body_response(
     await response(scope, receive, send)
 
 
-# Per-path request body ceilings above the 2,048-byte default.
+# Per-path request body ceilings. Every unsafe request is bounded at
+# `DEFAULT_BODY_LIMIT_BYTES` unless its path is listed here with its largest
+# valid body. `tests/architecture/test_request_body_limits.py` sends each route
+# a body one byte over its ceiling without signing in.
 _BODY_PATH_LIMITS = {
-    "/api/v1/review-preparation/dismiss": 2048,
-    "/api/v1/provider-recovery/retry": 2048,
-    "/api/v1/reviewer-access/openrouter/refresh": 2048,
+    "/api/v1/session/login": DEFAULT_BODY_LIMIT_BYTES,
+    "/api/v1/settings": 262_144,
+    "/api/v1/metadata-policy/activate": 16_384,
+    "/api/v1/metadata-policy/drafts": 16_384,
+    "/api/v1/metadata-policy/validate": 16_384,
+    "/api/v1/metadata-policy/preview": 16_384,
+    # A 256-character reason may expand sixfold under JSON escaping.
+    "/api/v1/metadata-policy/automatic-safety/suspend": 4_096,
+    # Up to 64 libraries, each naming the destinations it allows.
+    "/api/v1/activity/consent": 65_536,
+    "/api/v1/review-preparation/dismiss": DEFAULT_BODY_LIMIT_BYTES,
+    "/api/v1/provider-recovery/retry": DEFAULT_BODY_LIMIT_BYTES,
+    "/api/v1/reviewer-access/openrouter/refresh": DEFAULT_BODY_LIMIT_BYTES,
     # The write contract permits a 2,048-character key plus its
     # model, revision, and JSON framing.
-    "/api/v1/reviewer-access/openrouter": 4096,
-    "/api/v1/reviewer-access/description-model/test": 4096,
-    "/api/v1/reviewer-access/taste-model/test": 4096,
-    "/api/v1/covers/taste/retry": 2048,
-    "/api/v1/reviewer-access/selection": 2048,
-    "/api/v1/reviewer-access/codex/device": 2048,
-    "/api/v1/reviewer-access/codex/recheck": 2048,
-    "/api/v1/reviewer-access/codex/device/cancel": 2048,
-    "/api/v1/reviewer-access/codex": 2048,
+    "/api/v1/reviewer-access/openrouter": 4_096,
+    "/api/v1/reviewer-access/description-model/test": 4_096,
+    "/api/v1/reviewer-access/taste-model/test": 4_096,
+    "/api/v1/covers/taste/retry": DEFAULT_BODY_LIMIT_BYTES,
+    # A 400-code-point rule, even with every code point escaped as JSON
+    # surrogate pairs, plus its version, number and framing (#1372 PR 2).
+    "/api/v1/covers/taste/rules": 8_192,
+    "/api/v1/reviewer-access/selection": DEFAULT_BODY_LIMIT_BYTES,
+    "/api/v1/reviewer-access/codex/device": DEFAULT_BODY_LIMIT_BYTES,
+    "/api/v1/reviewer-access/codex/recheck": DEFAULT_BODY_LIMIT_BYTES,
+    "/api/v1/reviewer-access/codex/device/cancel": DEFAULT_BODY_LIMIT_BYTES,
+    "/api/v1/reviewer-access/codex": DEFAULT_BODY_LIMIT_BYTES,
 }
+_BODY_PATTERN_LIMITS = ((re.compile(r"/api/v1/review-cases/[^/]+/decisions"), 8_192),)
 
 
 def create_review_app(
@@ -3018,10 +3075,9 @@ def create_review_app(
 
     app.add_middleware(
         BodyLimitMiddleware,
-        maximum_bytes=2048,
-        decision_maximum_bytes=8192,
         hsts=origin.scheme == "https",
         path_limits=_BODY_PATH_LIMITS,
+        pattern_limits=_BODY_PATTERN_LIMITS,
     )
 
     @app.middleware("http")
@@ -4499,7 +4555,8 @@ def _register_case_and_effect_routes(
         "/api/v1/activity/consent",
         response_model=_ActivityResponse,
         responses={
-            status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)
+            status: {"model": _ErrorResponse}
+            for status in (401, 403, 409, 413, 422, 503)
         },
     )
     def enable_guarded_activity(
@@ -4744,7 +4801,7 @@ def _register_taste_routes(
     )
     def retry_taste_build(
         request: _TasteRetryRequest,
-        ml_session: str | None = Security(session_cookie),
+        ml_session: str = Depends(authenticated_session_cookie),
         x_csrf_token: str = Header(),
     ) -> _TasteProfileResponse:
         """Try again after a failed build; repeating it names the same retry."""
@@ -4756,6 +4813,44 @@ def _register_taste_routes(
             status = 409 if error.code == "stale" else 503
             raise HTTPException(status, detail={"code": error.code}) from None
         except ReviewerAccessApplicationError:
+            raise HTTPException(503, detail={"code": "unavailable"}) from None
+
+    @app.post(
+        "/api/v1/covers/taste/rules",
+        response_model=_TasteProfileResponse,
+        responses={
+            status: {"model": _ErrorResponse}
+            for status in (401, 403, 409, 413, 422, 503)
+        },
+    )
+    def edit_taste_rule(
+        request: Annotated[
+            _TasteRuleEdit | _TasteRuleAdd | _TasteRuleRemove,
+            Body(discriminator="action"),
+        ],
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> _TasteProfileResponse:
+        """Edit, add or remove one rule of the version shown; each saved
+        change is a new version at once. Errors carry only a closed code."""
+        _require_session(application, ml_session, x_csrf_token)
+        try:
+            application.edit_taste_rule(
+                request.version,
+                request.action,
+                getattr(request, "number", None),
+                getattr(request, "section", None),
+                getattr(request, "text", None),
+            )
+        except ReviewApplicationError as error:
+            if error.code == "stale":
+                raise HTTPException(409, detail={"code": "stale"}) from None
+            if error.code in _TASTE_EDIT_REFUSALS:
+                raise HTTPException(422, detail={"code": error.code}) from None
+            raise HTTPException(503, detail={"code": "unavailable"}) from None
+        try:
+            return _taste_response(application.taste_profile())
+        except (ReviewApplicationError, ReviewerAccessApplicationError):
             raise HTTPException(503, detail={"code": "unavailable"}) from None
 
 

@@ -2,7 +2,9 @@
 
 Per decision: the chosen cover, the current cover, then one cover of each other
 art, then other copies, at most four, each re-admitted from the artifact store
-as the exact preview the consideration recorded (#1372 S3-S5, S16).
+as the exact preview the consideration recorded (#1372 S3-S5, S16). The
+packet also carries the owner's kept rules, the texts the owner removed and
+the budget the kept rules leave (#1372 PR 2 S8).
 """
 
 from __future__ import annotations
@@ -30,6 +32,8 @@ from mechanical_librarian.domain.cover_taste import (
     TASTE_MAX_IMAGES,
     TASTE_MAX_REQUEST_BYTES,
     TASTE_PREVIEWS_PER_DECISION,
+    TasteRule,
+    taste_budget,
 )
 
 # A packet's own bytes per image and per decision, counted generously so the
@@ -126,6 +130,8 @@ def assemble_taste_inputs(
     decisions: Sequence[TasteDecisionSource],
     read_preview: Callable[[str], bytes],
     *,
+    kept: tuple[TasteRule, ...],
+    left_out: tuple[str, ...],
     nonce: bytes | None = None,
 ) -> TasteBuildInput | None:
     """Seal up to 50 decisions in stable sample order within the image and byte caps.
@@ -134,6 +140,11 @@ def assemble_taste_inputs(
     never fails the build. None when no decision could be sealed.
     """
     nonce = secrets.token_bytes(32) if nonce is None else nonce
+    owner = {
+        "budget": taste_budget(tuple(rule.text for rule in kept)),
+        "kept": [{"section": rule.section, "text": rule.text} for rule in kept],
+        "left_out": list(left_out),
+    }
     ordered = sorted(
         decisions,
         key=lambda decision: hashlib.sha256(
@@ -145,7 +156,7 @@ def assemble_taste_inputs(
     included: list[tuple[str, list[str]]] = []
     dropped = 0
     capped = False
-    budget = taste_request_frame_bytes("") + 64
+    budget = taste_request_frame_bytes(canonical_json(owner)) + 64
     for decision in ordered:
         if len(packet_decisions) == TASTE_MAX_DECISIONS:
             capped = True
@@ -200,6 +211,7 @@ def assemble_taste_inputs(
         return None
     packet = canonical_json(
         {
+            **owner,
             "decisions": packet_decisions,
             "schema_version": COVER_TASTE_BUILD_PACKET_SCHEMA,
         }

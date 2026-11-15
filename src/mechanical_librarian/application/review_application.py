@@ -81,6 +81,11 @@ from mechanical_librarian.domain.audiobook_corroboration import (
     admitted_audiobook_identity,
 )
 from mechanical_librarian.domain.automatic_decision import AutomaticSafetyState
+from mechanical_librarian.domain.cover_taste import (
+    TasteEditAction,
+    TasteEditError,
+    TasteSection,
+)
 from mechanical_librarian.domain.description_advice import DescriptionAdviceBinding
 from mechanical_librarian.domain.field_effect import SUPPORTED_DESTINATIONS
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
@@ -689,6 +694,24 @@ class ReviewApplication:
             self._cover_taste.retry(build_id)
         except CoverTasteRetryError:
             raise ReviewApplicationError("stale") from None
+        self._updates.publish("library")
+
+    def edit_taste_rule(
+        self,
+        version: int,
+        action: TasteEditAction,
+        number: int | None,
+        section: TasteSection | None,
+        text: str | None,
+    ) -> None:
+        """One owner edit of the taste profile (#1372 PR 2); a refusal is its
+        closed code and writes nothing."""
+        if self._cover_taste is None:
+            raise ReviewApplicationError("unavailable")
+        try:
+            self._cover_taste.edit(version, action, number, section, text)
+        except TasteEditError as error:
+            raise ReviewApplicationError(error.code) from None
         self._updates.publish("library")
 
     def owner_settings(self) -> object:
@@ -1463,8 +1486,8 @@ class ReviewApplication:
             raise KeyError("not_found")
         application = self._continuous_application()
         # Resume releases only a hold the case shows holding a decision, as its
-        # control does: with nothing to hold, an owner decision would remove
-        # the released row and let an older copy of the hold return (ADR-0085).
+        # control does: with nothing to hold, a withdrawal would remove the
+        # released row and let an older copy of the hold return (ADR-0085).
         if not self.serialized(lambda: self._shows_hold(review_case_id, destination)):
             raise GuardedApplicationError("manual_hold")
         application.return_to_automatic(review_case_id, destination)

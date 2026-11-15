@@ -131,13 +131,14 @@ verification every three seconds.
 - Exact Host is enforced on every request, exact Origin on every unsafe one.
   Forwarded Host or scheme is honoured only from a trusted proxy; Uvicorn's
   own proxy handling is off.
+- Every request but `GET`, `HEAD` and `OPTIONS` has its body bounded before
+  routing, at 2 KiB unless its route needs more (`413 body_too_large`).
 - Every unsafe request needs the session, the CSRF token and an
   `x-ml-build-identity` header matching the installed build.
-- The build identity is a non-secret version gate, not a credential. It is
-  sent only to the audience that already has it in the authenticated shell: a
-  response header on `/api/v1` responses to owner-authenticated requests. It
-  is never sent on a 401, on sign-in, in asset-recovery mode, on an early Host, Origin or body-size refusal, or to a
-  request without a valid session
+- The build identity is a non-secret version gate. It is sent only as a
+  response header to owner-authenticated `/api/v1` requests: never on a 401,
+  sign-in, asset recovery, an early Host, Origin or body-size refusal, or
+  without a valid session
   ([ADR-0091](decisions/0091-decode-browser-responses-and-report-uncertain-writes.md)).
 - Serving an authenticated page rotates the CSRF digest. The raw token lives
   only in that no-store HTML and page memory.
@@ -159,11 +160,11 @@ Every response has a restrictive same-origin CSP, frame denial,
 vendored. Errors are fixed value-free codes.
 
 Everything is `private, no-store` except content-hashed assets and
-session-checked cover previews addressed by digest
-(`private, max-age=31536000, immutable`). Logout does not clear the browser
-cache, so that profile can show a viewed cover for up to a year. The library
-cover route serves only the preview the current report binds to the item's
-cover, digest-verified and never decoded.
+session-checked cover previews addressed by digest (`private,
+max-age=31536000, immutable`). Logout keeps the browser cache, so that profile
+can show a viewed cover for up to a year. The library cover route serves only
+the preview the current report binds to the item's cover, digest-verified and
+never decoded.
 
 The preparation panel's book names (at most five current and eight recent)
 never enter update-stream frames, logs, audit identifiers, diagnostics,
@@ -195,8 +196,8 @@ credentials, sessions and metadata in plaintext, so it is for an
 owner-controlled network or VPN only. There is no TLS-disable flag. Direct
 TLS validates certificate and key as one identity before the database or
 listener opens and limits TLS 1.2 to ECDHE AEAD ciphers. The edge admits at
-most 100 connections, limits incomplete events to 16 KiB and closes
-incomplete headers after 10 seconds.
+most 100 connections, limits incomplete events to 16 KiB and closes a
+request whose headers take over 10 seconds or whose body takes 30 more.
 
 ## Credentials and egress
 
@@ -219,7 +220,7 @@ transport detail.
 ### Metadata providers
 
 A disabled provider builds no client and loses its library associations,
-which enabling does not restore.
+which enabling never restores.
 
 - Every adapter dispatches through the bounded session in
   `adapters/providers/sdk.py` (request, retry, byte and deadline limits),
@@ -275,7 +276,8 @@ Per provider, where *5xx* means 500, 502, 503 and 504:
   User-Agent to its fixed origins and is stored nowhere else. Retries 5xx,
   never 429.
 - **Google Books**: fixed-origin `GET` with an optional API key that only the
-  credential-bearing controller reads. Retries 503 only.
+  credential-bearing controller reads, sent in a header, never the URL.
+  Retries 503 only.
 - **Inventaire**: fixed-origin `GET`, no credential. Retries 5xx, and 429
   only with a bounded `Retry-After`; at most three attempts per request.
 - **Audible catalog**: `GET` to ten hosts from a closed marketplace map, so no
@@ -380,15 +382,17 @@ Settings write that sends no request, and no view shows a key's value.
 
 ## Parsers and hostile input
 
-No untrusted media or image byte is parsed in the server process.
+No untrusted media or image byte is parsed in the server process. Where the
+kernel allows, each parser helper is [confined](parser-confinement.md) to its
+handed files.
 
-**EPUB.** A descriptor-bound child with no credentials, network or
-persistence parses one bounded immutable snapshot
+**EPUB.** A child with no credentials or persistence parses one bounded
+immutable snapshot
 ([ADR-0011](decisions/0011-isolated-epub-inspector.md)). The parent
 revalidates file content and target identity inside the publication
 transaction, so a replaced file is refused. Digits inside non-ISBN schemes
 and URIs never become ISBNs. A declared cover that `encryption.xml` lists is
-refused as `unsupported_format` before any of its bytes is read, and no member
+refused as `unsupported_format` before any byte is read, and no member
 name reaches a report.
 
 When neither the EPUB 3 `cover-image` nor the legacy `meta name="cover"` is
@@ -408,10 +412,9 @@ verification of the current cover. No bound is raised. Only closed fallback
 and refusal codes reach the report; no reference, member name, wrapper text or
 image byte reaches a report, log, diagnostic, status or support bundle.
 
-**Audiobooks.** `ffprobe` runs as an isolated child over a passed descriptor
-([ADR-0063](decisions/0063-isolated-audiobook-inspector.md)): no network, no
-inherited `PATH`, a minimal environment, its own session, and CPU, memory,
-file, output and wall-clock limits installed before exec. Its output and
+**Audiobooks.** `ffprobe` runs over a passed descriptor
+([ADR-0063](decisions/0063-isolated-audiobook-inspector.md)) with no inherited
+`PATH`, and CPU, memory, file, output and wall-clock limits. Its output and
 sidecars are read in the audio child under a closed recognition grammar, never
 an XML or container parser.
 
@@ -462,7 +465,7 @@ ADR-0096's creator predicates also fold dotted initials ("R.F." and "R. F."
 agree), only in a name whose dotted tokens are letters and that keeps a token
 of two or more letters. Letter count and order still count, no NFKC,
 confusable mapping or other dot character applies, a fold that would merge two
-listed creators is not applied, and the fold never removes an agreement the
+listed creators is skipped, and the fold never removes an agreement the
 unfolded comparison makes. Sidecar belonging compares creators exactly until
 #1418 (#1780). The fold is read only on ADR-0096's level path (#1355).
 Belonging never reads the level.
@@ -475,7 +478,7 @@ markup never reaches a write. Markup built to hide a path is an accepted
 risk.
 
 **Images.** JPEG, PNG and static WebP are decoded only in a constrained
-child, which also computes the perceptual hash.
+child that also computes the perceptual hash.
 
 ## AI reviewer boundary
 
@@ -490,13 +493,16 @@ the mapping revision and secret together and releases the owner-operation
 gate before network work; the result write rechecks the revision, so an A-B-A
 change cannot make old evidence current.
 
+Owner taste rules reach the builder only as sealed packet data; edits are
+capped at 8 KiB.
+
 ### OpenRouter
 
 Egress is fixed to `https://openrouter.ai` and one exact model, with
-`require_parameters: true`. Cover and
-[taste profile](ai-boundary.md#taste-profile-builder) requests deny data
-collection; description requests set `allow_fallbacks: false`. Upstream data
-practice is not verified. Responses past each endpoint's cap are refused as
+`require_parameters: true`. Cover and [taste
+profile](ai-boundary.md#taste-profile-builder) requests deny data collection;
+description requests set `allow_fallbacks: false`. Upstream data practice is
+unverified. Responses past each endpoint's cap are refused as
 `response_too_large`, whatever `Content-Length` says. One deadline spans the
 key, catalogue and chat requests; a single read can overrun it by its phase
 cap (30 seconds by default). Error bodies are read up to 8 KiB to recognise
@@ -515,8 +521,8 @@ after the owner selects Codex again.
   no-new-privileges, with PID and memory ceilings; its seccomp profile admits
   only Bubblewrap's namespace setup
   ([deployment](../operations/deployment.md#contained-codex-reviewer)).
-- Inside, a second seccomp program denies `unshare`, `setns` and process
-  creation. No procfs is mounted.
+- Inside, a second seccomp program checks the architecture and denies
+  `unshare`, `setns` and process creation. No procfs is mounted.
 - Broker, supervisor and namespace init have 64 MiB address-space ceilings,
   Codex 832 MiB.
 - Every optional Codex tool is off (shell, agents, plugins, browser, web
@@ -527,8 +533,7 @@ after the owner selects Codex again.
 
 ### Cover observer
 
-The cover observer is the only model use that can influence a decision, as
-advisory evidence
+Only the cover observer influences decisions, as advisory evidence
 ([ADR-0049](decisions/0049-owner-confirmed-cover-considerations.md)). It
 returns a fixed set of visual properties with explicit unknowns and no
 ranking, winner or identity field. The local parser needs exactly one
@@ -574,16 +579,16 @@ are append-only. Automation never overrides an owner decision.
 Withdrawal appends a valueless row, revokes unclaimed authority in the same
 transaction and never re-arms automation. A previous value offered as a
 suggestion grants no authority: choosing it is an ordinary owner-entered write,
-stale if the field changed. A manual hold follows the work
-to its successor case; Return to automatic releases it only after the scan it
-requests succeeds, and only if no later owner decision replaced the hold
-([ADR-0039](decisions/0039-continuous-guarded-application.md)).
+stale if the field changed. Any decision but a withdrawal holds its field
+(covers aside) on the work's later cases until Return to automatic releases
+it, after its scan succeeds and if no later decision replaced it
+([ADR-0085](decisions/0085-owner-entered-values-withdrawal-and-reselection.md)).
 
 Owner-entered text is refused, never rewritten, unless it is 1 to 512 code
 points of NFC text with no control, path, credential or URI. No automatic path
-reads an owner-entered value. Clearing, rollback and undo are not available
+reads an owner-entered value. Clearing, rollback and undo are unavailable
 ([ADR-0085](decisions/0085-owner-entered-values-withdrawal-and-reselection.md)).
-An owner may choose a retained cover whose match is not confirmed, but not
+An owner may choose a retained cover whose match is unconfirmed, but not
 one with a positive contradiction.
 
 Decisions bind their offer's digest. Until its case is checked at the saved
@@ -641,7 +646,7 @@ Writes need the owner's library-scoped consent for the exact destination set
 shown in Activity; adding a destination lapses it, and policy activation
 carries forward only current consent, never wider. A grant must match
 a fresh capability probe. A policy or consent change between the browser's
-re-read and the grant is not detected; a capability or library change is
+re-read and the grant goes undetected; a capability or library change is
 still refused.
 
 Every claim rechecks backup readiness, capability, authority, consent,
@@ -703,7 +708,7 @@ mutation. Admission does not rely on SQLite alone:
 - A read-only open re-evaluates every CHECK constraint itself, because
   SQLite's read-only integrity check skips them. A CHECK it cannot extract
   refuses.
-- The permission-readiness check does not see a CHECK-breaking row, an
+- The permission-readiness check misses a CHECK-breaking row, an
   accepted gap since adding one needs write access to the volume.
 - Browse and attention facts are compared with their documents at open for
   every current row; any difference refuses the database
@@ -757,19 +762,5 @@ None of these has target-write, media-write or startup authority.
 
 ## Automated scanning boundary
 
-`dependency-audit`, a required public-gate job, scans `uv.lock` with a
-digest-pinned OSV-Scanner on every pull request and push to `main`, failing
-on any known advisory in runtime or development dependencies;
-`.github/workflows/public-gate.yml` has the command. Frontend checks are in
-[what merging proves](../../CONTRIBUTING.md#what-merging-proves).
-
-The only way to hold a failure open is an `osv-scanner.toml` entry naming one
-advisory, a reason and an expiry at most 90 days out; there is no severity
-floor or package exclusion.
-`tests/unit/test_security_scanning_contract.py` enforces the register and
-checks that every workflow has `contents: read`, pins actions to commits and
-sets `persist-credentials: false`.
-
-Not covered: triage and fixes, source static analysis, pull-request
-dependency review (these need GitHub Code Security), extra secret scanning,
-SBOMs and container image scanning.
+Dependency audits, CodeQL and what scanning does not cover are in
+[automated scanning](../development/dependencies.md#automated-scanning).

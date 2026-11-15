@@ -34,18 +34,20 @@ It never receives owner decisions, target-only text, titles, identifiers,
 paths or credentials. The reply is one bounded description and `ready` or
 `needs_review`, stored as authored content. The owner can select a stored
 result by reference. Automatic application is off by default; when the owner
-turns it on, only a current `ready` result that passes the description floor
-can be admitted, through the normal policy and write rules
+turns it on, only a current `ready` result that passes the description floor,
+on a field that offers the owner a choice, can be admitted, through the normal
+policy and write rules
 ([configuration](../reference/configuration.md#description-advice)).
 
 **Taste profile.** A vision model, Codex or OpenRouter, writes the owner's
 taste profile from up to 50 of their recorded cover choices: up to 100 cover images
 and closed facts about each (size, shape, same-art group, chosen or passed
 over, current, and the book's format), never a title, author, identifier,
-path or provider text. The reply is up to 40 numbered rules in four sections,
-stored as an append-only version and shown read-only in Covers → Taste
-profile. It influences nothing yet: no observation, recommendation or
-decision reads it (#1372). Builds are scheduled, at most 4 a day, and every
+path or provider text, with the rules the owner wrote or edited and the texts
+the owner removed. The reply is up to 40 numbered rules in four sections,
+merged with the owner's rules and stored as an append-only version; the owner
+edits it in Covers → Taste profile. It influences nothing yet: no observation,
+recommendation or decision reads it (#1372). Builds are scheduled, at most 4 a day, and every
 request counts against a daily limit
 ([configuration](../reference/configuration.md#taste-profile)). The owner
 chooses its engine separately from cover review
@@ -80,7 +82,12 @@ recommendation, decision or write.
 
 - **Inputs.** Up to 50 recorded choices, each with up to 4 previews and at
   most 100 images per request. A choice whose preview bytes are missing is
-  dropped, never sent partly.
+  dropped, never sent partly. The packet also carries `kept`, the owner's and
+  edited rules of the newest version (section and text, at most 40);
+  `left_out`, the texts the owner removed or replaced (at most 100 and 16,384
+  code points); and `budget`, the rules, words and characters the kept rules
+  leave. Owner text is a model input here: each text passes the owner-text
+  rule within 400 code points, and the instruction says rule text is data.
 - **Closed facts per image.** The original's decoded width and height (each
   1–8,192, area at most 16,777,216); shape `fits` or `wrong_shape` against the
   medium; an opaque same-art group letter; role `chosen` or `passed_over`; a
@@ -102,6 +109,14 @@ recommendation, decision or write.
   not one such JSON object, including one cut at the output limit, is
   `invalid_output`; on OpenRouter only, a reply whose body cannot be read
   counts as `unknown_charge`.
+- **Merge.** The admitted reply is merged in code against the newest version
+  when it is written, since an owner edit may land during a build: the
+  owner's and edited rules stay word for word, ahead of the model's in each
+  section, and a model rule whose key (NFKC, case-folded, without a trailing
+  full stop) equals a kept or removed text is left out and counted. A merge
+  over a bound ends the build `invalid_output`, or `unknown_charge` without
+  usage, and keeps the version in use. No cadence build is scheduled while
+  the kept rules leave no rule or word.
 - **Ceilings.** One build at a time and at most 4 scheduled a UTC day. Each
   request on either engine is counted durably before dispatch against
   `cover_taste_build_daily_requests`. On OpenRouter a timeout after sending
@@ -110,8 +125,10 @@ recommendation, decision or write.
   `unavailable` and never stop the day. A build
   interrupted by restart ends `interrupted` and is never retried silently; a
   fault or lost write during a build ends it at once instead.
-- **Storage.** Versions are append-only by trigger, and each stored profile
-  is re-admitted against its document when the database opens.
+- **Storage.** Versions are append-only by trigger, each a build's or an
+  owner edit's; an edit version keeps its build's model, inputs and time.
+  Each stored profile is re-admitted against its document when the database
+  opens.
 - **Redaction.** Failures are closed codes. Rule text, choices, references,
   previews, prompts and raw output never reach a log, failure history,
   diagnostic, status or support bundle.

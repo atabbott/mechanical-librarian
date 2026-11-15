@@ -20,7 +20,7 @@ import json
 import os
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -58,12 +58,10 @@ from mechanical_librarian.domain.description_advice import (
     DescriptionAdviceSettings,
 )
 from mechanical_librarian.domain.metadata_report import MetadataReport
-from tests.support.automatic_no_change import _automatic_no_change_inputs
 from tests.support.cover_taste import record_owner_cover_decisions
-from tests.support.description_advice import _prepared
+from tests.support.description_advice import _prepared, _preserved_description_report
 from tests.support.field_effects import _EffectEnvironment, _plan
 from tests.support.field_effects import effects as effects
-from tests.support.proposal_evidence import _report
 from tests.support.review_web_doubles import FakePreparation
 from tests.unit.review_app_fixture import (
     TEST_REACT_BUILD_IDENTITY,
@@ -521,22 +519,23 @@ def test_description_advice_activity(tmp_path) -> None:
 
 
 def test_description_advice_preservation(tmp_path) -> None:
-    """Retained automatic advice on a preservation-only field during a retry."""
-    source, *_ = _automatic_no_change_inputs("description_preserved")
-    preserved = _report(
-        fields=tuple(
-            replace(field, value="A qualified description.")
-            if field.destination.value == "description"
-            else field
-            for field in source.target.fields
-        ),
-        local_claims=source.local_claims,
-        providers=source.providers,
-    )
-    with _description_case(tmp_path, report_override=preserved) as (live, binding):
+    """Retained automatic advice on a preservation-only field during a retry.
+
+    Automatic advice is admitted only while the field offers the owner a
+    choice, so the selection is made while it did, as one from before that
+    rule or before a narrower offer, and the field then offers none.
+    """
+    with _description_case(
+        tmp_path, report_override=_preserved_description_report()
+    ) as (live, binding):
         store = live.repository.description_advice_store()
         advice = _advice(live, binding.review_case_id)
         assert isinstance(advice, dict) and advice["candidate"] is not None
+        choice = (
+            "UPDATE review_case_field_facts SET has_owner_decision_actions=? "
+            "WHERE review_case_id=? AND destination='description'"
+        )
+        live.repository._connection.execute(choice, (1, binding.review_case_id))
         store.admit(
             advice["candidate"]["candidate_id"],
             binding,
@@ -544,6 +543,7 @@ def test_description_advice_preservation(tmp_path) -> None:
             "c" * 64,
             20,
         )
+        live.repository._connection.execute(choice, (0, binding.review_case_id))
         live.call(
             "POST",
             f"/api/v1/review-cases/{binding.review_case_id}/description-advice/retry",
@@ -666,6 +666,7 @@ def test_taste_profile(tmp_path) -> None:
                 "input_sha256": "0" * 64,
                 "truncated": False,
             },
+            failure="invalid_output",
         )
         service = CoverTasteBuildService(
             repository.cover_taste_store,
@@ -676,6 +677,18 @@ def test_taste_profile(tmp_path) -> None:
         )
         with _signed_in(tmp_path, repository, access, cover_taste=service) as live:
             capture = live.call("GET", "/api/v1/covers/taste")
+            # An owner edit writes version 2 at once (#1372 PR 2).
+            edited = live.call(
+                "POST",
+                "/api/v1/covers/taste/rules",
+                {
+                    "version": 1,
+                    "action": "edit",
+                    "number": 1,
+                    "text": "Bold illustrated art, never photography.",
+                },
+            )
     finally:
         repository.close()
     _expect_wire("get-covers-taste", capture, {})
+    _expect_wire("post-covers-taste-rules", edited, {})

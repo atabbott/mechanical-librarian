@@ -42,6 +42,7 @@ from mechanical_librarian.domain.proposal_set import evaluate_report
 from tests.support.automatic_decisions import _automatic_decisions
 from tests.support.automatic_no_change import _automatic_no_change_inputs
 from tests.support.proposal_evidence import _claim, _target_work_candidate
+from tests.support.proposal_evidence import _report as _proposal_report
 from tests.unit.test_reviewer_access_application import _Auth
 
 
@@ -67,6 +68,21 @@ def _description_candidate(
             else claim
             for claim in candidate.claims
         ),
+    )
+
+
+def _preserved_description_report():
+    """A description every source repeats, so the owner has no choice to make."""
+    source, *_ = _automatic_no_change_inputs("description_preserved")
+    return _proposal_report(
+        fields=tuple(
+            replace(field, value="A qualified description.")
+            if field.destination.value == "description"
+            else field
+            for field in source.target.fields
+        ),
+        local_claims=source.local_claims,
+        providers=source.providers,
     )
 
 
