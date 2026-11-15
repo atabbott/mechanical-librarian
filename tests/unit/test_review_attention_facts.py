@@ -21,6 +21,7 @@ import tempfile
 from collections.abc import Callable, Iterator
 from contextlib import closing
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -47,6 +48,7 @@ from tests.support.metadata_report_schemas import (
     HUMAN_DECIDED_SQL,
     MANUAL_READY_COVER_ATTENTION_SQL,
     MEASURED_COVER_ATTENTION_SQL,
+    PRE_1346_ATTENTION_FACT_SOURCE_SQL,
     PRIOR_AUTOMATIC_DECIDED_SQL,
     PRIOR_HUMAN_DECIDED_SQL,
 )
@@ -94,7 +96,7 @@ _KEPT_COVER_SQL = " AND NOT " + _VERIFIED_CURRENT_COVER_SQL
 _RAW_REFRESH_SQL = "THEN " + _COVER_UNRESOLVED_OUTCOME_SQL + " END"
 _FACT_REFRESH_SQL = "THEN result.unresolved_choice END"
 _PRE_1249_ATTENTION_FACT_SOURCE_SQL = (
-    _ATTENTION_FACT_SOURCE_SQL.replace(
+    PRE_1346_ATTENTION_FACT_SOURCE_SQL.replace(
         MEASURED_COVER_ATTENTION_SQL, MANUAL_READY_COVER_ATTENTION_SQL, 1
     )
     .replace(_NARRATORS_ASK, "", 1)
@@ -700,6 +702,46 @@ def _steps(repository: SQLiteMetadataReportRepository) -> Iterator[_Step]:
         lambda: run("DELETE FROM field_effect_suspensions"),
     )
 
+    # A changed pin asks a quiet field, a pin in force settles it again, and
+    # its hold leaving takes the question with it (ADR-0085, Amendment 2).
+    pinned = _quiet(connection, "isbn")
+
+    def pin(in_force: bool) -> str:
+        return json.dumps({"pin": {"fingerprint": "0" * 64, "in_force": in_force}})
+
+    yield (
+        "a changed pin asks",
+        (("field_effect_manual_holds", "insert"),),
+        lambda: run(
+            "INSERT INTO field_effect_manual_holds(review_case_id,destination,"
+            "active,updated_at,document) VALUES(?,'isbn',1,1,?)",
+            (pinned, pin(False)),
+        ),
+    )
+    yield (
+        "the pin is in force again",
+        (("field_effect_manual_holds", "update"),),
+        lambda: run(
+            "UPDATE field_effect_manual_holds SET document=? WHERE review_case_id=?",
+            (pin(True), pinned),
+        ),
+    )
+    yield (
+        "the pin changes again",
+        (("field_effect_manual_holds", "update"),),
+        lambda: run(
+            "UPDATE field_effect_manual_holds SET document=? WHERE review_case_id=?",
+            (pin(False), pinned),
+        ),
+    )
+    yield (
+        "the hold goes",
+        (("field_effect_manual_holds", "delete"),),
+        lambda: run(
+            "DELETE FROM field_effect_manual_holds WHERE review_case_id=?", (pinned,)
+        ),
+    )
+
 
 def _columns(connection: sqlite3.Connection, table: str) -> list[str]:
     return [str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")]
@@ -1103,7 +1145,7 @@ def test_the_predecessor_oracle_is_mains_fact_source_before_1249() -> None:
         .replace("'$.manual_ready')=1)", "'$.manual_ready')=1)" + _KEPT_COVER_SQL, 1)
         .replace(_FACT_REFRESH_SQL, _RAW_REFRESH_SQL, 1)
         .replace(MANUAL_READY_COVER_ATTENTION_SQL, MEASURED_COVER_ATTENTION_SQL, 1)
-        == _ATTENTION_FACT_SOURCE_SQL
+        == PRE_1346_ATTENTION_FACT_SOURCE_SQL
     )
 
 
@@ -1177,3 +1219,40 @@ def test_a_recordings_settled_fill_has_no_attention_fact(tmp_path: Path) -> None
         assert "asin" not in {row[4] for row in _facts(connection)}
         # Control: the predecessor derivation counted it on the format alone.
         assert "asin" in {row[4] for row in _predecessor(connection)}
+
+
+def test_pinning_and_a_changed_pin_keep_the_facts_equal_to_the_live_attention(
+    tmp_path: Path,
+) -> None:
+    """Each pin step refreshes the field's fact, and the Library agrees (#1346)."""
+    from mechanical_librarian.application.review_web import BrowseReviewLibrary
+    from tests.support.owner_values import rewritten
+    from tests.unit.test_owner_answer_holds import _store
+
+    store, report, _ = _store(tmp_path, title="ask")
+    connection = store.repository._connection
+
+    def title_asked() -> bool:
+        facts = _facts(connection)
+        assert facts == _derived(connection)
+        (item,) = cast(
+            "list[dict[str, object]]",
+            BrowseReviewLibrary(store.repository).library(
+                lens="all", search=None, limit=25, cursor=None
+            )["items"],
+        )
+        assert item["attention_count"] == len(facts)
+        return any(fact[4] == "title" for fact in facts)
+
+    store.publish(report)
+    assert title_asked()
+    store.decide("pin")
+    assert not title_asked()
+    store.publish(rewritten(report, title="Another Example Title"))
+    assert title_asked()
+    store.publish(rewritten(report, publisher="Changed Elsewhere"))
+    assert not title_asked()
+    store.publish(rewritten(report, title="Another Example Title"))
+    store.decide("unpin")
+    assert title_asked()
+    store.close()

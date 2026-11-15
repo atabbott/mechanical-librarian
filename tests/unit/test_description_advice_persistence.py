@@ -927,3 +927,69 @@ def test_an_owner_answer_without_an_authored_description_holds_later_advice(
         32
     )
     repository.close()
+
+
+def test_a_pinned_description_admits_no_automatic_advice(tmp_path):
+    """ADR-0085 Amendment 2 (#1346, AC8 and AC15): a pin carried to a later
+    case keeps automatic advice out of the description, while the owner's own
+    advice choice is still admitted and ends the pin. A carried hold without
+    a pin refuses no automatic admission (the test above), so only the pin
+    can refuse it."""
+    from mechanical_librarian.application.description_advice import (
+        DescriptionAdviceService,
+    )
+    from mechanical_librarian.domain.human_decision import HumanDecision
+    from mechanical_librarian.domain.review_case import ReviewCase
+    from tests.support.description_advice import _prepared
+
+    access = []
+    repository, store, binding, _, _ = _prepared(
+        tmp_path,
+        automatic_policy=("cover_order", "fixed_source_order"),
+        pipeline_probe=lambda *values: access.append(values[3]),
+    )
+    case = ReviewCase.create_from_data(
+        json.loads(repository.get_review_case(binding.review_case_id))["case"]
+    )
+    proposal = next(
+        value for value in case.proposals if value["destination"] == "description"
+    )
+    pin = HumanDecision.create(
+        case,
+        proposal_id=str(proposal["proposal_id"]),
+        target_fingerprint=case.target_fingerprint,
+        destination="description",
+        actor="owner",
+        outcome="pin",
+        selected_value=None,
+        idempotency_key="owner-pins-description",
+        occurred_at=11,
+    )
+    repository.record_human_decision(pin)
+    report, fresh = _publish_successor(repository, binding)
+
+    def hold() -> dict[str, object]:
+        return json.loads(
+            repository._connection.execute(
+                "SELECT document FROM field_effect_manual_holds WHERE "
+                "review_case_id=? AND destination='description'",
+                (fresh.review_case_id,),
+            ).fetchone()[0]
+        )
+
+    assert hold()["decision_id"] == pin.decision_id
+    assert hold()["pin"] is not None
+    candidate = DescriptionAdviceService(
+        store, access[0], store.current_settings, lambda: 12
+    ).prepare(report, fresh, lambda: store.binding_is_current(fresh))
+    assert candidate is not None
+    with pytest.raises(ValueError, match="automatic admission unavailable"):
+        store.admit(candidate.candidate_id, fresh, "automatic_policy", "a" * 64, 15)
+    assert repository._connection.execute(
+        "SELECT count(*) FROM description_decisions WHERE review_case_id=?",
+        (fresh.review_case_id,),
+    ).fetchone() == (0,)
+    owner = store.admit(candidate.candidate_id, fresh, "human", "b" * 64, 16)
+    assert owner.origin == "human"
+    assert (hold()["decision_id"], hold()["pin"]) == (owner.decision_id, None)
+    repository.close()

@@ -162,8 +162,29 @@ _COVER_SUGGESTED_SQL = (
     "AND (" + _COVER_STAGE_OUTCOME_SQL + " IN ('suggest','replace') "
     "OR " + _COVER_STAGE_KEPT_SQL + ")))"
 )
+
+
+def _pin_hold_sql(case: str, destination: str, in_force: bool) -> str:
+    """Whether the field's hold on the case carries a pin in force, or changed.
+
+    A pin in force settles its field; a changed one asks it again, with or
+    without alternatives (ADR-0085, Amendment 2).
+    """
+    return (
+        "EXISTS (SELECT 1 FROM field_effect_manual_holds pin_hold "
+        f"WHERE pin_hold.review_case_id={case} AND pin_hold.destination={destination} "
+        "AND pin_hold.active=1 AND json_extract(pin_hold.document,'$.pin.in_force')="
+        + ("1" if in_force else "0")
+        + ")"
+    )
+
+
+# Whether the field's pin on its case is carried as changed.
+_PIN_CHANGED_SQL = _pin_hold_sql("rc.review_case_id", "result.destination", False)
+# A changed pin asks with or without alternatives, so it stands outside the
+# owner-action gate (ADR-0085, Amendment 2).
 _REVIEW_FIELD_ATTENTION_REASON_SQL = (
-    "result.has_owner_decision_actions=1 AND ((result.unresolved_choice=1 "
+    "(result.has_owner_decision_actions=1 AND ((result.unresolved_choice=1 "
     "AND NOT " + _COVER_SUGGESTED_SQL + ") "
     "OR (result.destination='cover' AND EXISTS (SELECT 1 "
     "FROM current_cover_considerations current_cover "
@@ -183,6 +204,8 @@ _REVIEW_FIELD_ATTENTION_REASON_SQL = (
     + _AUTOMATIC_SAFETY_ATTENTION_SQL
     + " OR "
     + _SHADOW_ABSTENTION_SQL
+    + ") OR "
+    + _PIN_CHANGED_SQL
     + ")"
 )
 
@@ -236,18 +259,27 @@ _WORK_LATEST_MANUAL_HOLDS_SQL = (
 # A field is decided by its latest owner decision of the case's episode unless
 # that withdrew it (ADR-0085); an earlier decision never settles a field the
 # owner took back, nor one the work has since left and returned to. An
-# automatic decision settles its field only in the active generation.
+# automatic decision settles its field only in the active generation. A pin in
+# force settles its field, and a pin or unpin row settles nothing itself. A
+# changed pin asks again over an automatic, authored or cover decision a
+# returning case still carries; no owner decision of the episode can stand
+# beside it, because any owner answer takes the pin off the hold (ADR-0085,
+# Amendment 2). A suspension still wins.
 _REVIEW_FIELD_ATTENTION_CLEAR_SQL = (
     " AND COALESCE((SELECT decision.outcome FROM human_decisions decision "
     "WHERE decision.review_case_id=rc.review_case_id "
     "AND decision.destination=result.destination AND "
     + _episode_decision_sql("decision")
-    + " ORDER BY decision.ordinal DESC LIMIT 1),'withdraw')='withdraw' "
-    "AND NOT EXISTS (SELECT 1 FROM current_description_decisions authored WHERE authored.review_case_id=rc.review_case_id AND result.destination='description') "
+    + " ORDER BY decision.ordinal DESC LIMIT 1),'withdraw') IN ('withdraw','pin','unpin') "
+    "AND NOT " + _pin_hold_sql("rc.review_case_id", "result.destination", True) + " "
+    "AND NOT EXISTS (SELECT 1 FROM current_description_decisions authored WHERE authored.review_case_id=rc.review_case_id AND result.destination='description'"
+    " AND NOT " + _PIN_CHANGED_SQL + ") "
     "AND NOT EXISTS (SELECT 1 FROM automatic_decisions decision "
     "WHERE decision.review_case_id=rc.review_case_id "
     "AND decision.destination=result.destination AND "
     + _active_generation_automatic_sql("decision")
+    + " AND NOT "
+    + _PIN_CHANGED_SQL
     + ") "
     "AND NOT EXISTS (SELECT 1 FROM current_cover_selection_authorities current_selection "
     "JOIN cover_selection_authorities selection "
@@ -259,7 +291,7 @@ _REVIEW_FIELD_ATTENTION_CLEAR_SQL = (
     "AND current_cover.consideration_id=selection.consideration_id)) "
     "AND current_selection.connection_name=c.connection_name "
     "AND current_selection.library_name=c.library_name "
-    "AND current_selection.item_id=c.item_id) "
+    "AND current_selection.item_id=c.item_id AND NOT " + _PIN_CHANGED_SQL + ") "
     "AND NOT EXISTS (SELECT 1 FROM field_effect_suspensions suspension "
     "WHERE suspension.connection_name=c.connection_name AND ("
     "(suspension.scope='connection' AND suspension.destination='') OR "

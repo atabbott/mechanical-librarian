@@ -497,6 +497,46 @@ def test_offer_change_appends_valueless_matching_changed_decision(
         store.close()
 
 
+def test_offer_change_leaves_a_pinned_field_pinned(tmp_path: Path) -> None:
+    """A pin is not a standing choice: the check appends no `matching_changed`
+    row over it, so the pinned field is not asked again (#1346, AC10)."""
+    store = _store(tmp_path, _WIDE)
+    try:
+        shown = offer_of(store)
+        proposal = next(
+            value for value in shown if value["destination"] == "description"
+        )
+        pin = HumanDecision.create(
+            store.case,
+            proposal_id=str(proposal["proposal_id"]),
+            target_fingerprint=store.case.target_fingerprint,
+            destination="description",
+            actor="owner",
+            outcome="pin",
+            selected_value=None,
+            idempotency_key="pin-description-0001",
+            occurred_at=69,
+            offer=shown,
+        )
+        store.repository.record_human_decision(pin)
+        _change(store, _IDENTIFIER, 70)
+        _check(store, 71)
+        assert [decision.outcome for decision in _decisions(store)] == ["pin"]
+        field = next(
+            value
+            for value in InspectCurrentReviewCase(store.repository).run(
+                store.case.review_case_id
+            )["fields"]
+            if value["destination"] == "description"
+        )
+        assert (field["classification_cause"], field["needs_attention"]) == (
+            "pinned",
+            False,
+        )
+    finally:
+        store.close()
+
+
 def test_old_level_effect_waits_for_reconciliation(tmp_path: Path) -> None:
     """An owner write on a case still reconciled at the old level waits,
     unclaimed and still "Planned", noted as waiting for the check; once the

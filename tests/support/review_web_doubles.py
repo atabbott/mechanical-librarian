@@ -115,7 +115,9 @@ _LIMITING_STATUSES = frozenset(
         "query_limit_exceeded",
     }
 )
-_AttentionRow = tuple[str, str, str, int, str | None, ReviewFieldCause | None, bool]
+_AttentionRow = tuple[
+    str, str, str, int, str | None, ReviewFieldCause | None, bool, bool
+]
 
 # The exact library row `ReviewLibrarySnapshot` declares, annotated for the
 # same reason (#711). The double emitted five of these seven columns behind a
@@ -131,6 +133,7 @@ _LibraryRow = tuple[
     tuple[str, ...],
     tuple[str, ...],
     str | None,
+    int,
     int,
 ]
 
@@ -910,6 +913,8 @@ class FakeReviewRepository:
                         ).proposals
                     ),
                 ),
+                # The double holds no pin.
+                0,
             )
             for case_id, case_document, report_document in identified
         ]
@@ -954,6 +959,7 @@ class FakeReviewRepository:
                 self.attention_dispositions.get(cast(str, proposal["destination"])),
                 self.attention_causes.get(cast(str, proposal["destination"])),
                 proposal["destination"] in self.policy_attention_destinations,
+                False,
             )
             for case, report, proposal in rows[offset : offset + limit]
         ]

@@ -3771,7 +3771,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "review-case-detail-v8",
+            "const": "review-case-detail-v9",
             "title": "Schema Version",
             "type": "string"
           },
@@ -5776,7 +5776,9 @@
               "keep_current",
               "reject",
               "owner_entered",
-              "withdraw"
+              "withdraw",
+              "pin",
+              "unpin"
             ],
             "title": "Outcome",
             "type": "string"
@@ -5871,7 +5873,9 @@
               "keep_current",
               "reject",
               "owner_entered",
-              "withdraw"
+              "withdraw",
+              "pin",
+              "unpin"
             ],
             "title": "Outcome",
             "type": "string"
@@ -5956,7 +5960,9 @@
               "keep_current",
               "reject",
               "owner_entered",
-              "withdraw"
+              "withdraw",
+              "pin",
+              "unpin"
             ],
             "title": "Outcome",
             "type": "string"
@@ -6624,6 +6630,29 @@
         "title": "_FieldChoiceContext",
         "type": "object"
       },
+      "_FieldPin": {
+        "additionalProperties": false,
+        "description": "An owner pin on the field: in force here, or the value has changed.",
+        "properties": {
+          "state": {
+            "enum": [
+              "in_force",
+              "changed"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/components/schemas/_TargetField"
+          }
+        },
+        "required": [
+          "state",
+          "value"
+        ],
+        "title": "_FieldPin",
+        "type": "object"
+      },
       "_GenresQualification": {
         "additionalProperties": false,
         "properties": {
@@ -6986,7 +7015,9 @@
               "keep_current",
               "reject",
               "owner_entered",
-              "withdraw"
+              "withdraw",
+              "pin",
+              "unpin"
             ],
             "title": "Outcome",
             "type": "string"
@@ -7635,7 +7666,7 @@
             "title": "Query"
           },
           "schema_version": {
-            "const": "review-library-v5",
+            "const": "review-library-v6",
             "title": "Schema Version",
             "type": "string"
           }
@@ -7753,6 +7784,11 @@
             "title": "Media Kind",
             "type": "string"
           },
+          "pinned_count": {
+            "minimum": 0.0,
+            "title": "Pinned Count",
+            "type": "integer"
+          },
           "preparation": {
             "anyOf": [
               {
@@ -7803,6 +7839,7 @@
         "required": [
           "authors",
           "attention_count",
+          "pinned_count",
           "attention_state",
           "detail_url",
           "detail_kind",
@@ -8286,7 +8323,7 @@
             "items": {
               "$ref": "#/components/schemas/_OwnerSuggestion"
             },
-            "maxItems": 5,
+            "maxItems": 6,
             "title": "Suggestions",
             "type": "array"
           }
@@ -8363,7 +8400,8 @@
               "strip_part",
               "split_author",
               "combined",
-              "previous"
+              "previous",
+              "pinned"
             ],
             "title": "Rule",
             "type": "string"
@@ -8408,6 +8446,25 @@
           "confirmation"
         ],
         "title": "_PasswordChangeRequest",
+        "type": "object"
+      },
+      "_PinControl": {
+        "additionalProperties": false,
+        "properties": {
+          "pin": {
+            "title": "Pin",
+            "type": "boolean"
+          },
+          "unpin": {
+            "title": "Unpin",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "pin",
+          "unpin"
+        ],
+        "title": "_PinControl",
         "type": "object"
       },
       "_PolicyActivationRequest": {
@@ -10993,7 +11050,9 @@
               "automatic_decided",
               "review_needed",
               "owner_choosable",
-              "nothing_to_decide"
+              "nothing_to_decide",
+              "pinned",
+              "pin_changed"
             ],
             "title": "Classification Cause",
             "type": "string"
@@ -11208,6 +11267,26 @@
               }
             ]
           },
+          "pin": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_FieldPin"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pin_control": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_PinControl"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "preservation_only": {
             "title": "Preservation Only",
             "type": "boolean"
@@ -11265,6 +11344,8 @@
           "navigation_role",
           "notices",
           "owner_control",
+          "pin",
+          "pin_control",
           "proposed_values",
           "choice_contexts",
           "provenance",

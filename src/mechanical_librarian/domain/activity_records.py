@@ -66,6 +66,8 @@ class ActivityResult(StrEnum):
     REJECTED = "Rejected"
     OWNER_ENTERED = "Entered by you"
     WITHDRAWN = "Withdrawn"
+    PINNED = "Pinned"
+    UNPINNED = "Unpinned"
     COVER_ADVICE_COMPLETED = "Cover advice completed"
     COVER_ADVICE_UNAVAILABLE = "Cover advice unavailable"
     COVER_ADVICE_FAILED = "Cover advice failed"
@@ -117,6 +119,8 @@ _RESULT_LABELS = {
     "reject": ActivityResult.REJECTED,
     "owner_entered": ActivityResult.OWNER_ENTERED,
     "withdraw": ActivityResult.WITHDRAWN,
+    "pin": ActivityResult.PINNED,
+    "unpin": ActivityResult.UNPINNED,
     "completed": ActivityResult.COVER_ADVICE_COMPLETED,
     "unavailable": ActivityResult.COVER_ADVICE_UNAVAILABLE,
     "failed": ActivityResult.COVER_ADVICE_FAILED,
@@ -402,6 +406,24 @@ def _decision_facts(
             {"label": "Current value", "value": value_text(destination, current)},
             chosen,
             {"label": "Outcome", "value": "The earlier decision no longer applies"},
+        ]
+    if state == "pin":
+        return ReadableChange(
+            "Pinned", f"Pinned the {destination_label(destination)} value"
+        ), [
+            {"label": "Pinned value", "value": value_text(destination, current)},
+            chosen,
+        ]
+    if state == "unpin":
+        return ReadableChange(
+            "Unpinned", f"Unpinned the {destination_label(destination)} field"
+        ), [
+            {"label": "Current value", "value": value_text(destination, current)},
+            chosen,
+            {
+                "label": "Outcome",
+                "value": "Mechanical Librarian can ask about this field again",
+            },
         ]
     if state == "reject" or type(selected) is not dict:
         return (

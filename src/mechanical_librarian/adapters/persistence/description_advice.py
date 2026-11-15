@@ -292,9 +292,14 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
             if not self._candidate_is_current(candidate, expected_binding):
                 raise ValueError("description candidate request mismatch")
             case_id = expected_binding.review_case_id
+            # An owner decision or a pin keeps automatic advice out
+            # (ADR-0085, Amendment 2).
             human = self._connection.execute(
-                "SELECT 1 FROM human_decisions WHERE review_case_id=? AND destination='description' LIMIT 1",
-                (case_id,),
+                "SELECT 1 FROM human_decisions WHERE review_case_id=? AND destination='description' "
+                "UNION ALL SELECT 1 FROM field_effect_manual_holds WHERE review_case_id=? "
+                "AND destination='description' AND active=1 "
+                "AND json_type(document,'$.pin')='object' LIMIT 1",
+                (case_id, case_id),
             ).fetchone()
             prior = self._connection.execute(
                 "SELECT d.document FROM current_description_decisions p JOIN description_decisions d ON d.decision_id=p.decision_id WHERE p.review_case_id=?",

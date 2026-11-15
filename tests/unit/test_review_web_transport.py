@@ -4183,3 +4183,77 @@ def test_a_400_code_point_rule_fits_the_body_cap_in_any_json_encoding(
             },
         )
     assert refused.status_code == 413
+
+
+def test_pin_and_unpin_through_the_decision_route(tmp_path: Path) -> None:
+    """Pin and unpin are owner decisions on the guarded route, and each store
+    refusal is a conflict (#1346, AC1, AC12-AC14)."""
+    from tests.support.genre_reports import genre_report
+    from tests.support.owner_values import OwnerStore
+
+    store = OwnerStore(tmp_path, genre_report())
+    context = review_web_context(lambda *_: cast(Any, store.repository))
+    web = next(context)
+    try:
+        login = web.login()
+        case_id = store.case.review_case_id
+        fields = {
+            field["destination"]: field
+            for field in web.client.get(f"/api/v1/review-cases/{case_id}").json()[
+                "fields"
+            ]
+        }
+        keys = iter(f"pin-request-{index:04d}" for index in range(10))
+
+        def decide(destination: str, outcome: str):
+            field = fields[destination]
+            return web.client.post(
+                f"/api/v1/review-cases/{case_id}/decisions",
+                headers={
+                    **web.origin,
+                    "X-CSRF-Token": login["csrf_token"],
+                    "Idempotency-Key": next(keys),
+                },
+                json={
+                    "destination": destination,
+                    "outcome": outcome,
+                    "proposal_id": field["proposal_id"],
+                    "selected_value": None,
+                    "target_fingerprint": field["target_fingerprint"],
+                    "offered_alternatives_digest": field["offer_digest"],
+                },
+            )
+
+        pinned = decide("title", "pin")
+        assert pinned.status_code == 200, pinned.text
+        assert (pinned.json()["outcome"], pinned.json()["selected_value"]) == (
+            "pin",
+            None,
+        )
+        repeated = decide("title", "pin")
+        assert (repeated.status_code, repeated.json()["error"]["code"]) == (
+            409,
+            "already_pinned",
+        )
+        unpinned = decide("title", "unpin")
+        assert unpinned.status_code == 200, unpinned.text
+        assert unpinned.json()["outcome"] == "unpin"
+        again = decide("title", "unpin")
+        assert (again.status_code, again.json()["error"]["code"]) == (
+            409,
+            "not_pinned",
+        )
+        store.decide(
+            "accept", {"kind": "list", "value": ["Fantasy"]}, destination="genres"
+        )
+        waiting = decide("genres", "pin")
+        assert (waiting.status_code, waiting.json()["error"]["code"]) == (
+            409,
+            "pin_change_waiting",
+        )
+        assert store.repository._connection.execute(
+            "SELECT outcome FROM human_decisions ORDER BY ordinal"
+        ).fetchall() == [("pin",), ("unpin",), ("accept",)]
+    finally:
+        next(context, None)
+        store.close()

@@ -101,13 +101,14 @@ from mechanical_librarian.domain.validation import (
     closed_document,
     literal,
     non_negative_integer,
+    optional,
     prefixed_hex_identity,
     text,
 )
 
 FIELD_EFFECT_CONSENT_STATE_SCHEMA: Final = "field-effect-consent-state-v2"
 
-FIELD_EFFECT_MANUAL_HOLD_SCHEMA: Final = "field-effect-manual-hold-v2"
+FIELD_EFFECT_MANUAL_HOLD_SCHEMA: Final = "field-effect-manual-hold-v3"
 
 __all__ = [
     "_automatic_decision_value",
@@ -1187,6 +1188,11 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
                 and re.fullmatch(r"human_decision_[0-9a-f]{64}", value) is not None
             ),
             updated_at=non_negative_integer,
+            # An owner pin (ADR-0085, Amendment 2): the pinned value's digest
+            # and whether this case still shows it.
+            pin=optional(
+                closed_document(fingerprint=prefixed_hex_identity(""), in_force=boolean)
+            ),
         )
         for (
             review_case_id,

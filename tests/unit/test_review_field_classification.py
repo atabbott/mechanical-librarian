@@ -403,7 +403,64 @@ def test_the_code_list_holds_every_input_cause() -> None:
     assert set(get_args(ReviewFieldCause)) <= set(
         get_args(ReviewFieldClassificationCause)
     )
-    assert len(set(get_args(ReviewFieldClassificationCause))) == 11
+    assert len(set(get_args(ReviewFieldClassificationCause))) == 13
+
+
+@pytest.mark.parametrize(
+    ("current", "inputs", "empty"),
+    (
+        ("Title", {}, False),
+        ("", {}, True),
+        (False, {}, False),
+        ("Title", {"attention_candidate": True, "has_human_decision": False}, False),
+    ),
+    ids=("value", "empty", "false_is_a_value", "with_alternatives"),
+)
+def test_a_pin_in_force_is_recorded_and_never_attention(
+    current: object, inputs: dict[str, object], empty: bool
+) -> None:
+    value = classify_review_field(
+        **{**_BASE_INPUTS, **inputs},
+        current_value=current,
+        proposed_values=("Other",),
+        pin="in_force",
+    )
+    assert (value.state, value.cause, value.needs_attention, value.recorded) == (
+        "human_recorded",
+        "pinned",
+        False,
+        True,
+    )
+    assert value.navigation_role == "inspect"
+    assert value.reason.startswith(
+        "You pinned this field empty." if empty else "You pinned this value."
+    )
+
+
+@pytest.mark.parametrize(
+    ("suspended", "state", "cause", "attention"),
+    (
+        (False, "needs_attention", "pin_changed", True),
+        (True, "unsupported", "automatic_safety_suspended", False),
+    ),
+    ids=("changed", "suspended"),
+)
+def test_a_changed_pin_needs_attention_unless_suspended(
+    suspended: bool, state: str, cause: str, attention: bool
+) -> None:
+    value = classify_review_field(
+        **{**_BASE_INPUTS, "suspended": suspended},
+        current_value="Edited",
+        proposed_values=(),
+        pin="changed",
+    )
+    assert (value.state, value.cause, value.needs_attention) == (
+        state,
+        cause,
+        attention,
+    )
+    if not suspended:
+        assert value.reason == "This changed in Audiobookshelf after you pinned it."
 
 
 @pytest.mark.parametrize(
@@ -483,7 +540,7 @@ def test_attention_continues_after_two_contradictory_batches(
             del library_labels  # These fixtures isolate pagination and read failure.
             self.offsets.append(offset)
             rows = tuple(
-                (*attention_documents, f"invalid-{index}", 1, None, None, False)
+                (*attention_documents, f"invalid-{index}", 1, None, None, False, False)
                 for index in range(offset, offset + limit)
             )
             return ReviewAttentionSnapshot(rows, 99)
@@ -520,9 +577,9 @@ def test_attention_backfills_a_valid_successor_and_ends_honestly(
     attention_documents,
 ) -> None:
     rows = (
-        (*attention_documents, "invalid", 1, None, None, False),
-        (*attention_documents, "also-invalid", 1, None, None, False),
-        (*attention_documents, "valid", 1, None, None, False),
+        (*attention_documents, "invalid", 1, None, None, False, False),
+        (*attention_documents, "also-invalid", 1, None, None, False, False),
+        (*attention_documents, "valid", 1, None, None, False, False),
     )
 
     class Repository:
@@ -546,8 +603,8 @@ def test_attention_last_valid_raw_row_has_no_cursor_and_stable_raw_total(
     attention_documents,
 ) -> None:
     rows = (
-        (*attention_documents, "stale", 1, None, None, False),
-        (*attention_documents, "valid", 1, None, None, False),
+        (*attention_documents, "stale", 1, None, None, False, False),
+        (*attention_documents, "valid", 1, None, None, False, False),
     )
 
     class Repository:
@@ -573,10 +630,10 @@ def test_attention_exact_boundary_all_contradictory_rows_proves_exhaustion(
     attention_documents,
 ) -> None:
     rows = (
-        (*attention_documents, "stale-1", 1, None, None, False),
-        (*attention_documents, "stale-2", 1, None, None, False),
-        (*attention_documents, "stale-3", 1, None, None, False),
-        (*attention_documents, "stale-4", 1, None, None, False),
+        (*attention_documents, "stale-1", 1, None, None, False, False),
+        (*attention_documents, "stale-2", 1, None, None, False, False),
+        (*attention_documents, "stale-3", 1, None, None, False, False),
+        (*attention_documents, "stale-4", 1, None, None, False, False),
     )
 
     class Repository:
@@ -605,8 +662,8 @@ def test_attention_terminal_contradictory_lookahead_has_no_empty_successor(
     attention_documents,
 ) -> None:
     rows = (
-        (*attention_documents, "valid", 1, None, None, False),
-        (*attention_documents, "invalid", 1, None, None, False),
+        (*attention_documents, "valid", 1, None, None, False, False),
+        (*attention_documents, "invalid", 1, None, None, False, False),
     )
 
     class Repository:
@@ -632,9 +689,9 @@ def test_attention_visible_successor_remains_at_next_cursor(
     attention_documents,
 ) -> None:
     rows = (
-        (*attention_documents, "valid-1", 1, None, None, False),
-        (*attention_documents, "invalid", 1, None, None, False),
-        (*attention_documents, "valid-2", 1, None, None, False),
+        (*attention_documents, "valid-1", 1, None, None, False, False),
+        (*attention_documents, "invalid", 1, None, None, False, False),
+        (*attention_documents, "valid-2", 1, None, None, False, False),
     )
 
     class Repository:

@@ -85,6 +85,7 @@ from mechanical_librarian.domain.human_decision import (
     DecisionScope,
     HumanDecision,
     HumanDecisionError,
+    pinned_field_fingerprint,
 )
 from mechanical_librarian.domain.review_case import (
     ReviewCase,
@@ -99,6 +100,75 @@ from mechanical_librarian.domain.shadow_outcome import (
 _REPLACEMENT_BLOCKING_EFFECT_SQL = (
     "(state IN ('claimed','applying','reconciling') OR (state='verified' AND ?))"
 )
+# What keeps Automatic from deciding a field on a case: an owner decision, its
+# own decision in this generation, or a pin, in force or changed (ADR-0085,
+# Amendment 2). Bound by `_automatic_mint_conflict`.
+_AUTOMATIC_MINT_CONFLICT_SQL = (
+    "SELECT 1 FROM human_decisions WHERE review_case_id=? AND destination=? "
+    "UNION ALL SELECT 1 FROM automatic_decisions WHERE review_case_id=? AND destination=? "
+    "AND policy_generation=? "
+    "UNION ALL SELECT 1 FROM field_effect_manual_holds WHERE review_case_id=? "
+    "AND destination=? AND active=1 AND json_type(document,'$.pin')='object'"
+)
+
+
+def field_change_waiting_sql(case: str, destination: str) -> str:
+    """Whether a change to the field on the case waits, so it cannot be pinned.
+
+    A write for the field is planned, in flight, retryable or verified in the
+    case's episode, under an owner decision of the episode, an automatic or a
+    description decision on the case, or as a subtitle companion of one; or
+    the episode's latest owner decision chose a value not yet written. The
+    case's value is then not what the library will hold (ADR-0085, Amendment
+    2). It lives here rather than in `review_sql`, which imports nothing,
+    because it reads the companion expression the schema indexes.
+    """
+    authorities = (
+        "SELECT waiting_human.decision_id FROM human_decisions waiting_human "
+        f"WHERE waiting_human.review_case_id={case} "
+        f"AND waiting_human.destination={destination} AND "
+        + _episode_decision_sql("waiting_human")
+        + " UNION ALL SELECT waiting_automatic.decision_id FROM automatic_decisions "
+        f"waiting_automatic WHERE waiting_automatic.review_case_id={case} "
+        f"AND waiting_automatic.destination={destination} "
+        "UNION ALL SELECT waiting_authored.decision_id FROM description_decisions "
+        f"waiting_authored WHERE waiting_authored.review_case_id={case} "
+        f"AND {destination}='description'"
+    )
+    return (
+        "(EXISTS (SELECT 1 FROM field_effects waiting_effect WHERE "
+        "waiting_effect.rowid IN (SELECT rowid FROM field_effects WHERE decision_id IN ("
+        + authorities
+        + ") UNION ALL SELECT rowid FROM field_effects WHERE "
+        + _FIELD_EFFECT_COMPANION_DECISION_SQL
+        + " IN ("
+        + authorities
+        + ")) AND waiting_effect.state IN "
+        "('planned','claimed','applying','reconciling','retryable','verified') "
+        "AND waiting_effect.rowid>COALESCE((SELECT waiting_episode.effect_floor "
+        "FROM review_case_episodes waiting_episode "
+        f"WHERE waiting_episode.review_case_id={case}),0)) "
+        "OR COALESCE((SELECT waiting_latest.outcome FROM human_decisions waiting_latest "
+        f"WHERE waiting_latest.review_case_id={case} "
+        f"AND waiting_latest.destination={destination} AND "
+        + _episode_decision_sql("waiting_latest")
+        + " ORDER BY waiting_latest.ordinal DESC LIMIT 1),'') IN ('accept','owner_entered'))"
+    )
+
+
+def _automatic_mint_conflict(
+    decision: AutomaticDecision,
+) -> tuple[str, str, str, str, int, str, str]:
+    case, destination = decision.review_case_id, decision.destination
+    return (
+        case,
+        destination,
+        case,
+        destination,
+        decision.policy_generation,
+        case,
+        destination,
+    )
 
 
 def _automatic_decision_documents(
@@ -154,7 +224,9 @@ class SQLiteDecisionRepository(ConnectionScoped):
         current_resolved_policy_id: Callable[[str], str],
         record_cover_decision_outcome: Callable[..., None],
         revoke_field_effect_authority_in_transaction: Callable[..., int],
-        set_field_effect_manual_hold: Callable[[str, str, int, str], None],
+        set_field_effect_manual_hold: Callable[
+            [str, str, int, str, dict[str, object] | None], None
+        ],
         validate_shadow_outcome_row: Callable[
             [tuple[object, ...] | sqlite3.Row], tuple[str, int]
         ],
@@ -179,6 +251,61 @@ class SQLiteDecisionRepository(ConnectionScoped):
         self, outcome: ShadowOutcomeSet, occurred_at: int
     ) -> None:
         """Append eligible dispositions, leaving paused/suspended work human."""
+        decisions = self._validated_automatic_decisions(outcome, occurred_at)
+        # A normal human winner, a pin or a replay is not an authority failure.
+        # Remove its whole bundle before any insert, so a bundle is all-or-none.
+        blocked_bundles: set[str] = set()
+        for decision in decisions:
+            conflict = self._connection.execute(
+                _AUTOMATIC_MINT_CONFLICT_SQL, _automatic_mint_conflict(decision)
+            ).fetchone()
+            if conflict is not None and decision.bundle_id is not None:
+                blocked_bundles.add(decision.bundle_id)
+        decisions = [
+            decision
+            for decision in decisions
+            if decision.bundle_id not in blocked_bundles
+        ]
+        # Complete validation precedes every insert: an authority defect cannot
+        # leave a subset of a multi-field bundle durable.
+        for decision in decisions:
+            existing = self._connection.execute(
+                "SELECT document FROM automatic_decisions WHERE idempotency_digest=?",
+                (decision.idempotency_digest,),
+            ).fetchone()
+            if existing is not None:
+                # The event timestamp is deliberately not part of the replay
+                # key; a later projection retry must reproduce the immutable
+                # authority fact rather than manufacture a second decision.
+                continue
+            conflict = self._connection.execute(
+                _AUTOMATIC_MINT_CONFLICT_SQL, _automatic_mint_conflict(decision)
+            ).fetchone()
+            if conflict is not None:
+                # Human wins and independent replay are ordinary fallback, not
+                # a global safety event.  Bundles were removed as a unit above.
+                continue
+            self._connection.execute(
+                "INSERT INTO automatic_decisions(decision_id,review_case_id,destination,idempotency_digest,occurred_at,document,policy_generation) VALUES(?,?,?,?,?,?,?)",
+                (
+                    decision.decision_id,
+                    decision.review_case_id,
+                    decision.destination,
+                    decision.idempotency_digest,
+                    decision.occurred_at,
+                    decision.to_json(),
+                    decision.policy_generation,
+                ),
+            )
+
+    def _validated_automatic_decisions(
+        self, outcome: ShadowOutcomeSet, occurred_at: int
+    ) -> list[AutomaticDecision]:
+        """Form every decision the outcome qualifies, its bundles coherent.
+
+        Any construction or protected-bundle defect raises before the caller
+        inserts anything.
+        """
         safety = self.automatic_safety_state()
         automatic_dispositions = {"candidate", "keep_current", "ignore"}
         required_bundles = {
@@ -326,69 +453,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 # coherence check above.
                 raise AutomaticDecisionError("authority") from error
             decisions.append(decision)
-        # A normal human winner or replay is not an authority failure.  Remove
-        # its whole bundle before any insert, so a bundle is all-or-none.
-        blocked_bundles: set[str] = set()
-        for decision in decisions:
-            conflict = self._connection.execute(
-                "SELECT 1 FROM human_decisions WHERE review_case_id=? AND destination=? "
-                "UNION ALL SELECT 1 FROM automatic_decisions WHERE review_case_id=? AND destination=? "
-                "AND policy_generation=?",
-                (
-                    decision.review_case_id,
-                    decision.destination,
-                    decision.review_case_id,
-                    decision.destination,
-                    decision.policy_generation,
-                ),
-            ).fetchone()
-            if conflict is not None and decision.bundle_id is not None:
-                blocked_bundles.add(decision.bundle_id)
-        decisions = [
-            decision
-            for decision in decisions
-            if decision.bundle_id not in blocked_bundles
-        ]
-        # Complete validation precedes every insert: an authority defect cannot
-        # leave a subset of a multi-field bundle durable.
-        for decision in decisions:
-            existing = self._connection.execute(
-                "SELECT document FROM automatic_decisions WHERE idempotency_digest=?",
-                (decision.idempotency_digest,),
-            ).fetchone()
-            if existing is not None:
-                # The event timestamp is deliberately not part of the replay
-                # key; a later projection retry must reproduce the immutable
-                # authority fact rather than manufacture a second decision.
-                continue
-            conflict = self._connection.execute(
-                "SELECT 1 FROM human_decisions WHERE review_case_id=? AND destination=? "
-                "UNION ALL SELECT 1 FROM automatic_decisions WHERE review_case_id=? AND destination=? "
-                "AND policy_generation=?",
-                (
-                    decision.review_case_id,
-                    decision.destination,
-                    decision.review_case_id,
-                    decision.destination,
-                    decision.policy_generation,
-                ),
-            ).fetchone()
-            if conflict is not None:
-                # Human wins and independent replay are ordinary fallback, not
-                # a global safety event.  Bundles were removed as a unit above.
-                continue
-            self._connection.execute(
-                "INSERT INTO automatic_decisions(decision_id,review_case_id,destination,idempotency_digest,occurred_at,document,policy_generation) VALUES(?,?,?,?,?,?,?)",
-                (
-                    decision.decision_id,
-                    decision.review_case_id,
-                    decision.destination,
-                    decision.idempotency_digest,
-                    decision.occurred_at,
-                    decision.to_json(),
-                    decision.policy_generation,
-                ),
-            )
+        return decisions
 
     @local_operation
     def get_review_case_decisions(
@@ -571,7 +636,11 @@ class SQLiteDecisionRepository(ConnectionScoped):
             self._record_cover_decision_outcome(
                 decision, cover_consideration_id, cover_confirmation, validate_only=True
             )
-            if decision.outcome == "withdraw":
+            if decision.outcome == "pin":
+                self._require_pinnable(decision)
+            elif decision.outcome == "unpin":
+                self._require_unpinnable(decision)
+            elif decision.outcome == "withdraw":
                 self._require_withdrawable(decision)
             previous, authored, automatic = self._replacement_authorities(
                 decision, case
@@ -602,7 +671,9 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 decision, cover_consideration_id, cover_confirmation
             )
             self._record_human_decision_event(decision)
-            self._close_replaced_authorities(decision, previous, authored, automatic)
+            self._close_replaced_authorities(
+                decision, previous, authored, automatic, case=case
+            )
             if self._binding is not None:
                 self._binding.require_current()
             transaction.commit()
@@ -672,9 +743,15 @@ class SQLiteDecisionRepository(ConnectionScoped):
         previous: sqlite3.Row | tuple[object, ...] | None,
         authored: sqlite3.Row | tuple[object, ...] | None,
         automatic: sqlite3.Row | tuple[object, ...] | None,
+        *,
+        case: ReviewCase,
     ) -> None:
         """Revoke the replaced and earlier-episode authorities, and set or
         clear the manual hold (#1358, ADR-0085).
+
+        A pin sets the hold with its pin in force; an unpin only takes the
+        pin off the hold; every other answer sets the hold without one
+        (ADR-0085, Amendment 2).
 
         Runs inside `record_human_decision`'s transaction.
         """
@@ -697,8 +774,18 @@ class SQLiteDecisionRepository(ConnectionScoped):
             self._revoke_field_effect_authority_in_transaction(
                 automatic[0], decision.occurred_at, required=False
             )
+        pin: dict[str, object] | None = (
+            {
+                "fingerprint": pinned_field_fingerprint(case, decision.destination),
+                "in_force": True,
+            }
+            if decision.outcome == "pin"
+            else None
+        )
         if decision.outcome == "withdraw":
-            self._withdraw_manual_hold(decision, previous)
+            self._withdraw_manual_hold(decision, previous, case)
+        elif decision.outcome == "unpin":
+            self._clear_pin(decision)
         elif decision.destination == "cover" and automatic is None:
             # A cover answer still holds only over an automatic cover
             # decision: a held cover refuses a replacement decision outright,
@@ -720,8 +807,9 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 decision.destination,
                 decision.occurred_at,
                 decision.decision_id,
+                pin,
             )
-        if authored is not None:
+        if authored is not None and decision.outcome != "unpin":
             self._connection.execute(
                 "DELETE FROM current_description_decisions WHERE review_case_id=?",
                 (decision.review_case_id,),
@@ -731,12 +819,69 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 decision.destination,
                 decision.occurred_at,
                 decision.decision_id,
+                pin,
             )
+
+    def _require_pinnable(self, decision: HumanDecision) -> None:
+        """Refuse a pin in its fixed order; nothing is written (ADR-0085, Amendment 2)."""
+        if self._connection.execute(
+            "SELECT 1 WHERE "
+            + field_change_waiting_sql(":review_case_id", ":destination"),
+            {
+                "review_case_id": decision.review_case_id,
+                "destination": decision.destination,
+            },
+        ).fetchone():
+            raise HumanDecisionError("pin_change_waiting")
+        if self._connection.execute(
+            "SELECT 1 FROM field_effect_manual_holds WHERE review_case_id=? "
+            "AND destination=? AND active=1 "
+            "AND json_extract(document,'$.pin.in_force')=1",
+            (decision.review_case_id, decision.destination),
+        ).fetchone():
+            raise HumanDecisionError("already_pinned")
+
+    def _require_unpinnable(self, decision: HumanDecision) -> None:
+        """Refuse an unpin where the case's hold carries no pin."""
+        if not self._connection.execute(
+            "SELECT 1 FROM field_effect_manual_holds WHERE review_case_id=? "
+            "AND destination=? AND active=1 AND json_type(document,'$.pin')='object'",
+            (decision.review_case_id, decision.destination),
+        ).fetchone():
+            raise HumanDecisionError("not_pinned")
+
+    def _clear_pin(self, decision: HumanDecision) -> None:
+        """Take the pin off the case's hold, keeping the hold and its token.
+
+        The update time moves to the unpin, so the work's latest hold is this
+        one and no pin is carried to its later cases: the latest hold is
+        chosen by update time before rowid, and a re-admitted case keeps its
+        old rowid.
+        """
+        (document,) = self._connection.execute(
+            "SELECT document FROM field_effect_manual_holds "
+            "WHERE review_case_id=? AND destination=?",
+            (decision.review_case_id, decision.destination),
+        ).fetchone()
+        hold = json.loads(document)
+        hold["pin"] = None
+        hold["updated_at"] = decision.occurred_at
+        self._connection.execute(
+            "UPDATE field_effect_manual_holds SET updated_at=?,document=? "
+            "WHERE review_case_id=? AND destination=?",
+            (
+                decision.occurred_at,
+                canonical_effect_json(hold),
+                decision.review_case_id,
+                decision.destination,
+            ),
+        )
 
     def _withdraw_manual_hold(
         self,
         decision: HumanDecision,
         withdrawn: sqlite3.Row | tuple[object, ...] | None,
+        case: ReviewCase,
     ) -> None:
         """Take back the hold the withdrawn answer set (ADR-0085, Amendment 1).
 
@@ -745,7 +890,8 @@ class SQLiteDecisionRepository(ConnectionScoped):
         still in force, speaks for the field again, as it did before that
         answer. A hold this answer did not set stays. A released row goes,
         so the case reads as never held (a withdrawal is only accepted on a
-        case with no automatic decision).
+        case with no automatic decision). A pin on the restored hold is
+        compared again with this case's value (ADR-0085, Amendment 2).
 
         Runs inside `record_human_decision`'s transaction.
         """
@@ -789,6 +935,11 @@ class SQLiteDecisionRepository(ConnectionScoped):
             ):
                 continue
             earlier["review_case_id"] = decision.review_case_id
+            if type(earlier["pin"]) is dict:
+                earlier["pin"]["in_force"] = (
+                    pinned_field_fingerprint(case, destination)
+                    == earlier["pin"]["fingerprint"]
+                )
             self._connection.execute(
                 "INSERT INTO field_effect_manual_holds(review_case_id,"
                 "destination,active,updated_at,document) VALUES(?,?,1,?,?)",
@@ -1006,7 +1157,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
             + " ORDER BY ordinal DESC LIMIT 1",
             (decision.review_case_id, decision.destination),
         ).fetchone()
-        if latest is None or latest[1] in {"withdraw", "reject"}:
+        if latest is None or latest[1] in {"withdraw", "reject", "pin", "unpin"}:
             raise HumanDecisionError("nothing_to_withdraw")
         if self._connection.execute(
             "SELECT 1 FROM automatic_decisions WHERE review_case_id=? AND destination=?",
@@ -1067,16 +1218,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
             if type(case) is not dict or case.get("current") is not True:
                 raise AutomaticDecisionError("stale")
             existing = self._connection.execute(
-                "SELECT 1 FROM human_decisions WHERE review_case_id=? AND destination=? "
-                "UNION ALL SELECT 1 FROM automatic_decisions WHERE review_case_id=? AND destination=? "
-                "AND policy_generation=?",
-                (
-                    decision.review_case_id,
-                    decision.destination,
-                    decision.review_case_id,
-                    decision.destination,
-                    decision.policy_generation,
-                ),
+                _AUTOMATIC_MINT_CONFLICT_SQL, _automatic_mint_conflict(decision)
             ).fetchone()
             if existing is not None:
                 raise AutomaticDecisionError("already_decided")
@@ -1532,7 +1674,8 @@ class SQLiteDecisionRepository(ConnectionScoped):
             decision.selected_value
             if decision.outcome in {"accept", "owner_entered"}
             else {"kind": kind, "value": target.get("value")}
-            if decision.outcome == "keep_current" and target.get("state") == "value"
+            if decision.outcome in {"keep_current", "pin"}
+            and target.get("state") == "value"
             else None
         )
         return (row[6], int(decision_row[0]), row[0], value)

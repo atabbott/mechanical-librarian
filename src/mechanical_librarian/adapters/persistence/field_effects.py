@@ -745,6 +745,8 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
         destination: str,
         changed_at: int,
         decision_id: str,
+        *,
+        pin: dict[str, object] | None = None,
     ) -> None:
         document = canonical_effect_json(
             {
@@ -752,6 +754,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 "destination": destination,
                 "decision_id": decision_id,
                 "pending_return": None,
+                "pin": pin,
                 "review_case_id": review_case_id,
                 "schema_version": FIELD_EFFECT_MANUAL_HOLD_SCHEMA,
                 "updated_at": changed_at,
@@ -929,6 +932,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                     "destination": destination,
                     "review_case_id": review_case_id,
                     "pending_return": None,
+                    "pin": None,
                     "schema_version": FIELD_EFFECT_MANUAL_HOLD_SCHEMA,
                     "updated_at": changed_at,
                 }

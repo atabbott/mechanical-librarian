@@ -120,6 +120,8 @@ def _facts(event: dict[str, object]) -> dict[str, str]:
         ("reject", "Rejected"),
         ("owner_entered", "Entered by you"),
         ("withdraw", "Withdrawn"),
+        ("pin", "Pinned"),
+        ("unpin", "Unpinned"),
         ("completed", "Cover advice completed"),
         ("unavailable", "Cover advice unavailable"),
         ("failed", "Cover advice failed"),
@@ -314,6 +316,43 @@ def test_an_owner_rejection_prepares_nothing_and_invents_nothing() -> None:
     # The change column says "Left unchanged"; no fact repeats it (#1765).
     assert "Outcome" not in facts
     assert "Previous value" not in facts and "New value" not in facts
+
+
+@pytest.mark.parametrize(
+    ("state", "change", "detail", "label", "outcome"),
+    (
+        ("pin", "Pinned", "Pinned the Title value", "Pinned value", None),
+        (
+            "unpin",
+            "Unpinned",
+            "Unpinned the Title field",
+            "Current value",
+            "Mechanical Librarian can ask about this field again",
+        ),
+    ),
+    ids=("pin", "unpin"),
+)
+def test_pin_and_unpin_ledger_words(
+    state: str, change: str, detail: str, label: str, outcome: str | None
+) -> None:
+    """A pin is not a field left unchanged (ADR-0085, Amendment 2)."""
+    report = _titled("The Dispossessed")
+    event = _project(
+        _event(
+            state=state,
+            record={
+                "source_kind": "human_decision",
+                "target_fingerprint": report.target.fingerprint,
+                "selected_value": None,
+            },
+        ),
+        report,
+    )
+    assert (event["change"], event["change_detail"]) == (change, detail)
+    facts = _facts(event)
+    assert facts[label] == "The Dispossessed"
+    assert facts["Chosen by"] == "You"
+    assert facts.get("Outcome") == outcome
 
 
 def test_an_automatic_decision_names_the_policy_that_chose_it() -> None:

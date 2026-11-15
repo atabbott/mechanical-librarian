@@ -499,6 +499,9 @@ KEYWORDS: tuple[tuple[str, str, str, str, object], ...] = (
         "enum",
         _strings(review_web.AutomaticWithheldCondition),
     ),
+    # An owner pin's state and a work's pinned fields (#1346).
+    ("S90", "_FieldPin", "/properties/state", "enum", ("in_force", "changed")),
+    ("S91", "_LibraryWork", "/properties/pinned_count", "minimum", 0),
 )
 
 
