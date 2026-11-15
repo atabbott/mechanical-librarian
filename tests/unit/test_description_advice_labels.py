@@ -583,6 +583,28 @@ def test_cleanup_choices_in_the_configuration_are_bound(tmp_path: Path) -> None:
     assert _only(_score(database))["not_counted"]["undecided"] == 1
 
 
+@pytest.mark.parametrize(
+    "off", ["remove_marketing", "remove_sales_boasts", "remove_praise"]
+)
+def test_each_cleanup_choice_in_the_configuration_reaches_its_field(
+    tmp_path: Path, off: str
+) -> None:
+    """Advice made under the file's choices is current under them."""
+    prepared = _store(tmp_path)
+    prepared.settings(**{off: False})
+    second = _admit(prepared, _other_work())
+    _advise(prepared, second)
+    connection = prepared.repository._connection
+    connection.execute("DELETE FROM owner_settings")
+    connection.commit()
+    database = prepared.copy()
+    config = str(_config(tmp_path, _REVIEW, **{off: False}))
+    assert _sample(database, "--config", config) == [
+        *_sample_lines(replacing=1, out_of_date=1),
+        _link(second.review_case_id),
+    ]
+
+
 def test_automatic_on_in_the_configuration_is_refused(tmp_path: Path) -> None:
     database = _store(tmp_path, settings=False).copy()
     config = str(_config(tmp_path, _REVIEW, automatic_application=True))
@@ -593,14 +615,29 @@ def test_automatic_on_in_the_configuration_is_refused(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("command", ["sample", "score"])
+@pytest.mark.parametrize("present", [True, False], ids=["file", "no_file"])
 def test_a_configuration_for_a_copy_with_saved_settings_is_refused(
-    tmp_path: Path, command: str
+    tmp_path: Path, command: str, present: bool
 ) -> None:
+    """Saved settings are named first, even before a file that is not there."""
     database = _store(tmp_path).copy()
-    config = str(_config(tmp_path, _REVIEW))
+    config = _config(tmp_path, _REVIEW)
+    if not present:
+        config.unlink()
     assert (
-        _refusal(command, "--database", str(database), "--config", config)
+        _refusal(command, "--database", str(database), "--config", str(config))
         == labels._CONFIG_NOT_NEEDED
+    )
+
+
+def test_a_missing_database_is_named_before_the_configuration(
+    tmp_path: Path,
+) -> None:
+    missing = tmp_path / "copy" / "application.sqlite3"
+    config = str(tmp_path / "copy" / "config.json")
+    assert (
+        _refusal("sample", "--database", str(missing), "--config", config)
+        == series_sample._MISSING
     )
 
 

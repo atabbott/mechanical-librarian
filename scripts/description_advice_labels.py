@@ -926,16 +926,16 @@ def _configured(path: Path) -> DescriptionAdviceSettings:
 def _bind(
     copy: _Copy,
     reader: SQLiteMetadataReportRepository,
-    settings: DescriptionAdviceSettings | None,
+    config: Path | None,
     required: bool,
 ) -> None:
     """Read the copy under the settings its install uses: saved in the app,
     or bound from the configuration file."""
     if _saved(copy):
-        if settings is not None:
+        if config is not None:
             raise SystemExit(_CONFIG_NOT_NEEDED)
-    elif settings is not None:
-        reader.description_advice_store().bind_settings(settings)
+    elif config is not None:
+        reader.description_advice_store().bind_settings(_configured(config))
     elif required:
         raise SystemExit(_NO_SETTINGS)
 
@@ -997,13 +997,12 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None, stdout: TextIO | None = None) -> int:
     arguments = _parser().parse_args(argv)
     output = sys.stdout if stdout is None else stdout
-    settings = None if arguments.config is None else _configured(arguments.config)
     reader = _open(arguments.database)
     try:
         copy = _Copy(reader._reader._connection)
         # Labels need no settings, so score runs without them; the count of
         # undecided advice then assumes the default choices.
-        _bind(copy, reader._reader, settings, arguments.command == "sample")
+        _bind(copy, reader._reader, arguments.config, arguments.command == "sample")
         if arguments.command == "sample":
             text = render_sample(
                 read_sample(copy, reader._reader), arguments.origin, arguments.limit

@@ -16,15 +16,15 @@ install from.
 2. In Policy → Curation → Description advice, set the cleanup choices you
    would use and leave the automatic switch off. Labels count only for the
    cleanup choices they were made under. If your settings come from
-   `config.json`, set them there with the `description_` fields and restart
-   the service.
+   `config.json`, set them there instead, with the
+   [description fields](../reference/configuration.md#description-advice) of
+   its `review` section, and restart the service.
 3. Wait until the app shows "Preparation idle".
 
 ## List the descriptions
 
 Copy the database as [owner labels](owner-labels.md#copy-the-database)
-describes. If your settings come from `config.json`, copy it too, in the same
-step while the container is stopped:
+describes. If your settings come from `config.json`, copy it too:
 
 ```
 docker cp "$(docker compose ps -aq mechanical-librarian)":/data/config.json ~/ml-labels/
