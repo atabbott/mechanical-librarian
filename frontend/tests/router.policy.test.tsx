@@ -1020,6 +1020,10 @@ describe('Policy route', () => {
     expect(screen.getByRole('button', { name: /^Publication/ })).not.toHaveAccessibleDescription()
     await user.click(screen.getByRole('button', { name: /Curation/ }))
     await user.click(screen.getByRole('button', { name: /Additional fields/ }))
+    // The chapter takes focus a frame later. Under load that frame can land
+    // after the next press and take focus from its alert, so wait for it.
+    const unsupported = globalThis.document.getElementById('policy-unsupported')
+    await waitFor(() => expect(unsupported).toHaveFocus())
     const explicit = screen.getByRole('region', { name: 'Explicit-content flag' })
     expect(explicit.querySelector('.cm-policy-control-heading small')).toHaveTextContent(
       /^Automatic not offered$/u,

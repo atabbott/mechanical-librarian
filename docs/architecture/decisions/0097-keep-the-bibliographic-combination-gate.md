@@ -1,6 +1,6 @@
 # ADR-0097: Keep the bibliographic combination gate
 
-- Status: proposed
+- Status: accepted (accepted by the owner on 2026-11-15)
 - Date: 2026-11-07
 - Owners: project maintainers
 - Issues: #1746 (row A3 of the admission-rule ledger, #1350)

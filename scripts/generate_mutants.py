@@ -55,7 +55,7 @@ def generate(root: Path) -> None:
         copy_src_dir,
         create_mutants,
     )
-    from mutmut.configuration import Config
+    from mutmut.configuration import config
 
     mutants = root / "mutants"
     shutil.rmtree(mutants, ignore_errors=True)
@@ -73,7 +73,7 @@ def generate(root: Path) -> None:
     importlib.invalidate_caches()
     shutil.copytree(root / "src", mutants / "src", dirs_exist_ok=True)
 
-    Config.ensure_loaded()
+    config()
     copy_src_dir()
     create_mutants(4)
     copy_also_copy_files()
@@ -92,21 +92,22 @@ def collect_stats(root: Path) -> int:
     sys.path.insert(0, str(mutants / "src"))
     os.chdir(mutants)
 
-    import mutmut
     import pytest
-    from mutmut.__main__ import strip_prefix
-    from mutmut.configuration import Config
+    from mutmut.configuration import config
+    from mutmut.state import state
+    from mutmut.utils.format_utils import strip_prefix
 
-    Config.ensure_loaded()
+    config()
+    mutmut_state = state()
     failures: list[str] = []
 
     class StatsCollector:
         def pytest_runtest_teardown(self, item, nextitem):
-            for function in mutmut._stats:
-                mutmut.tests_by_mangled_function_name[function].add(
+            for function in mutmut_state._stats:
+                mutmut_state.tests_by_mangled_function_name[function].add(
                     strip_prefix(item._nodeid, prefix="mutants/")
                 )
-            mutmut._stats.clear()
+            mutmut_state._stats.clear()
 
         def pytest_runtest_logreport(self, report):
             if report.failed:
@@ -129,14 +130,14 @@ def collect_stats(root: Path) -> int:
             {
                 "tests_by_mangled_function_name": {
                     key: sorted(value)
-                    for key, value in mutmut.tests_by_mangled_function_name.items()
+                    for key, value in mutmut_state.tests_by_mangled_function_name.items()
                 },
-                "duration_by_test": dict(mutmut.duration_by_test),
+                "duration_by_test": dict(mutmut_state.duration_by_test),
                 "stats_time": 0.0,
             }
         )
     )
-    reached = len(mutmut.tests_by_mangled_function_name)
+    reached = len(mutmut_state.tests_by_mangled_function_name)
     print(
         f"pytest exit {int(code)}; failures {len(set(failures))}; functions {reached}"
     )

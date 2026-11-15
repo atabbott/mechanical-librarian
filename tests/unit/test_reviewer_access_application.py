@@ -120,6 +120,10 @@ class _OpenRouter:
     def run_description(self, *args):
         return self.run(*args)
 
+    def run_taste_build(self, *_args):
+        self.calls.append(("taste", self.model))
+        raise RuntimeError("typed provider failure")
+
     def close(self):
         self.calls.append(("close", self.model))
 
@@ -1347,3 +1351,84 @@ def test_refresh_keeps_saved_description_metadata_when_the_committed_status_fail
     assert document.description_metadata is not None
     assert document.description_metadata.observed_at == 2
     assert document.description_metadata.model == before.model
+
+
+def test_taste_model_is_tested_selected_and_cleared_beside_cover_review():
+    """The taste profile builder is a separate OpenRouter task (#1372 A1)."""
+    operations, _, calls, _ = _operations()
+    cover = operations.configure_openrouter(
+        expected_revision=1, api_key="saved-secret", model="example/a"
+    )
+    assert operations.current_taste_build_model() is None
+    with pytest.raises(ReviewerAccessApplicationError) as missing:
+        operations.open_taste_build()
+    assert missing.value.code == "not_configured"
+    tested = operations.test_taste_model("", "example/vision")
+    assert tested.model == "example/vision"
+    view = operations.configure_openrouter(
+        expected_revision=cover.revision,
+        api_key="",
+        model="example/vision",
+        task="cover_taste_build",
+    )
+    assert view.mapping == cover.mapping
+    assert view.taste_mapping == OpenRouterTaskSelection(
+        engine="openrouter", model="example/vision"
+    )
+    assert view.taste_metadata is not None
+    assert view.taste_metadata.model == "example/vision"
+    assert view.taste_daily_requests == 8
+    assert operations.current_taste_build_model() == "example/vision"
+    model, profile, client = operations.open_taste_build()
+    assert model == "example/vision"
+    assert b"openrouter-taste-builder-profile-v1" in profile
+    client.close()
+    assert ("probe", "example/vision") in calls
+
+    class DescriptionOnly(_OpenRouter):
+        run_taste_build = None  # type: ignore[assignment]
+
+    operations._openrouter_factory = lambda key, model: DescriptionOnly(
+        key, model, calls
+    )
+    # A client that cannot run a taste build is closed and never returned.
+    with pytest.raises(ReviewerAccessApplicationError) as unable:
+        operations.open_taste_build()
+    assert unable.value.code == "unreachable"
+    assert calls[-1] == ("close", "example/vision")
+    cleared = operations.clear_openrouter(expected_revision=view.revision)
+    assert cleared.taste_mapping is None and cleared.taste_metadata is None
+    assert operations.current_taste_build_model() is None
+
+
+def test_continuing_without_a_taste_profile_clears_only_that_task():
+    """The taste profile is a separate opt-in (#1372 S11): withdrawing it keeps
+    cover review, description advice and the shared key."""
+    operations, _, _, _ = _operations()
+    revision = _description_configured(operations)
+    before = operations.read()
+    _, key = operations._repository.snapshot()
+    taste = operations.configure_openrouter(
+        expected_revision=revision,
+        api_key="",
+        model="example/vision",
+        task="cover_taste_build",
+    )
+    assert taste.taste_mapping is not None
+    without = operations.select_none(
+        expected_revision=taste.revision, task="cover_taste_build"
+    )
+    assert without.taste_mapping is None and without.taste_metadata is None
+    assert without.mapping == before.mapping
+    assert without.description_mapping == before.description_mapping
+    assert without.description_metadata == before.description_metadata
+    assert without.openrouter_key_configured is True
+    assert operations._repository.snapshot()[1] == key
+    assert operations.current_taste_build_model() is None
+
+
+def test_codex_is_refused_for_the_taste_build():
+    operations, _, _, _ = _operations()
+    with pytest.raises(ReviewerAccessApplicationError) as refused:
+        operations.select_codex(expected_revision=1, task="cover_taste_build")
+    assert refused.value.code == "reviewer_access_invalid"

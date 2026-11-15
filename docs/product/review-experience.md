@@ -485,7 +485,8 @@ once the write is verified, releasing the copy. If the cover was changed in
 Audiobookshelf first, the row says "The cover was changed in Audiobookshelf, so
 it was not put back." and offers Keep and Others again.
 
-A cover field's Covers link opens its book in All, wherever it falls.
+A cover field's Covers link opens its book in All, wherever it falls. The
+fifth tab is [Taste profile](cover-taste-profile.md).
 
 ## Evidence and History
 
@@ -594,9 +595,9 @@ buttons to move or remove each and a picker to add one, up to eight. In a
 file-managed deployment the list is read only.
 
 Reviewer sign-in, validation and tests take effect at once, outside Save
-settings. Each reviewer task has a model picker with an example cost per 1,000
-works. Both tasks share one OpenRouter key, and replacing it keeps both model
-choices. Reviewer advice allows no write
+settings. Cover and description pickers show cost per 1,000 works. One
+OpenRouter key serves all three tasks; replacing it keeps every choice.
+Reviewer advice allows no write
 ([ADR-0062](../architecture/decisions/0062-owner-managed-reviewer-access.md)).
 
 ## Words and values
