@@ -24,7 +24,7 @@ import re
 import sqlite3
 import sys
 import unicodedata
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -1705,6 +1705,24 @@ def _validate_existing_read_only(
                 connection.close()
 
 
+def _named_objects(
+    kind: str, statements: dict[str, str]
+) -> Iterator[tuple[str, str, str | None]]:
+    return ((kind, name, statement) for name, statement in statements.items())
+
+
+def _cover_taste_objects() -> tuple[tuple[str, str, str | None], ...]:
+    """The taste profile's tables, their key indexes and triggers (#1372)."""
+    return (
+        *_named_objects("table", _COVER_TASTE_TABLES),
+        ("index", "sqlite_autoindex_reviewer_task_requests_1", None),
+        ("index", "sqlite_autoindex_cover_taste_builds_1", None),
+        ("index", "sqlite_autoindex_cover_taste_builds_2", None),
+        ("index", "sqlite_autoindex_cover_taste_profile_versions_1", None),
+        *_named_objects("trigger", _COVER_TASTE_TRIGGERS),
+    )
+
+
 def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
     """Return the one exact-current SQLite object contract."""
     return sorted(
@@ -1723,22 +1741,8 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
                 "description_decisions_case",
                 _DESCRIPTION_DECISIONS_CASE_INDEX_SQL,
             ),
-            *(
-                ("trigger", name, statement)
-                for name, statement in _DESCRIPTION_ADVICE_TRIGGERS.items()
-            ),
-            *(
-                ("table", name, statement)
-                for name, statement in _COVER_TASTE_TABLES.items()
-            ),
-            ("index", "sqlite_autoindex_reviewer_task_requests_1", None),
-            ("index", "sqlite_autoindex_cover_taste_builds_1", None),
-            ("index", "sqlite_autoindex_cover_taste_builds_2", None),
-            ("index", "sqlite_autoindex_cover_taste_profile_versions_1", None),
-            *(
-                ("trigger", name, statement)
-                for name, statement in _COVER_TASTE_TRIGGERS.items()
-            ),
+            *_named_objects("trigger", _DESCRIPTION_ADVICE_TRIGGERS),
+            *_cover_taste_objects(),
             ("index", "sqlite_autoindex_current_metadata_reports_1", None),
             ("index", "sqlite_autoindex_current_metadata_report_lineages_1", None),
             ("index", "sqlite_autoindex_current_review_case_lineages_1", None),

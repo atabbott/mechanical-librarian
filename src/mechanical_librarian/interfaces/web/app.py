@@ -2893,6 +2893,25 @@ async def _oversized_body_response(
     await response(scope, receive, send)
 
 
+# Per-path request body ceilings above the 2,048-byte default.
+_BODY_PATH_LIMITS = {
+    "/api/v1/review-preparation/dismiss": 2048,
+    "/api/v1/provider-recovery/retry": 2048,
+    "/api/v1/reviewer-access/openrouter/refresh": 2048,
+    # The write contract permits a 2,048-character key plus its
+    # model, revision, and JSON framing.
+    "/api/v1/reviewer-access/openrouter": 4096,
+    "/api/v1/reviewer-access/description-model/test": 4096,
+    "/api/v1/reviewer-access/taste-model/test": 4096,
+    "/api/v1/covers/taste/retry": 2048,
+    "/api/v1/reviewer-access/selection": 2048,
+    "/api/v1/reviewer-access/codex/device": 2048,
+    "/api/v1/reviewer-access/codex/recheck": 2048,
+    "/api/v1/reviewer-access/codex/device/cancel": 2048,
+    "/api/v1/reviewer-access/codex": 2048,
+}
+
+
 def create_review_app(
     application: ReviewApplication,
     configuration: ReviewWebConfiguration,
@@ -2953,22 +2972,7 @@ def create_review_app(
         maximum_bytes=2048,
         decision_maximum_bytes=8192,
         hsts=origin.scheme == "https",
-        path_limits={
-            "/api/v1/review-preparation/dismiss": 2048,
-            "/api/v1/provider-recovery/retry": 2048,
-            "/api/v1/reviewer-access/openrouter/refresh": 2048,
-            # The write contract permits a 2,048-character key plus its
-            # model, revision, and JSON framing.
-            "/api/v1/reviewer-access/openrouter": 4096,
-            "/api/v1/reviewer-access/description-model/test": 4096,
-            "/api/v1/reviewer-access/taste-model/test": 4096,
-            "/api/v1/covers/taste/retry": 2048,
-            "/api/v1/reviewer-access/selection": 2048,
-            "/api/v1/reviewer-access/codex/device": 2048,
-            "/api/v1/reviewer-access/codex/recheck": 2048,
-            "/api/v1/reviewer-access/codex/device/cancel": 2048,
-            "/api/v1/reviewer-access/codex": 2048,
-        },
+        path_limits=_BODY_PATH_LIMITS,
     )
 
     @app.middleware("http")
@@ -3067,6 +3071,9 @@ def create_review_app(
         app, application, session_cookie, authenticated_session_cookie
     )
     _register_browse_and_preparation_routes(
+        app, application, session_cookie, authenticated_session_cookie
+    )
+    _register_taste_routes(
         app, application, session_cookie, authenticated_session_cookie
     )
     _register_cover_routes(app, application, session_cookie)
@@ -3379,27 +3386,6 @@ def _register_reviewer_access_routes(
         _require_session(application, ml_session, x_csrf_token)
         try:
             return authority().test_description_model(
-                request.api_key.get_secret_value(), request.model
-            )
-        except (ValueError, *_REVIEWER_FAILURES) as error:
-            raise problem(error) from None
-
-    @app.post(
-        "/api/v1/reviewer-access/taste-model/test",
-        response_model=CoverModelMetadata,
-        responses={
-            status: {"model": _ErrorResponse}
-            for status in (401, 403, 409, 413, 422, 503)
-        },
-    )
-    def test_taste_model(
-        request: _OpenRouterWriteRequest,
-        ml_session: str = Depends(authenticated_session_cookie),
-        x_csrf_token: str = Header(),
-    ) -> CoverModelMetadata:
-        _require_session(application, ml_session, x_csrf_token)
-        try:
-            return authority().test_taste_model(
                 request.api_key.get_secret_value(), request.model
             )
         except (ValueError, *_REVIEWER_FAILURES) as error:
@@ -4644,6 +4630,79 @@ async def _browse_response(
             await watcher
 
 
+def _register_taste_routes(
+    app: FastAPI,
+    application: ReviewApplication,
+    session_cookie: APIKeyCookie,
+    authenticated_session_cookie: _SessionDependency,
+) -> None:
+    """Covers → Taste profile and its model test in Settings (#1372)."""
+
+    @app.post(
+        "/api/v1/reviewer-access/taste-model/test",
+        response_model=CoverModelMetadata,
+        responses={
+            status: {"model": _ErrorResponse}
+            for status in (401, 403, 409, 413, 422, 503)
+        },
+    )
+    def test_taste_model(
+        request: _OpenRouterWriteRequest,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> CoverModelMetadata:
+        _require_session(application, ml_session, x_csrf_token)
+        try:
+            access = application.reviewer_access
+            if access is None:
+                raise HTTPException(503, detail={"code": "reviewer_access_unavailable"})
+            return access.test_taste_model(
+                request.api_key.get_secret_value(), request.model
+            )
+        except (ValueError, *_REVIEWER_FAILURES) as error:
+            status, code = reviewer_failure_response(error)
+            raise HTTPException(status, detail={"code": code}) from None
+
+    @app.get(
+        "/api/v1/covers/taste",
+        response_model=_TasteProfileResponse,
+        responses={status: {"model": _ErrorResponse} for status in (401, 503)},
+    )
+    def taste_profile(
+        ml_session: str | None = Security(session_cookie),
+    ) -> _TasteProfileResponse:
+        """Read-only: the taste profile in use, its versions and build state."""
+        _require_session(application, ml_session)
+        try:
+            return _taste_response(application.taste_profile())
+        except (ReviewApplicationError, ReviewerAccessApplicationError):
+            raise HTTPException(503, detail={"code": "unavailable"}) from None
+
+    @app.post(
+        "/api/v1/covers/taste/retry",
+        response_model=_TasteProfileResponse,
+        responses={
+            status: {"model": _ErrorResponse}
+            for status in (401, 403, 409, 413, 422, 503)
+        },
+    )
+    def retry_taste_build(
+        request: _TasteRetryRequest,
+        ml_session: str | None = Security(session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> _TasteProfileResponse:
+        """Try again after a failed build; repeating it names the same retry."""
+        _require_session(application, ml_session, x_csrf_token)
+        try:
+            application.retry_taste_build(request.build_id)
+            return _taste_response(application.taste_profile())
+        except ReviewApplicationError as error:
+            status = 409 if error.code == "stale" else 503
+            raise HTTPException(status, detail={"code": error.code}) from None
+        except ReviewerAccessApplicationError:
+            raise HTTPException(503, detail={"code": "unavailable"}) from None
+
+
 def _register_cover_routes(
     app: FastAPI, application: ReviewApplication, session_cookie: APIKeyCookie
 ) -> None:
@@ -4684,45 +4743,6 @@ def _register_cover_routes(
             )
 
         return await _browse_response(request, read)
-
-    @app.get(
-        "/api/v1/covers/taste",
-        response_model=_TasteProfileResponse,
-        responses={status: {"model": _ErrorResponse} for status in (401, 503)},
-    )
-    def taste_profile(
-        ml_session: str | None = Security(session_cookie),
-    ) -> _TasteProfileResponse:
-        """Read-only: the taste profile in use, its versions and build state."""
-        _require_session(sessions, ml_session)
-        try:
-            return _taste_response(application.taste_profile())
-        except (ReviewApplicationError, ReviewerAccessApplicationError):
-            raise HTTPException(503, detail={"code": "unavailable"}) from None
-
-    @app.post(
-        "/api/v1/covers/taste/retry",
-        response_model=_TasteProfileResponse,
-        responses={
-            status: {"model": _ErrorResponse}
-            for status in (401, 403, 409, 413, 422, 503)
-        },
-    )
-    def retry_taste_build(
-        request: _TasteRetryRequest,
-        ml_session: str | None = Security(session_cookie),
-        x_csrf_token: str = Header(),
-    ) -> _TasteProfileResponse:
-        """Try again after a failed build; repeating it names the same retry."""
-        _require_session(sessions, ml_session, x_csrf_token)
-        try:
-            application.retry_taste_build(request.build_id)
-            return _taste_response(application.taste_profile())
-        except ReviewApplicationError as error:
-            status = 409 if error.code == "stale" else 503
-            raise HTTPException(status, detail={"code": error.code}) from None
-        except ReviewerAccessApplicationError:
-            raise HTTPException(503, detail={"code": "unavailable"}) from None
 
     @app.get(
         "/api/v1/covers/replaced",
