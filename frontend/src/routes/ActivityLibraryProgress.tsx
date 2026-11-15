@@ -53,11 +53,18 @@ export const ActivityLibraryProgress = ({ http }: { http: ReviewHttp }) => {
       arrived.current = false
       return
     }
-    // Once per arrival, when the card has settled into its place.
+    // Once per arrival, when the card has settled into its place. A frame
+    // later, so a read already cached at mount does not focus the card before
+    // Activity's route-ready focus records what holds focus and moves past it.
     if (arrived.current || query.isPending || !shown) return
-    arrived.current = true
-    section.current?.focus({ preventScroll: true })
-    section.current?.scrollIntoView({ block: 'nearest' })
+    const frame = requestAnimationFrame(() => {
+      arrived.current = true
+      section.current?.focus({ preventScroll: true })
+      section.current?.scrollIntoView({ block: 'nearest' })
+    })
+    return () => {
+      cancelAnimationFrame(frame)
+    }
   }, [hash, query.isPending, shown])
   if (!shown) return null
   return (

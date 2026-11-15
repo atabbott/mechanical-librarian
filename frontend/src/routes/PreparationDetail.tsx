@@ -233,11 +233,12 @@ export const PreparationSummary = ({
   const finished =
     !recoveryRequired &&
     (presentation.state === 'completed_clean' || presentation.state === 'completed_with_failures')
-  if (!finished) return button
+  // One wrapper in every state, so the button stays the same element (and
+  // keeps focus) as a run finishes or a new one starts.
   return (
     <div className="preparation-summary-box">
       {button}
-      <RunLibraryProgress />
+      {finished ? <RunLibraryProgress /> : null}
     </div>
   )
 }

@@ -15726,6 +15726,19 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
       },
     })
 
+  it('groups both numbers of a searched Attention count above 999 (#1335)', async () => {
+    const http = createHttp()
+    http.getLibrary = vi.fn<ReviewHttp['getLibrary']>(async () => counted(1100, 2026))
+    renderRoute('/library?lens=needs_attention&attention=open&q=needle', http)
+    const rail = await screen.findByRole('complementary', { name: 'Attention queue' })
+    expect(
+      await within(rail).findByText('Matching: 1,100 of 1,100 works needing a decision'),
+    ).toBeVisible()
+    await waitFor(() =>
+      expect(worksStatus()).toHaveTextContent(/^Found 1,100 of 1,100 works needing attention$/u),
+    )
+  })
+
   it('V1: a search narrows only the list and the rail, never the badge or its denominators', async () => {
     const user = userEvent.setup()
     const http = createHttp()
@@ -17180,6 +17193,24 @@ describe('Library progress in the finished run box', () => {
     },
   )
 
+  it('focuses the Activity card when Open in Activity arrives with the counts read', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getPreparation = vi.fn(async () => finished('completed_clean'))
+    const { router } = renderRoute('/library?lens=all', http)
+    await waitFor(() => expect(progressLine()).toHaveTextContent('0 of 1 work settled'))
+    const line = progressLine()
+    if (!line) throw new Error('no progress line')
+    // The run's box has read the counts, so Activity's card mounts with them.
+    await user.click(within(line).getByRole('link', { name: 'Open in Activity' }))
+    const card = await screen.findByRole('region', { name: 'Library progress' })
+    expect(router.state.location.hash).toBe('activity-library-progress')
+    await waitFor(() => expect(card).toHaveFocus())
+    // Route-ready focus has had its frames and leaves the card focused.
+    await new Promise((resolve) => window.setTimeout(resolve, 150))
+    expect(card).toHaveFocus()
+  })
+
   it('groups the Works count beside the heading the same way', async () => {
     const http = createHttp()
     http.getLibrary = vi.fn(async () => ({
@@ -17217,10 +17248,58 @@ describe('Library progress in the finished run box', () => {
       })
       await screen.findByRole('button', { name: /^A Book\./u })
       expect(progressLine()).toBeNull()
-      expect(document.querySelector('.preparation-summary-box')).toBeNull()
+      // The box holds the run's button alone.
+      expect(document.querySelector('.preparation-summary-box')?.children).toHaveLength(1)
       expect(http.getLibraryProgress).not.toHaveBeenCalled()
     },
   )
+
+  it('keeps the run button the same element, with focus, as runs finish and start', async () => {
+    const http = createHttp()
+    const done = finished('completed_clean')
+    const running = (runId: string): PreparationView => ({
+      ...done,
+      active: true,
+      actionable: false,
+      presentation: done.presentation && {
+        ...done.presentation,
+        run_id: runId,
+        state: 'running',
+        completed_at: null,
+        dismissible: false,
+      },
+    })
+    const first = running(runId)
+    http.getPreparation = vi.fn(async () => first)
+    const { queryClient } = renderRoute('/library?lens=all', http)
+    const button = await screen.findByRole('button', { name: /^Preparing libraries/u })
+    button.focus()
+    // The run finishes: the same button gains the line beside it.
+    act(() => {
+      queryClient.setQueryData(['review-preparation'], {
+        ...first,
+        active: false,
+        actionable: true,
+        presentation: first.presentation && {
+          ...first.presentation,
+          state: 'completed_clean',
+          completed_at: 120,
+          dismissible: true,
+        },
+      })
+    })
+    await waitFor(() => expect(progressLine()).toHaveTextContent('0 of 1 work settled'))
+    expect(screen.getByRole('button', { name: /^Preparation complete(?! with)/u })).toBe(button)
+    expect(button).toHaveFocus()
+    // A new run starts: still the same button, and the line goes.
+    act(() => {
+      queryClient.setQueryData(['review-preparation'], running(`preparation_run_${'6'.repeat(64)}`))
+    })
+    await screen.findByRole('button', { name: /^Preparing libraries/u })
+    expect(screen.getByRole('button', { name: /^Preparing libraries/u })).toBe(button)
+    expect(button).toHaveFocus()
+    expect(progressLine()).toBeNull()
+  })
 
   it('hides the line while a new run runs and brings it back when that run finishes', async () => {
     const http = createHttp()
