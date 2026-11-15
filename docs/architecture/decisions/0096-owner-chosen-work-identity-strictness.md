@@ -1,6 +1,6 @@
 # ADR-0096: Let the owner choose how strictly title and creator agreement establishes work identity
 
-- Status: accepted (confirmed by the owner on 2026-11-15)
+- Status: accepted (accepted by the owner on 2026-11-15)
 - Date: 2026-11-07
 - Owners: project maintainers
 - Issues: #1355
