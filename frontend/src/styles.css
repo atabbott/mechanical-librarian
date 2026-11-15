@@ -796,7 +796,10 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
 .settings-capabilities > div { display:flex; flex-wrap:wrap; gap:.5rem; margin-top:.25rem; }
 .settings-empty-associations { margin:0; padding:.65rem .7rem; border:1px solid var(--line); border-radius:.45rem; background:var(--surface-strong); }
 .settings-immediate { margin:0; padding:.7rem 1.25rem; border-bottom:1px solid var(--line); border-left:3px solid var(--notice); color:var(--ink); background:var(--notice-soft); font-size:.75rem; line-height:1.45; }
-.settings-immediate-value { display:flex; align-items:center; min-height:44px; color:var(--soft); font-size:.75rem; font-weight:700; }
+/* Theme's three segments share one row, and stack one per row once the row is too narrow for whole words. */
+.settings-theme { container-type:inline-size; }
+.settings-theme .cm-segmented { grid-template-columns:repeat(3,minmax(0,1fr)); }
+@container (max-width:11rem) { .settings-theme .cm-segmented { grid-template-columns:minmax(0,1fr); } }
 .settings-clear-confirmation { display:flex; flex-wrap:wrap; align-items:center; gap:.4rem; padding:.55rem; border:1px solid var(--danger); color:var(--danger); background:var(--danger-soft); }
 .settings-stale-recovery { width:min(100%,98rem); margin:0 auto 1rem; padding:.75rem 1rem; border:1px solid var(--danger); color:var(--danger); background:var(--danger-soft); overflow-wrap:anywhere; }
 /* The saved notice floats above the page's end, clear of any tray, so its

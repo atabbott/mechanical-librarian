@@ -2419,6 +2419,39 @@ describe('Theme rule', () => {
     system.change(true)
     expect(document.documentElement.dataset.theme).toBe('light')
   })
+
+  it('keeps the masthead switch and the Settings choice in step on one page (#1341)', async () => {
+    const system = liveSystem()
+    const user = userEvent.setup()
+    const { view: settingsView } = await import('./settingsFixtures')
+    const http: ReviewHttp = { ...createHttp(), getSettings: vi.fn(async () => settingsView()) }
+    renderRoute('/settings?group=appearance', http)
+    const choice = within(await screen.findByRole('group', { name: 'Theme' }))
+    const pressed = () => choice.getByRole('button', { pressed: true }).textContent
+    expect(pressed()).toBe('Follow system')
+
+    await user.click(screen.getByRole('button', { name: 'Use dark mode' }))
+    expect(pressed()).toBe('Dark')
+    await user.click(screen.getByRole('button', { name: 'Use light mode' }))
+    expect(pressed()).toBe('Light')
+
+    await user.click(choice.getByRole('button', { name: 'Dark' }))
+    expect(screen.getByRole('button', { name: 'Use light mode' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    await user.click(choice.getByRole('button', { name: 'Follow system' }))
+    expect(screen.getByRole('button', { name: 'Use dark mode' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    )
+    system.change(true)
+    expect(screen.getByRole('button', { name: 'Use light mode' })).toBeVisible()
+    expect(pressed()).toBe('Follow system')
+    expect(document.cookie).not.toContain('ml_theme')
+    cleanup()
+    expect(system.listeners.size).toBe(0)
+  })
 })
 
 it('says only that a route is loading, with no eyebrow above it (#1286, #1765)', () => {
