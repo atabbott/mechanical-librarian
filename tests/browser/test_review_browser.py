@@ -4689,7 +4689,12 @@ def test_configured_cover_reviewer_keeps_failed_advice_retryable() -> None:
                 expect(retry).to_have_count(0)
                 # A readable current cover is kept without asking, and the
                 # owner can still choose another one (#1310).
-                expect(page.get_by_text("0 remaining · field 1 of 1")).to_be_visible()
+                expect(
+                    page.locator("dt", has_text=re.compile("^Needs you$")).locator(
+                        "xpath=following-sibling::dd[1]"
+                    )
+                ).to_have_text("0")
+                expect(page.get_by_text(re.compile("remaining ·"))).to_have_count(0)
                 expect(
                     page.get_by_text(
                         "Your current cover is kept, so no review is needed. "
@@ -5018,7 +5023,13 @@ def test_protected_cover_comparison_contains_every_image_without_cropping() -> N
                     track.evaluate("node => getComputedStyle(node).overscrollBehaviorX")
                     == "contain"
                 )
-                expect(page.locator(".cover-track-hint")).to_be_visible()
+                # The row scrolls without a hint telling the owner so.
+                expect(page.locator(".cover-track-hint")).to_have_count(0)
+                expect(
+                    page.get_by_text(
+                        "Every cover is shown whole in one row", exact=False
+                    )
+                ).to_have_count(0)
 
                 for width, size in ((390, "100%"), (390, "200%"), (320, "200%")):
                     page.set_viewport_size({"width": width, "height": 844})
@@ -6456,7 +6467,7 @@ def test_an_admitted_audiobook_is_decided_like_any_other_case(
                         "xpath=following-sibling::dd[1]"
                     )
                 ).to_have_text("0")
-                expect(page.get_by_text(re.compile("^0 remaining"))).to_be_visible()
+                expect(page.get_by_text(re.compile("remaining ·"))).to_have_count(0)
                 for name in ("ASIN", "Narrators"):
                     button = page.get_by_role(
                         "button", name=re.compile(f"^{name}")
@@ -12563,7 +12574,12 @@ def test_audiobook_work_series_title_owner_journey():
             expect(title).to_have_attribute("aria-checked", "true")
             # Only the book's own fields are offered; the subtitle, cover and
             # recording rows stay out.
-            expect(page.get_by_text("field 2 of 4", exact=False)).to_be_visible()
+            rail_fields = page.get_by_role("navigation", name="Review fields").locator(
+                "button:not(.field-more)"
+            )
+            expect(rail_fields).to_have_count(4)
+            expect(rail_fields.nth(1)).to_have_attribute("aria-current", "true")
+            expect(rail_fields.nth(1)).to_contain_text("Title")
             for field, count in (
                 ("Description", 1),
                 ("Title", 1),
@@ -14858,13 +14874,15 @@ def test_measured_cover_rules_keep_or_suggest_through_covers(
                                 node => node.textContent === 'Image unavailable')
                               return {
                                 lines: lines.size,
-                                parent: hold.parentElement === item ? 1 : 0,
+                                // It shares the pills' row inside the item.
+                                parent: hold.parentElement.classList.contains('covers-queue-pills')
+                                  && hold.parentElement.parentElement === item ? 1 : 0,
                                 frame: frame.textContent.length,
                                 stateWidth: state.getBoundingClientRect().width,
                                 // The pill sits just under the text, not
                                 // under the taller thumbnail.
                                 gap: hold.getBoundingClientRect().top
-                                  - item.querySelector(':scope > span:not(.status-pill, .covers-image-missing)').getBoundingClientRect().bottom,
+                                  - item.querySelector(':scope > span:not(.status-pill, .covers-image-missing, .covers-queue-pills)').getBoundingClientRect().bottom,
                                 radius: parseFloat(getComputedStyle(hold).borderTopLeftRadius),
                                 height: hold.getBoundingClientRect().height,
                               }

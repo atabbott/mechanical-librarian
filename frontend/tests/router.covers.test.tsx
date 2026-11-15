@@ -215,7 +215,7 @@ const wideScreen = () =>
 afterEach(() => vi.unstubAllGlobals())
 
 describe('Covers view (#1633)', () => {
-  it('switches from Works to Covers above the heading and focuses the heading', async () => {
+  it('switches from Works to Covers beside the Library heading and focuses the heading', async () => {
     const user = userEvent.setup()
     const http = coversHttp({ decide })
     const { router } = renderRoute('/library?lens=all', {
@@ -228,11 +228,21 @@ describe('Covers view (#1633)', () => {
       'true',
     )
     await user.click(within(switcher).getByRole('button', { name: 'Covers' }))
-    const heading = await screen.findByRole('heading', { level: 1, name: 'Covers' })
+    await waitFor(() =>
+      expect(router.state.location.search).toEqual({ lens: 'all', view: 'covers', tab: 'decide' }),
+    )
+    // Covers keeps the one "Library" page title, with the switch beside it, and
+    // has no "Covers" heading of its own.
+    const heading = await screen.findByRole('heading', { level: 1, name: 'Library' })
     await waitFor(() => expect(heading).toHaveFocus())
+    expect(screen.queryByRole('heading', { name: 'Covers' })).toBeNull()
     const moved = screen.getByRole('group', { name: 'Library views' })
-    expect(moved.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(router.state.location.search).toEqual({ lens: 'all', view: 'covers', tab: 'decide' })
+    expect(within(moved).getByRole('button', { name: 'Covers' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    expect(heading.closest('.library-title')).toContainElement(moved)
+    expect(heading.compareDocumentPosition(moved) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     const tabs = screen.getByRole('navigation', { name: 'Cover views' })
     expect(await within(tabs).findByRole('button', { name: 'To decide 2' })).toHaveAttribute(
       'aria-pressed',
@@ -251,8 +261,17 @@ describe('Covers view (#1633)', () => {
   it('opens the first undecided book beside the list on a wide screen', async () => {
     wideScreen()
     const { router } = renderRoute('/library?lens=all&view=covers', coversHttp({ decide }))
-    expect(await screen.findByRole('heading', { level: 2, name: 'First Book' })).toBeVisible()
+    const heading = await screen.findByRole('heading', { level: 2, name: 'First Book' })
+    expect(heading).toBeVisible()
     expect(router.state.location.search.cover).toBe('case-1')
+    // The title is a plain heading; the way back to Works is its own link by the byline.
+    expect(within(heading).queryByRole('link')).toBeNull()
+    const header = heading.closest('header')
+    if (!header) throw new Error('the comparison header is required')
+    expect(within(header).getByRole('link', { name: 'Open in Works' })).toHaveAttribute(
+      'href',
+      '/library?lens=all&preview=case-1',
+    )
   })
 
   it('says why a cover that contradicts the book cannot be chosen (#1790)', async () => {
@@ -1341,7 +1360,9 @@ describe('Measured cover rules (#1363)', () => {
     // is not squeezed into the title column (#1866).
     const pill = within(row).getByText("Cover's source names another book")
     expect(pill).toHaveClass('covers-queue-hold')
-    expect(pill.parentElement).toHaveClass('covers-queue-item')
+    // It shares a row with the status pill, both inside the item.
+    expect(pill.parentElement).toHaveClass('covers-queue-pills')
+    expect(pill.parentElement?.parentElement).toHaveClass('covers-queue-item')
   })
 
   it('says why an unreadable cover was switched and lists it under Show (#1362)', async () => {
@@ -1695,7 +1716,7 @@ describe('Covers → Taste profile (#1372)', () => {
     expect(await screen.findByText(copy)).toBeVisible()
     // The route's own focus move is deferred a frame. Under load it can land
     // after the click and take focus from the region, so it is waited for.
-    const heading = screen.getByRole('heading', { level: 1, name: 'Covers' })
+    const heading = screen.getByRole('heading', { level: 1, name: 'Library' })
     await waitFor(() => expect(heading).toHaveFocus())
     await user.click(screen.getByRole('button', { name: 'Try again' }))
     expect(http.retryTasteBuild).toHaveBeenCalledWith(`taste_build_${'b'.repeat(32)}`)

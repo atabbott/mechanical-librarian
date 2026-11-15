@@ -556,9 +556,8 @@ describe('a field Book matching substituted and made choosable', () => {
       getLibrary: vi.fn(async () => library),
     }
     renderRoute('/library?lens=all&preview=case-1&field=title', http)
-    expect(await questionLine()).toHaveTextContent(
-      'None of these values can be applied for you. Compare them yourself.',
-    )
+    expect(await questionLine()).toHaveTextContent('None of these values can be applied for you.')
+    expect(await questionLine()).not.toHaveTextContent('Compare them yourself.')
     expect(proposed()).toBeEnabled()
     expect(screen.queryByText('No source offered a value that can be used here.')).toBeNull()
   })
