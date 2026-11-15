@@ -582,3 +582,9 @@ level. The metadata report, proposal policy, shadow decision policy and
 decision-set versions do not move: live decisions are unchanged at every
 level. Every earlier application database is rejected before mutation and
 needs a clean rebuild; no adoption is supplied.
+
+Issue #1372's Codex taste profile (PR 1c) takes the clean-rebuild branch.
+`reviewer-access-v5` lets the `cover_taste_build` task select Codex, which a
+v4 reader refuses, so a v4 document is refused, and `reviewer-access-view-v5`
+carries that choice to the browser. Every earlier application database is
+rejected before mutation and needs a clean rebuild; no adoption is supplied.

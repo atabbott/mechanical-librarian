@@ -1431,8 +1431,8 @@
             "type": "integer"
           },
           "schema_version": {
-            "const": "reviewer-access-view-v4",
-            "default": "reviewer-access-view-v4",
+            "const": "reviewer-access-view-v5",
+            "default": "reviewer-access-view-v5",
             "title": "Schema Version",
             "type": "string"
           },
@@ -1446,12 +1446,27 @@
           "taste_mapping": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/OpenRouterTaskSelection"
+                "discriminator": {
+                  "mapping": {
+                    "codex": "#/components/schemas/CodexTaskSelection",
+                    "openrouter": "#/components/schemas/OpenRouterTaskSelection"
+                  },
+                  "propertyName": "engine"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/CodexTaskSelection"
+                  },
+                  {
+                    "$ref": "#/components/schemas/OpenRouterTaskSelection"
+                  }
+                ]
               },
               {
                 "type": "null"
               }
-            ]
+            ],
+            "title": "Taste Mapping"
           },
           "taste_metadata": {
             "anyOf": [
