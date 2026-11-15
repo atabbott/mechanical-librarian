@@ -11,7 +11,7 @@ import time
 from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager, ExitStack, nullcontext
 from dataclasses import dataclass
-from functools import partial
+from functools import lru_cache, partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict, cast
 
@@ -162,6 +162,11 @@ from mechanical_librarian.application.cover_consideration import (
 )
 from mechanical_librarian.application.cover_policy import cover_policy_of
 from mechanical_librarian.application.cover_retention import CoverRetention
+from mechanical_librarian.application.cover_taste_build import (
+    CoverTasteBuildService,
+    CoverTasteRepository,
+    CoverTasteRepositoryLease,
+)
 from mechanical_librarian.application.decision_preview import preview_shadow_decision
 from mechanical_librarian.application.description_advice import (
     admit_staged_description,
@@ -1685,6 +1690,7 @@ def create_review_pipeline(
     # This composition root reads the review configuration unconditionally, so
     # an absent one is already a configuration failure before this point.
     review_configuration = cast("ReviewWebConfiguration", configuration.review)
+    taste_lease = CoverTasteRepositoryLease(observation_repository_factory)
     return ReviewPreparationSupervisor(
         pipeline,
         polling_interval_seconds=review_configuration.library_polling_interval_seconds,
@@ -1694,6 +1700,13 @@ def create_review_pipeline(
         recovery_drain=recovery_cancel.set,
         recovery_resume=recovery_cancel.clear,
         on_stop=provider_recovery.close,
+        background_wake=_compose_cover_taste(
+            taste_lease.store,
+            artifact_store_path,
+            review_configuration,
+            reviewer_access,
+        ).wake,
+        background_close=taste_lease.close,
     )
 
 
@@ -2337,6 +2350,12 @@ def compose_store_runtime_generation(
                 cover_considerations=cover_considerations,
                 settings=OwnerSettingsOperations(settings_store),
                 reviewer_access=reviewer_access,
+                cover_taste=_compose_cover_taste(
+                    repository.cover_taste_store,
+                    artifact_store_path,
+                    review,
+                    reviewer_access,
+                ),
                 align_book_matching=partial(
                     repository.align_book_matching, review.work_identity.value
                 ),
@@ -2880,6 +2899,12 @@ def run_review_server(
                     cover_considerations=cover_considerations,
                     settings=settings,
                     reviewer_access=reviewer_access,
+                    cover_taste=_compose_cover_taste(
+                        repository.cover_taste_store,
+                        artifact_store_path,
+                        review,
+                        reviewer_access,
+                    ),
                     first_boot=first_boot,
                     provider_throttling=_provider_throttling_reader(
                         provider_recovery, configuration, credentials, "managed_by_file"
@@ -3172,6 +3197,26 @@ def _compose_reviewer_access(
         ),
         openrouter_factory=lambda key, model: OpenRouterReviewer(key, model),
         codex_description_binding=description_binding,
+        taste_daily_requests=review.cover_taste_build_daily_requests,
+    )
+
+
+def _compose_cover_taste(
+    repository: Callable[[], CoverTasteRepository],
+    artifact_store_path: Path,
+    review: ReviewWebConfiguration,
+    reviewer_access: ReviewerAccessOperations,
+) -> CoverTasteBuildService:
+    """Wire one taste profile build service over one repository (#1372)."""
+    # The artifact store opens on the first preview read, never at composition.
+    artifacts = lru_cache(maxsize=1)(
+        lambda: CoverArtifactStore(artifact_store_path, create=False)
+    )
+    return CoverTasteBuildService(
+        repository,
+        reviewer_access,
+        lambda digest: artifacts().read_preview_digest(digest),
+        daily_limit=review.cover_taste_build_daily_requests,
     )
 
 

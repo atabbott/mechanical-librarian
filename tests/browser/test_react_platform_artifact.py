@@ -209,6 +209,10 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                             "candidates": [],
                             "free_tier_caveat": "Synthetic reviewer capability.",
                             "data_use_caveat": "Synthetic cover evidence only.",
+                            "taste_mapping": None,
+                            "taste_metadata": None,
+                            "taste_daily_requests": 8,
+                            "taste_recommendations": ["anthropic/claude-sonnet-5.5"],
                         }
                     ),
                 )
