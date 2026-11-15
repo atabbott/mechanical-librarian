@@ -1516,6 +1516,17 @@ def test_codex_taste_counts_as_configured_only_while_the_sign_in_is_usable(
     assert (operations.current_taste_build_model() == "gpt-5.4") is configured
 
 
+def test_codex_taste_counts_as_unconfigured_on_a_host_that_cannot_run_it() -> None:
+    """A host that lost the headroom Codex needs schedules no taste build."""
+    operations, _auth, _openrouter, _codex = _operations(auth_state="usable")
+    operations.select_codex(expected_revision=1, task="cover_taste_build")
+    assert operations.current_taste_build_model() == "gpt-5.4"
+    operations._codex_host = lambda: ReviewerHostStatus(
+        False, "headroom_below_1_gib", 512 * 1024**2
+    )
+    assert operations.current_taste_build_model() is None
+
+
 def test_codex_sign_in_changes_clear_only_codex_taste_and_openrouter_clear_keeps_it():
     """Start and clear Codex drop a Codex taste task; clearing OpenRouter keeps it."""
     operations, auth, _openrouter, _codex = _operations(auth_state="usable")

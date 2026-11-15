@@ -8,8 +8,9 @@ what the model receives is in the
 [AI trust boundary](../architecture/ai-boundary.md#taste-profile-builder).
 
 Before the first profile, it reads "No taste profile yet" and says what is
-missing: "Choose a taste profile model in Settings.", linking to Settings →
-Reviewer, or "Mechanical Librarian writes it once you have chosen 25 covers in
+missing: "Set up the taste profile model in Settings.", linking to Settings →
+Reviewer (no model is chosen, or its Codex sign-in or OpenRouter key is not
+ready), or "Mechanical Librarian writes it once you have chosen 25 covers in
 To decide. You have chosen {n}.", linking to To decide. A first profile needs
 25 recorded choices and a later one 10 more; at most 4 are scheduled a day.
 

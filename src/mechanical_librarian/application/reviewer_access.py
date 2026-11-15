@@ -714,15 +714,17 @@ class ReviewerAccessOperations:
     def current_taste_build_model(self) -> str | None:
         """The selected taste model, without any transport or process.
 
-        OpenRouter needs its key saved. Codex needs its profile provisioned and
-        its sign-in usable, read from the recorded flow or the installed files
-        as the access view reads it, so a lapsed sign-in schedules no build.
+        OpenRouter needs its key saved. Codex needs its profile provisioned, a
+        host that can run it and its sign-in usable, each read as the access
+        view reads it, so a lapsed sign-in or host schedules no build.
         """
         document, key = self._snapshot()
         selection = document.cover_taste_build
         if isinstance(selection, CodexTaskSelection):
             try:
                 model, _profile = self._codex_identity()
+                if not self._codex_host().available:
+                    return None
                 credential = self.codex_status()
             except (OSError, RuntimeError):
                 return None
