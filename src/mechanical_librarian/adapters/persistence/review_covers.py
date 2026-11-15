@@ -168,17 +168,16 @@ _CHOOSABLE_SQL = (
     "WHERE result.review_case_id=ml.review_case_id "
     "AND result.destination='cover'),0)"
 )
-# The owner chose a proposed cover over the work's current comparison and its
-# write has not verified yet, so the cover Audiobookshelf holds is not the one
-# kept (#1866). A Put back stays with its switch, which the CASE reads first;
-# once the write verifies, the work reads as kept.
+# The owner's current selection chose a proposed cover and its write has not
+# verified yet, so the cover Audiobookshelf holds is not the one kept (#1866).
+# The selection stays the owner's choice when a later comparison is prepared
+# (a policy change), so it is read from the current selection, not the
+# current comparison. A Put back stays with its switch, which the CASE reads
+# first; once the write verifies, the work reads as kept.
 _CHOSEN_SQL = (
     "EXISTS (SELECT 1 FROM current_cover_selection_authorities current "
     "JOIN cover_selection_authorities answered "
     "ON answered.selection_id=current.selection_id "
-    "JOIN current_cover_considerations pointer "
-    "ON pointer.review_case_id=ml.review_case_id "
-    "AND pointer.consideration_id=answered.consideration_id "
     "WHERE current.connection_name=ml.connection_name "
     "AND current.library_name=ml.library_name AND current.item_id=ml.item_id "
     "AND answered.kind='owner' "

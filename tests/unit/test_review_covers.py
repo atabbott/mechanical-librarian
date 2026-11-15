@@ -24,6 +24,7 @@ from mechanical_librarian.application.configuration import ReviewWebConfiguratio
 from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
 )
+from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.review_covers import (
     COVER_PAGE_SIZE,
     cover_page,
@@ -866,6 +867,50 @@ def test_a_chosen_cover_not_yet_written_is_your_choice_under_all_only(
         # The thumbnail stays the cover Audiobookshelf holds now (Q5).
         assert str(row["cover"]["url"]).startswith("/api/v1/library/cover?")
         assert row["choosable"] is True
+
+
+def test_a_chosen_cover_stays_your_choice_after_a_new_comparison(
+    tmp_path: Path,
+) -> None:
+    """#1866 S4: a policy change that prepares a new comparison leaves the
+    owner's pending choice current, so the work still reads ``chosen``."""
+    with _library(tmp_path) as library:
+        case_id = library.cases["item-1"]
+        with _client(library) as (client, headers):
+            response = _post_cover_decision(
+                client,
+                headers,
+                case_id,
+                "owner-cover-answer-0001",
+                outcome="accept",
+                kind="candidate",
+            )
+            assert response.status_code == 200, response.text
+            before = library.repository._connection.execute(
+                "SELECT consideration_id FROM current_cover_considerations "
+                "WHERE review_case_id=?",
+                (case_id,),
+            ).fetchone()[0]
+            library.service.update_policy(CoverPolicy(prefer_edition=True))
+            case = ReviewCase.create_from_data(
+                json.loads(library.repository.get_review_case(case_id))["case"]
+            )
+            library.service.ensure(
+                case_id,
+                library.report.to_json(),
+                next(v for v in case.proposals if v["destination"] == "cover"),
+            )
+            after = library.repository._connection.execute(
+                "SELECT consideration_id FROM current_cover_considerations "
+                "WHERE review_case_id=?",
+                (case_id,),
+            ).fetchone()[0]
+            every = client.get("/api/v1/covers?view=all").json()
+
+    assert after != before
+    (row,) = every["items"]
+    assert row["group"] == "chosen"
+    assert every["counts"]["kept"] == 0
 
 
 def test_a_cursor_carries_the_longest_accepted_title_and_item(
