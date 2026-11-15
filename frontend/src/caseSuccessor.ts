@@ -3,7 +3,6 @@
 // Library updates name, and the move to the one that targets the same item.
 // While a move is under way the selected case's absence is that move, not news.
 // Moved out of the Library route under the route-size rule (#1903).
-import { useQuery } from '@tanstack/react-query'
 import type { QueryClient } from '@tanstack/react-query'
 import type { UseNavigateResult } from '@tanstack/react-router'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
@@ -12,7 +11,7 @@ import type { RefObject } from 'react'
 import { ApiError } from './api/http'
 import type { CaseDetailView, LibraryView, LibraryWorkView, ReviewHttp } from './api/http'
 import { coalesceMilliseconds } from './liveInvalidation'
-import { queryWorkClass } from './queryWork'
+import { queryWorkClass, useRequiredQuery as useQuery } from './queryWork'
 import { detailQuery } from './router'
 import type { RouterContext } from './router'
 
