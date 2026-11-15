@@ -123,6 +123,20 @@ def _reports() -> dict[str, MetadataReport]:
         "overlap": level_sets._report(
             _record("overlap-1", (_FIRST, _THIRD)), authors=(_FIRST, _SECOND)
         ),
+        # Neutral unbound creators A+C against A+B: the level admitted it
+        # before; the overlap refusal now refuses it.
+        "overlap_before": level_sets._report(
+            _record("overlap-2", (_FIRST, _THIRD), role=None),
+            authors=(_FIRST, _SECOND),
+        ),
+        # Two works in one set, neutral unbound creators A and A+C against
+        # A+B: before, both met the level, so both were ambiguous; now A+C
+        # is refused for the overlap, so A is admitted (a set-level change).
+        "ambiguous_before": level_sets._report(
+            _record("sibling-a", (_FIRST,), role=None),
+            _record("sibling-c", (_FIRST, _THIRD), role=None),
+            authors=(_FIRST, _SECOND),
+        ),
         # The same author, respelled so only the initials fold matches.
         "equal": level_sets._report(_record("equal-1", (retained.FOLDED,))),
         "truncated": _truncated(),
@@ -142,6 +156,20 @@ def _store(path: Path, reports: dict[str, MetadataReport]) -> Path:
     finally:
         repository.close()
     return path
+
+
+def _verdicts(**counts: int) -> dict[str, int]:
+    return {verdict: counts.get(verdict, 0) for verdict in replay_script.VERDICTS}
+
+
+def _change(records: int = 0, books: int = 0, **relations: int) -> dict[str, object]:
+    return {
+        "records": records,
+        "books": books,
+        "relations": {
+            relation: relations.get(relation, 0) for relation in replay_script.RELATIONS
+        },
+    }
 
 
 def _run(*argv: str) -> tuple[int, str, str]:
@@ -171,52 +199,33 @@ def test_the_replay_counts_each_relation_and_lists_the_nested_admissions(
     ]
     summary = json.loads(stdout)
     assert summary["reports"] == {
-        "read": 6,
-        "replayed": 6,
+        "read": 8,
+        "replayed": 8,
         "not_replayed": {"schema_unsupported": 0, "replay_failed": 0},
     }
     refused = summary["records"]["refused"]
-    assert refused["nested"] == {
-        "admitted": 2,
-        "refused": 0,
-        "ambiguous": 0,
-        "truncated": 0,
-    }
-    assert refused["overlap"] == {
-        "admitted": 0,
-        "refused": 1,
-        "ambiguous": 0,
-        "truncated": 0,
-    }
-    assert refused["same"] == {
-        "admitted": 1,
-        "refused": 0,
-        "ambiguous": 0,
-        "truncated": 5,
-    }
-    assert (
-        refused["disjoint"]
-        == refused["no_authors"]
-        == dict.fromkeys(replay_script.VERDICTS, 0)
-    )
+    assert refused["nested"] == _verdicts(admitted=3)
+    assert refused["overlap"] == _verdicts(refused=3)
+    assert refused["same"] == _verdicts(admitted=1, truncated=5)
+    assert refused["disjoint"] == refused["no_authors"] == _verdicts()
     live = summary["records"]["live"]
     # The synopsis report's two live answers name the item's one author.
-    assert live["same"] == {
-        "admitted": 2,
-        "refused": 0,
-        "ambiguous": 0,
-        "truncated": 0,
-    }
-    assert live["nested"] == live["overlap"] == dict.fromkeys(replay_script.VERDICTS, 0)
+    assert live["same"] == _verdicts(admitted=2)
+    assert live["nested"] == live["overlap"] == _verdicts()
     assert summary["newly_admitted"] == {
-        "live": {"records": 0, "books": 0, "live_identity_already_admits": 0},
-        "refused": {"records": 1, "books": 1},
+        "live": {**_change(), "live_identity_already_admits": 0},
+        "refused": _change(2, 2, nested=2),
+        "books": 2,
+    }
+    assert summary["no_longer_admitted"] == {
+        "live": _change(),
+        "refused": _change(1, 1, overlap=1),
         "books": 1,
     }
-    assert summary["nested_admitted_before"] == {
-        "live": {"records": 0, "books": 0},
-        "refused": {"records": 1, "books": 1},
-        "books": 1,
+    assert summary["still_admitted"] == {
+        "live": _change(2, 1, same=2),
+        "refused": _change(2, 2, nested=1, same=1),
+        "books": 3,
     }
     assert summary["detail_written"] is True
     # The summary carries counts only: no title, author or item reaches stdout.
@@ -225,44 +234,51 @@ def test_the_replay_counts_each_relation_and_lists_the_nested_admissions(
 
     document = json.loads(detail.read_text(encoding="utf-8"))
     assert detail.stat().st_mode & 0o777 == 0o600
-    rows = {row["record"]["identity"]: row for row in document["nested_admitted"]}
-    assert set(rows) == {"nested-1", "nested-2"}
-    assert (rows["nested-2"]["book"]["item"], rows["nested-2"]["new"]) == (
-        "item-nested_before",
-        False,
+    rows = {row["record"]["identity"]: row for row in document["newly_admitted"]}
+    assert set(rows) == {"nested-1", "sibling-a"}
+    assert (rows["sibling-a"]["book"]["item"], rows["sibling-a"]["before"]) == (
+        "item-ambiguous_before",
+        "ambiguous",
     )
-    assert [rows["nested-1"]] == [
-        {
-            "book": {
-                "library": "ebooks",
-                "item": "item-nested",
-                "title": retained.TITLE,
-                "authors": [_FIRST],
-            },
-            "record": {
-                "provider": retained.PROVIDER,
-                "identity": "nested-1",
-                "work_identity": "unresolved",
-                "title": retained.TITLE,
-                "authors": [_FIRST, _SECOND],
-            },
-            "source": "refused",
-            "fewer_authors": "book",
-            "verdict": "admitted",
-            "creator_comparison": "closed",
-            "new": True,
-        }
-    ]
-    (overlap,) = document["overlap_refused"]
+    assert rows["nested-1"] == {
+        "book": {
+            "library": "ebooks",
+            "item": "item-nested",
+            "title": retained.TITLE,
+            "authors": [_FIRST],
+        },
+        "record": {
+            "provider": retained.PROVIDER,
+            "identity": "nested-1",
+            "work_identity": "unresolved",
+            "title": retained.TITLE,
+            "authors": [_FIRST, _SECOND],
+        },
+        "source": "refused",
+        "fewer_authors": "book",
+        "relation": "nested",
+        "verdict": "admitted",
+        "before": "refused",
+    }
+    (gone,) = document["no_longer_admitted"]
+    assert (gone["record"]["identity"], gone["verdict"], gone["before"]) == (
+        "overlap-2",
+        "refused",
+        "admitted",
+    )
+    overlaps = {row["record"]["identity"]: row for row in document["overlap_refused"]}
+    assert set(overlaps) == {"overlap-1", "overlap-2", "sibling-c"}
+    overlap = overlaps["overlap-1"]
     assert (overlap["book"]["authors"], overlap["record"]["authors"]) == (
         [_FIRST, _SECOND],
         [_FIRST, _THIRD],
     )
-    assert (overlap["source"], overlap["verdict"], overlap["fewer_authors"]) == (
-        "refused",
-        "refused",
-        "neither",
-    )
+    assert (
+        overlap["source"],
+        overlap["verdict"],
+        overlap["before"],
+        overlap["fewer_authors"],
+    ) == ("refused", "refused", "refused", "neither")
 
 
 def test_the_detail_file_is_never_replaced(tmp_path: Path) -> None:
@@ -341,21 +357,50 @@ def test_the_help_says_what_it_does(capsys: pytest.CaptureFixture[str]) -> None:
 
 def test_one_report_gives_one_verdict_per_record() -> None:
     (verdict,) = replay_script.replay_records(_reports()["nested"])
-    assert (verdict.source, verdict.relation, verdict.verdict) == (
+    assert (verdict.source, verdict.relation, verdict.verdict, verdict.before) == (
         "refused",
         "nested",
         "admitted",
+        "refused",
     )
-    assert (verdict.already_admitted, verdict.new) == (False, True)
+    assert (verdict.already_admitted, verdict.change) == (False, "newly_admitted")
 
 
 def test_a_nested_record_the_classifier_could_not_contradict_is_not_new() -> None:
     """Neutral unbound creators: admitted today and before the amendment."""
     (verdict,) = replay_script.replay_records(_reports()["nested_before"])
-    assert (verdict.source, verdict.relation, verdict.verdict, verdict.new) == (
-        "refused",
+    assert (verdict.relation, verdict.verdict, verdict.before, verdict.change) == (
         "nested",
         "admitted",
-        False,
+        "admitted",
+        "still_admitted",
     )
-    assert verdict.detail["new"] is False
+
+
+def test_a_record_admitted_once_its_overlapping_sibling_is_refused_is_new() -> None:
+    """The set rule: ambiguous before beside an overlapping work, admitted now."""
+    first, second = replay_script.replay_records(_reports()["ambiguous_before"])
+    assert (first.relation, first.verdict, first.before, first.change) == (
+        "nested",
+        "admitted",
+        "ambiguous",
+        "newly_admitted",
+    )
+    assert (second.relation, second.verdict, second.before, second.change) == (
+        "overlap",
+        "refused",
+        "ambiguous",
+        None,
+    )
+
+
+def test_the_previous_composition_is_restored() -> None:
+    """The before pass swaps the contradiction only for its own duration."""
+    from mechanical_librarian.domain import proposal_set
+
+    current = proposal_set.level_contradiction
+    with pytest.raises(RuntimeError, match="stop"):
+        with replay_script._previous_composition():
+            assert proposal_set.level_contradiction is not current
+            raise RuntimeError("stop")
+    assert proposal_set.level_contradiction is current

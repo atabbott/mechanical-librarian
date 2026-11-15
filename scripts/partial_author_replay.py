@@ -14,26 +14,32 @@ replayed, never upgraded or guessed at. For every provider record in each
 report, the live answers (``candidates``) and the refused answers retained
 for the levels (``identity_refused_candidates``), it asks the level seam
 (``provider_candidate_level_admission`` at ``title_and_creator``) for its
-verdict, and relates the book's stored authors to the record's work authors
-(``creator_list_relation`` with the dotted-initials fold) from the inputs the
-seam itself reads (``level_identity_inputs``).
+verdict twice: as this checkout composes the level now, and as it was
+composed before the amendment. It also relates the book's stored authors to
+the record's work authors (``creator_list_relation`` with the
+dotted-initials fold) from the inputs the seam itself reads
+(``level_identity_inputs``).
+
+The "before" verdict is the whole seam, set rule included, with only the
+contradiction check swapped: before the amendment ``title_and_creator`` read
+the contradictions that ``title_and_creator_exact`` still reads, word for
+word (ADR-0096 amendment, contract S3). So a record can change because of
+its own author list or because a sibling in its set changed: a record that
+was ambiguous beside an overlapping one is admitted once that one is
+refused.
 
 It prints one JSON summary to stdout, counts only: reports read, replayed
-and not replayed; records per source (live, refused), author relation (same,
-nested, overlap, disjoint, or no_authors when either side names none) and
-verdict (admitted, refused, ambiguous, truncated); and the records newly
-admitted by the widening, with the number of distinct books. A record is new
-when its relation is nested, the level admits it, and the classifier's
-explicit-contradiction check without partial author lists, the check the
-level composed before the amendment, refuses it. A nested record that check
-does not refuse (for example one whose creators are neither labelled
-authors nor bound to an identity) was admitted before too; it is counted
-under ``nested_admitted_before``.
+and not replayed; records now per source (live, refused), author relation
+(same, nested, overlap, disjoint, or no_authors when either side names none)
+and verdict (admitted, refused, ambiguous, truncated); and, per source with
+distinct books and by relation, the records newly admitted (admitted now,
+not before), no longer admitted (admitted before, not now) and still
+admitted (both).
 
 Names leave the script only with ``--detail PATH``: a new owner-only JSON
-file (an existing path is refused) listing each admitted nested record,
-marked ``new`` true or false, for a by-hand check that it is the same book,
-and each overlapping record the level refuses, so a wrong refusal can be
+file (an existing path is refused) listing each newly admitted record, for a
+by-hand check that it is the same book, each record no longer admitted, and
+each overlapping record the level now refuses, so a wrong refusal can be
 spotted. Keep that file private.
 
 The application database is ``/data/application.sqlite3`` inside the
@@ -65,20 +71,20 @@ import sqlite3
 import sys
 from collections import Counter
 from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TextIO, cast
 from urllib.parse import quote
 
+from mechanical_librarian.domain import proposal_set
 from mechanical_librarian.domain.metadata_report import (
     REPORT_SCHEMA,
     MetadataReport,
     ProviderCandidate,
     ProviderObservation,
-    WorkIdentityContradiction,
     creator_comparison_key,
     creator_list_relation,
-    provider_candidate_work_identity_contradiction,
 )
 from mechanical_librarian.domain.proposal_set import (
     LevelIdentityInputs,
@@ -90,7 +96,9 @@ from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 
 SCHEMA = "partial-author-replay-v1"
 LEVEL = WorkIdentityLevel.TITLE_AND_CREATOR
+PREVIOUS_CONTRADICTION_LEVEL = WorkIdentityLevel.TITLE_AND_CREATOR_EXACT
 SOURCES = ("live", "refused")
+CHANGES = ("newly_admitted", "no_longer_admitted", "still_admitted")
 RELATIONS = ("same", "nested", "overlap", "disjoint", "no_authors")
 VERDICTS = ("admitted", "refused", "ambiguous", "truncated")
 NOT_REPLAYED = ("schema_unsupported", "replay_failed")
@@ -113,14 +121,34 @@ class Refusal(Exception):
 
 @dataclass(frozen=True, slots=True)
 class RecordVerdict:
-    """One provider record's verdict at the level and its author relation."""
+    """One provider record's verdicts now and before, and its author relation."""
 
     source: str
     relation: str
     verdict: str
+    before: str
     already_admitted: bool
-    new: bool
     detail: dict[str, object]
+
+    @property
+    def change(self) -> str | None:
+        now, then = self.verdict == "admitted", self.before == "admitted"
+        if now and then:
+            return "still_admitted"
+        if now:
+            return "newly_admitted"
+        return "no_longer_admitted" if then else None
+
+
+@dataclass(slots=True)
+class ChangeTally:
+    """The records of one change, per source, with their books."""
+
+    records: Counter[tuple[str, str]] = field(default_factory=Counter)
+    books: dict[str, set[Book]] = field(
+        default_factory=lambda: {source: set() for source in SOURCES}
+    )
+    rows: list[dict[str, object]] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -130,16 +158,10 @@ class Replay:
     read: int = 0
     not_replayed: Counter[str] = field(default_factory=Counter)
     records: Counter[tuple[str, str, str]] = field(default_factory=Counter)
-    newly_admitted: Counter[str] = field(default_factory=Counter)
-    newly_admitted_books: dict[str, set[Book]] = field(
-        default_factory=lambda: {source: set() for source in SOURCES}
+    changes: dict[str, ChangeTally] = field(
+        default_factory=lambda: {change: ChangeTally() for change in CHANGES}
     )
     already_admitted: int = 0
-    nested_before: Counter[str] = field(default_factory=Counter)
-    nested_before_books: dict[str, set[Book]] = field(
-        default_factory=lambda: {source: set() for source in SOURCES}
-    )
-    nested_admitted: list[dict[str, object]] = field(default_factory=list)
     overlap_refused: list[dict[str, object]] = field(default_factory=list)
 
     @property
@@ -233,57 +255,76 @@ def _detail(
     }
 
 
-def _refused_before(candidate: ProviderCandidate, inputs: LevelIdentityInputs) -> bool:
-    """Whether the level's composition before partial author lists refused it.
+@contextmanager
+def _previous_composition() -> Iterator[None]:
+    """The level seam as composed before the amendment, for this pass only.
 
-    For a nested list the two compositions differ only in the classifier:
-    the overlap refusal never applies to nested lists and every other
-    contradiction is the same, so the old refusal is the classifier's
-    explicit contradiction read without ``partial_authors``.
+    Before the amendment, ``title_and_creator`` read the contradictions
+    ``title_and_creator_exact`` still reads, word for word (contract S3);
+    the predicate and the set rule did not change. The seam looks
+    ``level_contradiction`` up in its module on every call, so replacing it
+    there for the duration of one single-threaded pass replays the previous
+    verdicts, set rule included, without a product option no product code
+    would use. It is restored before the pass returns, even on failure.
     """
-    return (
-        inputs.target_title is not None
-        and bool(inputs.target_authors)
-        and provider_candidate_work_identity_contradiction(
-            candidate, inputs.target_title, inputs.target_authors, fold_initials=True
+    current = proposal_set.level_contradiction
+
+    def previous(
+        report: MetadataReport,
+        provider: ProviderObservation,
+        candidate: ProviderCandidate,
+        level: WorkIdentityLevel,
+    ) -> bool:
+        return current(
+            report,
+            provider,
+            candidate,
+            PREVIOUS_CONTRADICTION_LEVEL if level is LEVEL else level,
         )
-        is WorkIdentityContradiction.EXPLICIT
-    )
+
+    proposal_set.level_contradiction = previous
+    try:
+        yield
+    finally:
+        proposal_set.level_contradiction = current
 
 
-def replay_records(report: MetadataReport) -> list[RecordVerdict]:
-    """Every record's verdict at ``title_and_creator`` in one report."""
-    verdicts: list[RecordVerdict] = []
-    for provider, candidate, source in _records(report):
+def _verdicts(report: MetadataReport) -> list[str]:
+    """Each record's verdict at ``title_and_creator``, in `_records` order."""
+    verdicts: list[str] = []
+    for provider, candidate, _source in _records(report):
         record = provider_candidate_level_admission(report, provider, candidate, LEVEL)
         if record is None:  # pragma: no cover - never at a wider level
             raise ValueError("level gave no verdict")
-        inputs = level_identity_inputs(report, candidate)
-        detail = _detail(report, provider, candidate, source, inputs)
-        if record.admission is None:
-            verdict = cast("str", record.refusal)
-        else:
-            verdict = "admitted"
-            detail["creator_comparison"] = record.creator_comparison
-        detail["verdict"] = verdict
-        relation = _relation(inputs)
-        new = (
-            relation == "nested"
-            and verdict == "admitted"
-            and _refused_before(candidate, inputs)
+        verdicts.append(
+            "admitted" if record.admission is not None else cast("str", record.refusal)
         )
-        if relation == "nested" and verdict == "admitted":
-            detail["new"] = new
+    return verdicts
+
+
+def replay_records(report: MetadataReport) -> list[RecordVerdict]:
+    """Every record's verdicts at ``title_and_creator``, now and before."""
+    now = _verdicts(report)
+    with _previous_composition():
+        before = _verdicts(report)
+    verdicts: list[RecordVerdict] = []
+    for (provider, candidate, source), verdict, then in zip(
+        _records(report), now, before, strict=True
+    ):
+        inputs = level_identity_inputs(report, candidate)
+        relation = _relation(inputs)
+        detail = _detail(report, provider, candidate, source, inputs)
+        detail.update(relation=relation, verdict=verdict, before=then)
         verdicts.append(
             RecordVerdict(
                 source,
                 relation,
                 verdict,
+                then,
                 source == "live"
                 and provider_candidate_represents_target_work(
                     report, provider, candidate
                 ),
-                new,
                 detail,
             )
         )
@@ -309,16 +350,16 @@ def replay_document(text: str, replay: Replay) -> None:
     )
     for value in verdicts:
         replay.records[(value.source, value.relation, value.verdict)] += 1
-        if value.relation == "nested" and value.verdict == "admitted":
-            if value.new:
-                replay.newly_admitted[value.source] += 1
-                replay.newly_admitted_books[value.source].add(book)
+        change = value.change
+        if change is not None:
+            tally = replay.changes[change]
+            tally.records[(value.source, value.relation)] += 1
+            tally.books[value.source].add(book)
+            if change != "still_admitted":
+                tally.rows.append(value.detail)
+            if change == "newly_admitted":
                 replay.already_admitted += value.already_admitted
-            else:
-                replay.nested_before[value.source] += 1
-                replay.nested_before_books[value.source].add(book)
-            replay.nested_admitted.append(value.detail)
-        elif value.relation == "overlap" and value.verdict != "admitted":
+        if value.relation == "overlap" and value.verdict != "admitted":
             replay.overlap_refused.append(value.detail)
 
 
@@ -333,8 +374,31 @@ def replay_database(connection: sqlite3.Connection) -> Replay:
     return replay
 
 
+def _change(tally: ChangeTally) -> dict[str, object]:
+    return {
+        **{
+            source: {
+                "records": sum(
+                    tally.records[(source, relation)] for relation in RELATIONS
+                ),
+                "books": len(tally.books[source]),
+                "relations": {
+                    relation: tally.records[(source, relation)]
+                    for relation in RELATIONS
+                },
+            }
+            for source in SOURCES
+        },
+        "books": len(tally.books["live"] | tally.books["refused"]),
+    }
+
+
 def summary(replay: Replay, *, detail_written: bool) -> dict[str, object]:
     """The aggregate document: counts only, never a name or identifier."""
+    changes = {change: _change(replay.changes[change]) for change in CHANGES}
+    cast("dict[str, object]", changes["newly_admitted"]["live"])[
+        "live_identity_already_admits"
+    ] = replay.already_admitted
     return {
         "schema": SCHEMA,
         "report_schema": REPORT_SCHEMA,
@@ -356,34 +420,7 @@ def summary(replay: Replay, *, detail_written: bool) -> dict[str, object]:
             }
             for source in SOURCES
         },
-        "newly_admitted": {
-            "live": {
-                "records": replay.newly_admitted["live"],
-                "books": len(replay.newly_admitted_books["live"]),
-                "live_identity_already_admits": replay.already_admitted,
-            },
-            "refused": {
-                "records": replay.newly_admitted["refused"],
-                "books": len(replay.newly_admitted_books["refused"]),
-            },
-            "books": len(
-                replay.newly_admitted_books["live"]
-                | replay.newly_admitted_books["refused"]
-            ),
-        },
-        "nested_admitted_before": {
-            **{
-                source: {
-                    "records": replay.nested_before[source],
-                    "books": len(replay.nested_before_books[source]),
-                }
-                for source in SOURCES
-            },
-            "books": len(
-                replay.nested_before_books["live"]
-                | replay.nested_before_books["refused"]
-            ),
-        },
+        **changes,
         "detail_written": detail_written,
     }
 
@@ -393,7 +430,8 @@ def write_detail(path: Path, replay: Replay) -> None:
     document = {
         "schema": SCHEMA + "-detail",
         "level": LEVEL.value,
-        "nested_admitted": replay.nested_admitted,
+        "newly_admitted": replay.changes["newly_admitted"].rows,
+        "no_longer_admitted": replay.changes["no_longer_admitted"].rows,
         "overlap_refused": replay.overlap_refused,
     }
     try:
@@ -413,7 +451,9 @@ def _parser() -> argparse.ArgumentParser:
             "without changing it, and count which provider records the Book "
             "matching level 'title_and_creator' admits now that an author "
             "list that contains the book's authors, or is contained in them, "
-            "counts. Prints counts only. Nothing is sent anywhere."
+            "counts, against what it admitted before that change: newly "
+            "admitted, no longer admitted and still admitted. Prints counts "
+            "only. Nothing is sent anywhere."
         ),
         epilog=(
             "Stop the service and copy /data/application.sqlite3 out of the "
@@ -430,9 +470,9 @@ def _parser() -> argparse.ArgumentParser:
         "--detail",
         type=Path,
         help=(
-            "also write a private JSON file naming each admitted record with "
-            "a nested author list, marked new or not, and each overlapping "
-            "record now refused, for a by-hand check; "
+            "also write a private JSON file naming each record admitted now "
+            "but not before, each admitted before but not now, and each "
+            "overlapping record now refused, for a by-hand check; "
             "the file must not exist yet"
         ),
     )
