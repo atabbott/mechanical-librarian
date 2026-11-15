@@ -2085,6 +2085,21 @@ class CoverConsiderationService:
             candidates.append(candidate)
         incumbent = cast("dict[str, object]", value["incumbent"])
         omissions = cast("list[object]", value["omissions"])
+        if incumbent.get("state") == "unavailable":
+            # The current cover Mechanical Librarian could not read has its
+            # own card, so its Audiobookshelf source is not also counted as a
+            # cover not shown. Stored and packet omissions keep it (#1866).
+            current_sources = {
+                cover_source_reference(report.report_id, source.source_id)
+                for source in report.cover_sources
+                if source.kind is CoverSourceKind.ABS
+            }
+            omissions = [
+                omission
+                for omission in omissions
+                if type(omission) is not dict
+                or omission.get("reference") not in current_sources
+            ]
         # The stored failure code is an open string; only a closed OpenRouter
         # identity reaches the owner, and any other or legacy value reads as none.
         failure = value["reviewer_failure"]

@@ -725,29 +725,47 @@ def test_keeping_a_switched_cover_releases_its_original_and_leaves_switched(
             assert switched["items"] == []
 
 
-def _keep_current(
-    client: TestClient, headers: dict[str, str], case_id: str, key: str
+def _post_cover_decision(
+    client: TestClient,
+    headers: dict[str, str],
+    case_id: str,
+    key: str,
+    *,
+    outcome: str = "keep_current",
+    kind: str | None = None,
 ) -> Any:
-    """POST the owner's keep of the current cover, as the book page does."""
+    """POST an owner cover decision as the book page does.
+
+    An accept names the comparison's one candidate of ``kind``.
+    """
     detail = client.get(f"/api/v1/review-cases/{case_id}")
     assert detail.status_code == 200, detail.text
     field = next(
         value for value in detail.json()["fields"] if value["destination"] == "cover"
     )
+    consideration = field["cover_consideration"]
+    selected = None
+    if outcome == "accept":
+        (candidate,) = (
+            value
+            for value in consideration["candidates"]
+            if value["incumbent"] is False and value["candidate_kind"] == kind
+        )
+        selected = {"kind": "cover", "value": candidate["artifact_id"]}
     return client.post(
         f"/api/v1/review-cases/{case_id}/decisions",
         headers={**headers, "Idempotency-Key": key},
         json={
             "destination": "cover",
-            "outcome": "keep_current",
+            "outcome": outcome,
             "proposal_id": field["proposal_id"],
-            "selected_value": None,
+            "selected_value": selected,
             "target_fingerprint": field["target_fingerprint"],
             "offered_alternatives_digest": field["offer_digest"],
-            "consideration_id": field["cover_consideration"]["consideration_id"],
+            "consideration_id": consideration["consideration_id"],
             "cover_confirmation": {
                 "expected_selection_id": field["current_cover_selection_id"],
-                "confirm_unverified_match": False,
+                "confirm_unverified_match": outcome == "accept",
             },
         },
     )
@@ -771,13 +789,83 @@ def test_keeping_a_current_cover_that_could_not_be_read_is_recorded_and_kept(
     ) as library:
         case_id = library.cases["item-1"]
         with _client(library) as (client, headers):
-            response = _keep_current(client, headers, case_id, "keep-unread-cover-01")
+            response = _post_cover_decision(
+                client, headers, case_id, "keep-unread-cover-01"
+            )
             assert response.status_code == 200, response.text
             kept = client.get("/api/v1/covers?view=kept").json()
             assert [item["review_case_id"] for item in kept["items"]] == [case_id]
             assert kept["items"][0]["group"] == "kept"
             assert kept["items"][0]["unreadable_cover"] is True
             assert client.get("/api/v1/covers?view=decide").json()["items"] == []
+
+
+@pytest.mark.parametrize(
+    "answer", ("chosen", "written", "kept", "put_back"), ids=lambda value: value
+)
+def test_a_chosen_cover_not_yet_written_is_your_choice_under_all_only(
+    tmp_path: Path, answer: str
+) -> None:
+    """#1866 S4: a proposed cover the owner chose is not listed as kept.
+
+    It reads ``chosen`` under All until its write verifies, then kept; a
+    keep is kept, and a Put back stays with its switch.
+    """
+    with _library(tmp_path, put_back=answer == "put_back") as library:
+        case_id = library.cases["item-1"]
+        with _client(library) as (client, headers):
+            response = _post_cover_decision(
+                client,
+                headers,
+                case_id,
+                "owner-cover-answer-0001",
+                outcome="keep_current" if answer == "kept" else "accept",
+                kind="retained" if answer == "put_back" else "candidate",
+            )
+            assert response.status_code == 200, response.text
+            if answer == "written":
+                decision_id = library.repository._connection.execute(
+                    "SELECT decision_id FROM cover_selection_authorities "
+                    "WHERE kind='owner'"
+                ).fetchone()[0]
+                library.repository._connection.execute(
+                    "INSERT INTO field_effects(plan_id,decision_id,connection_name,"
+                    "library_name,work_id,destination,state,attempt,updated_at,"
+                    "document) VALUES(?,?,'primary','ebooks','item-1','cover',"
+                    "'verified',0,300,?)",
+                    (
+                        "effect_plan_" + "8" * 64,
+                        decision_id,
+                        json.dumps({"plan": {"authority": {"origin": "owner"}}}),
+                    ),
+                )
+                library.repository._connection.commit()
+            every = client.get("/api/v1/covers?view=all").json()
+            kept = client.get("/api/v1/covers?view=kept").json()
+            decide = client.get("/api/v1/covers?view=decide").json()
+
+    group = {
+        "chosen": "chosen",
+        "written": "kept",
+        "kept": "kept",
+        "put_back": "auto",
+    }[answer]
+    (row,) = every["items"]
+    assert row["group"] == group
+    assert decide["items"] == []
+    assert every["counts"] == {
+        "decide": 0,
+        "kept": 1 if group == "kept" else 0,
+        "switched": 1 if group == "auto" else 0,
+        "all": 1,
+    }
+    assert [item["review_case_id"] for item in kept["items"]] == (
+        [case_id] if group == "kept" else []
+    )
+    if group == "chosen":
+        # The thumbnail stays the cover Audiobookshelf holds now (Q5).
+        assert str(row["cover"]["url"]).startswith("/api/v1/library/cover?")
+        assert row["choosable"] is True
 
 
 def test_a_cursor_carries_the_longest_accepted_title_and_item(

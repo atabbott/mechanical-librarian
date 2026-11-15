@@ -1472,7 +1472,7 @@ class _CoverWork(_ClosedModel):
     authors: list[str]
     choosable: bool
     cover: _CoverPreview | None
-    group: Literal["proposal", "choice", "kept", "auto", "none"]
+    group: Literal["proposal", "choice", "kept", "chosen", "auto", "none"]
     # Why the measured rules hold this cover's switch (#1363).
     hold: _CoverRuleReason | None
     media_kind: _MediaKind
