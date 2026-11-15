@@ -1481,6 +1481,53 @@ describe('Covers → Taste profile (#1372)', () => {
     await waitFor(() => expect(status.closest('.taste-build')).toHaveFocus())
   })
 
+  it('keeps the route from taking focus a pressed and then replaced Try again left on the page', async () => {
+    // jsdom runs animation frames on a timer, so the shell's deferred route
+    // focus can land after a press. Held here, it runs once the pressed control
+    // has gone and focus is back on the page, and must leave it for the retry.
+    const originalRequestFrame = window.requestAnimationFrame
+    const originalCancelFrame = window.cancelAnimationFrame
+    const frames = new Map<number, FrameRequestCallback>()
+    let nextFrame = 1
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      const frame = nextFrame
+      nextFrame += 1
+      frames.set(frame, callback)
+      return frame
+    })
+    vi.stubGlobal('cancelAnimationFrame', (frame: number) => frames.delete(frame))
+    try {
+      renderRoute(
+        tasteRoute,
+        tasteHttp(
+          tasteView({
+            chosen: 25,
+            build: {
+              build_id: `taste_build_${'d'.repeat(32)}`,
+              state: 'failed',
+              failure: 'unavailable',
+              retry_after: null,
+            },
+          }),
+        ),
+      )
+      expect(await screen.findByText('The taste profile could not be written.')).toBeVisible()
+      const retry = screen.getByRole('button', { name: 'Try again' })
+      retry.focus()
+      retry.blur()
+      act(() => {
+        const pending = [...frames.values()]
+        frames.clear()
+        for (const frame of pending) frame(0)
+      })
+      expect(screen.getByRole('heading', { level: 1, name: 'Covers' })).not.toHaveFocus()
+      expect(globalThis.document.body).toHaveFocus()
+    } finally {
+      vi.stubGlobal('requestAnimationFrame', originalRequestFrame)
+      vi.stubGlobal('cancelAnimationFrame', originalCancelFrame)
+    }
+  })
+
   it('shows the profile in use, hides empty sections and renders rule text literally', async () => {
     renderRoute(tasteRoute, tasteHttp(ready))
     expect(await screen.findByRole('heading', { name: 'What you’re drawn to' })).toBeVisible()

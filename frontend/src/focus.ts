@@ -14,10 +14,18 @@ export const useRouteReadyFocus = (identity: string, preserveFocusedSearch = fal
     if (main && main.dataset.routeFocusIdentity !== focusIdentity)
       delete main.dataset.routeFocusIdentity
     const held = document.activeElement
+    // A control pressed and then removed leaves focus back where it was held,
+    // so any focus move before the frame also counts as the reader's.
+    let moved = false
+    const onFocus = () => {
+      moved = true
+    }
+    document.addEventListener('focusin', onFocus)
     const frame = requestAnimationFrame(() => {
+      document.removeEventListener('focusin', onFocus)
       if (main?.dataset.routeFocusIdentity === focusIdentity) return
       const target = document.querySelector<HTMLElement>('#main-content [data-route-focus]')
-      if (document.activeElement !== held && document.activeElement !== target) return
+      if (document.activeElement !== target && (moved || document.activeElement !== held)) return
       // Library's debounced search updates its URL while the owner is typing.
       // Keep that input's caret; pagination and route controls still move focus.
       if (preserveFocusedSearch && held?.matches('input[type="search"]') && main?.contains(held))
@@ -26,7 +34,10 @@ export const useRouteReadyFocus = (identity: string, preserveFocusedSearch = fal
       if (document.activeElement !== target) target.focus({ preventScroll: true })
       if (main) main.dataset.routeFocusIdentity = focusIdentity
     })
-    return () => cancelAnimationFrame(frame)
+    return () => {
+      cancelAnimationFrame(frame)
+      document.removeEventListener('focusin', onFocus)
+    }
   }, [identity, preserveFocusedSearch])
 }
 // The open field's heading, the place focus returns to when the control that
