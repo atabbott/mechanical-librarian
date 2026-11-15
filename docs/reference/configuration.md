@@ -618,9 +618,9 @@ description floor is admitted through the normal policy and write rules on a
 field that offers the owner a choice, and may replace a populated description.
 The floor is valid plain text with no markup or visible cut-off, not a
 placeholder and not mostly quoted praise. The owner can still choose a result
-below it. A field that offers no choice, such as one whose sources all repeat
-the current description, keeps its current value and shows the result for
-reference only.
+below it. A field whose sources all repeat the current description offers the
+result and Keep current while the result is shown, as an optional choice that
+is not in Attention, so Automatic may write the result there too (#1905).
 
 Automatic admission also needs a shipped qualification record that names the
 result's adviser: its engine, model, instruction and output schema digests and

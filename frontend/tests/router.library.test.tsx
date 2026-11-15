@@ -14821,15 +14821,17 @@ it.each(['requested', 'running', 'failed', 'interrupted', 'succeeded'] as const)
   },
 )
 
-it('shows retained automatic advice during preservation-only retry without adding owner actions', async () => {
+it('keeps retained automatic advice reversible during a preservation-only retry', async () => {
   const { default: payload } = await import('./descriptionAdvicePreservationFixture.json')
   const authored = readCaseDetail(payload)
   const field = authored.fields.find((item) => item.destination === 'description')
   if (!field?.descriptionAdvice?.selected_advice)
     throw new Error('Selected preservation fixture required')
   expect(field.preservationOnly).toBe(true)
-  expect(field.editable).toBe(false)
-  expect(field.decisionActions).toEqual([])
+  // Every source repeats the description, so the retained advice keeps the
+  // adviser's text and Keep current available (#1905).
+  expect(field.editable).toBe(true)
+  expect(field.decisionActions).toEqual(['keep_current', 'accept'])
   expect(field.proposedValues).toEqual([])
   expect(field.descriptionAdvice.selection?.origin).toBe('automatic_policy')
   expect(field.descriptionAdvice.candidate).toBeNull()
@@ -14848,14 +14850,57 @@ it('shows retained automatic advice during preservation-only retry without addin
   expect(retained).toBeDisabled()
   expect(retained).toHaveAttribute('aria-checked', 'true')
   expect(retained).toHaveTextContent('Description adviser · Earlier choice')
-  // Preservation adds no owner action: every choice shown is disabled.
-  for (const radio of screen.getAllByRole('radio')) expect(radio).toBeDisabled()
+  expect(screen.getByRole('radio', { name: /^Choose current/u })).toBeEnabled()
+  expect(screen.queryByRole('radio', { name: /^Choose proposed value/u })).toBeNull()
   expect(screen.getByText(/Preparing description advice/)).toBeVisible()
   expect(screen.queryByText('Choice recorded.')).toBeNull()
-  expect(screen.queryByRole('button', { name: 'Description Decided' })).toBeNull()
   expect(screen.getByLabelText('Writing to the library')).toHaveTextContent(
     'No library connection is set up to write it.',
   )
+})
+
+it('offers Keep current beside advice on a description every source repeats', async () => {
+  const { default: payload } = await import('./descriptionAdviceRepeatedFixture.json')
+  const authored = readCaseDetail(payload)
+  const field = authored.fields.find((item) => item.destination === 'description')
+  if (!field?.descriptionAdvice?.candidate) throw new Error('Repeated advice fixture required')
+  expect(field.preservationOnly).toBe(true)
+  expect(field.classification).toBe('owner_choosable')
+  expect(field.needsAttention).toBe(false)
+  expect(field.editable).toBe(true)
+  expect(field.decisionActions).toEqual(['keep_current', 'accept'])
+  expect(field.proposedValues).toEqual([])
+  const reason =
+    "Every source repeats your current description, so no review is needed. You can still keep it or choose the adviser's text."
+  expect(field.classificationReason).toBe(reason)
+  const http = {
+    ...createHttp(),
+    getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+      ...authored,
+      id: 'case-1',
+      fields: [field],
+    })),
+  }
+  renderRoute('/library?lens=all&preview=case-1&field=description', http)
+  const advised = await screen.findByRole('radio', {
+    name: 'Choose advised value: Authored synthetic description.',
+  })
+  expect(advised).toBeEnabled()
+  expect(advised).toHaveAttribute('aria-checked', 'false')
+  expect(screen.getByRole('button', { name: /^Description/u })).toHaveAccessibleName(
+    'Description Optional',
+  )
+  expect(screen.getByText(reason)).toBeVisible()
+  expect(screen.queryByRole('radio', { name: /^Choose proposed value/u })).toBeNull()
+  const current = screen.getByRole('radio', { name: /^Choose current/u })
+  expect(current).toBeEnabled()
+  const user = userEvent.setup()
+  await user.click(current)
+  await waitFor(() => expect(http.recordDecision).toHaveBeenCalledOnce())
+  expect(vi.mocked(http.recordDecision).mock.calls[0]?.[1]).toMatchObject({
+    destination: 'description',
+    outcome: 'keep_current',
+  })
 })
 
 it.each([

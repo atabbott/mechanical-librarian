@@ -76,6 +76,7 @@ from mechanical_librarian.domain.human_decision import (
     owner_text,
     owner_value_admitted,
     owner_value_suggestions,
+    preserved_description,
 )
 from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
 from mechanical_librarian.domain.metadata_report import (
@@ -932,6 +933,9 @@ def _classify_field(
     # proposed fill the evaluated policy keeps (tags while they are off)
     # is settled the same way on every medium (#1661).
     single_source = _single_source_choice(proposal)
+    # A description every source repeats offers its choices only beside
+    # description advice (`_field`): optional, never attention (#1905).
+    repeated = preserved_description(proposal) and bool(actions)
     # The measured stage's decision over a current comparison: a suggested
     # switch is optional work, never attention, and a hold (a title naming
     # another book, or a current cover whose sources do) asks (#1363 S9,
@@ -957,7 +961,8 @@ def _classify_field(
         and destination in snapshot.policy_kept_destinations
     )
     return classify_review_field(
-        attention_candidate=(
+        attention_candidate=not repeated
+        and (
             (
                 cover_admits
                 and _needs_attention(
@@ -1029,7 +1034,8 @@ def _classify_field(
         # current comparison is still choosable: the owner can prepare one.
         owner_choosable=automatic_decision is None
         and (
-            (
+            repeated
+            or (
                 cover_admits
                 and (
                     context.case.media_kind == "audiobook"
@@ -1064,6 +1070,20 @@ def _classify_field(
         kept_by_fill_policy=policy_settled and destination != "tags",
         kept_by_tags_off=policy_settled and destination == "tags",
         single_source=single_source,
+        repeated_description=repeated,
+    )
+
+
+def _description_advice_offers(snapshot: CurrentReviewCaseSnapshot) -> bool:
+    """Whether description advice is shown for the field to choose against.
+
+    Current advice with a candidate, or a selection the owner can reverse
+    after a verified write retired its binding (#1905).
+    """
+    advice = snapshot.description_advice
+    return advice is not None and (
+        (advice.get("current") is True and advice.get("candidate") is not None)
+        or advice.get("selection") is not None
     )
 
 
@@ -1343,6 +1363,14 @@ class InspectCurrentReviewCase:
             preparation_possible=self._cover_considerations is not None,
         )
         actions = () if cover_preparation_available else decision_actions(proposal)
+        if (
+            not actions
+            and preserved_description(proposal)
+            and _description_advice_offers(snapshot)
+        ):
+            # Its sources all repeat it, so only advice offers a change: the
+            # adviser's text (an accept) and Keep current (#1905).
+            actions = ("keep_current", "accept")
         owner_control = _owner_control(
             proposal,
             target_fields,
@@ -1897,6 +1925,34 @@ class RecordHumanDecision:
         decision = AuthoredDescriptionDecision.from_json(document)
         return {"decision_id": decision.decision_id, "advised": True}
 
+    def _field_admits(
+        self, review_case_id: str, destination: str, keep_description: bool
+    ) -> bool:
+        """Whether the projected field takes this owner command.
+
+        A contextual row takes no owner entry, and a description is kept only
+        while its field offers that, as advice decides where every source
+        repeats it (#1905). The store's own checks follow.
+        """
+        field = next(
+            (
+                value
+                for value in cast(
+                    "list[dict[str, object]]",
+                    InspectCurrentReviewCase(self._repository).run(review_case_id)[
+                        "fields"
+                    ],
+                )
+                if value["destination"] == destination
+            ),
+            None,
+        )
+        if keep_description:
+            return field is not None and "keep_current" in cast(
+                "list[str]", field["decision_actions"]
+            )
+        return field is None or field["inventory_role"] != "contextual"
+
     def run(
         self,
         review_case_id: str,
@@ -1996,19 +2052,12 @@ class RecordHumanDecision:
                 # only consequence is that no ``human_wait`` sample is recorded.
                 ready_at = None
             previous = None
+            keep_description = (destination, outcome) == ("description", "keep_current")
+            if (
+                outcome == "owner_entered" or keep_description
+            ) and not self._field_admits(review_case_id, destination, keep_description):
+                raise HumanDecisionError("unsupported")
             if outcome == "owner_entered":
-                # A contextual row offers no owner entry, so it takes none.
-                if any(
-                    field["destination"] == destination
-                    and field["inventory_role"] == "contextual"
-                    for field in cast(
-                        "list[dict[str, object]]",
-                        InspectCurrentReviewCase(self._repository).run(review_case_id)[
-                            "fields"
-                        ],
-                    )
-                ):
-                    raise HumanDecisionError("unsupported")
                 target = case.target
                 try:
                     previous = dict(

@@ -530,6 +530,7 @@ def _server(
         "retry_running",
         "retry_failed",
         "retry_succeeded",
+        "repeated",
     ]
     | None = None,
     long_descriptions: bool = False,
@@ -1525,6 +1526,24 @@ def _server(
                     )
                     for provider in report.providers
                 ),
+                cover_sources=report.cover_sources,
+            )
+        if description_fixture == "repeated":
+            # Every source repeats the current description (#1905).
+            report = MetadataReport.create(
+                target=replace(
+                    report.target,
+                    fields=tuple(
+                        replace(field, value="A qualified description.")
+                        if field.destination is TargetDestination.DESCRIPTION
+                        else field
+                        for field in report.target.fields
+                    ),
+                ),
+                file=report.file,
+                local_claims=report.local_claims,
+                local_reasons=report.local_reasons,
+                providers=report.providers,
                 cover_sources=report.cover_sources,
             )
         if description_fixture == "no_alternatives":
@@ -11127,6 +11146,70 @@ def test_description_advice_displays_real_persisted_outcomes(state, monkeypatch)
                         "<strong>Authored text stays text.</strong>", exact=False
                     )
                 ).to_have_count(0)
+            browser.close()
+
+
+def test_description_advice_on_a_repeated_description_is_choosable():
+    """Every source repeats the description: advice and Keep current (#1905)."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        root.chmod(0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD))
+        hash_path.chmod(0o600)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True,
+                viewport={"width": 1280, "height": 800},
+                reduced_motion="reduce",
+            )
+            with (
+                closing(ReservedPort()) as port,
+                _server(
+                    database=root / "review.sqlite",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=port,
+                    description_fixture="repeated",
+                ) as (origin, case_id),
+                _closing_context(context),
+            ):
+                page = context.new_page()
+                _login(page, origin)
+                page.goto(
+                    f"{origin}/library?lens=all&preview={case_id}&field=description"
+                )
+                chooser = page.locator("section.direct-choice")
+                expect(chooser).to_be_visible()
+                current = chooser.get_by_role(
+                    "radio", name="Choose current value: A qualified description."
+                )
+                expect(current).to_be_enabled()
+                expect(
+                    chooser.get_by_role(
+                        "radio", name=re.compile("^Choose proposed value:")
+                    )
+                ).to_have_count(0)
+                advised = chooser.get_by_role(
+                    "radio", name=re.compile("^Choose advised value:")
+                )
+                expect(advised).to_be_enabled()
+                expect(advised).to_have_attribute("aria-checked", "false")
+                expect(
+                    page.get_by_role("button", name=re.compile("^Description "))
+                ).to_contain_text("Automatic")
+                with page.expect_response(
+                    lambda response: (
+                        response.request.method == "POST"
+                        and response.url.endswith("/decisions")
+                    )
+                ) as kept:
+                    current.click()
+                assert kept.value.ok
+                assert kept.value.request.post_data_json["outcome"] == "keep_current"
             browser.close()
 
 
