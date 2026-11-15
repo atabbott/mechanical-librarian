@@ -473,7 +473,7 @@ goes live.
 
 - An answer is kept only when the provider's observation and every lane of it
   ended `candidates`, `no_match` or `insufficient_input`, and only a 200 body
-  the session read and the adapter did not mark refused. A failed, incomplete,
+  the session read and the adapter did not refuse. A failed, incomplete,
   malformed, oversized or limit-exceeded lane keeps nothing from that
   observation, and a request that succeeded only on a retry is not kept.
 - A held answer is reused whatever its age. The weekly

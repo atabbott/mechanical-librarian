@@ -41,6 +41,10 @@ MAX_STORE_BYTES = 2 * 1024**3
 # The largest body any adapter may accept (the configured per-response bound's
 # ceiling).
 MAX_PAYLOAD_BYTES = 262_144
+# The most a compressed body of that size can occupy: zlib adds a few bytes
+# for each 16 KiB it cannot shrink, far under this margin. A longer stored
+# value was not written here and is refused before it is read into memory.
+_MAX_STORED_BYTES = MAX_PAYLOAD_BYTES + 1024
 # The last microsecond of 9999-12-31, the latest time a report can name.
 _LATEST_FETCHED_AT_US = 253_402_300_799_999_999
 _TABLE_SQL = (
@@ -162,9 +166,10 @@ class SQLiteProviderResponseStore:
         try:
             with self._lock:
                 row = self._connection.execute(
-                    "SELECT fetched_at_us,payload_digest,payload_bytes,payload "
+                    "SELECT fetched_at_us,payload_digest,payload_bytes,"
+                    "CASE WHEN length(payload)<=? THEN payload END "
                     "FROM provider_responses WHERE adapter=? AND digest=?",
-                    (adapter, digest),
+                    (_MAX_STORED_BYTES, adapter, digest),
                 ).fetchone()
                 if row is None:
                     return None

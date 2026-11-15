@@ -152,6 +152,50 @@ def test_open_reads_no_payload_and_a_corrupt_row_is_a_deleted_miss(
     connection.close()
 
 
+def test_an_overlong_stored_value_is_refused_before_it_is_read(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The schema bounds the body a row states, not the bytes it holds, so a
+    row written from outside is measured before its value is fetched."""
+    path = tmp_path / "provider-responses.sqlite"
+    store = SQLiteProviderResponseStore.open(path)
+    # The largest body the store accepts, at its least compressible, fits.
+    largest = os.urandom(provider_responses.MAX_PAYLOAD_BYTES)
+    store.commit("google_books", (("a" * 64, 1, largest), ("b" * 64, 1, b"body")))
+    assert store.get("google_books", "a" * 64) == (largest, 1)
+    store.close()
+    connection = sqlite3.connect(path)
+    overlong = b"\0" * (provider_responses._MAX_STORED_BYTES + 1)
+    connection.execute(
+        "UPDATE provider_responses SET payload=?,stored_bytes=? WHERE digest=?",
+        (overlong, len(overlong), "b" * 64),
+    )
+    connection.commit()
+    connection.close()
+
+    fetched: list[object] = []
+    verified = provider_responses._verified
+
+    def spy(payload_digest: object, payload_bytes: object, stored: object) -> object:
+        fetched.append(stored)
+        return verified(payload_digest, payload_bytes, stored)
+
+    monkeypatch.setattr(provider_responses, "_verified", spy)
+    store = SQLiteProviderResponseStore.open(path)
+    capsys.readouterr()
+    assert store.get("google_books", "b" * 64) is None
+    assert fetched == [None]
+    assert [event["store_fault"] for event in _events(capsys.readouterr().err)] == [
+        "row_corrupt"
+    ]
+    assert store._connection.execute(
+        "SELECT digest FROM provider_responses"
+    ).fetchall() == [("a" * 64,)]
+    store.close()
+
+
 def test_the_schema_refuses_a_fetch_time_past_the_report_range(tmp_path: Path) -> None:
     path = tmp_path / "provider-responses.sqlite"
     store = SQLiteProviderResponseStore.open(path)

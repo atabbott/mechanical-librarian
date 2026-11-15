@@ -901,6 +901,7 @@ class HardcoverMetadataProvider:
         Each page is one ledger detail request.
         """
         rows: list[dict[str, Any]] = []
+        attempts = self._session.attempt_count
         for page in range(_EDITION_PAGES):
             offset = page * _EDITION_PAGE
 
@@ -944,6 +945,9 @@ class HardcoverMetadataProvider:
         else:
             return _EditionStop.FULL
         if len({row["id"] for row in rows}) != len(rows):
+            # The list moved between the two requests. Each page read clean,
+            # so neither is marked, but neither is kept for reuse either.
+            self._session.refuse_answers_after(attempts)
             return _EditionStop.FAILED
         return tuple(rows)
 

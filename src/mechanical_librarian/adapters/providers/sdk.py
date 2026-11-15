@@ -626,6 +626,18 @@ class BoundedProviderSession:
         if self._responses is not None:
             self._responses.drop(prior.ordinal)
 
+    def refuse_answers_after(self, attempts: int) -> None:
+        """Keep none of the answers dispatched after attempt `attempts`.
+
+        For an adapter that reads each answer clean and then refuses them
+        together, as when two pages of one list disagree. No one attempt is at
+        fault, so the attempt records stay as they are. The answers are not
+        kept, and reused ones are removed, so the next observation asks again.
+        """
+        if self._responses is not None:
+            for ordinal in range(attempts + 1, self.attempt_count + 1):
+                self._responses.drop(ordinal)
+
     def _consume_response_bytes(self, amount: int) -> None:
         self.remaining_response_bytes -= amount
         if self.remaining_response_bytes < 0:

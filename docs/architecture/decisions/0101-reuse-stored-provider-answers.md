@@ -53,8 +53,10 @@ answer must bring back the time it was fetched for the report to be the same.
    oversized, limit-exceeded or provider-declared-error lane keeps nothing
    from that observation. An answer the adapter refuses after the session
    returned it (`mark_response_attempt`) is dropped even when its lane ends
-   clean, as in Hardcover's narrowing retry and edition fan-out. An answer
-   to a request one of whose dispatches failed in that observation is not
+   clean, as in Hardcover's narrowing retry and edition fan-out. So are
+   answers an adapter reads clean one by one and then refuses together, as
+   when two pages of one edition list disagree. An answer to a request one
+   of whose dispatches failed in that observation is not
    kept either: the failed dispatch is in the live counts and diagnostics,
    and a held answer would be served in its place. An adapter exception
    keeps nothing. The commit point is one wrapper in adapters around the
@@ -75,8 +77,10 @@ answer must bring back the time it was fetched for the report to be the same.
    journal, `BEGIN IMMEDIATE`, no network inside a write) and is safe to
    share between processes, with a 1,000 ms busy timeout. Open runs no
    integrity check, which would read every payload; each row is inflated
-   within its stated length and its digest compared when read, and a row
-   that fails is deleted and is a miss. A hit that is read writes nothing.
+   within its stated length and its digest compared when read, a stored
+   value longer than any compressed body can be is refused before it is
+   read into memory, and a row that fails is deleted and is a miss. A hit
+   that is read writes nothing.
    A commit replaces the answer held for a request unless that one was
    fetched later, so an observation that finishes late cannot undo a newer
    answer. The comparison trusts the wall clock: an answer dated ahead of
@@ -171,12 +175,15 @@ evict a full library's oldest answers and defeat reuse.
   request fact is in the key; the Google Books key reaches neither the
   digest input nor the store file.
 - `tests/unit/test_provider_response_store.py`: admission, refusal without
-  mutation, per-row integrity, degradation events, the ceiling and its
+  mutation, per-row integrity, an overlong stored value refused unread,
+  degradation events, the ceiling and its
   covering index, no write on a hit, an older answer never replacing a
   newer one, and two processes writing at once.
 - `tests/unit/test_reused_answer_preparation.py`: one item prepared twice
   through the real pipeline from the same answers converges on the same
   report, proposal and case; a different access time names a different
   report.
+- `tests/unit/test_hardcover_edition_covers.py`: edition pages that
+  disagree are not kept, and the next observation asks for them again.
 - `tests/unit/test_batch_composition.py`: preparation binds each adapter to
   the store; a re-search and a provider retry bind it to ask live.

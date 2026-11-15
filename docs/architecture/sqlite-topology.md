@@ -462,8 +462,9 @@ length and the time of that observation's first request in microseconds; no
 request text, header or credential.
 
 - Open checks the file, header and exact schema but runs no integrity check,
-  which would read every payload. A read inflates a row within its stated
-  length and compares its digest; a row that fails is deleted and is a miss.
+  which would read every payload. A read measures the stored value before
+  fetching it, inflates it within the row's stated length and compares
+  its digest; a row that fails any of these is deleted and is a miss.
 - A clean observation's answers are written in one `BEGIN IMMEDIATE`
   transaction that replaces the answer held for the same request unless that
   one was fetched later, then removes the answers fetched longest ago until
