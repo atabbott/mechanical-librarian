@@ -72,6 +72,7 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverSourceState,
     cover_source_id,
 )
+from mechanical_librarian.domain.cover_taste import TasteProfile, apply_taste_edit
 from mechanical_librarian.domain.field_effect import FieldEffectError
 from mechanical_librarian.domain.owner_settings import (
     OWNER_SETTINGS_SCHEMA,
@@ -99,7 +100,11 @@ from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_OPTION_DISPOSITIONS,
 )
-from mechanical_librarian.interfaces.web.app import owner_password_binding
+from mechanical_librarian.interfaces.web.app import (
+    _BODY_PATH_LIMITS,
+    REVIEW_TASTE_PROFILE_SCHEMA,
+    owner_password_binding,
+)
 from tests.support.proposal_evidence import _report as _proposal_report
 from tests.support.review_web_doubles import (
     FakeActivityApplication,
@@ -2999,6 +3004,7 @@ def test_openapi_is_deterministic_and_secret_free(
         ("get", "/api/v1/covers/replaced"),
         ("get", "/api/v1/covers/taste"),
         ("post", "/api/v1/covers/taste/retry"),
+        ("post", "/api/v1/covers/taste/rules"),
         ("get", "/api/v1/operations/status"),
         ("get", "/api/v1/operations/support/preview"),
         ("post", "/api/v1/operations/support/export"),
@@ -3930,3 +3936,228 @@ def test_taste_profile_routes_are_owner_only_no_store_and_csrf_bound(
         headers={**web.origin, "x-csrf-token": session["csrf_token"]},
     )
     assert malformed.status_code == 422
+
+
+class _TasteEdits:
+    """A taste service whose edits run the real domain edit over one profile
+    held in memory, so each closed refusal is the application's own."""
+
+    def __init__(self, rules: list[str]) -> None:
+        self.profile = TasteProfile.from_output(
+            {
+                "sections": {
+                    "drawn_to": rules,
+                    "avoid": [],
+                    "trade_offs": [],
+                    "keep_or_switch": [],
+                }
+            }
+        )
+        self.saved: list[tuple[object, ...]] = []
+
+    def read(self) -> dict[str, object]:
+        document = {
+            "source": "build",
+            "built_at": 900,
+            "input": {"included": 25},
+            "rules": self.profile.rules_data(),
+        }
+        return {
+            "eligible": 25,
+            "build": None,
+            "versions": [(1, 900, document)],
+            "configured": True,
+            "daily_limit": 8,
+        }
+
+    def edit(self, version, action, number, section, text) -> None:
+        edited = apply_taste_edit(
+            self.profile if version == 1 else None, (), action, number, section, text
+        )
+        self.saved.append((action, number, section, text, edited is not None))
+
+
+_TASTE_RULES = "/api/v1/covers/taste/rules"
+_MARKER = "MarkerRuleText"
+
+
+def _taste_client(
+    web: ReviewWebContext[FakeReviewRepository], service: _TasteEdits
+) -> TestClient:
+    return TestClient(
+        create_transport_test_app(
+            web.repository,
+            ReviewWebConfiguration(
+                tls_certificate_file="/synthetic/review.crt",
+                tls_private_key_file="/synthetic/review.key",
+                canonical_origin="https://review.test",
+                owner_password_hash_file=str(web.hash_path),
+            ),
+            clock=lambda: web.now,
+            cover_taste=service,
+        ),
+        base_url="https://review.test",
+    )
+
+
+def test_taste_rule_edits_are_owner_only_csrf_bound_and_answer_closed_codes(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    """#1372 PR 2 S10: session, CSRF, Origin and build identity, then the
+    application's closed codes; an error body never echoes the rule text."""
+    service = _TasteEdits(["Bold art."])
+    web.client.close()
+    web.client = _taste_client(web, service)
+    web.cleanup.enter_context(web.client)
+    body = {"version": 1, "action": "edit", "number": 1, "text": f"{_MARKER} art."}
+    signed_out = web.client.post(
+        _TASTE_RULES, json=body, headers={**web.origin, "x-csrf-token": "any"}
+    )
+    assert signed_out.status_code == 401
+    session = web.login()
+    headers = {**web.origin, "x-csrf-token": str(session["csrf_token"])}
+    assert (
+        web.client.post(_TASTE_RULES, json=body, headers=web.origin).status_code == 422
+    )
+    bad_csrf = web.client.post(
+        _TASTE_RULES, json=body, headers={**web.origin, "x-csrf-token": "bad"}
+    )
+    assert bad_csrf.status_code == 403
+    no_origin = web.client.post(
+        _TASTE_RULES, json=body, headers={"x-csrf-token": str(session["csrf_token"])}
+    )
+    assert no_origin.status_code == 403
+    mismatch = web.client.post(
+        _TASTE_RULES,
+        json=body,
+        headers={**headers, "x-ml-build-identity": "b" * 64},
+    )
+    assert mismatch.status_code == 409
+    assert mismatch.json()["error"]["code"] == "browser_build_mismatch"
+    assert service.saved == []
+
+    def refused(change: dict[str, object]) -> tuple[int, str]:
+        response = web.client.post(
+            _TASTE_RULES, json={**body, **change}, headers=headers
+        )
+        assert _MARKER not in response.text
+        assert response.headers["cache-control"] == "no-store, private"
+        return response.status_code, response.json()["error"]["code"]
+
+    assert refused({"text": "   "}) == (422, "rule_empty")
+    assert refused({"text": _MARKER * 30}) == (422, "rule_too_long")
+    assert refused({"text": f"{_MARKER} https://example.invalid"}) == (422, "rule_text")
+    assert refused({"version": 2}) == (409, "stale")
+    assert refused({"number": 7}) == (409, "stale")
+    assert refused({"text": "   ", "version": 2}) == (422, "rule_empty")
+    # Shape is refused before the handler, with no text echoed.
+    assert refused({"action": "rename"}) == (422, "invalid")
+    assert refused({"version": True}) == (422, "invalid")
+    assert refused({"section": "avoid"}) == (422, "invalid")
+    assert refused({"text": _MARKER * 300}) == (422, "invalid")
+    saved = web.client.post(_TASTE_RULES, json=body, headers=headers)
+    assert saved.status_code == 200
+    assert saved.json()["schema_version"] == REVIEW_TASTE_PROFILE_SCHEMA
+    assert saved.headers["cache-control"] == "no-store, private"
+    added = web.client.post(
+        _TASTE_RULES,
+        json={"version": 1, "action": "add", "section": "avoid", "text": "Busy type."},
+        headers=headers,
+    )
+    removed = web.client.post(
+        _TASTE_RULES,
+        json={"version": 1, "action": "remove", "number": 1},
+        headers=headers,
+    )
+    unchanged = web.client.post(
+        _TASTE_RULES, json={**body, "text": "Bold art."}, headers=headers
+    )
+    assert (added.status_code, removed.status_code, unchanged.status_code) == (
+        200,
+        200,
+        200,
+    )
+    assert service.saved == [
+        ("edit", 1, None, f"{_MARKER} art.", True),
+        ("add", None, "avoid", "Busy type.", True),
+        ("remove", 1, None, None, True),
+        ("edit", 1, None, "Bold art.", False),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("rules", "change", "code"),
+    [
+        ([f"Rule {index}." for index in range(40)], {}, "rule_limit"),
+        (["a " * 39 + "a"] * 30, {"text": "word " * 9 + "word"}, "profile_full"),
+    ],
+    ids=["rule-limit", "profile-full"],
+)
+def test_taste_rule_limits_answer_422(
+    web: ReviewWebContext[FakeReviewRepository], rules, change, code
+) -> None:
+    web.client.close()
+    web.client = _taste_client(web, _TasteEdits(rules))
+    web.cleanup.enter_context(web.client)
+    session = web.login()
+    response = web.client.post(
+        _TASTE_RULES,
+        json={
+            "version": 1,
+            "action": "add",
+            "section": "avoid",
+            "text": "Thin type.",
+            **change,
+        },
+        headers={**web.origin, "x-csrf-token": str(session["csrf_token"])},
+    )
+    assert (response.status_code, response.json()["error"]["code"]) == (422, code)
+
+
+def test_a_400_code_point_rule_fits_the_body_cap_in_any_json_encoding(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    """Dry proof d: 400 astral code points as escaped surrogate pairs (about
+    4.9 KB) are admitted at 8,192 bytes, refused at 4,096, and 8,193 is 413."""
+    text = "".join(chr(0x20000 + index) for index in range(400))
+    payload = json.dumps(
+        {"version": 1, "action": "edit", "number": 1, "text": text}
+    ).encode()
+    assert 4_096 < len(payload) < 8_192
+    service = _TasteEdits(["Bold art."])
+    web.client.close()
+    web.client = _taste_client(web, service)
+    web.cleanup.enter_context(web.client)
+    session = web.login()
+    headers = {
+        **web.origin,
+        "x-csrf-token": str(session["csrf_token"]),
+        "content-type": "application/json",
+    }
+    admitted = web.client.post(_TASTE_RULES, content=payload, headers=headers)
+    assert admitted.status_code == 200, admitted.text
+    assert service.saved == [("edit", 1, None, text, True)]
+    padded = payload[:-1] + b" " * (8_193 - len(payload)) + b"}"
+    assert len(padded) == 8_193
+    too_large = web.client.post(_TASTE_RULES, content=padded, headers=headers)
+    assert too_large.status_code == 413
+    # The middleware reads the limits when the first request builds it.
+    with (
+        patch.dict(_BODY_PATH_LIMITS, {_TASTE_RULES: 4_096}),
+        _taste_client(web, _TasteEdits(["Bold art."])) as narrow,
+    ):
+        login = narrow.post(
+            "/api/v1/session/login",
+            headers=web.origin,
+            json={"password": "correct horse"},
+        ).json()
+        refused = narrow.post(
+            _TASTE_RULES,
+            content=payload,
+            headers={
+                **headers,
+                "x-csrf-token": login["csrf_token"],
+                "x-ml-build-identity": TEST_REACT_BUILD_IDENTITY,
+            },
+        )
+    assert refused.status_code == 413

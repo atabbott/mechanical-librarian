@@ -73,6 +73,21 @@ PINS: tuple[tuple[str, str, str], ...] = (
         "cover-consideration-v10",
     ),
     (
+        "mechanical_librarian.domain.cover_taste",
+        "COVER_TASTE_PROFILE_SCHEMA",
+        "cover-taste-profile-v2",
+    ),
+    (
+        "mechanical_librarian.application.cover_taste_contract",
+        "COVER_TASTE_BUILD_PACKET_SCHEMA",
+        "cover-taste-build-packet-v2",
+    ),
+    (
+        "mechanical_librarian.interfaces.web.app",
+        "REVIEW_TASTE_PROFILE_SCHEMA",
+        "review-taste-profile-v2",
+    ),
+    (
         "mechanical_librarian.application.review_application",
         "REVIEW_PREPARATION_SCHEMA",
         "review-preparation-v2",

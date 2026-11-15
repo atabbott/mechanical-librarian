@@ -331,7 +331,7 @@ describe('Application shell', () => {
     expect(screen.getByRole('button', { name: 'Dismiss preparation' })).toBeVisible()
 
     fireEvent.click(screen.getByRole('button', { name: 'Preparation needs attention' }))
-    expect(await screen.findByText('Complete · some books could not finish')).toBeVisible()
+    expect(await screen.findByText('Complete · some works could not finish')).toBeVisible()
     expect(
       screen.getByText(
         // A finished scan's split is its buckets below, in the same words.
@@ -472,7 +472,7 @@ describe('Application shell', () => {
         bucket.querySelector('dt')?.textContent,
         bucket.querySelector('dd')?.textContent,
       ])
-    expect(within(books).getByText('Complete · some books could not finish')).toBeVisible()
+    expect(within(books).getByText('Complete · some works could not finish')).toBeVisible()
     expect(within(books).getByText('4 of 4 checked')).toBeVisible()
     expect(buckets(books)).toEqual([
       ['Ready to browse', '1'],
@@ -634,7 +634,7 @@ describe('Application shell', () => {
     await user.click(trigger)
     // A state reads in the owner's words, never as the store's identifier; the
     // transport refuses a state the label table does not name (#1286).
-    expect(screen.getByText('Finding your books')).toBeVisible()
+    expect(screen.getByText('Finding works')).toBeVisible()
     expect(screen.getByText(wholeText('1 of 2 checked · 0 ready to browse'))).toBeVisible()
     expect(
       screen.getByText(

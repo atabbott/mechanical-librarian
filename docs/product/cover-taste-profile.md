@@ -1,8 +1,8 @@
 # Taste profile
 
 Covers → Taste profile shows the taste profile a vision model wrote from the
-covers you chose and passed over, read-only. It changes no cover, suggestion
-or decision yet (#1372). The tab has no count, and the other tabs keep theirs
+covers you chose and passed over, and lets you edit it. It changes no cover,
+suggestion or decision yet (#1372). The tab has no count, and the other tabs keep theirs
 while it is open. It belongs to the [review experience](review-experience.md);
 what the model receives is in the
 [AI trust boundary](../architecture/ai-boundary.md#taste-profile-builder).
@@ -31,9 +31,36 @@ the last build that did not fail that way.
 A profile shows its version, the day it was built, how many decisions it read
 and its rules as "{n} of 40". Its numbered rules sit under four headings: What
 you’re drawn to, What you avoid, How you trade them off, and When to keep or
-switch. A heading with no rules is hidden. Versions, beside the rules above
-1024 pixels, lists every version, newest first, the one in use marked "(in use)", each "Built {date} from {n}
-decisions".
+switch. Every heading is shown with Add rule, even one with no rules yet.
+Versions, beside the rules above 1024 pixels, lists every version, newest
+first, the one in use marked "(in use)": a build reads "Built {date} from {n}
+decisions" and an edit "Edited {date}".
+
+## Editing rules
+
+Each rule has a pencil ("Edit rule {n}") that opens it in place: one line of
+at most 400 characters with a counter, Save rule, Cancel and Remove. Add rule
+opens an empty rule at the end of its section, with no Remove. One rule is
+open at a time. Each saved change, an edit, an added rule or a removal, is a
+new version at once, and "Rule {n} saved." or "Rule {n} removed." confirms it.
+A rule you wrote is marked "Yours", a model rule you changed "Edited". An edit
+keeps a rule's number; an added rule takes the next number above the highest,
+and a rebuild numbers rules from 1 again. Escape closes a rule as Cancel does.
+At 40 rules, Add rule says "40 rules is the limit." beside it.
+
+A rule must have text, at most 400 characters, and no web address or file
+path; the browser refuses these first, and the server also refuses passwords
+and hidden characters. A rule the profile has no room for, past 40 rules,
+1,200 words or 8,192 characters, is refused. If the profile changed since the
+page loaded, such as a rebuild while the rule was open, nothing is saved and
+the tab says so. When no answer comes back, the rule stays open with what you
+typed and the tab reads the profile again.
+
+A rebuild keeps your rules and edited rules word for word, ahead of the
+model's in each section, and the model is asked not to repeat, reword or
+contradict them. It does not write again a rule you removed or the wording you
+replaced: such a repeat is left out. While your rules leave no room for
+another rule or word, no rebuild is scheduled; Try again still asks for one.
 
 ## Settings
 

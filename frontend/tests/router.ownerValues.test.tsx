@@ -318,6 +318,29 @@ describe('owner-entered values', () => {
     await waitFor(() => expect(outcome).toHaveFocus())
   })
 
+  it('V6 holds the detail column through a withdrawal and lets go on the next field (#1365)', async () => {
+    const user = userEvent.setup()
+    const subtitle: Field = { ...contextTitle, destination: 'subtitle', ownerControl: null }
+    let fields: readonly Field[] = [enteredTitle, subtitle]
+    const http = owner(() => fields)
+    const panel = await open(http)
+    const column = panel.closest<HTMLElement>('.workspace-detail')
+    expect(column?.style.minHeight).toBe('')
+    fields = [{ ...contextTitle, needsAttention: false }, subtitle]
+    await user.click(within(panel).getByRole('button', { name: 'Withdraw' }))
+    await waitFor(() =>
+      expect(screen.getByText('Withdrawn. This field needs a decision again.')).toHaveFocus(),
+    )
+    // The column keeps the height it had when Withdraw was pressed.
+    expect(column?.style.minHeight).toMatch(/^\d+(\.\d+)?px$/u)
+    const rail = screen.getByRole('navigation', { name: 'Review fields' })
+    await user.click(within(rail).getByRole('button', { name: /^Subtitle/u }))
+    await waitFor(() =>
+      expect(screen.queryByRole('region', { name: 'Your value for Title' })).toBeNull(),
+    )
+    expect(column?.style.minHeight).toBe('')
+  })
+
   it.each(['withdraw', 'record'] as const)(
     'V10 keeps focus off the page when the reads after a %s fail (#1288)',
     async (command) => {
