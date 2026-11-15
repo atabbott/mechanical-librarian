@@ -523,9 +523,9 @@ def test_description_advice_preservation(
 ) -> None:
     """Retained automatic advice on a preservation-only field during a retry.
 
-    Automatic advice is admitted only while the field offers the owner a
-    choice, so the selection is made while it did, as one from before that
-    rule or before a narrower offer, and the field then offers none.
+    Every source repeats the current description, so the field offers the
+    adviser's text and Keep current while its advice is shown (#1905): the
+    retained selection keeps both available during the retry.
     """
     from tests.support.description_advice import qualify_description_advice
 
@@ -536,11 +536,6 @@ def test_description_advice_preservation(
         store = live.repository.description_advice_store()
         advice = _advice(live, binding.review_case_id)
         assert isinstance(advice, dict) and advice["candidate"] is not None
-        choice = (
-            "UPDATE review_case_field_facts SET has_owner_decision_actions=? "
-            "WHERE review_case_id=? AND destination='description'"
-        )
-        live.repository._connection.execute(choice, (1, binding.review_case_id))
         store.admit(
             advice["candidate"]["candidate_id"],
             binding,
@@ -548,7 +543,6 @@ def test_description_advice_preservation(
             "c" * 64,
             20,
         )
-        live.repository._connection.execute(choice, (0, binding.review_case_id))
         live.call(
             "POST",
             f"/api/v1/review-cases/{binding.review_case_id}/description-advice/retry",
@@ -559,6 +553,30 @@ def test_description_advice_preservation(
     _expect(
         FIXTURES / "descriptionAdvicePreservationFixture.json", detail, placeholders
     )
+
+
+def test_description_advice_repeated(tmp_path: Path) -> None:
+    """Advice on a description every source repeats, with no decision on it.
+
+    The field offers the adviser's text and Keep current as an optional
+    choice that never enters Attention (#1905).
+    """
+    with _description_case(
+        tmp_path,
+        automatic=False,
+        report_override=_preserved_description_report(),
+        ask_only_policy=True,
+        automatic_policy=("cover_order", "fixed_source_order"),
+    ) as (live, binding):
+        detail = live.call("GET", f"/api/v1/review-cases/{binding.review_case_id}")[3]
+        placeholders = live.placeholders()
+    assert isinstance(detail, dict)
+    description = next(
+        field for field in detail["fields"] if field["destination"] == "description"
+    )
+    assert description["classification"] == "owner_choosable"
+    assert description["decision_actions"] == ["keep_current", "accept"]
+    _expect(FIXTURES / "descriptionAdviceRepeatedFixture.json", detail, placeholders)
 
 
 def test_policy_documents_and_automatic_confirmation(tmp_path) -> None:

@@ -93,6 +93,7 @@ def classify_review_field(
     kept_by_fill_policy: bool = False,
     kept_by_tags_off: bool = False,
     single_source: bool = False,
+    repeated_description: bool = False,
 ) -> ReviewFieldClassification:
     """Classify a field consistently for queue, detail, and navigation use.
 
@@ -111,7 +112,9 @@ def classify_review_field(
     optional because the owner's setting only fills empty fields and the
     current value passes the floor, `kept_by_tags_off` because the owner's
     tags setting is off, and `single_source` because only one uncorroborated
-    source proposes a value (#1310).
+    source proposes a value (#1310). `repeated_description` says it is a
+    description every source repeats, offered beside description advice
+    (#1905).
     """
     preservation_only = bool(proposed_values) and all(
         _canonical_value(value) == _canonical_value(current_value)
@@ -213,7 +216,10 @@ def classify_review_field(
         return ReviewFieldClassification(
             "owner_choosable",
             (
-                "The proposed values only shorten or extend the current one, so "
+                "Every source repeats your current description, so no review is "
+                "needed. You can still keep it or choose the adviser's text."
+                if repeated_description
+                else "The proposed values only shorten or extend the current one, so "
                 "no review is needed. You can still keep the current value or "
                 "choose a proposed one."
                 if immaterial_alternatives
