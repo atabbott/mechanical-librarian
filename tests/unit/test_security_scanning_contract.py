@@ -12,6 +12,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
 PUBLIC_GATE = WORKFLOWS / "public-gate.yml"
+SCHEDULED_AUDIT = WORKFLOWS / "scheduled-audit.yml"
 ACCEPTANCE_REGISTER = ROOT / "osv-scanner.toml"
 
 # GitHub reads both extensions from `.github/workflows`. The hardening sweep
@@ -171,6 +172,26 @@ def test_the_public_gate_audits_the_lockfile_through_the_register(
     assert argument in workflow
     # Mounted read-only, so the audit can never rewrite the tree it audits.
     assert '--volume "$PWD:/src:ro"' in workflow
+
+
+def _audit_command(workflow: Path) -> str:
+    """The OSV-Scanner step's folded command, exactly as the workflow runs it."""
+    text = workflow.read_text(encoding="utf-8")
+    match = re.search(
+        r"- name: Audit the locked Python dependency closure\n"
+        r"\s+run: >-\n((?:\s{10}\S.*\n)+)",
+        text,
+    )
+    assert match is not None, workflow.name
+    return " ".join(line.strip() for line in match[1].splitlines())
+
+
+def test_the_weekly_audit_runs_the_gate_scan_on_main() -> None:
+    """A quiet repository still meets new advisories (security review, 1.0)."""
+    workflow = SCHEDULED_AUDIT.read_text(encoding="utf-8")
+    assert "  schedule:\n    - cron: " in workflow
+    assert "pull_request" not in workflow and "push:" not in workflow
+    assert _audit_command(SCHEDULED_AUDIT) == _audit_command(PUBLIC_GATE)
 
 
 def test_the_scanner_is_pinned_by_image_digest() -> None:
@@ -400,7 +421,10 @@ def test_a_workflow_without_read_only_defaults_is_flagged() -> None:
 
 
 def test_the_sweep_covers_the_repository_workflows() -> None:
-    assert [name for name, _ in workflow_sources(WORKFLOWS)] == ["public-gate.yml"]
+    assert [name for name, _ in workflow_sources(WORKFLOWS)] == [
+        "public-gate.yml",
+        "scheduled-audit.yml",
+    ]
 
 
 @pytest.mark.parametrize(

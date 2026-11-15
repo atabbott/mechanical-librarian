@@ -3,12 +3,9 @@
 from __future__ import annotations
 
 import base64
-import ctypes
-import errno
 import io
 import json
 import os
-import platform
 import resource
 import socket
 import sys
@@ -16,6 +13,7 @@ import warnings
 
 from PIL import Image, ImageOps, UnidentifiedImageError, features
 
+from mechanical_librarian.adapters.child_confinement import confine_interpreter
 from mechanical_librarian.adapters.cover_measures import (
     PREVIEW_BOX,
     difference_hash,
@@ -52,43 +50,6 @@ def _no_network() -> None:
     socket.socket = _deny_network  # type: ignore[assignment,misc]  # reason: deliberate monkeypatch of the socket type to deny network use in this one-shot child
     socket.create_connection = _deny_network  # type: ignore[assignment]
     socket.getaddrinfo = _deny_network  # type: ignore[assignment]
-
-
-def _isolate_network() -> None:
-    if not sys.platform.startswith("linux"):
-        return
-    numbers = {
-        "x86_64": (41, 53),
-        "aarch64": (198, 199),
-    }.get(platform.machine())
-    if numbers is None:
-        raise OSError("network syscall filter is unavailable")
-
-    class Filter(ctypes.Structure):
-        _fields_ = (
-            ("code", ctypes.c_ushort),
-            ("jt", ctypes.c_ubyte),
-            ("jf", ctypes.c_ubyte),
-            ("k", ctypes.c_uint),
-        )
-
-    class Program(ctypes.Structure):
-        _fields_ = (("length", ctypes.c_ushort), ("filter", ctypes.POINTER(Filter)))
-
-    instructions = [Filter(0x20, 0, 0, 0)]
-    for number in numbers:
-        instructions.extend(
-            (Filter(0x15, 0, 1, number), Filter(0x06, 0, 0, 0x00050000 | errno.EPERM))
-        )
-    instructions.append(Filter(0x06, 0, 0, 0x7FFF0000))
-    array = (Filter * len(instructions))(*instructions)
-    program = Program(len(instructions), array)
-    library = ctypes.CDLL(None, use_errno=True)
-    if (
-        library.prctl(38, 1, 0, 0, 0) != 0
-        or library.prctl(22, 2, ctypes.byref(program)) != 0
-    ):
-        raise OSError(ctypes.get_errno(), "network syscall filter is unavailable")
 
 
 def _decode(data: bytes) -> dict[str, object]:
@@ -153,8 +114,8 @@ def _decode(data: bytes) -> dict[str, object]:
 
 def main() -> int:
     try:
+        confine_interpreter()
         _limits()
-        _isolate_network()
         _no_network()
         data = sys.stdin.buffer.read(_MAX_ORIGINAL_BYTES + 1)
         if not data or len(data) > _MAX_ORIGINAL_BYTES:

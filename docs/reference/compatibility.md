@@ -113,8 +113,8 @@ refused.
 | `cover-policy-report-v5` | Cover policy evaluation, embedding the cover identity report; owner readiness and automatic recommendation are independent, and the measured cover rules' outcome and reason are recorded |
 | `cover-automatic-decision-v5` | An automatic cover decision, with the measured rule's reason for a replacement and which shadow identity admitted it: one for a confirmed current cover, one for a cover that is not confirmed |
 | `cover-selection-authority-v1`, `cover-selection-authority-v3` | Cover selections: v1 wraps an automatic choice, v3 an owner choice and the switch a Put back undoes |
-| `cover-taste-build-packet-v1` | The closed facts and image transports one taste profile build sends to its model |
-| `cover-taste-profile-v1` | A taste profile version: up to 40 numbered rules in four sections, with the inputs it was built from. It influences nothing yet |
+| `cover-taste-build-packet-v2` | The closed facts and image transports one taste profile build sends to its model, with the owner's kept rules, the rules the owner removed and the budget left |
+| `cover-taste-profile-v2` | A taste profile version, built or edited: up to 40 numbered rules in four sections, each written by the model, edited by the owner or the owner's own, with the texts the owner removed and the inputs it was built from. It influences nothing yet |
 | `field-effect-consent-state-v2` | A library consent and its basis: the owner's grant or the policy activation that carried it |
 | `field-effect-consent-envelope-v1` | The consent envelope whose identity digests the destination set |
 | `field-effect-plan-v1`, `field-effect-operation-v1`, `field-effect-event-v1` | Guarded write plans, operations and their append-only audit events |

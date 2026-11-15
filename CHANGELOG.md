@@ -63,6 +63,18 @@ brackets are GitHub issues.
   and their response versions start with `preview-`. A script that calls the
   old paths gets 404. Stored outcome sets keep `shadow-outcome-set-v11`; no
   rebuild is needed (#1739).
+- Every request but `GET`, `HEAD` and `OPTIONS` now has its body size limited
+  before sign-in, at 2 KiB unless its route needs more, with `413
+  body_too_large` above it, and a body that has not arrived 30 seconds after
+  its headers closes the connection. The Google Books key now travels in a
+  header instead of the address, and the dependency audit also runs weekly on
+  `main` (#1887).
+- Library, Policy and Activity share one page header and heading scale. A
+  field's choices sit in one panel under Keep current value and Choose a new
+  value, without queue position, choice count or the one-tap hint. Covers adds
+  Open in Works, Policy says what Automatic does on ebooks and audiobooks, and
+  Activity hides a one-page pager. Phones get a 16 px margin, and the masthead
+  scrolls away when taller than a sixth of the window (#1894).
 
 ## 0.33.0 — First library (in progress)
 
@@ -95,11 +107,14 @@ brackets are GitHub issues.
   the book's authors and names another still does not (#1355).
 - **Clean rebuild required.** Covers has a Taste profile tab. Once you have
   chosen 25 covers, an OpenRouter vision model you pick in Settings → Reviewer
-  writes rules about the covers you choose and pass over. The profile is shown
-  read-only and changes nothing yet. `review.cover_taste_build_daily_requests`
-  (default 8) caps its requests a day (#1372).
+  writes rules about the covers you choose and pass over. The profile changes
+  nothing yet. `review.cover_taste_build_daily_requests` (default 8) caps its
+  requests a day (#1372).
 - **Clean rebuild required.** Codex can write the taste profile too: choose it
   or an OpenRouter model in Settings → Reviewer › Taste profile (#1372).
+- **Clean rebuild required.** You can edit, add and remove taste profile
+  rules. Your rules stay as you wrote them through rebuilds, and rules you
+  removed are not written again (#1372).
 - **Clean rebuild required.** Choosing, putting back or automatically
   switching a cover over one Audiobookshelf already holds no longer fails
   before it writes. The write binds the current cover's exact bytes, even when
@@ -269,6 +284,12 @@ brackets are GitHub issues.
   other lists empty description, genres and narrators fields that Hardcover or
   Open Library offers a value for. The admission-rule ledger's A6 analysis now
   counts your decisions on each relaxation's fields (#1876).
+- Tooling: a read-only workbench script lists Library links to the
+  descriptions where the adviser's text could be written automatically, and
+  scores your decisions on them per adviser against your bar of a Wilson 95%
+  lower limit of 0.90. ADR-0099 proposes using automatic description advice
+  only once an adviser passes (#1886). It also reads an install whose
+  settings come from `config.json`, given a copy of that file (#1898).
 - **Clean rebuild required.** Nothing is taken from Audiobookshelf's own
   `metadata.json` or `metadata.abs`. A sidecar is set aside if its folder holds
   another audio or ebook file, or it lacks the audiobook's title and an author

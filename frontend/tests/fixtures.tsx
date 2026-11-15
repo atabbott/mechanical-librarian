@@ -324,7 +324,7 @@ export const idlePreparation: PreparationView = {
 type ScriptedPolicyCommand = (path: string, body?: unknown) => Promise<never>
 // Covers → Taste profile before any build: configured, nothing chosen yet.
 export const tasteProfile: TasteProfileView = {
-  schema_version: 'review-taste-profile-v1',
+  schema_version: 'review-taste-profile-v2',
   configured: true,
   chosen: 0,
   required: 25,
@@ -399,6 +399,7 @@ export const createHttp = (): ReviewHttp => ({
   })),
   getTasteProfile: vi.fn(async () => tasteProfile),
   retryTasteBuild: vi.fn(async () => tasteProfile),
+  editTasteRule: vi.fn(async () => tasteProfile),
   getCaseDetail: vi.fn(async () => detail),
   getCaseSuccessor: vi.fn(async () => null),
   getEvidence: vi.fn(async () => ({ items: [], missingLineageCount: 0, sourceLedger: [] })),
