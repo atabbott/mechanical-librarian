@@ -79,7 +79,7 @@ refused.
 | `review-bootstrap-v2` | The store-mode bootstrap document at `/run/secrets/review-bootstrap.json` |
 | `owner-settings-v6` | Store-mode owner settings in the application database, including Book matching (`matching.work_identity`) and Current covers |
 | `setup-state-v5` | Incomplete first-run setup, with libraries and their folders recorded before sources, including the setup claim token digest ([ADR-0086](../architecture/decisions/0086-deployment-held-setup-claim-token.md)). A setup left unfinished by an earlier build is refused at startup |
-| `reviewer-access-v4` | Optional reviewer access for cover review, description advice and the taste profile |
+| `reviewer-access-v5` | Optional reviewer access for cover review, description advice and the taste profile |
 
 ### Reports, proposals and policy
 

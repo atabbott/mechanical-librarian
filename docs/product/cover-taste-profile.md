@@ -36,11 +36,19 @@ decisions".
 
 ## Settings
 
-Settings → Reviewer › Taste profile picks the OpenRouter vision model that
-writes the taste profile, from recommended models measured for it. It says
-what OpenRouter receives, and Test taste profile model and prices shows the
-model's prices per input token, output token, image and request before Use
-for taste profile saves it. Continue without a taste profile stops taste
-profiles and keeps cover review and description advice. It also states the
-daily limit, "Mechanical Librarian asks for at most 8 taste profiles a day.",
-which the configuration sets ([configuration](../reference/configuration.md#taste-profile)).
+Settings → Reviewer › Taste profile, inside the reviewer panel below the
+description adviser, picks what writes the taste profile: Codex or an
+OpenRouter vision model. It says what the model receives, which model is
+selected, and the daily limit, "Mechanical Librarian asks for at most 8 taste
+profiles a day.", which the configuration sets
+([configuration](../reference/configuration.md#taste-profile)). Continue
+without a taste profile stops taste profiles and keeps cover review and
+description advice.
+
+The Codex row appears once Codex is signed in or selected for any task. It
+names the Codex model, says taste profiles count against the plan's usage
+limits, and Use Codex for taste profiles selects it; it is disabled until the
+Codex sign-in is usable. The OpenRouter row offers recommended models measured
+for taste profiles, and Test taste profile model and prices shows the model's
+prices per input token, output token, image and request before Use for taste
+profile saves it. A failure shows under the button that met it.

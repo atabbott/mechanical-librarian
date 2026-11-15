@@ -60,23 +60,27 @@ TASTE_INSTRUCTION: Final = (
 TASTE_INSTRUCTION_SHA256: Final = hashlib.sha256(
     TASTE_INSTRUCTION.encode("utf-8")
 ).hexdigest()
-TASTE_OUTPUT_SCHEMA: Final = canonical_json(
-    {
-        "additionalProperties": False,
-        "properties": {
-            "sections": {
-                "additionalProperties": False,
-                "properties": {
-                    section: {"items": {"type": "string"}, "type": "array"}
-                    for section in TASTE_SECTIONS
-                },
-                "required": list(TASTE_SECTIONS),
-                "type": "object",
-            }
-        },
-        "required": ["sections"],
-        "type": "object",
-    }
+_TASTE_SCHEMA: Final[dict[str, object]] = {
+    "additionalProperties": False,
+    "properties": {
+        "sections": {
+            "additionalProperties": False,
+            "properties": {
+                section: {"items": {"type": "string"}, "type": "array"}
+                for section in TASTE_SECTIONS
+            },
+            "required": list(TASTE_SECTIONS),
+            "type": "object",
+        }
+    },
+    "required": ["sections"],
+    "type": "object",
+}
+TASTE_OUTPUT_SCHEMA: Final = canonical_json(_TASTE_SCHEMA)
+# The same schema for the contained Codex engine, whose structured-output
+# subset requires the root to name its draft (#1372 C3).
+TASTE_CODEX_OUTPUT_SCHEMA: Final = canonical_json(
+    {"$schema": "https://json-schema.org/draft/2020-12/schema", **_TASTE_SCHEMA}
 )
 
 _REFERENCE = re.compile(r"^taste_image_[0-9a-f]{64}$")
@@ -272,6 +276,7 @@ class TasteChargeUnknownError(RuntimeError):
 __all__ = [
     "COVER_TASTE_BUILD_PACKET_SCHEMA",
     "TASTE_INSTRUCTION",
+    "TASTE_CODEX_OUTPUT_SCHEMA",
     "TASTE_INSTRUCTION_SHA256",
     "TASTE_OUTPUT_SCHEMA",
     "TASTE_OUTPUT_TOKENS",

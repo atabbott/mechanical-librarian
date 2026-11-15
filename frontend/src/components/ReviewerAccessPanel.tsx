@@ -1,5 +1,6 @@
 import { ReviewerCost } from './ReviewerCost'
 import { DescriptionReviewerSettings } from './DescriptionReviewerSettings'
+import { TasteReviewerSettings } from './TasteReviewerSettings'
 import { StaleBuildRead } from './StaleBuildRead'
 import { ModelPicker } from './ModelPicker'
 import { coverReviewerLabel, reviewerFailureCopy, reviewerStateLabels } from '../labels'
@@ -547,6 +548,7 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
   const codexManaged =
     view.mapping?.engine === 'codex' ||
     view.description_mapping?.engine === 'codex' ||
+    view.taste_mapping?.engine === 'codex' ||
     codexUsable ||
     view.codex.state === 'configured'
   const coverEngine =
@@ -625,6 +627,13 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
         http={http}
         view={view}
         codexUsable={codexUsable}
+        onCodexRefused={access.refreshAfterCodexRefusal}
+      />
+      <TasteReviewerSettings
+        http={http}
+        view={view}
+        codexUsable={codexUsable}
+        codexManaged={codexManaged && !waiting}
         onCodexRefused={access.refreshAfterCodexRefusal}
       />
     </div>

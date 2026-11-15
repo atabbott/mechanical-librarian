@@ -2309,7 +2309,7 @@ describe('shipped first-run setup script', () => {
     const fetch = vi.fn(async (request: RequestInfo | URL) => {
       if (requestUrl(request) === '/api/setup/reviewer-access')
         return response({
-          schema_version: 'reviewer-access-view-v4',
+          schema_version: 'reviewer-access-view-v5',
           taste_mapping: null,
           taste_metadata: null,
           taste_daily_requests: 8,
@@ -2562,7 +2562,7 @@ describe('shipped first-run setup script', () => {
 })
 
 const reviewerAccess = (state: string, reason: string | null = null) => ({
-  schema_version: 'reviewer-access-view-v4',
+  schema_version: 'reviewer-access-view-v5',
   taste_mapping: null,
   taste_metadata: null,
   taste_daily_requests: 8,
