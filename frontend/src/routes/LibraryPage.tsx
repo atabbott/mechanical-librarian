@@ -807,7 +807,6 @@ export default function LibraryPage({
         (item) => item.id === search.preview && item.destination === selected.destination,
       )
     : -1
-  const activeQueueGroup = attentionGroups.findIndex((group) => group[0]?.id === search.preview)
   // The summary and this search's read are separate reads; clamp any skew.
   const outsideSearch = Math.max((summaryAttention ?? 0) - (data?.counts.attention ?? 0), 0)
   const nextWork =
@@ -1459,23 +1458,10 @@ export default function LibraryPage({
     })
 
   const selectedMode = fieldDecisionMode(selected)
-  // Attention membership comes from the authoritative exact case. A pending
-  // or failed local command has not yet changed it.
-  const remainingFields = attentionFields.length
-  const railPosition =
-    complete?.id === selectedReviewCaseId && completionInspection === null
-      ? `${String(complete.fields.length)} recorded · work complete`
-      : selected
-        ? `${String(remainingFields)} remaining · field ${String(
-            renderedRailFields.indexOf(selected) + 1,
-          )} of ${String(renderedRailFields.length)}`
-        : `${String(remainingFields)} remaining · no field selected`
   const writesActive = detail.data?.writesConsented === true
 
   return (
     <div className="library-page variant-m-workspace">
-      <h1 className="sr-only">Library</h1>
-      <LibraryViewSwitch view="works" />
       {/* One toolbar in both states, so selecting a work never moves the workspace. */}
       <header
         className="library-header"
@@ -1483,6 +1469,10 @@ export default function LibraryPage({
         tabIndex={-1}
         {...(!hasSelection ? { 'data-route-focus': 'true' } : {})}
       >
+        <div className="library-title">
+          <h1>Library</h1>
+          <LibraryViewSwitch view="works" />
+        </div>
         <button
           ref={attentionToggle}
           className="attention-toggle"
@@ -1728,9 +1718,6 @@ export default function LibraryPage({
                 </aside>
               ) : null}
               <section className="field-map" aria-label={`Fields in ${displayedIdentity.title}`}>
-                <header>
-                  <strong>{railPosition}</strong>
-                </header>
                 <nav ref={fieldRail} className="field-filmstrip" aria-label="Review fields">
                   {renderedRailFields.map((field) => (
                     <button
@@ -1821,12 +1808,6 @@ export default function LibraryPage({
                   controller={controller}
                   inspectingCompletion={complete?.id === selectedReviewCaseId}
                   backToCompletion={() => setCompletionInspection(null)}
-                  queuePosition={
-                    activeQueueGroup >= 0
-                      ? `Work ${String(activeQueueGroup + 1)} of ${String(attentionGroups.length)}${attention.hasNextPage || search.attentionCursor ? ' loaded' : ''}`
-                      : 'Selected work'
-                  }
-                  frozenDestinations={frozenDestinations}
                   expandedChoices={expandedChoices}
                   toggleChoiceEvidence={toggleChoiceEvidence}
                   choose={choose}

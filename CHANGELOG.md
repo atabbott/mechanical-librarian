@@ -69,6 +69,12 @@ brackets are GitHub issues.
   its headers closes the connection. The Google Books key now travels in a
   header instead of the address, and the dependency audit also runs weekly on
   `main` (#1887).
+- Library, Policy and Activity share one page header and heading scale. A
+  field's choices sit in one panel under Keep current value and Choose a new
+  value, without queue position, choice count or the one-tap hint. Covers adds
+  Open in Works, Policy says what Automatic does on ebooks and audiobooks, and
+  Activity hides a one-page pager. Phones get a 16 px margin, and the masthead
+  scrolls away when taller than a sixth of the window (#1894).
 
 ## 0.33.0 — First library (in progress)
 
