@@ -467,9 +467,9 @@ before it sends a request
 An answer held for the same request is read exactly as a live one: it counts
 against the same attempt, retry and byte ceilings and passes the same decoder
 and parser. Only the pacing wait and the request are skipped. A miss asks the
-provider as before. The provider's `accessed_at` is the earliest fetch time
-among the answers its observation used, so a report built from held answers
-keeps the time it first had.
+provider as before. The provider's `accessed_at` is set by its first request:
+the fetch time of the held answer that served it, or now when that request
+goes live.
 
 - An answer is kept only when the provider's observation and every lane of it
   ended `candidates`, `no_match` or `insufficient_input`, and only a 200 body
@@ -614,11 +614,11 @@ If settlement cannot commit, preparation stops; see
 
 The report ID is derived from the complete canonical document, including each
 provider's `accessed_at`, captured at its first request (`null` if none was
-sent), or the fetch time of a [held answer](#held-provider-answers) it used
-when that is earlier. Reopening returns the same bytes and contacts nothing. A
-new observation creates a new immutable report even when the facts are
-unchanged, unless the answers it used were held, which yields the same report
-again; only the current pointer moves. Replay rechecks every invariant above from the
+sent), or the fetch time of a [held answer](#held-provider-answers) that
+served it. Reopening returns the same bytes and contacts nothing. A new
+observation creates a new immutable report even when the facts are unchanged,
+unless every provider's first answer and the rest it used were held, which
+yields the same report again; only the current pointer moves. Replay rechecks every invariant above from the
 stored report. Reports from earlier schemas cannot be replayed; do not relabel
 or rewrite them.
 

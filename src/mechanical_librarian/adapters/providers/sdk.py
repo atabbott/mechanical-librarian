@@ -421,11 +421,14 @@ class BoundedProviderSession:
             # A session without a store reads the wall time once, as before.
             # One with a store reads it at its first live dispatch even after
             # a held answer has been served, to date the answers it may keep.
+            # The access time is set once: every lane of the observation
+            # states it, and they must agree.
             if self._accessed_at is None or (
                 self._responses is not None and self._live_at_us < 0
             ):
                 wall = self._clocks.wall_clock()
-                self._note_access(provider_access_time(wall))
+                if self._accessed_at is None:
+                    self._accessed_at = provider_access_time(wall)
                 if self._responses is not None:
                     self._live_at_us = epoch_microseconds(wall)
             self._ledger.dispatch(retry=is_retry)
@@ -509,16 +512,6 @@ class BoundedProviderSession:
             self._responses.hold(self.attempt_count, digest, payload, self._live_at_us)
         return value
 
-    def _note_access(self, at: str) -> None:
-        """Keep the earliest access time among this observation's answers.
-
-        The canonical form sorts as text. A live observation's first dispatch
-        is its earliest, so this changes nothing for it; one that mixes held
-        and live answers reports the oldest it used.
-        """
-        if self._accessed_at is None or at < self._accessed_at:
-            self._accessed_at = at
-
     def _reuse_once(
         self,
         held: tuple[bytes, int],
@@ -540,7 +533,8 @@ class BoundedProviderSession:
         payload, fetched_at_us = held
         if deadline is not None and self._clocks.clock() >= deadline:
             raise self._incomplete(ProviderIncompleteCause.DEADLINE)
-        self._note_access(provider_access_time(fetched_at_us / 1_000_000))
+        if self._accessed_at is None:
+            self._accessed_at = provider_access_time(fetched_at_us / 1_000_000)
         self._ledger.dispatch(retry=is_retry)
         self.attempt_count += 1
         if is_retry:

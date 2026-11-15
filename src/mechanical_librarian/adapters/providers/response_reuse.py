@@ -9,8 +9,8 @@ ended clean, so a failed, partial or refused answer is never stored. Nor is an
 answer to a request one of whose dispatches failed in that observation: the
 failure is in the live accounting, and a held answer would be served in its
 place. Every answer an observation keeps is dated to its first live dispatch,
-and an observation reports the earliest date among the answers it used, so
-one that reuses answers reads as the observation that stored them.
+and an observation is dated by its first dispatch, held or live, so one whose
+first answer is held reads as the observation that stored it.
 
 A request is keyed by the adapter kind and the SHA-256 of its method, URL,
 sorted query, body and the adapter's revision below. Headers never enter the

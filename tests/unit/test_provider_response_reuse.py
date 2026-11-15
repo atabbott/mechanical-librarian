@@ -428,14 +428,15 @@ def test_a_hardcover_narrowing_retry_keeps_only_the_answer_it_read(
 
     again: list[dict[str, object]] = []
     later = _hardcover(answer, store, again, wall=_WALL + 86_400).observe(lookup)
-    assert later.observation == live.observation
-    # Only the refused overflow is asked again. It is asked first and a day
-    # later, yet the observation is dated by the oldest answer it used, so
-    # the report stays the one first published.
+    assert later.observation.status is ProviderStatus.NO_MATCH
+    # Only the refused overflow is asked again. It comes first and is never
+    # kept, so the observation is dated when it was asked: a new report with
+    # the same facts.
     assert [body["variables"]["authors"] for body in again] == [
         ["Ada Example", "Bea Example"]
     ]
-    assert later.evidence.accessed_at == live.evidence.accessed_at
+    assert live.evidence.accessed_at == "2023-11-14T22:13:20.123456Z"
+    assert later.evidence.accessed_at == "2023-11-15T22:13:20.123456Z"
     store.close()
 
 
@@ -501,24 +502,55 @@ def test_a_refused_request_beside_a_kept_one_reads_the_same_when_reused(
 
     outcomes, accessed_at, sent = observe(_WALL)
     assert (sent, _rows(store)) == (["missing", "value"], 1)
-    # A day later the refused request goes first and live, and the observation
-    # still reads as the one that stored the answer.
-    assert observe(_WALL + 86_400) == (outcomes, accessed_at, ["missing"])
+    assert accessed_at == "2023-11-14T22:13:20.123456Z"
+    # A day later the refused request goes first and live, so the observation
+    # is dated then; its counts and outcomes are the live ones.
+    assert observe(_WALL + 86_400) == (
+        outcomes,
+        "2023-11-15T22:13:20.123456Z",
+        ["missing"],
+    )
     store.close()
 
 
-def test_a_mixed_observation_is_dated_by_its_oldest_answer(tmp_path: Path) -> None:
-    store, reuse = _held(tmp_path)
-    later = _WALL + 86_400
-    session = _session(_json({"value": 2}), reuse, wall=later)
-    _ask(session, "new")
-    _ask(session)
-    assert session.accessed_at == "2023-11-14T22:13:20.123456Z"
-    # What it keeps is dated to its own first live dispatch.
-    reuse.settle(True)
-    assert store._connection.execute(
-        "SELECT fetched_at_us FROM provider_responses ORDER BY fetched_at_us"
-    ).fetchall() == [(1_700_000_000_123_456,), (1_700_086_400_123_456,)]
+def test_a_live_first_lane_beside_held_later_lanes_still_observes(
+    tmp_path: Path,
+) -> None:
+    """Every lane states the observation's one access time, so it is set by
+    the first dispatch and a held answer served later never moves it."""
+    store = _store(tmp_path)
+    first: list[httpx.Request] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        first.append(request)
+        return _volumes(request)
+
+    live = _google(answer, store).observe(discovery_plan())
+    stored = _rows(store)
+    assert stored > 1
+    store.discard(
+        "google_books",
+        ProviderResponseReuse(store, "google_books", False).digest(
+            "GET", str(first[0].url), None, None
+        ),
+    )
+    assert _rows(store) == stored - 1
+
+    sent: list[httpx.Request] = []
+
+    def counted(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        return _volumes(request)
+
+    mixed = _google(counted, store, wall=_WALL + 86_400).observe(discovery_plan())
+    assert (len(sent), mixed.observation.status) == (1, live.observation.status)
+    assert mixed.evidence.accessed_at == "2023-11-15T22:13:20.123456Z"
+    # The answer it kept is dated to its first live dispatch, so a third run
+    # served wholly from the store reads as the second.
+    assert _rows(store) == stored
+    again = _google(_never, store, wall=_WALL + 2 * 86_400).observe(discovery_plan())
+    assert again.observation == mixed.observation
+    assert again.evidence.accessed_at == mixed.evidence.accessed_at
     store.close()
 
 

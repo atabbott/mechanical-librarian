@@ -34,10 +34,10 @@ answer must bring back the time it was fetched for the report to be the same.
    the body goes through the same decoder and adapter parser. Only the pacer
    wait and the network are skipped. The attempt record is the live one.
    Provider recovery's physical request counts are unchanged, because a
-   retry never reuses a held answer (decision 5). An observation reports
-   the earliest fetch time among the answers it used, held or live, as its
-   access time, so a request asked again beside held answers does not move
-   it.
+   retry never reuses a held answer (decision 5). An observation's access
+   time is set once, by its first dispatch: the fetch time of the held
+   answer that served it, or the wall time when that request went live.
+   Every lane states that one time.
 2. **Key.** `(adapter kind, SHA-256 of the canonical method, scheme, host,
    port, path, sorted query items, body and the adapter's revision)`. Headers
    never enter the key, so a credential sent in a header never does. Each
@@ -117,6 +117,9 @@ answer must bring back the time it was fetched for the report to be the same.
   support bundle.
 - A partly failed lookup keeps nothing, so its clean lanes are asked again
   next time. A request that succeeded only on a retry is asked again too.
+- An observation whose first request is never kept (a 404 the adapter
+  tolerates, an answer it refuses) is dated when that request is asked, so
+  it yields a new report each time even when its other answers were held.
 - A hit skips Google Books' burst hold. No request is sent, so the hold has
   nothing to protect.
 - Two connections to the same source share answers. That is acceptable for
@@ -162,9 +165,9 @@ evict a full library's oldest answers and defeat reuse.
   access time, diagnostics and attempt outcomes; bounds and the deadline
   apply on a hit; unclean, refused, declared-error and adapter-failure cases
   keep nothing; an answer reached through a retry is not kept; a request
-  refused beside a kept answer, and an observation that mixes held and live
-  answers, report the same access time when reused; a re-search asks live
-  and replaces; a held answer refused on reuse is removed; each varied
+  refused beside a kept answer is asked again with the live accounting; a
+  live first lane beside held later lanes still observes, and what it keeps
+  reads the same on the next run; a re-search asks live and replaces; a held answer refused on reuse is removed; each varied
   request fact is in the key; the Google Books key reaches neither the
   digest input nor the store file.
 - `tests/unit/test_provider_response_store.py`: admission, refusal without
