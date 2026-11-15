@@ -890,14 +890,14 @@ class _OwnerControl(_ClosedModel):
 
 
 class _FieldPin(_ClosedModel):
-    """An owner pin on the field: in force here, or the value has changed."""
+    """An owner pin: in force here, waiting to be read back, or changed."""
 
-    state: Literal["in_force", "changed"]
+    state: Literal["in_force", "waiting", "changed"]
     value: _TargetField
 
 
 class _PinControl(_ClosedModel):
-    pin: StrictBool
+    pin: Literal["available", "change_waiting"] | None
     unpin: StrictBool
 
 
@@ -5995,6 +5995,7 @@ def _decision_call(call: Callable[[], dict[str, object]]) -> dict[str, object]:
             "pin_change_waiting": 409,
             "already_pinned": 409,
             "not_pinned": 409,
+            "pinned": 409,
             # Distinct from `stale`: the case stands, its field's offer moved
             # (#1355).
             "offer_changed": 409,

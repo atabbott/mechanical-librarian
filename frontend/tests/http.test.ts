@@ -1096,12 +1096,33 @@ describe('ReviewApiClient', () => {
       await readCase(
         closedDetail({
           pin: { state: 'changed', value: pinned },
-          pin_control: { pin: true, unpin: true },
+          pin_control: { pin: 'available', unpin: true },
         }),
       )
     ).fields[0]
     expect(read?.pin).toEqual({ state: 'changed', value: pinned })
-    expect(read?.pinControl).toEqual({ pin: true, unpin: true })
+    expect(read?.pinControl).toEqual({ pin: 'available', unpin: true })
+    const waiting = (
+      await readCase(closedDetail({ pin_control: { pin: 'change_waiting', unpin: false } }))
+    ).fields[0]
+    expect(waiting?.pinControl).toEqual({ pin: 'change_waiting', unpin: false })
+    // A pin on a chosen value waits until the value is read back (K5).
+    const chosen = (
+      await readCase(
+        closedDetail({
+          pin: { state: 'waiting', value: pinned },
+          pin_control: { pin: 'available', unpin: true },
+        }),
+      )
+    ).fields[0]
+    expect(chosen?.pin).toEqual({ state: 'waiting', value: pinned })
+    expect(chosen?.pinControl).toEqual({ pin: 'available', unpin: true })
+    await expect(
+      readCase(closedDetail({ pin_control: { pin: 'other', unpin: false } })),
+    ).rejects.toMatchObject(refused('enum@/fields/0/pin_control/pin'))
+    await expect(
+      readCase(closedDetail({ pin_control: { pin: true, unpin: false } })),
+    ).rejects.toMatchObject(refused('type@/fields/0/pin_control/pin'))
     await expect(
       readCase(closedDetail({ pin: { state: 'other', value: pinned } })),
     ).rejects.toMatchObject(refused('enum@/fields/0/pin/state'))

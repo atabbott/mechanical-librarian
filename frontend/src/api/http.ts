@@ -734,10 +734,15 @@ export interface ReviewFieldView {
   corroborationSources: readonly string[]
   descriptionAdvice?: DescriptionAdviceView | null
   ownerControl?: OwnerControlView | null
-  // An owner pin on the field, in force or changed, with the value it keeps,
-  // and whether a pin or an unpin is accepted now (ADR-0085, Amendment 2).
-  pin: { state: 'in_force' | 'changed'; value: ResponseSchema<'_TargetField'> } | null
-  pinControl: { pin: boolean; unpin: boolean } | null
+  // An owner pin on the field with the value it keeps: in force, waiting for
+  // the chosen value to be read back, or changed. And whether a pin or an
+  // unpin is accepted now (ADR-0085, Amendment 2): a pin is available, or
+  // waits for a change to the field to be written (J2).
+  pin: {
+    state: 'in_force' | 'waiting' | 'changed'
+    value: ResponseSchema<'_TargetField'>
+  } | null
+  pinControl: { pin: 'available' | 'change_waiting' | null; unpin: boolean } | null
   currentCoverSelectionId?: string | null
   currentCoverSelectionArtifactId?: string | null
   coverConsideration?: CoverConsiderationView | null

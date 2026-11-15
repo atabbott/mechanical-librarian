@@ -37,6 +37,7 @@ from mechanical_librarian.adapters.persistence.level_sql import (
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
     _episode_decision_sql,
+    _pin_hold_sql,
 )
 from mechanical_librarian.adapters.persistence.schema import (
     refresh_offered_field_facts,
@@ -242,8 +243,14 @@ def _ask_changed_fields(
     for destination in sorted(destinations):
         row = connection.execute(
             "SELECT document FROM human_decisions WHERE review_case_id=? "
-            "AND destination=? AND "
+            "AND destination=? AND outcome NOT IN ('pin','unpin') AND "
             + _episode_decision_sql("human_decisions")
+            # A pin in force keeps its field out of the question whatever
+            # the offer now is (ADR-0085, Amendment 2).
+            + " AND NOT "
+            + _pin_hold_sql(
+                "human_decisions.review_case_id", "human_decisions.destination", True
+            )
             + " ORDER BY ordinal DESC LIMIT 1",
             (case.review_case_id, destination),
         ).fetchone()

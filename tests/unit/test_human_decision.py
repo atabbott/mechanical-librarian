@@ -10,6 +10,7 @@ from mechanical_librarian.domain.human_decision import (
     HumanDecisionError,
     OwnerSuggestion,
     admitted_applications,
+    chosen_value_fingerprint,
     decision_actions,
     identity_contradicts,
     list_union,
@@ -25,6 +26,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     TargetField,
     TargetFieldState,
+    TargetSeries,
     default_target_fields,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
@@ -780,3 +782,47 @@ def test_pinned_field_fingerprint_distinguishes_values_and_destinations() -> Non
     assert pinned_field_fingerprint(_case_with(), "subtitle") != (
         pinned_field_fingerprint(_case_with(), "publisher")
     )
+
+
+# K-D17: a pin on a chosen value keeps the digest a later case showing that
+# value has, for each kind of value a field holds.
+@pytest.mark.parametrize(
+    "destination,selected,held",
+    (
+        (
+            TargetDestination.TITLE,
+            {"kind": "text", "value": "The Silent Orchard"},
+            "The Silent Orchard",
+        ),
+        (
+            TargetDestination.GENRES,
+            {"kind": "list", "value": ["Fantasy", "Drama"]},
+            ("Fantasy", "Drama"),
+        ),
+        (
+            TargetDestination.SERIES,
+            {
+                "kind": "series",
+                "value": [
+                    {"name": "Example Series", "sequence": "3"},
+                    {"name": "Another Series", "sequence": None},
+                ],
+            },
+            (TargetSeries("Example Series", "3"), TargetSeries("Another Series")),
+        ),
+        (TargetDestination.EXPLICIT, {"kind": "boolean", "value": False}, False),
+        (
+            TargetDestination.DESCRIPTION,
+            {"kind": "text", "value": "A synthetic description of a quiet orchard."},
+            "A synthetic description of a quiet orchard.",
+        ),
+    ),
+    ids=("text", "list", "series", "boolean", "description"),
+)
+def test_chosen_value_fingerprint_matches_the_value_read_back(
+    destination: TargetDestination, selected: dict[str, object], held: object
+) -> None:
+    case = _case_with(TargetField(destination, TargetFieldState.VALUE, held))
+    chosen = chosen_value_fingerprint(destination.value, selected)
+    assert chosen == pinned_field_fingerprint(case, destination.value)
+    assert chosen != pinned_field_fingerprint(_case_with(), destination.value)

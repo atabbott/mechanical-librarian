@@ -410,10 +410,7 @@ def _decision_facts(
     if state == "pin":
         return ReadableChange(
             "Pinned", f"Pinned the {destination_label(destination)} value"
-        ), [
-            {"label": "Pinned value", "value": value_text(destination, current)},
-            chosen,
-        ]
+        ), [chosen]
     if state == "unpin":
         return ReadableChange(
             "Unpinned", f"Unpinned the {destination_label(destination)} field"

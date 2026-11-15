@@ -1256,3 +1256,49 @@ def test_pinning_and_a_changed_pin_keep_the_facts_equal_to_the_live_attention(
     store.decide("unpin")
     assert title_asked()
     store.close()
+
+
+def test_a_pin_over_a_chosen_value_keeps_the_facts_equal_to_the_live_attention(
+    tmp_path: Path,
+) -> None:
+    """A pin on a chosen value leaves the field settled by its choice, an
+    unpin leaves the choice, and a pinned choice never read back asks; the
+    facts and the Library agree at each step (#1346, K-D15)."""
+    from mechanical_librarian.application.review_web import BrowseReviewLibrary
+    from tests.support.owner_values import rewritten
+    from tests.unit.test_owner_answer_holds import _store
+
+    store, report, _ = _store(tmp_path, title="ask")
+    connection = store.repository._connection
+
+    def title_asked(pinned: int) -> bool:
+        facts = _facts(connection)
+        assert facts == _derived(connection)
+        (item,) = cast(
+            "list[dict[str, object]]",
+            BrowseReviewLibrary(store.repository).library(
+                lens="all", search=None, limit=25, cursor=None
+            )["items"],
+        )
+        assert (item["attention_count"], item["pinned_count"]) == (len(facts), pinned)
+        return any(fact[4] == "title" for fact in facts)
+
+    store.publish(report)
+    assert title_asked(0)
+    store.decide("owner_entered", {"kind": "text", "value": "The Silent Orchard"})
+    assert not title_asked(0)
+    store.decide("pin")
+    assert not title_asked(1)
+    store.decide("unpin")
+    assert not title_asked(0)
+    store.decide("pin")
+    store.decide("owner_entered", {"kind": "text", "value": "Another Chosen Title"})
+    assert not title_asked(0)
+    store.decide("pin")
+    assert not title_asked(1)
+    # The choice was never written, so the next case carries its pin as changed.
+    store.publish(rewritten(report, publisher="Changed Elsewhere"))
+    assert title_asked(1)
+    store.decide("unpin")
+    assert title_asked(0)
+    store.close()

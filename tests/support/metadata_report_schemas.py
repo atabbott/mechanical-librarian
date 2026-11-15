@@ -415,7 +415,7 @@ assert PRIOR_HUMAN_DECISIONS_SQL != persistence_schema._HUMAN_DECISIONS_SQL
 
 # Every producer before #1346 kept no pin: a pin in force settled nothing, a
 # changed pin asked nothing, and a pin or unpin row was no outcome. These undo
-# exactly the three edits #1346 made to the attention source, so the oracles
+# exactly the edits #1346 made to the attention source, so the oracles
 # below keep describing the predecessors they name.
 _PIN_CHANGED_SQL = review_sql._PIN_CHANGED_SQL
 _PIN_IN_FORCE_SQL = review_sql._pin_hold_sql(
@@ -435,15 +435,14 @@ def without_pins(sql: str) -> str:
     unpinned = (
         sql.replace(_PINNED_REASON_HEAD, _PINNED_REASON_HEAD[1:])
         .replace(_PINNED_REASON_TAIL, "")
+        .replace("AND decision.outcome NOT IN ('pin','unpin') ", "")
         .replace(
-            "),'withdraw') IN ('withdraw','pin','unpin') AND NOT "
-            + _PIN_IN_FORCE_SQL
-            + " ",
+            "),'withdraw')='withdraw' AND NOT " + _PIN_IN_FORCE_SQL + " ",
             "),'withdraw')='withdraw' ",
         )
         .replace(" AND NOT " + _PIN_CHANGED_SQL + ")", ")")
     )
-    assert "pin_hold" not in unpinned
+    assert "pin_hold" not in unpinned and "'pin'" not in unpinned
     return unpinned
 
 

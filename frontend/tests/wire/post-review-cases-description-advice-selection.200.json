@@ -100,7 +100,7 @@
             "uncertainty": [],
             "pin": null,
             "pin_control": {
-              "pin": true,
+              "pin": "available",
               "unpin": false
             }
           },
@@ -197,7 +197,7 @@
             "uncertainty": [],
             "pin": null,
             "pin_control": {
-              "pin": true,
+              "pin": "available",
               "unpin": false
             }
           },
@@ -294,7 +294,7 @@
             "uncertainty": ["manifestation_verification_required"],
             "pin": null,
             "pin_control": {
-              "pin": true,
+              "pin": "available",
               "unpin": false
             }
           },
@@ -392,7 +392,7 @@
             "uncertainty": [],
             "pin": null,
             "pin_control": {
-              "pin": true,
+              "pin": "available",
               "unpin": false
             }
           },
@@ -451,7 +451,7 @@
             "uncertainty": [],
             "pin": null,
             "pin_control": {
-              "pin": true,
+              "pin": "available",
               "unpin": false
             }
           },
@@ -542,7 +542,7 @@
             "uncertainty": [],
             "pin": null,
             "pin_control": {
-              "pin": true,
+              "pin": "available",
               "unpin": false
             }
           },
@@ -834,7 +834,7 @@
             "uncertainty": ["populated_subjective_field", "populated_value_meets_floor"],
             "pin": null,
             "pin_control": {
-              "pin": true,
+              "pin": "available",
               "unpin": false
             }
           },
@@ -1029,7 +1029,7 @@
             "uncertainty": [],
             "pin": null,
             "pin_control": {
-              "pin": true,
+              "pin": "available",
               "unpin": false
             }
           },

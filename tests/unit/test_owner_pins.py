@@ -43,7 +43,11 @@ from mechanical_librarian.domain.field_effect import FieldEffectError
 from mechanical_librarian.domain.field_effect import (
     canonical_json as canonical_effect_json,
 )
-from mechanical_librarian.domain.human_decision import HumanDecisionError
+from mechanical_librarian.domain.human_decision import (
+    HumanDecisionError,
+    chosen_value_fingerprint,
+    pinned_field_fingerprint,
+)
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     TargetFacts,
@@ -55,6 +59,7 @@ from tests.support.genre_reports import genre_report
 from tests.support.owner_values import CAPABILITY, OwnerStore, rewritten
 from tests.unit.test_owner_answer_holds import (
     ORIGINAL,
+    SOURCES,
     _automatic,
     _field,
     _hold,
@@ -161,9 +166,13 @@ def genres(tmp_path: Path):
     store.close()
 
 
-# AC13: a pin already in force is refused.
-def test_a_repeated_pin_is_refused(genres: OwnerStore) -> None:
+# AC13 and K-D8: the same pin again is refused, in force or waiting.
+@pytest.mark.parametrize("state", ["in_force", "waiting"])
+def test_a_repeated_pin_is_refused(genres: OwnerStore, state: str) -> None:
+    if state == "waiting":
+        genres.decide("owner_entered", ORCHARD)
     genres.decide("pin")
+    assert _pin(genres)["in_force"] is (state == "in_force")
     _refused(genres, "already_pinned", "pin")
 
 
@@ -174,40 +183,306 @@ def test_unpin_is_refused_without_a_pin(genres: OwnerStore) -> None:
     _refused(genres, "not_pinned", "unpin", destination="genres")
 
 
-# AC12 and Q1: a pin waits until the owner's change is written and read back.
+def _pending(store: OwnerStore) -> set[str]:
+    return {
+        json.loads(document)["decision_id"]
+        for document in store.repository.pending_field_effect_decision_documents(32)
+    }
+
+
+def _pending_counts(store: OwnerStore) -> int:
+    return sum(
+        cast("int", row["count"])
+        for row in store.repository.pending_field_effect_decision_counts()
+    )
+
+
+# KC2, KC3 and K-D1: a pin on a value the owner chose is accepted before the
+# write lands. It only marks the choice's own hold, so the write goes on.
+@pytest.mark.parametrize("stage", ["unwritten", "planned", "in_flight", "verified"])
+def test_a_pin_on_a_chosen_value_is_accepted_at_every_stage(
+    genres: OwnerStore, stage: str
+) -> None:
+    choice = genres.decide("owner_entered", ORCHARD)
+    operation = None if stage in {"unwritten", "verified"} else genres.plan(choice)
+    if stage == "verified":
+        genres.write(choice)
+    if stage == "in_flight":
+        assert operation is not None
+        genres.target.before_apply = lambda _plan: genres.decide("pin")
+        assert genres.service.apply(operation.plan.plan_id).state == "verified"
+    else:
+        genres.decide("pin")
+    assert _hold(genres) == choice.decision_id
+    assert _pin(genres) == {
+        "fingerprint": chosen_value_fingerprint("title", ORCHARD),
+        "in_force": False,
+    }
+    hold = _hold_document(genres)
+    assert hold is not None
+    assert (hold["active"], hold["pending_return"]) == (True, None)
+    if stage == "unwritten":
+        assert _pending(genres) == {choice.decision_id}
+        assert _pending_counts(genres) == 1
+        genres.write(choice)
+    elif stage == "planned":
+        assert operation is not None
+        assert genres.service.apply(operation.plan.plan_id).state == "verified"
+    effects = genres.repository._connection.execute(
+        "SELECT state FROM field_effects WHERE decision_id=?", (choice.decision_id,)
+    ).fetchall()
+    assert effects == [("verified",)]
+
+
+# KC7 and K-D2: once a later case shows the chosen value the pin is in force.
 @pytest.mark.parametrize(
-    "stage", ["planned", "in_flight", "verified", "chosen_unwritten"]
+    "destination,chosen,held",
+    [("title", ORCHARD, ORCHARD["value"]), ("genres", FANTASY, ("Fantasy",))],
+    ids=["title", "genres"],
 )
-def test_a_pin_is_refused_while_a_change_waits(genres: OwnerStore, stage: str) -> None:
-    decision = genres.decide("owner_entered", ORCHARD)
+def test_a_pin_on_a_chosen_value_is_in_force_once_read_back(
+    genres: OwnerStore, destination: str, chosen: dict[str, Any], held: Any
+) -> None:
+    choice = genres.decide("owner_entered", chosen, destination=destination)
+    genres.decide("pin", destination=destination)
+    assert _pin(genres, destination)["in_force"] is False
+    genres.write(choice)
+    deciding = genres.case.review_case_id
+    genres.publish(rewritten(genre_report(), **{destination: held}))
+    assert genres.case.review_case_id != deciding
+    assert (_hold(genres, destination), _pin(genres, destination)["in_force"]) == (
+        choice.decision_id,
+        True,
+    )
+    field = _field(genres, destination)
+    assert field["pin"] == {"state": "in_force", "value": field["current"]}
+    assert field["classification_cause"] == "pinned"
+    assert _asked(genres, destination) is False
+
+
+# KC7 and K-D3: a pinned choice that was never read back is carried as
+# changed. The field asks, showing the chosen value, and nothing is written
+# from the old choice.
+def test_a_pinned_choice_never_read_back_asks_with_the_chosen_value(
+    genres: OwnerStore,
+) -> None:
+    choice = genres.decide("owner_entered", ORCHARD)
+    genres.decide("pin")
+    assert _pending(genres) == {choice.decision_id}
+    genres.publish(rewritten(genre_report(), publisher="Changed Elsewhere"))
+    assert (_hold(genres), _pin(genres)["in_force"]) == (choice.decision_id, False)
+    field = _field(genres, "title")
+    assert field["pin"] == {
+        "state": "changed",
+        "value": {"destination": "title", "state": "value", "value": ORCHARD["value"]},
+    }
+    assert (field["classification"], field["classification_cause"]) == (
+        "needs_attention",
+        "pin_changed",
+    )
+    assert field["classification_reason"] == (
+        "Audiobookshelf shows a different value from the one you pinned."
+    )
+    assert field["human_decision"] is None
+    assert _asked(genres) is True
+    assert _pending(genres) == set()
+    assert _pending_counts(genres) == 0
+
+
+# KC5 and K-D9: with no answer of the owner's standing, a pin is still
+# refused while Automatic's change waits to be written or read back.
+@pytest.mark.parametrize("stage", ["planned", "verified"])
+def test_a_pin_is_refused_while_automatics_change_waits(
+    tmp_path: Path, stage: str
+) -> None:
+    store, report, _ = _store(tmp_path)
+    store.publish(report)
+    queued = _queued(store)
+    assert queued is not None
     if stage == "planned":
-        genres.plan(decision)
-    elif stage == "verified":
-        genres.write(decision)
-    if stage != "in_flight":
-        _refused(genres, "pin_change_waiting", "pin")
-        return
-    operation = genres.plan(decision)
-    refusals: list[str] = []
-
-    def pin_while_applying(_plan) -> None:
-        before = _rows(genres)
-        try:
-            genres.decide("pin")
-        except HumanDecisionError as error:
-            refusals.append(error.code)
-        assert _rows(genres) == before
-
-    genres.target.before_apply = pin_while_applying
-    assert genres.service.apply(operation.plan.plan_id).state == "verified"
-    assert refusals == ["pin_change_waiting"]
+        store.plan(queued)
+    else:
+        store.write(queued)
+    _refused(store, "pin_change_waiting", "pin")
+    assert _field(store, "title")["pin_control"] == {
+        "pin": "change_waiting",
+        "unpin": False,
+    }
+    store.close()
 
 
-# Q1: a latest Keep current changes nothing, so it does not hold a pin back.
+# KC5, RK1 and K-D10: a pin over an answer whose hold a Resume was asked of,
+# or released, is refused, so it never makes that answer's write pending again.
+@pytest.mark.parametrize("resume", ["requested", "released"])
+def test_a_pin_after_resume_is_refused_and_revives_nothing(
+    tmp_path: Path, resume: str
+) -> None:
+    store, report, _ = _store(tmp_path, title="ask")
+    store.publish(report)
+    answer = store.decide("owner_entered", ORCHARD)
+    assert _pending(store) == {answer.decision_id}
+    at = store.clock()
+    if resume == "requested":
+        scan = store.repository.request_review_scan(
+            report.target.connection,
+            report.target.library,
+            "library-ebooks",
+            "a" * 64,
+            at,
+        )
+        assert store.repository.request_field_effect_manual_return(
+            store.case.review_case_id, "title", answer.decision_id, scan.scan_id, at, at
+        )
+    else:
+        assert store.repository.clear_field_effect_manual_hold(
+            store.case.review_case_id, "title", at, answer.decision_id
+        )
+    before = _pending(store), _pending_counts(store)
+    _refused(store, "pin_change_waiting", "pin")
+    assert (_pending(store), _pending_counts(store)) == before
+    if resume == "released":
+        assert before == (set(), 0)
+    assert _field(store, "title")["pin_control"] == {
+        "pin": "change_waiting",
+        "unpin": False,
+    }
+    store.close()
+
+
+# KC2 and K-D13: Keep current over a value Automatic already wrote restores
+# the case's value, so a pin on it is accepted and waits for that restore.
+def test_a_pin_on_a_restoring_keep_current_waits_for_the_restore(
+    tmp_path: Path,
+) -> None:
+    store, report, _ = _store(tmp_path)
+    store.publish(report)
+    queued = _queued(store)
+    assert queued is not None
+    store.write(queued)
+    kept = store.decide("keep_current")
+    assert _pending(store) == {kept.decision_id}
+    store.decide("pin")
+    assert _hold(store) == kept.decision_id
+    assert _pin(store) == {
+        "fingerprint": pinned_field_fingerprint(store.case, "title"),
+        "in_force": False,
+    }
+    assert _field(store, "title")["pin"]["state"] == "waiting"
+    # The restore is still the pending write, from Automatic's value back
+    # to the case's.
+    assert _pending(store) == {kept.decision_id}
+    restore = PersistedFieldEffectAuthority(store.repository).resolve(kept)
+    assert (restore.pre_value, restore.decision_value) == (
+        SOURCES,
+        {"kind": "text", "value": ORIGINAL},
+    )
+    store.close()
+
+
+# Q1 and K-D4: a Keep current that changes nothing puts the pin in force at
+# once, on the hold that answer set.
 def test_a_pin_follows_keep_current_without_waiting(genres: OwnerStore) -> None:
-    genres.decide("keep_current", destination="genres")
-    pin = genres.decide("pin", destination="genres")
-    assert _hold(genres, "genres") == pin.decision_id
+    kept = genres.decide("keep_current", destination="genres")
+    genres.decide("pin", destination="genres")
+    assert _hold(genres, "genres") == kept.decision_id
+    assert _pin(genres, "genres") == {
+        "fingerprint": pinned_field_fingerprint(genres.case, "genres"),
+        "in_force": True,
+    }
+    field = _field(genres, "genres")
+    assert field["pin"] == {"state": "in_force", "value": field["current"]}
+    assert field["classification_cause"] == "pinned"
+
+
+# KC1 and K-D5: an unpin takes only the pin off. The answer under it stands,
+# with its pending write, and the field reads decided.
+@pytest.mark.parametrize("outcome,value", [("keep_current", None), ("accept", FANTASY)])
+def test_unpin_over_an_answer_leaves_the_answer(
+    genres: OwnerStore, outcome: str, value: dict[str, object] | None
+) -> None:
+    answer = genres.decide(outcome, value, destination="genres")
+    decided = _field(genres, "genres")
+    pending = _pending(genres)
+    assert pending == ({answer.decision_id} if outcome == "accept" else set())
+    genres.decide("pin", destination="genres")
+    assert _field(genres, "genres")["owner_control"]["withdraw"] is None
+    genres.decide("unpin", destination="genres")
+    assert (_hold(genres, "genres"), _pin(genres, "genres")) == (
+        answer.decision_id,
+        None,
+    )
+    assert _pending(genres) == pending
+    field = _field(genres, "genres")
+    assert field["pin"] is None
+    assert field["human_decision"] == decided["human_decision"] is not None
+    assert (field["classification"], field["classification_cause"]) == (
+        decided["classification"],
+        decided["classification_cause"],
+    )
+    assert field["owner_control"]["withdraw"] == "available"
+    assert _asked(genres, "genres") is False
+
+
+# KC4, RK1 and K-D6: a second choice under a pin replaces the first, whose
+# planned write closes, and the pin ends.
+def test_a_second_choice_under_a_pin_closes_the_first_choices_write(
+    genres: OwnerStore,
+) -> None:
+    first = genres.decide("owner_entered", ORCHARD)
+    planned = genres.plan(first)
+    genres.decide("pin")
+    second = genres.decide("owner_entered", {"kind": "text", "value": ANOTHER})
+    assert (_hold(genres), _pin(genres)) == (second.decision_id, None)
+    closed = genres.repository.get_field_effect(planned.plan.plan_id)
+    assert (closed.state, closed.failure) == ("superseded", "authority_superseded")
+    assert _pending(genres) == {second.decision_id}
+    assert _field(genres, "title")["pin"] is None
+
+
+# K-D7 (QK3): an answer cannot be withdrawn while its field is pinned.
+def test_withdraw_is_refused_while_pinned(genres: OwnerStore) -> None:
+    answer = genres.decide("owner_entered", ORCHARD)
+    genres.decide("pin")
+    _refused(genres, "pinned", "withdraw")
+    assert _pending(genres) == {answer.decision_id}
+    genres.decide("unpin")
+    genres.decide("withdraw")
+    assert _hold_document(genres) is None
+    assert _pending(genres) == set()
+    assert _field(genres, "title")["human_decision"] is None
+
+
+# KC6, KC8 and K-D16: on the deciding case a waiting pin leaves the field as
+# its answer reads, and shows the chosen value as the pinned one.
+def test_a_waiting_pin_reads_waiting_with_the_chosen_value(
+    genres: OwnerStore,
+) -> None:
+    choice = genres.decide("owner_entered", ORCHARD)
+    decided = _field(genres, "title")
+    assert decided["owner_control"]["withdraw"] == "available"
+    genres.decide("pin")
+    field = _field(genres, "title")
+    assert field["pin"] == {
+        "state": "waiting",
+        "value": {"destination": "title", "state": "value", "value": ORCHARD["value"]},
+    }
+    assert field["human_decision"] == decided["human_decision"]
+    assert field["human_decision"]["decision_id"] == choice.decision_id
+    assert (
+        field["classification"],
+        field["classification_cause"],
+        field["classification_reason"],
+    ) == (
+        decided["classification"],
+        decided["classification_cause"],
+        decided["classification_reason"],
+    )
+    assert field["classification_cause"] != "pinned"
+    assert field["owner_control"]["withdraw"] is None
+    assert field["pin_control"] == {"pin": "available", "unpin": True}
+    assert field["manual_hold"] is False
+    assert _asked(genres) is False
+    assert _library_pinned_count(genres) == 1
 
 
 def test_a_pin_is_accepted_once_the_written_value_is_read_back(
@@ -373,7 +648,7 @@ def test_a_changed_value_asks_again_with_the_pinned_value(tmp_path: Path) -> Non
         "state": "changed",
         "value": {"destination": "title", "state": "value", "value": ORIGINAL},
     }
-    assert field["pin_control"] == {"pin": True, "unpin": True}
+    assert field["pin_control"] == {"pin": "available", "unpin": True}
     assert _asked(store) is True
     assert [
         decision
@@ -432,7 +707,7 @@ def test_an_unreadable_later_value_reads_as_changed(tmp_path: Path) -> None:
     field = _field(store, "title")
     assert field["pin"]["state"] == "changed"
     # Nothing readable to pin again, so only Unpin is offered.
-    assert field["pin_control"] == {"pin": False, "unpin": True}
+    assert field["pin_control"] == {"pin": None, "unpin": True}
     store.close()
 
 
@@ -702,11 +977,15 @@ def test_a_resume_in_the_same_second_outranks_a_carried_hold(
 
 # AC9 and AC16.
 def test_a_pinned_field_reads_pinned_and_offers_unpin(genres: OwnerStore) -> None:
-    assert _field(genres, "title")["pin_control"] == {"pin": True, "unpin": False}
+    assert _field(genres, "title")["pin_control"] == {
+        "pin": "available",
+        "unpin": False,
+    }
     genres.decide("pin")
     field = _field(genres, "title")
     assert field["pin"] == {"state": "in_force", "value": field["current"]}
-    assert field["pin_control"] == {"pin": False, "unpin": True}
+    # The page marks the current value's card and sends Unpin from it.
+    assert field["pin_control"] == {"pin": "available", "unpin": True}
     assert field["manual_hold"] is False
     assert (field["classification"], field["classification_cause"]) == (
         "human_recorded",
@@ -775,13 +1054,31 @@ def test_the_changed_field_suggests_the_pinned_value(tmp_path: Path) -> None:
     store.close()
 
 
-# AC12: the page offers no pin while a change of the field waits.
-def test_pin_control_is_withheld_while_a_change_waits(genres: OwnerStore) -> None:
+# AC12, J2 and K-D9: while Automatic's change of the field waits the page
+# offers no pin and says why; the owner's own choice never holds a pin back.
+def test_pin_control_says_a_change_waits(tmp_path: Path) -> None:
+    store, report, _ = _store(tmp_path)
+    store.publish(report)
+    available = {"pin": "available", "unpin": False}
+    assert _field(store, "title")["pin_control"] == available
+    queued = _queued(store)
+    assert queued is not None
+    store.plan(queued)
+    assert _field(store, "title")["pin_control"] == {
+        "pin": "change_waiting",
+        "unpin": False,
+    }
+    store.close()
+
+
+def test_pin_control_offers_a_pin_over_the_owners_unwritten_choice(
+    genres: OwnerStore,
+) -> None:
     decision = genres.decide("owner_entered", ORCHARD)
-    assert _field(genres, "title")["pin_control"] is None
+    available = {"pin": "available", "unpin": False}
+    assert _field(genres, "title")["pin_control"] == available
     genres.plan(decision)
-    assert _field(genres, "title")["pin_control"] is None
-    assert _field(genres, "genres")["pin_control"] == {"pin": True, "unpin": False}
+    assert _field(genres, "title")["pin_control"] == available
 
 
 # AC17: each work counts its pinned fields.
@@ -810,19 +1107,27 @@ def test_title_recovery_records_nothing_for_a_pinned_title(tmp_path: Path) -> No
     store.close()
 
 
-# AC3 and D29.
+# AC3, KC4 and K-D12: a pin or unpin plans nothing and changes nothing of
+# what is planned: after accept, pin and unpin both pending readers return
+# exactly the accept.
 def test_pin_and_unpin_plan_nothing(genres: OwnerStore) -> None:
     pin = genres.decide("pin")
     unpin = genres.decide("unpin")
     repository = genres.repository
-    pending = {
-        json.loads(document)["decision_id"]
-        for document in repository.pending_field_effect_decision_documents(32)
-    }
-    assert {pin.decision_id, unpin.decision_id}.isdisjoint(pending)
+    assert _pending(genres) == set()
     assert repository.pending_field_effect_decision_counts() == ()
     assert authority_from_decision(pin) is None
     assert authority_from_decision(unpin, allow_corrective_keep_current=True) is None
+    accept = genres.decide("accept", FANTASY, destination="genres")
+    counts = repository.pending_field_effect_decision_counts()
+    assert _pending(genres) == {accept.decision_id}
+    assert _pending_counts(genres) == 1
+    genres.decide("pin", destination="genres")
+    assert _pending(genres) == {accept.decision_id}
+    assert repository.pending_field_effect_decision_counts() == counts
+    genres.decide("unpin", destination="genres")
+    assert _pending(genres) == {accept.decision_id}
+    assert repository.pending_field_effect_decision_counts() == counts
     assert repository._connection.execute(
         "SELECT count(*) FROM field_effects"
     ).fetchone() == (0,)

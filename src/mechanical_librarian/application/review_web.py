@@ -1480,13 +1480,16 @@ class InspectCurrentReviewCase:
                 projected = _automatic_decision_projection(document)
                 if projected is None:
                     decision = HumanDecision.from_json(document)
+                    if decision.outcome in {"pin", "unpin"}:
+                        # Never a field's latest decision: a pin acts through
+                        # its hold, and the answer under it stands (ADR-0085,
+                        # Amendment 2).
+                        continue
                     decisions[decision.destination] = decision
-                    if decision.outcome in {"withdraw", "pin", "unpin"}:
+                    if decision.outcome == "withdraw":
                         # A withdrawn field is undecided again (ADR-0085). A
                         # Book matching cause row reads the same way: no
-                        # human decision (#1355, AC2). A pin acts through
-                        # its hold and an unpin settles nothing (ADR-0085,
-                        # Amendment 2).
+                        # human decision (#1355, AC2).
                         decisions.pop(decision.destination, None)
                 else:
                     destination = str(projected["destination"])
@@ -1652,11 +1655,18 @@ class InspectCurrentReviewCase:
         reasons = result["reasons"]
         assert type(reasons) is list
         decision = decisions.get(destination)
-        # A pin on this case's hold, in force or changed, and the value it
-        # keeps, as the current value is shown (ADR-0085, Amendment 2).
+        # A pin on this case's hold and the value it keeps, as the current
+        # value is shown: in force, waiting for the owner's standing answer
+        # to be read back, or changed (ADR-0085, Amendment 2).
         pin = next((row[1:] for row in snapshot.pins if row[0] == destination), None)
-        pin_state: Literal["in_force", "changed"] | None = (
-            None if pin is None else "in_force" if pin[0] else "changed"
+        pin_state: Literal["in_force", "waiting", "changed"] | None = (
+            None
+            if pin is None
+            else "in_force"
+            if pin[0]
+            else "changed"
+            if decision is None
+            else "waiting"
         )
         pinned_field: dict[str, object] | None = None
         if pin is not None:
@@ -1732,7 +1742,8 @@ class InspectCurrentReviewCase:
             cover_preparation_available=cover_preparation_available,
             actions=actions,
             owner_entry=owner_entry,
-            pin=pin_state,
+            # A waiting pin leaves the field as its answer reads.
+            pin=None if pin_state == "waiting" else pin_state,
         )
         # Classification retains the field's owner context. Action
         # availability is a separate exact-proposal contract; an empty
@@ -1763,18 +1774,22 @@ class InspectCurrentReviewCase:
                 or (decision is not None and automatic_decision is not None)
             )
         )
-        pin_offered = (
-            destination != "cover"
-            and inventory_role == "primary"
-            and destination not in snapshot.change_waiting_destinations
-            and pinned_field_fingerprint(context.case, destination) is not None
-            and pin_state != "in_force"
+        # A readable primary field can have a value pinned, or says a change
+        # to it waits to be written (#1346, J2).
+        pin_offer = (
+            None
+            if destination == "cover"
+            or inventory_role != "primary"
+            or pinned_field_fingerprint(context.case, destination) is None
+            else "change_waiting"
+            if destination in snapshot.change_waiting_destinations
+            else "available"
         )
-        pin_control = (
+        pin_control: dict[str, object] | None = (
             None
             if inventory_role == "contextual"
-            or not (pin_offered or pin_state is not None)
-            else {"pin": pin_offered, "unpin": pin_state is not None}
+            or (pin_offer is None and pin_state is None)
+            else {"pin": pin_offer, "unpin": pin_state is not None}
         )
         return self._field_document(
             context,
@@ -1823,7 +1838,7 @@ class InspectCurrentReviewCase:
         has_owner_action: bool,
         needs_attention: bool,
         pin: dict[str, object] | None,
-        pin_control: dict[str, bool] | None,
+        pin_control: dict[str, object] | None,
     ) -> dict[str, object]:
         """The field's wire document, kept apart from the decisions above it."""
         case = context.case
@@ -3229,11 +3244,14 @@ def _owner_control(
                 )
             ],
         }
+    # An answer cannot be withdrawn while its field is pinned (ADR-0085,
+    # Amendment 2).
     withdraw = None
     if (
         decision is not None
         and decision.outcome != "reject"
         and destination not in UNREVERSIBLE_DESTINATIONS
+        and all(row[0] != destination for row in snapshot.pins)
     ):
         withdraw = (
             "automatic_hold"
@@ -4549,9 +4567,9 @@ def _library_item(
                     else DecisionScope.of(canonical_case)
                 )
             decision.validate_in(scope)
-            if decision.outcome in {"withdraw", "pin", "unpin"}:
+            if decision.outcome == "withdraw":
                 decisions.discard(decision.destination)
-            else:
+            elif decision.outcome not in {"pin", "unpin"}:
                 decisions.add(decision.destination)
         else:
             destination = str(automatic["destination"])

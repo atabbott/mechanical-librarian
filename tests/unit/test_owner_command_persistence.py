@@ -1129,7 +1129,8 @@ def test_deciding_again_closes_the_earlier_episodes_plan(store: OwnerStore) -> N
     assert (closed.state, closed.failure) == ("superseded", "authority_superseded")
 
 
-# #1346: a pin's history names the value it keeps; an unpin carries none.
+# #1346, K-D19: a pin's history row carries no value, as an unpin's; the
+# value a pin keeps is its answer's or its case's.
 def test_pin_and_unpin_history_events(store: OwnerStore) -> None:
     pin = store.decide("pin")
     unpin = store.decide("unpin")
@@ -1140,18 +1141,10 @@ def test_pin_and_unpin_history_events(store: OwnerStore) -> None:
         )
         if event.get("kind") == "human_decision_recorded"
     }
-    title = next(
-        field
-        for field in cast("list[dict[str, object]]", store.case.target["fields"])
-        if field["destination"] == "title"
-    )
     assert (
         events[pin.decision_id]["outcome"],
         events[pin.decision_id]["selected_value"],
-    ) == (
-        "pin",
-        {"kind": "text", "value": title["value"]},
-    )
+    ) == ("pin", None)
     assert (
         events[unpin.decision_id]["outcome"],
         events[unpin.decision_id]["selected_value"],

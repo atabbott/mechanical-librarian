@@ -359,16 +359,23 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                         (review_case_id,),
                     )
                 ),
-                # A pin's decision is a pin, so its case is the one whose
-                # value was pinned; a hold breaking that reads no pin.
+                # The pinned value is the chosen value where the hold's
+                # decision chose one, and otherwise the value of that
+                # decision's case; a hold breaking that reads no pin.
                 pins=tuple(
                     (row[0], row[1] == 1, row[2])
                     for row in self._connection.execute(
                         "SELECT hold.destination,"
-                        "json_extract(hold.document,'$.pin.in_force'),target.value "
+                        "json_extract(hold.document,'$.pin.in_force'),"
+                        "CASE WHEN human.outcome IN ('accept','owner_entered') "
+                        "THEN json_object('destination',hold.destination,'state',"
+                        "'value','value',"
+                        "json_extract(human.selected_value_document,'$.value')) "
+                        "ELSE target.value END "
                         "FROM field_effect_manual_holds hold JOIN human_decisions human "
                         "ON human.decision_id=json_extract(hold.document,'$.decision_id') "
-                        "AND human.outcome='pin' JOIN review_cases review "
+                        "AND human.outcome IN ('pin','keep_current','accept','owner_entered') "
+                        "JOIN review_cases review "
                         "ON review.review_case_id=human.review_case_id,"
                         "json_each(review.document,'$.target.fields') target "
                         "WHERE hold.review_case_id=? AND hold.active=1 "
@@ -480,7 +487,8 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             + _episode_decision_sql("human")
             + " AND human.ordinal=(SELECT MAX(latest.ordinal) "
             "FROM human_decisions latest WHERE latest.review_case_id=human.review_case_id "
-            "AND latest.destination=human.destination) GROUP BY human.destination "
+            "AND latest.destination=human.destination "
+            "AND latest.outcome NOT IN ('pin','unpin')) GROUP BY human.destination "
             "ORDER BY human.destination",
             (review_case_id,),
         ).fetchall()

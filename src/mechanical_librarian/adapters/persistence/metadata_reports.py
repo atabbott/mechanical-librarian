@@ -961,7 +961,8 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 "AND human.destination=automatic.destination "
                 "AND human.ordinal=(SELECT MAX(current.ordinal) FROM human_decisions current "
                 "WHERE current.review_case_id=human.review_case_id AND "
-                "current.destination=human.destination) "
+                "current.destination=human.destination "
+                "AND current.outcome NOT IN ('pin','unpin')) "
                 "WHERE automatic.review_case_id=? AND automatic.destination=? AND "
                 # Only the active generation's decision is superseded (#1573).
                 + _active_generation_automatic_sql("automatic"),

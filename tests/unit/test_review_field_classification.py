@@ -460,7 +460,9 @@ def test_a_changed_pin_needs_attention_unless_suspended(
         attention,
     )
     if not suspended:
-        assert value.reason == "This changed in Audiobookshelf after you pinned it."
+        assert value.reason == (
+            "Audiobookshelf shows a different value from the one you pinned."
+        )
 
 
 @pytest.mark.parametrize(

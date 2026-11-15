@@ -85,6 +85,7 @@ from mechanical_librarian.domain.human_decision import (
     DecisionScope,
     HumanDecision,
     HumanDecisionError,
+    chosen_value_fingerprint,
     pinned_field_fingerprint,
 )
 from mechanical_librarian.domain.review_case import (
@@ -112,16 +113,13 @@ _AUTOMATIC_MINT_CONFLICT_SQL = (
 )
 
 
-def field_change_waiting_sql(case: str, destination: str) -> str:
-    """Whether a change to the field on the case waits, so it cannot be pinned.
+def _field_effect_waiting_sql(case: str, destination: str) -> str:
+    """Whether a write for the field waits or was not yet read back on the case.
 
-    A write for the field is planned, in flight, retryable or verified in the
-    case's episode, under an owner decision of the episode, an automatic or a
-    description decision on the case, or as a subtitle companion of one; or
-    the episode's latest owner decision chose a value not yet written. The
-    case's value is then not what the library will hold (ADR-0085, Amendment
-    2). It lives here rather than in `review_sql`, which imports nothing,
-    because it reads the companion expression the schema indexes.
+    The write is planned, in flight, retryable or verified in the case's
+    episode, under an owner decision of the episode, an automatic or a
+    description decision on the case, or as a subtitle companion of one. The
+    case's value is then not what the library will hold.
     """
     authorities = (
         "SELECT waiting_human.decision_id FROM human_decisions waiting_human "
@@ -136,7 +134,7 @@ def field_change_waiting_sql(case: str, destination: str) -> str:
         f"AND {destination}='description'"
     )
     return (
-        "(EXISTS (SELECT 1 FROM field_effects waiting_effect WHERE "
+        "EXISTS (SELECT 1 FROM field_effects waiting_effect WHERE "
         "waiting_effect.rowid IN (SELECT rowid FROM field_effects WHERE decision_id IN ("
         + authorities
         + ") UNION ALL SELECT rowid FROM field_effects WHERE "
@@ -147,12 +145,49 @@ def field_change_waiting_sql(case: str, destination: str) -> str:
         "('planned','claimed','applying','reconciling','retryable','verified') "
         "AND waiting_effect.rowid>COALESCE((SELECT waiting_episode.effect_floor "
         "FROM review_case_episodes waiting_episode "
-        f"WHERE waiting_episode.review_case_id={case}),0)) "
-        "OR COALESCE((SELECT waiting_latest.outcome FROM human_decisions waiting_latest "
-        f"WHERE waiting_latest.review_case_id={case} "
-        f"AND waiting_latest.destination={destination} AND "
-        + _episode_decision_sql("waiting_latest")
-        + " ORDER BY waiting_latest.ordinal DESC LIMIT 1),'') IN ('accept','owner_entered'))"
+        f"WHERE waiting_episode.review_case_id={case}),0))"
+    )
+
+
+def _standing_decision_sql(column: str, case: str, destination: str) -> str:
+    """One column of the field's standing owner decision on the case.
+
+    That is the latest row of the case's episode that is not a pin or an
+    unpin, which are never a field's latest decision (ADR-0085, Amendment 2).
+    """
+    return (
+        f"(SELECT standing.{column} FROM human_decisions standing "
+        f"WHERE standing.review_case_id={case} "
+        f"AND standing.destination={destination} "
+        "AND standing.outcome NOT IN ('pin','unpin') AND "
+        + _episode_decision_sql("standing")
+        + " ORDER BY standing.ordinal DESC LIMIT 1)"
+    )
+
+
+def field_change_waiting_sql(case: str, destination: str) -> str:
+    """Whether a pin on the field of the case is refused as `pin_change_waiting`.
+
+    Where no answer of the owner's stands on the case, a write for the field
+    waits (`_field_effect_waiting_sql`). Where one stands, its hold is not its
+    own standing hold: released, with a Resume asked of it, or under another
+    token, so a pin there would revive a write that is over (ADR-0085,
+    Amendment 2). It lives here rather than in `review_sql`, which imports
+    nothing, because it reads the companion expression the schema indexes.
+    """
+    return (
+        "(CASE WHEN COALESCE("
+        + _standing_decision_sql("outcome", case, destination)
+        + ",'') IN ('accept','keep_current','owner_entered') THEN NOT EXISTS ("
+        "SELECT 1 FROM field_effect_manual_holds standing_hold "
+        f"WHERE standing_hold.review_case_id={case} "
+        f"AND standing_hold.destination={destination} AND standing_hold.active=1 "
+        "AND json_extract(standing_hold.document,'$.pending_return') IS NULL "
+        "AND json_extract(standing_hold.document,'$.decision_id')="
+        + _standing_decision_sql("decision_id", case, destination)
+        + ") ELSE "
+        + _field_effect_waiting_sql(case, destination)
+        + " END)"
     )
 
 
@@ -636,14 +671,21 @@ class SQLiteDecisionRepository(ConnectionScoped):
             self._record_cover_decision_outcome(
                 decision, cover_consideration_id, cover_confirmation, validate_only=True
             )
+            # A pin over a standing answer, and every unpin, only annotates
+            # the hold: it replaces no decision and revokes no authority.
+            pin: dict[str, object] | None = None
+            annotation = decision.outcome == "unpin"
             if decision.outcome == "pin":
-                self._require_pinnable(decision)
+                standing, pin = self._require_pinnable(decision, case)
+                annotation = standing is not None
             elif decision.outcome == "unpin":
                 self._require_unpinnable(decision)
             elif decision.outcome == "withdraw":
                 self._require_withdrawable(decision)
-            previous, authored, automatic = self._replacement_authorities(
-                decision, case
+            previous, authored, automatic = (
+                (None, None, None)
+                if annotation
+                else self._replacement_authorities(decision, case)
             )
             selected = _canonical_json(decision.selected_value)
             self._connection.execute(
@@ -671,9 +713,12 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 decision, cover_consideration_id, cover_confirmation
             )
             self._record_human_decision_event(decision)
-            self._close_replaced_authorities(
-                decision, previous, authored, automatic, case=case
-            )
+            if annotation:
+                self._annotate_hold(decision, pin)
+            else:
+                self._close_replaced_authorities(
+                    decision, previous, authored, automatic, case=case, pin=pin
+                )
             if self._binding is not None:
                 self._binding.require_current()
             transaction.commit()
@@ -745,13 +790,15 @@ class SQLiteDecisionRepository(ConnectionScoped):
         automatic: sqlite3.Row | tuple[object, ...] | None,
         *,
         case: ReviewCase,
+        pin: dict[str, object] | None,
     ) -> None:
         """Revoke the replaced and earlier-episode authorities, and set or
         clear the manual hold (#1358, ADR-0085).
 
-        A pin sets the hold with its pin in force; an unpin only takes the
-        pin off the hold; every other answer sets the hold without one
-        (ADR-0085, Amendment 2).
+        A pin where no answer of the owner's stands sets the hold with its
+        `pin`; every other answer sets the hold without one. A pin over a
+        standing answer and an unpin never come here (`_annotate_hold`;
+        ADR-0085, Amendment 2).
 
         Runs inside `record_human_decision`'s transaction.
         """
@@ -774,18 +821,8 @@ class SQLiteDecisionRepository(ConnectionScoped):
             self._revoke_field_effect_authority_in_transaction(
                 automatic[0], decision.occurred_at, required=False
             )
-        pin: dict[str, object] | None = (
-            {
-                "fingerprint": pinned_field_fingerprint(case, decision.destination),
-                "in_force": True,
-            }
-            if decision.outcome == "pin"
-            else None
-        )
         if decision.outcome == "withdraw":
             self._withdraw_manual_hold(decision, previous, case)
-        elif decision.outcome == "unpin":
-            self._clear_pin(decision)
         elif decision.destination == "cover" and automatic is None:
             # A cover answer still holds only over an automatic cover
             # decision: a held cover refuses a replacement decision outright,
@@ -809,7 +846,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 decision.decision_id,
                 pin,
             )
-        if authored is not None and decision.outcome != "unpin":
+        if authored is not None:
             self._connection.execute(
                 "DELETE FROM current_description_decisions WHERE review_case_id=?",
                 (decision.review_case_id,),
@@ -822,24 +859,54 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 pin,
             )
 
-    def _require_pinnable(self, decision: HumanDecision) -> None:
-        """Refuse a pin in its fixed order; nothing is written (ADR-0085, Amendment 2)."""
-        if self._connection.execute(
-            "SELECT 1 WHERE "
-            + field_change_waiting_sql(":review_case_id", ":destination"),
-            {
-                "review_case_id": decision.review_case_id,
-                "destination": decision.destination,
-            },
-        ).fetchone():
+    def _require_pinnable(
+        self, decision: HumanDecision, case: ReviewCase
+    ) -> tuple[str | None, dict[str, object]]:
+        """Refuse a pin in its fixed order; nothing is written (ADR-0085, Amendment 2).
+
+        Returns the owner's standing answer on the case, if one stands, and
+        the pin: the chosen value where that answer chose one and the case's
+        value otherwise, in force only when the case shows it and no write
+        for the field waits.
+        """
+        field = {
+            "review_case_id": decision.review_case_id,
+            "destination": decision.destination,
+        }
+        refused, waiting, standing, outcome, selected = self._connection.execute(
+            "SELECT "
+            + field_change_waiting_sql(":review_case_id", ":destination")
+            + ","
+            + _field_effect_waiting_sql(":review_case_id", ":destination")
+            + ","
+            + ",".join(
+                _standing_decision_sql(column, ":review_case_id", ":destination")
+                for column in ("decision_id", "outcome", "selected_value_document")
+            ),
+            field,
+        ).fetchone()
+        if refused:
             raise HumanDecisionError("pin_change_waiting")
-        if self._connection.execute(
-            "SELECT 1 FROM field_effect_manual_holds WHERE review_case_id=? "
-            "AND destination=? AND active=1 "
-            "AND json_extract(document,'$.pin.in_force')=1",
+        shown = pinned_field_fingerprint(case, decision.destination)
+        fingerprint = (
+            chosen_value_fingerprint(decision.destination, json.loads(selected))
+            if outcome in {"accept", "owner_entered"}
+            else shown
+        )
+        pin: dict[str, object] = {
+            "fingerprint": fingerprint,
+            "in_force": fingerprint == shown and not waiting,
+        }
+        hold = self._connection.execute(
+            "SELECT document FROM field_effect_manual_holds WHERE review_case_id=? "
+            "AND destination=? AND active=1",
             (decision.review_case_id, decision.destination),
-        ).fetchone():
+        ).fetchone()
+        if hold is not None and json.loads(hold[0])["pin"] == pin:
             raise HumanDecisionError("already_pinned")
+        return (
+            standing if outcome in {"accept", "keep_current", "owner_entered"} else None
+        ), pin
 
     def _require_unpinnable(self, decision: HumanDecision) -> None:
         """Refuse an unpin where the case's hold carries no pin."""
@@ -850,13 +917,19 @@ class SQLiteDecisionRepository(ConnectionScoped):
         ).fetchone():
             raise HumanDecisionError("not_pinned")
 
-    def _clear_pin(self, decision: HumanDecision) -> None:
-        """Take the pin off the case's hold, keeping the hold and its token.
+    def _annotate_hold(
+        self, decision: HumanDecision, pin: dict[str, object] | None
+    ) -> None:
+        """Set or take off the `pin` of the case's hold, keeping the hold and its token.
 
-        The update time moves to the unpin and the row is written again, so
-        the work's latest hold is this one and no pin is carried to its later
-        cases. The latest hold is chosen by update time, then rowid: the
-        re-inserted row takes a fresh rowid, so it outranks a pinned copy
+        An unpin passes None; a pin over the owner's standing answer passes
+        its pin. Nothing else of the hold changes, no authority is revoked
+        and no decision is replaced, so the answer's own write goes on.
+
+        The update time moves to the decision and the row is written again, so
+        the work's latest hold is this one and its later cases carry this
+        `pin`. The latest hold is chosen by update time, then rowid: the
+        re-inserted row takes a fresh rowid, so it outranks a copy
         carried to a sibling case in the same second, which an in-place update
         would not, since a re-admitted case keeps its old row. The explicit
         DELETE fires the attention delete trigger.
@@ -867,7 +940,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
             (decision.review_case_id, decision.destination),
         ).fetchone()
         hold = json.loads(document)
-        hold["pin"] = None
+        hold["pin"] = pin
         hold["updated_at"] = decision.occurred_at
         self._connection.execute(
             "DELETE FROM field_effect_manual_holds "
@@ -1024,7 +1097,8 @@ class SQLiteDecisionRepository(ConnectionScoped):
         # episode's is history (#1358).
         previous = self._connection.execute(
             "SELECT decision_id,'human' FROM human_decisions "
-            "WHERE review_case_id=? AND destination=? AND "
+            "WHERE review_case_id=? AND destination=? "
+            "AND outcome NOT IN ('pin','unpin') AND "
             + _episode_decision_sql("human_decisions")
             + " ORDER BY ordinal DESC LIMIT 1",
             (decision.review_case_id, decision.destination),
@@ -1161,13 +1235,20 @@ class SQLiteDecisionRepository(ConnectionScoped):
         """Refuse a withdraw in its fixed order; nothing is written (ADR-0085)."""
         latest = self._connection.execute(
             "SELECT decision_id,outcome FROM human_decisions "
-            "WHERE review_case_id=? AND destination=? AND "
+            "WHERE review_case_id=? AND destination=? "
+            "AND outcome NOT IN ('pin','unpin') AND "
             + _episode_decision_sql("human_decisions")
             + " ORDER BY ordinal DESC LIMIT 1",
             (decision.review_case_id, decision.destination),
         ).fetchone()
-        if latest is None or latest[1] in {"withdraw", "reject", "pin", "unpin"}:
+        if latest is None or latest[1] in {"withdraw", "reject"}:
             raise HumanDecisionError("nothing_to_withdraw")
+        if self._connection.execute(
+            "SELECT 1 FROM field_effect_manual_holds WHERE review_case_id=? "
+            "AND destination=? AND json_type(document,'$.pin')='object'",
+            (decision.review_case_id, decision.destination),
+        ).fetchone():
+            raise HumanDecisionError("pinned")
         if self._connection.execute(
             "SELECT 1 FROM automatic_decisions WHERE review_case_id=? AND destination=?",
             (decision.review_case_id, decision.destination),
@@ -1683,8 +1764,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
             decision.selected_value
             if decision.outcome in {"accept", "owner_entered"}
             else {"kind": kind, "value": target.get("value")}
-            if decision.outcome in {"keep_current", "pin"}
-            and target.get("state") == "value"
+            if decision.outcome == "keep_current" and target.get("state") == "value"
             else None
         )
         return (row[6], int(decision_row[0]), row[0], value)

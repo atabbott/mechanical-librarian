@@ -1146,6 +1146,21 @@ def test_automatic_decisions_are_not_labels(
     assert group["not_counted"]["decided_by_automatic"] == 1
 
 
+@pytest.mark.parametrize("marks", [("pin",), ("pin", "unpin")], ids=["pin", "unpin"])
+def test_a_pin_or_unpin_leaves_the_label(
+    tmp_path: Path, marks: tuple[str, ...]
+) -> None:
+    """A pin or an unpin is never the latest decision, so the decision before
+    it still labels the advice (#1346)."""
+    prepared = _store(tmp_path)
+    prepared.decide("keep_current")
+    for mark in marks:
+        prepared.decide(mark)
+    group = _only(_score(prepared.copy()))
+    assert (group["labels"], group["right"]) == (1, 0)
+    assert group["wrong"] == _wrong(kept_current=1)
+
+
 def test_withdrawal_is_not_a_label(tmp_path: Path) -> None:
     """A withdrawal on a description cannot be recorded; the mapper still
     counts none."""

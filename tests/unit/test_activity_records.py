@@ -321,7 +321,7 @@ def test_an_owner_rejection_prepares_nothing_and_invents_nothing() -> None:
 @pytest.mark.parametrize(
     ("state", "change", "detail", "label", "outcome"),
     (
-        ("pin", "Pinned", "Pinned the Title value", "Pinned value", None),
+        ("pin", "Pinned", "Pinned the Title value", None, None),
         (
             "unpin",
             "Unpinned",
@@ -333,9 +333,10 @@ def test_an_owner_rejection_prepares_nothing_and_invents_nothing() -> None:
     ids=("pin", "unpin"),
 )
 def test_pin_and_unpin_ledger_words(
-    state: str, change: str, detail: str, label: str, outcome: str | None
+    state: str, change: str, detail: str, label: str | None, outcome: str | None
 ) -> None:
-    """A pin is not a field left unchanged (ADR-0085, Amendment 2)."""
+    """A pin is not a field left unchanged, and its row names no value: the
+    value a pin keeps is its answer's (ADR-0085, Amendment 2)."""
     report = _titled("The Dispossessed")
     event = _project(
         _event(
@@ -350,7 +351,10 @@ def test_pin_and_unpin_ledger_words(
     )
     assert (event["change"], event["change_detail"]) == (change, detail)
     facts = _facts(event)
-    assert facts[label] == "The Dispossessed"
+    if label is None:
+        assert set(facts) == {"Chosen by"}
+    else:
+        assert facts[label] == "The Dispossessed"
     assert facts["Chosen by"] == "You"
     assert facts.get("Outcome") == outcome
 

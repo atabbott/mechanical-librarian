@@ -123,7 +123,7 @@
         "offer_digest": "e86eea40f0c48e02cc1a0988d64466d2aa45a917705d0e8d7f100cb0dcf7def0",
         "pin": null,
         "pin_control": {
-          "pin": true,
+          "pin": "available",
           "unpin": false
         }
       },
@@ -228,7 +228,7 @@
         "offer_digest": "aa3bd14b8c2cf7cc009cc69b8d0aab1fdb4925a048541c747261ccb6d7b8ac25",
         "pin": null,
         "pin_control": {
-          "pin": true,
+          "pin": "available",
           "unpin": false
         }
       },
@@ -339,7 +339,7 @@
         "offer_digest": "ced675df0c60e3debecc34eb92f6c1ec2a77f9d5d3e2e1896deaf9fe861e7f0f",
         "pin": null,
         "pin_control": {
-          "pin": true,
+          "pin": "available",
           "unpin": false
         }
       },
@@ -398,7 +398,7 @@
         "offer_digest": "ced675df0c60e3debecc34eb92f6c1ec2a77f9d5d3e2e1896deaf9fe861e7f0f",
         "pin": null,
         "pin_control": {
-          "pin": true,
+          "pin": "available",
           "unpin": false
         }
       },
@@ -502,7 +502,7 @@
         "offer_digest": "221dc9ba25d55d99c14cb11ff69582f7ec10b908bebf2ed34cc919907fc6ec48",
         "pin": null,
         "pin_control": {
-          "pin": true,
+          "pin": "available",
           "unpin": false
         }
       },
@@ -561,7 +561,7 @@
         "offer_digest": "ced675df0c60e3debecc34eb92f6c1ec2a77f9d5d3e2e1896deaf9fe861e7f0f",
         "pin": null,
         "pin_control": {
-          "pin": true,
+          "pin": "available",
           "unpin": false
         }
       },
@@ -844,7 +844,7 @@
         "offer_digest": "774f8321936975e650ae662eaea5a4082c69979247ba5a2e8bb8f2c307e3ddd4",
         "pin": null,
         "pin_control": {
-          "pin": true,
+          "pin": "available",
           "unpin": false
         }
       },

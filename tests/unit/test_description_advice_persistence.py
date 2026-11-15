@@ -993,3 +993,69 @@ def test_a_pinned_description_admits_no_automatic_advice(tmp_path):
     assert owner.origin == "human"
     assert (hold()["decision_id"], hold()["pin"]) == (owner.decision_id, None)
     repository.close()
+
+
+def test_a_pin_never_reopens_a_description_choice(tmp_path, monkeypatch):
+    """ADR-0085 Amendment 2 (#1346, K-D11): where the owner's advice choice
+    stands over an earlier answer on the description, the field's hold is the
+    advice choice's and not that answer's, so a pin is refused. Accepting it
+    would drop the advice choice and make the earlier answer the field's
+    decision again."""
+    from mechanical_librarian.domain.human_decision import (
+        HumanDecision,
+        HumanDecisionError,
+    )
+    from mechanical_librarian.domain.review_case import ReviewCase
+    from tests.support.description_advice import _prepared
+
+    qualify_description_advice(monkeypatch)
+    repository, store, binding, original, _ = _prepared(tmp_path)
+    connection = repository._connection
+    case = ReviewCase.create_from_data(
+        json.loads(repository.get_review_case(binding.review_case_id))["case"]
+    )
+    proposal = next(
+        value for value in case.proposals if value["destination"] == "description"
+    )
+
+    def owner(outcome: str, at: int) -> HumanDecision:
+        return HumanDecision.create(
+            case,
+            proposal_id=str(proposal["proposal_id"]),
+            target_fingerprint=case.target_fingerprint,
+            destination="description",
+            actor="owner",
+            outcome=outcome,
+            selected_value=None,
+            idempotency_key=f"owner-{outcome.replace('_', '-')}-description",
+            occurred_at=at,
+        )
+
+    def state() -> tuple[object, ...]:
+        return (
+            connection.execute(
+                "SELECT review_case_id,decision_id FROM current_description_decisions"
+            ).fetchall(),
+            connection.execute(
+                "SELECT decision_id FROM human_decisions ORDER BY ordinal"
+            ).fetchall(),
+            connection.execute(
+                "SELECT document FROM field_effect_manual_holds"
+            ).fetchall(),
+            repository.pending_field_effect_decision_documents(32),
+        )
+
+    kept = owner("keep_current", 11)
+    repository.record_human_decision(kept)
+    chosen = store.admit(original.candidate_id, binding, "human", "e" * 64, 12)
+    before = state()
+    assert before[0] == [(binding.review_case_id, chosen.decision_id)]
+    assert (
+        repository.field_effect_manual_hold_token(binding.review_case_id, "description")
+        == chosen.decision_id
+    )
+    with pytest.raises(HumanDecisionError) as refused:
+        repository.record_human_decision(owner("pin", 13))
+    assert refused.value.code == "pin_change_waiting"
+    assert state() == before
+    repository.close()

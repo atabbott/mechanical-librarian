@@ -265,17 +265,19 @@ _WORK_LATEST_MANUAL_HOLDS_SQL = (
 # that withdrew it (ADR-0085); an earlier decision never settles a field the
 # owner took back, nor one the work has since left and returned to. An
 # automatic decision settles its field only in the active generation. A pin in
-# force settles its field, and a pin or unpin row settles nothing itself. A
-# changed pin asks again over an automatic, authored or cover decision a
-# returning case still carries; no owner decision of the episode can stand
-# beside it, because any owner answer takes the pin off the hold (ADR-0085,
-# Amendment 2). A suspension still wins.
+# force settles its field. A pin or unpin row is never the latest decision, so
+# an answer under a pin settles its field as it would without one, including
+# while its pin waits for the chosen value to be read back. A changed pin with
+# no answer standing asks again over an automatic, authored or cover decision
+# a returning case still carries (ADR-0085, Amendment 2). A suspension still
+# wins.
 _REVIEW_FIELD_ATTENTION_CLEAR_SQL = (
     " AND COALESCE((SELECT decision.outcome FROM human_decisions decision "
     "WHERE decision.review_case_id=rc.review_case_id "
-    "AND decision.destination=result.destination AND "
+    "AND decision.destination=result.destination "
+    "AND decision.outcome NOT IN ('pin','unpin') AND "
     + _episode_decision_sql("decision")
-    + " ORDER BY decision.ordinal DESC LIMIT 1),'withdraw') IN ('withdraw','pin','unpin') "
+    + " ORDER BY decision.ordinal DESC LIMIT 1),'withdraw')='withdraw' "
     "AND NOT " + _pin_hold_sql("rc.review_case_id", "result.destination", True) + " "
     "AND NOT EXISTS (SELECT 1 FROM current_description_decisions authored WHERE authored.review_case_id=rc.review_case_id AND result.destination='description'"
     " AND NOT " + _PIN_CHANGED_SQL + ") "

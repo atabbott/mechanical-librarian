@@ -296,7 +296,7 @@ def _pinned_classification(
     if pin == "changed" and not suspended:
         return ReviewFieldClassification(
             "needs_attention",
-            "This changed in Audiobookshelf after you pinned it.",
+            "Audiobookshelf shows a different value from the one you pinned.",
             "pin_changed",
             True,
             True,

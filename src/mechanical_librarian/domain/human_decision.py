@@ -525,6 +525,19 @@ def pinned_field_fingerprint(case: ReviewCase, destination: str) -> str | None:
     )
 
 
+def chosen_value_fingerprint(destination: str, selected_value: object) -> str:
+    """The digest a pin keeps for a value the owner chose but has not seen written.
+
+    It equals `pinned_field_fingerprint` of a case that shows the chosen value,
+    because a verified write is read back as exactly the projected value
+    (ADR-0085, Amendment 2).
+    """
+    value = project_decision_value(destination, selected_value)
+    return _sha256(
+        _canonical({"destination": destination, "state": "value", "value": value})
+    )
+
+
 def validate_owner_value(
     case: ReviewCase,
     proposal: Mapping[str, object],
