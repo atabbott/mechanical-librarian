@@ -1689,6 +1689,53 @@ def test_first_run_states_its_rules_transport_and_recoveries_without_raw_codes()
     assert "submit.disabled" not in SETUP_JS
 
 
+def test_setup_pending_buttons_dim_their_colours_not_their_focus_outline() -> None:
+    """A pending button keeps an unmixed focus outline (DESIGN.md, #1698)."""
+    rules = re.findall(r"([^{}]+)\{([^{}]*)\}", SETUP_CSS)
+    dimmed = [
+        body
+        for selector, body in rules
+        if ":disabled" in selector or "[aria-disabled=true]" in selector
+    ]
+    assert len(dimmed) == 2
+    assert all("opacity" not in body for body in dimmed)
+    assert all("color-mix(in srgb," in body for body in dimmed)
+    assert all("outline" not in body for body in dimmed)
+    assert "cursor:not-allowed" in dimmed[0]
+    # The dark themes change the primary colours the dimmed rule mixes, so
+    # they never outrank it.
+    assert ":root[data-theme=dark] .primary{--primary-fill:#61b29f;" in SETUP_CSS
+    assert ":root:not([data-theme]) .primary{--primary-fill:#61b29f;" in SETUP_CSS
+    assert ".primary{background:" not in SETUP_CSS.replace(
+        ".primary{--primary-fill", ""
+    )
+
+
+def test_setup_reviewer_codex_buttons_say_what_they_are_doing() -> None:
+    """The reviewer step's Codex buttons are spoken while they work (#1698)."""
+    assert (
+        "use.setAttribute('aria-disabled','true');announce('Selecting Codex…');"
+        in SETUP_JS
+    )
+    assert (
+        "signIn.setAttribute('aria-disabled','true');announce('Starting sign-in…');"
+        in SETUP_JS
+    )
+    assert (
+        "cancel.setAttribute('aria-disabled','true');announce('Cancelling sign-in…');"
+        in SETUP_JS
+    )
+    # After a cancel the redrawn card's own line is spoken, so it stays true
+    # if the sign-in finished first.
+    assert (
+        "await render();"
+        "announce(main.querySelector('[data-codex-status]')?.textContent||'')"
+        in SETUP_JS
+    )
+    assert "line.dataset.codexStatus='';" in SETUP_JS
+    assert "await render();announce('Codex selected.')" in SETUP_JS
+
+
 def test_setup_enables_cross_document_motion_only_for_the_workspace_handoff() -> None:
     assert "@view-transition{navigation:auto}" not in SETUP_CSS
     assert SETUP_HANDOFF_CSS == "@view-transition{navigation:auto}"

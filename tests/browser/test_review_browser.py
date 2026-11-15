@@ -9338,6 +9338,219 @@ _SETTINGS_LANGUAGE_FIT = """() => {
 }"""
 
 
+# The computed state a pending button is judged by, beside the Focus Blue the
+# page's own `--focus` resolves to.
+_PENDING_STYLE = """element => {
+  const probe = document.createElement('span');
+  probe.style.color = 'var(--focus)';
+  element.after(probe);
+  const focus = getComputedStyle(probe).color;
+  probe.remove();
+  const style = getComputedStyle(element);
+  return {
+    opacity: style.opacity,
+    outlineColor: style.outlineColor,
+    outlineStyle: style.outlineStyle,
+    focus,
+    color: style.color,
+    background: style.backgroundColor,
+    cursor: style.cursor,
+  };
+}"""
+
+
+def _release(page: Page, held: dict[str, Route], path: str, body: object) -> None:
+    """Answer one held request once the page has sent it."""
+    for _ in range(200):
+        if path in held:
+            break
+        page.wait_for_timeout(25)
+    held.pop(path).fulfill(json=body)
+
+
+def _assert_pending(button: Locator, idle: dict[str, str]) -> dict[str, str]:
+    """A pending button keeps focus, dims its colours and keeps an unmixed ring."""
+    expect(button).to_have_attribute("aria-disabled", "true")
+    expect(button).to_be_focused()
+    pending = button.evaluate(_PENDING_STYLE)
+    assert pending["opacity"] == "1"
+    assert pending["cursor"] == "not-allowed"
+    assert pending["outlineStyle"] == "solid"
+    assert pending["outlineColor"] == pending["focus"]
+    assert pending["color"] != idle["color"]
+    return pending
+
+
+@pytest.mark.parametrize("color_scheme", ("light", "dark"), ids=("light", "dark"))
+def test_setup_reviewer_buttons_dim_and_announce_while_pending(
+    color_scheme: Literal["light", "dark"],
+) -> None:
+    """Pending reviewer-step buttons look pending and say so (#1698)."""
+    codex = {"state": "unconfigured"}
+    mapping: dict[str, dict[str, str] | None] = {"value": None}
+    held: dict[str, Route] = {}
+    errors: list[str] = []
+
+    def setup_api(route: Route) -> None:
+        path = urlparse(route.request.url).path
+        method = route.request.method
+        if path == "/api/setup/state":
+            route.fulfill(
+                json={
+                    "csrf_token": "c" * 32,
+                    "completed_steps": [
+                        "claim",
+                        "connect",
+                        "libraries",
+                        "mounts",
+                        "providers",
+                    ],
+                    "next_step": "reviewer",
+                    "revision": 6,
+                    "connection": {
+                        "name": "primary",
+                        "endpoint": "https://library.invalid",
+                    },
+                    "providers": [],
+                    "libraries": [
+                        {
+                            "name": "books",
+                            "library_id": "books",
+                            "media_kind": "book",
+                            "display_name": "Books",
+                            "provider_connections": [],
+                        }
+                    ],
+                    "mounts": [{"library": "books", "state": "matched"}],
+                }
+            )
+        elif path == "/api/setup/reviewer-access":
+            route.fulfill(
+                json={
+                    **ReviewerAccessView(
+                        revision=1,
+                        mapping=None,
+                        openrouter_key_configured=False,
+                        codex=ReviewerEngineStatus(
+                            engine="codex",
+                            model="gpt-5.6-sol",
+                            state=cast(Any, codex["state"]),
+                        ),
+                        openrouter=ReviewerEngineStatus(
+                            engine="openrouter", state="unconfigured"
+                        ),
+                    ).model_dump(mode="json"),
+                    "mapping": mapping["value"],
+                }
+            )
+        elif path == "/api/setup/reviewer/codex/device" and method == "GET":
+            route.fulfill(
+                json={
+                    "state": "waiting",
+                    "verification_url": "https://auth.invalid/device",
+                    "user_code": "ABCD-1234",
+                }
+            )
+        elif method == "POST":
+            held[path] = route
+        else:
+            route.fulfill(status=404, json={"error": "not_found"})
+
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True,
+                viewport={"width": 1440, "height": 900},
+                color_scheme=color_scheme,
+                reduced_motion="reduce",
+            )
+            page = context.new_page()
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            page.route("**/api/setup/**", setup_api)
+            with (
+                closing(ReservedPort()) as reserved_port,
+                _setup_asset_server(certificate, key, reserved_port) as origin,
+                _closing_context(context),
+            ):
+                status = page.locator("#setup-status")
+                page.goto(origin)
+                # The automatic check leaves Sign in natively disabled and
+                # dimmed, and is not announced: nobody pressed anything.
+                sign_in = page.get_by_role("button", name="Sign in with ChatGPT")
+                expect(
+                    page.get_by_text("Checking your ChatGPT sign-in…")
+                ).to_be_visible()
+                expect(sign_in).to_be_disabled()
+                checking = sign_in.evaluate(_PENDING_STYLE)
+                assert checking["opacity"] == "1"
+                assert checking["cursor"] == "not-allowed"
+                expect(status).not_to_contain_text("Checking")
+                _release(
+                    page,
+                    held,
+                    "/api/setup/reviewer/codex/recheck",
+                    {"engine": "codex", "state": "unconfigured"},
+                )
+                expect(status).to_have_text("Not signed in")
+                expect(sign_in).to_be_enabled()
+                idle = sign_in.evaluate(_PENDING_STYLE)
+                assert checking["color"] != idle["color"]
+
+                sign_in.focus()
+                sign_in.press("Enter")
+                expect(status).to_have_text("Starting sign-in…")
+                _assert_pending(sign_in, idle)
+                _release(
+                    page,
+                    held,
+                    "/api/setup/reviewer/codex/device",
+                    {"engine": "codex", "state": "starting"},
+                )
+                cancel = page.get_by_role("button", name="Cancel sign-in")
+                expect(cancel).to_be_focused()
+                idle = cancel.evaluate(_PENDING_STYLE)
+                cancel.press("Enter")
+                expect(status).to_have_text("Cancelling sign-in…")
+                _assert_pending(cancel, idle)
+                _release(
+                    page,
+                    held,
+                    "/api/setup/reviewer/codex/device/cancel",
+                    {"engine": "codex", "state": "cancelled"},
+                )
+                # The redrawn card's own line is spoken after a cancel.
+                expect(status).to_have_text("Not signed in")
+                expect(sign_in).to_be_enabled()
+
+                codex["state"] = "usable"
+                page.goto(origin)
+                use = page.get_by_role("button", name="Use Codex")
+                expect(use).to_be_enabled()
+                idle = use.evaluate(_PENDING_STYLE)
+                use.focus()
+                use.press("Enter")
+                expect(status).to_have_text("Selecting Codex…")
+                _assert_pending(use, idle)
+                mapping["value"] = {"engine": "codex"}
+                _release(page, held, "/api/setup/reviewer/selection", {"revision": 2})
+                expect(status).to_have_text("Codex selected.")
+
+                # The primary button dims its fill too, over either theme's.
+                proceed = page.get_by_role("button", name="Continue", exact=True)
+                idle = proceed.evaluate(_PENDING_STYLE)
+                proceed.focus()
+                proceed.press("Enter")
+                pending = _assert_pending(proceed, idle)
+                assert pending["background"] != idle["background"]
+                _release(page, held, "/api/setup/reviewer", {"revision": 7})
+                expect(proceed).not_to_have_attribute("aria-disabled", "true")
+            browser.close()
+    assert errors == []
+
+
 def test_settings_language_picker_and_tray_fit_a_phone_at_200_percent_text() -> None:
     """At 375 and 320px with 200% text the "Add a language" picker shows its
     whole label, "Review changes" stays inside its button, and the save tray
