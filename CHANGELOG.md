@@ -17,7 +17,6 @@ brackets are GitHub issues.
   correction made after Automatic's own change and answers given in Preview,
   while paused or under Ask me. Before, Automatic could write over them.
   Withdrawing a decision removes the hold it set (ADR-0085 Amendment 1).
-
 - Stopping writes for a library, or granting them again for a changed set of
   fields, now closes a change that was waiting for Audiobookshelf to come back,
   instead of leaving it waiting beside a new one, and a cover's restore point

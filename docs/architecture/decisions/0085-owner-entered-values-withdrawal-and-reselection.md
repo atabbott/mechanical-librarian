@@ -189,12 +189,14 @@ a field always overrides Automatic for that field
   mode or field setting when it was given, sets the field's manual hold on
   its case, with that decision as the release token, whether or not an
   automatic decision is on the case. Cover is the exception: a cover answer
-  still holds only over an automatic cover decision on its case, because a
-  held cover refuses an automatic replacement decision outright, so a later
-  case would never show Resume to release it. Automatic cover replacement
-  is not qualified today, so no cover answer is overwritten; the automatic
-  cover switching planned under #1372 must keep an owner's cover choice. The hold follows the work as before, so
-  Automatic still records its decisions on later cases but plans no write
+  still holds only over an automatic cover decision on its case, and with
+  none it removes a released cover row the case carries, as before, so it
+  plans. A held cover refuses an automatic replacement decision outright, so
+  a later case would never show Resume to release it. Automatic cover
+  replacement is not qualified today, so no cover answer is overwritten; the
+  automatic cover switching planned under #1372 must keep an owner's cover
+  choice. The hold follows the work as before, so Automatic still records
+  its decisions on later cases but plans no write
   from them until the owner chooses Resume automatic handling. This replaces
   "Holds are still created only where an automatic decision exists" above,
   and, on a re-admitted case, "a new owner decision there removes its

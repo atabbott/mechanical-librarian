@@ -396,3 +396,48 @@ def test_a_cover_answer_without_an_automatic_cover_decision_sets_no_hold(
         "SELECT count(*) FROM field_effect_manual_holds"
     ).fetchone() == (0,)
     repository.close()
+
+
+# A re-admitted case can carry a released cover row from a Resume on another
+# case. With no automatic cover decision the cover answer removes it, as
+# before the amendment, so the answer plans (#1358).
+def test_a_cover_answer_removes_a_released_cover_row_it_meets(tmp_path: Path) -> None:
+    from mechanical_librarian.adapters.persistence.field_effect_validation import (
+        FIELD_EFFECT_MANUAL_HOLD_SCHEMA,
+    )
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        open_repository,
+    )
+    from mechanical_librarian.domain.field_effect import (
+        canonical_json as canonical_effect_json,
+    )
+    from tests.support.cover_taste import record_owner_cover_decisions
+
+    repository = open_repository(tmp_path / "covers.sqlite")
+    connection = repository._connection
+
+    def released(case_id: str) -> None:
+        document = {
+            "active": False,
+            "decision_id": "human_decision_" + "0" * 64,
+            "destination": "cover",
+            "pending_return": None,
+            "review_case_id": case_id,
+            "schema_version": FIELD_EFFECT_MANUAL_HOLD_SCHEMA,
+            "updated_at": 150,
+        }
+        connection.execute(
+            "INSERT INTO field_effect_manual_holds(review_case_id,destination,"
+            "active,updated_at,document) VALUES(?,'cover',0,150,?)",
+            (case_id, canonical_effect_json(document)),
+        )
+        connection.commit()
+
+    record_owner_cover_decisions(tmp_path, repository, 1, before_decision=released)
+    assert connection.execute(
+        "SELECT count(*) FROM human_decisions WHERE destination='cover'"
+    ).fetchone() == (1,)
+    assert connection.execute(
+        "SELECT count(*) FROM field_effect_manual_holds"
+    ).fetchone() == (0,)
+    repository.close()
