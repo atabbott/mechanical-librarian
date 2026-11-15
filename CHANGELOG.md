@@ -78,6 +78,9 @@ brackets are GitHub issues.
   minute (#1516).
 - Settings → Reviewer counts its example costs and cover requests in works, as
   setup does (#1852).
+- Setup and Settings round the cover cost the same way and count in works
+  (#1863).
+- The preparation detail fits a 320 px window at 200% text (#1864).
 
 ## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
 
@@ -90,6 +93,10 @@ brackets are GitHub issues.
   confirmed, or has no readable image, is suggested for replacement when it
   has a fault. One whose source names another book is held for you, and one
   Audiobookshelf did not return is kept until the next scan (#1362).
+- Keeping a current cover Mechanical Librarian could not read is recorded, and
+  like any kept cover it is never switched automatically (#1865).
+- Covers lists a cover you chose but not yet written under All as Your choice,
+  and its wording, thumbnails and counts match the book page (#1866).
 - **Clean rebuild required.** A book Hardcover finds now offers its editions'
   covers in review. Only editions in the library's languages, with at least
   300 px on the short side, are fetched, so a library with no languages gets
