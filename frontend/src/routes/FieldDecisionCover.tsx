@@ -68,6 +68,8 @@ const revealFocusedCoverChoice = (event: SyntheticEvent<HTMLElement>) => {
 interface CoverChoiceWording {
   question?: string
   currentLabel?: string
+  /** The current cover card's accessible name: keeping it, in the label's words. */
+  keepLabel?: string
   coversLink?: boolean
 }
 export function LibraryCoverChoices(
@@ -529,6 +531,7 @@ function CoverCard({
   state: { outcome, value, selected, actionableCandidate, disabled: cardDisabled },
   radio,
   label,
+  name,
   context,
   shape,
   consideration,
@@ -544,6 +547,9 @@ function CoverCard({
   state: CoverCardState
   radio: CoverRadio | undefined
   label: string
+  /** The card's accessible name. The current cover's card keeps it, readable
+   * or not, so it is named for that one action (#1866). */
+  name: string
   context: CoverContext | undefined
   shape: CoverShape
   consideration: CoverConsideration
@@ -568,9 +574,7 @@ function CoverCard({
     >
       <button
         type="button"
-        // The current cover's card keeps it, readable or not, so it is named
-        // for that one action (#1866).
-        aria-label={candidate.incumbent ? 'Keep current cover' : `Choose ${label}`}
+        aria-label={name}
         {...radio}
         className={`library-cover-card${candidate.incumbent ? ' is-current' : ''}${recommended ? ' is-recommended' : ''}${selected ? ' is-selected' : ''}`}
         disabled={cardDisabled}
@@ -861,6 +865,7 @@ function LibraryCoverChoicesContent({
   prepareFailure,
   question = decisionQuestion('cover'),
   currentLabel = 'Current cover',
+  keepLabel = 'Keep current cover',
   coversLink = true,
 }: {
   reviewCaseId: string
@@ -909,6 +914,11 @@ function LibraryCoverChoicesContent({
       radio={coverRadios.get(candidate.reference)}
       label={
         candidate.incumbent ? currentLabel : (names.get(candidate.reference) ?? 'Proposed cover')
+      }
+      name={
+        candidate.incumbent
+          ? keepLabel
+          : `Choose ${names.get(candidate.reference) ?? 'Proposed cover'}`
       }
       context={
         candidate.incumbent

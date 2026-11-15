@@ -12648,13 +12648,35 @@ _PREPARATION_DETAIL_GEOMETRY = """() => {
     const beside = rest.every(box => box.top < first.bottom && box.left >= first.right)
     return { text: heading.textContent.trim().slice(0, 40), lines: beside ? 1 : 2 }
   })
+  const card = detail.querySelector('.preparation-active-books li')
+  const badge = card.firstElementChild.getBoundingClientRect()
+  const words = card.lastElementChild.getBoundingClientRect()
   return {
+    badgeBeside: badge.right <= words.left && badge.bottom > words.top,
     overflow: page.scrollWidth - page.clientWidth,
     detail: [Math.round(bounds.left), Math.round(bounds.right)],
     viewport: innerWidth,
     escaped,
     headings,
   }
+}"""
+
+
+_BROKEN_WORDS = """selector => {
+  const broken = []
+  for (const root of document.querySelectorAll(selector)) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      for (const match of node.textContent.matchAll(/\\S+/gu)) {
+        const range = document.createRange()
+        range.setStart(node, match.index)
+        range.setEnd(node, match.index + match[0].length)
+        const tops = new Set([...range.getClientRects()].map(rect => Math.round(rect.top)))
+        if (tops.size > 1) broken.push(match[0])
+      }
+    }
+  }
+  return broken
 }"""
 
 
@@ -12692,6 +12714,15 @@ def test_preparation_detail_fits_a_phone_at_enlarged_text() -> None:
                 _closing_context(context),
             ):
                 _login(page, origin)
+
+                # A long word in the work being prepared, as titles have.
+                def long_word(route: Any) -> None:
+                    document = route.fetch().json()
+                    active = document["presentation"]["active_books"]
+                    active[0]["name"] = "Extraordinary Preparation"
+                    route.fulfill(json=document)
+
+                page.route("**/api/v1/review-preparation", long_word)
                 page.goto(f"{origin}/library?lens=all")
                 page.locator(".preparation-summary").click()
                 detail = page.locator(".preparation-detail")
@@ -12722,17 +12753,20 @@ def test_preparation_detail_fits_a_phone_at_enlarged_text() -> None:
                             for heading in found["headings"]
                             if heading["lines"] != 1
                         ]
+                        # The initials sit beside the text, as before.
+                        if not found["badgeBeside"]:
+                            failures.append(
+                                f"{where}: the initials left the text's side"
+                            )
                     else:
-                        # A narrow card's words break at syllables, with a
-                        # hyphen, in the page's language.
-                        hyphens = page.evaluate(
-                            "() => [document.documentElement.lang, ...[...document"
-                            ".querySelectorAll('.preparation-active-books strong,"
-                            " .preparation-active-books small')].map(node =>"
-                            " getComputedStyle(node).hyphens)]"
+                        # A narrow active-work card wraps between words and
+                        # never splits one across lines.
+                        broken = page.evaluate(
+                            _BROKEN_WORDS, ".preparation-active-books"
                         )
-                        if hyphens[0] != "en" or set(hyphens[1:]) != {"auto"}:
-                            failures.append(f"{where}: hyphenation is {hyphens}")
+                        failures += [
+                            f"{where}: {word} breaks mid-word" for word in broken
+                        ]
                     set_root_text(page, "")
         browser.close()
         assert failures == [], "\n".join(failures)

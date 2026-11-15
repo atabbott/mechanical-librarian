@@ -535,6 +535,36 @@ describe('Covers view (#1633)', () => {
     expect(within(empty).getByRole('img', { name: 'No cover' })).toHaveTextContent('No cover')
   })
 
+  it('names the current card of a switched comparison as changed automatically (#1866)', async () => {
+    const user = userEvent.setup()
+    const at = Math.floor(Date.now() / 1000) - 7200
+    const switched = page('switched', [
+      work('case-1', 'auto', {
+        switched: {
+          at,
+          before: preview('b', 500, 500),
+          filled: false,
+          put_back: null,
+          put_back_offered: false,
+          language: null,
+          reason: null,
+        },
+      }),
+    ])
+    renderRoute('/library?lens=all&view=covers&tab=switched', coversHttp({ switched }))
+    const [row] = await screen.findAllByRole('listitem')
+    if (!row) throw new Error('a switched row is required')
+    await user.click(within(row).getByRole('button', { name: 'Others' }))
+    const group = await screen.findByRole('radiogroup', {
+      name: 'Which cover should this work use?',
+    })
+    // The name says what the visible label says, as the book page's does.
+    expect(
+      within(group).getByRole('radio', { name: 'Keep current cover · changed automatically' }),
+    ).toHaveTextContent('Current cover · changed automatically')
+    expect(within(group).queryByRole('radio', { name: 'Keep current cover' })).toBeNull()
+  })
+
   it('lists automatic switches with Before and Now, and Keep lands on Change', async () => {
     const user = userEvent.setup()
     const at = Math.floor(Date.now() / 1000) - 7200

@@ -377,7 +377,10 @@ function CoverComparison({
           prepareFailure={prepareFailure}
           question={question}
           {...(work.group === 'auto'
-            ? { currentLabel: 'Current cover · changed automatically' }
+            ? {
+                currentLabel: 'Current cover · changed automatically',
+                keepLabel: 'Keep current cover · changed automatically',
+              }
             : {})}
           coversLink={false}
         />
