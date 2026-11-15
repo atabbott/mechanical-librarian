@@ -224,3 +224,90 @@ hold untouched, as before. Proof: `tests/unit/test_owner_answer_holds.py`,
 whose title, genres, Preview, pause, Ask me, withdrawal and Resume cases each
 failed before this amendment, and the recurring-case tests in
 `tests/unit/test_owner_command_persistence.py`.
+
+## Amendment 2: a pin keeps one field's value and stops the question (2026-11-15)
+
+- Status: proposed. Only the owner's own answer makes this amendment
+  accepted; until then the body above and Amendment 1 stay the accepted
+  record.
+
+Amendment 1 made every owner answer hold its field against Automatic's
+writes. It did not stop the question. A work gets a new case whenever a
+source's answer or a library value changes, and on that case a field is asked
+again whenever it is Ask me or Automatic abstains, even when the owner kept
+the current value on the case before. Issue #1346 asks for an owner
+instruction that one field of one work is finished.
+
+- **A pin is an owner decision.** The decision vocabulary gains `pin` and
+  `unpin` (`human-decision-v5`), recorded through the field-decision
+  operation with every guard it has: the session, CSRF, the current case,
+  the target fingerprint, the offer digest and an idempotency key. Neither
+  carries a value and neither grants write authority: no planning query,
+  pending count or authority reader accepts them. A pin may be recorded on
+  any field of the case except the cover, whether or not the field offers a
+  choice. It is refused while a write for the field is planned, in flight or
+  verified in the case's episode, or while the owner's latest choice for it
+  is not yet written (`pin_change_waiting`), because the case's value is then
+  not what the library will hold; after the write is read back the new case
+  can be pinned. It is refused where the library's value could
+  not be read (`unsupported`) and where the field is already pinned at this
+  value (`already_pinned`). `unpin` is refused where no pin stands
+  (`not_pinned`). Neither row can be withdrawn.
+- **The pin lives on the hold.** A pin sets the field's manual hold, with the
+  pin decision as its token, as every answer does, and the hold document
+  (`field-effect-manual-hold-v3`) gains a `pin` key: null, or the
+  fingerprint of the pinned value and whether the pin is in force on this
+  case. The fingerprint hashes the destination, the value and its state,
+  with missing, null and empty read as one empty state, so a field pinned
+  empty stays pinned however the library stores nothing. The pinned value is
+  read from the pin decision's own case, so nothing larger than a digest is
+  stored. No table is added, and the proposal set, case identity, report and
+  policy do not depend on pins.
+- **In force is a comparison.** Each time admission carries the hold to a
+  case, and when a withdrawal restores it, the case's value for the field is
+  compared with the pinned fingerprint. While they are equal the pin is in
+  force: the field is out of Attention whatever its setting or reason;
+  Automatic records no decision for it, and none for a bundle that contains
+  it; description advice admits no automatic description; Book matching
+  does not ask it again; and the hold refuses every write. Resume automatic
+  handling is not offered; Unpin is.
+- **A changed value asks once.** When the value differs, after an edit in
+  Audiobookshelf or because it could not be read, the pin is carried as
+  changed. The field joins Attention with its own reason, even where it
+  offers no other value, and shows the pinned value beside the current one.
+  Automatic still records nothing and the hold still refuses writes. A new
+  `pin` keeps the current value and `unpin` releases the pin. A later read
+  that shows the pinned value again puts the pin back in force.
+- **Unpin keeps the hold.** `unpin` removes the pin from the case's hold and
+  leaves an ordinary hold with the same token, its update time moved to the
+  unpin, so the work's latest hold carries no pin to later cases. Like a
+  withdrawal an unpin row settles nothing, so the field can be asked again;
+  Automatic stays off it until Resume automatic handling, as for any answer.
+- **Another answer ends the pin.** A later `accept`, `keep_current` or
+  `owner_entered`, or an owner description choice, replaces the hold without
+  a pin. Withdrawing that answer takes back the work's earlier hold as
+  Amendment 1 says; a pin on it is compared again with this case's value.
+- **Covers are excluded.** An owner cover choice is already kept on every
+  later case and never replaced by Automatic.
+
+Consequences. Read-back is still a one-time check after a write: a change
+made in Audiobookshelf is seen only at the work's next read. A value that
+cannot be read is treated as changed, so the owner is asked rather than the
+field held on a value nobody can see. The persisted attention facts gain the
+manual holds as an input. Every earlier database needs a clean rebuild
+(ADR-0013).
+
+Alternatives considered. Ignoring the field inside `evaluate_report`, as the
+`ignore` policy does, would change the case identity on every pin and unpin.
+A separate pins table would be a second policy surface beside the hold,
+which already follows the work. Treating `keep_current` as a pin stops
+writes, not questions. Storing the pinned value on the hold or the decision
+would not fit a description in the 4,096-byte hold or the selected-value
+column. Treating any direct Audiobookshelf edit as a hold is left to the
+owner's decision.
+
+Proof: `tests/unit/test_owner_pins.py`, the pinned-bundle test in
+`tests/unit/test_shadow_outcome_persistence.py`, the attention-facts test in
+`tests/unit/test_review_attention_facts.py` and the Book matching test in
+`tests/integration/test_book_matching_fields.py`, each failing before this
+amendment.

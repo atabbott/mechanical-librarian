@@ -97,6 +97,12 @@ brackets are GitHub issues.
   Activity hides a one-page pager. Phones get a 16 px margin, and the masthead
   scrolls away when taller than a sixth of the window (#1894).
 
+## 0.36.0 — Standing owner instructions (in progress)
+
+- **Clean rebuild required.** Stored owner decisions and field holds changed
+  shape, ready for pinning a field of a work. Nothing looks different yet
+  (#1346).
+
 ## 0.33.0 — First library (in progress)
 
 - **Clean rebuild required** only for an install whose setup was interrupted.
