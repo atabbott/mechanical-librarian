@@ -29,6 +29,7 @@ import hashlib
 import json
 import sqlite3
 from collections.abc import Callable
+from typing import Any
 
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
@@ -596,89 +597,8 @@ class SQLiteDecisionRepository(ConnectionScoped):
             self._record_cover_decision_outcome(
                 decision, cover_consideration_id, cover_confirmation
             )
-            event_id = (
-                "human_decision_event_"
-                + hashlib.sha256(
-                    (HUMAN_DECISION_EVENT_SCHEMA + ":" + decision.decision_id).encode(
-                        "utf-8"
-                    )
-                ).hexdigest()
-            )
-            event_document = _canonical_json(
-                {
-                    "actor": decision.actor,
-                    "decision_id": decision.decision_id,
-                    "destination": decision.destination,
-                    "event_id": event_id,
-                    "kind": "human_decision_recorded",
-                    "occurred_at": decision.occurred_at,
-                    "outcome": decision.outcome,
-                    "review_case_id": decision.review_case_id,
-                    "schema_version": HUMAN_DECISION_EVENT_SCHEMA,
-                }
-            )
-            self._connection.execute(
-                "INSERT INTO human_decision_events("
-                "event_id,decision_id,review_case_id,destination,actor,kind,"
-                "occurred_at,document) VALUES(?,?,?,?,?,'human_decision_recorded',?,?)",
-                (
-                    event_id,
-                    decision.decision_id,
-                    decision.review_case_id,
-                    decision.destination,
-                    decision.actor,
-                    decision.occurred_at,
-                    event_document,
-                ),
-            )
-            if previous is not None:
-                self._revoke_field_effect_authority_in_transaction(
-                    previous[0], decision.occurred_at, required=False
-                )
-            # An earlier episode's decisions authorize nothing now; their
-            # plans close with this one (#1358).
-            for (earlier,) in self._connection.execute(
-                "SELECT decision_id FROM human_decisions WHERE review_case_id=? "
-                "AND destination=? AND decision_id<>? AND NOT "
-                + _episode_decision_sql("human_decisions"),
-                (decision.review_case_id, decision.destination, decision.decision_id),
-            ).fetchall():
-                self._revoke_field_effect_authority_in_transaction(
-                    earlier, decision.occurred_at, required=False
-                )
-            if automatic is None:
-                # A case admitted again can carry a release made on a later
-                # case, and a released row excludes its human decisions from
-                # planning. With no automatic decision here there is nothing
-                # to hold, so the row goes and the case reads as never held:
-                # the owner's decision plans and nothing carries (ADR-0085).
-                self._connection.execute(
-                    "DELETE FROM field_effect_manual_holds WHERE "
-                    "review_case_id=? AND destination=? AND active=0",
-                    (decision.review_case_id, decision.destination),
-                )
-            else:
-                if previous is None or automatic[0] != previous[0]:
-                    self._revoke_field_effect_authority_in_transaction(
-                        automatic[0], decision.occurred_at, required=False
-                    )
-                self._set_field_effect_manual_hold(
-                    decision.review_case_id,
-                    decision.destination,
-                    decision.occurred_at,
-                    decision.decision_id,
-                )
-            if authored is not None:
-                self._connection.execute(
-                    "DELETE FROM current_description_decisions WHERE review_case_id=?",
-                    (decision.review_case_id,),
-                )
-                self._set_field_effect_manual_hold(
-                    decision.review_case_id,
-                    decision.destination,
-                    decision.occurred_at,
-                    decision.decision_id,
-                )
+            self._record_human_decision_event(decision)
+            self._close_replaced_authorities(decision, previous, authored, automatic)
             if self._binding is not None:
                 self._binding.require_current()
             transaction.commit()
@@ -703,6 +623,105 @@ class SQLiteDecisionRepository(ConnectionScoped):
         ) as error:
             transaction.rollback()
             raise MetadataReportError("human decision persistence failed") from error
+
+    def _record_human_decision_event(self, decision: HumanDecision) -> None:
+        """Write the `human_decision_recorded` audit event."""
+        event_id = (
+            "human_decision_event_"
+            + hashlib.sha256(
+                (HUMAN_DECISION_EVENT_SCHEMA + ":" + decision.decision_id).encode(
+                    "utf-8"
+                )
+            ).hexdigest()
+        )
+        event_document = _canonical_json(
+            {
+                "actor": decision.actor,
+                "decision_id": decision.decision_id,
+                "destination": decision.destination,
+                "event_id": event_id,
+                "kind": "human_decision_recorded",
+                "occurred_at": decision.occurred_at,
+                "outcome": decision.outcome,
+                "review_case_id": decision.review_case_id,
+                "schema_version": HUMAN_DECISION_EVENT_SCHEMA,
+            }
+        )
+        self._connection.execute(
+            "INSERT INTO human_decision_events("
+            "event_id,decision_id,review_case_id,destination,actor,kind,"
+            "occurred_at,document) VALUES(?,?,?,?,?,'human_decision_recorded',?,?)",
+            (
+                event_id,
+                decision.decision_id,
+                decision.review_case_id,
+                decision.destination,
+                decision.actor,
+                decision.occurred_at,
+                event_document,
+            ),
+        )
+
+    def _close_replaced_authorities(
+        self,
+        decision: HumanDecision,
+        previous: sqlite3.Row | tuple[object, ...] | None,
+        authored: sqlite3.Row | tuple[object, ...] | None,
+        automatic: sqlite3.Row | tuple[object, ...] | None,
+    ) -> None:
+        """Revoke the replaced and earlier-episode authorities, and set or
+        clear the manual hold (#1358, ADR-0085).
+
+        Runs inside `record_human_decision`'s transaction.
+        """
+        if previous is not None:
+            self._revoke_field_effect_authority_in_transaction(
+                previous[0], decision.occurred_at, required=False
+            )
+        # An earlier episode's decisions authorize nothing now; their
+        # plans close with this one (#1358).
+        for (earlier,) in self._connection.execute(
+            "SELECT decision_id FROM human_decisions WHERE review_case_id=? "
+            "AND destination=? AND decision_id<>? AND NOT "
+            + _episode_decision_sql("human_decisions"),
+            (decision.review_case_id, decision.destination, decision.decision_id),
+        ).fetchall():
+            self._revoke_field_effect_authority_in_transaction(
+                earlier, decision.occurred_at, required=False
+            )
+        if automatic is None:
+            # A case admitted again can carry a release made on a later
+            # case, and a released row excludes its human decisions from
+            # planning. With no automatic decision here there is nothing
+            # to hold, so the row goes and the case reads as never held:
+            # the owner's decision plans and nothing carries (ADR-0085).
+            self._connection.execute(
+                "DELETE FROM field_effect_manual_holds WHERE "
+                "review_case_id=? AND destination=? AND active=0",
+                (decision.review_case_id, decision.destination),
+            )
+        else:
+            if previous is None or automatic[0] != previous[0]:
+                self._revoke_field_effect_authority_in_transaction(
+                    automatic[0], decision.occurred_at, required=False
+                )
+            self._set_field_effect_manual_hold(
+                decision.review_case_id,
+                decision.destination,
+                decision.occurred_at,
+                decision.decision_id,
+            )
+        if authored is not None:
+            self._connection.execute(
+                "DELETE FROM current_description_decisions WHERE review_case_id=?",
+                (decision.review_case_id,),
+            )
+            self._set_field_effect_manual_hold(
+                decision.review_case_id,
+                decision.destination,
+                decision.occurred_at,
+                decision.decision_id,
+            )
 
     @local_operation
     def require_reconciled_case(self, review_case_id: str, refused_at: int) -> None:
@@ -1267,105 +1286,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
             ]
             events: list[tuple[int, int, str, dict[str, object]]] = []
             for row in event_rows:
-                value = json.loads(row[7])
-                if (
-                    type(value) is not dict
-                    or set(value)
-                    != {
-                        "actor",
-                        "decision_id",
-                        "destination",
-                        "event_id",
-                        "kind",
-                        "occurred_at",
-                        "outcome",
-                        "review_case_id",
-                        "schema_version",
-                    }
-                    or value["schema_version"] != HUMAN_DECISION_EVENT_SCHEMA
-                    or (
-                        value["event_id"],
-                        value["decision_id"],
-                        value["review_case_id"],
-                        value["destination"],
-                        value["actor"],
-                        value["kind"],
-                        value["occurred_at"],
-                    )
-                    != row[:7]
-                ):
-                    raise MetadataReportError("review history is invalid")
-                decision_row = self._connection.execute(
-                    "SELECT ordinal,document FROM human_decisions WHERE decision_id=?",
-                    (row[1],),
-                ).fetchone()
-                if decision_row is None:
-                    raise MetadataReportError("review history is invalid")
-                decision = HumanDecision.from_json(decision_row[1])
-                case_document = json.loads(self.get_review_case(review_case_id))
-                if (
-                    type(case_document) is not dict
-                    or type(case_document.get("case")) is not dict
-                ):
-                    raise MetadataReportError("review history is invalid")
-                case = ReviewCase.create_from_data(case_document["case"])
-                fields = case.target.get("fields")
-                if type(fields) is not list:
-                    raise MetadataReportError("review history is invalid")
-                target = next(
-                    (
-                        field
-                        for field in fields
-                        if type(field) is dict
-                        and field.get("destination") == decision.destination
-                    ),
-                    None,
-                )
-                if type(target) is not dict:
-                    raise MetadataReportError("review history is invalid")
-                previous = (
-                    target.get("value") if target.get("state") == "value" else None
-                )
-                prior = self._connection.execute(
-                    "SELECT effect.document FROM field_effects effect JOIN ("
-                    "SELECT earlier.decision_id,earlier.ordinal FROM human_decisions earlier "
-                    "WHERE earlier.review_case_id=? AND earlier.destination=? AND earlier.ordinal<? "
-                    "UNION ALL SELECT earlier.decision_id,-1 FROM automatic_decisions earlier "
-                    "WHERE earlier.review_case_id=? AND earlier.destination=?"
-                    ") recorded ON (recorded.decision_id=effect.decision_id "
-                    "OR recorded.decision_id="
-                    + _FIELD_EFFECT_COMPANION_DECISION_SQL
-                    + ") WHERE effect.state='verified' "
-                    "ORDER BY recorded.ordinal DESC,effect.rowid LIMIT 1",
-                    (
-                        review_case_id,
-                        decision.destination,
-                        decision_row[0],
-                        review_case_id,
-                        decision.destination,
-                    ),
-                ).fetchone()
-                if prior is not None:
-                    plan = FieldEffectOperation.from_json(prior[0]).plan
-                    previous = (
-                        plan.subtitle_companion.desired_value
-                        if decision.destination == "subtitle"
-                        and plan.subtitle_companion is not None
-                        else plan.desired_value
-                    )
-                kind = decision_value_kind(decision.destination)
-                value["previous_value"] = (
-                    {"kind": kind, "value": previous} if previous is not None else None
-                )
-                value["selected_value"] = (
-                    decision.selected_value
-                    if decision.outcome in {"accept", "owner_entered"}
-                    else {"kind": kind, "value": target.get("value")}
-                    if decision.outcome == "keep_current"
-                    and target.get("state") == "value"
-                    else None
-                )
-                events.append((row[6], int(decision_row[0]), row[0], value))
+                events.append(self._human_decision_history_event(review_case_id, row))
             for row in shadow_rows:
                 document, evaluated_at = self._validate_shadow_outcome_row(row)
                 outcome = ShadowOutcomeSet.from_json(document)
@@ -1426,105 +1347,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                         },
                     )
                 )
-            for (
-                attempt_id,
-                state,
-                engine,
-                model,
-                at,
-                candidate_document,
-            ) in self._connection.execute(
-                "SELECT a.attempt_id,a.state,a.engine,a.model,a.updated_at,c.document FROM description_advice_attempts a LEFT JOIN description_advice_candidates c ON c.attempt_id=a.attempt_id WHERE json_extract(a.binding_document,'$.review_case_id')=? ORDER BY a.updated_at DESC,a.attempt_id DESC LIMIT ?",
-                (review_case_id, limit),
-            ):
-                events.append(
-                    (
-                        at,
-                        0,
-                        attempt_id,
-                        {
-                            "schema_version": "description-advice-history-v1",
-                            "kind": "description_advice_recorded",
-                            "occurred_at": at,
-                            "review_case_id": review_case_id,
-                            "state": state,
-                            "engine": engine,
-                            "model": model,
-                            "candidate": None
-                            if candidate_document is None
-                            else DescriptionAdviceCandidate.from_json(
-                                candidate_document
-                            ).model_dump(),
-                            "decision": None,
-                        },
-                    )
-                )
-            for (
-                document,
-                candidate_document,
-                selected_current,
-            ) in self._connection.execute(
-                "SELECT d.document,c.document,EXISTS(SELECT 1 FROM current_description_decisions current WHERE current.decision_id=d.decision_id) FROM description_decisions d JOIN description_advice_candidates c ON c.candidate_id=d.candidate_id WHERE d.review_case_id=? ORDER BY json_extract(d.document,'$.occurred_at') DESC,d.decision_id DESC LIMIT ?",
-                (review_case_id, limit),
-            ):
-                authored = AuthoredDescriptionDecision.from_json(document)
-                candidate = DescriptionAdviceCandidate.from_json(candidate_document)
-                events.append(
-                    (
-                        authored.occurred_at,
-                        1,
-                        authored.decision_id,
-                        {
-                            "schema_version": "description-advice-history-v1",
-                            "kind": "description_selected",
-                            "occurred_at": authored.occurred_at,
-                            "review_case_id": review_case_id,
-                            "state": "succeeded" if selected_current else "superseded",
-                            "engine": candidate.engine,
-                            "model": candidate.model,
-                            "candidate": candidate.model_dump(),
-                            "decision": authored.model_dump(),
-                        },
-                    )
-                )
-            for (
-                event_id,
-                at,
-                state,
-                document,
-                candidate_document,
-            ) in self._connection.execute(
-                "SELECT event.event_id,event.occurred_at,event.kind,decision.document,candidate.document "
-                "FROM field_effect_events event JOIN field_effects effect ON effect.plan_id=event.plan_id "
-                "JOIN description_decisions decision ON decision.decision_id=effect.decision_id "
-                "JOIN description_advice_candidates candidate ON candidate.candidate_id=decision.candidate_id "
-                "WHERE decision.review_case_id=? UNION ALL "
-                "SELECT event.event_id,event.occurred_at,'no_change_required',decision.document,candidate.document "
-                "FROM field_effect_no_changes event JOIN description_decisions decision ON decision.decision_id=event.decision_id "
-                "JOIN description_advice_candidates candidate ON candidate.candidate_id=decision.candidate_id "
-                "WHERE decision.review_case_id=? ORDER BY 2 DESC,1 DESC LIMIT ?",
-                (review_case_id, review_case_id, limit),
-            ):
-                authored = AuthoredDescriptionDecision.from_json(document)
-                candidate = DescriptionAdviceCandidate.from_json(candidate_document)
-                events.append(
-                    (
-                        at,
-                        2,
-                        event_id,
-                        {
-                            "schema_version": "description-advice-history-v1",
-                            "kind": "description_application",
-                            "occurred_at": at,
-                            "review_case_id": review_case_id,
-                            "state": state,
-                            "engine": candidate.engine,
-                            "model": candidate.model,
-                            "candidate": candidate.model_dump(),
-                            "decision": authored.model_dump(),
-                        },
-                    )
-                )
+            events.extend(self._description_advice_history(review_case_id, limit))
             ordered_events = [value for _, _, _, value in sorted(events, reverse=True)]
             return tuple((ordered_events + transitions)[:limit])
         except (
@@ -1535,3 +1358,210 @@ class SQLiteDecisionRepository(ConnectionScoped):
             ShadowOutcomeError,
         ) as error:
             raise MetadataReportError("review history is unavailable") from error
+
+    def _human_decision_history_event(
+        self, review_case_id: str, row: Any
+    ) -> tuple[int, int, str, dict[str, object]]:
+        """One owner-decision history entry, with its previous and selected values."""
+        value = json.loads(row[7])
+        if (
+            type(value) is not dict
+            or set(value)
+            != {
+                "actor",
+                "decision_id",
+                "destination",
+                "event_id",
+                "kind",
+                "occurred_at",
+                "outcome",
+                "review_case_id",
+                "schema_version",
+            }
+            or value["schema_version"] != HUMAN_DECISION_EVENT_SCHEMA
+            or (
+                value["event_id"],
+                value["decision_id"],
+                value["review_case_id"],
+                value["destination"],
+                value["actor"],
+                value["kind"],
+                value["occurred_at"],
+            )
+            != row[:7]
+        ):
+            raise MetadataReportError("review history is invalid")
+        decision_row = self._connection.execute(
+            "SELECT ordinal,document FROM human_decisions WHERE decision_id=?",
+            (row[1],),
+        ).fetchone()
+        if decision_row is None:
+            raise MetadataReportError("review history is invalid")
+        decision = HumanDecision.from_json(decision_row[1])
+        case_document = json.loads(self.get_review_case(review_case_id))
+        if (
+            type(case_document) is not dict
+            or type(case_document.get("case")) is not dict
+        ):
+            raise MetadataReportError("review history is invalid")
+        case = ReviewCase.create_from_data(case_document["case"])
+        fields = case.target.get("fields")
+        if type(fields) is not list:
+            raise MetadataReportError("review history is invalid")
+        target = next(
+            (
+                field
+                for field in fields
+                if type(field) is dict
+                and field.get("destination") == decision.destination
+            ),
+            None,
+        )
+        if type(target) is not dict:
+            raise MetadataReportError("review history is invalid")
+        previous = target.get("value") if target.get("state") == "value" else None
+        prior = self._connection.execute(
+            "SELECT effect.document FROM field_effects effect JOIN ("
+            "SELECT earlier.decision_id,earlier.ordinal FROM human_decisions earlier "
+            "WHERE earlier.review_case_id=? AND earlier.destination=? AND earlier.ordinal<? "
+            "UNION ALL SELECT earlier.decision_id,-1 FROM automatic_decisions earlier "
+            "WHERE earlier.review_case_id=? AND earlier.destination=?"
+            ") recorded ON (recorded.decision_id=effect.decision_id "
+            "OR recorded.decision_id="
+            + _FIELD_EFFECT_COMPANION_DECISION_SQL
+            + ") WHERE effect.state='verified' "
+            "ORDER BY recorded.ordinal DESC,effect.rowid LIMIT 1",
+            (
+                review_case_id,
+                decision.destination,
+                decision_row[0],
+                review_case_id,
+                decision.destination,
+            ),
+        ).fetchone()
+        if prior is not None:
+            plan = FieldEffectOperation.from_json(prior[0]).plan
+            previous = (
+                plan.subtitle_companion.desired_value
+                if decision.destination == "subtitle"
+                and plan.subtitle_companion is not None
+                else plan.desired_value
+            )
+        kind = decision_value_kind(decision.destination)
+        value["previous_value"] = (
+            {"kind": kind, "value": previous} if previous is not None else None
+        )
+        value["selected_value"] = (
+            decision.selected_value
+            if decision.outcome in {"accept", "owner_entered"}
+            else {"kind": kind, "value": target.get("value")}
+            if decision.outcome == "keep_current" and target.get("state") == "value"
+            else None
+        )
+        return (row[6], int(decision_row[0]), row[0], value)
+
+    def _description_advice_history(
+        self, review_case_id: str, limit: int
+    ) -> list[tuple[int, int, str, dict[str, object]]]:
+        """Advice attempts, selections and applications, newest first."""
+        events: list[tuple[int, int, str, dict[str, object]]] = []
+        for (
+            attempt_id,
+            state,
+            engine,
+            model,
+            at,
+            candidate_document,
+        ) in self._connection.execute(
+            "SELECT a.attempt_id,a.state,a.engine,a.model,a.updated_at,c.document FROM description_advice_attempts a LEFT JOIN description_advice_candidates c ON c.attempt_id=a.attempt_id WHERE json_extract(a.binding_document,'$.review_case_id')=? ORDER BY a.updated_at DESC,a.attempt_id DESC LIMIT ?",
+            (review_case_id, limit),
+        ):
+            events.append(
+                (
+                    at,
+                    0,
+                    attempt_id,
+                    {
+                        "schema_version": "description-advice-history-v1",
+                        "kind": "description_advice_recorded",
+                        "occurred_at": at,
+                        "review_case_id": review_case_id,
+                        "state": state,
+                        "engine": engine,
+                        "model": model,
+                        "candidate": None
+                        if candidate_document is None
+                        else DescriptionAdviceCandidate.from_json(
+                            candidate_document
+                        ).model_dump(),
+                        "decision": None,
+                    },
+                )
+            )
+        for (
+            document,
+            candidate_document,
+            selected_current,
+        ) in self._connection.execute(
+            "SELECT d.document,c.document,EXISTS(SELECT 1 FROM current_description_decisions current WHERE current.decision_id=d.decision_id) FROM description_decisions d JOIN description_advice_candidates c ON c.candidate_id=d.candidate_id WHERE d.review_case_id=? ORDER BY json_extract(d.document,'$.occurred_at') DESC,d.decision_id DESC LIMIT ?",
+            (review_case_id, limit),
+        ):
+            authored = AuthoredDescriptionDecision.from_json(document)
+            candidate = DescriptionAdviceCandidate.from_json(candidate_document)
+            events.append(
+                (
+                    authored.occurred_at,
+                    1,
+                    authored.decision_id,
+                    {
+                        "schema_version": "description-advice-history-v1",
+                        "kind": "description_selected",
+                        "occurred_at": authored.occurred_at,
+                        "review_case_id": review_case_id,
+                        "state": "succeeded" if selected_current else "superseded",
+                        "engine": candidate.engine,
+                        "model": candidate.model,
+                        "candidate": candidate.model_dump(),
+                        "decision": authored.model_dump(),
+                    },
+                )
+            )
+        for (
+            event_id,
+            at,
+            state,
+            document,
+            candidate_document,
+        ) in self._connection.execute(
+            "SELECT event.event_id,event.occurred_at,event.kind,decision.document,candidate.document "
+            "FROM field_effect_events event JOIN field_effects effect ON effect.plan_id=event.plan_id "
+            "JOIN description_decisions decision ON decision.decision_id=effect.decision_id "
+            "JOIN description_advice_candidates candidate ON candidate.candidate_id=decision.candidate_id "
+            "WHERE decision.review_case_id=? UNION ALL "
+            "SELECT event.event_id,event.occurred_at,'no_change_required',decision.document,candidate.document "
+            "FROM field_effect_no_changes event JOIN description_decisions decision ON decision.decision_id=event.decision_id "
+            "JOIN description_advice_candidates candidate ON candidate.candidate_id=decision.candidate_id "
+            "WHERE decision.review_case_id=? ORDER BY 2 DESC,1 DESC LIMIT ?",
+            (review_case_id, review_case_id, limit),
+        ):
+            authored = AuthoredDescriptionDecision.from_json(document)
+            candidate = DescriptionAdviceCandidate.from_json(candidate_document)
+            events.append(
+                (
+                    at,
+                    2,
+                    event_id,
+                    {
+                        "schema_version": "description-advice-history-v1",
+                        "kind": "description_application",
+                        "occurred_at": at,
+                        "review_case_id": review_case_id,
+                        "state": state,
+                        "engine": candidate.engine,
+                        "model": candidate.model,
+                        "candidate": candidate.model_dump(),
+                        "decision": authored.model_dump(),
+                    },
+                )
+            )
+        return events
