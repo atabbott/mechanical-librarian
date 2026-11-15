@@ -374,12 +374,13 @@ default type, so every call site states its own.
   borders; secondary is the plain button.
 - **Danger:** transparent with Correction Red text and border until explicitly
   invoked.
-- **Disabled:** every variant keeps its structure at 55% opacity with a
+- **Disabled:** every variant keeps its structure at 55% strength with a
   not-allowed cursor. A command marked `aria-disabled` while it runs looks the
-  same but keeps keyboard focus, so focus never falls to the page. Rows and
-  pagers kept on screen while a read is pending are `aria-disabled` inside
-  busy content and stay at full opacity, because the busy mark, not dimming,
-  says the list is updating.
+  same but keeps keyboard focus, so focus never falls to the page. It mixes
+  its own text, fill and border toward the surface instead of using opacity,
+  so its focus outline stays unmixed. Rows and pagers kept on screen while a
+  read is pending are `aria-disabled` inside busy content and stay at full
+  opacity, because the busy mark, not dimming, says the list is updating.
 
 ### Chips and Status Pills
 

@@ -598,6 +598,11 @@ brackets are GitHub issues.
   ask about, such as an ASIN or a tag list for empty Tags, is now an optional
   choice you can take, as on an audiobook, instead of reading "Nothing to
   decide for this field." (#1707).
+- Setup now dims a button while its step runs without fading its focus
+  outline, and tells screen readers "Selecting Codex…", "Starting sign-in…" or
+  "Cancelling sign-in…" while the reviewer step's Codex buttons work. Pending
+  buttons in Settings, Policy, a field's own value and Activity keep a
+  full-strength focus outline too (#1698).
 
 ## 0.29.2 — Delivery reliability and hygiene
 

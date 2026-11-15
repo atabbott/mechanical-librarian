@@ -4755,6 +4755,12 @@ def test_reviewer_access_failure_sits_under_its_focused_button() -> None:
                 expect(button).to_have_attribute("aria-disabled", "true")
                 # Chromium blurs a natively disabled button; this one keeps focus.
                 expect(button).to_be_focused()
+                # It dims its colours, not itself, so its outline stays Focus
+                # Blue (#1698).
+                pending = button.evaluate(_PENDING_STYLE)
+                assert pending["opacity"] == "1", pending
+                assert pending["outlineStyle"] == "solid", pending
+                assert pending["outlineColor"] == pending["focus"], pending
                 page.keyboard.press("Enter")
                 button.click(force=True)
                 assert len(held) == 1
