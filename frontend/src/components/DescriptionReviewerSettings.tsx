@@ -24,12 +24,11 @@ const useDescriptionAdviser = (
   )
   const [key, setKey] = useState('')
   const [metadata, setMetadata] = useState<DescriptionModelMetadata | null>(null)
-  // A selection or refresh may have been saved although it answered a failure:
-  // reload reviewer access instead of leaving the earlier state on screen.
-  const reloadIfUncertain = async (error: unknown) => {
-    if (uncertainWriteOutcome(error))
-      await invalidateForegroundQueries(cache, { queryKey: ['reviewer-access'] })
-  }
+  // A selection or refresh may have been saved although it answered a failure,
+  // and one refused as stale needs the current revision before Try again can
+  // succeed: reload reviewer access instead of leaving the earlier state.
+  const reloadAfterFailedWrite = () =>
+    invalidateForegroundQueries(cache, { queryKey: ['reviewer-access'] })
   // Only the latest action's failure is shown, so an earlier uncertain change
   // cannot mask a later, unrelated failure.
   const [latest, setLatest] = useState<'test' | 'selection' | 'refresh' | 'contained' | null>(null)
@@ -59,14 +58,14 @@ const useDescriptionAdviser = (
     },
     // A refused Codex sign-in is recorded into reviewer access; read it (#1617).
     onError: (error, engine) =>
-      engine === 'codex' && credentialRefused(error) ? onCodexRefused() : reloadIfUncertain(error),
+      engine === 'codex' && credentialRefused(error) ? onCodexRefused() : reloadAfterFailedWrite(),
   })
   const refresh = useMutation({
     mutationFn: () => http.refreshOpenRouter(undefined, 'description_rewrite'),
     retry: false,
     onMutate: () => setLatest('refresh'),
     onSuccess: (saved) => cache.setQueryData(['reviewer-access'], saved),
-    onError: reloadIfUncertain,
+    onError: reloadAfterFailedWrite,
   })
   const contained = useMutation({
     mutationFn: () => http.describeContainedDescription(),

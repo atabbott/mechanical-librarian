@@ -15,7 +15,8 @@ To decide. You have chosen {n}.", linking to To decide. A first profile needs
 
 While a first profile is written, "Writing your taste profile" is the
 heading, and the tab checks again every 5 seconds. A build that starts while
-the tab is open appears without a reload. A failed build says what
+the tab is open appears without a reload. After 10 seconds without input, it
+appears on your next input. A failed build says what
 failed in one line under "No taste profile yet", or above the profile in use,
 such as "The taste profile could not be written." ("could not be updated"
 beside a profile), and offers Try again. A daily limit or an unconfirmed

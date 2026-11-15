@@ -29,8 +29,9 @@ const useTasteModel = (http: ReviewHttp, view: ReviewerAccessView) => {
   const [key, setKey] = useState('')
   const [metadata, setMetadata] = useState<CoverModelMetadata | null>(null)
   const [latest, setLatest] = useState<'test' | 'selection' | 'without' | null>(null)
-  // A write that got no answer may have landed: read both again.
-  const rereadAfterUncertainWrite = () =>
+  // A write that got no answer may have landed, and one refused as stale
+  // needs the current revision before Try again can succeed: read both again.
+  const rereadAfterFailedWrite = () =>
     Promise.all([
       invalidateForegroundQueries(cache, { queryKey: ['reviewer-access'] }),
       invalidateForegroundQueries(cache, { queryKey: tasteProfileKey }),
@@ -58,10 +59,7 @@ const useTasteModel = (http: ReviewHttp, view: ReviewerAccessView) => {
       cache.setQueryData(['reviewer-access'], saved)
       void cache.invalidateQueries({ queryKey: tasteProfileKey })
     },
-    // A selection may have been saved although it answered a failure.
-    onError: async (error) => {
-      if (uncertainWriteOutcome(error)) await rereadAfterUncertainWrite()
-    },
+    onError: rereadAfterFailedWrite,
   })
   // Continue without a taste profile clears only this task (#1372 S11).
   const without = useMutation({
@@ -74,9 +72,7 @@ const useTasteModel = (http: ReviewHttp, view: ReviewerAccessView) => {
       cache.setQueryData(['reviewer-access'], saved)
       void cache.invalidateQueries({ queryKey: tasteProfileKey })
     },
-    onError: async (error) => {
-      if (uncertainWriteOutcome(error)) await rereadAfterUncertainWrite()
-    },
+    onError: rereadAfterFailedWrite,
   })
   const error = latest === null ? null : { test, selection, without }[latest].error
   const failure =

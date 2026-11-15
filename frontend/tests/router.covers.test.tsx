@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiError, UncertainMutationError } from '../src/api/http'
-import { coalesceMilliseconds } from '../src/liveInvalidation'
+import { coalesceMilliseconds, ownerIdleMilliseconds } from '../src/liveInvalidation'
 import type {
   CaseDetailView,
   CoverTab,
@@ -1315,6 +1315,45 @@ describe('Covers → Taste profile (#1372)', () => {
     )
     expect(await screen.findByRole('heading', { name: 'Writing your taste profile' })).toBeVisible()
     expect(screen.queryByRole('heading', { name: 'No taste profile yet' })).toBeNull()
+  })
+
+  // K1 with an idle owner: after 10 seconds without input a library notice
+  // waits for the next input (#1224), and then the scheduled build appears.
+  it('shows a build scheduled while the owner is idle on their next input', async () => {
+    const updates = createLiveStream()
+    let view = tasteView({ chosen: 25 })
+    const http = tasteHttp(async () => view)
+    renderRoute(tasteRoute, http, updates)
+    expect(await screen.findByText(/You have chosen 25\./u)).toBeVisible()
+    const reads = http.getTasteProfile.mock.calls.length
+    const realNow = performance.now.bind(performance)
+    const clock = vi
+      .spyOn(performance, 'now')
+      .mockImplementation(() => realNow() + ownerIdleMilliseconds)
+    try {
+      view = tasteView({
+        chosen: 25,
+        build: {
+          build_id: `taste_build_${'a'.repeat(32)}`,
+          state: 'building',
+          failure: null,
+          retry_after: null,
+        },
+      })
+      await act(async () => {
+        updates.announce({ sequence: 5, subject: null, topic: 'library' })
+        await new Promise((resolve) => setTimeout(resolve, coalesceMilliseconds + 20))
+      })
+      expect(http.getTasteProfile).toHaveBeenCalledTimes(reads)
+      expect(screen.getByText(/You have chosen 25\./u)).toBeVisible()
+      fireEvent.wheel(document)
+      expect(
+        await screen.findByRole('heading', { name: 'Writing your taste profile' }),
+      ).toBeVisible()
+      expect(http.getTasteProfile.mock.calls.length).toBeGreaterThan(reads)
+    } finally {
+      clock.mockRestore()
+    }
   })
 
   it('puts a first failure and Try again under the empty heading', async () => {

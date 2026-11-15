@@ -2404,6 +2404,68 @@ it('discloses description prices before activation and preserves the cover task 
   expect(document.description_advice.automatic_application).toBe(false)
 })
 
+// Another session changed reviewer access: the refusal reads it again, so
+// Try again sends the current revision and succeeds.
+it('saves the description model on Try again after a stale refusal', async () => {
+  const http = createHttp()
+  const initial: ReviewerAccessView = {
+    ...reviewerView,
+    mapping: { engine: 'openrouter', model: 'example/cover-a' },
+    openrouter_key_configured: true,
+  }
+  const metadata = {
+    model: 'example/text-b',
+    observed_at: 100,
+    prompt_price: '0.000001',
+    completion_price: '0.000002',
+    request_price: '0',
+    text_input: true as const,
+    text_output: true as const,
+    structured_outputs: true as const,
+  }
+  http.getSettings = vi.fn(async () => view())
+  http.getReviewerAccess = vi
+    .fn()
+    .mockResolvedValueOnce(initial)
+    .mockResolvedValue({ ...initial, revision: 7 })
+  http.testDescriptionModel = vi.fn(async () => metadata)
+  http.configureOpenRouter = vi
+    .fn()
+    .mockRejectedValueOnce(new ApiError(409, 'access_changed'))
+    .mockResolvedValue({
+      ...initial,
+      revision: 8,
+      description_mapping: { engine: 'openrouter' as const, model: metadata.model },
+      description_metadata: metadata,
+    })
+  renderRoute('/settings?group=reviewer', http)
+  const user = userEvent.setup()
+  const enable = await screen.findByRole('button', {
+    name: 'Use this OpenRouter model for descriptions',
+  })
+  await user.click(screen.getByRole('combobox', { name: 'Description model' }))
+  await user.click(screen.getByRole('option', { name: 'Custom model ID' }))
+  await user.type(screen.getByRole('textbox', { name: 'Description model ID' }), metadata.model)
+  await user.click(screen.getByRole('button', { name: 'Test description model and prices' }))
+  await screen.findByText(metadata.model, { selector: 'dd' })
+  await user.click(enable)
+  expect(
+    await screen.findByText(
+      'Description adviser setup did not complete. Check the model and key, then try again.',
+    ),
+  ).toBeVisible()
+  await waitFor(() => expect(http.getReviewerAccess).toHaveBeenCalledTimes(2))
+  await user.click(enable)
+  await waitFor(() =>
+    expect(http.configureOpenRouter).toHaveBeenLastCalledWith({
+      expected_revision: 7,
+      api_key: '',
+      model: metadata.model,
+      task: 'description_rewrite',
+    }),
+  )
+})
+
 it('discloses an unavailable description request price and still saves the model', async () => {
   const http = createHttp()
   const initial: ReviewerAccessView = {
@@ -4109,5 +4171,85 @@ describe('taste profile model (#1372)', () => {
     )
     expect(await within(taste).findByRole('alert')).toHaveTextContent(copy)
     expect(within(taste).queryByText(/Taste profile setup did not complete/u)).toBeNull()
+  })
+
+  // Another session changed reviewer access: the refusal reads it again, so
+  // Try again sends the current revision and succeeds.
+  it('continues without a taste profile on Try again after a stale refusal', async () => {
+    const http = createHttp()
+    const selected: ReviewerAccessView = {
+      ...initial,
+      taste_mapping: { engine: 'openrouter' as const, model: metadata.model },
+      taste_metadata: metadata,
+    }
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi
+      .fn()
+      .mockResolvedValueOnce(selected)
+      .mockResolvedValue({ ...selected, revision: 7 })
+    http.selectReviewer = vi
+      .fn()
+      .mockRejectedValueOnce(new ApiError(409, 'access_changed'))
+      .mockResolvedValue({ ...initial, revision: 8 })
+    renderRoute('/settings?group=reviewer', http)
+    const user = userEvent.setup()
+    const taste = await section()
+    const without = within(taste).getByRole('button', {
+      name: 'Continue without a taste profile',
+    })
+    await user.click(without)
+    expect(await within(taste).findByRole('alert')).toHaveTextContent(
+      'The taste profile model was not cleared. Try again.',
+    )
+    await waitFor(() => expect(http.getReviewerAccess).toHaveBeenCalledTimes(2))
+    await user.click(without)
+    await waitFor(() =>
+      expect(http.selectReviewer).toHaveBeenLastCalledWith(null, 7, undefined, 'cover_taste_build'),
+    )
+    expect(await within(taste).findByText('No taste profile model selected.')).toBeVisible()
+    expect(within(taste).queryByRole('alert')).toBeNull()
+  })
+
+  it('saves the taste profile model on Try again after a stale refusal', async () => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi
+      .fn()
+      .mockResolvedValueOnce(initial)
+      .mockResolvedValue({ ...initial, revision: 7 })
+    http.testTasteModel = vi.fn(async () => metadata)
+    http.configureOpenRouter = vi
+      .fn()
+      .mockRejectedValueOnce(new ApiError(409, 'access_changed'))
+      .mockResolvedValue({
+        ...initial,
+        revision: 8,
+        taste_mapping: { engine: 'openrouter' as const, model: metadata.model },
+        taste_metadata: metadata,
+      })
+    renderRoute('/settings?group=reviewer', http)
+    const user = userEvent.setup()
+    const taste = await section()
+    await user.click(within(taste).getByRole('combobox', { name: 'Taste profile model' }))
+    await user.click(screen.getByRole('option', { name: /anthropic\/claude-sonnet-5\.5/u }))
+    await user.click(
+      within(taste).getByRole('button', { name: 'Test taste profile model and prices' }),
+    )
+    const use = await within(taste).findByRole('button', { name: 'Use for taste profile' })
+    await user.click(use)
+    expect(await within(taste).findByRole('alert')).toHaveTextContent(
+      'Taste profile setup did not complete. Check the model and key, then try again.',
+    )
+    await waitFor(() => expect(http.getReviewerAccess).toHaveBeenCalledTimes(2))
+    await user.click(use)
+    await waitFor(() =>
+      expect(http.configureOpenRouter).toHaveBeenLastCalledWith({
+        expected_revision: 7,
+        api_key: '',
+        model: metadata.model,
+        task: 'cover_taste_build',
+      }),
+    )
+    expect(await within(taste).findByText('Taste profile model saved.')).toBeVisible()
   })
 })
