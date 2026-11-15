@@ -14,6 +14,9 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
+from mechanical_librarian.adapters.providers.response_reuse import (
+    ProviderResponseReuse,
+)
 from mechanical_librarian.adapters.providers.retry_safety import (
     ProviderFailure,
     ProviderRequestPacer,
@@ -117,6 +120,7 @@ class GoogleBooksMetadataProvider:
         *,
         api_key: str | None = None,
         pacer: ProviderRequestPacer | None = None,
+        responses: ProviderResponseReuse | None = None,
         clock: Callable[[], float] = time.monotonic,
         wall_clock: Callable[[], float] = time.time,
         sleep: Callable[[float], None] = time.sleep,
@@ -147,6 +151,7 @@ class GoogleBooksMetadataProvider:
             _DiscoveryRequestLedger("google_books", "volumes-v1"),
             pacer=pacer,
             clocks=ProviderClocks(clock, wall_clock, sleep, jitter),
+            responses=responses,
         )
         self._called = False
         self._schema_rejections = 0

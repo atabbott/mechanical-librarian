@@ -85,6 +85,7 @@ Some refusals affect one store only. Fix only that store.
 | Incomplete first-run setup state | Start setup again on an empty `/data` volume. |
 | Configuration document | Replace it with the current version (`config-v12` or `review-bootstrap-v2`). No conversion is provided. |
 | Catalogue (`/data/catalogue.sqlite3`) or provider-recovery database (`/data/private/provider-recovery.sqlite`) | Stop the container, move the file aside, restart. A fresh store is created; the next refresh rebuilds the catalogue. Pending provider recovery jobs, retry backoff and their history are lost. |
+| Provider-response database (`/data/private/provider-responses.sqlite`) | It never stops startup: while refused, every provider request goes live and a `provider_response_store` line says `unavailable`. To use it again, stop the container, move the file aside and restart. A fresh store is created and providers are asked again. |
 
 ## Changes that need owner action without a rebuild
 

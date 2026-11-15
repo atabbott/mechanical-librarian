@@ -563,7 +563,8 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                     "AND lineage.proposal_set_id=review_preparation_work.proposal_set_id "
                     "AND lineage.report_id=review_preparation_work.report_id "
                     "AND lineage.review_case_id=review_preparation_work.review_case_id) "
-                    ",(SELECT generation FROM metadata_policy_state WHERE singleton=1),recovery_attempt "
+                    ",(SELECT generation FROM metadata_policy_state WHERE singleton=1),recovery_attempt,"
+                    "stage='extraction' AND research_not_before IS NOT NULL "
                     "FROM review_preparation_work WHERE state='queued' AND library_name=? "
                     "AND NOT EXISTS(SELECT 1 FROM review_preparation_connection_conditions c "
                     "WHERE c.connection_name=review_preparation_work.connection_name "
@@ -613,6 +614,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                     work[17],
                     work[18],
                     recovery_attempt=work[19],
+                    research=work[20] == 1,
                 )
                 self._pending_claim = (action,)
                 transaction.commit(after_commit=self.commit_review_pipeline_claim)
@@ -736,7 +738,8 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 "AND lineage.proposal_set_id=review_preparation_work.proposal_set_id "
                 "AND lineage.report_id=review_preparation_work.report_id "
                 "AND lineage.review_case_id=review_preparation_work.review_case_id),"
-                "(SELECT generation FROM metadata_policy_state WHERE singleton=1),recovery_attempt "
+                "(SELECT generation FROM metadata_policy_state WHERE singleton=1),recovery_attempt,"
+                "stage='extraction' AND research_not_before IS NOT NULL "
                 "FROM review_preparation_work WHERE work_id=? AND state='queued' "
                 "AND EXISTS(SELECT 1 FROM review_preparation_scans s "
                 "WHERE s.scan_id=review_preparation_work.scan_id AND s.state='processing')",
@@ -779,6 +782,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 work[17],
                 work[18],
                 recovery_attempt=work[19],
+                research=work[20] == 1,
             )
             self._pending_claim = (action,)
             transaction.commit(after_commit=self.commit_review_pipeline_claim)

@@ -83,7 +83,10 @@ CEILING = {
     # 3312 since #1385 shared one live owner verifier across a store
     # activation's generations: one holder, its seed, three bound methods and
     # one keyword argument, plus the offline store's purge refusal.
-    "composition.py": 3312,
+    # 3350 since #1064 opened the provider-response store beside the recovery
+    # store, closed it on stop, and passed it and each adapter's reuse binding
+    # through the report and retry constructors: imports and keyword arguments.
+    "composition.py": 3350,
     # 142 since #1372 PR 1c's run_taste_build_reviewer, the taste build's
     # counterpart of run_description_reviewer.
     "contained_reviewer.py": 142,
@@ -119,16 +122,20 @@ RESIDUAL: dict[str, int | None] = {
     _C + "compose_continuous_guarded_application": 97,
     # Report composer shared by the CLI, run_batch and the review pipeline;
     # builds the target reader, artifact store and provider adapters per call.
-    _C + "run_metadata_report_loaded": 180,
+    # 187 since #1064 binds each provider factory to the response store.
+    _C + "run_metadata_report_loaded": 187,
     # Chooses an adapter class per provider configuration; needs the adapters.
-    _C + "_metadata_provider": 98,
+    # 107 since #1064 passes each adapter its response reuse.
+    _C + "_metadata_provider": 107,
     # Binds adapter-typed callbacks (SQLite repositories, Audiobookshelf reader)
     # into ReviewPipelineStages; the stage logic moved to application in stage 4.
     # 202 since #1372 passed the taste build's wake as the background lane;
-    # 203 since it leases that lane's repository and closes it on stop.
-    _C + "create_review_pipeline": 203,
+    # 203 since it leases that lane's repository and closes it on stop; 216
+    # since #1064 opens the provider-response store and closes it on stop.
+    _C + "create_review_pipeline": 216,
     # Wires recovery to the built pipeline; catches an adapter error type.
-    _C + "_provider_recovery_wiring": 95,
+    # 96 since #1064 passes the response store to the retry constructor.
+    _C + "_provider_recovery_wiring": 96,
     # CLI entries: each opens its own stores and adapters for one command and
     # shapes the result for the CLI (the CLI projections A-U4 kept).
     # run_batch also checks its manifest against configuration and catalogue.
