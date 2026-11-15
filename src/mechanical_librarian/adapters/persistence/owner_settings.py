@@ -139,6 +139,47 @@ class OwnerSettingsStore(ConnectionScoped):
             transaction.rollback()
             raise error from None
 
+    def replace_owner_verifier(self, expected: str, replacement: str) -> bool:
+        """Store ``replacement`` only while ``expected`` is the stored verifier.
+
+        ``False`` means another change replaced it first and nothing was
+        written. The replacement is held to what runtime activation admits, so
+        no write leaves a store that the next start would refuse.
+        """
+        if (
+            type(expected) is not str
+            or type(replacement) is not str
+            or not replacement.startswith("$argon2id$")
+            or not credential(replacement)
+        ):
+            raise OwnerSettingsError("owner password verifier is invalid")
+        transaction = self._transaction("replace_owner_verifier")
+        try:
+            transaction.begin()
+            _document, values = _load_owner_settings_authority(self._connection)
+            replaced = values.get("owner.password.verifier") == expected and (
+                self._connection.execute(
+                    "UPDATE owner_setting_secrets SET value=? "
+                    "WHERE field_id='owner.password.verifier' AND value=?",
+                    (replacement, expected),
+                ).rowcount
+                == 1
+            )
+            if replaced:
+                transaction.commit()
+            else:
+                transaction.rollback()
+        except OwnerSettingsError:
+            transaction.rollback()
+            raise
+        except sqlite3.Error as error:
+            transaction.rollback()
+            raise OwnerSettingsError("owner settings are unavailable") from error
+        except BaseException as error:
+            transaction.rollback()
+            raise error from None
+        return replaced
+
     @local_operation
     def write(
         self,

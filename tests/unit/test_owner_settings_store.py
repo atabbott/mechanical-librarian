@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Never, cast
 
 import pytest
+from argon2 import PasswordHasher
 from pydantic import ValidationError
 
 import mechanical_librarian.adapters.persistence.owner_settings as owner_settings_adapter
@@ -316,7 +317,15 @@ def test_composed_settings_and_reviewer_aliases_serialize_transactions(
 
 @pytest.mark.parametrize("fault_type", (KeyboardInterrupt, SystemExit))
 @pytest.mark.parametrize(
-    "owner", ("read", "activate_runtime", "acknowledge_runtime", "write", "snapshot")
+    "owner",
+    (
+        "read",
+        "activate_runtime",
+        "acknowledge_runtime",
+        "write",
+        "snapshot",
+        "replace_verifier",
+    ),
 )
 def test_owner_settings_transaction_owners_rollback_process_control(
     tmp_path: Path,
@@ -346,6 +355,8 @@ def test_owner_settings_transaction_owners_rollback_process_control(
             return None
         if owner == "write":
             return store.write(_document(2), 1, ())
+        if owner == "replace_verifier":
+            return store.replace_owner_verifier("$argon2id$old", "$argon2id$new")
         return store.activation_snapshot(_document(2), 1, ())
 
     with pytest.raises(fault_type) as raised:
@@ -676,6 +687,104 @@ def test_store_read_refuses_corrupt_canonical_authority(statement: str) -> None:
 
     with pytest.raises(OwnerSettingsError, match="owner settings are unavailable"):
         store.read()
+
+
+def _verifier_store() -> tuple[OwnerSettingsStore, str]:
+    store = _store()
+    current = PasswordHasher().hash("the current owner password")
+    store._connection.execute(
+        "INSERT INTO owner_setting_secrets VALUES(?,?)",
+        ("owner.password.verifier", current),
+    )
+    store._connection.commit()
+    return store, current
+
+
+def _authority_rows(store: OwnerSettingsStore) -> tuple[object, ...]:
+    connection = store._connection
+    return (
+        connection.execute("SELECT * FROM owner_settings").fetchall(),
+        connection.execute(
+            "SELECT * FROM owner_setting_secrets "
+            "WHERE field_id<>'owner.password.verifier' ORDER BY field_id"
+        ).fetchall(),
+        connection.execute(
+            "SELECT value FROM owner_setting_secrets "
+            "WHERE field_id='owner.password.verifier'"
+        ).fetchone()[0],
+    )
+
+
+def test_owner_verifier_replacement_commits_only_the_verifier() -> None:
+    store, current = _verifier_store()
+    document, secrets, _ = _authority_rows(store)
+    replacement = PasswordHasher().hash("the replacement owner password")
+
+    assert store.replace_owner_verifier(current, replacement) is True
+
+    assert _authority_rows(store) == (document, secrets, replacement)
+    assert not store._connection.in_transaction
+    _view, _credentials, verifier = store.activate_runtime()
+    assert verifier == replacement
+
+
+def test_owner_verifier_replacement_lost_to_another_change_writes_nothing() -> None:
+    store, current = _verifier_store()
+    before = _authority_rows(store)
+
+    assert (
+        store.replace_owner_verifier(
+            PasswordHasher().hash("not the stored one"), PasswordHasher().hash("x" * 12)
+        )
+        is False
+    )
+
+    assert _authority_rows(store) == before
+    assert not store._connection.in_transaction
+    assert before[2] == current
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    ("$2b$12$notargon", "$argon2id$ with spaces", "", "$argon2id$" + "x" * 2048),
+)
+def test_owner_verifier_replacement_refuses_what_activation_would_refuse(
+    replacement: str,
+) -> None:
+    store, current = _verifier_store()
+    before = _authority_rows(store)
+
+    with pytest.raises(OwnerSettingsError, match="verifier is invalid"):
+        store.replace_owner_verifier(current, replacement)
+
+    assert _authority_rows(store) == before
+
+
+@pytest.mark.parametrize(
+    "statement",
+    (
+        "UPDATE owner_settings SET document=' '||document",
+        "DELETE FROM owner_settings",
+    ),
+)
+def test_owner_verifier_replacement_refuses_unavailable_authority(
+    statement: str,
+) -> None:
+    store, current = _verifier_store()
+    store._connection.execute(statement)
+    store._connection.commit()
+
+    with pytest.raises(OwnerSettingsError, match="owner settings are unavailable"):
+        store.replace_owner_verifier(current, PasswordHasher().hash("x" * 12))
+
+    assert not store._connection.in_transaction
+    assert (
+        store._connection.execute(
+            "SELECT value FROM owner_setting_secrets "
+            "WHERE field_id='owner.password.verifier'"
+        ).fetchone()[0]
+        == current
+    )
 
 
 def test_store_is_atomic_and_enforces_cas_and_secret_operations() -> None:

@@ -18,8 +18,8 @@ owner runs it offline, and the changelog says when one ships.
 
 - **Absent or exact.** Each store opens only when it is absent or at its
   exact current schema. An absent store is created fresh; in store mode the
-  application database is created only on an empty `/data` volume, by
-  first-run setup. An earlier or later schema, an extra object, altered SQL,
+  application database is created only by first-run setup, on an empty
+  `/data` volume or one that holds only kept provider answers. An earlier or later schema, an extra object, altered SQL,
   an unknown vocabulary member or a failed integrity check stops startup
   without touching the file. How open-time admission works is in
   [Schema admission](../architecture/security.md#schema-admission); the stores
@@ -131,9 +131,10 @@ refused.
 | `work-route-measurement-v1` | The read-only [work-route measurement](../operations/work-route-measurement.md) |
 | `review-react-assets-v1` | The browser bundle identity manifest |
 
-The session database (`/data/private/review-sessions.sqlite`) and the provider
-recovery database (`/data/private/provider-recovery.sqlite`) have exact schemas
-of their own and no separate version string.
+The session database (`/data/private/review-sessions.sqlite`), the provider
+recovery database (`/data/private/provider-recovery.sqlite`) and the
+provider-response database (`/data/private/provider-responses.sqlite`) have
+exact schemas of their own and no separate version string.
 
 ### HTTP API
 

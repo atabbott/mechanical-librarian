@@ -80,7 +80,15 @@ CEILING = {
     # leased and closed when the supervisor stops. 3302 since #1372 PR 1c
     # bound the Codex taste build like description advice: one binding and
     # its guarded runner, one import line each and one keyword argument.
-    "composition.py": 3302,
+    # 3312 since #1385 shared one live owner verifier across a store
+    # activation's generations: one holder, its seed, three bound methods and
+    # one keyword argument, plus the offline store's purge refusal.
+    # 3350 since #1064 opened the provider-response store beside the recovery
+    # store, closed it on stop, and passed it and each adapter's reuse binding
+    # through the report and retry constructors: imports and keyword arguments.
+    # 3354 since #1385's sign-out refusal (2026-11-15): the offline store
+    # refuses signing out other browsers too.
+    "composition.py": 3354,
     # 142 since #1372 PR 1c's run_taste_build_reviewer, the taste build's
     # counterpart of run_description_reviewer.
     "contained_reviewer.py": 142,
@@ -89,8 +97,11 @@ CEILING = {
 DEF_COUNT = {
     "__init__.py": 1,
     # 111 since #1372's _compose_cover_taste, a one-call constructor; 113
-    # since PR 1c's Codex taste binding and its runner.
-    "composition.py": 113,
+    # since PR 1c's Codex taste binding and its runner; 114 since #1385's
+    # _OfflineSessionStore.end_review_sessions_except; 115 since #1385's
+    # sign-out refusal, _OfflineSessionStore.end_other_review_sessions
+    # (2026-11-15).
+    "composition.py": 115,
     # 7 since PR 1c's run_taste_build_reviewer and its dispatch recorder.
     "contained_reviewer.py": 7,
 }
@@ -108,22 +119,27 @@ _C = "composition.py::"
 RESIDUAL: dict[str, int | None] = {
     # Builds a store generation at setup completion or a Settings change and
     # swaps it in; it calls compose_store_runtime_generation, so it stays here.
-    _C + "_StoreRuntimeActivation": 118,
+    # 121 since #1385 gave it the live owner verifier its generations share.
+    _C + "_StoreRuntimeActivation": 121,
     # Builds each configured library's Audiobookshelf target, capability
     # observer and guarded application from adapters: construction only.
     _C + "compose_continuous_guarded_application": 97,
     # Report composer shared by the CLI, run_batch and the review pipeline;
     # builds the target reader, artifact store and provider adapters per call.
-    _C + "run_metadata_report_loaded": 180,
+    # 187 since #1064 binds each provider factory to the response store.
+    _C + "run_metadata_report_loaded": 187,
     # Chooses an adapter class per provider configuration; needs the adapters.
-    _C + "_metadata_provider": 98,
+    # 107 since #1064 passes each adapter its response reuse.
+    _C + "_metadata_provider": 107,
     # Binds adapter-typed callbacks (SQLite repositories, Audiobookshelf reader)
     # into ReviewPipelineStages; the stage logic moved to application in stage 4.
     # 202 since #1372 passed the taste build's wake as the background lane;
-    # 203 since it leases that lane's repository and closes it on stop.
-    _C + "create_review_pipeline": 203,
+    # 203 since it leases that lane's repository and closes it on stop; 216
+    # since #1064 opens the provider-response store and closes it on stop.
+    _C + "create_review_pipeline": 216,
     # Wires recovery to the built pipeline; catches an adapter error type.
-    _C + "_provider_recovery_wiring": 95,
+    # 96 since #1064 passes the response store to the retry constructor.
+    _C + "_provider_recovery_wiring": 96,
     # CLI entries: each opens its own stores and adapters for one command and
     # shapes the result for the CLI (the CLI projections A-U4 kept).
     # run_batch also checks its manifest against configuration and catalogue.
@@ -133,7 +149,8 @@ RESIDUAL: dict[str, int | None] = {
     # Build the whole store and setup runtimes from adapters (wiring kept by
     # A-U4); a feature split of composition is A-U6, deferred to stage 7.
     # 247 since #1372 passed the taste build service to the review application.
-    _C + "compose_store_runtime_generation": 247,
+    # 253 since #1385 read the owner verifier from the activation's holder.
+    _C + "compose_store_runtime_generation": 253,
     _C + "_compose_setup_runtime_generation": 145,
     # Server entry. Its file-authority branch still duplicates
     # compose_store_runtime_generation: the residual A-U4 kept.
@@ -149,8 +166,10 @@ RESIDUAL: dict[str, int | None] = {
     # #1363 passed the Current covers settings as two keyword arguments.
     _C + "_compose_cover_considerations": 78,
     # Fail-closed session store for run_cover_review, its only user; the
-    # optional move to application was not taken (A-U4).
-    _C + "_OfflineSessionStore": 40,
+    # optional move to application was not taken (A-U4). 43 since #1385's
+    # end_review_sessions_except refusal; 48 since #1385's sign-out refusal,
+    # end_other_review_sessions (2026-11-15).
+    _C + "_OfflineSessionStore": 48,
 }
 
 _FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)

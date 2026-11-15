@@ -23,6 +23,9 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from mechanical_librarian.adapters.providers.response_reuse import (
+    ProviderResponseReuse,
+)
 from mechanical_librarian.adapters.providers.retry_safety import (
     ProviderFailure,
     ProviderRequestPacer,
@@ -200,6 +203,7 @@ class ITunesSearchMetadataProvider:
         timeout_seconds: float = 5.0,
         *,
         pacer: ProviderRequestPacer | None = None,
+        responses: ProviderResponseReuse | None = None,
         clock: Callable[[], float] = time.monotonic,
         wall_clock: Callable[[], float] = time.time,
         sleep: Callable[[float], None] = time.sleep,
@@ -222,6 +226,7 @@ class ITunesSearchMetadataProvider:
             _DiscoveryRequestLedger("itunes_search", "search-1"),
             pacer=pacer,
             clocks=ProviderClocks(clock, wall_clock, sleep, jitter),
+            responses=responses,
             accept_content_types=ITUNES_CONTENT_TYPES,
         )
         self._called = False

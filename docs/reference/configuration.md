@@ -20,8 +20,10 @@ in [compatibility](compatibility.md).
 `review-serve` needs the owner-only bootstrap document
 `/run/secrets/review-bootstrap.json` and one exact-current owner-settings
 document and owner verifier in `/data/application.sqlite3`. An empty `/data`
-volume starts guided setup instead, and an incomplete setup store bound to the
-same bootstrap resumes it. Any other missing, malformed, mixed or orphaned
+volume, or one holding only
+[kept provider answers](../operations/upgrades.md#keeping-provider-answers),
+starts guided setup instead, and an incomplete setup store bound to the same
+bootstrap resumes it. Any other missing, malformed, mixed or orphaned
 state stops startup without fallback, import, migration or repair.
 
 Creating the owner password needs the one-time setup claim token, which is
