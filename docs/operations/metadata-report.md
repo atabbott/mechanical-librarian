@@ -465,15 +465,17 @@ Every provider asks the
 before it sends a request
 ([ADR-0101](../architecture/decisions/0101-reuse-stored-provider-answers.md)).
 An answer held for the same request is read exactly as a live one: it counts
-against the same attempt, retry and byte ceilings, passes the same decoder and
-parser, and dates the provider's `accessed_at` to when it was fetched. Only the
-pacing wait and the request are skipped. A miss asks the provider as before.
+against the same attempt, retry and byte ceilings and passes the same decoder
+and parser. Only the pacing wait and the request are skipped. A miss asks the
+provider as before. The provider's `accessed_at` is the earliest fetch time
+among the answers its observation used, so a report built from held answers
+keeps the time it first had.
 
 - An answer is kept only when the provider's observation and every lane of it
   ended `candidates`, `no_match` or `insufficient_input`, and only a 200 body
   the session read and the adapter did not mark refused. A failed, incomplete,
   malformed, oversized or limit-exceeded lane keeps nothing from that
-  observation.
+  observation, and a request that succeeded only on a retry is not kept.
 - A held answer is reused whatever its age. The weekly
   [re-search](#after-the-report) of an audiobook that admitted no recording
   and every [provider recovery](provider-recovery.md) retry ask live and
@@ -612,11 +614,11 @@ If settlement cannot commit, preparation stops; see
 
 The report ID is derived from the complete canonical document, including each
 provider's `accessed_at`, captured at its first request (`null` if none was
-sent), or the fetch time of a [held answer](#held-provider-answers) that
-served it. Reopening returns the same bytes and contacts nothing. A new
-observation creates a new immutable report even when the facts are unchanged,
-unless every answer was held, which yields the same report again; only the
-current pointer moves. Replay rechecks every invariant above from the
+sent), or the fetch time of a [held answer](#held-provider-answers) it used
+when that is earlier. Reopening returns the same bytes and contacts nothing. A
+new observation creates a new immutable report even when the facts are
+unchanged, unless the answers it used were held, which yields the same report
+again; only the current pointer moves. Replay rechecks every invariant above from the
 stored report. Reports from earlier schemas cannot be replayed; do not relabel
 or rewrite them.
 

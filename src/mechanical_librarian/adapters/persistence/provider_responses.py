@@ -193,8 +193,10 @@ class SQLiteProviderResponseStore:
     def commit(self, adapter: str, rows: tuple[tuple[str, int, bytes], ...]) -> None:
         """Keep one clean observation's answers as `(digest, fetched_at_us, body)`.
 
-        The newest answer for a request replaces the one held, and the answers
-        fetched longest ago are removed until the store is under its ceiling.
+        An answer replaces the one held for its request unless that one was
+        fetched later, so an observation that finishes late cannot undo a
+        newer one. The answers fetched longest ago are then removed until the
+        store is under its ceiling.
         """
         if not rows:
             return
@@ -222,7 +224,8 @@ class SQLiteProviderResponseStore:
                     "fetched_at_us=excluded.fetched_at_us,"
                     "payload_digest=excluded.payload_digest,"
                     "payload_bytes=excluded.payload_bytes,payload=excluded.payload,"
-                    "stored_bytes=excluded.stored_bytes",
+                    "stored_bytes=excluded.stored_bytes "
+                    "WHERE excluded.fetched_at_us>=provider_responses.fetched_at_us",
                     values,
                 )
                 (total,) = self._connection.execute(

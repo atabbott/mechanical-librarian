@@ -174,8 +174,11 @@ class BoundedProviderSession:
         # Whether an empty success body is an unavailable response, refused
         # before its encoding or media type is judged.
         self._refuse_empty_success = refuse_empty_success
-        # The held answers this observation may reuse instead of asking (#1064).
+        # The held answers this observation may reuse instead of asking, and
+        # the wall time of its first live dispatch, which dates every answer
+        # it keeps (#1064).
         self._responses = responses
+        self._live_at_us = -1
         self.attempt_count = 0
         self.retry_count = 0
         self.remaining_response_bytes = bounds.aggregate_response_bytes
@@ -265,6 +268,11 @@ class BoundedProviderSession:
             type(maximum_bytes) is not int or maximum_bytes < 1
         ):
             raise ValueError("provider bounds are invalid")
+        digest = (
+            ""
+            if self._responses is None
+            else self._responses.digest(method, url, params, content)
+        )
         for retry_index in range(self._bounds.attempts_per_request):
             started = self._clocks.clock()
             attempts_before_dispatch = self.attempt_count
@@ -275,6 +283,7 @@ class BoundedProviderSession:
                     params=params,
                     content=content,
                     headers=headers,
+                    digest=digest,
                     deadline=deadline,
                     is_retry=query_retry or retry_index > 0,
                     classify=classify,
@@ -294,6 +303,11 @@ class BoundedProviderSession:
             except ProviderFailure as error:
                 if self.attempt_count == attempts_before_dispatch:
                     raise
+                # This dispatch is part of what the observation reports. An
+                # answer kept for the same request would be served in its
+                # place next time, so none is kept.
+                if self._responses is not None:
+                    self._responses.failed(digest)
                 retries = self._bounds.retries_per_observation
                 can_retry = (
                     error.retryable
@@ -367,6 +381,7 @@ class BoundedProviderSession:
         params: dict[str, str] | httpx.QueryParams | None,
         content: bytes | None,
         headers: dict[str, str],
+        digest: str,
         deadline: float | None,
         is_retry: bool,
         classify: ProviderResponseClassifier,
@@ -381,9 +396,7 @@ class BoundedProviderSession:
         retries = self._bounds.retries_per_observation
         if is_retry and retries is not None and self.retry_count >= retries:
             raise ProviderFailure(ProviderStatus.UNAVAILABLE)
-        digest = ""
         if self._responses is not None:
-            digest = self._responses.digest(method, url, params, content)
             held = self._responses.lookup(digest)
             if held is not None:
                 return self._reuse_once(
@@ -405,19 +418,16 @@ class BoundedProviderSession:
         try:
             if deadline is not None and self._clocks.clock() >= deadline:
                 raise self._incomplete(ProviderIncompleteCause.DEADLINE)
-            # The wall time is read again on later dispatches only to date an
-            # answer that may be kept, so a session without a store reads it
-            # exactly as before.
-            fetched_at = (
-                self._clocks.wall_clock()
-                if self._accessed_at is None or self._responses is not None
-                else 0.0
-            )
-            if self._accessed_at is None:
-                self._accessed_at = provider_access_time(fetched_at)
-            fetched_at_us = (
-                0 if self._responses is None else epoch_microseconds(fetched_at)
-            )
+            # A session without a store reads the wall time once, as before.
+            # One with a store reads it at its first live dispatch even after
+            # a held answer has been served, to date the answers it may keep.
+            if self._accessed_at is None or (
+                self._responses is not None and self._live_at_us < 0
+            ):
+                wall = self._clocks.wall_clock()
+                self._note_access(provider_access_time(wall))
+                if self._responses is not None:
+                    self._live_at_us = epoch_microseconds(wall)
             self._ledger.dispatch(retry=is_retry)
             self.attempt_count += 1
             if is_retry:
@@ -496,8 +506,18 @@ class BoundedProviderSession:
             raise ProviderFailure(ProviderStatus.UNAVAILABLE) from None
         value = read(payload)
         if self._responses is not None:
-            self._responses.hold(self.attempt_count, digest, payload, fetched_at_us)
+            self._responses.hold(self.attempt_count, digest, payload, self._live_at_us)
         return value
+
+    def _note_access(self, at: str) -> None:
+        """Keep the earliest access time among this observation's answers.
+
+        The canonical form sorts as text. A live observation's first dispatch
+        is its earliest, so this changes nothing for it; one that mixes held
+        and live answers reports the oldest it used.
+        """
+        if self._accessed_at is None or at < self._accessed_at:
+            self._accessed_at = at
 
     def _reuse_once(
         self,
@@ -520,8 +540,7 @@ class BoundedProviderSession:
         payload, fetched_at_us = held
         if deadline is not None and self._clocks.clock() >= deadline:
             raise self._incomplete(ProviderIncompleteCause.DEADLINE)
-        if self._accessed_at is None:
-            self._accessed_at = provider_access_time(fetched_at_us / 1_000_000)
+        self._note_access(provider_access_time(fetched_at_us / 1_000_000))
         self._ledger.dispatch(retry=is_retry)
         self.attempt_count += 1
         if is_retry:

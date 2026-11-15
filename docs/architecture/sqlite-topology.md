@@ -458,14 +458,16 @@ table, `provider_responses`, keyed by adapter kind and the SHA-256 of a
 request's method, URL, sorted query, body and adapter revision
 ([ADR-0101](decisions/0101-reuse-stored-provider-answers.md)). Each row is one
 success body a clean observation accepted, compressed, with its SHA-256,
-length and fetch time in microseconds; no request text, header or credential.
+length and the time of that observation's first request in microseconds; no
+request text, header or credential.
 
 - Open checks the file, header and exact schema but runs no integrity check,
   which would read every payload. A read inflates a row within its stated
   length and compares its digest; a row that fails is deleted and is a miss.
 - A clean observation's answers are written in one `BEGIN IMMEDIATE`
-  transaction that replaces any answer held for the same request, then removes
-  the answers fetched longest ago until the stored bytes are under 2 GiB. A
+  transaction that replaces the answer held for the same request unless that
+  one was fetched later, then removes the answers fetched longest ago until
+  the stored bytes are under 2 GiB. A
   covering index on fetch time and size serves that without reading payloads.
   A hit that is read writes nothing; one the decoder or adapter refuses is
   removed.

@@ -251,6 +251,18 @@ def test_the_size_sum_and_the_oldest_first_removal_read_only_the_index(
     store.close()
 
 
+def test_an_older_answer_never_replaces_a_newer_one(tmp_path: Path) -> None:
+    """An observation that finishes late cannot undo a newer one."""
+    store = _store(tmp_path)
+    digest = "a" * 64
+    store.commit("open_library", ((digest, 2, b"newer"),))
+    store.commit("open_library", ((digest, 1, b"older"),))
+    assert store.get("open_library", digest) == (b"newer", 2)
+    store.commit("open_library", ((digest, 2, b"same time"),))
+    assert store.get("open_library", digest) == (b"same time", 2)
+    store.close()
+
+
 def test_the_store_never_replaces_a_row_wholesale() -> None:
     # The SQL is written in upper case; an upsert keeps the row's key.
     assert "REPLACE" not in inspect.getsource(provider_responses)

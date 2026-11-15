@@ -5,7 +5,12 @@ dispatches a request. A held answer is served in place of the network; a miss
 goes live through the normal path, and the answer is held until the adapter's
 observation ends. `RetainingProvider` is the one commit point: it keeps an
 observation's held answers only when the observation and every lane of it
-ended clean, so a failed, partial or refused answer is never stored.
+ended clean, so a failed, partial or refused answer is never stored. Nor is an
+answer to a request one of whose dispatches failed in that observation: the
+failure is in the live accounting, and a held answer would be served in its
+place. Every answer an observation keeps is dated to its first live dispatch,
+and an observation reports the earliest date among the answers it used, so
+one that reuses answers reads as the observation that stored them.
 
 A request is keyed by the adapter kind and the SHA-256 of its method, URL,
 sorted query, body and the adapter's revision below. Headers never enter the
@@ -96,6 +101,8 @@ class ProviderResponseReuse:
         self._held: dict[int, tuple[str, int, bytes]] = {}
         # The dispatches served from the store, by ordinal.
         self._served: dict[int, str] = {}
+        # The requests one of whose dispatches failed in this observation.
+        self._failed: set[str] = set()
 
     def digest(
         self,
@@ -117,6 +124,15 @@ class ProviderResponseReuse:
         if 0 < len(payload) <= MAX_PAYLOAD_BYTES:
             self._held[ordinal] = (digest, fetched_at_us, payload)
 
+    def failed(self, digest: str) -> None:
+        """Keep no answer to a request one of whose dispatches failed.
+
+        The failed dispatch is in the live observation's accounting and
+        diagnostics. A held answer would be served in its place, so a retried
+        request is asked again until it succeeds at once.
+        """
+        self._failed.add(digest)
+
     def served(self, ordinal: int, digest: str) -> None:
         self._served[ordinal] = digest
 
@@ -133,9 +149,10 @@ class ProviderResponseReuse:
             self._store.discard(self._adapter, digest)
 
     def settle(self, clean: bool) -> None:
-        held = tuple(self._held.values())
+        held = tuple(row for row in self._held.values() if row[0] not in self._failed)
         self._held.clear()
         self._served.clear()
+        self._failed.clear()
         if clean:
             self._store.commit(self._adapter, held)
 

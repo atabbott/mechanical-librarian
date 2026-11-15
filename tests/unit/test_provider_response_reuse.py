@@ -355,6 +355,8 @@ def _hardcover(
     handler: Callable[[httpx.Request], httpx.Response],
     store: SQLiteProviderResponseStore,
     sent: list[dict[str, object]],
+    *,
+    wall: float = _WALL,
 ) -> MetadataProvider:
     def record(request: httpx.Request) -> httpx.Response:
         sent.append(json.loads(request.content))
@@ -367,7 +369,7 @@ def _hardcover(
             httpx.Client(transport=httpx.MockTransport(record)),
             262_144,
             clock=lambda: 0.0,
-            wall_clock=lambda: _WALL,
+            wall_clock=lambda: wall,
             sleep=lambda _: None,
             jitter=lambda: 0.0,
             responses=reuse,
@@ -419,17 +421,103 @@ def test_a_hardcover_narrowing_retry_keeps_only_the_answer_it_read(
 
     lookup = _lookup(work_lookup(authors=("Ada Example", "Bea Example")))
     sent: list[dict[str, object]] = []
-    observation = _hardcover(answer, store, sent).observe(lookup).observation
+    live = _hardcover(answer, store, sent).observe(lookup)
     # The six-book answer was refused and narrowed; the lookup ended clean.
-    assert observation.status is ProviderStatus.NO_MATCH
+    assert live.observation.status is ProviderStatus.NO_MATCH
     assert (len(sent), _rows(store)) == (2, 1)
 
     again: list[dict[str, object]] = []
-    assert _hardcover(answer, store, again).observe(lookup).observation == observation
-    # Only the refused overflow is asked again.
+    later = _hardcover(answer, store, again, wall=_WALL + 86_400).observe(lookup)
+    assert later.observation == live.observation
+    # Only the refused overflow is asked again. It is asked first and a day
+    # later, yet the observation is dated by the oldest answer it used, so
+    # the report stays the one first published.
     assert [body["variables"]["authors"] for body in again] == [
         ["Ada Example", "Bea Example"]
     ]
+    assert later.evidence.accessed_at == live.evidence.accessed_at
+    store.close()
+
+
+def test_an_answer_reached_through_a_retry_is_not_kept(tmp_path: Path) -> None:
+    """The failed dispatch is in the live accounting; a held answer would be
+    served in its place and the reused report would lose it."""
+    store = _store(tmp_path)
+    reuse = ProviderResponseReuse(store, "open_library", False)
+    answers = iter(
+        (
+            httpx.Response(503, headers={"content-type": "application/json"}),
+            _json({"value": 1})(None),
+        )
+    )
+    session = _session(lambda _: next(answers), reuse)
+    assert _ask(session) == {"value": 1}
+    assert [record.outcome for record in session.attempt_records] == [
+        "retry",
+        "response_received",
+    ]
+    reuse.settle(True)
+    assert _rows(store) == 0
+
+    # Asked again without a failure, the answer is kept.
+    again = ProviderResponseReuse(store, "open_library", False)
+    _ask(_session(_json({"value": 1}), again))
+    again.settle(True)
+    assert _rows(store) == 1
+    store.close()
+
+
+def test_a_refused_request_beside_a_kept_one_reads_the_same_when_reused(
+    tmp_path: Path,
+) -> None:
+    """A 404 a source answers for one request does not stop the others being
+    kept: it is asked again each time, so the accounting is the live one."""
+    store = _store(tmp_path)
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        if request.url.params["q"] == "missing":
+            return httpx.Response(404, headers={"content-type": "application/json"})
+        return _json({"value": 1})(request)
+
+    def observe(wall: float) -> tuple[list[str], str | None, list[str]]:
+        reuse = ProviderResponseReuse(store, "open_library", False)
+        sent: list[str] = []
+
+        def counted(request: httpx.Request) -> httpx.Response:
+            sent.append(request.url.params["q"])
+            return answer(request)
+
+        session = _session(counted, reuse, wall=wall)
+        with pytest.raises(ProviderFailure):
+            _ask(session, "missing")
+        assert _ask(session) == {"value": 1}
+        reuse.settle(True)
+        return (
+            [record.outcome for record in session.attempt_records],
+            session.accessed_at,
+            sent,
+        )
+
+    outcomes, accessed_at, sent = observe(_WALL)
+    assert (sent, _rows(store)) == (["missing", "value"], 1)
+    # A day later the refused request goes first and live, and the observation
+    # still reads as the one that stored the answer.
+    assert observe(_WALL + 86_400) == (outcomes, accessed_at, ["missing"])
+    store.close()
+
+
+def test_a_mixed_observation_is_dated_by_its_oldest_answer(tmp_path: Path) -> None:
+    store, reuse = _held(tmp_path)
+    later = _WALL + 86_400
+    session = _session(_json({"value": 2}), reuse, wall=later)
+    _ask(session, "new")
+    _ask(session)
+    assert session.accessed_at == "2023-11-14T22:13:20.123456Z"
+    # What it keeps is dated to its own first live dispatch.
+    reuse.settle(True)
+    assert store._connection.execute(
+        "SELECT fetched_at_us FROM provider_responses ORDER BY fetched_at_us"
+    ).fetchall() == [(1_700_000_000_123_456,), (1_700_086_400_123_456,)]
     store.close()
 
 
@@ -438,7 +526,7 @@ def test_a_google_books_key_never_reaches_the_digest_or_the_store(
 ) -> None:
     """The key is sent, but no key or digest input carries it (S4).
 
-    Expected to fail until #1885 moves the key from the query to a header.
+    The key travels in a header, and headers never enter the request key.
     """
     key = "synthetic-google-key-0123456789"
     store = _store(tmp_path)

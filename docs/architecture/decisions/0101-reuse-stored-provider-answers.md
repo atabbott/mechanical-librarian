@@ -34,8 +34,10 @@ answer must bring back the time it was fetched for the report to be the same.
    the body goes through the same decoder and adapter parser. Only the pacer
    wait and the network are skipped. The attempt record is the live one.
    Provider recovery's physical request counts are unchanged, because a
-   retry never reuses a held answer (decision 5). A session whose first
-   answer is reused reports that answer's fetch time as its access time.
+   retry never reuses a held answer (decision 5). An observation reports
+   the earliest fetch time among the answers it used, held or live, as its
+   access time, so a request asked again beside held answers does not move
+   it.
 2. **Key.** `(adapter kind, SHA-256 of the canonical method, scheme, host,
    port, path, sorted query items, body and the adapter's revision)`. Headers
    never enter the key, so a credential sent in a header never does. Each
@@ -43,17 +45,20 @@ answer must bring back the time it was fetched for the report to be the same.
    differently enough that a held one would mislead it.
 3. **What is stored.** Only a 200 body the session accepted and `read`
    decoded, compressed, with its SHA-256, length and the wall time of its
-   live dispatch in integer microseconds. No request text, header or
-   credential.
+   observation's first live dispatch in integer microseconds. No request
+   text, header or credential.
 4. **Commit.** Answers are held per provider observation and kept only when
    the observation's status and every lane's status are `candidates`,
    `no_match` or `insufficient_input`. A failed, incomplete, malformed,
    oversized, limit-exceeded or provider-declared-error lane keeps nothing
    from that observation. An answer the adapter refuses after the session
    returned it (`mark_response_attempt`) is dropped even when its lane ends
-   clean, as in Hardcover's narrowing retry and edition fan-out. An adapter
-   exception keeps nothing. The commit point is one wrapper in adapters
-   around the adapter's `observe`.
+   clean, as in Hardcover's narrowing retry and edition fan-out. An answer
+   to a request one of whose dispatches failed in that observation is not
+   kept either: the failed dispatch is in the live counts and diagnostics,
+   and a held answer would be served in its place. An adapter exception
+   keeps nothing. The commit point is one wrapper in adapters around the
+   adapter's `observe`.
 5. **Freshness.** A held answer is reused whatever its age (the owner's
    choice, "until something asks again"). Two things ask live and replace
    what is held. One is an extraction claimed while the item holds ADR-0089's
@@ -72,6 +77,10 @@ answer must bring back the time it was fetched for the report to be the same.
    integrity check, which would read every payload; each row is inflated
    within its stated length and its digest compared when read, and a row
    that fails is deleted and is a miss. A hit that is read writes nothing.
+   A commit replaces the answer held for a request unless that one was
+   fetched later, so an observation that finishes late cannot undo a newer
+   answer. The comparison trusts the wall clock: an answer dated ahead of
+   it holds until the clock passes it.
 7. **Bound.** At most 2 GiB of stored payload bytes; after each commit the
    answers fetched longest ago are removed until the store is under the
    ceiling. A covering index on fetch time and size serves the sum and the
@@ -107,7 +116,7 @@ answer must bring back the time it was fetched for the report to be the same.
   of the same class as reports, kept out of every report, diagnostic and
   support bundle.
 - A partly failed lookup keeps nothing, so its clean lanes are asked again
-  next time.
+  next time. A request that succeeded only on a retry is asked again too.
 - A hit skips Google Books' burst hold. No request is sent, so the hold has
   nothing to protect.
 - Two connections to the same source share answers. That is acceptable for
@@ -152,13 +161,16 @@ evict a full library's oldest answers and defeat reuse.
   network; a reused observation equals the live one in its observation,
   access time, diagnostics and attempt outcomes; bounds and the deadline
   apply on a hit; unclean, refused, declared-error and adapter-failure cases
-  keep nothing; a re-search asks live and replaces; a held answer refused on
-  reuse is removed; each varied request fact
-  is in the key; the Google Books key reaches neither the digest input nor
-  the store file.
+  keep nothing; an answer reached through a retry is not kept; a request
+  refused beside a kept answer, and an observation that mixes held and live
+  answers, report the same access time when reused; a re-search asks live
+  and replaces; a held answer refused on reuse is removed; each varied
+  request fact is in the key; the Google Books key reaches neither the
+  digest input nor the store file.
 - `tests/unit/test_provider_response_store.py`: admission, refusal without
   mutation, per-row integrity, degradation events, the ceiling and its
-  covering index, no write on a hit, and two processes writing at once.
+  covering index, no write on a hit, an older answer never replacing a
+  newer one, and two processes writing at once.
 - `tests/unit/test_reused_answer_preparation.py`: one item prepared twice
   through the real pipeline from the same answers converges on the same
   report, proposal and case; a different access time names a different
