@@ -3071,6 +3071,7 @@ def test_openapi_is_deterministic_and_secret_free(
         ("post", "/api/v1/review-preparation/pause"),
         ("post", "/api/v1/review-preparation/resume"),
         ("post", "/api/v1/session/logout"),
+        ("post", "/api/v1/session/password"),
     }
     response_statuses = {
         (method, path): set(operation["responses"])
@@ -3094,6 +3095,17 @@ def test_openapi_is_deterministic_and_secret_free(
         "403",
         "409",
         "422",
+        "503",
+    }
+    assert response_statuses[("post", "/api/v1/session/password")] == {
+        "204",
+        "400",
+        "401",
+        "403",
+        "409",
+        "413",
+        "422",
+        "429",
         "503",
     }
     assert response_statuses[

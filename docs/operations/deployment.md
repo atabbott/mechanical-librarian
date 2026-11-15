@@ -269,9 +269,18 @@ described in [observability](observability.md).
 
 A sign-in creates a persistent session cookie with a fixed absolute lifetime of
 up to 30 days, the default. Set a shorter `review.session_lifetime_seconds` if
-you need one. Sessions survive restarts until you sign out or they expire, and
-are kept in `/data/private/review-sessions.sqlite`. A remembered session is a
-bearer credential: do not use it on an untrusted device or network.
+you need one. Sessions survive restarts until you sign out, they expire or the
+owner password changes, and are kept in
+`/data/private/review-sessions.sqlite`. A remembered session is a bearer
+credential: do not use it on an untrusted device or network.
+
+## Changing the owner password
+
+In store mode, open Settings → Access and diagnostics and use Owner password.
+It needs the current password. The browser you change it from stays signed
+in, and every other browser is signed out. In file mode, write a new verifier
+to the hash file as under [Forgotten owner password](#forgotten-owner-password),
+then restart the container; the restart signs every browser out.
 
 ## Forgotten owner password
 
@@ -291,10 +300,11 @@ The sign-in page links here.
 
   The restart signs every browser out.
 - **Store mode** (password created in guided setup): the verifier is in
-  `/data/application.sqlite3` and nothing replaces it. Restore a
-  [backup](backups-and-recovery.md) of the volume taken while you knew the
-  password, or start again from an empty volume and repeat setup. Starting
-  again discards the review history, decisions and settings on that volume.
+  `/data/application.sqlite3`, and Settings changes it only with the current
+  password. Restore a [backup](backups-and-recovery.md) of the volume taken
+  while you knew the password, or start again from an empty volume and repeat
+  setup. Starting again discards the review history, decisions and settings
+  on that volume.
 
 ## Live updates
 

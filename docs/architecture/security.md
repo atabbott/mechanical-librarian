@@ -103,6 +103,11 @@ only to compare with mount mappings, and those checks never read media.
   lookup keyed by the exact verifier, CSRF digests, expiry, revocation and
   throttle rows. Replacing the verifier invalidates every session. Logout
   deletes the cookie only after revocation is durable.
+- In store mode, Settings changes the password given the session, CSRF token
+  and current password, whose check spends a sign-in attempt. One transaction
+  stores the new verifier only while the stored one is the one checked. The
+  changing browser gets a new session and every other session ends. File mode
+  answers `409`.
 - A workspace page opened without a session sends the browser to sign-in with
   that page as `next`. Sign-in returns only to a workspace page on this
   origin: the server matches `next` against the workspace routes and a
@@ -112,7 +117,9 @@ only to compare with mount mappings, and those checks never read media.
 
 Sign-in allows five attempts per client in any five minutes, under a global
 ceiling of 100; a refusal is `429 throttled`. A granted session clears only
-its own client's attempts. The client key is an HMAC, never a stored address.
+its own client's attempts; a password change clears every client's, since
+client keys are keyed by the verifier. The client key is an HMAC, never a
+stored address.
 
 The client comes from the transport: an untrusted peer is its socket
 address, whatever its `X-Forwarded-For` says, and a peer in

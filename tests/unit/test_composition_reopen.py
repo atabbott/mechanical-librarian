@@ -25,6 +25,7 @@ from unittest.mock import Mock, patch
 
 import httpx
 import pytest
+from argon2 import PasswordHasher
 
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.reviewers.codex_device_auth import (
@@ -64,6 +65,10 @@ async def _runtime_app(scope: object, receive: object, send: object) -> None:
     return None
 
 
+_PASSWORD = "synthetic owner password"
+_VERIFIER = PasswordHasher().hash(_PASSWORD)
+
+
 @pytest.mark.parametrize("activated", (False, True))
 @pytest.mark.parametrize("failure", (None, "composition", "http"))
 def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover(
@@ -74,7 +79,7 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover(
     settings.activate_runtime.return_value = (
         SimpleNamespace(document=SimpleNamespace(pending_restart=())),
         {},
-        "verifier",
+        _VERIFIER,
     )
     repository.has_first_boot_preparation.return_value = False
     session_store = Mock()
@@ -118,9 +123,6 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover(
         ) as create_pipeline,
         patch.object(
             composition.SQLiteProviderRecoveryStore, "open", return_value=Mock()
-        ),
-        patch.object(
-            composition, "owner_password_binding", return_value=(Mock(), Mock(), Mock())
         ),
         patch.object(
             composition, "_compose_reviewer_access", return_value=reviewer_access
@@ -194,8 +196,44 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover(
             operation_admission=OperationAdmission(),
             activation=activation,
         )
+        owner_password = compose_application.call_args.kwargs["owner_password_change"]
+        if activation is not None:
+            # A later Settings snapshot reads the same live verifier and does
+            # not reseed it from the verifier it carries.
+            composition.compose_store_runtime_generation(
+                bootstrap,
+                Path("application.sqlite3"),
+                Path("catalogue.sqlite3"),
+                Path("artifacts"),
+                repository_authority=object(),
+                operation_admission=OperationAdmission(),
+                authority_snapshot=(
+                    cast(
+                        "SettingsView",
+                        SimpleNamespace(document=SimpleNamespace(pending_restart=())),
+                    ),
+                    {},
+                    PasswordHasher().hash("a later snapshot's password"),
+                ),
+                activation=activation,
+            )
+            later = compose_application.call_args.kwargs
+            assert owner_password is activation.owner_password
+            assert later["owner_password_change"] is owner_password
+            assert later["verify_password"] == owner_password.verify
+            assert not owner_password.verify("a later snapshot's password")
 
-    repository.bind_library_catalogue.assert_called_once_with(
+    # Every generation's session checks read the one live verifier it was
+    # given, and a standalone generation gets one of its own.
+    assert isinstance(owner_password, composition.StoreOwnerPassword)
+    application_arguments = compose_application.call_args.kwargs
+    assert application_arguments["verify_password"] == owner_password.verify
+    assert application_arguments["session_digest"] == owner_password.session_digest
+    assert application_arguments["client_digest"] == owner_password.client_digest
+    assert owner_password.verify(_PASSWORD)
+    # One bind per composed generation.
+    assert repository.bind_library_catalogue.call_count == (2 if activated else 1)
+    repository.bind_library_catalogue.assert_called_with(
         Path("catalogue.sqlite3"),
         composition.batch_catalogue_fingerprint(configuration),
     )
