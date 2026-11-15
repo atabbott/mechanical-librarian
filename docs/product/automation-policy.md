@@ -36,7 +36,7 @@ chosen, and one of these settings:
 - Automatic records a decision without you, but only when that exact option is
   qualified for that kind of media (see [Qualification](#qualification)).
   Otherwise Policy will not turn Automatic on for that option, and the Policy
-  page shows no automatic effect.
+  page says Automatic is not offered.
 - Ask me offers you every eligible choice. The field joins Attention only when
   a real choice remains.
 - Ignore leaves the field unchanged. Its proposals are marked

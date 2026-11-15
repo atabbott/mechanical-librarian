@@ -58,6 +58,12 @@ brackets are GitHub issues.
   and their response versions start with `preview-`. A script that calls the
   old paths gets 404. Stored outcome sets keep `shadow-outcome-set-v11`; no
   rebuild is needed (#1739).
+- Library, Policy and Activity share one page header and heading scale. A
+  field's choices sit in one panel under Keep current value and Choose a new
+  value, without queue position, choice count or the one-tap hint. Covers adds
+  Open in Works, Policy says what Automatic does on ebooks and audiobooks, and
+  Activity hides a one-page pager. Phones get a 16 px margin, and the masthead
+  scrolls away when taller than a sixth of the window (#1894).
 
 ## 0.33.0 — First library (in progress)
 
