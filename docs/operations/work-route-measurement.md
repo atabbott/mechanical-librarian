@@ -10,10 +10,12 @@ Run it from the checkout that prepared the library, against a copy of the
 application database:
 
 ```
-uv run python scripts/work_route_measurement.py \
-    --database /copy/application.sqlite3 \
-    [--mark 15:0.9] [--provenance]
+uv run python scripts/work_route_measurement.py --database "$COPY"
 ```
+
+`$COPY` is a copy of the database, taken as
+[owner labels](owner-labels.md#copy-the-database) describes. Add
+`--mark 15:0.9` to set your own pass mark.
 
 It opens the copy read-only, writes nothing and prints one
 `work-route-measurement-v1` JSON document. A database that is missing, or that

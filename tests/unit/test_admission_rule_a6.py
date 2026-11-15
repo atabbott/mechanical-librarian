@@ -1010,6 +1010,22 @@ def test_owner_labels_count_by_outcome_and_admitted_choice(
     assert section["all_owner_labels"]["owner"] == owner
 
 
+def test_keeping_a_current_value_the_relaxation_admits_chooses_it(
+    tmp_path: Path,
+) -> None:
+    text = Sentinels()
+    fixture = admitting_fixture(text)
+    ledger._dicts(fixture.results[0]["alternatives"])[0]["assessment"] = (
+        "preserves_target"
+    )
+    fixture.decide(1, "title", "keep_current", None)
+    section = json.loads(_owner_run(tmp_path, [fixture]))["a6_abstention"]
+    (row,) = section["snapshots"][0]["owner_labels"]
+    owner = row["owner"]
+    assert (owner["labelled"], owner["pick_agrees"]) == (1, 1)
+    assert owner["by_outcome"]["keep_current"] == 1
+
+
 def test_a_decided_earlier_case_counts_for_owner_labels_only(tmp_path: Path) -> None:
     text = Sentinels()
     current = admitting_fixture(text)

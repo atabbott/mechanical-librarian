@@ -70,7 +70,7 @@ _WAL = (
     "Stop the container, then copy application.sqlite3 again."
 )
 _ENGINE = (
-    "That database was built by a different version of Mechanical Librarian. "
+    "The copy was made by a different version of Mechanical Librarian. "
     "Run this from the checkout you built the install from."
 )
 _MIRROR = "This tool does not cover this checkout's decision rules yet."

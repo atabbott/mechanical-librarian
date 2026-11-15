@@ -95,9 +95,10 @@ records the decision they support: keep the gate.
 
   These screens are necessary, but they do not show that a value is right.
 - Only the owner's decisions show that. The owner-labels table counts each
-  admitted field the owner's latest decision on that book's field labels: by
-  outcome (accepted, entered, kept current or rejected), how often the owner
-  chose the admitted value, and that rate with its Wilson 95% lower limit. A
+  admitted field that the owner has decided, by the latest decision on that
+  book's field. It shows the outcomes (accepted, entered, kept current or
+  rejected), how often the owner chose the admitted value, and that rate with
+  its Wilson 95% lower limit. A
   withdrawn decision, or one older than the case's latest episode, labels
   nothing. A decision on a case a rescan has since replaced still labels its
   field, and adds nothing else to the tables. Rows are per snapshot and
