@@ -65,6 +65,17 @@ def epoch_microseconds(timestamp: float) -> int:
     return (observed - _EPOCH) // timedelta(microseconds=1)
 
 
+def stored_access_time(fetched_at_us: int) -> str:
+    """Return the access time one stored whole microsecond names.
+
+    Whole-number arithmetic, the inverse of `epoch_microseconds`: a float of
+    seconds cannot hold every microsecond the store admits, and the last of
+    them would round past the latest date a report can name.
+    """
+    observed = _EPOCH + timedelta(microseconds=fetched_at_us)
+    return observed.isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
 def _canonical_request(
     revision: int,
     method: str,
@@ -201,6 +212,7 @@ __all__ = [
     "ProviderResponseReuse",
     "RetainingProvider",
     "epoch_microseconds",
+    "stored_access_time",
     "provider_response_reuse",
     "retaining_provider",
 ]

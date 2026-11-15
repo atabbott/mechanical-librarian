@@ -194,6 +194,22 @@ def test_a_held_answer_is_served_without_pacing_or_network(tmp_path: Path) -> No
     store.close()
 
 
+def test_the_latest_time_the_store_admits_is_served_as_that_time(
+    tmp_path: Path,
+) -> None:
+    """A float of seconds rounds this microsecond past the last date a report
+    can name; the stored whole number is converted as it is."""
+    store = _store(tmp_path)
+    latest = 253_402_300_799_999_999
+    reuse = ProviderResponseReuse(store, "open_library", False)
+    digest = reuse.digest("GET", _URL, {"q": "value"}, None)
+    store.commit("open_library", ((digest, latest, b'{"value": 1}'),))
+    session = _session(_never, reuse)
+    assert _ask(session) == {"value": 1}
+    assert session.accessed_at == "9999-12-31T23:59:59.999999Z"
+    store.close()
+
+
 def _google(
     handler: Callable[[httpx.Request], httpx.Response],
     store: SQLiteProviderResponseStore,

@@ -26,6 +26,7 @@ import httpx
 from mechanical_librarian.adapters.providers.response_reuse import (
     ProviderResponseReuse,
     epoch_microseconds,
+    stored_access_time,
 )
 from mechanical_librarian.adapters.providers.retry_safety import (
     ProviderFailure,
@@ -534,7 +535,7 @@ class BoundedProviderSession:
         if deadline is not None and self._clocks.clock() >= deadline:
             raise self._incomplete(ProviderIncompleteCause.DEADLINE)
         if self._accessed_at is None:
-            self._accessed_at = provider_access_time(fetched_at_us / 1_000_000)
+            self._accessed_at = stored_access_time(fetched_at_us)
         self._ledger.dispatch(retry=is_retry)
         self.attempt_count += 1
         if is_retry:
