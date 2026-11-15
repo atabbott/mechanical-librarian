@@ -1416,9 +1416,11 @@ class SQLiteProviderRecoveryStore:
         ``deferred`` counts only queued or running jobs of that row's exact scope
         and generation. ``waiting_since`` is when the episode's current wait
         began: the first scope event after the later of its last recovery and
-        its last daily quota deferral, so time in a quota wait never counts. It
-        is ``None`` while that quota wait lasts. This is one read under the
-        store lock and never begins a transaction.
+        its last daily quota deferral that changes the recorded health, so time
+        in a quota wait never counts. An event that repeats the health before it
+        (a report publication naming its outcome) changes nothing. It is
+        ``None`` while that quota wait lasts. This is one read under the store
+        lock and never begins a transaction.
         """
         try:
             with self._lock:
@@ -1441,7 +1443,14 @@ class SQLiteProviderRecoveryStore:
                     "WHERE f.connection=h.connection AND f.adapter=h.adapter AND f.scope=h.scope "
                     "AND f.generation=h.generation AND f.job_attempt IS NULL "
                     "AND (f.state='recovered' OR f.outcome='quota_exhausted') "
-                    "ORDER BY f.sequence DESC LIMIT 1),0) ORDER BY e.sequence ASC LIMIT 1) "
+                    "ORDER BY f.sequence DESC LIMIT 1),0) "
+                    "AND (e.state,e.attempt,e.next_eligible_at) IS NOT (SELECT p.state,p.attempt,"
+                    "p.next_eligible_at FROM provider_recovery_events p "
+                    "INDEXED BY provider_recovery_events_scope_latest "
+                    "WHERE p.connection=e.connection AND p.adapter=e.adapter AND p.scope=e.scope "
+                    "AND p.generation=e.generation AND p.job_attempt IS NULL "
+                    "AND p.sequence<e.sequence ORDER BY p.sequence DESC LIMIT 1) "
+                    "ORDER BY e.sequence ASC LIMIT 1) "
                     "FROM provider_recovery_health h "
                     "WHERE h.state!='recovered' ORDER BY h.scope,h.adapter,h.connection LIMIT 4096"
                 ).fetchall()

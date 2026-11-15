@@ -5569,6 +5569,25 @@ def test_waiting_since_ignores_a_daily_quota_wait(tmp_path: Path) -> None:
     store.close()
 
 
+def test_waiting_since_ignores_a_report_published_during_a_daily_quota_wait(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
+    _fail(store, "quota_exhausted", 1_100, retry_after=86_400)
+    # A publication names its outcome by copying the health unchanged: the
+    # quota wait goes on, so the clock has not started.
+    assert 1 == store.enqueue_jobs(
+        (_job("a"),), enqueued_at=1_200, outcomes={_job("a"): "transient"}
+    )
+    ((row),) = store.throttling_snapshot()
+    assert (87_500, None) == (row["next_eligible_at"], row["waiting_since"])
+    claimed = store.claim_one(generation=1, now=87_500, token="owner")
+    assert claimed is not None
+    store.complete(token="owner", recovery=claimed, now=87_500, failure="transient")
+    assert [87_500] == _waiting_since(store)
+    store.close()
+
+
 def test_waiting_since_restarts_with_retry_now_and_survives_a_restart(
     tmp_path: Path,
 ) -> None:
@@ -5768,6 +5787,7 @@ def test_throttling_read_walks_each_episode_through_its_index_at_bounded_cost(
         index = "USING INDEX provider_recovery_events_scope_latest"
         assert any(line.startswith("SEARCH e ") and index in line for line in plan)
         assert any(line.startswith("SEARCH f ") and index in line for line in plan)
+        assert any(line.startswith("SEARCH p ") and index in line for line in plan)
         assert _vm_steps(store._connection, statement) <= 2.1 * base_worst, shape
         store.close()
 
