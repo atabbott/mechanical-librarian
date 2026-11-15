@@ -36,7 +36,7 @@ decisive cases was run. It found:
 - **Reproduction** misses size problems at the 320×480 preview, and
   thumbnail legibility measures the preview rather than the cover.
 
-ADR-0093 (proposed) decides shape, same-art copies and the size floor from
+ADR-0093 decides shape, same-art copies and the size floor from
 decoded pixels and reads no observation. This revision relies on it: v4
 activates no earlier than ADR-0093's stage.
 
