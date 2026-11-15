@@ -1347,6 +1347,17 @@ LIBRARY_PROGRESS_STATES: dict[str, dict[str, object]] = {
         ],
         [("cover", 120), ("description", 31), ("authors", 14), ("isbn", 1)],
     ),
+    # The largest counts: a million works, every count six or seven digits.
+    "largest_counts": _progress(
+        [
+            ("Household ebooks", _progress_counts(123_456, 12_345, 1_234, 2_345)),
+            (
+                LIBRARY_PROGRESS_LONG_LIBRARY,
+                _progress_counts(876_544, 98_765, 4_321, 7_654),
+            ),
+        ],
+        [("cover", 98_765), ("description", 12_345)],
+    ),
 }
 
 

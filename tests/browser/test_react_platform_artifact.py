@@ -5730,3 +5730,171 @@ def test_library_progress_card_and_run_box_line_keep_their_places() -> None:
             _fits_its_container(page, ".preparation-summary-box", width)
             no_sideways_scroll(page, width)
             page.close()
+
+
+# The element's box grown by `pad` px (the global focus ring: 3 px wide, 3 px
+# out) against every ancestor up to `stop` whose overflow clips: the ancestors
+# that would cut the ring, by class.
+_RING_CLIPPERS = """
+([selector, stop, pad]) => {
+  const element = document.querySelector(selector);
+  const ring = element.getBoundingClientRect();
+  const clippers = [];
+  for (let node = element.parentElement; node; node = node.parentElement) {
+    const style = getComputedStyle(node);
+    if (style.overflowX !== 'visible' || style.overflowY !== 'visible') {
+      const box = node.getBoundingClientRect();
+      const left = box.left + node.clientLeft;
+      const top = box.top + node.clientTop;
+      if (
+        ring.left - pad < left - 0.5 || ring.top - pad < top - 0.5
+        || ring.right + pad > left + node.clientWidth + 0.5
+        || ring.bottom + pad > top + node.clientHeight + 0.5
+      ) clippers.push(node.className || node.tagName);
+    }
+    if (node.matches(stop)) break;
+  }
+  return clippers;
+}
+"""
+
+# Each line box of the run's line, against the frame's inside edges: how far
+# the furthest piece of text sticks out, in px (0 or less when all is inside).
+_LINE_OUTSIDE_FRAME = """
+() => {
+  const frame = document.querySelector('.preparation-summary-box');
+  const line = frame.querySelector('.preparation-summary-progress');
+  const box = frame.getBoundingClientRect();
+  const left = box.left + frame.clientLeft;
+  const right = left + frame.clientWidth;
+  const range = document.createRange();
+  range.selectNodeContents(line);
+  let worst = -Infinity;
+  for (const rect of range.getClientRects()) {
+    if (rect.width === 0) continue;
+    worst = Math.max(worst, left - rect.left, rect.right - right);
+  }
+  return worst;
+}
+"""
+
+
+def _serve_run_box(page: Page, progress: Callable[[Route], None]) -> None:
+    """The cohort with a cleanly finished run in Library's box (#1335)."""
+    _serve_cohort(page)
+    page.route(
+        "**/api/v1/review-preparation",
+        lambda route: route.fulfill(
+            content_type="application/json",
+            body=json.dumps(finished_preparation("completed_clean")),
+        ),
+    )
+    page.route("**/api/v1/library/progress", progress)
+
+
+def _progress_route(state: str) -> Callable[[Route], None]:
+    def fulfill(route: Route) -> None:
+        route.fulfill(
+            content_type="application/json",
+            body=json.dumps(LIBRARY_PROGRESS_STATES[state]),
+        )
+
+    return fulfill
+
+
+def test_library_progress_run_box_never_cuts_a_focus_ring() -> None:
+    """A finished run's frame never cuts the global focus ring, of the run's
+    button or of the line while Try again reads (#1335)."""
+
+    def tab_to(page: Page, locator: Any) -> None:
+        for _ in range(60):
+            page.keyboard.press("Tab")
+            if locator.evaluate("node => node === document.activeElement"):
+                return
+        raise AssertionError("the keyboard never reached it")
+
+    def failing_then_held() -> Callable[[Route], None]:
+        reads: list[Route] = []
+
+        def fulfill(route: Route) -> None:
+            reads.append(route)
+            if len(reads) == 1:
+                route.fulfill(
+                    status=503,
+                    content_type="application/json",
+                    body=json.dumps(
+                        {
+                            "error": {"code": "unavailable"},
+                            "schema_version": "review-error-v1",
+                        }
+                    ),
+                )
+
+        return fulfill
+
+    library = "https://react-platform.invalid/library?lens=all"
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        for width in (320, 1280):
+            page = browser.new_page(
+                viewport={"width": width, "height": 844}, locale="en-US"
+            )
+            _serve_run_box(page, _progress_route("two_libraries"))
+            page.goto(library)
+            expect(page.locator(".preparation-summary-progress")).to_contain_text(
+                "works settled"
+            )
+            button = page.get_by_role(
+                "button", name=re.compile("^Preparation complete")
+            )
+            tab_to(page, button)
+            assert button.evaluate("node => node.matches(':focus-visible')")
+            clippers = page.evaluate(
+                _RING_CLIPPERS, [".preparation-summary", ".library-works", 6]
+            )
+            assert clippers == [], (width, "run's button", clippers)
+            page.close()
+
+            # Try again holds focus on the line while the counts read again.
+            page = browser.new_page(
+                viewport={"width": width, "height": 844}, locale="en-US"
+            )
+            _serve_run_box(page, failing_then_held())
+            page.goto(library)
+            retry = page.get_by_role("button", name="Try again")
+            expect(retry).to_be_visible()
+            tab_to(page, retry)
+            page.keyboard.press("Enter")
+            line = page.locator(".preparation-summary-progress")
+            expect(line).to_be_focused()
+            assert line.evaluate("node => node.matches(':focus-visible')")
+            clippers = page.evaluate(
+                _RING_CLIPPERS, [".preparation-summary-progress", ".library-works", 6]
+            )
+            assert clippers == [], (width, "line", clippers)
+            page.close()
+
+
+def test_library_progress_largest_counts_wrap_inside_the_run_box() -> None:
+    """At 320 px with 200% text the largest counts wrap inside a finished
+    run's frame, and the page does not scroll sideways (#1335)."""
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 320, "height": 844}, locale="en-US")
+        _serve_run_box(page, _progress_route("largest_counts"))
+        page.goto("https://react-platform.invalid/library?lens=all")
+        expect(page.locator(".preparation-summary-progress")).to_contain_text(
+            "of 1,000,000 works settled"
+        )
+        set_root_text(page, "200%")
+        outside = page.evaluate(_LINE_OUTSIDE_FRAME)
+        assert outside <= 0, f"the line sticks out of its frame by {outside}px"
+        assert page.evaluate(
+            "() => document.documentElement.scrollWidth"
+            " <= document.documentElement.clientWidth"
+        )
+        page.close()
