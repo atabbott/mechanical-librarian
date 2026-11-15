@@ -5284,7 +5284,7 @@ def test_cover_choice_records_in_one_tap(width: int, mode: str) -> None:
                           const edge = track.getBoundingClientRect().right
                           const cards = [...track.querySelectorAll(
                             '.library-cover-card:not(:disabled)')].filter(card =>
-                            !card.getAttribute('aria-label').startsWith('Choose Current'))
+                            card.getAttribute('aria-label') !== 'Keep current cover')
                           const cut = cards.find(card => {
                             const box = card.getBoundingClientRect()
                             return box.left < edge - 24 && box.right > edge
@@ -12587,6 +12587,17 @@ def test_preparation_detail_fits_a_phone_at_enlarged_text() -> None:
                             for heading in found["headings"]
                             if heading["lines"] != 1
                         ]
+                    else:
+                        # A narrow card's words break at syllables, with a
+                        # hyphen, in the page's language.
+                        hyphens = page.evaluate(
+                            "() => [document.documentElement.lang, ...[...document"
+                            ".querySelectorAll('.preparation-active-books strong,"
+                            " .preparation-active-books small')].map(node =>"
+                            " getComputedStyle(node).hyphens)]"
+                        )
+                        if hyphens[0] != "en" or set(hyphens[1:]) != {"auto"}:
+                            failures.append(f"{where}: hyphenation is {hyphens}")
                     set_root_text(page, "")
         browser.close()
         assert failures == [], "\n".join(failures)
@@ -14238,6 +14249,12 @@ def test_measured_cover_rules_keep_or_suggest_through_covers(
                                 parent: hold.parentElement === item ? 1 : 0,
                                 frame: frame.textContent.length,
                                 stateWidth: state.getBoundingClientRect().width,
+                                // The pill sits just under the text, not
+                                // under the taller thumbnail.
+                                gap: hold.getBoundingClientRect().top
+                                  - item.querySelector(':scope > span:not(.status-pill, .covers-image-missing)').getBoundingClientRect().bottom,
+                                radius: parseFloat(getComputedStyle(hold).borderTopLeftRadius),
+                                height: hold.getBoundingClientRect().height,
                               }
                             }"""
                         ),
@@ -14246,6 +14263,29 @@ def test_measured_cover_rules_keep_or_suggest_through_covers(
                     assert held["parent"] == 1, held
                     assert held["frame"] == 0, held
                     assert held["stateWidth"] > 1, held
+                    assert held["gap"] <= 16, held
+                    # One line keeps its round ends.
+                    assert held["radius"] * 2 >= held["height"], held
+                    # Wrapped on a phone at 200% text, the pill keeps a
+                    # readable shape instead of an oval.
+                    page.set_viewport_size({"width": 390, "height": 900})
+                    page.goto(f"{origin}/library?lens=all&view=covers&tab=decide")
+                    expect(hold).to_be_visible()
+                    set_root_text(page, "200%")
+                    wrapped = cast(
+                        "dict[str, float]",
+                        hold.evaluate(
+                            """hold => ({
+                              radius: parseFloat(getComputedStyle(hold).borderTopLeftRadius),
+                              height: hold.getBoundingClientRect().height,
+                              lineHeight: parseFloat(getComputedStyle(hold).lineHeight)
+                                || parseFloat(getComputedStyle(hold).fontSize) * 1.5,
+                            })"""
+                        ),
+                    )
+                    assert wrapped["height"] > 2 * wrapped["lineHeight"], wrapped
+                    assert wrapped["radius"] * 2 < wrapped["height"], wrapped
+                    set_root_text(page, "")
                     page.unroute("**/api/v1/covers?*")
                     page.set_viewport_size({"width": 1280, "height": 900})
                     page.goto(f"{origin}/library?lens=all&view=covers&tab={tab}")
@@ -14257,7 +14297,7 @@ def test_measured_cover_rules_keep_or_suggest_through_covers(
                 for card in cards.all():
                     expect(card).to_be_enabled()
                 choice = (
-                    group.get_by_role("radio", name=re.compile(r"^Choose Current"))
+                    group.get_by_role("radio", name="Keep current cover", exact=True)
                     if journey == "J4"
                     else group.get_by_role("radio", name=re.compile(r"EPUB file"))
                 )
@@ -14272,6 +14312,19 @@ def test_measured_cover_rules_keep_or_suggest_through_covers(
                 else:
                     assert decision["outcome"] == "accept", decision
                     assert decision["selected_value"]["kind"] == "cover", decision
+                # Once answered, the field no longer heads itself as a pending
+                # suggestion (#1866).
+                expect(page.locator(".covers-notice")).to_have_text(
+                    re.compile(r"^(Kept|Switched) ")
+                )
+                page.goto(f"{origin}/library?lens=all&preview={case_id}&field=cover")
+                answered = page.get_by_role("region", name="Choose a cover")
+                expect(answered.locator(":scope > header > strong")).to_have_text(
+                    "Cover choices ready"
+                )
+                expect(
+                    answered.get_by_text("Switch suggested", exact=True)
+                ).to_have_count(0)
             browser.close()
 
 

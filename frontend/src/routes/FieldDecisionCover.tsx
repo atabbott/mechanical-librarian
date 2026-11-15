@@ -568,7 +568,9 @@ function CoverCard({
     >
       <button
         type="button"
-        aria-label={`Choose ${label}`}
+        // The current cover's card keeps it, readable or not, so it is named
+        // for that one action (#1866).
+        aria-label={candidate.incumbent ? 'Keep current cover' : `Choose ${label}`}
         {...radio}
         className={`library-cover-card${candidate.incumbent ? ' is-current' : ''}${recommended ? ' is-recommended' : ''}${selected ? ' is-selected' : ''}`}
         disabled={cardDisabled}
@@ -719,7 +721,9 @@ function CoverComparisonHeader({
   return (
     <header>
       <strong>
-        {recommendedReference !== null
+        {/* Once the owner has answered, a suggestion is no longer pending, so
+            the field is headed as any other answered comparison (#1866). */}
+        {recommendedReference !== null && !(suggesting && field.humanDecision)
           ? suggesting
             ? 'Switch suggested'
             : 'Recommended cover ready'

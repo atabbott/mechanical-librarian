@@ -1311,7 +1311,7 @@ html[data-reduced-motion='always-reduced'] :is(.route-state, .settings-state, .d
 .preparation-active-books,.preparation-completions { display:grid; gap:.45rem; margin:0; padding:0; list-style:none; }
 .preparation-active-books li { display:grid; grid-template-columns:auto minmax(0,1fr); align-items:center; gap:.65rem; min-height:52px; padding:.55rem .65rem; border:1px solid var(--line); border-radius:.65rem; background:var(--page); }
 .preparation-active-books li > span:last-child { display:grid; min-width:0; gap:.1rem; }
-.preparation-active-books strong,.preparation-active-books small { overflow-wrap:anywhere; }
+.preparation-active-books strong,.preparation-active-books small { overflow-wrap:anywhere; hyphens:auto; }
 .preparation-active-books strong { font:700 .78rem/1.3 Georgia,'Times New Roman',serif; }
 .preparation-active-books small { color:var(--soft); font-size:.75rem; }
 .preparation-passage { display:grid; gap:.75rem; margin:0; }
@@ -1507,7 +1507,10 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 .covers-queue-item strong { overflow-wrap:anywhere; }
 .covers-queue-item small { color:var(--soft); }
 /* A hold's pill is its own row under the title and status, so it has their width (#1866). */
-.covers-queue-item > .covers-queue-hold { grid-column:2 / -1; justify-self:start; }
+.covers-queue-item > .covers-queue-hold { grid-column:2 / -1; justify-self:start; align-self:start; border-radius:1rem; }
+/* A held row's thumbnail spans the pill's row too, so the pill sits just under the byline. */
+.covers-queue-item:has(> .covers-queue-hold) > :first-child { grid-row:span 2; }
+.covers-queue-item:has(> .covers-queue-hold) > span:not(.status-pill, .covers-image-missing) { align-self:end; }
 .covers-comparison { display:grid; gap:.75rem; min-width:0; }
 .covers-comparison header h2 { margin:0; font-size:1.1rem; }
 .covers-comparison header p, .covers-comparison header small { margin:0; color:var(--soft); }

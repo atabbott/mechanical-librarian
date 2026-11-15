@@ -5551,7 +5551,7 @@ describe('Library route', () => {
     ).toHaveTextContent('Match not confirmed')
     const pinnedTrack = mixedComparison.querySelector<HTMLElement>('.library-cover-pinned')
     const currentCard = within(mixedComparison).getByRole('radio', {
-      name: 'Choose Current cover',
+      name: 'Keep current cover',
     })
     const forwardCard = within(mixedComparison).getByRole('radio', {
       name: /Open Library cover, 800 × 1200 px \(3\)/u,
@@ -5938,6 +5938,55 @@ describe('Library route', () => {
         .getByRole('radio', { name: 'Choose Open Library cover, 800 × 1200 px (2)' })
         .querySelector('small'),
     ).toHaveTextContent(/^Suggested$/u)
+
+    // Once the owner keeps the current cover, the suggestion is no longer
+    // pending: the field is headed as any answered comparison, keeps its
+    // fault's pill, and the suggested card still says what it is (#1866).
+    cleanup()
+    renderRoute('/library?lens=all&preview=case-1&field=cover', {
+      ...createHttp(),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+        ...detail,
+        target: { ...detail.target, mediaKind },
+        fields: [
+          {
+            ...coverField,
+            humanDecision: {
+              actor: 'owner' as const,
+              application: 'apply' as const,
+              application_reason: null,
+              decision_id: 'kept-cover',
+              destination: 'cover' as const,
+              occurred_at: 1,
+              outcome: 'keep_current' as const,
+              proposal_id: coverField.proposalId,
+              review_case_id: 'case-1',
+              target_fingerprint: coverField.targetFingerprint,
+              selected_value: null,
+            },
+            coverConsideration: {
+              ...recommended,
+              stage: {
+                language: null,
+                outcome: 'suggest' as const,
+                reason: 'below_floor' as const,
+              },
+            },
+          },
+        ],
+      })),
+    })
+    const answered = await screen.findByLabelText('Choose a cover')
+    expect(answered.querySelector(':scope > header > strong')).toHaveTextContent(
+      /^Cover choices ready$/u,
+    )
+    expect(within(answered).queryByText('Switch suggested')).not.toBeInTheDocument()
+    expect(within(answered).getByText('Under 300 px')).toBeVisible()
+    expect(
+      within(answered)
+        .getByRole('radio', { name: 'Choose Open Library cover, 800 × 1200 px (2)' })
+        .querySelector('small'),
+    ).toHaveTextContent(/^Suggested$/u)
   })
 
   describe('cover choices (#1290)', () => {
@@ -6006,7 +6055,7 @@ describe('Library route', () => {
       expect(within(merged).getByText('Selectable retained cover.')).toBeVisible()
       expect(
         within(group)
-          .getByRole('radio', { name: 'Choose Current cover' })
+          .getByRole('radio', { name: 'Keep current cover' })
           .querySelector('.cover-dimensions'),
       ).toHaveTextContent('800 × 1200 px')
     })
@@ -6144,7 +6193,7 @@ describe('Library route', () => {
       })
       expect(
         within(group)
-          .getByRole('radio', { name: 'Choose Current cover' })
+          .getByRole('radio', { name: 'Keep current cover' })
           .querySelector('.cover-sources'),
       ).toHaveTextContent(/^Audiobookshelf$/u)
       expect(document.querySelector('.cover-merged')).toBeNull()
@@ -6189,7 +6238,7 @@ describe('Library route', () => {
       })
       expect(
         within(group)
-          .getByRole('radio', { name: 'Choose Current cover' })
+          .getByRole('radio', { name: 'Keep current cover' })
           .querySelector('.cover-sources'),
       ).toHaveTextContent('Audiobookshelf · EPUB file · Hardcover')
       expect(
@@ -6238,7 +6287,7 @@ describe('Library route', () => {
       )
       expect(radios.map((radio) => radio.tabIndex).filter((index) => index === 0)).toHaveLength(1)
       // Arrows move between covers and record nothing.
-      const current = within(group).getByRole('radio', { name: 'Choose Current cover' })
+      const current = within(group).getByRole('radio', { name: 'Keep current cover' })
       await waitFor(() => expect(document.querySelector('[data-route-focus]')).toHaveFocus())
       current.focus()
       await user.keyboard('{ArrowRight}')
