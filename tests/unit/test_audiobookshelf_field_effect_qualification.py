@@ -1229,3 +1229,323 @@ def test_no_product_import_precedes_the_import_root_selection() -> None:
         )
     ]
     assert early == []
+
+
+class _OwnerStepRepository:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _owner_canary(
+    before: dict[str, object],
+    stored: dict[str, object],
+    *,
+    category: str = "allowed",
+) -> tuple[
+    list[dict[str, object]], list[tuple[str, object]], list[_OwnerStepRepository]
+]:
+    """Run the owner-value canary against fakes; return rows, writes, repos."""
+    applied: list[tuple[str, object]] = []
+    repositories: list[_OwnerStepRepository] = []
+
+    def open_service(case: str) -> tuple[object, _OwnerStepRepository]:
+        repository = _OwnerStepRepository()
+        repositories.append(repository)
+        return object(), repository
+
+    def apply(*arguments: object, **_: object) -> dict[str, object]:
+        applied.append((str(arguments[7]), arguments[8]))
+        return {"state": "verified", "request_count": 1}
+
+    target = SimpleNamespace(
+        read=lambda plan: SimpleNamespace(value=before.get(plan.destination))
+    )
+    capabilities = SimpleNamespace(
+        result=lambda plan: SimpleNamespace(category=category)
+    )
+    detail = {"media": {"metadata": stored}}
+    with (
+        patch.object(qualification, "_apply", apply),
+        patch.object(qualification, "_request", lambda *_, **__: detail),
+    ):
+        rows = qualification._owner_value_canary(
+            open_service,
+            target,
+            capabilities,
+            [],
+            object(),
+            "http://abs.test",
+            "token",
+            "item-1",
+            lambda: 1,
+        )
+    return rows, applied, repositories
+
+
+_BEFORE_OWNER_ENTRY: dict[str, object] = {
+    "subtitle": None,
+    "publisher": None,
+    "genres": ["Qualification"],
+    "narrators": ["Synthetic Narrator"],
+    "authors": ["Synthetic Author"],
+}
+_CLEARED: dict[str, object] = {
+    "subtitle": None,
+    "publisher": None,
+    "genres": [],
+    "narrators": [],
+}
+
+
+def test_the_owner_canary_enters_goes_back_and_clears_every_clearable_field() -> None:
+    """Each entry is followed by the value it replaced, then a clear (#1523).
+
+    Going back on a field that was empty is itself the clear; a field that
+    held a value is cleared after going back. Authors are never emptied.
+    """
+    rows, applied, repositories = _owner_canary(_BEFORE_OWNER_ENTRY, _CLEARED)
+
+    entered = dict(qualification.OWNER_VALUE_ENTRIES)
+    assert applied == [
+        ("subtitle", entered["subtitle"]),
+        ("subtitle", None),
+        ("publisher", entered["publisher"]),
+        ("publisher", None),
+        ("genres", entered["genres"]),
+        ("genres", ["Qualification"]),
+        ("genres", None),
+        ("narrators", entered["narrators"]),
+        ("narrators", ["Synthetic Narrator"]),
+        ("narrators", None),
+        ("authors", entered["authors"]),
+        ("authors", ["Synthetic Author"]),
+    ]
+    assert [(row["destination"], row["step"]) for row in rows] == [
+        ("subtitle", "entered"),
+        ("subtitle", "back"),
+        ("publisher", "entered"),
+        ("publisher", "back"),
+        ("genres", "entered"),
+        ("genres", "back"),
+        ("genres", "clear"),
+        ("narrators", "entered"),
+        ("narrators", "back"),
+        ("narrators", "clear"),
+        ("authors", "entered"),
+        ("authors", "back"),
+    ]
+    assert {row["destination"] for row in rows if row["cleared"]} == set(_CLEARED)
+    assert all(row["state"] == "verified" for row in rows)
+    # Every step writes through a repository of its own, closed after it.
+    assert len(repositories) == len(rows)
+    assert all(repository.closed for repository in repositories)
+
+
+@pytest.mark.parametrize(
+    ("destination", "stored"),
+    (
+        ("subtitle", ""),
+        ("publisher", "Seed Press"),
+        ("genres", None),
+        ("narrators", "absent"),
+    ),
+    ids=("subtitle-empty-string", "publisher-kept", "genres-null", "narrators-absent"),
+)
+def test_a_clear_the_service_holds_in_another_form_fails_the_run(
+    destination: str, stored: object
+) -> None:
+    """The service's item must hold `null` for a scalar and `[]` for a list.
+
+    The guarded read-back reads every empty form as no value, so only the raw
+    item shows that the payload left the field in the form the probe pinned.
+    """
+    raw = dict(_CLEARED)
+    if stored == "absent":
+        raw.pop(destination)
+    else:
+        raw[destination] = stored
+
+    with pytest.raises(
+        QualificationError, match="owner_clear_not_empty_" + destination
+    ):
+        _owner_canary(_BEFORE_OWNER_ENTRY, raw)
+
+
+def test_an_owner_field_the_service_will_not_write_fails_the_run() -> None:
+    """Every pinned version empties all four fields, so a refusal is a defect."""
+    with pytest.raises(QualificationError, match="owner_value_capability_subtitle"):
+        _owner_canary(_BEFORE_OWNER_ENTRY, _CLEARED, category="field_unavailable")
+
+
+_WRITTEN_SUBTITLE = "Synthetic written subtitle"
+
+
+def _going_back_field(
+    *,
+    current: object = _WRITTEN_SUBTITLE,
+    suggestions: list[dict[str, object]] | None = None,
+    pin: dict[str, object] | None = None,
+    hold: bool = True,
+    attention: bool = False,
+) -> dict[str, object]:
+    return {
+        "destination": "subtitle",
+        "proposal_id": "review_proposal_" + "1" * 64,
+        "target_fingerprint": "2" * 64,
+        "offer_digest": "3" * 64,
+        "owner_control": {
+            "entry": {"max_characters": 512, "suggestions": suggestions or []},
+            "subset": None,
+            "names": None,
+            "clear": True,
+            "current": current,
+            "withdraw": "written",
+        },
+        "pin": pin,
+        "manual_hold": hold,
+        "needs_attention": attention,
+    }
+
+
+class _GoingBackClient:
+    """The review API as the going-back scenario reads and writes it."""
+
+    def __init__(self, fields: dict[str, dict[str, object]]) -> None:
+        self.fields = fields
+        self.posts: list[tuple[str, dict[str, object]]] = []
+
+    def get(self, path: str) -> SimpleNamespace:
+        case_id = path.rsplit("/", 1)[1]
+        return SimpleNamespace(
+            status_code=200, json=lambda: {"fields": [self.fields[case_id]]}
+        )
+
+    def post(
+        self, path: str, *, headers: dict[str, str], json: dict[str, object]
+    ) -> SimpleNamespace:
+        self.posts.append((path, json))
+        decision_id = "human_decision_" + str(len(self.posts))
+        return SimpleNamespace(
+            status_code=200, json=lambda: {"decision_id": decision_id}
+        )
+
+
+def _going_back(
+    client: _GoingBackClient,
+    *,
+    read_back: object = None,
+) -> tuple[dict[str, object], list[str]]:
+    cases = iter((("writing", None), ("successor", "actionable")))
+    events: list[str] = []
+    result = qualification._installed_going_back(
+        client,
+        {"Origin": "https://review.test"},
+        _WRITTEN_SUBTITLE,
+        current_case=lambda: next(cases),
+        wait_written=lambda decision_id: events.append("written:" + decision_id),
+        read_back=lambda: read_back,
+        rescan=lambda: events.append("rescan"),
+    )
+    return result, events
+
+
+def test_going_back_on_a_written_subtitle_clears_it_and_the_pin_keeps_it_quiet() -> (
+    None
+):
+    """The demonstration: go back (a clear), pin it, and scan again (R3)."""
+    client = _GoingBackClient(
+        {
+            "writing": _going_back_field(),
+            "successor": _going_back_field(
+                current=None,
+                pin={"state": "in_force", "value": {"state": "empty", "value": None}},
+            ),
+        }
+    )
+
+    result, events = _going_back(client)
+
+    assert [
+        (path, body["outcome"], body["selected_value"]) for path, body in client.posts
+    ] == [
+        (
+            "/api/v1/review-cases/writing/decisions",
+            "owner_entered",
+            {"kind": "empty", "value": None},
+        ),
+        ("/api/v1/review-cases/writing/decisions", "pin", None),
+    ]
+    assert all(
+        body["offered_alternatives_digest"] == "3" * 64 for _, body in client.posts
+    )
+    # The clear is written before the scan that must find it pinned.
+    assert events == ["written:human_decision_1", "rescan"]
+    assert result == {
+        "cleared": True,
+        "empty_previous_offered": False,
+        "pin": "in_force",
+        "needs_attention": False,
+        "successor_reason": "actionable",
+    }
+
+
+def test_going_back_refuses_an_empty_previous_suggestion() -> None:
+    """Emptying the box is the choice; no "previous" of empty is offered."""
+    client = _GoingBackClient(
+        {"writing": _going_back_field(suggestions=[{"rule": "previous", "value": ""}])}
+    )
+
+    with pytest.raises(
+        QualificationError, match="installed_going_back_empty_previous_offered"
+    ):
+        _going_back(client)
+    assert client.posts == []
+
+
+def test_going_back_needs_the_written_value_as_current() -> None:
+    """On the case that wrote the subtitle, the written value is current."""
+    client = _GoingBackClient({"writing": _going_back_field(current=None)})
+
+    with pytest.raises(QualificationError, match="installed_going_back_not_offered"):
+        _going_back(client)
+    assert client.posts == []
+
+
+def test_a_subtitle_the_service_still_holds_fails_going_back() -> None:
+    client = _GoingBackClient({"writing": _going_back_field()})
+
+    with pytest.raises(QualificationError, match="installed_going_back_not_cleared"):
+        _going_back(client, read_back="")
+
+
+@pytest.mark.parametrize(
+    "successor",
+    (
+        {"pin": None},
+        {"pin": {"state": "changed", "value": {"state": "empty", "value": None}}},
+        {
+            "pin": {"state": "in_force", "value": {"state": "empty", "value": None}},
+            "attention": True,
+        },
+        {
+            "pin": {"state": "in_force", "value": {"state": "empty", "value": None}},
+            "hold": False,
+        },
+    ),
+    ids=("unpinned", "pin-changed", "asks", "not-held"),
+)
+def test_a_pinned_clear_that_asks_again_fails_going_back(
+    successor: dict[str, object],
+) -> None:
+    client = _GoingBackClient(
+        {
+            "writing": _going_back_field(),
+            "successor": _going_back_field(current=None, **successor),  # type: ignore[arg-type]
+        }
+    )
+
+    with pytest.raises(QualificationError, match="installed_going_back_pin_not_quiet"):
+        _going_back(client)
