@@ -619,7 +619,10 @@
         "description_advice": null,
         "offer_digest": "d8fd4421cf5a3a4ecbb1ce4ed43707700edf2fa6a2b516ebf92a2dfe716b5397",
         "pin": null,
-        "pin_control": null
+        "pin_control": {
+          "pin": "available",
+          "unpin": false
+        }
       },
       {
         "classification": "unsupported",
@@ -675,7 +678,10 @@
         "description_advice": null,
         "offer_digest": "b07037849fd764eebd9e49622da48433c9a11767ffb26bb02124a83b26b08426",
         "pin": null,
-        "pin_control": null
+        "pin_control": {
+          "pin": "available",
+          "unpin": false
+        }
       },
       {
         "classification": "unsupported",
@@ -731,7 +737,10 @@
         "description_advice": null,
         "offer_digest": "4f3effd6af47ebcce203a5aa1ebf5158b304e83c5dd9412bf471a048fd9721cf",
         "pin": null,
-        "pin_control": null
+        "pin_control": {
+          "pin": "available",
+          "unpin": false
+        }
       },
       {
         "classification": "unsupported",
@@ -787,7 +796,10 @@
         "description_advice": null,
         "offer_digest": "ae0663c79471a7e576694bbc3dee6a9919f7ef9059a7e05fb08a75728d121053",
         "pin": null,
-        "pin_control": null
+        "pin_control": {
+          "pin": "available",
+          "unpin": false
+        }
       },
       {
         "classification": "manual_fallback",
@@ -902,7 +914,10 @@
         "description_advice": null,
         "offer_digest": "ba86b44ae9ce20a33a6e52fb76a1ca64259ae994de764980e3ee581bd55ea0a7",
         "pin": null,
-        "pin_control": null
+        "pin_control": {
+          "pin": "available",
+          "unpin": false
+        }
       },
       {
         "classification": "unsupported",
@@ -958,7 +973,10 @@
         "description_advice": null,
         "offer_digest": "1b5e09d0cfed5bdebf912c3737d49ad5d50c82550afce0221e6132d3fee3aa46",
         "pin": null,
-        "pin_control": null
+        "pin_control": {
+          "pin": "available",
+          "unpin": false
+        }
       },
       {
         "classification": "unsupported",
@@ -1014,7 +1032,10 @@
         "description_advice": null,
         "offer_digest": "6fc78d7f3e493ba2a99fbd62bd5924cc1136c4621c8e13c3e804b99dbb8f2855",
         "pin": null,
-        "pin_control": null
+        "pin_control": {
+          "pin": "available",
+          "unpin": false
+        }
       },
       {
         "classification": "unsupported",
