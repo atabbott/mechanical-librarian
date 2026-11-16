@@ -1908,7 +1908,7 @@ export default function LibraryPage({
                     : 'Count unavailable'
                 : !search.q
                   ? `${workCount(summaryAttention)} ${summaryAttention === 1 ? 'needs' : 'need'} a decision`
-                  : `Matching: ${String(data?.counts.attention ?? 0)} of ${workCount(summaryAttention)} needing a decision`
+                  : `Matching: ${(data?.counts.attention ?? 0).toLocaleString('en-US')} of ${workCount(summaryAttention)} needing a decision`
           }
           attention={attention}
           attentionItems={attentionItems}
