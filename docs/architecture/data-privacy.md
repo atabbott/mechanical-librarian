@@ -58,6 +58,11 @@ considerations and field-effect plans retain the values needed for
 attribution and recovery: pre-values, desired values, owner-entered text,
 consent, state, attempts and failure codes. Activity events are append-only.
 
+**The Library visit.** One row keeps how far Library's listing had got at the
+owner's last visit and when Library was last used, as integers
+([ADR-0103](decisions/0103-keep-the-library-visit-on-the-server.md)). The
+time is overwritten on each use; no history is kept, logged or exported.
+
 **Reviewer work.** A cover consideration keeps its packet, the request and
 profile identities, and one locally admitted closed observation or a typed,
 value-free failure. Description advice keeps each attempt and the one bounded

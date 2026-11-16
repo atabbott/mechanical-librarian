@@ -212,12 +212,13 @@ reads `Found m
 of n works` and the lens. A search narrows the list and Attention, never the
 totals.
 
-The lenses are All (default), [Looks wrong](looks-wrong.md), Needs attention,
-No attention needed, Not matched and Could not finish, in one row that scrolls
-sideways when the panel is narrow. Lens, search, page, selected work and field
-live in the URL, so links, Back and Forward work. The pager offers only the
-moves that exist. An empty list says so in one line; with no library connected
-it links to Settings.
+The lenses are All (default),
+[New](library-progress.md#new-since-your-last-visit) while works are new,
+[Looks wrong](looks-wrong.md), Needs attention, No attention needed, Not
+matched and Could not finish, in one row that scrolls sideways. Lens, search,
+page, selected work and field live in the URL, so links, Back and Forward
+work. An empty list says so in one line; with no library connected it links
+to Settings.
 
 Works that need a decision come first, under "Every lookup finished" and then
 "Some lookups gave no usable answer". The first heading does not promise a

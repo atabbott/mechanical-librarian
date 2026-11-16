@@ -605,3 +605,10 @@ attention facts gain triggers on `field_effect_manual_holds`. The proposal
 set, metadata report, proposal policy, shadow decision policy and
 decision-set versions do not move. Every earlier application database is
 rejected before mutation and needs a clean rebuild; no adoption is supplied.
+
+Issue #1351 takes the clean-rebuild branch. The application database gains
+the `library_visit` singleton, which holds how far Library's listing had got
+at the owner's last visit
+([ADR-0103](0103-keep-the-library-visit-on-the-server.md)). No stored
+document version moves. Every earlier application database is rejected before mutation
+and needs a clean rebuild; no adoption is supplied.
