@@ -12498,7 +12498,27 @@ def test_review_keys_show_nothing_on_a_phone_or_tablet(size):
         assert heights() == with_keys
         named()
         expect(badges.locator("visible=true")).to_have_count(0)
+
+        # Off is not one-way: Keys shows while they are off and switches them
+        # on again, then goes.
+        expect(toggle).to_be_visible()
+        unmoved = page.url
+        page.keyboard.press("j")
+        page.keyboard.press("?")
+        expect(keys).to_be_hidden()
+        assert page.url == unmoved
+        toggle.click()
+        switch = keys.get_by_role("checkbox", name="Use these keys")
+        expect(switch).not_to_be_checked()
+        switch.check()
+        keys.get_by_role("button", name="Close").click()
+        expect(keys).to_be_hidden()
+        expect(page.locator("html")).to_have_attribute("data-review-keys", "on")
         expect(toggle).to_be_hidden()
+        expect(badges.locator("visible=true")).to_have_count(0)
+        assert heights() == with_keys
+        page.keyboard.press("j")
+        expect(page).to_have_url(re.compile("field=description"))
 
 
 @pytest.mark.parametrize("width", (1440, 390))

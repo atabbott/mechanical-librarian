@@ -125,7 +125,8 @@ brackets are GitHub issues.
 - Library takes single keys for review: J and K move between fields and works,
   1 to 3 choose a value, E enters your own value, U withdraws your decision on
   the open field and ? lists the keys. Keys in the Library toolbar turns them
-  off in this browser. A phone or tablet does not show Keys (#1337).
+  off in this browser. A phone or tablet shows neither the numbers nor Keys
+  (#1337).
 
 ## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
 

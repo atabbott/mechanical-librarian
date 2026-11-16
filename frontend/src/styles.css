@@ -1790,9 +1790,9 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 .library-page .library-cover-card { position:relative; }
 /* No key acts while owner entry is open, so the badges go; the corner they keep clear stays, and no card changes height. */
 .library-page:has(form.owner-entry) .review-key-badge { visibility:hidden; }
-/* A phone or tablet, told by its input and not its width, shows no Keys button and no badge, and keeps no room for one. The keys still act with a keyboard attached. */
+/* A phone or tablet, told by its input and not its width, shows no badge and keeps no room for one, and shows no Keys button while the keys are on. The keys still act with a keyboard attached; switched off there, the button is the way to switch them on. */
 @media (hover:none) and (pointer:coarse) {
-  .review-keys-toggle { display:none; }
+  :root[data-review-keys='on'] .review-keys-toggle { display:none; }
 }
 @media not all and (hover:none) and (pointer:coarse) {
   :root[data-review-keys='on'] .library-page :is(.value-choice, .library-cover-card):not(:disabled) > .review-key-badge { display:inline-grid; position:absolute; z-index:1; top:.65rem; right:.65rem; }
