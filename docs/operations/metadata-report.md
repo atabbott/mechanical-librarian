@@ -476,10 +476,10 @@ goes live.
   the session read and the adapter did not refuse. A failed, incomplete,
   malformed, oversized or limit-exceeded lane keeps nothing from that
   observation, and a request that succeeded only on a retry is not kept.
-- A held answer is reused whatever its age. The weekly
-  [re-search](#after-the-report) of an audiobook that admitted no recording
-  and every [provider recovery](provider-recovery.md) retry ask live and
-  replace what is held.
+- A held answer is reused until its book is
+  [searched again](#after-the-report); that search and every
+  [provider recovery](provider-recovery.md) retry ask live and replace what
+  is held.
 - A held answer the decoder or the adapter refuses when it is reused is
   removed, so that request is asked live the next time.
 - Losing or refusing the store costs only requests: every request goes live.
@@ -597,10 +597,27 @@ An ebook, or an audiobook whose report admitted a recording, goes on to a
 An audiobook with no admitted recording completes as `evidence_only`. It stays
 browsable, and its library row links to a read-only evidence view. This is not
 a failure and does not fail its scan. Its work is searched again seven days
-after publication
+after publication, or sooner when its 90-day time below comes first
 ([ADR-0089](../architecture/decisions/0089-unmatched-audiobook-research.md)).
-If that still admits nothing, an open case is unchanged; if it admits a
-recording, the case is replaced.
+If that weekly search still admits nothing, an open case is unchanged; if it
+admits a recording, the case is replaced. Once the book's 90-day time has
+passed since its last preparation, the search follows the rules for every
+other book instead.
+
+Every other finished book is searched again every 90 days, at a time fixed for
+that book so that about one ninetieth of the library comes due each day, and
+never within seven days of being prepared
+([ADR-0102](../architecture/decisions/0102-search-every-finished-book-again.md)).
+A search whose proposals equal the current ones leaves the case, its answers
+and its report as they were; one whose proposals differ is prepared again as
+after any change. A search in which a provider could not answer, as
+[provider recovery](provider-recovery.md) counts it, never replaces a report
+in which every provider answered, or its case, and is tried again within the
+week. A search that now identifies nothing never takes a case away. A changed
+file, a requested refresh, a scan reset because its library's settings
+changed, or any other fresh start prepares the book again as before and sets
+its next time anew. Each search keeps its report as history, so the report
+history grows by about four reports per book a year.
 
 For an evidence-only item, a work match or an unavailable provider does not
 mean no recording exists. Check the provider statuses and the title, author and

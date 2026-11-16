@@ -881,7 +881,8 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                         "state='queued',attempt=0,recovery_attempt=0,library_id=?,producer_fingerprint=?,"
                         "report_id=NULL,recovery_source_report_id=NULL,"
                         "proposal_set_id=NULL,review_case_id=NULL,failure_code=NULL,"
-                        "failure_root=NULL,outcome=NULL "
+                        # A fresh start, not a scheduled search (ADR-0102).
+                        "failure_root=NULL,outcome=NULL,research_not_before=NULL "
                         "WHERE scan_id=?",
                         (library_id, producer_fingerprint, row[0]),
                     )
