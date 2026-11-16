@@ -1,7 +1,7 @@
-"""Activity readers reuse pending counts and the example per exact stamp (#1223).
+"""Activity readers reuse pending counts and the plan per exact stamp (#1223).
 
 A configured Activity reader answers the pending counts and the readiness
-example once per SQLite revision and database file identity. These oracles
+plan's examples once per SQLite revision and database file identity. These oracles
 compare it, read by read, with a repository that recomputes every time, over
 the same store as decisions, effects, holds, suspensions and refusals change.
 """
@@ -28,9 +28,14 @@ from tests.unit.test_pending_field_effect_lookup import (  # noqa: F401
     store,
 )
 
-# The two memoised statements, as the reader's trace callback sees them.
-_COUNTS = "WITH pending AS ("
-_EXAMPLE = "SELECT pending.document FROM ("
+# The two memoised statements, as the reader's trace callback sees them: both
+# share the counts relation, and only the plan's ranks it (#1336).
+_PENDING = "WITH pending AS ("
+_PLAN = ",ranked AS ("
+
+
+def _plan(repository: SQLiteMetadataReportRepository) -> object:
+    return repository.pending_field_effect_plan_entries(2, 60, ("books",))
 
 
 class _Traced:
@@ -46,17 +51,17 @@ class _Traced:
         self.on_counts: Callable[[], None] | None = None
 
     def _trace(self, statement: str) -> None:
-        for name, prefix in (("counts", _COUNTS), ("example", _EXAMPLE)):
-            if statement.startswith(prefix):
-                self.executed.append(name)
-                if name == "counts" and self.on_counts is not None:
-                    self.on_counts()
+        if statement.startswith(_PENDING):
+            name = "plan" if _PLAN in statement else "counts"
+            self.executed.append(name)
+            if name == "counts" and self.on_counts is not None:
+                self.on_counts()
 
     def answers(self) -> dict[str, object]:
         answers: dict[str, object] = {}
         for name, call in (
             ("counts", self.repository.pending_field_effect_decision_counts),
-            ("example", self.repository.pending_field_effect_activity_example_document),
+            ("plan", lambda: _plan(self.repository)),
         ):
             try:
                 answers[name] = call()
@@ -109,7 +114,7 @@ def _assert_oracle(reader: _Traced, canonical: _Traced) -> dict[str, object]:
     expected = canonical.answers()
     assert first == expected
     computed = list(reader.executed)
-    assert computed == ["counts", "example"]
+    assert computed == ["counts", "plan"]
     assert reader.answers() == expected == canonical.answers()
     refused = [name for name, value in first.items() if _refused(value)]
     # Only a refusal is read again at an unchanged stamp; recomputation always is.
@@ -151,8 +156,13 @@ def test_reader_equals_recomputation_across_pending_changes(
     step()
     _effect(writer, "terminal", pending[2], "{}", "superseded")
     step()
-    example = json.loads(str(answers[0]["example"]))["decision_id"]
-    _effect(writer, "example", example, json.dumps({"plan": {}}))
+    # A decision the plan lists, other than those the steps above touched.
+    listed = next(
+        entry[4]
+        for entry in cast("tuple[tuple[str, ...], ...]", answers[-1]["plan"])
+        if entry[4] not in pending[:3]
+    )
+    _effect(writer, "listed", listed, json.dumps({"plan": {}}))
     step()
     # Holds, a recorded no-change and a new accepted owner decision.
     hold = (
@@ -195,7 +205,7 @@ def test_reader_equals_recomputation_across_pending_changes(
     )
     _forget_lineage(writer, case)
     step()
-    # A refused read stays refused, and so does the example once it is reached.
+    # A refused read stays refused, and so does the plan.
     writer.execute("DROP TRIGGER automatic_decisions_no_update")
     # An automatic decision's document must name its generation (#1573), so
     # the corruption is written past that check, as a damaged file would be.
@@ -213,7 +223,7 @@ def test_reader_equals_recomputation_across_pending_changes(
     step()
     assert answers[-1] == {
         "counts": ("refused", "persistence"),
-        "example": ("refused", "persistence"),
+        "plan": ("refused", "persistence"),
     }
     step(("DELETE FROM field_effects WHERE document='{not json'", ()))
     step(
@@ -230,7 +240,15 @@ def test_reader_equals_recomputation_across_pending_changes(
     ]
     refused = ["refused"] * 3
     assert totals == [20, 19, 18, 18, 17, 16, 17, 16, 17, 17, 15, *refused, 15]
-    assert len({str(value["example"]) for value in answers}) == 3
+    # Every answered plan lists two examples of each counted group.
+    for value in answers:
+        if not _refused(value["counts"]):
+            groups = {
+                (row["connection"], row["library"], row["origin"], row["destination"])
+                for row in cast("tuple[dict[str, object], ...]", value["counts"])
+            }
+            plan = cast("tuple[tuple[str, ...], ...]", value["plan"])
+            assert {entry[:4] for entry in plan} == groups
 
 
 def test_revision_alone_invalidates(
@@ -298,7 +316,7 @@ def test_a_transient_refusal_is_read_again_at_the_same_stamp(
     assert activity._activity_projection_revision() == stamp
     reader.executed.clear()
     assert reader.answers() == expected
-    assert reader.executed == ["counts", "example"]
+    assert reader.executed == ["counts", "plan"]
 
 
 @pytest.mark.parametrize("unavailable", ["before", "after", "both"])
@@ -330,14 +348,11 @@ def test_an_unavailable_stamp_is_never_stored_or_served(
         answer: dict[str, object] = {}
         for name, call in (
             ("counts", reader.repository.pending_field_effect_decision_counts),
-            (
-                "example",
-                reader.repository.pending_field_effect_activity_example_document,
-            ),
+            ("plan", lambda: _plan(reader.repository)),
         ):
             started[0] = len(reader.executed)
             answer[name] = call()
         assert answer == canonical.answers()
-        assert reader.executed == ["counts", "example"]
+        assert reader.executed == ["counts", "plan"]
         answers.append(answer)
     assert answers[0] == answers[1] != answers[2] == answers[3]

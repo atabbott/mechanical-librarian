@@ -184,7 +184,13 @@ def project_readable_activity_event(
         or report.target.item != event.get("work_id")
     ):
         raise ActivityProjectionError("activity")
-    event["work_label"] = report.target.current_title or "Untitled"
+    event["work_label"], event["author_label"] = report_work_labels(report)
+    readable_activity_event(event, report)
+
+
+def report_work_labels(report: MetadataReport) -> tuple[str, str]:
+    """Name a work and its authors as its exact report records them."""
+    author_label = "Author details are not recorded"
     authors = next(
         (
             field.value
@@ -195,10 +201,10 @@ def project_readable_activity_event(
     )
     if type(authors) is tuple and all(type(author) is str for author in authors):
         joined = ", ".join(cast("tuple[str, ...]", authors))
-        event["author_label"] = (
+        author_label = (
             joined if len(joined) <= 512 else joined[:511].rstrip() + "…"
-        ) or "Author details are not recorded"
-    readable_activity_event(event, report)
+        ) or author_label
+    return report.target.current_title or "Untitled", author_label
 
 
 def activity_result_label(state: str, failure: object = None) -> ActivityResult:

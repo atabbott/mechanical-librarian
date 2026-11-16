@@ -258,7 +258,7 @@ export const readWriteConsent = (
  * What a permission draft was reviewed against: the configured libraries, each
  * library's capability and per-destination state and consent, and the active
  * policy. A draft survives anything that leaves this unchanged and is discarded
- * when it differs (#1279). Prepared counts, backup readiness, the example and
+ * when it differs (#1279). Prepared counts, backup readiness, the write plan and
  * the waiting reasons are excluded: they move with ordinary preparation, and
  * confirmation re-checks backup and capability on the server regardless.
  */
