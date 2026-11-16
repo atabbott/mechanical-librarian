@@ -174,3 +174,14 @@ two preparations of one track set and its absence after a track change or with
 a local ASIN. `tests/unit/test_provider_retry_successor.py` proves the retry
 rebuilds the carried lane, and `tests/unit/test_audiosilo_provider.py` proves
 one recording reached through two regional ASINs is kept once.
+
+## Amendment: an owner's recording link (#1477, ADR-0104, proposed)
+
+While an item has an owner's recording link
+([ADR-0104](0104-owner-identity-links.md)), clause 1 carries nothing and
+clause 3 plans no carried lane: the item is asked with the product the owner
+chose, on the ASIN lane of each recording source. An ASIN the item's own
+surfaces assert is still asked. Clause 4's variant conflict, tight runtime
+band and narrator gate are reused for the linked product without exact work
+admission, because the owner has named the work. A product that fails them is
+dropped, and the link reads contradicted with the failing gate as its reason.

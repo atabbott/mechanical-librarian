@@ -58,7 +58,8 @@ How the pipeline prepares each work, stage by stage:
 - [Domain model](architecture/domain-model.md)
 - [Application service contracts](architecture/service-port-contracts.md)
 - [SQLite topology](architecture/sqlite-topology.md)
-- [Security and threat model](architecture/security.md)
+- [Security and threat model](architecture/security.md), with
+  [provider egress](architecture/provider-egress.md) as part of it
 - [Parser confinement](architecture/parser-confinement.md)
 - [Data privacy](architecture/data-privacy.md)
 - [AI trust boundary](architecture/ai-boundary.md)

@@ -623,3 +623,14 @@ at the owner's last visit, and `current_review_packages` gains
 ([ADR-0103](0103-keep-the-library-visit-on-the-server.md)). No stored
 document version moves. Every earlier application database is rejected before mutation
 and needs a clean rebuild; no adoption is supplied.
+
+Issue #1477 takes the clean-rebuild branch. The application database gains the
+append-only `owner_links` table, its sequence and no-update triggers and the
+`current_owner_links` view
+([ADR-0104](0104-owner-identity-links.md)). `metadata-report-v82` adds the
+report's `owner_link` facts; `fixed-conservative-v48`,
+`deterministic-shadow-decision-policy-v28`, `shadow-review-packet-v10`,
+`shadow-outcome-set-v12` and `cover-identity-report-v3` keep link-admitted
+evidence shadow-first. The decision-set, proposal-set and every review response
+version do not move. Every earlier application database is rejected before
+mutation and needs a clean rebuild; no adoption is supplied.

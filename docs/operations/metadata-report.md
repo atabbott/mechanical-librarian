@@ -281,6 +281,25 @@ name or each other. With no local ASIN, the first can drive one alternative
 work lane, which Audible alone asks after the asserted lane ends `no_match`. It
 gives recording authority only.
 
+### Owner links
+
+A work its owner linked to a record is read through the link first, on its
+own `link` lane ([ADR-0104](../architecture/decisions/0104-owner-identity-links.md)):
+a work link by its key, an edition link as its ISBN and a recording link as
+its ASIN. Edition links are re-checked against the stated format and
+recording links against the variant, runtime band and narrators; a record
+that fails is dropped. The report's `owner_link` records the outcome:
+`admitted`, `contradicted` with its reason, `unavailable`, `merged`,
+`missing`, `source_disabled` or `medium_changed`.
+
+An admitted link's record supplies the anchor, its work title and creators.
+The other sources get one anchored work lane instead of the local title and
+author lanes, and every title and creator comparison reads the anchor, so a
+record matching only the local values is not admitted. No work lane runs
+while the link is unread. A failed link lane is retried by provider recovery
+alone and first. Evidence only the link or its anchor admitted reaches review
+but decides nothing automatically.
+
 ### Work search ladder
 
 A work lane asks at most three rungs — normalized, subtitle-stripped,
@@ -529,7 +548,7 @@ incomplete.
 
 Open Library serves its older covers from the Internet Archive. Its cover
 request follows only that fixed two-redirect route (the boundary is in
-[security](../architecture/security.md#provider-cover-admission)), and an
+[security](../architecture/provider-egress.md#provider-cover-admission)), and an
 off-route redirect is `unsafe_remote`. Every cover source carries
 `final_host`: for a retrieved Open Library cover, the closed host family that
 served it (`covers.openlibrary.org`, `archive.org` or `us.archive.org`), and
