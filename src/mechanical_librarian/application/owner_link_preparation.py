@@ -11,7 +11,7 @@ and creators, and each provider's two observations become one.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from mechanical_librarian.application.metadata_report import (
     OWNER_LINK_MERGED_DIAGNOSTIC,
@@ -243,8 +243,41 @@ def resettled_owner_link(
     The retried lane was re-checked before it joined (`reason` names its
     failure, if any); every other link lane is the source's, already
     re-checked, so what each keeps is kept and the earlier contradiction
-    still counts.
+    still counts. An anchor the source read stays the anchor: the carried
+    main-phase lanes were asked and admitted against it, even when a record
+    the retry newly kept would come first (`owner_link_anchor_moved`).
     """
+    settled = _resettled(facts, providers, reason)
+    if (
+        facts.anchor is not None
+        and settled.outcome == OwnerLinkOutcome.ADMITTED.value
+        and settled.anchor != facts.anchor
+    ):
+        return replace(settled, anchor=facts.anchor)
+    return settled
+
+
+def owner_link_anchor_moved(
+    facts: OwnerLinkFacts,
+    providers: tuple[ProviderObservation, ...],
+    reason: str | None,
+) -> bool:
+    """Whether a fresh settlement would read another anchor than the source's.
+
+    The successor keeps the source's anchor; the work is then prepared afresh
+    so the next ordinary preparation asks every source with the anchor it
+    would read now.
+    """
+    return facts.anchor is not None and _resettled(
+        facts, providers, reason
+    ).anchor not in (None, facts.anchor)
+
+
+def _resettled(
+    facts: OwnerLinkFacts,
+    providers: tuple[ProviderObservation, ...],
+    reason: str | None,
+) -> OwnerLinkFacts:
     lookup = facts.lookup
     identity = owner_link_discovery_lane(lookup).identity
     lanes: list[ProviderLaneObservation] = []

@@ -124,9 +124,12 @@ about the work, and it should steer what preparation reads.
    change gives a new report and case on the next preparation. A failed link
    lane enrolls in provider recovery like any lane. The successor rebuilds it
    from the source report's own `owner_link` facts and retries it alone and
-   first. A main lane is retried under the anchored plan. When a successor
-   newly admits the link, its publication marks the work fresh and requests a
-   scan, so the next ordinary preparation runs the anchor. No cross-provider
+   first. A main lane is retried under the anchored plan. A successor keeps
+   the anchor its source read, because the carried main-phase lanes were
+   admitted against it. When a successor newly admits the link, or a fresh
+   settlement would read another anchor, its publication marks the work
+   fresh and requests a scan, so the next ordinary preparation runs the
+   anchor it reads then. No cross-provider
    fan-out runs inside the successor. Stored answers are reused as usual
    (ADR-0101). A timed re-search (ADR-0102) of a linked work uses the anchor.
 9. **Privacy and logging.** Operational events gain only the closed phase and

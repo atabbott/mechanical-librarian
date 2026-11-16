@@ -62,6 +62,7 @@ from mechanical_librarian.application.metadata_report import (
     with_lane_dispatch,
 )
 from mechanical_librarian.application.owner_link_preparation import (
+    owner_link_anchor_moved,
     phase_part,
     resettled_owner_link,
     settle_owner_link,
@@ -390,9 +391,14 @@ class GenerateProviderRetrySuccessor:
             def stage(bound: ReportRepository, report: MetadataReport) -> None:
                 self._after_publication(bound, report)
                 # A link the retry now admits has never anchored the other
-                # sources: the work is prepared afresh, in this transaction,
-                # and the next ordinary preparation runs the anchor (S22).
-                if owner_link_newly_admitted(source, report):
+                # sources, and one whose anchor a fresh settlement would move
+                # kept the source's for the lanes it carries: either way the
+                # work is prepared afresh, in this transaction, and the next
+                # ordinary preparation runs the anchor (S22).
+                if owner_link_newly_admitted(source, report) or (
+                    source.owner_link is not None
+                    and owner_link_anchor_moved(source.owner_link, providers, reason)
+                ):
                     self._owner_link_admitted(bound, report)
 
             published = repository.publish(

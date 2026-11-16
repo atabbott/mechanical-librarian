@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from contextlib import ExitStack
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -48,6 +49,10 @@ from mechanical_librarian.application.metadata_report import (
     TargetFile,
     TargetSnapshot,
     _audiobook_link_stands,
+)
+from mechanical_librarian.application.owner_link_preparation import (
+    owner_link_anchor_moved,
+    resettled_owner_link,
 )
 from mechanical_librarian.domain import proposal_set, reviewer_decision_summary
 from mechanical_librarian.domain.cover_evidence import (
@@ -539,3 +544,30 @@ def test_a_recording_link_the_anchored_search_also_finds_prepares(
     )
     assert linked.provenance is not None
     assert linked.provenance.designation is CoverDesignation.EXACT_EDITION
+
+
+def test_a_successor_keeps_the_anchor_its_carried_lanes_were_asked_with(
+    tmp_path: Path,
+) -> None:
+    # Codex P2-3 on #1938: a retried link lane that now keeps a record from
+    # a provider sorted first would settle another anchor than the one the
+    # carried main-phase lanes were admitted against, and publication failed
+    # on their lineage. The source's anchor stands, and the moved anchor asks
+    # for a fresh preparation instead.
+    asin = payload("audible_search")["products"][0]["asin"]
+    report = _audio_report(
+        tmp_path,
+        link=OwnerLinkTarget(OwnerLinkScope.RECORDING, "audible_catalog", asin, "A"),
+    )
+    facts = report.owner_link
+    assert facts is not None and facts.anchor == (AUDIO_TITLE, (AUDIO_AUTHOR,))
+    # As if the source had read its anchor from a record another provider
+    # kept while Audible's link lane was unavailable.
+    source = replace(facts, anchor=(AUDIO_TITLE, ("C. Halloway",)))
+    assert resettled_owner_link(source, report.providers, None).anchor == (
+        source.anchor
+    )
+    assert owner_link_anchor_moved(source, report.providers, None)
+    # Control: a source that read this anchor keeps it and asks for nothing.
+    assert resettled_owner_link(facts, report.providers, None) == facts
+    assert not owner_link_anchor_moved(facts, report.providers, None)
