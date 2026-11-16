@@ -54,7 +54,11 @@ about the work, and it should steer what preparation reads.
    the link: it names the identity at every Book matching level. An edition
    link is re-checked at every preparation against the format the record
    states. A recording link is re-checked with ADR-0088's variant, runtime band
-   and narrator gates, without exact work admission. A record that fails is
+   and narrator gates, without exact work admission. Its runtime must agree
+   positively: a product that states no runtime, or a file that states none,
+   does not confirm the link, and it reads `contradicted` with reason
+   `runtime`. That keeps the closed outcome set; "not confirmed" and
+   "disagrees" both leave the owner to look again. A record that fails is
    dropped and the link reads `contradicted` with its reason (`format`,
    `variant`, `runtime` or `narrators`). The report's `owner_link` facts record
    medium, scope, provider, identity, outcome, reason and anchor, bound by the

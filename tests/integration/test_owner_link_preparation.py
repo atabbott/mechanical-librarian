@@ -499,7 +499,7 @@ def test_an_edition_link_is_asked_on_its_own_lane_and_re_checked(
     )
 
 
-def _audnexus(runtime_minutes: int) -> AudnexusMetadataProvider:
+def _audnexus(runtime_minutes: int | None) -> AudnexusMetadataProvider:
     def handle(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/chapters"):
             return httpx.Response(404, json={})
@@ -508,8 +508,12 @@ def _audnexus(runtime_minutes: int) -> AudnexusMetadataProvider:
             json={
                 "asin": request.url.path.split("/")[2],
                 "title": LINKED_TITLE,
-                "runtimeLengthMin": runtime_minutes,
                 "authors": [{"name": LINKED_AUTHOR}],
+                **(
+                    {}
+                    if runtime_minutes is None
+                    else {"runtimeLengthMin": runtime_minutes}
+                ),
             },
         )
 
@@ -526,7 +530,7 @@ def _audnexus(runtime_minutes: int) -> AudnexusMetadataProvider:
     )
 
 
-def _recording_report(tmp_path: Path, minutes: int) -> MetadataReport:
+def _recording_report(tmp_path: Path, minutes: int | None) -> MetadataReport:
     path = _store(tmp_path)
     _link(
         path,
@@ -576,10 +580,13 @@ def _recording_report(tmp_path: Path, minutes: int) -> MetadataReport:
     [
         pytest.param(970, "admitted", None, id="inside-runtime-band"),
         pytest.param(500, "contradicted", "runtime", id="outside-runtime-band"),
+        # Codex P2-2 on #1938: a product that states no runtime corroborates
+        # nothing, so the link is not confirmed (ADR-0104 decision 4).
+        pytest.param(None, "contradicted", "runtime", id="no-runtime-stated"),
     ],
 )
 def test_a_recording_link_is_re_checked_against_the_files_runtime(
-    tmp_path: Path, minutes: int, outcome: str, reason: str | None
+    tmp_path: Path, minutes: int | None, outcome: str, reason: str | None
 ) -> None:
     report = _recording_report(tmp_path, minutes)
     facts = report.owner_link

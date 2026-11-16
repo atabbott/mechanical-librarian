@@ -21,6 +21,8 @@ from typing import Final
 
 from mechanical_librarian.domain.audiobook_corroboration import (
     candidate_narrator_disjoint,
+    candidate_runtime_seconds,
+    local_claim_runtime_seconds,
 )
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
@@ -416,8 +418,8 @@ def owner_link_contradiction(
 
     The owner chose the record; the file still has a say. An edition link's
     record must not state a print format for the linked ISBN, and a recording
-    link's product must be a whole recording inside the runtime band (its
-    lane already demoted one that is not), of no other variant, crediting a
+    link's product must state a runtime inside the band of the file's own
+    (its lane already demoted one outside it), of no other variant, crediting a
     narrator the recording's own credits name. A work link is never
     re-checked here: its record is the work, whatever the file's edition.
     """
@@ -433,8 +435,14 @@ def owner_link_contradiction(
         candidate, local_claims, work_title, library_languages, echoed_languages
     ):
         return OwnerLinkContradiction.VARIANT
-    if identifier_only_candidate(candidate) or not edition_marketplace_evidence(
-        candidate
+    # The runtime must agree positively: a product that states no runtime, or
+    # a file that states none, corroborates nothing, so the link is not
+    # confirmed and reads contradicted on its runtime (ADR-0104 decision 4).
+    if (
+        identifier_only_candidate(candidate)
+        or not edition_marketplace_evidence(candidate)
+        or candidate_runtime_seconds(candidate) is None
+        or local_claim_runtime_seconds(local_claims) is None
     ):
         return OwnerLinkContradiction.RUNTIME
     if candidate_narrator_disjoint(candidate, local_claims, echoed_narrators):

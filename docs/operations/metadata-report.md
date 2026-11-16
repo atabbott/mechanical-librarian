@@ -287,8 +287,8 @@ A work its owner linked to a record is read through the link first, on its
 own `link` lane ([ADR-0104](../architecture/decisions/0104-owner-identity-links.md)):
 a work link by its key, an edition link as its ISBN and a recording link as
 its ASIN. Edition links are re-checked against the stated format and
-recording links against the variant, runtime band and narrators; a record
-that fails is dropped. The report's `owner_link` records the outcome:
+recording links against the variant, a stated runtime inside the band and
+the narrators; a record that fails is dropped. The report's `owner_link` records the outcome:
 `admitted`, `contradicted` with its reason, `unavailable`, `merged`,
 `missing`, `source_disabled` or `medium_changed`.
 
