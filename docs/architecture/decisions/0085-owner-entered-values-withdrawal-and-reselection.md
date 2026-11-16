@@ -5,7 +5,7 @@
 - Owners: project maintainers
 - Supersedes: none
 - Superseded by: none
-- Amended by: [ADR-0104](0104-going-back-after-a-write.md) (proposed: the
+- Amended by: [ADR-0105](0105-going-back-after-a-write.md) (proposed: the
   owner may clear four fields and enter names, the written value is current on
   the writing case, and a clear holds its field and can be pinned)
 

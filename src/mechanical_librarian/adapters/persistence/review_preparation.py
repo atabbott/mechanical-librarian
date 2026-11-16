@@ -926,6 +926,22 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         )
         return cast(str, row[0])
 
+    def mark_owner_link_work_fresh(self, report: MetadataReport) -> None:
+        """Prepare a successor's work afresh once its owner link admits (#1477).
+
+        Runs inside the successor's publication transaction, beside its
+        staging: the next scan prepares the work rather than carry the
+        successor forward, so the link's anchor reaches every other source.
+        """
+        if not self._connection.in_transaction or type(report) is not MetadataReport:
+            raise MetadataReportError("provider retry staging is invalid")
+        mark_preparation_work_fresh(
+            self._connection,
+            report.target.connection,
+            report.target.library,
+            report.target.item,
+        )
+
     @local_operation
     def provider_retry_work_id(self, report_id: str) -> str:
         try:

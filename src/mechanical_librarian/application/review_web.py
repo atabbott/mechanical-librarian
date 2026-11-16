@@ -3408,7 +3408,7 @@ def _owner_control(
     the store still decides, and refuses a stale panel inline (ADR-0085).
     ``pinned`` is the value a changed pin keeps, suggested like the previous
     one (ADR-0085, Amendment 2). Names entry reaches authors, and narrators on
-    an audiobook; a clearable field also takes an empty value (ADR-0104).
+    an audiobook; a clearable field also takes an empty value (ADR-0105).
     """
     destination = cast(str, proposal["destination"])
     # On the case that wrote the field, what it wrote is current (#1523, S5).

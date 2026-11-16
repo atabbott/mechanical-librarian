@@ -342,7 +342,7 @@ or that field's name. Title and authors cannot be empty. Character and name
 counts show only past a limit. Recording, or choosing Withdraw on an
 unwritten decision, keeps focus on the field
 ([ADR-0085](../architecture/decisions/0085-owner-entered-values-withdrawal-and-reselection.md),
-[ADR-0104](../architecture/decisions/0104-going-back-after-a-write.md)).
+[ADR-0105](../architecture/decisions/0105-going-back-after-a-write.md)).
 
 A recorded field keeps its choices, and a new choice adds a decision. You
 cannot replace a decision while its write is in progress, or once a cover write

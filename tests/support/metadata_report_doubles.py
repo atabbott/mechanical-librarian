@@ -27,6 +27,7 @@ from mechanical_librarian.domain.metadata_report import (
     LocalClaim,
     MetadataReport,
 )
+from mechanical_librarian.domain.owner_link import OwnerLink
 
 
 class FakeTarget:
@@ -185,6 +186,7 @@ class FakeReportRepository:
     def __init__(self) -> None:
         self.values: dict[str, str] = {}
         self.closed = False
+        self.owner_link: OwnerLink | None = None
 
     def publish(
         self, report: MetadataReport, currentness, expected_current=None
@@ -211,6 +213,12 @@ class FakeReportRepository:
     ) -> tuple[str, str, str] | None:
         """No automatic switch was ever kept here (#1363)."""
         return None
+
+    def current_owner_link(
+        self, connection: str, library: str, item: str
+    ) -> OwnerLink | None:
+        """The link a test set on this double, if any (#1477)."""
+        return self.owner_link
 
     def close(self) -> None:
         self.closed = True

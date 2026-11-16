@@ -1,4 +1,4 @@
-"""Clearing a field and entering names against a real store (#1523, ADR-0104).
+"""Clearing a field and entering names against a real store (#1523, ADR-0105).
 
 Every write goes through the guarded path over the fake library, so a clear is
 shown planned with an empty desired value, written, read back and held, and a

@@ -14,7 +14,7 @@ import { destinationLabel } from '../src/labels'
 import { SettledFieldContext } from '../src/routes/FieldDecisionOutcome'
 import { createHttp, detail, library, recordedAcknowledgement, renderRoute } from './fixtures'
 
-// Clearing a field and entering names in the browser (#1523, ADR-0104): an
+// Clearing a field and entering names in the browser (#1523, ADR-0105): an
 // emptied form clears a clearable field with one press; names are one per line.
 type Field = CaseDetailView['fields'][number]
 const base = detail.fields[0]

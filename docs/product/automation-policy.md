@@ -58,7 +58,7 @@ Amendment 1). Withdrawing a decision removes the hold it set. Clearing a
 subtitle, publisher, genres or narrators is an answer like any other: it holds
 the field and ends a pin on it, and the cleared field can be pinned, so a
 source still offering a value does not ask again
-([ADR-0104](../architecture/decisions/0104-going-back-after-a-write.md)).
+([ADR-0105](../architecture/decisions/0105-going-back-after-a-write.md)).
 
 ### Pinned fields
 
@@ -199,6 +199,15 @@ offered only in fields Automatic does not decide, and they never take part in
 an automatic choice until the owner-run qualification in #1418 passes. Edition
 details always need a confirmed match
 ([ADR-0096](../architecture/decisions/0096-owner-chosen-work-identity-strictness.md)).
+
+A work you linked to a source record is read through that link, and the
+record's title and authors replace the file's own when other sources are
+asked ([ADR-0104](../architecture/decisions/0104-owner-identity-links.md)).
+Values that only the link, or that anchor, brought in are offered for you to
+choose at every Book matching level. They take no part in an automatic choice,
+cover switch or description fill, and never supply an ISBN or ASIN, until the
+link rules pass their own qualification (#1479). The shadow record notes what
+Automatic would have chosen.
 
 Agreement counts only between independent sources. Several metadata sources
 repeating one upstream record are one source, and so are package metadata and

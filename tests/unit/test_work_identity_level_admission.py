@@ -164,6 +164,7 @@ def _report(
         providers=(provider,),
         identifier_evidence=identifier_evidence,
         local_claims=(),
+        owner_link=None,
     )
     return cast("MetadataReport", report), cast("ProviderObservation", provider)
 
@@ -376,6 +377,7 @@ def _refused_set(
         providers=(provider,),
         identifier_evidence=(),
         local_claims=(),
+        owner_link=None,
     )
     return cast("MetadataReport", report), cast("ProviderObservation", provider)
 

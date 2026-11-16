@@ -130,6 +130,7 @@ def test_the_books_document_is_pinned_and_every_document_is_closed() -> None:
     }
     assert {
         "_AUDIO_EDITIONS_QUERY",
+        "_BOOK_BY_ID_QUERY",
         "_BOOKS_QUERY",
         "_EDITION_COVERS_QUERY",
         "_ISBN_QUERY",

@@ -294,7 +294,9 @@ def retained_report_as_current(document: str) -> MetadataReport:
     report's sources hold none (#1853). v81 added each provider's
     `identity_refused_candidates` and `identity_refused_truncated` and each
     lane's `identity_refused_new`: empty and zero here, since an earlier
-    producer kept nothing of a refused WORK answer (#1355).
+    producer kept nothing of a refused WORK answer (#1355). v82 added the
+    report's `owner_link`: null here, since a v49 item had no owner link
+    (#1477).
     """
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(document)
@@ -304,6 +306,7 @@ def retained_report_as_current(document: str) -> MetadataReport:
     data["comparison_version"] = COMPARISON_VERSION
     data["library_languages"] = []
     data["companion"] = None
+    data["owner_link"] = None
     data["local"]["cover_recovery"] = None
     for cover in data["covers"]:
         cover["final_host"] = (

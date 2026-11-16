@@ -61,7 +61,7 @@ VALUE_OUTCOMES = frozenset({"accept", "owner_entered"})
 OWNER_TEXT_DESTINATIONS = ("title", "subtitle", "publisher")
 OWNER_SUBSET_DESTINATION = "genres"
 # Authors on both media and narrators on audiobooks take a list of names, one
-# per line, in the owner's order (ADR-0104).
+# per line, in the owner's order (ADR-0105).
 OWNER_NAMES_DESTINATIONS = ("authors", "narrators")
 OWNER_ENTRY_DESTINATIONS = (
     *OWNER_TEXT_DESTINATIONS,
@@ -72,7 +72,7 @@ OWNER_TEXT_MAXIMUM = 512
 OWNER_SUBSET_MAXIMUM = 32
 OWNER_NAMES_MAXIMUM = 32
 # These refuse an empty owner value as required: identity admission and
-# provider searches read them (ADR-0104).
+# provider searches read them (ADR-0105).
 OWNER_REQUIRED_DESTINATIONS = frozenset({"title", "authors"})
 # An owner's clear: the one closed empty envelope, only on `owner_entered`.
 EMPTY_VALUE: Final[Mapping[str, object]] = {"kind": EMPTY_DECISION_KIND, "value": None}
@@ -433,7 +433,7 @@ def owner_value_admitted(proposal: Mapping[str, object]) -> bool:
 def owner_entry_admitted(proposal: Mapping[str, object], media_kind: str) -> bool:
     """Whether owner entry reaches this field on a case of this medium.
 
-    Narrators are entered on audiobooks only (ADR-0104).
+    Narrators are entered on audiobooks only (ADR-0105).
     """
     return owner_value_admitted(proposal) and (
         proposal.get("destination") != "narrators" or media_kind == "audiobook"
@@ -445,7 +445,7 @@ def empty_owner_value(selected_value: object) -> bool:
 
     Only the closed empty envelope is a clear; an empty text or list is the
     same intent, which a field that cannot be emptied refuses as required and
-    any other field refuses as invalid, never rewritten (ADR-0104).
+    any other field refuses as invalid, never rewritten (ADR-0105).
     """
     return type(selected_value) is dict and (
         selected_value.get("kind") == EMPTY_DECISION_KIND
@@ -492,7 +492,7 @@ def genre_subset_available(
     proposal: Mapping[str, object], current: object, previous: object = None
 ) -> bool:
     options = list_union(proposal, current, previous)
-    # A single current genre is offered too, so it can be cleared (ADR-0104).
+    # A single current genre is offered too, so it can be cleared (ADR-0105).
     return (
         owner_value_admitted(proposal)
         and proposal.get("destination") == OWNER_SUBSET_DESTINATION
@@ -611,7 +611,7 @@ def chosen_value_fingerprint(destination: str, selected_value: object) -> str:
     (ADR-0085, Amendment 2).
     """
     value = project_decision_value(destination, selected_value)
-    # A chosen clear is pinned as the one empty state (ADR-0104).
+    # A chosen clear is pinned as the one empty state (ADR-0105).
     state = "empty" if value is None else "value"
     return _sha256(
         _canonical({"destination": destination, "state": state, "value": value})

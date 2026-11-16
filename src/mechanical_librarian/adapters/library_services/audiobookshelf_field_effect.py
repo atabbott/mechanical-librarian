@@ -37,7 +37,7 @@ from mechanical_librarian.domain.field_effect import (
 )
 
 # Every form Audiobookshelf leaves an empty field in reads as no value: `null`,
-# an empty string, an absent key and an empty list (#1523, ADR-0104).
+# an empty string, an absent key and an empty list (#1523, ADR-0105).
 _EMPTY_FORMS: tuple[object, ...] = (None, "", [])
 
 

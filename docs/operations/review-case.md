@@ -32,7 +32,7 @@ before. A kept case adds no Attention fact except a pinned field whose value
 changed, and preparation asks no cover or description advice for it. An
 actionable result replaces it as usual. The first scan of the unchanged work
 once the write is 30 days old sends it back to admission, which retires the
-case ([ADR-0104](../architecture/decisions/0104-going-back-after-a-write.md)).
+case ([ADR-0105](../architecture/decisions/0105-going-back-after-a-write.md)).
 
 A scheduled search whose proposals equal the current case's, that fails at a
 provider, or that now identifies nothing never reaches admission

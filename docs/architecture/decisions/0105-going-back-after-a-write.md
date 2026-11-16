@@ -1,4 +1,4 @@
-# ADR-0104: Going back after a write
+# ADR-0105: Going back after a write
 
 - Status: proposed
 - Date: 2026-11-16

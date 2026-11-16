@@ -159,7 +159,7 @@ export const choiceSelected = (
     commandSelected(progress?.command ?? null, field.destination, outcome, selectedValue)) ||
   ((progress === null || progress.phase === 'failed') &&
     recordedSelected(field, outcome, selectedValue))
-// Fields an owner may leave empty (ADR-0104); the store's own list.
+// Fields an owner may leave empty (ADR-0105); the store's own list.
 const CLEARABLE: readonly TargetDestination[] = ['subtitle', 'publisher', 'genres', 'narrators']
 const emptyRaw = (value: unknown) =>
   value === null ||
@@ -201,7 +201,7 @@ export const noWayBack = (field: ReviewField) =>
 // library's, so it reads Before your change, and pressing it writes that value
 // back. It is left out where owner entry already offers the same way back, and
 // where there is none: nothing to restore and a field that can't be emptied
-// (#1523, ADR-0104).
+// (#1523, ADR-0105).
 export const keepCard = (field: ReviewField): 'keep' | 'before' | null =>
   !field.decisionActions.includes('keep_current')
     ? null

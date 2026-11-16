@@ -605,7 +605,7 @@ class _ProposedValue(_ClosedModel):
 
 
 class _EmptyValue(_ClosedModel):
-    """An owner's clear: it empties the field and carries no value (ADR-0104)."""
+    """An owner's clear: it empties the field and carries no value (ADR-0105)."""
 
     kind: Literal["empty"]
     value: None
@@ -981,7 +981,7 @@ class _OwnerSubset(_ClosedModel):
 
 
 class _OwnerNames(_ClosedModel):
-    """Names entry, one per line in the owner's order (ADR-0104).
+    """Names entry, one per line in the owner's order (ADR-0105).
 
     It opens with the field's current names; `previous` is what the field
     held before its latest verified write, when that was a list of names.
@@ -998,7 +998,7 @@ class _OwnerControl(_ClosedModel):
     """F59's owner controls for one field; each part is offered or null.
 
     `current` is the value owner entry compares with, raw: the case's value,
-    or on the case that wrote the field, the written value (ADR-0104). `clear`
+    or on the case that wrote the field, the written value (ADR-0105). `clear`
     says an empty value is accepted here.
     """
 

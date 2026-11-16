@@ -47,7 +47,7 @@ SUPPORTED_DESTINATIONS = (
 )
 # Owner entry may empty exactly these fields, and a plan carries an empty
 # desired value (`None`, distinct from a missing key) only for them and only
-# under an owner's authority (ADR-0104). Title and authors are never emptied:
+# under an owner's authority (ADR-0105). Title and authors are never emptied:
 # identity admission and provider searches read them.
 CLEARABLE_DESTINATIONS = frozenset({"subtitle", "publisher", "genres", "narrators"})
 # The closed envelope of an owner's clear; it carries no value.
@@ -215,7 +215,7 @@ def project_decision_value(destination: str, value: object) -> object:
     if type(value) is not dict or set(value) != {"kind", "value"}:
         raise FieldEffectError("invalid_decision_value")
     if value["kind"] == EMPTY_DECISION_KIND:
-        # An owner's clear projects to the empty target value (ADR-0104).
+        # An owner's clear projects to the empty target value (ADR-0105).
         if destination not in CLEARABLE_DESTINATIONS or value["value"] is not None:
             raise FieldEffectError("invalid_decision_value")
         return None

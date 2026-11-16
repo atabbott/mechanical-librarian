@@ -893,7 +893,7 @@ def test_keep_current_is_admitted_on_a_description_every_source_repeats() -> Non
     assert empty.value.code == "unsupported"
 
 
-# --- going back, clearing and names (#1523, ADR-0104) --------------------------
+# --- going back, clearing and names (#1523, ADR-0105) --------------------------
 
 _EMPTY = {"kind": "empty", "value": None}
 

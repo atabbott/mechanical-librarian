@@ -624,6 +624,17 @@ at the owner's last visit, and `current_review_packages` gains
 document version moves. Every earlier application database is rejected before mutation
 and needs a clean rebuild; no adoption is supplied.
 
+Issue #1477 takes the clean-rebuild branch. The application database gains the
+append-only `owner_links` table, its sequence and no-update triggers and the
+`current_owner_links` view
+([ADR-0104](0104-owner-identity-links.md)). `metadata-report-v82` adds the
+report's `owner_link` facts; `fixed-conservative-v48`,
+`deterministic-shadow-decision-policy-v28`, `shadow-review-packet-v10`,
+`shadow-outcome-set-v12` and `cover-identity-report-v3` keep link-admitted
+evidence shadow-first. The decision-set, proposal-set and every review response
+version do not move. Every earlier application database is rejected before
+mutation and needs a clean rebuild; no adoption is supplied.
+
 Issue #1523 takes the clean-rebuild branch. `human-decision-v6` admits the
 owner's clear, the closed valueless `empty` kind on `owner_entered` only, and
 names for authors and narrators, so a v5 document is refused. The
@@ -631,7 +642,7 @@ names for authors and narrators, so a v5 document is refused. The
 closed kind, and the `empty` kind carries no value and appears only on an
 `owner_entered` row. Both `review_case_transitions` `CHECK`s admit the reason
 `recent_write`, only on an `admitted` or `superseded` row
-([ADR-0104](0104-going-back-after-a-write.md)). The proposal set, metadata
+([ADR-0105](0105-going-back-after-a-write.md)). The proposal set, metadata
 report, field-effect plan, manual hold and Library versions do not move. Every
 earlier application database is rejected before mutation and needs a clean
 rebuild; no adoption is supplied.

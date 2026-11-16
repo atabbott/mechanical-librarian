@@ -6268,7 +6268,7 @@
       },
       "_EmptyValue": {
         "additionalProperties": false,
-        "description": "An owner's clear: it empties the field and carries no value (ADR-0104).",
+        "description": "An owner's clear: it empties the field and carries no value (ADR-0105).",
         "properties": {
           "kind": {
             "const": "empty",
@@ -8447,7 +8447,7 @@
       },
       "_OwnerControl": {
         "additionalProperties": false,
-        "description": "F59's owner controls for one field; each part is offered or null.\n\n`current` is the value owner entry compares with, raw: the case's value,\nor on the case that wrote the field, the written value (ADR-0104). `clear`\nsays an empty value is accepted here.",
+        "description": "F59's owner controls for one field; each part is offered or null.\n\n`current` is the value owner entry compares with, raw: the case's value,\nor on the case that wrote the field, the written value (ADR-0105). `clear`\nsays an empty value is accepted here.",
         "properties": {
           "clear": {
             "title": "Clear",
@@ -8555,7 +8555,7 @@
       },
       "_OwnerNames": {
         "additionalProperties": false,
-        "description": "Names entry, one per line in the owner's order (ADR-0104).\n\nIt opens with the field's current names; `previous` is what the field\nheld before its latest verified write, when that was a list of names.",
+        "description": "Names entry, one per line in the owner's order (ADR-0105).\n\nIt opens with the field's current names; `previous` is what the field\nheld before its latest verified write, when that was a list of names.",
         "properties": {
           "max_characters": {
             "const": 512,

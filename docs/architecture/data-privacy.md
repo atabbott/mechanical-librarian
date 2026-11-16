@@ -33,8 +33,20 @@ Where each store lives is in [SQLite topology](sqlite-topology.md).
   closed codes, and the values recorded but not believed: Libation shadow
   values and, for a sidecar that starts with a byte-order mark, what a reading
   without the mark adds. Never a path, excerpt or association text.
+- for a work its owner linked to a provider record, the link facts the
+  preparation used: medium, scope, provider, the stored record identity, the
+  closed outcome and reason, and the anchor title and creators read from that
+  record, bound by the link's digest.
 
 Cover originals and previews are stored once per digest in the artifact store.
+
+**Owner links.** Each link, replacement and withdrawal is an append-only row
+keyed by connection, library and item ID: the scope, source and record
+identity, the record's title and at most ten creators as the owner chose it,
+the acting account, the time, a request digest and the link digest. A
+withdrawal keeps no record value. Rows are never updated or deleted; a clean
+rebuild removes them with the rest of the store
+([ADR-0104](decisions/0104-owner-identity-links.md)).
 
 **Provider answers.** `/data/private/provider-responses.sqlite` keeps each
 success body a provider returned for an observation that ended clean, so a
@@ -60,7 +72,7 @@ consent, state, attempts and failure codes. Owner-entered names are kept like
 owner-entered text; a clear stores no value. A work written in the last 30
 days keeps its current case when nothing is left to decide, holding no more
 than any case
-([ADR-0104](decisions/0104-going-back-after-a-write.md)). Activity events are
+([ADR-0105](decisions/0105-going-back-after-a-write.md)). Activity events are
 append-only.
 
 **The Library visit.** One row keeps how far Library's listing had got at the

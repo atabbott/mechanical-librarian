@@ -145,7 +145,7 @@ containment, completed-ledger recovery, and two-lane independence. The
 exact-artifact qualifier proves the installed review server, generated OpenAPI,
 full public suite, and static architecture boundary.
 
-## Amendment: a kept case expires through the unchanged-work branch (#1523, ADR-0104, proposed)
+## Amendment: a kept case expires through the unchanged-work branch (#1523, ADR-0105, proposed)
 
 An unchanged later scan still reuses completed state, with one exception. When
 the work's current case was kept only for a recent write (transition reason
@@ -156,4 +156,4 @@ because nothing is actionable. Reuse no longer projects a kept case again for
 a pending description or a cover compared under another policy, since a kept
 case takes no part in either. A kept case therefore lasts until the first scan
 of the work once its 30 days have passed
-([ADR-0104](0104-going-back-after-a-write.md)).
+([ADR-0105](0105-going-back-after-a-write.md)).

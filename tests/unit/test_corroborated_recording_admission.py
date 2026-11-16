@@ -757,9 +757,13 @@ def test_the_leading_number_rung_stays_inside_the_dispatch_bound() -> None:
 # -- refused products ---------------------------------------------------------
 
 
-def _fed_report(
-    product: ProviderCandidate, *, title: str = "Synthetic Journey"
-) -> MetadataReport:
+def _fed_lane(
+    product: ProviderCandidate,
+    *,
+    title: str = "Synthetic Journey",
+    anchored: bool = False,
+    anchor: tuple[str, tuple[str, ...]] | None = None,
+) -> Any:
     asin = product.identity.rsplit("-", 1)[1]
     asserted = LocalClaim.create(
         kind=ClaimKind.ASIN,
@@ -781,30 +785,45 @@ def _fed_report(
     snapshot = m.TargetSnapshot("audiobook", title, (), fields=fields)
     claims = (target_title_claim(title), asserted, local_runtime_claim(_RUNTIME))
     plan = m.audiobook_discovery_plan(
-        snapshot, claims, audio=single_track_audio_facts()
+        snapshot,
+        claims,
+        audio=single_track_audio_facts(),
+        anchored=anchored,
+        anchor=anchor,
     )
     feed = m.audiobook_asin_feed_plan(snapshot, plan, ())
     assert feed is not None
     (lane,) = feed.lanes
-    lane_answer = m.qualify_provider_lane(
-        ProviderObservation(
-            "enrichment",
-            ProviderStatus.CANDIDATES,
-            (),
-            (finalize_candidate_comparisons(product, claims, "enrichment"),),
-            ProviderQueryKind.ASIN,
-            "audnexus",
-        ),
-        m.MetadataLookup(
-            ProviderQueryKind.ASIN,
-            feed.local_claims,
-            audio=feed.audio,
-            work_title=feed.work_title,
-            work_authors=feed.work_authors,
-            requested_asin=lane.canonical_asin,
-            recording_corroboration=feed.recording_corroboration,
+    return (
+        fields,
+        claims,
+        lane,
+        m.qualify_provider_lane(
+            ProviderObservation(
+                "enrichment",
+                ProviderStatus.CANDIDATES,
+                (),
+                (finalize_candidate_comparisons(product, claims, "enrichment"),),
+                ProviderQueryKind.ASIN,
+                "audnexus",
+            ),
+            m.MetadataLookup(
+                ProviderQueryKind.ASIN,
+                feed.local_claims,
+                audio=feed.audio,
+                work_title=feed.work_title,
+                work_authors=feed.work_authors,
+                requested_asin=lane.canonical_asin,
+                recording_corroboration=feed.recording_corroboration,
+            ),
         ),
     )
+
+
+def _fed_report(
+    product: ProviderCandidate, *, title: str = "Synthetic Journey"
+) -> MetadataReport:
+    fields, claims, lane, lane_answer = _fed_lane(product, title=title)
     qualified = lane_answer.observation
     observation = m.provider_observation(
         "enrichment",
@@ -881,6 +900,30 @@ def test_an_admitted_fed_product_retains_nothing_refused() -> None:
     assert {ClaimKind.TITLE} <= {
         claim.kind for claim in report.providers[0].candidates[0].claims
     }
+
+
+@pytest.mark.parametrize(
+    ("anchor", "admitted"),
+    [
+        pytest.param(None, False, id="no-anchor-read"),
+        pytest.param(("Distant Harbour", (_AUTHOR,)), True, id="anchor"),
+    ],
+)
+def test_a_standing_link_admits_a_fed_product_only_against_its_anchor(
+    anchor: tuple[str, tuple[str, ...]] | None, admitted: bool
+) -> None:
+    # #1477 finding 4: while the owner's link stands, an asserted ASIN's
+    # product is admitted against the linked record's work, and against
+    # nothing while no anchor was read. The file's own title never admits.
+    local = _enrichment("enrichment-B000000007", "Synthetic Journey")
+    linked = _enrichment("enrichment-B000000007", "Distant Harbour")
+    # A refused product stays only as an ASIN stub beside its refusal.
+    *_, unlinked = _fed_lane(local)
+    assert not unlinked.observation.refused_products  # Control: local admits.
+    *_, answer = _fed_lane(local, anchored=True, anchor=anchor)
+    assert answer.observation.refused_products
+    *_, answer = _fed_lane(linked, anchored=True, anchor=anchor)
+    assert (not answer.observation.refused_products) is admitted
 
 
 def _carried_report(product: ProviderCandidate, narrators: tuple[str, ...]) -> Any:

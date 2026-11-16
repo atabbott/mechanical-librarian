@@ -20,7 +20,7 @@ import { PinButton } from './FieldDecisionPin'
 // F59's owner controls (ADR-0085): enter a value, choose genres, enter names
 // and withdraw a decision. Going back to an earlier value is choosing it
 // again, from the same suggestions; emptying a clearable field clears it
-// (ADR-0104). Each is offered only where the store would accept it now; the
+// (ADR-0105). Each is offered only where the store would accept it now; the
 // store still decides, and a refusal is said here, beside the control used.
 export type OwnerOutcome = 'owner_entered' | 'withdraw'
 const ownerText = (value: string) => value.normalize('NFC').replace(/\s+/gu, ' ').trim()
@@ -146,7 +146,7 @@ export function OwnerControls({
   // from the field's current value; each refusal says which it matched (#1523).
   const standing = changing && !recordedClear ? (recordedValue?.value ?? null) : null
   // An emptied form clears a clearable field that holds a value, unless the
-  // owner's standing value is already a clear (ADR-0104).
+  // owner's standing value is already a clear (ADR-0105).
   const clearing = (empty: boolean) => control.clear && empty && !currentEmpty && !recordedClear
   // An emptied form that clears nothing says why, or what to enter (#1523).
   const emptied = (remedy: string) =>

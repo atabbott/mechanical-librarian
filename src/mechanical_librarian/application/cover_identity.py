@@ -51,6 +51,7 @@ from mechanical_librarian.domain.proposal_set import (
     LevelAdmissionRecord,
     candidate_title_and_creator_evidence,
     level_contradiction,
+    owner_link_reached,
     provider_candidate_bound_identifiers,
     provider_candidate_level_admission,
     provider_candidate_represents_target_recording,
@@ -60,7 +61,7 @@ from mechanical_librarian.domain.work_identity_levels import (
     WorkIdentityLevel,
 )
 
-SCHEMA_VERSION = "cover-identity-report-v2"
+SCHEMA_VERSION = "cover-identity-report-v3"
 _OUTCOMES = frozenset(
     {
         "verified_manifestation_match",
@@ -117,6 +118,7 @@ _CLASSIFIER_RULES = (
     "level-title-and-creator-nested-author-lists:own-list-comparison",
     "level-title-and-creator-overlapping-author-lists:level-refused",
     "level-contradiction-gate-per-level:exact-and-wide-apart",
+    "owner-link-or-anchor-admitted-records-only:plausible-owner-link-unqualified",
 )
 CLASSIFIER_REFERENCE = (
     "cover_identity_classifier_"
@@ -463,6 +465,13 @@ def _classify_sources(
                 )
     if not matches:
         return "unknown", ["unbound_provider_identity"], []
+    # A cover whose every record only the owner's link or its anchor kept is
+    # shadow-first (#1477, S26): it never verifies, so no switch or automatic
+    # cover mode can bind it until the link rules qualify.
+    if all(
+        owner_link_reached(report, match[1], match[2]) is not None for match in matches
+    ):
+        return "plausible_match", ["owner_link_unqualified"], []
     if all(_listed(match[0]) for match in matches):
         return _classify_listed_edition(report, matches, level)
     evidence: list[str] = []

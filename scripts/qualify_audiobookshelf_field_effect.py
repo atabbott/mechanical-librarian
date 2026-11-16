@@ -935,7 +935,7 @@ def _audiobook_canary(
     }
 
 
-# What the owner enters on the audiobook, field by field (#1523, ADR-0104). Each
+# What the owner enters on the audiobook, field by field (#1523, ADR-0105). Each
 # is written, then the field goes back to the value the write replaced, and a
 # clearable field that still holds a value is then cleared.
 OWNER_VALUE_ENTRIES: tuple[tuple[str, object], ...] = (
@@ -1785,7 +1785,7 @@ def _installed_going_back(
     no empty previous value is offered, and the field takes the empty value.
     The owner pins the clear; once it is written, a scan in which a source
     still proposes a subtitle keeps the field held, pinned and out of
-    Attention (#1523, ADR-0104).
+    Attention (#1523, ADR-0105).
     """
     case_id, _ = current_case()
     if case_id is None:

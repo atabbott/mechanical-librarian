@@ -474,8 +474,8 @@ _PROVIDER_EVENT_FIELDS: dict[str, FieldCheck] = {
     "adapter": one_of(*(value for value in PROVIDER_AUTHORITIES if value)),
     "provider": matching(re.compile(r"[a-z][a-z0-9_-]{0,63}")),
     "item_ref": matching(re.compile(r"item-[0-9a-f]{16}")),
-    "phase": one_of("discovery", "asin_feed", "recovery"),
-    "lane_kind": one_of("isbn", "work", "asin", "mixed"),
+    "phase": one_of("discovery", "link", "asin_feed", "recovery"),
+    "lane_kind": one_of("isbn", "work", "asin", "link", "mixed"),
     "query_family": one_of("identifier", "asserted", "path_leaf", "title_tag", "mixed"),
     "outcome_class": one_of(
         "held", *(value.value for value in FailureCategory), *RECOVERY_OUTCOMES

@@ -12,7 +12,7 @@ provider's published guidance.
 | Open Library | 2 (one retry) | 49 (at most 4 retries) | 500, 502, 503, 504 and transient transport failures | Never retried |
 
 The full provider egress and retry contract, including the other providers, is
-in [security: metadata providers](../architecture/security.md#metadata-providers).
+in [security: metadata providers](../architecture/provider-egress.md#metadata-providers).
 Per-provider request ceilings are in
 [metadata report: provider limits](../operations/metadata-report.md#provider-limits).
 

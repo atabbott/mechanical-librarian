@@ -141,7 +141,7 @@ Each lineage change is an append-only transition: `admitted`, `superseded`,
 `no_case`, `retired` or `tombstoned`, with a closed reason. An admitted or
 superseded case is `actionable`, or `recent_write`: nothing is actionable but
 the work's latest verified write is under 30 days old, so the case is kept
-for going back ([ADR-0104](decisions/0104-going-back-after-a-write.md)).
+for going back ([ADR-0105](decisions/0105-going-back-after-a-write.md)).
 `nonactionable` retires a case or makes none, `absent` tombstones one, and
 `ineligible` and `policy_changed` retire one. Admitting the same ProposalSet
 again is reported as `replayed` and records nothing new, except that a kept
@@ -194,7 +194,7 @@ a chosen value before it is written. Covers and descriptions have their own
 decision lineages and cannot be withdrawn this way, and a cover cannot be
 pinned
 ([ADR-0085](decisions/0085-owner-entered-values-withdrawal-and-reselection.md),
-[ADR-0104](decisions/0104-going-back-after-a-write.md)).
+[ADR-0105](decisions/0105-going-back-after-a-write.md)).
 
 ### Policy and automatic decisions
 

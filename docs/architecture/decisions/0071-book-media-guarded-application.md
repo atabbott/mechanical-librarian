@@ -105,7 +105,7 @@ one field and records the finding, which is the honest outcome.
 
 The `audiobookshelf-field-effect` canary receipt on both pinned images (v3
 when accepted; v4 adds the owner's clears and names of
-[ADR-0104](0104-going-back-after-a-write.md)), with the audiobook item's
+[ADR-0105](0105-going-back-after-a-write.md)), with the audiobook item's
 per-destination capability and outcome; a fake-service
 end-to-end test in the `required-installed` cohort covering decision, plan,
 apply, read-back, audit, idempotent re-apply and an ambiguous response that is

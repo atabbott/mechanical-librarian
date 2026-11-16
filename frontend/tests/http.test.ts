@@ -7305,7 +7305,7 @@ describe('logoutOthers', () => {
   })
 })
 
-// An owner's clear and names entry on the wire (#1523, ADR-0104): each member
+// An owner's clear and names entry on the wire (#1523, ADR-0105): each member
 // is decoded closed, and the empty kind only where an owner decision stands.
 describe('owner clear and names on the wire', () => {
   const EMPTY = { kind: 'empty', value: null }
