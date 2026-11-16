@@ -57,11 +57,18 @@ from mechanical_librarian.domain.description_advice import (
     DescriptionAdviceBinding,
     DescriptionAdviceSettings,
 )
-from mechanical_librarian.domain.metadata_report import MetadataReport
+from mechanical_librarian.domain.metadata_report import (
+    FileFacts,
+    MetadataReport,
+    TargetFacts,
+    default_target_fields,
+)
+from mechanical_librarian.domain.proposal_set import evaluate_report
 from tests.support.cover_taste import record_owner_cover_decisions
 from tests.support.description_advice import _prepared, _preserved_description_report
 from tests.support.field_effects import _EffectEnvironment, _plan
 from tests.support.field_effects import effects as effects
+from tests.support.review_cases import _report
 from tests.support.review_web_doubles import FakePreparation
 from tests.unit.review_app_fixture import (
     TEST_REACT_BUILD_IDENTITY,
@@ -518,24 +525,24 @@ def test_description_advice_activity(tmp_path) -> None:
     _expect_wire("get-attention", attention, placeholders)
 
 
-def test_description_advice_preservation(tmp_path) -> None:
+def test_description_advice_preservation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Retained automatic advice on a preservation-only field during a retry.
 
-    Automatic advice is admitted only while the field offers the owner a
-    choice, so the selection is made while it did, as one from before that
-    rule or before a narrower offer, and the field then offers none.
+    Every source repeats the current description, so the field offers the
+    adviser's text and Keep current while its advice is shown (#1905): the
+    retained selection keeps both available during the retry.
     """
+    from tests.support.description_advice import qualify_description_advice
+
+    qualify_description_advice(monkeypatch)
     with _description_case(
         tmp_path, report_override=_preserved_description_report()
     ) as (live, binding):
         store = live.repository.description_advice_store()
         advice = _advice(live, binding.review_case_id)
         assert isinstance(advice, dict) and advice["candidate"] is not None
-        choice = (
-            "UPDATE review_case_field_facts SET has_owner_decision_actions=? "
-            "WHERE review_case_id=? AND destination='description'"
-        )
-        live.repository._connection.execute(choice, (1, binding.review_case_id))
         store.admit(
             advice["candidate"]["candidate_id"],
             binding,
@@ -543,7 +550,6 @@ def test_description_advice_preservation(tmp_path) -> None:
             "c" * 64,
             20,
         )
-        live.repository._connection.execute(choice, (0, binding.review_case_id))
         live.call(
             "POST",
             f"/api/v1/review-cases/{binding.review_case_id}/description-advice/retry",
@@ -554,6 +560,30 @@ def test_description_advice_preservation(tmp_path) -> None:
     _expect(
         FIXTURES / "descriptionAdvicePreservationFixture.json", detail, placeholders
     )
+
+
+def test_description_advice_repeated(tmp_path: Path) -> None:
+    """Advice on a description every source repeats, with no decision on it.
+
+    The field offers the adviser's text and Keep current as an optional
+    choice that never enters Attention (#1905).
+    """
+    with _description_case(
+        tmp_path,
+        automatic=False,
+        report_override=_preserved_description_report(),
+        ask_only_policy=True,
+        automatic_policy=("cover_order", "fixed_source_order"),
+    ) as (live, binding):
+        detail = live.call("GET", f"/api/v1/review-cases/{binding.review_case_id}")[3]
+        placeholders = live.placeholders()
+    assert isinstance(detail, dict)
+    description = next(
+        field for field in detail["fields"] if field["destination"] == "description"
+    )
+    assert description["classification"] == "owner_choosable"
+    assert description["decision_actions"] == ["keep_current", "accept"]
+    _expect(FIXTURES / "descriptionAdviceRepeatedFixture.json", detail, placeholders)
 
 
 def test_policy_documents_and_automatic_confirmation(tmp_path) -> None:
@@ -692,3 +722,33 @@ def test_taste_profile(tmp_path) -> None:
         repository.close()
     _expect_wire("get-covers-taste", capture, {})
     _expect_wire("post-covers-taste-rules", edited, {})
+
+
+def test_library_progress(tmp_path) -> None:
+    """Library progress over a work needing the owner and one not matched (#1335)."""
+    repository = open_repository(tmp_path / "reports.sqlite", cross_thread=True)
+    try:
+        for report in (
+            _report("Synthetic attention work"),
+            MetadataReport.create(
+                target=TargetFacts(
+                    "primary",
+                    "audiobooks",
+                    "item-2",
+                    default_target_fields("Synthetic unmatched work"),
+                ),
+                file=FileFacts(0, "c" * 64, "d" * 64),
+                local_claims=(),
+                local_reasons=("no_opening_claims",),
+                providers=(),
+            ),
+        ):
+            repository.publish(report, lambda: True)
+            proposal = evaluate_report(report)
+            repository.publish_proposal(proposal)
+            repository.admit_review_case(proposal)
+        with _signed_in(tmp_path, repository) as live:
+            capture = live.call("GET", "/api/v1/library/progress")
+    finally:
+        repository.close()
+    _expect_wire("get-library-progress", capture, {})

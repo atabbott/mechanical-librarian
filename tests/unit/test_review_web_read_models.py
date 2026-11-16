@@ -8,11 +8,14 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Iterator
+import threading
+import time
+from collections.abc import Callable, Iterator
 from types import SimpleNamespace
 from typing import Any, cast, get_args
 from unittest.mock import Mock, patch
 
+import anyio
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
@@ -22,6 +25,7 @@ from mechanical_librarian.adapters.evidence_extractors.audio_local import (
     AudioSidecar,
     interpret,
 )
+from mechanical_librarian.application import write_plan
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
 from mechanical_librarian.application.continuous_field_effects import (
     CONTINUOUS_FIELD_ACTIVITY_SCHEMA,
@@ -42,6 +46,7 @@ from mechanical_librarian.application.metadata_policy import (
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_application import (
     REVIEW_PREPARATION_SCHEMA,
+    ReviewApplication,
 )
 from mechanical_librarian.application.review_pipeline import (
     ReviewPipelineError,
@@ -69,7 +74,6 @@ from mechanical_librarian.application.review_web import (
     _field_inventory_role,
     _library_item,
     _provider_comparison_notices,
-    _provider_label,
 )
 from mechanical_librarian.domain import audiobook_decision_qualification
 from mechanical_librarian.domain.activity_records import readable_activity_event
@@ -98,6 +102,7 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverSourceState,
     cover_source_id,
 )
+from mechanical_librarian.domain.field_effect import FieldEffectError
 from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
 from mechanical_librarian.domain.metadata_report import (
     AudioFacts,
@@ -116,7 +121,11 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
     default_target_fields,
 )
-from mechanical_librarian.domain.owner_settings import OWNER_SETTINGS_SCHEMA
+from mechanical_librarian.domain.owner_settings import (
+    OWNER_SETTINGS_SCHEMA,
+    provider_label,
+    provider_source_labels,
+)
 from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
 from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.review_browse import ReviewBrowseValueError
@@ -124,11 +133,14 @@ from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.review_field_classification import ReviewFieldState
 from mechanical_librarian.interfaces.web.app import (
     METADATA_POLICY_NOTEBOOK_SCHEMA,
+    AbortedResponseBody,
     _CaseDetailResponse,
     _CoverOmission,
+    _marking_aborted,
     _MediaHealthObservation,
     _ReportDetailResponse,
     _ReviewField,
+    _unless_aborted,
 )
 from tests.support.audiobook_reports import (
     admitted_audiobook_report,
@@ -749,6 +761,398 @@ def test_shutdown_closes_both_admissions_before_one_shared_deadline(
     assert web.repository.closes == []
 
 
+def _write_plan_web(
+    web: ReviewWebContext[_CloseRecordingRepository],
+    application: FakeActivityApplication,
+    *,
+    export: bool = True,
+) -> Any:
+    configuration = ReviewWebConfiguration(
+        tls_certificate_file="/synthetic/review.crt",
+        tls_private_key_file="/synthetic/review.key",
+        canonical_origin="https://review.test",
+        owner_password_hash_file=str(web.hash_path),
+        session_lifetime_seconds=600,
+    )
+    web.client.close()
+    app = create_transport_test_app(
+        web.repository,
+        configuration,
+        clock=lambda: web.now,
+        field_application=application,
+        export_projection=application if export else None,
+    )
+    web.client = TestClient(app, base_url="https://review.test")
+    return app
+
+
+@pytest.mark.parametrize(
+    ("format", "media_type", "head"),
+    (
+        ("csv", "text/csv; charset=utf-8", b"\xef\xbb\xbf"),
+        ("json", "application/json", b'{"changes":[\n'),
+    ),
+    ids=("csv", "json"),
+)
+def test_write_plan_file_is_an_owner_only_uncached_attachment(
+    web: ReviewWebContext[_CloseRecordingRepository],
+    format: str,
+    media_type: str,
+    head: bytes,
+) -> None:
+    _write_plan_web(web, FakeActivityApplication())
+    path = f"/api/v1/activity/write-plan?format={format}"
+    assert web.client.get(path).status_code == 401
+    web.login()
+
+    response = web.client.get(path)
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == media_type
+    assert response.headers["content-disposition"] == (
+        f'attachment; filename="mechanical-librarian-write-plan.{format}"'
+    )
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.headers["x-accel-buffering"] == "no"
+    assert response.content.startswith(head)
+    # One line feed per row plus the head's, in either format.
+    assert response.content.count(b"\n") == 1 + 1
+    if format == "json":
+        document = json.loads(response.content)
+        assert document["changes"][0]["current_value"] == "=Before"
+        assert (document["listed"], document["total"]) == (1, 1)
+    else:
+        assert b'"\'=Before"' in response.content
+
+
+@pytest.mark.parametrize(
+    "query", ("", "?format=xlsx", "?format=CSV"), ids=("missing", "xlsx", "upper")
+)
+def test_write_plan_file_refuses_an_unknown_format(
+    web: ReviewWebContext[_CloseRecordingRepository], query: str
+) -> None:
+    _write_plan_web(web, FakeActivityApplication())
+    web.login()
+
+    assert web.client.get(f"/api/v1/activity/write-plan{query}").status_code == 422
+
+
+def test_write_plan_file_is_refused_without_its_own_reader(
+    web: ReviewWebContext[_CloseRecordingRepository],
+) -> None:
+    """Never served from the permission reader, which can be the writer (#1336)."""
+    application = FakeActivityApplication()
+    started: list[str] = []
+
+    def producing(_format, _emit, _cancelled) -> None:
+        started.append("produced")
+
+    application.plan_file = producing
+    _write_plan_web(web, application, export=False)
+    web.login()
+
+    response = web.client.get("/api/v1/activity/write-plan?format=csv")
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "unavailable"
+    assert "content-disposition" not in response.headers
+    assert started == []
+    review = web.client.app.state.review_application
+    assert review._active_browses == 0
+
+
+@pytest.mark.parametrize(
+    "fault",
+    (
+        GuardedApplicationError("unavailable"),
+        FieldEffectError("persistence"),
+    ),
+    ids=("unavailable", "persistence"),
+)
+def test_write_plan_fault_before_the_first_byte_is_unavailable(
+    web: ReviewWebContext[_CloseRecordingRepository], fault: Exception
+) -> None:
+    application = FakeActivityApplication()
+
+    def failing(_format, _emit, _cancelled) -> None:
+        raise fault
+
+    application.plan_file = failing
+    _write_plan_web(web, application)
+    web.login()
+
+    response = web.client.get("/api/v1/activity/write-plan?format=csv")
+
+    assert response.status_code == 503
+    assert response.headers["cache-control"] == "no-store, private"
+    assert "content-disposition" not in response.headers
+
+
+class _EndlessPlan:
+    """A file that never ends by itself, recording its snapshot's life."""
+
+    def __init__(self) -> None:
+        self.events: list[str] = []
+        self.ended = threading.Event()
+
+    def __call__(self, _format, emit, cancelled) -> None:
+        self.events.append("snapshot began")
+        try:
+            emit(b'\xef\xbb\xbf"Library"\r\n')
+            while not cancelled():
+                emit(b'"fiction"\r\n')
+        finally:
+            self.events.append("snapshot ended")
+            self.ended.set()
+
+
+def _write_plan_asgi(
+    web: ReviewWebContext[_CloseRecordingRepository],
+    plan: Callable[..., None],
+) -> tuple[Any, dict[str, object], list[ReviewApplication]]:
+    """The app, an authenticated CSV request scope, and its application."""
+    application = FakeActivityApplication()
+    application.plan_file = plan
+    app = _write_plan_web(web, application)
+    web.login()
+    cookie = "; ".join(f"{name}={value}" for name, value in web.client.cookies.items())
+    scope: dict[str, object] = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "https",
+        "path": "/api/v1/activity/write-plan",
+        "raw_path": b"/api/v1/activity/write-plan",
+        "query_string": b"format=csv",
+        "root_path": "",
+        "headers": [
+            (b"host", b"review.test"),
+            (b"cookie", cookie.encode()),
+            (b"x-ml-build-identity", TEST_REACT_BUILD_IDENTITY.encode()),
+        ],
+        "client": ("127.0.0.1", 50000),
+        "server": ("review.test", 443),
+    }
+    # The review application that counted the file as an accepted read.
+    started: list[ReviewApplication] = []
+    original = ReviewApplication.activity_write_plan_file
+
+    def recording(self: ReviewApplication, format: Any) -> Any:
+        started.append(self)
+        return original(self, format)
+
+    patcher = patch.object(ReviewApplication, "activity_write_plan_file", recording)
+    patcher.start()
+    web.cleanup.callback(patcher.stop)
+    return app, scope, started
+
+
+def _released(plan: _EndlessPlan, started: list[ReviewApplication]) -> None:
+    """The producer left its snapshot and gave back its accepted read."""
+    assert plan.ended.wait(5)
+    assert plan.events == ["snapshot began", "snapshot ended"]
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and (
+        started[0]._active_browses
+        or any(
+            thread.name == "write-plan-file" and thread.is_alive()
+            for thread in threading.enumerate()
+        )
+    ):
+        time.sleep(0.02)
+    assert started[0]._active_browses == 0
+    assert not any(
+        thread.name == "write-plan-file" and thread.is_alive()
+        for thread in threading.enumerate()
+    )
+
+
+def test_write_plan_client_disconnect_stops_the_file_and_releases_its_reader(
+    web: ReviewWebContext[_CloseRecordingRepository],
+) -> None:
+    plan = _EndlessPlan()
+    app, scope, started = _write_plan_asgi(web, plan)
+
+    async def drive() -> list[dict[str, object]]:
+        sent: list[dict[str, object]] = []
+        gone = anyio.Event()
+
+        async def receive() -> dict[str, object]:
+            await gone.wait()
+            return {"type": "http.disconnect"}
+
+        async def send(message: dict[str, object]) -> None:
+            sent.append(message)
+            if message["type"] == "http.response.body" and len(sent) >= 3:
+                gone.set()
+
+        with anyio.fail_after(10):
+            await app(scope, receive, send)
+        return sent
+
+    sent = anyio.run(drive)
+
+    assert sent[0]["type"] == "http.response.start"
+    assert sent[0]["status"] == 200
+    # The producer saw the client go, ended its snapshot and was released.
+    _released(plan, started)
+
+
+def test_write_plan_cancelled_by_an_enclosing_scope_still_releases_its_reader(
+    web: ReviewWebContext[_CloseRecordingRepository],
+) -> None:
+    """A cancel scope skips every await in cleanup; the release must not need one."""
+    plan = _EndlessPlan()
+    app, scope, started = _write_plan_asgi(web, plan)
+
+    async def drive() -> int:
+        bodies = 0
+        with anyio.CancelScope() as cancelled:
+
+            async def receive() -> dict[str, object]:
+                await anyio.sleep_forever()
+                raise AssertionError("unreachable")
+
+            async def send(message: dict[str, object]) -> None:
+                nonlocal bodies
+                if message["type"] == "http.response.body":
+                    bodies += 1
+                    if bodies == 2:
+                        cancelled.cancel()
+
+            with anyio.fail_after(10):
+                await app(scope, receive, send)
+        return bodies
+
+    assert anyio.run(drive) >= 2
+    _released(plan, started)
+
+
+class _FaultAfterTheHead(_EndlessPlan):
+    """A file whose storage fails after its head and one row."""
+
+    def __call__(self, _format, emit, cancelled) -> None:
+        self.events.append("snapshot began")
+        try:
+            emit(b'\xef\xbb\xbf"Library"\r\n')
+            emit(b'"fiction"\r\n')
+            raise FieldEffectError("persistence")
+        finally:
+            self.events.append("snapshot ended")
+            self.ended.set()
+
+
+@pytest.mark.parametrize(
+    "abort", ("fault", "closing", "stall"), ids=("fault", "closing", "stall")
+)
+def test_write_plan_aborted_after_the_head_never_completes_the_response(
+    web: ReviewWebContext[_CloseRecordingRepository],
+    monkeypatch: pytest.MonkeyPatch,
+    abort: str,
+) -> None:
+    """Behind the app's own middleware, an abort sends no final body frame (#1336).
+
+    The server then closes the connection instead of ending the body, so a
+    short file is never received as a complete one.
+    """
+    if abort == "stall":
+        monkeypatch.setattr(write_plan, "STALLED_CONSUMER_SECONDS", 0.3)
+    plan = _FaultAfterTheHead() if abort == "fault" else _EndlessPlan()
+    app, scope, started = _write_plan_asgi(web, plan)
+
+    async def drive() -> tuple[list[dict[str, object]], BaseException | None]:
+        sent: list[dict[str, object]] = []
+
+        async def receive() -> dict[str, object]:
+            await anyio.sleep_forever()
+            raise AssertionError("unreachable")
+
+        async def send(message: dict[str, object]) -> None:
+            sent.append(message)
+            if message["type"] != "http.response.body" or len(sent) != 2:
+                return
+            if abort == "closing":
+                await anyio.to_thread.run_sync(started[0].begin_drain)
+            elif abort == "stall":
+                # Nobody takes a chunk for longer than the stall bound.
+                await anyio.sleep(1.0)
+
+        raised = None
+        try:
+            with anyio.fail_after(10):
+                await app(scope, receive, send)
+        except Exception as error:  # noqa: BLE001 - the server sees what escapes
+            raised = error
+        return sent, raised
+
+    sent, raised = anyio.run(drive)
+
+    assert sent[0]["type"] == "http.response.start"
+    assert sent[0]["status"] == 200
+    bodies = [message for message in sent if message["type"] == "http.response.body"]
+    assert bodies and bodies[0]["body"].startswith(b"\xef\xbb\xbf")
+    assert all(message.get("more_body", False) for message in bodies)
+    assert isinstance(raised, AbortedResponseBody)
+    # Each abort is an ordinary exception, so the route marked its request.
+    assert scope["mechanical_librarian.aborted_body"] in {
+        "FieldEffectError",
+        "GuardedApplicationError",
+    }
+    # Value-free: the message names only the original error's type.
+    assert str(raised) in {
+        "response body aborted by FieldEffectError",
+        "response body aborted by GuardedApplicationError",
+    }
+    _released(plan, started)
+
+
+@pytest.mark.parametrize(
+    "end", ("closed", "cancelled", "fault"), ids=("closed", "cancelled", "fault")
+)
+def test_only_a_faulted_body_marks_its_request_aborted(end: str) -> None:
+    """An abandoned download is closed or cancelled, never logged as aborted (#1336)."""
+    scope: dict[str, object] = {}
+
+    async def body() -> Any:
+        yield b"head"
+        if end == "fault":
+            raise FieldEffectError("persistence")
+        await anyio.sleep_forever()
+
+    async def relayed() -> Any:
+        return
+        yield
+
+    async def drive() -> None:
+        content = _marking_aborted(scope, body())
+        assert await anext(content) == b"head"
+        if end == "closed":
+            await content.aclose()
+        elif end == "cancelled":
+            with anyio.CancelScope() as cancelled:
+                cancelled.cancel()
+                await anext(content)
+            assert cancelled.cancelled_caught
+        else:
+            with pytest.raises(FieldEffectError):
+                await anext(content)
+        relay = _unless_aborted(scope, relayed())
+        if end == "fault":
+            with pytest.raises(AbortedResponseBody, match="by FieldEffectError$"):
+                await anext(relay)
+        else:
+            with pytest.raises(StopAsyncIteration):
+                await anext(relay)
+
+    anyio.run(drive)
+    assert scope == (
+        {"mechanical_librarian.aborted_body": "FieldEffectError"}
+        if end == "fault"
+        else {}
+    )
+
+
 def test_activity_is_permanent_and_consent_is_csrf_bound(
     web: ReviewWebContext[_CloseRecordingRepository],
 ) -> None:
@@ -793,7 +1197,9 @@ def test_activity_is_permanent_and_consent_is_csrf_bound(
     for invalid in (
         {"backup_ready": True},
         {"backup_ready": False},
-        {"example": readiness.json()["example"]},
+        # History keeps its empty example and never carries the plan (#1336).
+        {"example": {"after": "After", "before": "Before"}},
+        {"plan": readiness.json()["plan"]},
     ):
         with (
             patch.object(application, "activity", return_value={**history, **invalid}),
@@ -805,8 +1211,9 @@ def test_activity_is_permanent_and_consent_is_csrf_bound(
         "configured_libraries",
         "capabilities",
         "prepared",
-        "example",
+        "plan",
     }
+    assert readiness.json()["plan"]["total"] == history["prepared"]["total"]
     with patch.object(
         application, "activity_permission_readiness", side_effect=RuntimeError
     ):
@@ -2032,8 +2439,8 @@ def test_provider_comparison_notices_never_create_a_permanent_case_banner(
     assert _provider_comparison_notices(report) == projected["comparison_notices"]
     unaffected = InspectCurrentReviewCase(web.repository).run(web.case.review_case_id)
     assert [] == unaffected["comparison_notices"]
-    assert "Google Books" == _provider_label("google_books")
-    assert "Provider (name unavailable)" == _provider_label(None)
+    assert "Google Books" == provider_label("google_books")
+    assert "Provider (name unavailable)" == provider_label(None)
     for spoofed_name in (
         "google-books-private-instance",
         "open-library-owner-home",
@@ -4307,12 +4714,12 @@ def test_activity_history_defers_permission_fields(backup_ready: bool | None) ->
     permission["backup_ready"] = backup_ready
     checked = _ActivityPermissionReadiness.model_validate(permission)
     assert checked.backup_ready is backup_ready
-    assert checked.example is not None
+    assert checked.plan.total == 2
     if backup_ready is not None:
         with pytest.raises(ValidationError):
             _ActivityResponse.model_validate({**history, "backup_ready": backup_ready})
     with pytest.raises(ValidationError):
-        _ActivityResponse.model_validate({**history, "example": permission["example"]})
+        _ActivityResponse.model_validate({**history, "plan": permission["plan"]})
     for field in ("backup_ready", "example"):
         with pytest.raises(ValidationError):
             _ActivityResponse.model_validate(
@@ -4338,7 +4745,9 @@ def test_attention_consecutive_documents_keep_row_specific_classification():
         (3, "abstention", None, True),
         (4, None, "automatic_safety_suspended", False),
     )
-    rows = tuple((case.to_json(), report.to_json(), "title", *flag) for flag in flags)
+    rows = tuple(
+        (case.to_json(), report.to_json(), "title", *flag, False) for flag in flags
+    )
     expected = [
         item
         for count, outcome, cause, policy in flags
@@ -4398,7 +4807,7 @@ def test_attention_equal_ids_never_replace_exact_document_validation(
             )
             documents[index] = json.dumps(value)
     rows = tuple(
-        (*pair, "title", 1, None, None, False) for pair in (original, documents)
+        (*pair, "title", 1, None, None, False, False) for pair in (original, documents)
     )
     repository = Mock()
     repository.read_review_attention.return_value = ReviewAttentionSnapshot(rows, 2)
@@ -4432,7 +4841,7 @@ def test_attention_revalidates_each_raw_page_and_fresh_request(
     case, report = canonical_attention_pair
     documents = (case.to_json(), report.to_json())
     rows = tuple(
-        (*documents, destination, 1, None, None, False)
+        (*documents, destination, 1, None, None, False, False)
         for destination in ("authors", "authors", "title")
     )
     repository = Mock()
@@ -4489,6 +4898,7 @@ def test_attention_nonconsecutive_pair_is_parsed_again(canonical_attention_pair)
             1,
             None,
             None,
+            False,
             False,
         )
         for selected_case, selected_report in (
@@ -4917,7 +5327,6 @@ def test_provider_recovery_retry_without_settings_is_unavailable(
 
 def test_an_edition_narrator_choice_names_the_audio_edition_it_came_from() -> None:
     """Edition references reach the packet and the owner's choice (#1642)."""
-    from mechanical_librarian.application.review_web import _provider_source_labels
     from mechanical_librarian.domain.proposal_set import evaluate_report
     from mechanical_librarian.domain.review_case import ReviewCase
     from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
@@ -4980,7 +5389,7 @@ def test_an_edition_narrator_choice_names_the_audio_edition_it_came_from() -> No
         },
     ]
     assert proposed["rationale"] == "Hardcover audio edition"
-    assert _provider_source_labels(report, list(alternative.evidence_references)) == [
+    assert provider_source_labels(report, list(alternative.evidence_references)) == [
         "Hardcover audio edition"
     ]
     assert set(alternative.evidence_references) <= set(_evidence_by_reference(report))
@@ -5071,3 +5480,147 @@ def test_only_a_retained_cover_candidate_may_have_no_preview() -> None:
                 candidate_kind=kind, source_kinds=sources, **_PREVIEW
             )
         )
+
+
+def test_library_progress_answers_library_counts_and_attention_fields(
+    web: ReviewWebContext[_CloseRecordingRepository],
+) -> None:
+    """`GET /api/v1/library/progress` (#1335): counts and library names only."""
+    unmatched = _report(title="Private unmatched title", actionable=False)
+    web.repository.browse_without_cases.append(
+        MetadataReport.create(
+            target=TargetFacts(
+                unmatched.target.connection,
+                "audiobooks",
+                "private-item-2",
+                unmatched.target.fields,
+            ),
+            file=unmatched.file,
+            local_claims=unmatched.local_claims,
+            local_reasons=unmatched.local_reasons,
+            providers=unmatched.providers,
+        )
+    )
+    assert web.client.get("/api/v1/library/progress").status_code == 401
+    web.login()
+
+    response = web.client.get("/api/v1/library/progress")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body == {
+        "totals": {
+            "all": 2,
+            "needs_attention": 1,
+            "no_attention_needed": 0,
+            "not_matched": 1,
+            "preparation_failed": 0,
+        },
+        # No settings name either library: each reads as its stable name, and
+        # the unconfigured names come alphabetically.
+        "libraries": [
+            {
+                "connection": "primary",
+                "counts": {
+                    "all": 1,
+                    "needs_attention": 0,
+                    "no_attention_needed": 0,
+                    "not_matched": 1,
+                    "preparation_failed": 0,
+                },
+                "library": "audiobooks",
+                "library_display_name": "audiobooks",
+            },
+            {
+                "connection": "primary",
+                "counts": {
+                    "all": 1,
+                    "needs_attention": 1,
+                    "no_attention_needed": 0,
+                    "not_matched": 0,
+                    "preparation_failed": 0,
+                },
+                "library": "ebooks",
+                "library_display_name": "ebooks",
+            },
+        ],
+        "fields": [{"destination": "title", "need_you": 1}],
+    }
+    library = web.client.get("/api/v1/library?lens=all")
+    assert library.json()["counts"] == body["totals"]
+    attention = web.client.get("/api/v1/attention")
+    assert [item["destination"] for item in attention.json()["items"]] == ["title"]
+    for private in (
+        "Private unmatched title",
+        "private-item-2",
+        "item-1",
+        web.case.review_case_id,
+        "report_",
+    ):
+        assert private not in response.text
+
+    with patch.object(
+        web.repository,
+        "read_review_library_progress",
+        side_effect=MetadataReportError("review library is unavailable"),
+    ):
+        refused = web.client.get("/api/v1/library/progress")
+    assert refused.status_code == 503
+    assert refused.json() == {
+        "error": {"code": "unavailable"},
+        "schema_version": "review-error-v1",
+    }
+
+
+def test_library_progress_model_is_closed_and_bounded() -> None:
+    from mechanical_librarian.interfaces.web.app import _LibraryProgressResponse
+
+    counts = {
+        "all": 1,
+        "needs_attention": 1,
+        "no_attention_needed": 0,
+        "not_matched": 0,
+        "preparation_failed": 0,
+    }
+    valid: dict[str, Any] = {
+        "totals": counts,
+        "libraries": [
+            {
+                "connection": "primary",
+                "counts": counts,
+                "library": "ebooks",
+                "library_display_name": "Reading Room",
+            }
+        ],
+        "fields": [{"destination": "cover", "need_you": 1}],
+    }
+    assert _LibraryProgressResponse.model_validate(valid).model_dump() == valid
+    for invalid in (
+        {**valid, "run_id": "run"},
+        {**valid, "libraries": [{**valid["libraries"][0], "item": "item-1"}]},
+        {**valid, "fields": [{"destination": "cover", "need_you": 0}]},
+        {**valid, "fields": [{"destination": "shelf", "need_you": 1}]},
+        {**valid, "fields": [{"destination": "title", "need_you": 1}] * 17},
+        {**valid, "totals": {**counts, "all": -1}},
+    ):
+        with pytest.raises(ValidationError):
+            _LibraryProgressResponse.model_validate(invalid)
+
+
+@pytest.mark.parametrize("path", ("/api/v1/library/progress", "/api/v1/library"))
+def test_library_reads_answer_503_once_admission_closes(
+    web: ReviewWebContext[_CloseRecordingRepository], path: str
+) -> None:
+    """A closing application refuses a browse read as 503, never 500 (#1335)."""
+    web.login()
+    assert web.client.get(path).status_code == 200
+    # Shutdown closes admission; the read is refused before it starts.
+    web.client.app.state.review_application._admission.close()
+
+    refused = web.client.get(path)
+
+    assert refused.status_code == 503, refused.text
+    assert refused.json() == {
+        "error": {"code": "unavailable"},
+        "schema_version": "review-error-v1",
+    }

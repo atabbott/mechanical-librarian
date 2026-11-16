@@ -18,8 +18,8 @@ owner runs it offline, and the changelog says when one ships.
 
 - **Absent or exact.** Each store opens only when it is absent or at its
   exact current schema. An absent store is created fresh; in store mode the
-  application database is created only on an empty `/data` volume, by
-  first-run setup. An earlier or later schema, an extra object, altered SQL,
+  application database is created only by first-run setup, on an empty
+  `/data` volume or one that holds only kept provider answers. An earlier or later schema, an extra object, altered SQL,
   an unknown vocabulary member or a failed integrity check stops startup
   without touching the file. How open-time admission works is in
   [Schema admission](../architecture/security.md#schema-admission); the stores
@@ -105,7 +105,7 @@ refused.
 
 | Identifier | What it is |
 | --- | --- |
-| `human-decision-v4` | An owner decision, including `owner_entered` and `withdraw` outcomes; it binds the digest of the field offer it was made in (`offered_alternatives_digest`) and may name a closed `cause` (`matching_changed`) for the valueless row Book matching writes |
+| `human-decision-v5` | An owner decision, including `owner_entered`, `withdraw`, `pin` and `unpin` outcomes; it binds the digest of the field offer it was made in (`offered_alternatives_digest`) and may name a closed `cause` (`matching_changed`) for the valueless row Book matching writes |
 | `human-decision-event-v1`, `human-decision-ack-v1` | The decision event and its acknowledgement |
 | `cover-consideration-v10` | A cover consideration, bound to its report by identity and digest and to the Book matching level it was made under; each candidate names its kind, so the original an automatic switch replaced can be put back, even one the decoder refused, which has no size or preview, and a larger copy of the current cover's own picture can replace it; it stores the would-admit note, which nothing shows, and how many distinct pictures the stage kept |
 | `cover-identity-report-v2` | Cover identity classification under one Book matching level, with the title-and-author outcome and level reasons |
@@ -131,15 +131,16 @@ refused.
 | `work-route-measurement-v1` | The read-only [work-route measurement](../operations/work-route-measurement.md) |
 | `review-react-assets-v1` | The browser bundle identity manifest |
 
-The session database (`/data/private/review-sessions.sqlite`) and the provider
-recovery database (`/data/private/provider-recovery.sqlite`) have exact schemas
-of their own and no separate version string.
+The session database (`/data/private/review-sessions.sqlite`), the provider
+recovery database (`/data/private/provider-recovery.sqlite`) and the
+provider-response database (`/data/private/provider-responses.sqlite`) have
+exact schemas of their own and no separate version string.
 
 ### HTTP API
 
 The owner API is served under `/api/v1`, and each response names its version
 in `schema_version`. The main ones are `review-session-v1`,
-`review-library-v5`, `review-preparation-v2`, `review-case-detail-v8`,
+`review-library-v6`, `review-preparation-v2`, `review-case-detail-v9`,
 `review-case-evidence-v5`, `review-report-detail-v6`, `review-case-history-v4`,
 `review-attention-v1` and `continuous-field-activity-v3`. The generated
 [OpenAPI document](review-openapi-v1.json) pins each of them except

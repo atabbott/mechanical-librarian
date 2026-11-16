@@ -10,6 +10,30 @@ existing `/data` volume must be rebuilt; [upgrades](docs/operations/upgrades.md)
 says how. Sections marked "in progress" are still open. The numbers in
 brackets are GitHub issues.
 
+## 0.39.0 — Owner trust (in progress)
+
+- In store mode, Settings can change the owner password. It asks for the
+  current password, keeps this browser signed in and signs out every other
+  browser (#1385).
+- Settings can sign out every other browser from Access and diagnostics, in
+  store and file mode, and keeps this browser signed in (#1385).
+
+## 0.37.0 — Provider economy (in progress)
+
+- Mechanical Librarian keeps each source's answers and reuses them when it asks
+  the same question again, so preparing a book again sends far fewer requests.
+  A failed lookup keeps nothing and is asked again, and the weekly search for
+  an unmatched audiobook always asks live. The answers are kept in
+  `/data/private/provider-responses.sqlite`; losing it only means asking again
+  (#1064).
+- A clean rebuild can keep those answers, so a rebuilt library does not ask
+  every source again for every book.
+  [Upgrades](docs/operations/upgrades.md#keeping-provider-answers) says how
+  (#1064).
+- Every finished book is searched again every 90 days, spread evenly across
+  the library. Its review case changes only when the new answers would propose
+  something different, and a failed search changes nothing (#1916).
+
 ## 0.36.1 — Persistence health (in progress)
 
 - Your decision on a field now keeps Automatic off that field on every later
@@ -76,6 +100,12 @@ brackets are GitHub issues.
   Activity hides a one-page pager. Phones get a 16 px margin, and the masthead
   scrolls away when taller than a sixth of the window (#1894).
 
+## 0.36.0 — Standing owner instructions (in progress)
+
+- **Clean rebuild required.** Stored owner decisions and field holds changed
+  shape, ready for pinning a field of a work. Nothing looks different yet
+  (#1346).
+
 ## 0.33.0 — First library (in progress)
 
 - **Clean rebuild required** only for an install whose setup was interrupted.
@@ -98,6 +128,15 @@ brackets are GitHub issues.
 - Setup and Settings round the cover cost the same way and count in works
   (#1863).
 - The preparation detail fits a 320 px window at 200% text (#1864).
+- Checking write permissions now shows the write plan under each library's
+  fields: each prepared change's current and new value, who chose it and why.
+  Download CSV and Download JSON save the whole plan, up to 20,000 changes, as
+  it is made; nothing is stored or granted (#1336).
+- A finished run's box in Library says where the whole library stands, such as
+  "1,840 of 2,026 works settled · 174 need you", each count linked to its
+  lens, until you dismiss the run. Activity has a Library progress card with
+  the same counts per library and the works that need you per field. Counts of
+  works group their digits (#1335).
 
 ## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
 
@@ -345,6 +384,16 @@ brackets are GitHub issues.
   repeat the current text is no longer replaced by the adviser's result,
   which you could not have chosen or reversed there. The result stays shown
   for reference, and the review API refuses choosing it directly too (#1892).
+- Automatically apply ready description advice now only suggests until a
+  release shows, from your decisions, that the adviser is right often enough
+  with those cleanup choices. No release does yet, so the adviser's text is
+  offered on the work's page as with the switch off, and an automatic choice
+  stored before this change is not written (ADR-0099, #1886).
+- A description whose sources all repeat the current text now offers the
+  adviser's text and Keep current while description advice is shown for it.
+  The field reads Optional and stays out of Attention, Keep current undoes
+  your choice of the adviser's text, and once an adviser qualifies Automatic
+  may write it there too (#1905).
 
 ## 0.30.0 — Audiobook matching and editions (in progress)
 

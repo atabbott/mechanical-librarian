@@ -4,6 +4,7 @@ import activityV2Predecessor from './activityV2Predecessor.json'
 import descriptionAdviceActivityFixture from './descriptionAdviceActivityFixture.json'
 import descriptionAdviceFixture from './descriptionAdviceFixture.json'
 import descriptionAdvicePreservationFixture from './descriptionAdvicePreservationFixture.json'
+import descriptionAdviceRepeatedFixture from './descriptionAdviceRepeatedFixture.json'
 import descriptionAdviceRetryFixture from './descriptionAdviceRetryFixture.json'
 import identifierEvidenceFixture from './identifierEvidenceFixture.json'
 import * as builders from './wireFixtures'
@@ -66,7 +67,7 @@ const roundTrip = (decode: D<unknown>, body: unknown) => {
 
 describe('captured wire fixtures', () => {
   it('has a capture for every operation 2a-i records', () => {
-    expect(Object.keys(captures)).toHaveLength(23)
+    expect(Object.keys(captures)).toHaveLength(24)
   })
 
   it.each(Object.entries(captures))('%s decodes by operation and status', (_file, wire) => {
@@ -76,6 +77,7 @@ describe('captured wire fixtures', () => {
   it.each([
     ['descriptionAdviceFixture', descriptionAdviceFixture],
     ['descriptionAdvicePreservationFixture', descriptionAdvicePreservationFixture],
+    ['descriptionAdviceRepeatedFixture', descriptionAdviceRepeatedFixture],
   ])('%s decodes as a case detail', (_name, detail) => {
     roundTrip(decoderFor('GET', `/api/v1/review-cases/${detail.review_case_id}`, 200), detail)
   })

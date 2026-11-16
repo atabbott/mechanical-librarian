@@ -505,13 +505,18 @@ def _cover_ledger(
     return decision_id
 
 
-def test_description_and_cover_candidates_project_exactly(tmp_path: Path) -> None:
+def test_description_and_cover_candidates_project_exactly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Both automatic decision arms, cover safeguards and description rows.
 
     A wrong kind or identity column in any of these arms' restrictions drops
     or admits rows here, before any validation. Where both decision ledgers
     hold one id at one time, the cover selection ranks first on every path.
     """
+    from tests.support.description_advice import qualify_description_advice
+
+    qualify_description_advice(monkeypatch)
     repository, store, binding, candidate, deterministic = _prepared(tmp_path)
     store.admit(candidate.candidate_id, binding, "automatic_policy", "a" * 64, 11)
     selected = _cover_ledger(

@@ -67,6 +67,7 @@ from mechanical_librarian.application.review_web import (
     HumanDecisionStore,
     InspectCurrentReviewCase,
     LibraryLabels,
+    OwnerPasswordChange,
     OwnerSessionService,
     ProviderRecoverySchedule,
     RecordHumanDecision,
@@ -77,6 +78,7 @@ from mechanical_librarian.application.review_web import (
     ValidatedDocumentCache,
 )
 from mechanical_librarian.application.reviewer_access import ReviewerAccessOperations
+from mechanical_librarian.application.write_plan import PlanFormat, ProducedStream
 from mechanical_librarian.domain.audiobook_corroboration import (
     admitted_audiobook_identity,
 )
@@ -559,6 +561,7 @@ class ReviewApplication:
         admission: OperationAdmission | None = None,
         operation_lock: RLock | None = None,
         cover_considerations: CoverConsiderationService | None = None,
+        export_projection: ContinuousGuardedApplication | None = None,
         cover_store: CoverBrowseStore | None = None,
         settings: OwnerSettingsOperations | None = None,
         reviewer_access: ReviewerAccessOperations | None = None,
@@ -605,6 +608,7 @@ class ReviewApplication:
         self._field_application = field_application
         self._activity_projection = activity_projection
         self._permission_projection = permission_projection
+        self._export_projection = export_projection
         self._close_activity_projection = close_activity_projection
         self._operations = operations
         self._cover_considerations = cover_considerations
@@ -661,6 +665,9 @@ class ReviewApplication:
                 nullcontext()
                 if self._permission_projection is None
                 else self._permission_projection.classify_request(work_class),
+                nullcontext()
+                if self._export_projection is None
+                else self._export_projection.classify_request(work_class),
             ):
                 yield
 
@@ -948,7 +955,7 @@ class ReviewApplication:
     def ready(self) -> bool:
         return self._operations is None or self._operations.ready()
 
-    # The four session operations below deliberately bypass ``serialized``:
+    # The six session operations below deliberately bypass ``serialized``:
     # the session store owns its dedicated database and lock (#912), so owner
     # sign-in and session checks never queue behind an operation that holds
     # the application gate while it waits on a scan's write transaction.
@@ -964,6 +971,27 @@ class ReviewApplication:
 
     def logout(self, session_token: str, csrf_token: str) -> None:
         self._sessions.logout(session_token, csrf_token)
+
+    def logout_others(self, session_token: str, csrf_token: str) -> int:
+        return self._sessions.logout_others(session_token, csrf_token)
+
+    def change_owner_password(
+        self,
+        session_token: str,
+        csrf_token: str,
+        current_password: str,
+        new_password: str,
+        confirmation: str,
+        client: str,
+    ) -> SessionTokens:
+        return self._sessions.change_password(
+            session_token,
+            csrf_token,
+            current_password,
+            new_password,
+            confirmation,
+            client,
+        )
 
     def operations_status(self) -> dict[str, object]:
         if self._operations is None:
@@ -1157,6 +1185,18 @@ class ReviewApplication:
                     labels,
                 )
             )
+
+        return self._browse_serialized(read, check_active)
+
+    def library_progress(
+        self, *, check_active: Callable[[], None] | None = None
+    ) -> dict[str, object]:
+        def read() -> dict[str, object]:
+            snapshot: LibraryLabels = tuple(
+                (connection, library, label)
+                for (connection, library), label in self._library_labels().items()
+            )
+            return self._browse.progress(snapshot)
 
         return self._browse_serialized(read, check_active)
 
@@ -1448,6 +1488,43 @@ class ReviewApplication:
     def activity_permission_readiness(self) -> dict[str, object]:
         with self._accepted_read():
             return self._permission_reader().activity_permission_readiness()
+
+    def activity_write_plan_file(self, format: PlanFormat) -> ProducedStream:
+        """Start the write plan file on its own reader (#1336).
+
+        A file can take minutes, so neither the permission reader nor the
+        Activity history reader waits for it. It counts as an accepted read
+        until its producer has ended its read, so shutdown waits for its
+        reader; the producer ends by itself once the application is closing
+        or nobody has read for a minute, whatever the response does.
+        """
+        with self._browse_lifetime:
+            if self._browse_closed:
+                raise ReviewApplicationError("unavailable")
+            self._active_browses += 1
+
+        def release() -> None:
+            with self._browse_lifetime:
+                self._active_browses -= 1
+                self._browse_lifetime.notify_all()
+
+        try:
+            labels = {
+                library: label for (_, library), label in self._library_labels().items()
+            }
+            # Never the permission reader, which can be the writer: a file
+            # keeps its reader for minutes.
+            reader = self._export_projection
+            if reader is None:
+                raise ReviewApplicationError("unavailable")
+            stream = reader.activity_write_plan_file(
+                format, lambda: self._browse_closed, labels
+            )
+        except BaseException:
+            release()
+            raise
+        stream.when_closed(release)
+        return stream
 
     def activity_consent(self) -> dict[str, object]:
         # The permission reader borrows no Activity facts, so neither the
@@ -1906,6 +1983,7 @@ def compose_review_application(
     graceful_shutdown_seconds: int,
     session_digest: Callable[[str], str],
     client_digest: Callable[[str], str],
+    owner_password_change: OwnerPasswordChange | None = None,
     close_state_owner: bool = False,
     preparation: ReviewPreparationSupervisor | None = None,
     policy_libraries: tuple[tuple[str, dict[str, object] | None], ...] = (),
@@ -1914,6 +1992,7 @@ def compose_review_application(
     | None = None,
     activity_projection: ContinuousGuardedApplication | None = None,
     permission_projection: ContinuousGuardedApplication | None = None,
+    export_projection: ContinuousGuardedApplication | None = None,
     close_activity_projection: Callable[[], None] | None = None,
     browse_observation: BrowseObservationOwner | None = None,
     admission: OperationAdmission | None = None,
@@ -1991,6 +2070,7 @@ def compose_review_application(
             clock,
             session_lifetime_seconds,
             client_digest=client_digest,
+            password_change=owner_password_change,
         ),
         cases=InspectCurrentReviewCase(case_store, cover_considerations),
         decisions=RecordHumanDecision(decision_store, clock, timing),
@@ -2017,6 +2097,7 @@ def compose_review_application(
         updates=updates,
         activity_projection=activity_projection,
         permission_projection=permission_projection,
+        export_projection=export_projection,
         close_activity_projection=close_activity_projection,
         browse_observation=browse_observation,
         admission=admission,

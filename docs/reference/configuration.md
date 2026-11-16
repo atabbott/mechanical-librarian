@@ -20,8 +20,10 @@ in [compatibility](compatibility.md).
 `review-serve` needs the owner-only bootstrap document
 `/run/secrets/review-bootstrap.json` and one exact-current owner-settings
 document and owner verifier in `/data/application.sqlite3`. An empty `/data`
-volume starts guided setup instead, and an incomplete setup store bound to the
-same bootstrap resumes it. Any other missing, malformed, mixed or orphaned
+volume, or one holding only
+[kept provider answers](../operations/upgrades.md#keeping-provider-answers),
+starts guided setup instead, and an incomplete setup store bound to the same
+bootstrap resumes it. Any other missing, malformed, mixed or orphaned
 state stops startup without fallback, import, migration or repair.
 
 Creating the owner password needs the one-time setup claim token, which is
@@ -618,9 +620,17 @@ description floor is admitted through the normal policy and write rules on a
 field that offers the owner a choice, and may replace a populated description.
 The floor is valid plain text with no markup or visible cut-off, not a
 placeholder and not mostly quoted praise. The owner can still choose a result
-below it. A field that offers no choice, such as one whose sources all repeat
-the current description, keeps its current value and shows the result for
-reference only.
+below it. A field whose sources all repeat the current description offers the
+result and Keep current while the result is shown, as an optional choice that
+is not in Attention. Automatic may write the result there too, under the same
+rules as any other field (#1905).
+
+Automatic admission also needs a shipped qualification record that names the
+result's adviser: its engine, model, instruction and output schema digests and
+cleanup choices ([ADR-0099](../architecture/decisions/0099-qualify-automatic-description-advice.md)).
+No release has such a record yet, so with the setting on each result is only
+suggested, as with it off, and an automatic decision stored before this check
+is not written.
 
 - An owner's final choice wins, and in-flight effects are not raced.
 - Identical text records no change and sends no PATCH or Attention item.

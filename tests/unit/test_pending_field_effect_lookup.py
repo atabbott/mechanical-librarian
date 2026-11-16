@@ -15,6 +15,7 @@ import itertools
 import json
 import re
 import sqlite3
+from collections import Counter
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -162,8 +163,8 @@ def _calls(
         "cursor": lambda: repository.pending_field_effect_decision_documents(
             3, (0, "automatic_decision_8")
         ),
-        "example": lambda: repository.pending_field_effect_activity_example_document(),
         "counts": lambda: repository.pending_field_effect_decision_counts(),
+        "plan": lambda: repository.pending_field_effect_plan_entries(2, 60, ("books",)),
     }
 
 
@@ -324,6 +325,100 @@ def test_current_statements_equal_the_original_across_effect_shapes(
     assert excluded == 5
 
 
+def _counted(repository: SQLiteMetadataReportRepository) -> dict[tuple[str, ...], int]:
+    return {
+        (
+            str(row["connection"]),
+            str(row["library"]),
+            str(row["origin"]),
+            str(row["destination"]),
+        ): int(str(row["count"]))
+        for row in repository.pending_field_effect_decision_counts()
+    }
+
+
+def _assert_plan_lists_the_counted(repository: SQLiteMetadataReportRepository) -> None:
+    counted = _counted(repository)
+    entries = repository.pending_field_effect_plan_entries(None, 100_000, ("books",))
+    assert Counter(entry[:4] for entry in entries) == counted
+    documents = repository.field_effect_plan_documents(
+        tuple(entry[4] for entry in entries[:100])
+    )
+    assert all(
+        json.loads(documents[entry[4]])["decision_id"] == entry[4]
+        for entry in entries[:100]
+    )
+    # File order: library, then work, so a work's rows are adjacent.
+    works = [entry[5] for entry in entries]
+    assert works == sorted(works)
+    first = repository.pending_field_effect_plan_entries(1, 100_000, ("books",))
+    assert Counter(entry[:4] for entry in first) == dict.fromkeys(counted, 1)
+    # Each group keeps its first decisions by id.
+    assert all(
+        entry[4] == min(row[4] for row in entries if row[:4] == entry[:4])
+        for entry in first
+    )
+    assert (
+        repository.pending_field_effect_plan_entries(None, 3, ("books",)) == entries[:3]
+    )
+
+
+def test_plan_entries_list_exactly_the_counted_decisions(
+    store: tuple[sqlite3.Connection, list[str]],
+) -> None:
+    """The write plan's rows are the counts statement's decisions (#1336)."""
+    connection, pending = store
+    repository = SQLiteMetadataReportRepository(connection)
+    assert {key[2] for key in _counted(repository)} == {"automatic", "human"}
+    _assert_plan_lists_the_counted(repository)
+    _effect(connection, "own", pending[0], json.dumps({"plan": {}}))
+    _effect(connection, "terminal", pending[1], _companion(pending[2]), "superseded")
+    _effect(connection, "companion", "human_decision_absent", _companion(pending[3]))
+    _effect(
+        connection,
+        "released",
+        pending[4],
+        json.dumps({"failure": "connection", **json.loads(_companion(pending[5]))}),
+        "stale",
+    )
+    connection.commit()
+    _assert_plan_lists_the_counted(repository)
+
+    # Negative control: without the effect filter the rows list a decision the
+    # counts exclude, so the two would disagree.
+    statement = (
+        _statements(connection)["plan"]
+        .replace("WHERE ordinal<=2 ", "WHERE ordinal<=100000 ")
+        .replace("LIMIT 60", "LIMIT 100000")
+    )
+    assert statement.count(_CURRENT_PREDICATE) == 1
+    listed = connection.execute(statement).fetchall()
+    assert Counter(row[:4] for row in listed) == _counted(repository)
+    unfiltered = connection.execute(
+        statement.replace(_CURRENT_PREDICATE, "1 ")
+    ).fetchall()
+    assert Counter(row[:4] for row in unfiltered) != _counted(repository)
+    assert pending[0] in {row[4] for row in unfiltered} - {row[4] for row in listed}
+
+
+@pytest.mark.parametrize(
+    ("per_group", "limit"),
+    [(0, 1), (101, 1), (True, 1), (None, 0), (None, 100_001), (None, False)],
+    ids=["zero", "over", "bool", "no-rows", "over-limit", "bool-limit"],
+)
+def test_plan_entries_refuse_an_unbounded_read(
+    store: tuple[sqlite3.Connection, list[str]], per_group: object, limit: object
+) -> None:
+    repository = SQLiteMetadataReportRepository(store[0])
+    with pytest.raises(FieldEffectError, match="invalid_limit"):
+        repository.pending_field_effect_plan_entries(per_group, limit, ())  # type: ignore[arg-type]
+    with pytest.raises(FieldEffectError, match="invalid_limit"):
+        repository.pending_field_effect_plan_entries(None, 1, ["books"])  # type: ignore[arg-type]
+    with pytest.raises(FieldEffectError, match="invalid_limit"):
+        repository.field_effect_plan_documents(("x",) * 101)
+    assert repository.field_effect_plan_documents(()) == {}
+
+
 def test_companion_cast_preserves_the_original_comparison_affinity() -> None:
     """The CAST is the conversion a TEXT decision id already applied.
 
@@ -399,7 +494,7 @@ def test_every_pending_call_shape_reaches_effects_by_index_only(
 ) -> None:
     connection, _ = store
     statements = _statements(connection)
-    assert set(statements) == {"documents", "cursor", "example", "counts"}
+    assert set(statements) == {"documents", "cursor", "counts", "plan"}
     for name, statement in statements.items():
         plan = _plan(connection, statement, ())
         assert not _scans_effects(plan), name
@@ -993,8 +1088,11 @@ def test_consent_revocation_supersedes_in_its_original_order(
 
 
 def test_description_application_history_breaks_tied_times_as_displayed(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from tests.support.description_advice import qualify_description_advice
+
+    qualify_description_advice(monkeypatch)
     from mechanical_librarian.adapters.field_effect_authority import (
         PersistedFieldEffectAuthority,
     )
@@ -1159,8 +1257,11 @@ def test_description_advice_history_breaks_tied_times_by_attempt_id(
 
 
 def test_description_decision_history_breaks_tied_times_by_decision_id(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from tests.support.description_advice import qualify_description_advice
+
+    qualify_description_advice(monkeypatch)
     from mechanical_librarian.domain.description_advice import (
         AuthoredDescriptionDecision,
     )
@@ -1243,10 +1344,12 @@ def _automatic_lineage(outcome: str) -> tuple[str, str]:
     )
 
 
+# A pin or unpin row is never the latest owner decision (#1346).
+_NOT_A_PIN_ROW = " AND current.outcome NOT IN ('pin','unpin')"
 _CURRENT_OWNER_DECISION = (
     "human.ordinal=(SELECT MAX(current.ordinal) FROM human_decisions current "
     "WHERE current.review_case_id=human.review_case_id AND "
-    "current.destination=human.destination)"
+    "current.destination=human.destination" + _NOT_A_PIN_ROW + ")"
 )
 _LINEAGE_REWRITES = {
     "documents": (
@@ -1278,14 +1381,16 @@ _HELD_DESCRIPTION = (
 _STATEMENTS_1204 = {
     "documents": "e62a8aca670e77687afeda2585f588070e80386e773408a62ef496edca4e4d16",
     "cursor": "820b901727766eaf3a516804cfe1cbd283381fd59b3f9ce36eea506539448608",
-    "example": "7aa5ac04c56ef298a1b0f1e05b08a2cce050309bec37fd2706c4d9cb629a769f",
     "counts": "6efa0744ef03ff2d0723e653f68c6ee54cbf941cdd295f921f9055918a1f8f0c",
+    # The write plan's rows (#1336) share the counts relation; its text came
+    # later, so this pins its own restoration.
+    "plan": "d723f12f367e5f44a58312fcb92d9c64633b4ced8e150f4181faa57c16be61e2",
 }
 
 
 def _before_1205(name: str, statement: str) -> str:
     for before, after in _LINEAGE_REWRITES[
-        "counts" if name == "counts" else "documents"
+        "counts" if name in {"counts", "plan"} else "documents"
     ]:
         assert statement.count(after) == 1, name
         statement = statement.replace(after, before)
@@ -1366,7 +1471,8 @@ def test_lineage_membership_restores_the_1204_text(
     # an automatic description under the owner's hold as it holds the rest;
     # #1358 then left an earlier episode's decision unplanned, and #1568 left
     # an automatic one unplanned outside the Automatic posture, and #1573
-    # one of an earlier policy generation.
+    # one of an earlier policy generation; #1346 left pin and unpin rows out
+    # of the owner's latest decision.
     restored = {
         name: hashlib.sha256(
             _before_1568(_before_1573(_before_1205(name, statement)))
@@ -1374,6 +1480,7 @@ def test_lineage_membership_restores_the_1204_text(
             .replace(_HELD_DESCRIPTION, "", 1)
             .replace(_FIELD_EFFECT_HOLDS_DECISION_SQL, _HELD_1204)
             .replace(_episode_decision_sql("human") + " AND ", "")
+            .replace(_NOT_A_PIN_ROW, "")
             .encode()
         ).hexdigest()
         for name, statement in _statements(connection).items()
@@ -1542,13 +1649,13 @@ def test_lineage_membership_refuses_malformed_documents_as_before(
     connection.execute("PRAGMA ignore_check_constraints=OFF")
     connection.commit()
     answers = _assert_lineage_oracle(connection, statements)
-    # Every statement that reads past the first pending row reaches the
-    # corrupted document, lineage or not; the unordered example stops first.
+    # Every statement reaches the corrupted document, lineage or not.
     refused = ("refused", "malformed JSON")
     assert [name for name, answer in answers.items() if answer == refused] == [
         "documents",
         "cursor",
         "counts",
+        "plan",
     ]
 
 
@@ -1630,40 +1737,6 @@ def test_lineage_lists_are_built_once_and_arms_keep_their_scans(
             "+automatic.review_case_id IN", "automatic.review_case_id IN"
         )
         assert "SCAN automatic" not in _arm_drivers(connection, bare), name
-
-
-def test_example_keeps_rowid_order_without_an_order_by(
-    store: tuple[sqlite3.Connection, list[str]],
-) -> None:
-    connection, pending = store
-    statement = _statements(connection)["example"]
-    # Only automatic decisions remain pending: a live effect claims each owner
-    # decision.
-    for value in pending:
-        if value.startswith("human_"):
-            _effect(connection, "claimed-" + value, value, "{}")
-    rows = connection.execute(
-        "SELECT decision_id,review_case_id FROM automatic_decisions ORDER BY rowid"
-    ).fetchall()
-    pending_rows = [row for row in rows if row[0] in pending]
-    first, later = next(
-        (first, later)
-        for index, first in enumerate(pending_rows)
-        for later in pending_rows[index + 1 :]
-        if later[1] < first[1]
-    )
-    for value, _ in rows:
-        if value not in (first[0], later[0]):
-            _effect(connection, "claimed-" + value, value, "{}")
-    connection.commit()
-    (answer,) = connection.execute(statement).fetchall()
-    assert json.loads(answer[0])["decision_id"] == first[0]
-    assert [answer] == connection.execute(_before_1205("example", statement)).fetchall()
-    bare = statement.replace(
-        "+automatic.review_case_id IN", "automatic.review_case_id IN"
-    )
-    (other,) = connection.execute(bare).fetchall()
-    assert json.loads(other[0])["decision_id"] == later[0]
 
 
 @pytest.mark.parametrize("reactivation", [False, True])

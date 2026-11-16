@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlsplit
 
+import pytest
 from playwright.sync_api import Page, Route, expect, sync_playwright
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
@@ -19,6 +20,7 @@ from mechanical_librarian.interfaces.web.react_assets import (
     ReactAssetBundle,
     load_react_asset_bundle,
 )
+from tests.browser import fidelity_cohort
 from tests.browser.fidelity_cohort import (
     BUILD_IDENTITY as _BUILD_IDENTITY,
 )
@@ -26,9 +28,11 @@ from tests.browser.fidelity_cohort import (
     HOSTILE_TEXT as _HOSTILE,
 )
 from tests.browser.fidelity_cohort import (
+    LIBRARY_PROGRESS_STATES,
     LONG_TITLE,
     TERMINAL_FAILURE_COPY,
     UNBROKEN_TITLE_SEGMENT,
+    finished_preparation,
     rich_payload,
     synthetic_preview,
     synthetic_preview_key,
@@ -1294,7 +1298,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 ).wait_for()
                 page.locator(".activity-consent-library").filter(
                     has_text="Household ebooks"
-                ).get_by_text("5 prepared · Writes enabled").wait_for()
+                ).get_by_text("6 prepared · Writes enabled").wait_for()
                 spoken = (
                     page.locator(".activity-consent-library")
                     .filter(has_text="Spoken stories")
@@ -2496,7 +2500,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 "grants": [
                     {
                         "library": "Spoken stories",
-                        "destinations": ["authors", "title"],
+                        "destinations": ["authors", "cover", "title"],
                     }
                 ]
             }
@@ -5374,6 +5378,75 @@ def test_write_permission_panel_fits_a_phone_at_200_percent_text() -> None:
         assert failures == [], "\n".join(failures)
 
 
+# Each write plan field card's content past the card's inner right edge.
+_PAST_THE_FIELD_CARD = """() => [...document.querySelectorAll('.write-plan-field')].flatMap(field => {
+  const card = field.closest('li');
+  const style = getComputedStyle(card);
+  const right = card.getBoundingClientRect().right - parseFloat(style.borderRightWidth) -
+    parseFloat(style.paddingRight);
+  const found = card.scrollWidth > card.clientWidth
+    ? [`${card.firstElementChild.textContent.trim()} scrolls ${card.scrollWidth - card.clientWidth}px`] : [];
+  for (const node of card.querySelectorAll('*')) {
+    const box = node.getBoundingClientRect();
+    if (box.width && box.right > right + 0.5)
+      found.push(`"${node.textContent.trim().slice(0, 30)}" runs ${Math.round(box.right - right)}px past its card`);
+  }
+  return found;
+})"""
+
+
+def _open_write_permissions(page: Page) -> None:
+    page.goto("https://react-platform.invalid/activity")
+    page.get_by_role("button", name="Review write permissions").first.click()
+    page.get_by_role("heading", name="Write permissions", exact=True).wait_for()
+    page.locator(".write-plan-field").first.wait_for()
+    page.evaluate(_TWO_FRAMES)
+
+
+def test_write_plan_values_line_up_down_the_list() -> None:
+    """At 1280px every listed change's New value starts at one left edge, so
+    rows of different lengths read as two columns (#1336)."""
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1280, "height": 900}, locale="en-US")
+        page.add_init_script(_LIVE_UPDATE_STREAM)
+        _serve_cohort(page)
+        _open_write_permissions(page)
+        rows = page.locator(".write-plan-rows > li")
+        lengths = rows.evaluate_all("rows => rows.map(row => row.textContent.length)")
+        lefts = rows.evaluate_all(
+            "rows => rows.map(row => row.querySelector('.write-plan-values > div:last-child')"
+            ".getBoundingClientRect().left)"
+        )
+        assert len(set(lengths)) > 1, lengths
+        assert max(lefts) - min(lefts) < 0.5, lefts
+
+
+def test_write_plan_groups_stay_in_their_cards_at_320px_and_200_percent_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """In a plan past the file limit, each group's count and Show cue move to
+    their own line and wrap inside the field card at 320px with 200% text (#1336)."""
+    monkeypatch.setattr(
+        fidelity_cohort,
+        "_COHORT_WRITE_PLAN",
+        fidelity_cohort.COHORT_WRITE_PLANS["over_limit"],
+    )
+    with ExitStack() as stack:
+        page = _enlarged_cohort(stack, 320, 844)
+        _open_write_permissions(page)
+        expect(page.get_by_text("23,570 changes")).to_be_visible()
+        failures = page.evaluate(_PAST_THE_FIELD_CARD)
+        sideways = page.evaluate(
+            "() => document.documentElement.scrollWidth - innerWidth"
+        )
+        if sideways > 0:
+            failures.append(f"the page scrolls {sideways}px sideways")
+        assert failures == [], "\n".join(failures)
+
+
 def test_policy_preview_actions_stay_inside_the_editor_at_200_percent_text() -> None:
     """With root font-size 200%, the Policy finish tray's preview-stage steps
     and actions stay inside the editor at 1440, 1200, 1024 and 375px (#1490).
@@ -5595,3 +5668,304 @@ def test_library_handoff_arrives_with_the_works() -> None:
             )
             assert abs(now - first["top"]) <= 1, (where, first, now)
             assert moved == 0, (where, moved)
+
+
+def test_library_progress_card_and_run_box_line_keep_their_places() -> None:
+    """The Activity card follows the status box above the Ledger on a wide
+    screen and, on a phone where the Ledger comes first, follows the Ledger
+    and the status box in full; a finished run's line sits in its box beside
+    its button, never in it, and no width scrolls sideways (#1335)."""
+
+    def progress(page: Page, state: str) -> None:
+        def fulfill(route: Route) -> None:
+            if state == "loading":
+                return
+            if state == "failed":
+                route.fulfill(
+                    status=503,
+                    content_type="application/json",
+                    body=json.dumps(
+                        {
+                            "error": {"code": "unavailable"},
+                            "schema_version": "review-error-v1",
+                        }
+                    ),
+                )
+                return
+            route.fulfill(
+                content_type="application/json",
+                body=json.dumps(LIBRARY_PROGRESS_STATES[state]),
+            )
+
+        page.route("**/api/v1/library/progress", fulfill)
+
+    def no_sideways_scroll(page: Page, width: int) -> None:
+        assert page.evaluate(
+            "() => document.documentElement.scrollWidth"
+            " <= document.documentElement.clientWidth"
+        ), width
+
+    activity = (
+        "https://react-platform.invalid/activity"
+        "?eventType=all&rangeDays=30&page=1&pageSize=25"
+    )
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        for width in (320, 390, 1280):
+            page = browser.new_page(
+                viewport={"width": width, "height": 844}, locale="en-US"
+            )
+            _serve_cohort(page)
+            progress(page, "two_libraries")
+            page.goto(activity)
+            card = page.get_by_role("region", name="Library progress")
+            expect(card).to_contain_text("1,840 of 2,026 works settled")
+            ledger = page.locator(".cm-activity-ledger")
+            # Both lists are shown in full at every width.
+            expect(card.locator("details")).to_have_count(0)
+            expect(card.get_by_role("heading", name="By library")).to_be_visible()
+            expect(
+                card.get_by_role("heading", name="Fields that need you")
+            ).to_be_visible()
+            expect(card.get_by_role("listitem")).to_have_count(6)
+            mine = card.bounding_box()
+            ledger_box = ledger.bounding_box()
+            status = page.locator(".cm-activity-status").bounding_box()
+            assert mine is not None and ledger_box is not None and status is not None
+            assert mine["y"] >= status["y"] + status["height"] - 1, (width, mine)
+            if width > 760:
+                assert mine["y"] + mine["height"] <= ledger_box["y"] + 1, (width, mine)
+            else:
+                # The phone puts the Ledger first; the card follows it.
+                assert mine["y"] >= ledger_box["y"] + ledger_box["height"] - 1, (
+                    width,
+                    mine,
+                )
+            _fits_its_container(page, ".activity-library-progress", width)
+            no_sideways_scroll(page, width)
+            page.close()
+
+            # One library, a read still counting and a failed read all fit.
+            for state, words in (
+                ("one_library", "184 of 184 works settled"),
+                ("loading", "Counting works…"),
+                ("failed", "Library progress could not be loaded."),
+            ):
+                page = browser.new_page(
+                    viewport={"width": width, "height": 844}, locale="en-US"
+                )
+                _serve_cohort(page)
+                progress(page, state)
+                page.goto(activity)
+                card = page.get_by_role("region", name="Library progress")
+                expect(card).to_contain_text(words)
+                _fits_its_container(page, ".activity-library-progress", width)
+                no_sideways_scroll(page, width)
+                page.close()
+
+            page = browser.new_page(
+                viewport={"width": width, "height": 844}, locale="en-US"
+            )
+            _serve_cohort(page)
+            page.route(
+                "**/api/v1/review-preparation",
+                lambda route: route.fulfill(
+                    content_type="application/json",
+                    body=json.dumps(
+                        finished_preparation("completed_with_failures", failed=3)
+                    ),
+                ),
+            )
+            page.goto("https://react-platform.invalid/library?lens=all")
+            line = page.locator(".preparation-summary-progress")
+            expect(line).to_contain_text("works settled")
+            assert (
+                page.locator(
+                    ".preparation-summary .preparation-summary-progress"
+                ).count()
+                == 0
+            )
+            expect(
+                page.get_by_role("button", name=re.compile("^Preparation completed"))
+            ).to_be_visible()
+            # Open in Activity sits on its own line, below the counts.
+            counts_box = line.locator(".library-progress-line").bounding_box()
+            onward = line.get_by_role("link", name="Open in Activity").bounding_box()
+            assert counts_box is not None and onward is not None
+            assert onward["y"] >= counts_box["y"] + counts_box["height"] - 1, (
+                width,
+                onward,
+            )
+            _fits_its_container(page, ".preparation-summary-box", width)
+            no_sideways_scroll(page, width)
+            page.close()
+
+
+# The element's box grown by `pad` px (the global focus ring: 3 px wide, 3 px
+# out) against every ancestor up to `stop` whose overflow clips: the ancestors
+# that would cut the ring, by class.
+_RING_CLIPPERS = """
+([selector, stop, pad]) => {
+  const element = document.querySelector(selector);
+  const ring = element.getBoundingClientRect();
+  const clippers = [];
+  for (let node = element.parentElement; node; node = node.parentElement) {
+    const style = getComputedStyle(node);
+    if (style.overflowX !== 'visible' || style.overflowY !== 'visible') {
+      const box = node.getBoundingClientRect();
+      const left = box.left + node.clientLeft;
+      const top = box.top + node.clientTop;
+      if (
+        ring.left - pad < left - 0.5 || ring.top - pad < top - 0.5
+        || ring.right + pad > left + node.clientWidth + 0.5
+        || ring.bottom + pad > top + node.clientHeight + 0.5
+      ) clippers.push(node.className || node.tagName);
+    }
+    if (node.matches(stop)) break;
+  }
+  return clippers;
+}
+"""
+
+# Each line box of the run's line, against the frame's inside edges: how far
+# the furthest piece of text sticks out, in px (0 or less when all is inside).
+_LINE_OUTSIDE_FRAME = """
+() => {
+  const frame = document.querySelector('.preparation-summary-box');
+  const line = frame.querySelector('.preparation-summary-progress');
+  const box = frame.getBoundingClientRect();
+  const left = box.left + frame.clientLeft;
+  const right = left + frame.clientWidth;
+  const range = document.createRange();
+  range.selectNodeContents(line);
+  let worst = -Infinity;
+  for (const rect of range.getClientRects()) {
+    if (rect.width === 0) continue;
+    worst = Math.max(worst, left - rect.left, rect.right - right);
+  }
+  return worst;
+}
+"""
+
+
+def _serve_run_box(page: Page, progress: Callable[[Route], None]) -> None:
+    """The cohort with a cleanly finished run in Library's box (#1335)."""
+    _serve_cohort(page)
+    page.route(
+        "**/api/v1/review-preparation",
+        lambda route: route.fulfill(
+            content_type="application/json",
+            body=json.dumps(finished_preparation("completed_clean")),
+        ),
+    )
+    page.route("**/api/v1/library/progress", progress)
+
+
+def _progress_route(state: str) -> Callable[[Route], None]:
+    def fulfill(route: Route) -> None:
+        route.fulfill(
+            content_type="application/json",
+            body=json.dumps(LIBRARY_PROGRESS_STATES[state]),
+        )
+
+    return fulfill
+
+
+def test_library_progress_run_box_never_cuts_a_focus_ring() -> None:
+    """A finished run's frame never cuts the global focus ring, of the run's
+    button or of the line while Try again reads (#1335)."""
+
+    def tab_to(page: Page, locator: Any) -> None:
+        for _ in range(60):
+            page.keyboard.press("Tab")
+            if locator.evaluate("node => node === document.activeElement"):
+                return
+        raise AssertionError("the keyboard never reached it")
+
+    def failing_then_held() -> Callable[[Route], None]:
+        reads: list[Route] = []
+
+        def fulfill(route: Route) -> None:
+            reads.append(route)
+            if len(reads) == 1:
+                route.fulfill(
+                    status=503,
+                    content_type="application/json",
+                    body=json.dumps(
+                        {
+                            "error": {"code": "unavailable"},
+                            "schema_version": "review-error-v1",
+                        }
+                    ),
+                )
+
+        return fulfill
+
+    library = "https://react-platform.invalid/library?lens=all"
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        for width in (320, 1280):
+            page = browser.new_page(
+                viewport={"width": width, "height": 844}, locale="en-US"
+            )
+            _serve_run_box(page, _progress_route("two_libraries"))
+            page.goto(library)
+            expect(page.locator(".preparation-summary-progress")).to_contain_text(
+                "works settled"
+            )
+            button = page.get_by_role(
+                "button", name=re.compile("^Preparation complete")
+            )
+            tab_to(page, button)
+            assert button.evaluate("node => node.matches(':focus-visible')")
+            clippers = page.evaluate(
+                _RING_CLIPPERS, [".preparation-summary", ".library-works", 6]
+            )
+            assert clippers == [], (width, "run's button", clippers)
+            page.close()
+
+            # Try again holds focus on the line while the counts read again.
+            page = browser.new_page(
+                viewport={"width": width, "height": 844}, locale="en-US"
+            )
+            _serve_run_box(page, failing_then_held())
+            page.goto(library)
+            retry = page.get_by_role("button", name="Try again")
+            expect(retry).to_be_visible()
+            tab_to(page, retry)
+            page.keyboard.press("Enter")
+            line = page.locator(".preparation-summary-progress")
+            expect(line).to_be_focused()
+            assert line.evaluate("node => node.matches(':focus-visible')")
+            clippers = page.evaluate(
+                _RING_CLIPPERS, [".preparation-summary-progress", ".library-works", 6]
+            )
+            assert clippers == [], (width, "line", clippers)
+            page.close()
+
+
+def test_library_progress_largest_counts_wrap_inside_the_run_box() -> None:
+    """At 320 px with 200% text the largest counts wrap inside a finished
+    run's frame, and the page does not scroll sideways (#1335)."""
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 320, "height": 844}, locale="en-US")
+        _serve_run_box(page, _progress_route("largest_counts"))
+        page.goto("https://react-platform.invalid/library?lens=all")
+        expect(page.locator(".preparation-summary-progress")).to_contain_text(
+            "of 1,000,000 works settled"
+        )
+        set_root_text(page, "200%")
+        outside = page.evaluate(_LINE_OUTSIDE_FRAME)
+        assert outside <= 0, f"the line sticks out of its frame by {outside}px"
+        assert page.evaluate(
+            "() => document.documentElement.scrollWidth"
+            " <= document.documentElement.clientWidth"
+        )
+        page.close()

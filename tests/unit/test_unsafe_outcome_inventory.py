@@ -112,8 +112,10 @@ _CASE_CALL: Row = {
 # and no decision is recorded (#1355, amendment 4). `offer_changed` with
 # `digest_mismatch` is raised inside the decision transaction.
 # `decision_written` refuses a withdrawal of a decision already written to the
-# target. A read after the commit is absorbed by `_decision_confirmation`; the
-# `run` catch-all is `unavailable`.
+# target. The pin refusals and a pinned field's refused withdrawal (#1346) are
+# raised inside the decision transaction before any insert. A read after the
+# commit is absorbed by `_decision_confirmation`; the `run` catch-all is
+# `unavailable`.
 _DECISION: Row = {
     **{
         (409, code): "pre-commit"
@@ -125,6 +127,10 @@ _DECISION: Row = {
             "automatic_hold",
             "decision_written",
             "offer_changed",
+            "pin_change_waiting",
+            "already_pinned",
+            "not_pinned",
+            "pinned",
         )
     },
     **{
@@ -218,6 +224,30 @@ INVENTORY: dict[tuple[str, str], Row] = {
     ("POST", "/api/v1/session/logout"): {
         # `OwnerSessionService.logout` refuses inside its revoke transaction;
         # `unauthorized` is a session another request already revoked.
+        (403, "csrf"): "pre-commit",
+        (401, "unauthorized"): "pre-commit",
+        (503, "persistence"): "post-commit",
+    },
+    ("POST", "/api/v1/session/password"): {
+        # `OwnerSessionService.change_password`: the missing change port, the
+        # snapshot re-authentication and the rule check all precede the
+        # throttle; `_replace_password` refuses before `adopt` commits, and a
+        # lost or failed compare-and-set revokes its own new session. The
+        # swap and the purge after the commit cannot raise into the caller.
+        (409, "settings_managed_by_file"): "pre-commit",
+        (401, "unauthorized"): "pre-commit",
+        (403, "csrf"): "pre-commit",
+        (422, "invalid_password"): "pre-commit",
+        (429, "throttled"): "pre-commit",
+        (403, "current_password_invalid"): "pre-commit",
+        (500, "runtime"): "pre-commit",
+        (503, "persistence"): "pre-commit",
+    },
+    ("POST", "/api/v1/session/logout-others"): {
+        # `OwnerSessionService.logout_others` refuses inside the one
+        # `end_other_review_sessions` transaction, before anything is deleted;
+        # `unauthorized` is this session ended meanwhile. A fault can follow a
+        # raised COMMIT, as for logout.
         (403, "csrf"): "pre-commit",
         (401, "unauthorized"): "pre-commit",
         (503, "persistence"): "post-commit",

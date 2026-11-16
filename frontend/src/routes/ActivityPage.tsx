@@ -21,6 +21,7 @@ import type {
 import { activityOutcome, ledgerRows } from '../activityState'
 import { Button } from '../components/Button'
 import { StatusPill } from '../components/StatusPill'
+import { WritePlanField } from '../components/WritePlanGroups'
 import { Dropdown } from '../components/Dropdown'
 import { useRouteReadyFocus } from '../focus'
 import { destinationLabel, destinationPhrase, writeHoldReasons } from '../labels'
@@ -46,6 +47,7 @@ import { ActivityEventRow, PageJump, RowTime } from './ActivityLedgerRow'
 import { ActivityStatusCopy, ProviderRecoveryPanel } from './ActivityStatus'
 import { focusAfterRetry } from '../focusAfterRetry'
 import { ActivityPermissionCheck, readinessUnavailableCopy } from './ActivityPermissionCheck'
+import { ActivityLibraryProgress } from './ActivityLibraryProgress'
 import type { PermissionCheck } from './ActivityPermissionCheck'
 // The activity response is validated into `ActivityDisplayView` at the
 // transport boundary, so this route reads it as the typed view it already is
@@ -1256,7 +1258,6 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               checkPressed.current = true
               checkPermissions()
             }}
-            libraryName={names.name}
           />
           {configured.map((library) => {
             const name = library.library
@@ -1286,7 +1287,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                   />
                   <strong>{displayName}</strong>
                   <small>
-                    {preparedCount(library)} prepared ·{' '}
+                    {preparedCount(library).toLocaleString('en-US')} prepared ·{' '}
                     {permission?.backup_ready !== true
                       ? 'Backup not confirmed'
                       : libraryWritesHeld(destinations)
@@ -1300,11 +1301,16 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                       <span>{destinationLabel(entry.destination)}</span>
                       <small>
                         {writesEnabled(entry)
-                          ? `Writes enabled · ${String(entry.prepared)} prepared`
+                          ? `Writes enabled · ${entry.prepared.toLocaleString('en-US')} prepared`
                           : entry.state === 'allowed'
-                            ? `Included · ${String(entry.prepared)} prepared`
+                            ? `Included · ${entry.prepared.toLocaleString('en-US')} prepared`
                             : `${entry.consented ? 'Writes held' : 'Excluded'}: ${destinationReason(entry.state, consent.lapsed !== null)}`}
                       </small>
+                      <WritePlanField
+                        plan={permission?.plan}
+                        library={name}
+                        destination={entry.destination}
+                      />
                     </li>
                   ))}
                 </ul>
@@ -1491,6 +1497,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
           </details>
         ) : null}
       </section>
+      <ActivityLibraryProgress http={http} />
       <PreparationNotice routeIdentity={routeIdentity} />
     </div>
   )

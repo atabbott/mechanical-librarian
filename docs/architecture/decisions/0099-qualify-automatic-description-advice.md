@@ -12,9 +12,9 @@
 
 ## Context
 
-With **Automatically apply ready description advice** on, the app writes the
-description adviser's text without asking and may replace a description the
-owner already has. Nothing yet measures how often that text is the one the
+With **Automatically apply ready description advice** on, the app would write
+the description adviser's text without asking and could replace a description
+the owner already has. Nothing yet measures how often that text is the one the
 owner would have chosen.
 
 The owner's decisions on descriptions are already stored. On a description,
@@ -52,11 +52,12 @@ Codex profile digest comes from the image's build and cannot be reproduced
 from a checkout.
 
 The advice choice on the work's page is enabled only when the field is
-editable, which needs a source description that differs from the library's.
-Where every source repeats the library's description, the owner can neither
-choose the advice nor keep the current description. Until #1895, Automatic
-still admitted and wrote there, because admission checked neither the policy
-destination nor the decision actions.
+editable. Before #1905 that needed a source description that differed from
+the library's: where every source repeated the library's description, the
+owner could neither choose the advice nor keep the current description. Until
+#1895, Automatic still admitted and wrote there, because admission checked
+neither the policy destination nor the decision actions. Since #1905 such a
+field offers the adviser's text and Keep current while its advice is shown.
 
 ## Decision
 
@@ -100,12 +101,12 @@ destination nor the decision actions.
    eligible, decided before any advice, and current eligible advice still
    undecided are not labels. The owner chose that keeping the current
    description counts as wrong on 2026-11-15.
-6. **Fields the owner cannot choose.** Where every source repeats the
-   library's description, the advice cannot be chosen, so those fields cannot
-   be labelled and qualification does not cover them. Since #1895 (issue
-   #1892), Automatic never writes a description field with no decision
-   actions, so the labelled population is the whole population Automatic may
-   write.
+6. **Fields every source repeats.** Where every source repeats the
+   library's description, the field offers the adviser's text and Keep
+   current while its advice is shown (#1905), so those fields are labelled
+   like any other. Since #1895 (issue #1892), Automatic never writes a
+   description field the owner could not choose or reverse, so the labelled
+   population is the whole population Automatic may write.
 7. **Identity.** Labels are pooled by the advice's engine, model, instruction
    digest, output-schema digest and cleanup digest, as ADR-0087 binds a
    qualification to the operation it permits. Each of the eight cleanup
@@ -131,8 +132,17 @@ destination nor the decision actions.
     admission refuses unless a shipped qualification record names the
     advice's engine, model, instruction digest, schema digest and cleanup
     choices. The switch stays choosable but only proposes until then. The
-    owner chose this on 2026-11-15; it is built in a separate change. This
-    decision changes no behaviour now.
+    owner chose this on 2026-11-15. The record is
+    `QUALIFIED_DESCRIPTION_ADVISERS` in `domain/description_advice.py`: each
+    key copies one passing identity's five fields from the score JSON
+    (`engine`, `model`, `instruction_sha256`, `output_schema_sha256`,
+    `preferences_digest`), and its value is the SHA-256 of that JSON as
+    attached to #1886. It is empty until such a score is attached. Admission
+    and write authority read it on each ask, so an automatic decision stored
+    before a record, or after one is removed, never writes. A change to the
+    instruction or output schema drops or requalifies the records, which a
+    test enforces. Policy → Curation says ready advice is only suggested; the
+    first record also makes that line name the advisers that write.
 
 ## Consequences
 
@@ -152,8 +162,7 @@ destination nor the decision actions.
 
 ### Neutral or deferred
 
-- The qualification record and the admission check are built in a later change
-  (Decision 10).
+- The first qualification record waits for a passing score (Decision 10).
 
 ## Alternatives considered
 
@@ -183,5 +192,8 @@ Rejected: it changes with every CLI update and would reset the labels.
 
 `tests/unit/test_description_advice_labels.py` proves the refusals, every
 `sample` count, the label rule, the identity groups and the manifest relation
-on product-built stores. The owner's score JSON from the run is the
-qualification evidence.
+on product-built stores. `tests/unit/test_description_advice_qualification.py`
+proves the enforcement: an unrecorded identity is refused at admission and at
+write time, a record names one exact identity, a record copied from the score
+JSON admits the advice, and every record names this checkout's instruction and
+schema. The owner's score JSON from the run is the qualification evidence.

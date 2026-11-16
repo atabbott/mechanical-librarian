@@ -15,10 +15,12 @@ import type {
   CaseDetailView,
   CoverTab,
   DecisionAcknowledgementView,
+  LibraryProgressView,
   LibraryView,
   PolicyStateView,
   PreparationView,
   ReviewHttp,
+  WritePlanView,
   PreviewPostureView,
   PreviewSampleView,
   TasteProfileView,
@@ -88,6 +90,7 @@ export const library: LibraryView = {
       library: 'Books',
       mediaKind: 'epub',
       attentionCount: 1,
+      pinnedCount: 0,
       attention: 'needs_attention',
       detailUrl: '/review/case-1',
       detailKind: 'case' as const,
@@ -95,6 +98,20 @@ export const library: LibraryView = {
       preparationOutcomes: [],
     },
   ],
+}
+
+// Library progress over the same one work as `library` (#1335).
+export const libraryProgress: LibraryProgressView = {
+  totals: library.counts,
+  libraries: [
+    {
+      connection: 'primary',
+      library: 'books',
+      libraryDisplayName: 'Books',
+      counts: library.counts,
+    },
+  ],
+  fields: [{ destination: 'title', needYou: 1 }],
 }
 
 export const detail: CaseDetailView = {
@@ -147,6 +164,8 @@ export const detail: CaseDetailView = {
       provenance: [],
       preservationOnly: false,
       corroborationSources: [],
+      pin: null,
+      pinControl: null,
     },
   ],
 }
@@ -280,12 +299,29 @@ export const inertAudiobookQualification: PolicyStateView['audiobook_qualificati
   },
 ]
 
+// The write plan a readiness check finds: one owner-chosen group per field
+// with prepared changes, its count only, so its total is those counts (#1336).
+export const writePlan = (data: ActivityView): WritePlanView => {
+  const groups = data.capabilities.flatMap((library) =>
+    library.destinations
+      .filter((destination) => destination.prepared > 0)
+      .map((destination) => ({
+        library: library.library,
+        destination: destination.destination,
+        kind: 'human' as const,
+        count: destination.prepared,
+        rows: [],
+      })),
+  )
+  return { total: groups.reduce((sum, group) => sum + group.count, 0), groups }
+}
+
 export const permissionReadiness = (data: ActivityView, backupReady: boolean | null = true) => ({
   backup_ready: backupReady,
   configured_libraries: data.configured_libraries,
   capabilities: data.capabilities,
   prepared: data.prepared,
-  example: data.example,
+  plan: writePlan(data),
 })
 
 // An idle preparation view with every field the decoder requires. A case
@@ -373,6 +409,7 @@ export const createHttp = (): ReviewHttp => ({
     throw new Error('not configured')
   }),
   getLibrary: vi.fn(async () => library),
+  getLibraryProgress: vi.fn(async () => libraryProgress),
   getAttention: vi.fn(async () => ({ total: 0, items: [] })),
   getCovers: vi.fn(async (view: CoverTab) => ({
     counts: { decide: 0, kept: 0, switched: 0, all: 0 },
@@ -463,20 +500,17 @@ export const createHttp = (): ReviewHttp => ({
     return (this.policyCommand as ScriptedPolicyCommand)('activate', request)
   },
   getActivity: vi.fn(async () => activity()),
-  getActivityPermissionReadiness: vi.fn(async () => {
-    const data = activity()
-    return {
-      backup_ready: true,
-      configured_libraries: data.configured_libraries,
-      capabilities: data.capabilities,
-      prepared: data.prepared,
-      example: data.example,
-    }
-  }),
+  getActivityPermissionReadiness: vi.fn(async () => permissionReadiness(activity())),
+  downloadActivityWritePlan: vi.fn<ReviewHttp['downloadActivityWritePlan']>(async () => ({
+    blob: new Blob(['"Library"\r\n'], { type: 'text/csv;charset=utf-8' }),
+    filename: 'mechanical-librarian-write-plan.csv',
+  })),
   getActivityConsent: vi.fn(async () => consentOf(activity())),
   getActivityTransitions: vi.fn(async () => ({ events: [], has_more: false })),
   activityCommand: vi.fn(async () => undefined),
   logout: vi.fn(async () => undefined),
+  changePassword: vi.fn(async () => undefined),
+  logoutOthers: vi.fn(async () => undefined),
 })
 
 /**

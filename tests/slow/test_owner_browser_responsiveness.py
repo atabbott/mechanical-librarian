@@ -97,7 +97,7 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
                 "warm_full_reload",
                 "cold_sign_in_destination",
             }:
-                expect(page.get_by_text("2300 works", exact=True)).to_be_visible()
+                expect(page.get_by_text("2,300 works", exact=True)).to_be_visible()
             state = page.evaluate("() => window.__ownerTiming")
             if navigation:
                 key = "sign_in" if name == "cold_sign_in_shell" else "data"
@@ -210,6 +210,38 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
                 with running_owner_fixture(
                     tmp_path, 2300 if cold == 0 else 0, prepare=True
                 ) as (fixture, origin):
+                    if cold == 4:
+                        # A readable current cover asks only while the title
+                        # names another book (#1362), so no work asks about
+                        # its cover alone. As the fixture does for cases[1],
+                        # the owner has already kept every title it asks
+                        # about, so each work left in attention asks about
+                        # its cover and leaves once that is answered. The
+                        # last case is left for the external actors.
+                        for case in fixture.cases:
+                            if case is fixture.cases[1] or case is fixture.cases[-1]:
+                                continue
+                            title = next(
+                                value
+                                for value in case.proposals
+                                if value["destination"] == "title"
+                            )
+                            title_result = title["result"]
+                            assert type(title_result) is dict
+                            if title_result["outcome"] != "unresolved_choice":
+                                continue
+                            proposal_id = title["proposal_id"]
+                            assert type(proposal_id) is str
+                            fixture.application.record_decision(
+                                case.review_case_id,
+                                proposal_id=proposal_id,
+                                target_fingerprint=case.target_fingerprint,
+                                destination="title",
+                                actor="owner",
+                                outcome="keep_current",
+                                selected_value=None,
+                                idempotency_key="owner-title-" + case.review_case_id,
+                            )
                     with closing(
                         browser.new_context(viewport={"width": 1440, "height": 900})
                     ) as context:
@@ -246,18 +278,18 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
                                 const heading = text => exact('h1,h2,h3,h4', text);
                                 const tests = {
                                     cold_sign_in_destination: () => heading('Works'),
-                                    warm_sign_in_destination: () => exact('.library-works-heading>span', '2300 works'),
-                                    search: () => exact('.library-works-heading>span', 'Found 2070 of 2300 works'),
+                                    warm_sign_in_destination: () => exact('.library-works-heading>span', '2,300 works'),
+                                    search: () => exact('.library-works-heading>span', 'Found 2,070 of 2,300 works'),
                                     negative_search: () => new URL(location.href).searchParams.get('q') === 'absent-search-term'
                                         && exact('p', 'No works match this search.'),
                                     clear_search: () => !new URL(location.href).searchParams.has('q')
-                                        && exact('.library-works-heading>span', '2300 works'),
+                                        && exact('.library-works-heading>span', '2,300 works'),
                                     pagination: () => exact('span', 'Page 2'),
                                     selected_detail: () => heading('Which cover should this work use?'),
                                     choice_confirmation: () => heading('Review complete'),
                                     policy_navigation: () => heading('Library policy'),
                                     settings_navigation: () => heading('Settings'),
-                                    library_navigation: () => exact('.library-works-heading>span', '2300 works'),
+                                    library_navigation: () => exact('.library-works-heading>span', '2,300 works'),
                                     attention_status: () => exact('button', 'Load more attention'),
                                     preparation_status: () => heading('Background activity'),
                                     activity_navigation: () => heading('Ledger') && !!document.querySelector('.cm-activity-events article'),
@@ -288,7 +320,7 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
                                     const now = performance.now();
                                     if (exact('button', 'Sign in')) timing.navigation.sign_in ??= now;
                                     if (heading('Works')) timing.navigation.shell ??= now;
-                                    if (exact('.library-works-heading>span', '2300 works')) timing.navigation.data ??= now;
+                                    if (exact('.library-works-heading>span', '2,300 works')) timing.navigation.data ??= now;
                                     if (timing.name && tests[timing.name]()) timing.ready ??= now;
                                 }).observe(document, {
                                     subtree: true, childList: true, characterData: true, attributes: true,
@@ -322,13 +354,13 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
                             1000,
                         )
                         expect(
-                            page.get_by_text("2300 works", exact=True)
+                            page.get_by_text("2,300 works", exact=True)
                         ).to_be_visible()
                         measured(
                             "cold_full_reload",
                             page.reload,
                             lambda page=page: expect(
-                                page.get_by_text("2300 works", exact=True)
+                                page.get_by_text("2,300 works", exact=True)
                             ).to_be_visible(),
                         )
                         if cold < 4:
@@ -379,7 +411,7 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
                                     "clear_search",
                                     lambda search=search: search.fill(""),
                                     lambda page=page: expect(
-                                        page.get_by_text("2300 works", exact=True)
+                                        page.get_by_text("2,300 works", exact=True)
                                     ).to_be_visible(),
                                 )
                                 assert "q" not in parse_qs(urlsplit(page.url).query)
@@ -390,7 +422,7 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
                                     ),
                                     lambda page=page: expect(
                                         page.get_by_text(
-                                            "Found 2070 of 2300 works", exact=True
+                                            "Found 2,070 of 2,300 works", exact=True
                                         )
                                     ).to_be_visible(),
                                 )
@@ -455,8 +487,16 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
                                 page.get_by_role(
                                     "link", name="History", exact=True
                                 ).click()
+                                # The work may hold an earlier kept field, so
+                                # the cover's own entry is the one read here.
                                 expect(
-                                    page.get_by_text(
+                                    page.locator("article.diagnostic-entry")
+                                    .filter(
+                                        has=page.get_by_role(
+                                            "heading", name="Cover", exact=True
+                                        )
+                                    )
+                                    .get_by_text(
                                         "You kept the current value.", exact=True
                                     )
                                 ).to_be_visible()
@@ -589,7 +629,7 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
                                         "link", name="Library", exact=True
                                     ).click(),
                                     lambda page=page: expect(
-                                        page.get_by_text("2300 works", exact=True)
+                                        page.get_by_text("2,300 works", exact=True)
                                     ).to_be_visible(),
                                 )
                                 measured(
@@ -638,7 +678,7 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
                                         "button", name="Sign in", exact=True
                                     ).click(),
                                     lambda page=page: expect(
-                                        page.get_by_text("2300 works", exact=True)
+                                        page.get_by_text("2,300 works", exact=True)
                                     ).to_be_visible(),
                                 )
                                 response = context.request.get(

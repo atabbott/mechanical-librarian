@@ -29,6 +29,7 @@ from mechanical_librarian.application.review_application import (
 from mechanical_librarian.application.review_pipeline import ReviewPreparationSupervisor
 from mechanical_librarian.application.reviewer_access import ReviewerAccessOperations
 from mechanical_librarian.interfaces.web import (
+    StoreOwnerPassword,
     create_review_app,
     load_owner_password_binding,
 )
@@ -111,6 +112,7 @@ def create_transport_test_app(
     | ContinuousGuardedApplication
     | None = None,
     activity_projection: ContinuousGuardedApplication | None = None,
+    export_projection: ContinuousGuardedApplication | None = None,
     operational_timings: TimingRepository | None = None,
     operational_support: SupportExporter | None = None,
     operational_timer: StageTimer | None = None,
@@ -122,10 +124,21 @@ def create_transport_test_app(
     first_boot: bool = False,
     acknowledge_first_boot: Callable[[], None] | None = None,
     provider_throttling: Callable[[], dict[str, object]] | None = None,
+    owner_password: StoreOwnerPassword | None = None,
 ):
-    """Wire synthetic store capabilities before creating the HTTP adapter."""
-    password_binding = load_owner_password_binding(
-        Path(configuration.owner_password_hash_file)
+    """Wire synthetic store capabilities before creating the HTTP adapter.
+
+    ``owner_password`` serves the verifier as a store deployment does, and
+    lets Settings change it; without it the hash file serves it.
+    """
+    password_binding = (
+        load_owner_password_binding(Path(configuration.owner_password_hash_file))
+        if owner_password is None
+        else (
+            owner_password.verify,
+            owner_password.session_digest,
+            owner_password.client_digest,
+        )
     )
     if session_store is None:
         # A double that still implements the session protocol serves as its
@@ -145,6 +158,7 @@ def create_transport_test_app(
         verify_password=password_binding[0],
         session_digest=password_binding[1],
         client_digest=password_binding[2],
+        owner_password_change=owner_password,
         clock=clock,
         session_lifetime_seconds=configuration.session_lifetime_seconds,
         graceful_shutdown_seconds=configuration.graceful_shutdown_seconds,
@@ -153,6 +167,7 @@ def create_transport_test_app(
         policy_libraries=policy_libraries,
         field_application=field_application,
         activity_projection=activity_projection,
+        export_projection=export_projection,
         operational_timings=operational_timings,
         operational_support=operational_support,
         operational_timer=operational_timer,

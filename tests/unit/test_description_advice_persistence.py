@@ -12,6 +12,13 @@ from mechanical_librarian.adapters.persistence.metadata_reports import open_repo
 from mechanical_librarian.domain.description_advice import (
     DescriptionAdviceCandidate,
 )
+from tests.support.description_advice import qualify_description_advice
+
+
+@pytest.fixture(autouse=True)
+def _qualified_adviser(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These proofs admit automatic advice, so a record names their adviser."""
+    qualify_description_advice(monkeypatch)
 
 
 def test_attempt_persisted_before_dispatch_and_success_rebinds_without_call(
@@ -919,4 +926,157 @@ def test_an_owner_answer_without_an_authored_description_holds_later_advice(
     assert decision.to_json() not in repository.pending_field_effect_decision_documents(
         32
     )
+    repository.close()
+
+
+def test_a_pinned_description_admits_no_automatic_advice(tmp_path):
+    """ADR-0085 Amendment 2 (#1346, AC8 and AC15): a pin carried to a later
+    case keeps automatic advice out of the description, while the owner's own
+    advice choice is still admitted and ends the pin. A carried hold without
+    a pin refuses no automatic admission (the test above), so only the pin
+    can refuse it."""
+    from mechanical_librarian.application.description_advice import (
+        DescriptionAdviceService,
+    )
+    from mechanical_librarian.domain.human_decision import HumanDecision
+    from mechanical_librarian.domain.review_case import ReviewCase
+    from tests.support.description_advice import _prepared
+
+    access = []
+    repository, store, binding, _, _ = _prepared(
+        tmp_path,
+        automatic_policy=("cover_order", "fixed_source_order"),
+        pipeline_probe=lambda *values: access.append(values[3]),
+    )
+    case = ReviewCase.create_from_data(
+        json.loads(repository.get_review_case(binding.review_case_id))["case"]
+    )
+    proposal = next(
+        value for value in case.proposals if value["destination"] == "description"
+    )
+    pin = HumanDecision.create(
+        case,
+        proposal_id=str(proposal["proposal_id"]),
+        target_fingerprint=case.target_fingerprint,
+        destination="description",
+        actor="owner",
+        outcome="pin",
+        selected_value=None,
+        idempotency_key="owner-pins-description",
+        occurred_at=11,
+    )
+    repository.record_human_decision(pin)
+    report, fresh = _publish_successor(repository, binding)
+
+    def hold() -> dict[str, object]:
+        return json.loads(
+            repository._connection.execute(
+                "SELECT document FROM field_effect_manual_holds WHERE "
+                "review_case_id=? AND destination='description'",
+                (fresh.review_case_id,),
+            ).fetchone()[0]
+        )
+
+    assert hold()["decision_id"] == pin.decision_id
+    assert hold()["pin"] is not None
+    candidate = DescriptionAdviceService(
+        store, access[0], store.current_settings, lambda: 12
+    ).prepare(report, fresh, lambda: store.binding_is_current(fresh))
+    assert candidate is not None
+    with pytest.raises(ValueError, match="automatic admission unavailable"):
+        store.admit(candidate.candidate_id, fresh, "automatic_policy", "a" * 64, 15)
+    assert repository._connection.execute(
+        "SELECT count(*) FROM description_decisions WHERE review_case_id=?",
+        (fresh.review_case_id,),
+    ).fetchone() == (0,)
+    owner = store.admit(candidate.candidate_id, fresh, "human", "b" * 64, 16)
+    assert owner.origin == "human"
+    assert (hold()["decision_id"], hold()["pin"]) == (owner.decision_id, None)
+    repository.close()
+
+
+@pytest.mark.parametrize("beneath", ["keep_current", "nothing", "nothing_repeated"])
+def test_a_pin_never_reopens_a_description_choice(tmp_path, monkeypatch, beneath):
+    """ADR-0085 Amendment 2 (#1346, K-D11): where the owner's advice choice
+    stands on the description, alone or over an earlier answer, a pin is
+    refused. Accepting it would drop the advice choice, so the chosen text
+    would never be written, and would make an earlier answer the field's
+    decision again. The same holds on a description every source repeats
+    (#1912)."""
+    from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+    from mechanical_librarian.domain.human_decision import (
+        HumanDecision,
+        HumanDecisionError,
+    )
+    from mechanical_librarian.domain.review_case import ReviewCase
+    from tests.support.description_advice import (
+        _prepared,
+        _preserved_description_report,
+    )
+
+    qualify_description_advice(monkeypatch)
+    repository, store, binding, original, _ = _prepared(
+        tmp_path,
+        report_override=_preserved_description_report()
+        if beneath == "nothing_repeated"
+        else None,
+    )
+    connection = repository._connection
+    case = ReviewCase.create_from_data(
+        json.loads(repository.get_review_case(binding.review_case_id))["case"]
+    )
+    proposal = next(
+        value for value in case.proposals if value["destination"] == "description"
+    )
+
+    def owner(outcome: str, at: int) -> HumanDecision:
+        return HumanDecision.create(
+            case,
+            proposal_id=str(proposal["proposal_id"]),
+            target_fingerprint=case.target_fingerprint,
+            destination="description",
+            actor="owner",
+            outcome=outcome,
+            selected_value=None,
+            idempotency_key=f"owner-{outcome.replace('_', '-')}-description",
+            occurred_at=at,
+        )
+
+    def state() -> tuple[object, ...]:
+        return (
+            connection.execute(
+                "SELECT review_case_id,decision_id FROM current_description_decisions"
+            ).fetchall(),
+            connection.execute(
+                "SELECT decision_id FROM human_decisions ORDER BY ordinal"
+            ).fetchall(),
+            connection.execute(
+                "SELECT document FROM field_effect_manual_holds"
+            ).fetchall(),
+            repository.pending_field_effect_decision_documents(32),
+        )
+
+    if beneath == "keep_current":
+        repository.record_human_decision(owner("keep_current", 11))
+    chosen = store.admit(original.candidate_id, binding, "human", "e" * 64, 12)
+    before = state()
+    assert before[0] == [(binding.review_case_id, chosen.decision_id)]
+    # The advice choice is the description's pending write.
+    assert chosen.to_json() in repository.pending_field_effect_decision_documents(32)
+    assert (
+        repository.field_effect_manual_hold_token(binding.review_case_id, "description")
+        == chosen.decision_id
+    )
+    with pytest.raises(HumanDecisionError) as refused:
+        repository.record_human_decision(owner("pin", 13))
+    assert refused.value.code == "pin_change_waiting"
+    assert state() == before
+    description = next(
+        field
+        for field in InspectCurrentReviewCase(repository).run(binding.review_case_id)[
+            "fields"
+        ]
+        if field["destination"] == "description"
+    )
+    assert description["pin_control"] == {"pin": "change_waiting", "unpin": False}
     repository.close()

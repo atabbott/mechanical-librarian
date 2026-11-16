@@ -107,7 +107,7 @@ h2 { margin-bottom:.35rem; }
   .shell-status { grid-template-columns:minmax(0,1fr); } .shell-status > .preparation-activity { grid-column:1; }
   .masthead nav { grid-template-columns:repeat(2,minmax(0,1fr)); } .masthead nav a { padding-inline:.25rem; }
 }
-.navigation-status, .sr-only, .cm-activity-authority-actions > .activity-command-status:empty, .activity-consent-ledger > p[role='status']:empty { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+.navigation-status, .sr-only, .cm-activity-authority-actions > .activity-command-status:empty, .activity-consent-ledger > p[role='status']:empty, .activity-write-plan-status:has(> [role='status']:empty) { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
 .shell-error { margin:0; padding:.75rem 1rem; color:var(--danger); text-align:center; }
 .shell-error.is-uncertain { color:color-mix(in srgb,var(--notice) 80%,var(--ink)); background:var(--notice-soft); }
 .build-mismatch { display:flex; gap:1rem; align-items:center; justify-content:center; padding:.75rem; color:#211500; background:#ffd27a; }
@@ -743,6 +743,18 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
 .settings-secret-state > span { display:flex; flex-wrap:wrap; gap:.4rem; }
 .settings-secret-state button,.settings-secret-editor button { padding:.45rem .65rem; }
 .settings-secret-editor small { color:var(--soft); overflow-wrap:anywhere; }
+.settings-password,.settings-password-field { display:grid; gap:.65rem; min-width:0; }
+.settings-password-field { gap:.25rem; }
+.settings-password label { font-size:.75rem; font-weight:650; }
+.settings-password small { color:var(--soft); font-size:.75rem; font-weight:400; }
+.settings-password-actions { display:flex; flex-wrap:wrap; gap:.4rem; }
+.settings-password-actions button { padding:.45rem .8rem; }
+.settings-password-reveal { justify-self:start; padding:.45rem .65rem; font-size:.75rem; }
+.settings-password-status { margin:0; color:var(--accent-strong); font-size:.75rem; font-weight:650; }
+.settings-password .settings-field-error { margin:0; color:var(--danger); font-size:.75rem; font-weight:650; }
+/* After the shared settings input rule, which it must outrank. */
+.settings-field-control .settings-password input[aria-invalid='true'] { border-color:var(--danger); }
+.settings-password small.is-refused { color:var(--danger); font-size:.875rem; font-weight:650; }
 .settings-choice { display:grid; gap:.1rem; min-width:0; margin:0; padding:.35rem .7rem; border:1px solid var(--line-strong); border-radius:.45rem; }
 .settings-choice legend { padding:0 .25rem; color:var(--soft); font-size:.75rem; font-weight:700; }
 .settings-choice label { display:flex; align-items:center; gap:.5rem; min-height:44px; }
@@ -1768,4 +1780,66 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
   .taste-section li:not(.taste-editing) > span:first-child { grid-column:2 / 4; grid-row:1; }
   .taste-section li:not(.taste-editing) > .taste-who { grid-column:2; grid-row:2; justify-self:start; align-self:center; padding-top:0; }
   .taste-section li:not(.taste-editing) > .taste-pencil { grid-column:3; grid-row:2; justify-self:end; align-self:center; margin-block:0; }
+}
+
+/* The write plan (#1336): a library's fields read as one column of full-width
+   rows, each listing its prepared changes under it; the lead and the two
+   files sit with the check. */
+.activity-consent-library ul { grid-template-columns:minmax(0,1fr); }
+.write-plan-field { flex-basis:100%; display:grid; grid-template-columns:minmax(0,1fr); gap:.35rem; min-width:0; }
+.write-plan-group { min-width:0; padding-top:.3rem; border-top:1px solid var(--line); }
+/* A group with nothing to open is the same line without its cue. */
+.write-plan-group > :is(summary, .write-plan-summary) { display:flex; flex-wrap:wrap; align-items:center; gap:.1rem .6rem; min-height:44px; margin:0; list-style:none; }
+.write-plan-group > summary { cursor:pointer; }
+.write-plan-group > summary::-webkit-details-marker { display:none; }
+.write-plan-chooser { flex:1 1 auto; min-width:0; }
+/* The count and its Show or Hide cue are one unit: it moves to the next line
+   whole, and wraps inside itself only when that line is still too narrow. */
+.activity-consent-library .write-plan-count { display:flex; flex-wrap:wrap; flex:0 1 auto; column-gap:.6rem; min-width:0; margin-inline-start:auto; color:var(--soft); }
+.write-plan-group > summary > .write-plan-count::after { content:'Show'; color:var(--accent-strong); text-decoration:underline; }
+.write-plan-group[open] > summary > .write-plan-count::after { content:'Hide'; }
+.activity-consent-library .write-plan-rows { display:grid; grid-template-columns:minmax(0,1fr); gap:.45rem; margin:.2rem 0 0; }
+/* Every row takes the whole width, so Current and New line up down the list. */
+.activity-consent-library .write-plan-rows > li { display:grid; grid-template-columns:minmax(0,1fr); justify-content:normal; gap:.25rem; padding:.55rem .65rem; background:var(--surface); }
+.write-plan-work, .write-plan-why, .write-plan-more { margin:0; min-width:0; overflow-wrap:anywhere; }
+.activity-consent-library .write-plan-work span, .write-plan-why, .write-plan-more { color:var(--soft); }
+.write-plan-values { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.25rem .75rem; margin:0; }
+.write-plan-values dt { color:var(--soft); font-size:.8rem; }
+.write-plan-values dd { margin:0; min-width:0; overflow-wrap:anywhere; }
+.activity-write-plan { display:grid; gap:.5rem; margin:.5rem 0; }
+.activity-write-plan > p { margin:0; }
+.activity-write-plan-actions { display:flex; flex-wrap:wrap; gap:.5rem; }
+@media (max-width:760px) {
+  .write-plan-values { grid-template-columns:minmax(0,1fr); }
+  .activity-write-plan-actions > button { flex:1 1 auto; }
+}
+
+/* Library progress (#1335): Activity's card, after the status box and above
+   the Ledger (on a phone, where the Ledger comes first, after both), and the
+   line in a finished run's box at the top of Works. */
+.cm-activity-route > .activity-library-progress { order:4; min-width:0; margin:0 0 1rem; padding:1rem 1.15rem; border:1px solid var(--line); border-radius:.75rem; background:var(--surface); }
+.activity-library-progress h2 { margin:0 0 .5rem; font:700 1.45rem/1.2 Georgia,'Times New Roman',serif; letter-spacing:-.015em; }
+.activity-library-progress h3 { margin:1rem 0 .35rem; color:var(--soft); font-size:.8rem; font-weight:700; }
+.activity-library-progress p { margin:0; line-height:1.45; }
+.activity-library-progress ul { display:grid; gap:.45rem; margin:0; padding:0; list-style:none; overflow-wrap:anywhere; line-height:1.45; }
+.activity-library-progress > p[role='status'] { color:var(--soft); }
+.activity-library-progress [role='alert'] button { margin-top:.5rem; }
+.activity-library-progress-libraries strong { display:block; }
+.activity-library-progress-libraries .library-progress-line { color:var(--soft); font-size:.9rem; }
+.activity-library-progress-groups { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,22rem),1fr)); column-gap:2.5rem; }
+.activity-library-progress .activity-library-progress-fields { grid-template-columns:repeat(auto-fill,minmax(min(100%,13rem),1fr)); column-gap:2.5rem; }
+.activity-library-progress-fields li { display:flex; justify-content:space-between; gap:1rem; font-weight:700; }
+.activity-library-progress-fields li > .count-pair { color:var(--soft); font-weight:400; white-space:nowrap; }
+.library-progress-line a .count-pair { display:inline; }
+.preparation-summary-box { margin:0 0 1rem; }
+.preparation-summary-box > .preparation-summary { margin:0; }
+/* With its line, the run's box is one frame: the row, a rule, then the line
+   and Open in Activity on its own line. */
+.preparation-summary-box:has(> .preparation-summary-progress) { border:1px solid var(--line-strong); border-radius:.65rem; background:var(--surface); }
+.preparation-summary-box:has(> .preparation-summary-progress) > .preparation-summary { border:0; border-bottom:1px solid var(--line-strong); border-radius:calc(.65rem - 1px) calc(.65rem - 1px) 0 0; }
+.preparation-summary-progress { margin:0; padding:.65rem .72rem .75rem; font-size:.875rem; line-height:1.5; overflow-wrap:anywhere; }
+.preparation-summary-progress > a, .preparation-summary-progress > button { display:block; width:fit-content; margin-top:.4rem; }
+@media (max-width:760px) {
+  .activity-library-progress h2 { font-size:1.25rem; }
+  .cm-activity-route > .activity-library-progress { padding:.9rem; }
 }

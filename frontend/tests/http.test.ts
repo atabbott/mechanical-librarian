@@ -32,6 +32,7 @@ import {
   targetIdentity,
 } from './wireFixtures'
 import activationCapture from './wire/post-metadata-policy-activate.200.json'
+import libraryProgressCapture from './wire/get-library-progress.200.json'
 import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 
 import {
@@ -1088,6 +1089,46 @@ describe('ReviewApiClient', () => {
     ).toBe(shown)
   })
 
+  it('reads a field’s pin and pin control, and refuses an unknown pin state (#1346)', async () => {
+    const pinned = targetField({ state: 'value', value: 'A Pinned Book' })
+    const field = (await readCase(closedDetail())).fields[0]
+    expect([field?.pin, field?.pinControl]).toEqual([null, null])
+    const read = (
+      await readCase(
+        closedDetail({
+          pin: { state: 'changed', value: pinned },
+          pin_control: { pin: 'available', unpin: true },
+        }),
+      )
+    ).fields[0]
+    expect(read?.pin).toEqual({ state: 'changed', value: pinned })
+    expect(read?.pinControl).toEqual({ pin: 'available', unpin: true })
+    const waiting = (
+      await readCase(closedDetail({ pin_control: { pin: 'change_waiting', unpin: false } }))
+    ).fields[0]
+    expect(waiting?.pinControl).toEqual({ pin: 'change_waiting', unpin: false })
+    // A pin on a chosen value waits until the value is read back (K5).
+    const chosen = (
+      await readCase(
+        closedDetail({
+          pin: { state: 'waiting', value: pinned },
+          pin_control: { pin: 'available', unpin: true },
+        }),
+      )
+    ).fields[0]
+    expect(chosen?.pin).toEqual({ state: 'waiting', value: pinned })
+    expect(chosen?.pinControl).toEqual({ pin: 'available', unpin: true })
+    await expect(
+      readCase(closedDetail({ pin_control: { pin: 'other', unpin: false } })),
+    ).rejects.toMatchObject(refused('enum@/fields/0/pin_control/pin'))
+    await expect(
+      readCase(closedDetail({ pin_control: { pin: true, unpin: false } })),
+    ).rejects.toMatchObject(refused('type@/fields/0/pin_control/pin'))
+    await expect(
+      readCase(closedDetail({ pin: { state: 'other', value: pinned } })),
+    ).rejects.toMatchObject(refused('enum@/fields/0/pin/state'))
+  })
+
   it('reads a cover’s current value as the current cover, never its id (#1363)', async () => {
     const cover = (state: string, value: string | null) =>
       readCase(closedDetail({ destination: 'cover', current: targetField({ state, value }) })).then(
@@ -1868,6 +1909,7 @@ describe('ReviewApiClient', () => {
       libraryDisplayName: 'Reading Room',
       mediaKind: 'epub',
       attentionCount: 1,
+      pinnedCount: 0,
       attention: 'needs_attention',
       detailUrl: '/review/case-1',
       detailKind: 'case',
@@ -1883,6 +1925,7 @@ describe('ReviewApiClient', () => {
       libraryDisplayName: 'Books',
       mediaKind: 'epub',
       attentionCount: 0,
+      pinnedCount: 0,
       attention: 'no_attention_needed',
       detailUrl: null,
       detailKind: null,
@@ -3209,7 +3252,7 @@ describe('ReviewApiClient', () => {
       csrf,
       fetch: vi.fn(async () =>
         Response.json(
-          { schema_version: 'review-library-v5', error: { code: 'busy' } },
+          { schema_version: 'review-library-v6', error: { code: 'busy' } },
           { status: 503 },
         ),
       ),
@@ -3288,9 +3331,19 @@ describe('ReviewApiClient', () => {
     await expect(
       readLibrary({ ...page, schema_version: 'review-library-v4' }),
     ).rejects.toMatchObject(refused('const@/schema_version'))
+    // v6 added each work's pinned field count (#1346); a v5 document lacks it.
     await expect(
       readLibrary({ ...page, schema_version: 'review-library-v5' }),
+    ).rejects.toMatchObject(refused('const@/schema_version'))
+    await expect(
+      readLibrary({ ...page, schema_version: 'review-library-v6' }),
     ).resolves.toBeDefined()
+  })
+
+  it('reads each work’s pinned field count (#1346)', async () => {
+    const page = (count: number) => library({ items: [libraryWork({ pinned_count: count })] })
+    expect((await readLibrary(page(2))).works[0]?.pinnedCount).toBe(2)
+    await expect(readLibrary(page(-1))).rejects.toMatchObject(refused('min@/items/0/pinned_count'))
   })
 
   it('maps a library work cover and refuses a malformed one', async () => {
@@ -4262,6 +4315,97 @@ describe('Activity check group (#1281)', () => {
   })
 })
 
+describe('write plan file (#1336)', () => {
+  const encoder = new TextEncoder()
+  const streamed = (chunks: string[], fault?: Error) =>
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(encoder.encode(chunk))
+        if (fault) controller.error(fault)
+        else controller.close()
+      },
+    })
+
+  it('fetches the file once, counts rows as they arrive and keeps its bytes', async () => {
+    const chunks = ['{"changes":[\n', '{"work":"A"}\n,{"work":"B"}\n', '],"listed":2}']
+    const fetchMock = vi.fn<typeof fetch>(
+      async () =>
+        new Response(streamed(chunks), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    )
+    const rows: number[] = []
+
+    const file = await new ReviewApiClient({ csrf, fetch: fetchMock }).downloadActivityWritePlan(
+      'json',
+      undefined,
+      (count) => rows.push(count),
+    )
+
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const [path, init] = fetchMock.mock.calls[0] ?? []
+    expect(path).toBe('/api/v1/activity/write-plan?format=json')
+    expect(init).toMatchObject({ credentials: 'same-origin', cache: 'no-store' })
+    expect(init?.method ?? 'GET').toBe('GET')
+    expect(rows).toEqual([0, 2, 2])
+    expect(file.filename).toBe('mechanical-librarian-write-plan.json')
+    expect(file.blob.type).toBe('application/json')
+    expect(await file.blob.text()).toBe(chunks.join(''))
+  })
+
+  it('reads the whole body when it cannot be streamed', async () => {
+    const response = new Response('"Library"\r\n', { status: 200 })
+    Object.defineProperty(response, 'body', { value: null })
+    const file = await new ReviewApiClient({
+      csrf,
+      fetch: vi.fn<typeof fetch>(async () => response),
+    }).downloadActivityWritePlan('csv')
+
+    expect(file.filename).toBe('mechanical-librarian-write-plan.csv')
+    expect(await file.blob.text()).toBe('"Library"\r\n')
+  })
+
+  it('never returns a file whose connection ended before its end', async () => {
+    const client = new ReviewApiClient({
+      csrf,
+      fetch: vi.fn<typeof fetch>(
+        async () => new Response(streamed(['"Library"\r\n'], new TypeError('network'))),
+      ),
+    })
+
+    await expect(client.downloadActivityWritePlan('csv')).rejects.toBeInstanceOf(
+      NetworkUnavailableError,
+    )
+  })
+
+  it.each([
+    [
+      'session expiry',
+      () => Response.json({ error: { code: 'session' } }, { status: 401 }),
+      SessionExpiredError,
+    ],
+    [
+      'an earlier build',
+      () => new Response('x', { status: 200, headers: { 'x-ml-build-identity': 'e'.repeat(64) } }),
+      BuildMismatchError,
+    ],
+    [
+      'an unavailable plan',
+      () => Response.json({ error: { code: 'unavailable' } }, { status: 503 }),
+      ApiError,
+    ],
+  ])('refuses %s as every read does', async (_name, answer, refusal) => {
+    const client = new ReviewApiClient({
+      csrf,
+      buildIdentity: 'c'.repeat(64),
+      fetch: vi.fn<typeof fetch>(async () => answer()),
+    })
+
+    await expect(client.downloadActivityWritePlan('csv')).rejects.toBeInstanceOf(refusal)
+  })
+})
+
 describe('deferred Activity permission contract', () => {
   it('refuses a genuine earlier producer and requires both nullable fields', async () => {
     await expect(readActivity(activityV2Predecessor)).rejects.toBeInstanceOf(ResponseDecodeError)
@@ -4299,20 +4443,53 @@ describe('deferred Activity permission contract', () => {
         backup_ready,
         capabilities: [],
         configured_libraries: [],
-        prepared: { automatic: 0, human: 0, total: 0 },
-        example: {
-          after: 'After',
-          before: 'Before',
-          destination: 'title',
-          library: 'Fiction',
-          work_id: 'work-1',
+        prepared: { automatic: 0, human: 1, total: 1 },
+        plan: {
+          total: 1,
+          groups: [
+            {
+              library: 'Fiction',
+              destination: 'title',
+              kind: 'human',
+              count: 1,
+              rows: [
+                {
+                  work: 'Real Tigers',
+                  authors: 'Mick Herron',
+                  current: 'Not set',
+                  new: 'Real Tigers',
+                  reason: 'You chose this value',
+                  sources: ['Hardcover'],
+                },
+              ],
+            },
+          ],
         },
       }
-      expect(await readPermissionReadiness(response)).toEqual({
-        ...response,
-        example: { ...response.example, work_label: 'Work details unavailable' },
-      })
-      expect((await readPermissionReadiness({ ...response, example: null })).example).toBeNull()
+      expect(await readPermissionReadiness(response)).toEqual(response)
+      // The plan is required, its kinds are closed and a row states no identity.
+      await expect(readPermissionReadiness({ ...response, plan: undefined })).rejects.toMatchObject(
+        refused('required@/plan'),
+      )
+      await expect(readPermissionReadiness({ ...response, example: null })).rejects.toMatchObject(
+        refused('unknown_key@/example'),
+      )
+      const [group] = response.plan.groups as [(typeof response.plan.groups)[number]]
+      await expect(
+        readPermissionReadiness({
+          ...response,
+          plan: { ...response.plan, groups: [{ ...group, kind: 'policy' }] },
+        }),
+      ).rejects.toMatchObject({ name: 'ResponseDecodeError' })
+      await expect(
+        readPermissionReadiness({
+          ...response,
+          plan: {
+            ...response.plan,
+            groups: [{ ...group, rows: [{ ...group.rows[0], work_id: 'work-1' }] }],
+          },
+        }),
+      ).rejects.toMatchObject({ name: 'ResponseDecodeError' })
       await expect(readPermissionReadiness({ ...response, events: [] })).rejects.toMatchObject(
         refused('unknown_key@/events'),
       )
@@ -5814,6 +5991,9 @@ describe('answer types of read and mutate (#1730)', () => {
     // An operation with no decoder documents only 204, the only answer
     // `request()` accepts from it (#1731).
     expectTypeOf<RequestAnswer<'POST', '/api/v1/session/logout'>>().toEqualTypeOf<undefined>()
+    expectTypeOf<
+      RequestAnswer<'POST', '/api/v1/session/logout-others'>
+    >().toEqualTypeOf<undefined>()
     expectTypeOf<RequestAnswer<'POST', `/api/v1/${ActivityCommandPath}`>>().toEqualTypeOf<
       Answer<'_ActivityResponse'> | undefined
     >()
@@ -5836,6 +6016,7 @@ describe('answer types of read and mutate (#1730)', () => {
     expectTypeOf<'/api/v1/nothing'>().not.toExtend<RoutablePath<'GET'>>()
     expectTypeOf<`/api/v1/attention${string}`>().not.toExtend<RoutablePath<'GET'>>()
     expectTypeOf<'/api/v1/session/logout'>().toExtend<RoutablePath<'POST'>>()
+    expectTypeOf<'/api/v1/session/logout-others'>().toExtend<RoutablePath<'POST'>>()
   })
 })
 
@@ -6615,5 +6796,386 @@ describe('taste profile decoder (#1372)', () => {
         taste_mapping: { engine: 'codex', model: 'gpt-5.6-sol' },
       }),
     ).rejects.toBeInstanceOf(Error)
+  })
+})
+
+describe('Library progress (#1335)', () => {
+  const answering = (response: Response) =>
+    new ReviewApiClient({ csrf, fetch: vi.fn<typeof fetch>(async () => response) })
+
+  it('reads the captured answer as Library counts per library and per field', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => Response.json(libraryProgressCapture.body))
+    const view = await new ReviewApiClient({ csrf, fetch: fetchMock }).getLibraryProgress()
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/library/progress')
+    expect(view).toEqual({
+      totals: { all: 2, attention: 1, clear: 0, notMatched: 1, failed: 0 },
+      libraries: [
+        {
+          connection: 'primary',
+          library: 'audiobooks',
+          libraryDisplayName: 'audiobooks',
+          counts: { all: 1, attention: 0, clear: 0, notMatched: 1, failed: 0 },
+        },
+        {
+          connection: 'primary',
+          library: 'ebooks',
+          libraryDisplayName: 'ebooks',
+          counts: { all: 1, attention: 1, clear: 0, notMatched: 0, failed: 0 },
+        },
+      ],
+      fields: [{ destination: 'title', needYou: 1 }],
+    })
+  })
+
+  it('refuses a field outside the vocabulary or one nobody needs', async () => {
+    const body = libraryProgressCapture.body
+    await expect(
+      answering(
+        Response.json({ ...body, fields: [{ destination: 'shelf', need_you: 1 }] }),
+      ).getLibraryProgress(),
+    ).rejects.toMatchObject(refused('enum@/fields/0/destination'))
+    await expect(
+      answering(
+        Response.json({ ...body, fields: [{ destination: 'title', need_you: 0 }] }),
+      ).getLibraryProgress(),
+    ).rejects.toMatchObject(refused('min@/fields/0/need_you'))
+    await expect(
+      answering(Response.json({ ...body, run_id: 'run-1' })).getLibraryProgress(),
+    ).rejects.toBeInstanceOf(ResponseDecodeError)
+  })
+
+  it('hands an expired session to sign-in and keeps a storage fault as 503', async () => {
+    const expired = vi.fn()
+    await expect(
+      new ReviewApiClient({
+        csrf,
+        fetch: vi.fn(async () => Response.json({ error: { code: 'session' } }, { status: 401 })),
+        onSessionExpired: expired,
+      }).getLibraryProgress(),
+    ).rejects.toBeInstanceOf(SessionExpiredError)
+    await vi.waitFor(() => expect(expired).toHaveBeenCalledOnce())
+    await expect(
+      answering(
+        Response.json(
+          { error: { code: 'unavailable' }, schema_version: 'review-error-v1' },
+          { status: 503 },
+        ),
+      ).getLibraryProgress(),
+    ).rejects.toMatchObject({ status: 503, code: 'unavailable' })
+  })
+
+  it('refuses an answer from another build and raises the shell recovery', async () => {
+    const mismatch = vi.fn()
+    await expect(
+      new ReviewApiClient({
+        csrf,
+        buildIdentity: 'c'.repeat(64),
+        fetch: vi.fn(async () =>
+          Response.json(libraryProgressCapture.body, {
+            headers: { 'x-ml-build-identity': 'e'.repeat(64) },
+          }),
+        ),
+        onBuildMismatch: mismatch,
+      }).getLibraryProgress(),
+    ).rejects.toBeInstanceOf(BuildMismatchError)
+    expect(mismatch).toHaveBeenCalledOnce()
+  })
+})
+
+describe('changePassword', () => {
+  const build = 'c'.repeat(64)
+  const body = {
+    current_password: 'old horse battery',
+    new_password: 'correct horse battery staple',
+    confirmation: 'correct horse battery staple',
+  }
+  const changed = () => new Response(null, { status: 204 })
+  const gone = () => Response.json({ error: { code: 'unauthorized' } }, { status: 401 })
+  const refused = (status: number, code: string) => Response.json({ error: { code } }, { status })
+  const flush = () => new Promise<void>((resolve) => window.setTimeout(resolve, 0))
+  const client = (
+    fetchMock: typeof fetch,
+    tokens: { current: () => string; renew: () => Promise<string> } = {
+      current: () => token,
+      renew: vi.fn(async () => renewedToken),
+    },
+  ) => {
+    const expired = vi.fn()
+    return {
+      expired,
+      tokens,
+      client: new ReviewApiClient({
+        csrf: tokens,
+        fetch: fetchMock,
+        buildIdentity: build,
+        onSessionExpired: expired,
+      }),
+    }
+  }
+  // The change is held in flight while another request is answered.
+  const holding = () => {
+    let release: (response: Response) => void = () => undefined
+    const fetchMock = vi.fn<typeof fetch>()
+    fetchMock.mockImplementationOnce(() => new Promise<Response>((resolve) => (release = resolve)))
+    fetchMock.mockResolvedValue(gone())
+    return { fetchMock, release: (response: Response) => release(response) }
+  }
+
+  it('posts the three passwords with the build identity and CSRF token, then renews the token', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => changed())
+    const { client: http, tokens } = client(fetchMock)
+
+    await expect(http.changePassword(body)).resolves.toBeUndefined()
+
+    const [path, init] = fetchMock.mock.calls[0] ?? []
+    expect(path).toBe('/api/v1/session/password')
+    expect(init?.method).toBe('POST')
+    expect(JSON.parse(init?.body as string)).toEqual(body)
+    const headers = new Headers(init?.headers)
+    expect(headers.get('x-ml-build-identity')).toBe(build)
+    expect(headers.get('x-csrf-token')).toBe(token)
+    expect(headers.get('content-type')).toBe('application/json')
+    expect(tokens.renew).toHaveBeenCalledOnce()
+  })
+
+  it('succeeds although the token renewal after the change fails', async () => {
+    const renew = vi.fn(async () => {
+      throw new SessionExpiredError()
+    })
+    const { client: http, expired } = client(
+      vi.fn<typeof fetch>(async () => changed()),
+      { current: () => token, renew },
+    )
+
+    await expect(http.changePassword(body)).resolves.toBeUndefined()
+    expect(renew).toHaveBeenCalledOnce()
+    await flush()
+    expect(expired).not.toHaveBeenCalled()
+  })
+
+  it('never sends the change again after a CSRF challenge', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => refused(403, 'csrf'))
+    const { client: http, tokens } = client(fetchMock)
+
+    await expect(http.changePassword(body)).rejects.toBeInstanceOf(CsrfRenewedError)
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(tokens.renew).toHaveBeenCalledOnce()
+  })
+
+  it('discards a 401 a parallel request got while the change succeeded', async () => {
+    const { fetchMock, release } = holding()
+    const { client: http, expired } = client(fetchMock)
+
+    const change = http.changePassword(body)
+    await expect(http.getAttention({})).rejects.toBeInstanceOf(SessionExpiredError)
+    await flush()
+    expect(expired).not.toHaveBeenCalled()
+    release(changed())
+    await change
+    await flush()
+    expect(expired).not.toHaveBeenCalled()
+    // The mark clears: a later 401 goes to sign-in.
+    await expect(http.getLibrary({ lens: 'all' })).rejects.toBeInstanceOf(SessionExpiredError)
+    await vi.waitFor(() => expect(expired).toHaveBeenCalledOnce())
+  })
+
+  it('ignores a 401 answered after the change for a request that left before it', async () => {
+    const answers: ((response: Response) => void)[] = []
+    const fetchMock = vi.fn<typeof fetch>(
+      () => new Promise<Response>((resolve) => answers.push(resolve)),
+    )
+    const { client: http, expired } = client(fetchMock)
+
+    const change = http.changePassword(body)
+    const earlier = http.getAttention({})
+    answers[0]?.(changed())
+    await change
+    // The earlier request carried the replaced session's cookie.
+    answers[1]?.(gone())
+    await expect(earlier).rejects.toBeInstanceOf(SessionExpiredError)
+    await flush()
+    expect(expired).not.toHaveBeenCalled()
+    // A request that leaves on the new session and answers 401 goes to sign-in.
+    const later = http.getLibrary({ lens: 'all' })
+    answers[2]?.(gone())
+    await expect(later).rejects.toBeInstanceOf(SessionExpiredError)
+    await vi.waitFor(() => expect(expired).toHaveBeenCalledOnce())
+  })
+
+  it.each([
+    ['a refusal', refused(403, 'current_password_invalid'), { status: 403 }],
+    ['a lost answer', undefined, { name: 'AmbiguousMutationError' }],
+  ])('replays a 401 held back during the change after %s', async (_, answer, failure) => {
+    const { fetchMock, release } = holding()
+    const { client: http, expired } = client(fetchMock)
+
+    const change = http.changePassword(body)
+    await expect(http.getAttention({})).rejects.toBeInstanceOf(SessionExpiredError)
+    await flush()
+    expect(expired).not.toHaveBeenCalled()
+    if (answer === undefined)
+      release(Promise.reject(new TypeError('network')) as unknown as Response)
+    else release(answer)
+    await expect(change).rejects.toMatchObject(failure)
+    await vi.waitFor(() => expect(expired).toHaveBeenCalledOnce())
+  })
+
+  it('goes to sign-in when the change itself answers 401', async () => {
+    const { client: http, expired } = client(vi.fn<typeof fetch>(async () => gone()))
+
+    await expect(http.changePassword(body)).rejects.toBeInstanceOf(SessionExpiredError)
+    await vi.waitFor(() => expect(expired).toHaveBeenCalledOnce())
+  })
+
+  it('reports a lost answer as uncertain, and a refusal as itself', async () => {
+    const lost = client(
+      vi.fn<typeof fetch>(async () => {
+        throw new TypeError('network')
+      }),
+    )
+    await expect(lost.client.changePassword(body)).rejects.toBeInstanceOf(AmbiguousMutationError)
+    expect(lost.tokens.renew).not.toHaveBeenCalled()
+    const wrong = client(vi.fn<typeof fetch>(async () => refused(429, 'throttled')))
+    await expect(wrong.client.changePassword(body)).rejects.toMatchObject({
+      status: 429,
+      code: 'throttled',
+    })
+    expect(wrong.tokens.renew).not.toHaveBeenCalled()
+  })
+
+  it('names a 204-only operation that answers nothing', () => {
+    expectTypeOf<RequestAnswer<'POST', '/api/v1/session/password'>>().toEqualTypeOf<undefined>()
+    expectTypeOf<'/api/v1/session/password'>().toExtend<RoutablePath<'POST'>>()
+    expectTypeOf<Parameters<ReviewApiClient['changePassword']>[0]>().toEqualTypeOf<
+      components['schemas']['_PasswordChangeRequest']
+    >()
+    expect(matchOperation('POST', '/api/v1/session/password')).toBeUndefined()
+  })
+})
+
+describe('logoutOthers', () => {
+  const build = 'c'.repeat(64)
+  const route = '/api/v1/session/logout-others'
+  const ended = () => new Response(null, { status: 204 })
+  const gone = () => Response.json({ error: { code: 'unauthorized' } }, { status: 401 })
+  const refused = (status: number, code: string) => Response.json({ error: { code } }, { status })
+  const flush = () => new Promise<void>((resolve) => window.setTimeout(resolve, 0))
+  const client = (fetchMock: typeof fetch, buildIdentity: string | null = build) => {
+    const expired = vi.fn()
+    const mismatch = vi.fn()
+    const tokens = { current: () => token, renew: vi.fn(async () => renewedToken) }
+    return {
+      expired,
+      mismatch,
+      tokens,
+      client: new ReviewApiClient({
+        csrf: tokens,
+        fetch: fetchMock,
+        ...(buildIdentity === null ? {} : { buildIdentity }),
+        onSessionExpired: expired,
+        onBuildMismatch: mismatch,
+      }),
+    }
+  }
+
+  it('posts to the sign-out route with build identity and CSRF and no body', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => ended())
+    const { client: http, tokens } = client(fetchMock)
+
+    await expect(http.logoutOthers()).resolves.toBeUndefined()
+
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const [path, init] = fetchMock.mock.calls[0] ?? []
+    expect(path).toBe(route)
+    expect(init?.method).toBe('POST')
+    expect(init?.body).toBeUndefined()
+    const headers = new Headers(init?.headers)
+    expect(headers.get('x-ml-build-identity')).toBe(build)
+    expect(headers.get('x-csrf-token')).toBe(token)
+    expect(headers.get('content-type')).toBeNull()
+    // This session and its token are unchanged, so nothing is renewed.
+    expect(tokens.renew).not.toHaveBeenCalled()
+  })
+
+  it('never sends again after a CSRF challenge', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => refused(403, 'csrf'))
+    const { client: http, tokens } = client(fetchMock)
+
+    await expect(http.logoutOthers()).rejects.toBeInstanceOf(CsrfRenewedError)
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(tokens.renew).toHaveBeenCalledOnce()
+  })
+
+  it('reports a lost answer as uncertain', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => {
+      throw new TypeError('network')
+    })
+    const { client: http } = client(fetchMock)
+
+    const failure = await http.logoutOthers().catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(AmbiguousMutationError)
+    expect(uncertainWriteOutcome(failure)).toBe(true)
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it('reports a body in a 204-only answer as uncertain', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => Response.json({ signed_out: 2 }))
+    const { client: http } = client(fetchMock)
+
+    const failure = await http.logoutOthers().catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(UncertainMutationError)
+    expect(failure).toMatchObject({
+      ...uncertain('no_decoder@'),
+      operation: `POST ${route}`,
+      responseStatus: 200,
+    })
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it('reads a 503 as uncertain and a pre-call 503 as a refusal', async () => {
+    const lost = await client(vi.fn<typeof fetch>(async () => refused(503, 'persistence')))
+      .client.logoutOthers()
+      .catch((error: unknown) => error)
+    expect(lost).toMatchObject({ status: 503, code: 'persistence' })
+    expect(uncertainWriteOutcome(lost)).toBe(true)
+    const recovering = await client(
+      vi.fn<typeof fetch>(async () => refused(503, 'react_assets_unavailable')),
+    )
+      .client.logoutOthers()
+      .catch((error: unknown) => error)
+    expect(recovering).toMatchObject({ status: 503, code: 'react_assets_unavailable' })
+    expect(uncertainWriteOutcome(recovering)).toBe(false)
+  })
+
+  it('hands a 401 to session expiry at once', async () => {
+    const { client: http, expired } = client(vi.fn<typeof fetch>(async () => gone()))
+
+    await expect(http.logoutOthers()).rejects.toBeInstanceOf(SessionExpiredError)
+    await vi.waitFor(() => expect(expired).toHaveBeenCalledOnce())
+  })
+
+  it('holds back no 401 a parallel request gets while it is in flight', async () => {
+    let release: (response: Response) => void = () => undefined
+    const fetchMock = vi.fn<typeof fetch>()
+    fetchMock.mockImplementationOnce(() => new Promise<Response>((resolve) => (release = resolve)))
+    fetchMock.mockResolvedValue(gone())
+    const { client: http, expired } = client(fetchMock)
+
+    const signingOut = http.logoutOthers()
+    await expect(http.getAttention({})).rejects.toBeInstanceOf(SessionExpiredError)
+    await vi.waitFor(() => expect(expired).toHaveBeenCalledOnce())
+    release(ended())
+    await expect(signingOut).resolves.toBeUndefined()
+    await flush()
+    expect(expired).toHaveBeenCalledOnce()
+  })
+
+  it('refuses without a build identity before sending', async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+    const { client: http, mismatch } = client(fetchMock, null)
+
+    await expect(http.logoutOthers()).rejects.toBeInstanceOf(BuildMismatchError)
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(mismatch).toHaveBeenCalledOnce()
   })
 })

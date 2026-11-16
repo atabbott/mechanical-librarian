@@ -226,8 +226,11 @@ class OwnerResponsivenessFixture:
                     local_claims=(*base.local_claims, title_claim),
                     local_reasons=(*base.local_reasons, "opening_matter_title"),
                     providers=providers,
-                    # A readable current cover is kept without asking (#1310),
-                    # so most of a mixed store's works lack one and ask.
+                    # A readable current cover is kept without asking (#1310)
+                    # unless the title names another book, and one
+                    # Audiobookshelf did not return is kept until the next
+                    # scan (#1362). So a mixed store's works ask about their
+                    # cover only where it is readable and the title asks too.
                     cover_sources=tuple(
                         source
                         for source in base.cover_sources
@@ -295,7 +298,7 @@ class OwnerResponsivenessFixture:
                 review=review,
             )
             self.configuration = configuration
-            activity, permissions, close_activity = (
+            activity, permissions, export, close_activity = (
                 composition.open_field_effect_activity_readers(
                     configuration,
                     self.database,
@@ -331,6 +334,7 @@ class OwnerResponsivenessFixture:
                 reviewer_access=self.reviewer_access,
                 activity_projection=activity,
                 permission_projection=permissions,
+                export_projection=export,
                 close_activity_projection=close_activity,
                 preparation=self.preparation,
                 provider_throttling=composition._provider_throttling_reader(
@@ -983,11 +987,13 @@ def activity_generation(
         cross_thread=True,
         admission=root.operation_admission,
     )
-    projection, permissions, close = composition.open_field_effect_activity_readers(
-        configuration,
-        database,
-        root.authority,
-        facts=facts,
+    projection, permissions, export, close = (
+        composition.open_field_effect_activity_readers(
+            configuration,
+            database,
+            root.authority,
+            facts=facts,
+        )
     )
 
     def close_reader() -> None:
@@ -1015,6 +1021,7 @@ def activity_generation(
         graceful_shutdown_seconds=graceful_shutdown_seconds,
         activity_projection=projection,
         permission_projection=permissions,
+        export_projection=export,
         close_activity_projection=close_reader,
         close_state_owner=True,
     )

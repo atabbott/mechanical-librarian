@@ -171,6 +171,7 @@ COHORTS = {
             ("tests/unit", "test_cover_taste_persistence.py"),
             ("tests/unit", "test_pending_field_effect_lookup.py"),
             ("tests/unit", "test_provider_recovery.py"),
+            ("tests/unit", "test_provider_response_store.py"),
             ("tests/unit", "test_review_attention_facts.py"),
             ("tests/unit", "test_review_pipeline.py"),
             ("tests/unit", "test_review_read_indexes.py"),

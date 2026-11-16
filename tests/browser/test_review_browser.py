@@ -58,7 +58,10 @@ from mechanical_librarian.application.metadata_report import (
     MetadataLookup,
     qualify_provider_observation,
 )
-from mechanical_librarian.application.owner_settings import OwnerSettingsOperations
+from mechanical_librarian.application.owner_settings import (
+    FileOwnerSettingsRepository,
+    OwnerSettingsOperations,
+)
 from mechanical_librarian.application.review_application import (
     REVIEW_PREPARATION_SCHEMA,
 )
@@ -103,6 +106,7 @@ from mechanical_librarian.domain.setup_state import (
     claim_token_digest,
 )
 from mechanical_librarian.infrastructure.settings_authority import BootstrapMount
+from mechanical_librarian.interfaces.web import StoreOwnerPassword
 from mechanical_librarian.interfaces.web.react_assets import ReactAssetLoader
 from mechanical_librarian.interfaces.web.setup import create_setup_app
 from tests.browser.text_size import set_root_text
@@ -530,6 +534,7 @@ def _server(
         "retry_running",
         "retry_failed",
         "retry_succeeded",
+        "repeated",
     ]
     | None = None,
     long_descriptions: bool = False,
@@ -550,6 +555,7 @@ def _server(
     audiobook_tranche: bool = False,
     settings_document: OwnerSettingsDocument | None = _DEFAULT_SETTINGS_DOCUMENT,
     on_app: Callable[[Any], None] | None = None,
+    owner_password: Literal["file", "store"] | None = None,
     write_consent: Callable[[Any], tuple[str, ...]] | None = None,
 ):
     repository = open_repository(database, create=True, cross_thread=True)
@@ -597,11 +603,26 @@ def _server(
             [
                 (f"connection.{item.name}.key", f"synthetic-{item.name}-secret")
                 for item in settings_document.connections
-            ],
+            ]
+            # A store deployment keeps the verifier beside the settings, and
+            # Settings can change it there.
+            + (
+                [("owner.password.verifier", hash_path.read_text(encoding="utf-8"))]
+                if owner_password == "store"
+                else []
+            ),
         )
         connection.commit()
         connection.close()
-        settings = OwnerSettingsOperations(repository.owner_settings_store())
+        settings = OwnerSettingsOperations(
+            FileOwnerSettingsRepository(settings_document)
+            if owner_password == "file"
+            else repository.owner_settings_store()
+        )
+    store_password = None
+    if owner_password == "store":
+        store_password = StoreOwnerPassword(repository.owner_settings_store())
+        store_password.seed(hash_path.read_text(encoding="utf-8"))
     if audiobook_tranche:
         # The tranche's policy has to reach the automatic posture before any
         # other case exists, because confirmation requires a settled
@@ -1527,6 +1548,24 @@ def _server(
                 ),
                 cover_sources=report.cover_sources,
             )
+        if description_fixture == "repeated":
+            # Every source repeats the current description (#1905).
+            report = MetadataReport.create(
+                target=replace(
+                    report.target,
+                    fields=tuple(
+                        replace(field, value="A qualified description.")
+                        if field.destination is TargetDestination.DESCRIPTION
+                        else field
+                        for field in report.target.fields
+                    ),
+                ),
+                file=report.file,
+                local_claims=report.local_claims,
+                local_reasons=report.local_reasons,
+                providers=report.providers,
+                cover_sources=report.cover_sources,
+            )
         if description_fixture == "no_alternatives":
             report = MetadataReport.create(
                 target=report.target,
@@ -1815,6 +1854,21 @@ def _server(
             lambda *_: None,
             activity_only=True,
         )
+    field_application = (
+        consent_application
+        if consent_libraries
+        else _BrowserActivityApplication()
+        if not isbn_fixture
+        and isbn_title_fixture is None
+        and synopsis_fixture is None
+        and not work_review_fixture
+        and not work_route_cover
+        and language_fixture is None
+        and genre_fixture is None
+        and series_fixture is None
+        and not activity_checks_fixture
+        else None
+    )
     app = create_transport_test_app(
         repository,
         review_configuration,
@@ -1829,26 +1883,16 @@ def _server(
                 else ()
             )
         ),
-        field_application=(
-            consent_application
-            if consent_libraries
-            else _BrowserActivityApplication()
-            if not isbn_fixture
-            and isbn_title_fixture is None
-            and synopsis_fixture is None
-            and not work_review_fixture
-            and not work_route_cover
-            and language_fixture is None
-            and genre_fixture is None
-            and series_fixture is None
-            and not activity_checks_fixture
-            else None
-        ),
+        field_application=field_application,
+        export_projection=field_application
+        if isinstance(field_application, _BrowserActivityApplication)
+        else None,
         activity_projection=language_activity,
         react_asset_loader=ReactAssetLoader(Path(os.environ["ML_REACT_ASSET_DIR"])),
         cover_considerations=cover_considerations,
         settings=settings,
         reviewer_access=reviewer_access,
+        owner_password=store_password,
     )
     if owner_library_change:
         owner_changed = False
@@ -10949,7 +10993,12 @@ def test_provider_recovery_rail_explains_exact_automatic_withholding():
 @pytest.mark.parametrize(
     "state", ("ready", "needs_review", "failed", "automatic", "no_change")
 )
-def test_description_advice_displays_real_persisted_outcomes(state):
+def test_description_advice_displays_real_persisted_outcomes(state, monkeypatch):
+    if state in {"automatic", "no_change"}:
+        from tests.support.description_advice import qualify_description_advice
+
+        # The server runs in this process, so the record holds for its life.
+        qualify_description_advice(monkeypatch, "synthetic-contained-model")
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         root.chmod(0o700)
@@ -11023,9 +11072,7 @@ def test_description_advice_displays_real_persisted_outcomes(state):
                         )
                         expect(select.locator("strong strong")).to_have_count(0)
                         if state == "needs_review":
-                            expect(select).to_contain_text(
-                                "never applied automatically"
-                            )
+                            expect(select).to_contain_text("Automatic never applies it")
                         selection_requests = []
                         page.on(
                             "request",
@@ -11122,6 +11169,70 @@ def test_description_advice_displays_real_persisted_outcomes(state):
                         "<strong>Authored text stays text.</strong>", exact=False
                     )
                 ).to_have_count(0)
+            browser.close()
+
+
+def test_description_advice_on_a_repeated_description_is_choosable():
+    """Every source repeats the description: advice and Keep current (#1905)."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        root.chmod(0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD))
+        hash_path.chmod(0o600)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True,
+                viewport={"width": 1280, "height": 800},
+                reduced_motion="reduce",
+            )
+            with (
+                closing(ReservedPort()) as port,
+                _server(
+                    database=root / "review.sqlite",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=port,
+                    description_fixture="repeated",
+                ) as (origin, case_id),
+                _closing_context(context),
+            ):
+                page = context.new_page()
+                _login(page, origin)
+                page.goto(
+                    f"{origin}/library?lens=all&preview={case_id}&field=description"
+                )
+                chooser = page.locator("section.direct-choice")
+                expect(chooser).to_be_visible()
+                current = chooser.get_by_role(
+                    "radio", name="Choose current value: A qualified description."
+                )
+                expect(current).to_be_enabled()
+                expect(
+                    chooser.get_by_role(
+                        "radio", name=re.compile("^Choose proposed value:")
+                    )
+                ).to_have_count(0)
+                advised = chooser.get_by_role(
+                    "radio", name=re.compile("^Choose advised value:")
+                )
+                expect(advised).to_be_enabled()
+                expect(advised).to_have_attribute("aria-checked", "false")
+                expect(
+                    page.get_by_role("button", name=re.compile("^Description "))
+                ).to_contain_text("Automatic")
+                with page.expect_response(
+                    lambda response: (
+                        response.request.method == "POST"
+                        and response.url.endswith("/decisions")
+                    )
+                ) as kept:
+                    current.click()
+                assert kept.value.ok
+                assert kept.value.request.post_data_json["outcome"] == "keep_current"
             browser.close()
 
 

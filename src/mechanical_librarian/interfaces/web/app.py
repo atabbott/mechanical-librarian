@@ -10,7 +10,7 @@ import re
 import stat
 import threading
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
-from contextlib import asynccontextmanager, suppress
+from contextlib import AbstractContextManager, asynccontextmanager, suppress
 from contextvars import ContextVar
 from ipaddress import IPv6Address, IPv6Network, ip_address
 from pathlib import Path
@@ -93,6 +93,8 @@ from mechanical_librarian.application.review_application import (
 )
 from mechanical_librarian.application.review_web import (
     AutomaticWithheldCondition,
+    OwnerCredential,
+    OwnerVerifierStore,
     ReviewAttentionSchemaVersion,
     ReviewCaseDetailSchemaVersion,
     ReviewCaseEvidenceSchemaVersion,
@@ -114,6 +116,7 @@ from mechanical_librarian.application.reviewer_contracts import (
     DeviceAuthStatus,
     OpenRouterPublicFailure,
 )
+from mechanical_librarian.application.write_plan import PLAN_SOURCE_LABELS
 from mechanical_librarian.domain.audio_health import MAX_HEALTH_OBSERVATIONS
 from mechanical_librarian.domain.cover_taste import (
     MAX_TASTE_RULE_CODE_POINTS,
@@ -248,6 +251,89 @@ _Result = TypeVar("_Result")
 _SessionDependency: TypeAlias = Callable[[Request, str | None], str]
 
 
+# The scope key a streamed body sets when it ends by an exception (#1336).
+_ABORTED_BODY: Final = "mechanical_librarian.aborted_body"
+
+
+class AbortedResponseBody(Exception):
+    """A streamed body ended by an exception, so its response is not completed.
+
+    The message names only the type of the original error, never a value.
+    """
+
+
+async def _marking_aborted(
+    scope: Scope, content: AsyncIterator[bytes]
+) -> AsyncIterator[bytes]:
+    """Relay a route's body, marking the request before an exception leaves it.
+
+    The middleware below shares this scope; ``_unless_aborted`` reads the mark
+    once the relayed body has ended. A cancellation or a body closed early, as
+    an abandoned download is, is not a fault and leaves no mark.
+    """
+    try:
+        async for chunk in content:
+            yield chunk
+    except Exception as error:
+        scope[_ABORTED_BODY] = type(error).__name__
+        raise
+
+
+async def _unless_aborted(
+    scope: Scope, relayed: AsyncIterator[Any]
+) -> AsyncIterator[Any]:
+    """Re-yield a relayed body, then raise if the route marked it aborted.
+
+    ``BaseHTTPMiddleware`` ends its relayed body normally when the inner app
+    raises, and would then send the final frame. Raising here, before that
+    frame, leaves the response unfinished, so the server closes the connection
+    and a short file is never received as a complete one.
+    """
+    async for chunk in relayed:
+        yield chunk
+    aborted = scope.get(_ABORTED_BODY)
+    if aborted is not None:
+        raise AbortedResponseBody(f"response body aborted by {aborted}")
+
+
+def _withhold_aborted_end(scope: Scope, response: Response) -> None:
+    """Make a relayed response raise, not complete, when its route aborted it.
+
+    For an ``@app.middleware("http")`` function, after ``call_next``: the
+    relayed body then ends through ``_unless_aborted``.
+    """
+    relayed = getattr(response, "body_iterator", None)
+    if relayed is not None:
+        # Starlette's relay type is private, so the attribute is set by name.
+        setattr(response, "body_iterator", _unless_aborted(scope, relayed))  # noqa: B010
+
+
+class _ReleasingStreamingResponse(StreamingResponse):
+    """Stop a streamed body's producer however the response ends (#1336).
+
+    ``stop`` only sets a flag, so it runs even when an enclosing cancel scope
+    skips every await; the producer then ends its read and releases its reader
+    from its own thread.
+    """
+
+    def __init__(
+        self,
+        content: AsyncIterator[bytes],
+        release: Callable[[], None],
+        *,
+        media_type: str,
+        headers: dict[str, str],
+    ) -> None:
+        super().__init__(content, media_type=media_type, headers=headers)
+        self._stop = release
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self._stop()
+
+
 class _LiveUpdateStreamingResponse(StreamingResponse):
     """Release a reserved reader even when the response never reaches its body."""
 
@@ -272,6 +358,15 @@ class _LiveUpdateStreamingResponse(StreamingResponse):
 class _LoginRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     password: StrictStr = Field(min_length=1, max_length=1024)
+
+
+class _PasswordChangeRequest(BaseModel):
+    # No minimum on the new password or its confirmation: every rule failure
+    # reaches the service and answers `invalid_password`.
+    model_config = ConfigDict(extra="forbid", strict=True)
+    current_password: StrictStr = Field(min_length=1, max_length=1024)
+    new_password: StrictStr = Field(max_length=1024)
+    confirmation: StrictStr = Field(max_length=1024)
 
 
 REVIEW_SESSION_SCHEMA: Final = "review-session-v1"
@@ -506,6 +601,13 @@ class _ProposedValue(_ClosedModel):
     )
 
 
+# Every owner decision outcome, `reject` as readable history and `pin` and
+# `unpin` as standing instructions (ADR-0085, Amendment 2).
+_HumanDecisionOutcome: TypeAlias = Literal[
+    "accept", "keep_current", "reject", "owner_entered", "withdraw", "pin", "unpin"
+]
+
+
 class _DecisionProjection(_ClosedModel):
     actor: str
     application: Literal["apply", "recorded_only"]
@@ -513,7 +615,7 @@ class _DecisionProjection(_ClosedModel):
     decision_id: str
     destination: str
     occurred_at: int
-    outcome: Literal["accept", "keep_current", "reject", "owner_entered", "withdraw"]
+    outcome: _HumanDecisionOutcome
     proposal_id: str
     review_case_id: str
     selected_value: _ProposedValue | None
@@ -840,13 +942,15 @@ class _DescriptionRetryAcknowledgement(_ClosedModel):
 
 
 class _OwnerSuggestion(_ClosedModel):
-    rule: Literal["title_case", "strip_part", "split_author", "combined", "previous"]
+    rule: Literal[
+        "title_case", "strip_part", "split_author", "combined", "previous", "pinned"
+    ]
     value: StrictStr = Field(min_length=1, max_length=512)
 
 
 class _OwnerEntry(_ClosedModel):
     max_characters: Literal[512]
-    suggestions: list[_OwnerSuggestion] = Field(max_length=5)
+    suggestions: list[_OwnerSuggestion] = Field(max_length=6)
 
 
 class _OwnerSubsetOption(_ClosedModel):
@@ -867,6 +971,18 @@ class _OwnerControl(_ClosedModel):
     entry: _OwnerEntry | None
     subset: _OwnerSubset | None
     withdraw: Literal["available", "automatic_hold", "in_progress", "written"] | None
+
+
+class _FieldPin(_ClosedModel):
+    """An owner pin: in force here, waiting to be read back, or changed."""
+
+    state: Literal["in_force", "waiting", "changed"]
+    value: _TargetField
+
+
+class _PinControl(_ClosedModel):
+    pin: Literal["available", "change_waiting"] | None
+    unpin: StrictBool
 
 
 class _ReviewField(_ClosedModel):
@@ -911,6 +1027,8 @@ class _ReviewField(_ClosedModel):
     navigation_role: Literal["attention", "inspect"]
     notices: list[str]
     owner_control: _OwnerControl | None
+    pin: _FieldPin | None
+    pin_control: _PinControl | None
     proposed_values: list[_ProposedValue]
     choice_contexts: list["_FieldChoiceContext"]
     provenance: list[str]
@@ -1144,7 +1262,7 @@ class _HistoryDecisionItem(_ClosedModel):
     event_id: str
     kind: Literal["human_decision_recorded"]
     occurred_at: _Instant
-    outcome: Literal["accept", "keep_current", "reject", "owner_entered", "withdraw"]
+    outcome: _HumanDecisionOutcome
     previous_value: _ProposedValue | None
     review_case_id: str
     schema_version: HumanDecisionEventSchemaVersion
@@ -1641,6 +1759,7 @@ class _CoversResponse(_ClosedModel):
 class _LibraryWork(_ClosedModel):
     authors: list[str]
     attention_count: _Count
+    pinned_count: _Count
     attention_state: Literal[
         "needs_attention", "no_attention_needed", "not_matched", "preparation_failed"
     ]
@@ -1826,6 +1945,31 @@ class _LibraryResponse(_ClosedModel):
     schema_version: ReviewLibrarySchemaVersion
 
 
+class _LibraryProgressLibrary(_ClosedModel):
+    connection: str = Field(max_length=512)
+    counts: _ReviewCounts
+    library: str = Field(max_length=512)
+    library_display_name: str = Field(max_length=512)
+
+
+class _LibraryProgressField(_ClosedModel):
+    destination: _TargetDestination
+    # The works whose field Attention lists; a field with none is left out.
+    need_you: int = Field(ge=1)
+
+
+class _LibraryProgressResponse(_ClosedModel):
+    """Library's counts in total and per library, and Attention's fields (#1335).
+
+    Computed from current state on each request; `totals` equals the `counts`
+    `GET /api/v1/library` answers on the same state.
+    """
+
+    fields: list[_LibraryProgressField] = Field(max_length=16)
+    libraries: list[_LibraryProgressLibrary] = Field(max_length=256)
+    totals: _ReviewCounts
+
+
 class _AttentionItem(_ClosedModel):
     authors: list[str]
     classification_reason: str
@@ -1967,12 +2111,31 @@ class _ActivitySuspension(_ClosedModel):
     updated_at: _Count
 
 
-class _ActivityExample(_ClosedModel):
-    after: object
-    before: object
+class _WritePlanRow(_ClosedModel):
+    """One prepared change in words: no work, item or decision identity (#1336)."""
+
+    work: str = Field(max_length=512)
+    authors: str = Field(max_length=512)
+    current: str = Field(max_length=512)
+    new: str = Field(max_length=512)
+    reason: str = Field(max_length=512)
+    # Distinct names from a closed set, so the bound admits all of them.
+    sources: list[Annotated[str, Field(max_length=128)]] = Field(
+        max_length=len(PLAN_SOURCE_LABELS)
+    )
+
+
+class _WritePlanGroup(_ClosedModel):
+    library: str = Field(max_length=512)
     destination: _TargetDestination
-    library: str
-    work_id: str
+    kind: Literal["human", "automatic"]
+    count: _Count
+    rows: list[_WritePlanRow] = Field(max_length=25)
+
+
+class _WritePlan(_ClosedModel):
+    total: _Count
+    groups: list[_WritePlanGroup] = Field(max_length=1024)
 
 
 class _ActivityLedger(_ClosedModel):
@@ -2049,7 +2212,7 @@ class _ActivityPermissionReadiness(_ClosedModel):
     capabilities: list[_ActivityCapability]
     configured_libraries: list[_ActivityLibrary]
     prepared: _ActivityPrepared
-    example: _ActivityExample | None
+    plan: _WritePlan
 
 
 class _ActivityConsentState(_ClosedModel):
@@ -2256,7 +2419,7 @@ class _CoverConfirmation(_ClosedModel):
 class _DecisionRequest(_ClosedModel):
     cover_confirmation: _CoverConfirmation | None = None
     destination: StrictStr = Field(min_length=1, max_length=64)
-    outcome: Literal["accept", "keep_current", "reject", "owner_entered", "withdraw"]
+    outcome: _HumanDecisionOutcome
     proposal_id: StrictStr = Field(pattern=r"^review_proposal_[0-9a-f]{64}$")
     selected_value: _ProposedValue | None = None
     target_fingerprint: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
@@ -3014,6 +3177,8 @@ _BODY_PATH_LIMITS = {
     "/api/v1/reviewer-access/codex/recheck": DEFAULT_BODY_LIMIT_BYTES,
     "/api/v1/reviewer-access/codex/device/cancel": DEFAULT_BODY_LIMIT_BYTES,
     "/api/v1/reviewer-access/codex": DEFAULT_BODY_LIMIT_BYTES,
+    # Three maximum passwords may each expand sixfold under JSON escaping.
+    "/api/v1/session/password": 3 * 1_024 * 6 + 128,
 }
 _BODY_PATTERN_LIMITS = ((re.compile(r"/api/v1/review-cases/[^/]+/decisions"), 8_192),)
 
@@ -3120,6 +3285,7 @@ def create_review_app(
                 response = await call_next(request)
         finally:
             _OWNER_SESSION_AUTHENTICATED.reset(marker)
+        _withhold_aborted_end(request.scope, response)
         if await _answers_an_owner_session(request, response, authenticated[0]):
             bundle = assets.load()
             if isinstance(bundle, ReactAssetBundle):
@@ -3166,12 +3332,14 @@ def create_review_app(
             "ready\n" if ready else "draining\n", status_code=200 if ready else 503
         )
 
-    _register_session_and_operations_routes(
+    _register_operations_routes(app, application, authenticated_session_cookie)
+    _register_session_routes(
         app, application, configuration, authenticated_session_cookie
     )
     _register_settings_routes(app, application, authenticated_session_cookie)
     _register_reviewer_access_routes(app, application, authenticated_session_cookie)
     _register_policy_routes(app, application, authenticated_session_cookie)
+    _register_write_plan_route(app, application, authenticated_session_cookie)
     _register_case_and_effect_routes(
         app, application, session_cookie, authenticated_session_cookie
     )
@@ -3673,14 +3841,11 @@ def _register_reviewer_access_routes(
             raise problem(error) from None
 
 
-def _register_session_and_operations_routes(
+def _register_operations_routes(
     app: FastAPI,
     application: ReviewApplication,
-    configuration: ReviewWebConfiguration,
     authenticated_session_cookie: _SessionDependency,
 ) -> None:
-    sessions = application
-
     @app.get(
         "/api/v1/operations/status",
         response_model=_OperationalResponse,
@@ -3689,7 +3854,7 @@ def _register_session_and_operations_routes(
     def operations_status(
         ml_session: str = Depends(authenticated_session_cookie),
     ) -> _OperationalResponse:
-        _require_session(sessions, ml_session)
+        _require_session(application, ml_session)
         if not application.operations_available:
             raise HTTPException(503, detail={"code": "operations_unavailable"})
         try:
@@ -3707,7 +3872,7 @@ def _register_session_and_operations_routes(
     def support_preview(
         ml_session: str = Depends(authenticated_session_cookie),
     ) -> _SupportPreviewResponse:
-        _require_session(sessions, ml_session)
+        _require_session(application, ml_session)
         try:
             if not application.operations_available:
                 raise OperationsError("support_unavailable")
@@ -3725,7 +3890,7 @@ def _register_session_and_operations_routes(
         ml_session: str = Depends(authenticated_session_cookie),
         x_csrf_token: str = Header(),
     ) -> Response:
-        _require_session(sessions, ml_session, x_csrf_token)
+        _require_session(application, ml_session, x_csrf_token)
         try:
             if not application.operations_available:
                 raise OperationsError("support_unavailable")
@@ -3738,6 +3903,15 @@ def _register_session_and_operations_routes(
             )
         except OperationsError:
             raise HTTPException(503, detail={"code": "support_unavailable"}) from None
+
+
+def _register_session_routes(
+    app: FastAPI,
+    application: ReviewApplication,
+    configuration: ReviewWebConfiguration,
+    authenticated_session_cookie: _SessionDependency,
+) -> None:
+    sessions = application
 
     @app.post(
         "/api/v1/session/login",
@@ -3808,6 +3982,152 @@ def _register_session_and_operations_routes(
         )
         response.status_code = 204
         return response
+
+    @app.post(
+        "/api/v1/session/logout-others",
+        status_code=204,
+        responses={
+            status: {"model": _ErrorResponse} for status in (400, 401, 403, 422, 503)
+        },
+    )
+    def logout_others(
+        response: Response,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> Response:
+        # As in logout, the CSRF token is checked inside the store's one
+        # transaction. This browser's cookie and CSRF token stay as they are.
+        try:
+            sessions.logout_others(ml_session, x_csrf_token)
+        except ReviewWebError as error:
+            status = {
+                "csrf": 403,
+                "persistence": 503,
+                "unauthorized": 401,
+            }.get(error.code, 503)
+            raise HTTPException(status, detail={"code": error.code}) from None
+        response.status_code = 204
+        return response
+
+    @app.post(
+        "/api/v1/session/password",
+        status_code=204,
+        responses={
+            status: {"model": _ErrorResponse}
+            for status in (400, 401, 403, 409, 413, 422, 429, 503)
+        },
+    )
+    def change_password(
+        payload: _PasswordChangeRequest,
+        request: Request,
+        response: Response,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> Response:
+        _require_session(sessions, ml_session, x_csrf_token)
+        try:
+            tokens = sessions.change_owner_password(
+                ml_session,
+                x_csrf_token,
+                payload.current_password,
+                payload.new_password,
+                payload.confirmation,
+                client_identity(request, configuration.trusted_proxy_ips),
+            )
+        except ReviewWebError as error:
+            if error.code == "settings_managed_by_file":
+                raise HTTPException(
+                    409,
+                    detail={"code": error.code, "managed_by_file": "/data/config.json"},
+                ) from None
+            status = {
+                "csrf": 403,
+                "current_password_invalid": 403,
+                "invalid_password": 422,
+                "persistence": 503,
+                "throttled": 429,
+                "unauthorized": 401,
+            }.get(error.code, 500)
+            raise HTTPException(status, detail={"code": error.code}) from None
+        response.set_cookie(
+            _COOKIE_NAME,
+            tokens.session_token,
+            httponly=True,
+            secure=configuration.canonical_origin.startswith("https://"),
+            samesite="strict",
+            max_age=configuration.session_lifetime_seconds,
+            path="/",
+        )
+        response.status_code = 204
+        return response
+
+
+def _register_write_plan_route(
+    app: FastAPI,
+    application: ReviewApplication,
+    authenticated_session_cookie: _SessionDependency,
+) -> None:
+    @app.get(
+        "/api/v1/activity/write-plan",
+        responses={
+            200: {
+                "content": {
+                    "text/csv": {"schema": {"type": "string"}},
+                    "application/json": {},
+                }
+            },
+            **{status: {"model": _ErrorResponse} for status in (401, 422, 503)},
+        },
+    )
+    def activity_write_plan(
+        request: Request,
+        format: Literal["csv", "json"] = Query(),
+        ml_session: str = Depends(authenticated_session_cookie),
+    ) -> Response:
+        """Send every prepared change as it is made; computed, never stored.
+
+        A fault before the first byte answers with its status. After it, the
+        connection ends without completing the body, so a short file is never
+        received as a complete one.
+        """
+        _require_session(application, ml_session)
+        stream = None
+        try:
+            stream = application.activity_write_plan_file(format)
+            first = stream.next_chunk() or b""
+        except (
+            GuardedApplicationError,
+            FieldEffectError,
+            ReviewApplicationError,
+        ) as error:
+            if stream is not None:
+                stream.close()
+            raise HTTPException(
+                503, detail={"code": getattr(error, "code", "unavailable")}
+            ) from None
+        except BaseException:
+            if stream is not None:
+                stream.close()
+            raise
+        produced = stream
+
+        async def body() -> AsyncIterator[bytes]:
+            yield first
+            while (chunk := await run_in_threadpool(produced.next_chunk)) is not None:
+                yield chunk
+
+        return _ReleasingStreamingResponse(
+            _marking_aborted(request.scope, body()),
+            produced.stop,
+            media_type="text/csv; charset=utf-8"
+            if format == "csv"
+            else "application/json",
+            headers={
+                "Content-Disposition": "attachment; "
+                f'filename="mechanical-librarian-write-plan.{format}"',
+                "X-Accel-Buffering": "no",
+            },
+        )
 
 
 def _register_policy_routes(
@@ -5046,6 +5366,27 @@ def _register_browse_and_preparation_routes(
         )
 
     @app.get(
+        "/api/v1/library/progress",
+        response_model=_LibraryProgressResponse,
+        responses={status: {"model": _ErrorResponse} for status in (401, 503)},
+    )
+    async def library_progress(
+        request: Request,
+        ml_session: str | None = Security(session_cookie),
+    ) -> _LibraryProgressResponse | Response:
+        """Read-only: Library's works settled and needing the owner (#1335)."""
+
+        def read(check_active: Callable[[], None]) -> _LibraryProgressResponse:
+            _require_session(sessions, ml_session)
+            return _LibraryProgressResponse.model_validate(
+                _query_call(
+                    lambda: application.library_progress(check_active=check_active)
+                )
+            )
+
+        return await _browse_response(request, read)
+
+    @app.get(
         "/api/v1/attention",
         response_model=_AttentionResponse,
         responses={
@@ -5621,6 +5962,98 @@ def owner_password_binding(encoded: str) -> OwnerPasswordBinding:
     return verify, session_digest, client_digest
 
 
+class _StoreOwnerCredential:
+    """One encoded owner verifier and the binding derived from it."""
+
+    __slots__ = ("_binding", "encoded")
+
+    def __init__(self, encoded: str) -> None:
+        self._binding = owner_password_binding(encoded)
+        self.encoded = encoded
+
+    def verify(self, password: str) -> bool:
+        return self._binding[0](password)
+
+    def session_digest(self, token: str) -> str:
+        return self._binding[1](token)
+
+    def client_digest(self, identity: str) -> str:
+        return self._binding[2](identity)
+
+
+class StoreOwnerPassword:
+    """The live owner verifier of a store deployment, shared by its generations.
+
+    Every store generation in one process reads the verifier here, so a
+    password change takes effect in all of them at once, and no Settings
+    cutover can bring back a verifier it composed before the change. The first
+    generation seeds it from the stored verifier; after that only ``adopt``
+    moves it, and only once the store has committed the replacement.
+    """
+
+    def __init__(self, store: OwnerVerifierStore) -> None:
+        self._store = store
+        # Re-entrant, because ``adopt`` takes it again inside ``exclusive``.
+        self._lock = threading.RLock()
+        self._current: _StoreOwnerCredential | None = None
+
+    def seed(self, encoded: str) -> None:
+        with self._lock:
+            if self._current is None:
+                self._current = _StoreOwnerCredential(encoded)
+
+    def current(self) -> _StoreOwnerCredential:
+        current = self._current
+        if current is None:
+            raise ReviewWebError("password_hash")
+        return current
+
+    def verify(self, password: str) -> bool:
+        return self.current().verify(password)
+
+    def session_digest(self, token: str) -> str:
+        return self.current().session_digest(token)
+
+    def client_digest(self, identity: str) -> str:
+        return self.current().client_digest(identity)
+
+    def successor(self, password: str) -> _StoreOwnerCredential:
+        return _StoreOwnerCredential(PasswordHasher().hash(password))
+
+    def exclusive(self) -> AbstractContextManager[bool]:
+        return self._lock
+
+    def adopt(
+        self,
+        expected: OwnerCredential,
+        successor: OwnerCredential,
+        committed: Callable[[], None] | None = None,
+    ) -> bool:
+        """Commit ``successor`` and swap to it, only while ``expected`` is live.
+
+        ``committed`` runs after the commit and before the swap, still under
+        the lock: until the swap no request is checked against the successor,
+        so no session of its own can exist for ``committed`` to remove. The
+        swap follows whatever ``committed`` does.
+        """
+        if (
+            type(expected) is not _StoreOwnerCredential
+            or type(successor) is not _StoreOwnerCredential
+        ):
+            raise TypeError("owner credential was not issued here")
+        with self._lock:
+            if self._current is not expected or not self._store.replace_owner_verifier(
+                expected.encoded, successor.encoded
+            ):
+                return False
+            try:
+                if committed is not None:
+                    committed()
+            finally:
+                self._current = successor
+            return True
+
+
 # The one key every client the server cannot resolve shares: no peer, or a
 # trusted proxy that did not append exactly one parseable address. It is
 # throttled like any client and, lacking the ``client:`` prefix, can never
@@ -5745,7 +6178,9 @@ def _case_call(call: Callable[[], _Result]) -> _Result:
 def _query_call(call: Callable[[], _Result]) -> _Result:
     try:
         return call()
-    except ReviewWebError as error:
+    # A closing application refuses admission with the application's error, so
+    # it answers 503 as a storage fault does rather than escaping as a 500.
+    except (ReviewWebError, ReviewApplicationError) as error:
         status = 400 if error.code == "request" else 503
         raise HTTPException(status, detail={"code": error.code}) from None
 
@@ -5778,6 +6213,10 @@ def _decision_call(call: Callable[[], dict[str, object]]) -> dict[str, object]:
             "nothing_to_withdraw": 409,
             "automatic_hold": 409,
             "decision_written": 409,
+            "pin_change_waiting": 409,
+            "already_pinned": 409,
+            "not_pinned": 409,
+            "pinned": 409,
             # Distinct from `stale`: the case stands, its field's offer moved
             # (#1355).
             "offer_changed": 409,

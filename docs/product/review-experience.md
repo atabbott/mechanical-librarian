@@ -148,13 +148,13 @@ unknown review path shows a recovery state, not an error.
 The preparation panel states one run in five counts. Their labels are "ready
 to browse", "recorded, nothing to decide", "not matched", "could not finish"
 and "in progress". Ready to browse and in progress always show. The others hide
-at zero, and an unknown count reads `…`. Counts describe the run's books as
-they stand now. Each stage bar counts books that first reached it in this run.
+at zero; an unknown count reads `…`. Counts describe the run's books as
+they stand. Each stage bar counts books that first reached it in this run.
 A book that could not finish stops at its last stage. Bars glide to each new
 count unless reduced motion is set. The status line's wipe plays only when the
 run's state changes. Recent completions record each book's first finish, one
 row each: the title, linked into Library, then "Prepared" or "Couldn't
-finish". A rate in works a minute appears only while the run is running.
+finish". A rate in works a minute appears only while running.
 
 The masthead's background-work control shows each library's scan state and
 counts, and marks a library outside the current run. At idle it reads
@@ -202,6 +202,7 @@ or raw source response. Once the catalogue no longer matches, the row reads
 
 Library is the complete work list and the only place you make decisions. It
 opens with its write handoff in place, so the notice never moves the works.
+Finished runs show [Library progress](library-progress.md).
 
 ### Counts and lenses
 
@@ -284,9 +285,9 @@ Each tab names the field's status:
   skips it when it moves on. Its one reason says why no review is needed, and
   it shows no condition asking you to choose.
 - No change means the field is there for reference. Keeping the current value
-  is a choice only when another eligible value exists. Each such field shows
-  its value and a reason, never a selectable `Not set`. In Preview, a field
-  that Automatic chose before you entered Preview mode reads No change. It
+  is a choice only beside another eligible value or description advice. Each
+  such field shows its value and a reason, never a selectable `Not set`. In
+  Preview, a field Automatic chose before Preview mode reads No change. It
   shows that choice beside the current value and says turning on Automatic
   decides it again.
 
@@ -538,8 +539,8 @@ permission are in a section you open.
 Review write permissions opens one panel, from Activity or from Library's
 write handoff, and opening it grants nothing. Mechanical Librarian then checks
 that its own database is consistent and shows the prepared work, the fields
-each library can write and one before-and-after example. You can confirm only
-once that check passes and you include at least one library.
+each library can write and the [write plan](write-plan.md). You can confirm
+only once that check passes and you include at least one library.
 
 The libraries you include stay included through page updates and repeat
 checks. A change to the libraries, their fields' write support or permission,
@@ -556,8 +557,8 @@ The ledger shows one row per change: the work or setting, the field, the exact
 before and after, who chose it, and whether Audiobookshelf confirmed it.
 Categories are your choice, automatic choice, policy change and recovery.
 Values come from the record made at the time, so later changes never alter
-history. A record that was not a change, such as a paused preparation, says
-what happened instead. Automatic checks with nothing to write gather into one
+history. A record that was no change, such as a paused preparation, says
+what happened. Automatic checks with nothing to write gather into one
 row, "Checked N fields, no changes". Each Details control names its row's
 field, work, result and time. Search, filters, a 7, 30 or 90-day range and 25,
 50 or 100-row pages run on the server. An unknown filter shows every event and
@@ -567,12 +568,11 @@ says so.
 
 Settings has seven sections: Audiobookshelf, Libraries, Metadata sources,
 Reviewer, Background work, Access and diagnostics, and Appearance. The section
-is the `?group=` URL value. A message elsewhere that names Settings → Reviewer
-or Settings → Audiobookshelf links to that section. Wider than 760 pixels, a
-section index sits beside the page, and at 760 or narrower a selector replaces
-it.
+is the `?group=` URL value. A message naming Settings → Reviewer or Settings →
+Audiobookshelf links there. A section index sits beside the page above 760
+pixels; at 760 or narrower a selector replaces it.
 
-The page edits one draft of all settings, and each section counts its changes,
+The page edits one draft of all settings; each section counts its changes,
 indirect ones too. While anything is unsaved, a bottom tray shared with Policy
 lists before and after values and offers Discard all and Save settings. A tray
 taller than a third of the window scrolls with the page. Save settings checks
@@ -586,17 +586,20 @@ edits ([configuration](../reference/configuration.md),
 
 Secrets show only as `Configured · ····xxxx` or `Not configured`. Turning a
 source off keeps its key, turns off its cover evidence and removes it from its
-libraries. Turning it back on does not add it to those libraries again.
+libraries. Turning it back on does not re-add it.
 
 Each library lists its languages by name, the first marked Preferred, with
-buttons to move or remove each and a picker to add one, up to eight. In a
-file-managed deployment the list is read only.
+buttons to move or remove each and a picker to add one, up to eight.
 
-Reviewer sign-in, validation and tests take effect at once, outside Save
+Reviewer sign-in, validation and tests apply at once, outside Save
 settings. Cover and description pickers show cost per 1,000 works. One
 OpenRouter key serves all three tasks; replacing it keeps every choice.
 Reviewer advice allows no write
 ([ADR-0062](../architecture/decisions/0062-owner-managed-reviewer-access.md)).
+
+In Access and diagnostics, Sign out other browsers and, in store mode, Owner
+password (given the current one) apply at once and sign out every other
+browser ([deployment](../operations/deployment.md#owner-sessions)).
 
 ## Words and values
 
@@ -604,8 +607,8 @@ The voice is the one `DESIGN.md` states under Voice. Mechanical Librarian
 never turns a code into words: it refuses an unknown code instead of
 sentence-casing it. Acronyms stay capitalised, languages read by name with
 their tag ("English (en)"), and sizes use MB. Times within the past hour are
-relative, others on the same day show the clock time, and other days add the
-date. A time still ahead is never relative.
+relative, others today show the clock time, and other days add the date. A
+time still ahead is never relative.
 
 ## Responsive and accessible behaviour
 

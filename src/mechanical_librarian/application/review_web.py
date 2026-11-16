@@ -13,7 +13,7 @@ import threading
 import unicodedata
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, replace
 from dataclasses import field as dataclass_field
 from functools import partial
@@ -76,6 +76,8 @@ from mechanical_librarian.domain.human_decision import (
     owner_text,
     owner_value_admitted,
     owner_value_suggestions,
+    pinned_field_fingerprint,
+    preserved_description,
 )
 from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
 from mechanical_librarian.domain.metadata_report import (
@@ -90,7 +92,12 @@ from mechanical_librarian.domain.metadata_report import (
     field_evidence_providers,
     recording_variant_conflict,
 )
-from mechanical_librarian.domain.owner_settings import PROVIDER_LABELS
+from mechanical_librarian.domain.owner_settings import (
+    PROVIDER_LABELS,
+    audio_edition_label,
+    provider_label,
+    provider_source_labels,
+)
 from mechanical_librarian.domain.proposal_set import (
     audiobook_review_scope,
     canonical_target_fields,
@@ -122,10 +129,11 @@ from mechanical_librarian.domain.shadow_outcome import (
     ShadowFieldOutcome,
     ShadowOutcomeSet,
 )
+from mechanical_librarian.domain.validation import owner_password
 
-ReviewCaseDetailSchemaVersion = Literal["review-case-detail-v8"]
+ReviewCaseDetailSchemaVersion = Literal["review-case-detail-v9"]
 REVIEW_CASE_DETAIL_SCHEMA: Final[ReviewCaseDetailSchemaVersion] = (
-    "review-case-detail-v8"
+    "review-case-detail-v9"
 )
 
 ReviewCaseEvidenceSchemaVersion = Literal["review-case-evidence-v5"]
@@ -141,8 +149,8 @@ REVIEW_CASE_HISTORY_SCHEMA: Final[ReviewCaseHistorySchemaVersion] = (
     "review-case-history-v4"
 )
 
-ReviewLibrarySchemaVersion = Literal["review-library-v5"]
-REVIEW_LIBRARY_SCHEMA: Final[ReviewLibrarySchemaVersion] = "review-library-v5"
+ReviewLibrarySchemaVersion = Literal["review-library-v6"]
+REVIEW_LIBRARY_SCHEMA: Final[ReviewLibrarySchemaVersion] = "review-library-v6"
 
 ReviewReportDetailSchemaVersion = Literal["review-report-detail-v6"]
 REVIEW_REPORT_DETAIL_SCHEMA: Final[ReviewReportDetailSchemaVersion] = (
@@ -317,6 +325,11 @@ class CurrentReviewCaseSnapshot:
     # Destinations whose automatic handling an owner hold keeps off on this
     # case, including a hold carried forward from an earlier case (ADR-0085).
     held_destinations: tuple[str, ...] = ()
+    # Each pin on this case's holds: its destination, whether it is in force
+    # here, and the pinned case's target field as JSON (ADR-0085, Amendment 2).
+    pins: tuple[tuple[str, bool, str], ...] = ()
+    # Destinations whose change waits to be written, so a pin is refused.
+    change_waiting_destinations: tuple[str, ...] = ()
     # Held destinations whose return to automatic handling the owner has
     # requested; the hold stays until the requested checks finish (#1755).
     return_requested_destinations: tuple[str, ...] = ()
@@ -346,6 +359,7 @@ class ReviewLibrarySnapshot:
             tuple[str, ...],
             str | None,
             int,
+            int,
         ],
         ...,
     ]
@@ -367,9 +381,27 @@ class ReviewLibrarySnapshot:
 @dataclass(frozen=True, slots=True)
 class ReviewAttentionSnapshot:
     rows: tuple[
-        tuple[str, str, str, int, str | None, ReviewFieldCause | None, bool], ...
+        tuple[str, str, str, int, str | None, ReviewFieldCause | None, bool, bool],
+        ...,
     ]
     total: int
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewLibraryProgress:
+    """Library's counts and Attention's fields, per library, from one snapshot.
+
+    Computed on request and never stored (#1335). Each library row carries the
+    totals Library's page carries, so the works with no attention needed are
+    derived the same way.
+    """
+
+    # (connection, library, all, needs_attention, not_matched,
+    # preparation_failed), one row per library that has works.
+    libraries: tuple[tuple[str, str, int, int, int, int], ...]
+    # (connection, library, destination, works whose field needs the owner),
+    # one row per field with at least one such work.
+    fields: tuple[tuple[str, str, str, int], ...]
 
 
 class ReviewSessionStore(Protocol):
@@ -398,6 +430,48 @@ class ReviewSessionStore(Protocol):
     def revoke_review_session(
         self, session_digest: str, csrf_digest: str, now: int
     ) -> str: ...
+    def end_review_sessions_except(self, session_digest: str) -> int: ...
+    def end_other_review_sessions(
+        self, session_digest: str, csrf_digest: str, now: int
+    ) -> tuple[str, int]: ...
+
+
+class OwnerCredential(Protocol):
+    """One owner verifier with the session and client keys derived from it."""
+
+    def verify(self, password: str) -> bool: ...
+    def session_digest(self, token: str) -> str: ...
+    def client_digest(self, identity: str) -> str: ...
+
+
+class OwnerPasswordChange(Protocol):
+    """The live owner verifier a store deployment can replace in place."""
+
+    def current(self) -> OwnerCredential: ...
+    def successor(self, password: str) -> OwnerCredential: ...
+    def exclusive(self) -> AbstractContextManager[bool]:
+        """Hold off adopt while a session write must not interleave with one."""
+        ...
+
+    def adopt(
+        self,
+        expected: OwnerCredential,
+        successor: OwnerCredential,
+        committed: Callable[[], None] | None = None,
+    ) -> bool:
+        """Commit ``successor`` while ``expected`` is live, then make it live.
+
+        ``committed`` runs once the store holds the successor and before any
+        request can be checked against it, so what it removes can only belong
+        to the replaced verifier.
+        """
+        ...
+
+
+class OwnerVerifierStore(Protocol):
+    """The durable compare-and-set behind ``OwnerPasswordChange.adopt``."""
+
+    def replace_owner_verifier(self, expected: str, replacement: str) -> bool: ...
 
 
 class CurrentReviewCaseStore(Protocol):
@@ -428,6 +502,22 @@ _LIBRARY_LENSES: dict[str, LibraryLensFilter | None] = {
 }
 
 _Validated = TypeVar("_Validated")
+
+
+def _library_counts(
+    total: int, needs_attention: int, not_matched: int, preparation_failed: int
+) -> dict[str, int]:
+    """Library's lens counts: what is left of All is the no-attention lens."""
+    return {
+        "all": total,
+        "needs_attention": needs_attention,
+        "no_attention_needed": total
+        - needs_attention
+        - not_matched
+        - preparation_failed,
+        "not_matched": not_matched,
+        "preparation_failed": preparation_failed,
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -567,6 +657,9 @@ class ReviewLibraryStore(Protocol):
         offset: int,
         library_labels: LibraryLabels = (),
     ) -> ReviewAttentionSnapshot: ...
+    def read_review_library_progress(
+        self, library_labels: LibraryLabels = ()
+    ) -> ReviewLibraryProgress: ...
     def read_current_report_document(
         self, connection: str, library: str, item: str
     ) -> str | None: ...
@@ -629,7 +722,11 @@ class OwnerSessionService:
     guards and converts the failure into a ``ReviewWebError`` with the cause
     chained: none discards a failure, and none reads a fault as an answer the
     store or the verifier gave. The two that answer with something other than
-    ``persistence`` say why where they stand.
+    ``persistence`` say why where they stand. The one deliberate exception is
+    the purge after a committed password change: the change has already
+    committed and every purged row is unreachable once the successor is live,
+    so its failure is reported in the ``owner_password_change`` event rather
+    than as an error.
     """
 
     def __init__(
@@ -642,8 +739,10 @@ class OwnerSessionService:
         token_factory: Callable[[int], str] = secrets.token_urlsafe,
         *,
         client_digest: Callable[[str], str],
+        password_change: OwnerPasswordChange | None = None,
     ) -> None:
         self._repository = repository
+        self._password_change = password_change
         self._verify_password = verify_password
         self._session_digest = session_digest
         self._client_digest = client_digest
@@ -659,9 +758,24 @@ class OwnerSessionService:
         """
         if type(password) is not str or not 1 <= len(password.encode("utf-8")) <= 1024:
             raise ReviewWebError("invalid_credentials")
+        # One snapshot of a replaceable verifier, so a sign-in that straddles a
+        # password change cannot prove the old password and receive a session
+        # keyed by the new one.
+        credential = (
+            None if self._password_change is None else self._password_change.current()
+        )
+        verify, session_digest, client_digest = (
+            (self._verify_password, self._session_digest, self._client_digest)
+            if credential is None
+            else (
+                credential.verify,
+                credential.session_digest,
+                credential.client_digest,
+            )
+        )
         now = self._clock()
         try:
-            client_key = self._client_digest(client)
+            client_key = client_digest(client)
             permitted = self._repository.begin_login(
                 now,
                 client_key,
@@ -674,7 +788,7 @@ class OwnerSessionService:
         if permitted is not True:
             raise ReviewWebError("throttled")
         try:
-            verified = self._verify_password(password)
+            verified = verify(password)
         except Exception as error:
             # The verifier answers with a bool, and a wrong password is
             # ``False`` rather than a raise. A raise is therefore a fault in the
@@ -691,7 +805,7 @@ class OwnerSessionService:
         expires_at = now + self._lifetime_seconds
         try:
             self._repository.create_review_session(
-                self._session_digest(session_token),
+                session_digest(session_token),
                 _digest(csrf_token),
                 now,
                 expires_at,
@@ -753,6 +867,271 @@ class OwnerSessionService:
             raise ReviewWebError(
                 outcome if outcome in {"unauthorized", "csrf"} else "persistence"
             )
+
+    def logout_others(self, session_token: str, csrf_token: str) -> int:
+        """End every session but this one, and keep this one and its CSRF token.
+
+        In store mode the call holds off a password change in flight, so it can
+        never delete the session that change has just issued. Returns how many
+        other session rows were removed.
+        """
+        if not _bounded_token(session_token):
+            raise ReviewWebError("unauthorized")
+        if not _bounded_token(csrf_token):
+            raise ReviewWebError("csrf")
+        change = self._password_change
+        try:
+            with nullcontext() if change is None else change.exclusive():
+                outcome, ended = self._repository.end_other_review_sessions(
+                    self._session_digest(session_token),
+                    _digest(csrf_token),
+                    self._clock(),
+                )
+        except Exception as error:
+            _owner_sign_out_others_event("persistence", None)
+            raise ReviewWebError("persistence") from error
+        if outcome != "ended":
+            code = outcome if outcome in {"unauthorized", "csrf"} else "persistence"
+            _owner_sign_out_others_event(code, None)
+            raise ReviewWebError(code)
+        _owner_sign_out_others_event("signed_out", ended)
+        return ended
+
+    def change_password(
+        self,
+        session_token: str,
+        csrf_token: str,
+        current_password: str,
+        new_password: str,
+        confirmation: str,
+        client: str,
+    ) -> SessionTokens:
+        """Replace the owner password and keep only this browser signed in.
+
+        Every check runs against one snapshot of the live verifier, and the
+        replacement commits only while that snapshot is still the stored
+        verifier. Nothing after the commit can raise: the old sessions end at
+        the swap, because their digests are keyed by the replaced verifier,
+        and the purge that deletes their rows is best effort.
+        """
+        change = self._password_change
+        if change is None:
+            raise ReviewWebError("settings_managed_by_file")
+        if not _bounded_token(session_token):
+            raise ReviewWebError("unauthorized")
+        now = self._clock()
+        credential = change.current()
+        try:
+            own_session_digest = credential.session_digest(session_token)
+            _, expected_csrf, _ = self._repository.authenticate_review_session(
+                own_session_digest, now
+            )
+        except Exception as error:
+            # Fail closed, as ``authenticate`` does.
+            raise ReviewWebError("unauthorized") from error
+        if not _bounded_token(csrf_token) or not secrets.compare_digest(
+            expected_csrf, _digest(csrf_token)
+        ):
+            raise ReviewWebError("csrf")
+        if (
+            not owner_password(new_password)
+            or new_password != confirmation
+            or type(current_password) is not str
+        ):
+            raise ReviewWebError("invalid_password")
+        try:
+            tokens, ended = self._replace_password(
+                change,
+                credential,
+                own_session_digest,
+                current_password,
+                new_password,
+                client,
+                now,
+            )
+        except ReviewWebError as error:
+            _owner_password_change_event(error.code, None)
+            raise
+        _owner_password_change_event("changed", ended)
+        return tokens
+
+    def _replace_password(
+        self,
+        change: OwnerPasswordChange,
+        credential: OwnerCredential,
+        own_session_digest: str,
+        current_password: str,
+        new_password: str,
+        client: str,
+        now: int,
+    ) -> tuple[SessionTokens, int | None]:
+        """Spend a sign-in attempt, verify, then commit the successor.
+
+        Returns the new session and how many sessions the purge removed, or
+        ``None`` when the purge failed.
+        """
+        try:
+            permitted = self._repository.begin_login(
+                now,
+                credential.client_digest(client),
+                _LOGIN_WINDOW_SECONDS,
+                _LOGIN_CLIENT_ATTEMPTS,
+                _LOGIN_GLOBAL_ATTEMPTS,
+            )
+        except Exception as error:
+            raise ReviewWebError("persistence") from error
+        if permitted is not True:
+            raise ReviewWebError("throttled")
+        try:
+            verified = credential.verify(current_password)
+        except Exception as error:
+            # As in ``login``: a wrong password is ``False``, so a raise is a
+            # hasher or stored-digest fault no password can satisfy.
+            raise ReviewWebError("runtime") from error
+        if not verified:
+            raise ReviewWebError("current_password_invalid")
+        try:
+            successor = change.successor(new_password)
+            session_token = self._token_factory(32)
+            csrf_token = self._token_factory(32)
+            session_digest = successor.session_digest(session_token)
+            client_key = successor.client_digest(client)
+        except Exception as error:
+            raise ReviewWebError("runtime") from error
+        if not 32 <= len(session_token) <= 128 or not 32 <= len(csrf_token) <= 128:
+            raise ReviewWebError("runtime")
+        expires_at = now + self._lifetime_seconds
+        # Held from the new session through the swap, so a sign-out of other
+        # browsers cannot delete the session this change has just issued.
+        with change.exclusive():
+            # The passwords were checked outside the hold. A browser signed out
+            # meanwhile changes nothing: its session is read again before
+            # anything is written.
+            try:
+                self._repository.authenticate_review_session(own_session_digest, now)
+            except Exception as error:
+                raise ReviewWebError("unauthorized") from error
+            try:
+                self._repository.create_review_session(
+                    session_digest, _digest(csrf_token), now, expires_at, client_key
+                )
+            except Exception as error:
+                raise ReviewWebError("persistence") from error
+            ended: int | None = None
+
+            def purge() -> None:
+                # Runs between the commit and the swap, so every other row is keyed
+                # by the replaced verifier: a sign-in or a later change under the
+                # successor cannot have written one yet. Best effort, because those
+                # rows are unreachable either way.
+                nonlocal ended
+                try:
+                    ended = self._repository.end_review_sessions_except(session_digest)
+                except Exception:
+                    ended = None
+
+            try:
+                adopted = change.adopt(credential, successor, purge)
+            except Exception as error:
+                self._discard_session(session_digest, csrf_token, now)
+                raise ReviewWebError("persistence") from error
+            if adopted is not True:
+                # Another change replaced the verifier this request was checked
+                # against, so its session is gone with the rest.
+                self._discard_session(session_digest, csrf_token, now)
+                raise ReviewWebError("unauthorized")
+        return SessionTokens(session_token, csrf_token, expires_at), ended
+
+    def _discard_session(self, session_digest: str, csrf_token: str, now: int) -> None:
+        """Best-effort revoke of a session whose password change did not commit.
+
+        Its digest is keyed by a verifier that was never adopted, so no request
+        can reach it even if this revoke fails.
+        """
+        try:
+            self._repository.revoke_review_session(
+                session_digest, _digest(csrf_token), now
+            )
+        except Exception:
+            pass
+
+
+_OWNER_PASSWORD_CHANGE_OUTCOMES: Final = frozenset(
+    {
+        "changed",
+        "current_password_invalid",
+        "persistence",
+        "runtime",
+        "throttled",
+        "unauthorized",
+    }
+)
+
+
+def _owner_password_change_event(outcome: str, sessions_ended: int | None) -> None:
+    """Write one value-free line for a password change that reached the throttle.
+
+    It carries a closed outcome and the number of sessions the purge removed,
+    or null when the purge failed or nothing committed. Never a password,
+    verifier, digest, token or client. A failing sink cannot fail the request.
+    """
+    ended = (
+        sessions_ended
+        if type(sessions_ended) is int and 0 <= sessions_ended <= 2**31
+        else None
+    )
+    known = outcome if outcome in _OWNER_PASSWORD_CHANGE_OUTCOMES else "runtime"
+    event = {
+        "event": "owner_password_change",
+        "level": (
+            "info"
+            if (known == "changed" and ended is not None)
+            or known in {"current_password_invalid", "throttled", "unauthorized"}
+            else "warning"
+        ),
+        "outcome": known,
+        "sessions_ended": ended,
+    }
+    try:
+        sys.stderr.write(
+            json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n"
+        )
+    except Exception:
+        pass
+
+
+_OWNER_SIGN_OUT_OTHERS_OUTCOMES: Final = frozenset(
+    {"signed_out", "csrf", "unauthorized", "persistence"}
+)
+
+
+def _owner_sign_out_others_event(outcome: str, sessions_ended: int | None) -> None:
+    """Write one value-free line for a sign-out of other browsers.
+
+    It carries a closed outcome and the number of other session rows removed,
+    or null when nothing was removed. Never a cookie, token, digest, client or
+    password. A failing sink cannot fail the request.
+    """
+    known = outcome if outcome in _OWNER_SIGN_OUT_OTHERS_OUTCOMES else "persistence"
+    ended = (
+        sessions_ended
+        if known == "signed_out"
+        and type(sessions_ended) is int
+        and 0 <= sessions_ended <= 2**31
+        else None
+    )
+    event = {
+        "event": "owner_sign_out_others",
+        "level": "warning" if known == "persistence" else "info",
+        "outcome": known,
+        "sessions_ended": ended,
+    }
+    try:
+        sys.stderr.write(
+            json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n"
+        )
+    except Exception:
+        pass
 
 
 # The policy category each destination's posture is read under; any other
@@ -831,7 +1210,7 @@ def _automatic_field_decision(
     automatic_decision = context.automatic.get(destination)
     automatic_selection_sources: list[str] = []
     if automatic_decision is not None:
-        automatic_selection_sources = _provider_source_labels(
+        automatic_selection_sources = provider_source_labels(
             report,
             list(automatic_sources.get(automatic_source_outcome_ids[destination], ())),
         )
@@ -914,6 +1293,7 @@ def _classify_field(
     cover_preparation_available: bool,
     actions: tuple[HumanDecisionAction, ...],
     owner_entry: bool,
+    pin: Literal["in_force", "changed"] | None,
 ) -> ReviewFieldClassification:
     """Classify one field from its proposal, decisions and cover state."""
     snapshot = context.snapshot
@@ -932,6 +1312,9 @@ def _classify_field(
     # proposed fill the evaluated policy keeps (tags while they are off)
     # is settled the same way on every medium (#1661).
     single_source = _single_source_choice(proposal)
+    # A description every source repeats offers its choices only beside
+    # description advice (`_field`): optional, never attention (#1905).
+    repeated = preserved_description(proposal) and bool(actions)
     # The measured stage's decision over a current comparison: a suggested
     # switch is optional work, never attention, and a hold (a title naming
     # another book, or a current cover whose sources do) asks (#1363 S9,
@@ -957,7 +1340,8 @@ def _classify_field(
         and destination in snapshot.policy_kept_destinations
     )
     return classify_review_field(
-        attention_candidate=(
+        attention_candidate=not repeated
+        and (
             (
                 cover_admits
                 and _needs_attention(
@@ -983,7 +1367,9 @@ def _classify_field(
             "candidate"
             if authored_selection is not None
             else "abstention"
-            if destination in snapshot.shadow_abstention_destinations
+            # A repeated description is optional, never attention, so neither
+            # an abstention nor a pause asks about it (#1905).
+            if destination in snapshot.shadow_abstention_destinations and not repeated
             else None
             if automatic_decision is None
             else str(automatic_decision["outcome"])
@@ -1015,6 +1401,7 @@ def _classify_field(
         cause=(
             "automatic_safety_suspended"
             if destination in snapshot.automatic_safety_suspended_destinations
+            and not repeated
             else context.suspension_causes.get(destination)
         ),
         current_value=target_fields[destination]["value"],
@@ -1029,7 +1416,8 @@ def _classify_field(
         # current comparison is still choosable: the owner can prepare one.
         owner_choosable=automatic_decision is None
         and (
-            (
+            repeated
+            or (
                 cover_admits
                 and (
                     context.case.media_kind == "audiobook"
@@ -1064,6 +1452,21 @@ def _classify_field(
         kept_by_fill_policy=policy_settled and destination != "tags",
         kept_by_tags_off=policy_settled and destination == "tags",
         single_source=single_source,
+        pin=pin,
+        repeated_description=repeated,
+    )
+
+
+def _description_advice_offers(snapshot: CurrentReviewCaseSnapshot) -> bool:
+    """Whether description advice is shown for the field to choose against.
+
+    Current advice with a candidate, or a selection the owner can reverse
+    after a verified write retired its binding (#1905).
+    """
+    advice = snapshot.description_advice
+    return advice is not None and (
+        (advice.get("current") is True and advice.get("candidate") is not None)
+        or advice.get("selection") is not None
     )
 
 
@@ -1141,6 +1544,11 @@ class InspectCurrentReviewCase:
                 projected = _automatic_decision_projection(document)
                 if projected is None:
                     decision = HumanDecision.from_json(document)
+                    if decision.outcome in {"pin", "unpin"}:
+                        # Never a field's latest decision: a pin acts through
+                        # its hold, and the answer under it stands (ADR-0085,
+                        # Amendment 2).
+                        continue
                     decisions[decision.destination] = decision
                     if decision.outcome == "withdraw":
                         # A withdrawn field is undecided again (ADR-0085). A
@@ -1311,6 +1719,23 @@ class InspectCurrentReviewCase:
         reasons = result["reasons"]
         assert type(reasons) is list
         decision = decisions.get(destination)
+        # A pin on this case's hold and the value it keeps, as the current
+        # value is shown: in force, waiting for the owner's standing answer
+        # to be read back, or changed (ADR-0085, Amendment 2).
+        pin = next((row[1:] for row in snapshot.pins if row[0] == destination), None)
+        pin_state: Literal["in_force", "waiting", "changed"] | None = (
+            None
+            if pin is None
+            else "in_force"
+            if pin[0]
+            else "changed"
+            if decision is None
+            else "waiting"
+        )
+        pinned_field: dict[str, object] | None = None
+        if pin is not None:
+            pinned_field = json.loads(pin[1])
+            pinned_field.pop("restorable", None)
         automatic_decision, automatic_selection_sources = _automatic_field_decision(
             context, destination, alternatives
         )
@@ -1343,6 +1768,14 @@ class InspectCurrentReviewCase:
             preparation_possible=self._cover_considerations is not None,
         )
         actions = () if cover_preparation_available else decision_actions(proposal)
+        if (
+            not actions
+            and preserved_description(proposal)
+            and _description_advice_offers(snapshot)
+        ):
+            # Its sources all repeat it, so only advice offers a change: the
+            # adviser's text (an accept) and Keep current (#1905).
+            actions = ("keep_current", "accept")
         owner_control = _owner_control(
             proposal,
             target_fields,
@@ -1350,6 +1783,9 @@ class InspectCurrentReviewCase:
             decision,
             automatic_decision is not None,
             snapshot,
+            None
+            if pinned_field is None or pin_state != "changed"
+            else pinned_field["value"],
         )
         # The owner's hold follows the work: a successor case holds the
         # field as the owner's decision on the earlier case left it, once
@@ -1378,11 +1814,15 @@ class InspectCurrentReviewCase:
             cover_preparation_available=cover_preparation_available,
             actions=actions,
             owner_entry=owner_entry,
+            # A waiting pin leaves the field as its answer reads.
+            pin=None if pin_state == "waiting" else pin_state,
         )
         # Classification retains the field's owner context. Action
         # availability is a separate exact-proposal contract; an empty
         # action list is context-only, never an implied choice envelope.
-        has_owner_action = bool(actions) or cover_preparation_available
+        has_owner_action = (
+            bool(actions) or cover_preparation_available or pin_state == "changed"
+        )
         needs_attention = classification.needs_attention and has_owner_action
         inventory_role = _field_inventory_role(
             classification.state,
@@ -1396,9 +1836,32 @@ class InspectCurrentReviewCase:
         if inventory_role == "contextual":
             owner_control = None
         # Held only while the hold row is in force: Return to automatic
-        # releases it on the deciding case too (#1358).
-        manual_hold = destination in snapshot.held_destinations and (
-            carried_hold or (decision is not None and automatic_decision is not None)
+        # releases it on the deciding case too (#1358). A pinned field offers
+        # Unpin instead, so its hold is not one Resume can release.
+        manual_hold = (
+            pin_state is None
+            and destination in snapshot.held_destinations
+            and (
+                carried_hold
+                or (decision is not None and automatic_decision is not None)
+            )
+        )
+        # A readable primary field can have a value pinned, or says a change
+        # to it waits to be written (#1346, J2).
+        pin_offer = (
+            None
+            if destination == "cover"
+            or inventory_role != "primary"
+            or pinned_field_fingerprint(context.case, destination) is None
+            else "change_waiting"
+            if destination in snapshot.change_waiting_destinations
+            else "available"
+        )
+        pin_control: dict[str, object] | None = (
+            None
+            if inventory_role == "contextual"
+            or (pin_offer is None and pin_state is None)
+            else {"pin": pin_offer, "unpin": pin_state is not None}
         )
         return self._field_document(
             context,
@@ -1419,6 +1882,10 @@ class InspectCurrentReviewCase:
             manual_hold=manual_hold,
             has_owner_action=has_owner_action,
             needs_attention=needs_attention,
+            pin=None
+            if pin_state is None
+            else {"state": pin_state, "value": pinned_field},
+            pin_control=pin_control,
         )
 
     def _field_document(
@@ -1442,6 +1909,8 @@ class InspectCurrentReviewCase:
         manual_hold: bool,
         has_owner_action: bool,
         needs_attention: bool,
+        pin: dict[str, object] | None,
+        pin_control: dict[str, object] | None,
     ) -> dict[str, object]:
         """The field's wire document, kept apart from the decisions above it."""
         case = context.case
@@ -1500,6 +1969,8 @@ class InspectCurrentReviewCase:
                 reasons,
             ),
             "owner_control": owner_control,
+            "pin": pin,
+            "pin_control": pin_control,
             # The offer a choice binds: its value, proposal and rule (#1355).
             "offer_digest": offer_digest(proposals, destination),
             "proposal_id": proposal["proposal_id"],
@@ -1897,6 +2368,29 @@ class RecordHumanDecision:
         decision = AuthoredDescriptionDecision.from_json(document)
         return {"decision_id": decision.decision_id, "advised": True}
 
+    def _keep_refused(
+        self,
+        review_case_id: str,
+        offer: tuple[dict[str, object], ...],
+        proposal_id: str,
+    ) -> bool:
+        """Whether a keep binds a description every source repeats while its
+        field, as advice decides, does not offer Keep current (#1905).
+
+        Only that shape reads the page; the store's own checks follow.
+        """
+        proposal = next(value for value in offer if value["proposal_id"] == proposal_id)
+        return preserved_description(proposal) and not any(
+            field["destination"] == "description"
+            and "keep_current" in cast("list[str]", field["decision_actions"])
+            for field in cast(
+                "list[dict[str, object]]",
+                InspectCurrentReviewCase(self._repository).run(review_case_id)[
+                    "fields"
+                ],
+            )
+        )
+
     def run(
         self,
         review_case_id: str,
@@ -2042,6 +2536,10 @@ class RecordHumanDecision:
                 occurred_at=self._clock(),
                 previous=previous,
             )
+            if outcome == "keep_current" and self._keep_refused(
+                review_case_id, offer, proposal_id
+            ):
+                raise HumanDecisionError("unsupported")
             try:
                 stored = HumanDecision.from_json(
                     self._repository.record_human_decision(
@@ -2176,6 +2674,7 @@ class BrowseReviewLibrary:
                     shadow_abstention_destinations,
                     terminal_document,
                     attention_count,
+                    pinned_count,
                 ) = row
                 items.append(
                     _library_item(
@@ -2187,6 +2686,7 @@ class BrowseReviewLibrary:
                         shadow_abstention_destinations,
                         terminal_document,
                         attention_count,
+                        pinned_count,
                         decision_scope=scope,
                         validated=self._validated,
                         match_state=(
@@ -2204,16 +2704,12 @@ class BrowseReviewLibrary:
             # the page rather than silently dropping a work from the library.
             raise ReviewWebError("unavailable") from error
         return {
-            "counts": {
-                "all": snapshot.total,
-                "needs_attention": snapshot.attention_total,
-                "no_attention_needed": snapshot.total
-                - snapshot.attention_total
-                - snapshot.not_matched_total
-                - snapshot.preparation_failed_total,
-                "not_matched": snapshot.not_matched_total,
-                "preparation_failed": snapshot.preparation_failed_total,
-            },
+            "counts": _library_counts(
+                snapshot.total,
+                snapshot.attention_total,
+                snapshot.not_matched_total,
+                snapshot.preparation_failed_total,
+            ),
             "items": items,
             "lens": lens,
             "next_cursor": (
@@ -2235,6 +2731,55 @@ class BrowseReviewLibrary:
             "page": offset // bounded_limit + 1,
             "query": normalized,
             "schema_version": REVIEW_LIBRARY_SCHEMA,
+        }
+
+    def progress(self, library_labels: LibraryLabels = ()) -> dict[str, object]:
+        """Library's counts in total and per library, and Attention's fields.
+
+        Libraries follow the active settings, then any stable name they no
+        longer configure alphabetically. Fields come most-needed first.
+        """
+        try:
+            snapshot = self._repository.read_review_library_progress(library_labels)
+        except Exception as error:
+            raise ReviewWebError("unavailable") from error
+        order = {
+            (connection, library): index
+            for index, (connection, library, _label) in enumerate(library_labels)
+        }
+        labels = {
+            (connection, library): label
+            for connection, library, label in library_labels
+        }
+        libraries = sorted(
+            snapshot.libraries,
+            key=lambda row: (order.get((row[0], row[1]), len(order)), row[1], row[0]),
+        )
+        fields: dict[str, int] = {}
+        for _connection, _library, destination, works in snapshot.fields:
+            fields[destination] = fields.get(destination, 0) + works
+        return {
+            "totals": _library_counts(
+                sum(row[2] for row in libraries),
+                sum(row[3] for row in libraries),
+                sum(row[4] for row in libraries),
+                sum(row[5] for row in libraries),
+            ),
+            "libraries": [
+                {
+                    "connection": connection,
+                    "library": library,
+                    "library_display_name": labels.get((connection, library), library),
+                    "counts": _library_counts(*counts),
+                }
+                for connection, library, *counts in libraries
+            ],
+            "fields": [
+                {"destination": destination, "need_you": works}
+                for destination, works in sorted(
+                    fields.items(), key=lambda item: (-item[1], item[0])
+                )
+            ],
         }
 
     def attention(
@@ -2277,6 +2822,7 @@ class BrowseReviewLibrary:
                         automatic_outcome,
                         cause,
                         policy_attention,
+                        pin_changed,
                     ) = row
                     if (
                         parsed is None
@@ -2299,6 +2845,7 @@ class BrowseReviewLibrary:
                         automatic_outcome=automatic_outcome,
                         cause=cause,
                         policy_attention=policy_attention,
+                        pin_changed=pin_changed,
                     )
                     if len(items) < bounded_limit:
                         consumed += 1
@@ -2613,7 +3160,7 @@ def _report_detail_provider_claims(
         if type(provider) is not dict or provider.get("provider") not in evidence:
             continue
         authority = provider.get("authority")
-        label = _provider_label(authority if type(authority) is str else None)
+        label = provider_label(authority if type(authority) is str else None)
         candidates = provider.get("candidates")
         if type(candidates) is not list:
             continue
@@ -2761,11 +3308,14 @@ def _owner_control(
     decision: HumanDecision | None,
     automatic: bool,
     snapshot: CurrentReviewCaseSnapshot,
+    pinned: object,
 ) -> dict[str, object] | None:
     """Project F59's owner controls for one field, or ``None`` when it has none.
 
     Each part is offered only where the store would accept that command now;
     the store still decides, and refuses a stale panel inline (ADR-0085).
+    ``pinned`` is the value a changed pin keeps, suggested like the previous
+    one (ADR-0085, Amendment 2).
     """
     destination = cast(str, proposal["destination"])
     current = target_fields[destination]["value"]
@@ -2810,6 +3360,13 @@ def _owner_control(
             and all(previous != item["value"] for item in suggestions)
         ):
             suggestions.append({"rule": "previous", "value": previous})
+        if (
+            type(pinned) is str
+            and owner_text(pinned)
+            and pinned != current
+            and all(pinned != item["value"] for item in suggestions)
+        ):
+            suggestions.append({"rule": "pinned", "value": pinned})
         entry = {"max_characters": OWNER_TEXT_MAXIMUM, "suggestions": suggestions}
     subset = None
     if (
@@ -2831,11 +3388,14 @@ def _owner_control(
                 )
             ],
         }
+    # An answer cannot be withdrawn while its field is pinned (ADR-0085,
+    # Amendment 2).
     withdraw = None
     if (
         decision is not None
         and decision.outcome != "reject"
         and destination not in UNREVERSIBLE_DESTINATIONS
+        and all(row[0] != destination for row in snapshot.pins)
     ):
         withdraw = (
             "automatic_hold"
@@ -2855,29 +3415,7 @@ def _corroboration_source_labels(
     """Project only closed provider authorities for #416 creator corroboration."""
     if reasons != ["explicit_author_corroborates_untyped_creator"]:
         return []
-    return _provider_source_labels(report, references)
-
-
-def _provider_source_labels(
-    report: MetadataReport,
-    references: list[str],
-) -> list[str]:
-    """Project provider labels for exact evidence references."""
-    by_reference = {
-        claim.reference: _provider_label(provider.authority)
-        for provider in report.providers
-        for candidate in (*provider.candidates, *provider.recording_lookup_candidates)
-        for claim in candidate.claims
-    } | {
-        claim.reference: _audio_edition_label(provider.authority)
-        for provider in report.providers
-        for edition in provider.audio_editions
-        for claim in edition.claims
-    }
-    labels = {
-        by_reference[reference] for reference in references if reference in by_reference
-    }
-    return sorted(labels)
+    return provider_source_labels(report, references)
 
 
 def _choice_contexts(
@@ -3017,7 +3555,7 @@ def _current_value_present(value: object) -> bool:
 def _choice_rationale(rows: list[dict[str, object]]) -> str:
     """Name the sources an alternative came from, or nothing when none is known (#1519)."""
     named = set(PROVIDER_LABELS.values()) | {
-        _audio_edition_label(authority) for authority in PROVIDER_LABELS
+        audio_edition_label(authority) for authority in PROVIDER_LABELS
     }
     return ", ".join(
         sorted(
@@ -3049,11 +3587,6 @@ def _choice_evidence(
         else "external_corroboration",
         "source": _choice_source_label(evidence),
     }
-
-
-def _audio_edition_label(authority: str | None) -> str:
-    """Name a provider's audio edition as such, never as its book (#1642)."""
-    return _provider_label(authority) + " audio edition"
 
 
 def _audio_edition_note(edition: dict[str, object]) -> str:
@@ -3088,7 +3621,7 @@ def _audio_edition_note(edition: dict[str, object]) -> str:
 def _choice_source_label(evidence: dict[str, str | None]) -> str:
     provider = evidence["provider"]
     if provider in PROVIDER_LABELS and evidence["source"] == "audio_edition":
-        return _audio_edition_label(provider)
+        return audio_edition_label(provider)
     if provider in PROVIDER_LABELS:
         return PROVIDER_LABELS[cast("str", provider)]
     if _choice_is_local(evidence):
@@ -3323,7 +3856,7 @@ def _review_unselectable_evidence(
                         "destinations": [destination],
                         "language": value if language else None,
                         "role": "external_observation",
-                        "source": _provider_label(provider.authority),
+                        "source": provider_label(provider.authority),
                         "observation": (
                             f"{label}: {value}. Not offered as a choice. {reason}"
                             + (
@@ -3795,7 +4328,7 @@ def _provider_outcomes(lanes: tuple[ProviderLaneFacts, ...]) -> list[dict[str, o
         {
             "provider_requests": lane.logical_requests,
             "lane_kind": lane.kind,
-            "provider": _provider_label(lane.authority),
+            "provider": provider_label(lane.authority),
             "reason": _ADAPTER_FAULT_REASON
             if lane.adapter_fault
             else _REFUSED_PROVIDER_REASON
@@ -3822,12 +4355,6 @@ def _provider_outcomes(lanes: tuple[ProviderLaneFacts, ...]) -> list[dict[str, o
         }
         for lane in lanes
     ]
-
-
-def _provider_label(authority: str | None) -> str:
-    if authority is None or authority not in PROVIDER_LABELS:
-        return "Provider (name unavailable)"
-    return PROVIDER_LABELS[authority]
 
 
 def _provider_comparison_notices(report: MetadataReport) -> list[str]:
@@ -3986,6 +4513,7 @@ def _library_item(
     shadow_abstention_destinations: tuple[str, ...] = (),
     terminal_document: str | None = None,
     attention_count: int | None = None,
+    pinned_count: int = 0,
     *,
     decision_scope: DecisionScope | None = None,
     validated: ValidatedDocumentCache | None = None,
@@ -4043,6 +4571,7 @@ def _library_item(
                 return {
                     "authors": authors,
                     "attention_count": 0,
+                    "pinned_count": 0,
                     # Failed is its own lens, never counted as needing no
                     # attention (#1413).
                     "attention_state": "preparation_failed",
@@ -4151,7 +4680,7 @@ def _library_item(
             decision.validate_in(scope)
             if decision.outcome == "withdraw":
                 decisions.discard(decision.destination)
-            else:
+            elif decision.outcome not in {"pin", "unpin"}:
                 decisions.add(decision.destination)
         else:
             destination = str(automatic["destination"])
@@ -4215,6 +4744,8 @@ def _library_item(
     value = {
         "authors": _report_authors(report.target),
         "attention_count": current_attention_count,
+        # The fields an owner pin holds on this case (ADR-0085, Amendment 2).
+        "pinned_count": pinned_count,
         # The cover the library holds, retained by this report, so the row can
         # show the book it stands for; `library_cover` serves only this preview
         # (#1290). The row names no connection, so the server states the
@@ -4317,6 +4848,7 @@ def _attention_item(
     automatic_outcome: str | None = None,
     cause: ReviewFieldCause | None = None,
     policy_attention: bool = False,
+    pin_changed: bool = False,
 ) -> dict[str, object] | None:
     if _omitted_for_epub(destination, report.file.format):
         return None
@@ -4349,6 +4881,7 @@ def _attention_item(
         cause=cause,
         current_value=None,
         proposed_values=(),
+        pin="changed" if pin_changed else None,
     )
     if not classification.needs_attention:
         # Query membership can race a durable automatic or human decision.  A

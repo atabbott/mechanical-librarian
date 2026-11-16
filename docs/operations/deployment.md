@@ -173,8 +173,10 @@ out for up to five minutes at a time. A reverse proxy listed in
 
 ## First-run setup
 
-An empty `/data` volume starts guided setup. Until setup finishes, the service
-serves only health checks and the setup pages.
+An empty `/data` volume starts guided setup, as does one that holds only
+[provider answers kept across a clean rebuild](upgrades.md#keeping-provider-answers).
+Until setup finishes, the service serves only health checks and the setup
+pages.
 
 **Claim token.** Every start that finds setup unclaimed creates a new setup
 claim token and revokes the previous one. It is printed once in the container
@@ -234,12 +236,12 @@ to change them.
 ## Starting, stopping and restarting
 
 **Startup refuses rather than repairs.** The container starts only from an
-empty volume, a resumable setup, or exact-current stores with complete
-settings. It stops without changing anything if it finds a schema mismatch,
-missing or incomplete settings, a volume owned by another user, an invalid
-configuration or bootstrap file, or a permission failure. It never falls back,
-imports, migrates or repairs. What to do after a refusal is in
-[upgrades](upgrades.md).
+empty volume (kept provider answers aside), a resumable setup, or exact-current
+stores with complete settings. It stops without changing anything if it finds a
+schema mismatch, missing or incomplete settings, a volume owned by another
+user, an invalid configuration or bootstrap file, or a permission failure. It
+never falls back, imports, migrates or repairs. What to do after a refusal is
+in [upgrades](upgrades.md).
 
 **Crash recovery.** After a crash the container can recover one interrupted
 database transaction on its own. It checks a private copy first and needs free
@@ -269,9 +271,23 @@ described in [observability](observability.md).
 
 A sign-in creates a persistent session cookie with a fixed absolute lifetime of
 up to 30 days, the default. Set a shorter `review.session_lifetime_seconds` if
-you need one. Sessions survive restarts until you sign out or they expire, and
-are kept in `/data/private/review-sessions.sqlite`. A remembered session is a
-bearer credential: do not use it on an untrusted device or network.
+you need one. Sessions survive restarts until you sign out, they expire, the
+owner password changes or another browser signs them out, and are kept in
+`/data/private/review-sessions.sqlite`. A remembered session is a bearer
+credential: do not use it on an untrusted device or network.
+
+Settings → Access and diagnostics → Sign out other browsers ends every session
+except the browser you use, in store mode and file mode. It does not change
+the password: after a password was exposed, change it instead
+([changing the owner password](#changing-the-owner-password)).
+
+## Changing the owner password
+
+In store mode, open Settings → Access and diagnostics and use Owner password.
+It needs the current password. The browser you change it from stays signed
+in, and every other browser is signed out. In file mode, write a new verifier
+to the hash file as under [Forgotten owner password](#forgotten-owner-password),
+then restart the container; the restart signs every browser out.
 
 ## Forgotten owner password
 
@@ -291,10 +307,11 @@ The sign-in page links here.
 
   The restart signs every browser out.
 - **Store mode** (password created in guided setup): the verifier is in
-  `/data/application.sqlite3` and nothing replaces it. Restore a
-  [backup](backups-and-recovery.md) of the volume taken while you knew the
-  password, or start again from an empty volume and repeat setup. Starting
-  again discards the review history, decisions and settings on that volume.
+  `/data/application.sqlite3`, and Settings changes it only with the current
+  password. Restore a [backup](backups-and-recovery.md) of the volume taken
+  while you knew the password, or start again from an empty volume and repeat
+  setup. Starting again discards the review history, decisions and settings
+  on that volume.
 
 ## Live updates
 
@@ -371,7 +388,11 @@ but keeps its history.
 
 1. Open Policy → Curation → Description advice. Review the three cleanup
    choices (all on by default) and press **Save description preferences**.
-   Automatic application is off by default and has its own switch. Saving a
+   Automatic application is off by default and has its own switch; it only
+   suggests until a release shows, from your decisions, that the adviser is
+   right often enough
+   ([description advice qualification](description-advice-qualification.md)).
+   Saving a
    policy draft does not save these preferences. In file mode, set the
    `review.description_*` fields instead.
 2. In Settings → Reviewer, test the description model and its prices, then

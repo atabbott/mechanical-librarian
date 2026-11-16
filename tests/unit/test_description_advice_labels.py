@@ -56,7 +56,11 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
-from tests.support.description_advice import _description_candidate, _prepared
+from tests.support.description_advice import (
+    _description_candidate,
+    _prepared,
+    qualify_description_advice,
+)
 from tests.support.proposal_evidence import (
     _report,
     _target_work_candidate,
@@ -727,11 +731,35 @@ def test_sample_refusals_keep_their_order(
 # sample (S9-S11).
 
 
-def test_unchoosable_advice_is_counted_not_listed(tmp_path: Path) -> None:
+def test_advice_on_a_description_every_source_repeats_is_listed(
+    tmp_path: Path,
+) -> None:
     """Every source repeats the library's description: the advice is ready
+    and differs, and the work's page offers it beside Keep current (#1905)."""
+    prepared = _store(tmp_path, library=LIBRARY, source=LIBRARY)
+    assert _sample(prepared.copy()) == [
+        *_sample_lines(replacing=1),
+        _link(prepared.case),
+    ]
+
+
+def test_unchoosable_advice_is_counted_not_listed(tmp_path: Path) -> None:
+    """The library refuses writes to the description: the advice is ready
     and differs, but the work's page offers no choice (finding 6)."""
-    database = _store(tmp_path, library=LIBRARY, source=LIBRARY).copy()
-    assert _sample(database) == _sample_lines(cannot=1)
+    prepared = _store(tmp_path)
+    (connection,) = prepared.repository._connection.execute(
+        "SELECT connection_name FROM current_review_case_lineages "
+        "WHERE review_case_id=?",
+        (prepared.case,),
+    ).fetchone()
+    prepared.repository.suspend_field_effect_capability(
+        scope="destination",
+        connection=connection,
+        destination="description",
+        reason="field_unavailable",
+        changed_at=prepared.tick(),
+    )
+    assert _sample(prepared.copy()) == _sample_lines(cannot=1)
 
 
 @pytest.mark.parametrize(
@@ -1112,7 +1140,10 @@ def test_undecided_counts_current_eligible_advice(tmp_path: Path) -> None:
     }
 
 
-def test_automatic_decisions_are_not_labels(tmp_path: Path) -> None:
+def test_automatic_decisions_are_not_labels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    qualify_description_advice(monkeypatch)
     from mechanical_librarian.application.description_advice import (
         admit_staged_description,
     )
@@ -1137,6 +1168,21 @@ def test_automatic_decisions_are_not_labels(tmp_path: Path) -> None:
     group = _only(_score(prepared.copy()))
     assert group["labels"] == 0
     assert group["not_counted"]["decided_by_automatic"] == 1
+
+
+@pytest.mark.parametrize("marks", [("pin",), ("pin", "unpin")], ids=["pin", "unpin"])
+def test_a_pin_or_unpin_leaves_the_label(
+    tmp_path: Path, marks: tuple[str, ...]
+) -> None:
+    """A pin or an unpin is never the latest decision, so the decision before
+    it still labels the advice (#1346)."""
+    prepared = _store(tmp_path)
+    prepared.decide("keep_current")
+    for mark in marks:
+        prepared.decide(mark)
+    group = _only(_score(prepared.copy()))
+    assert (group["labels"], group["right"]) == (1, 0)
+    assert group["wrong"] == _wrong(kept_current=1)
 
 
 def test_withdrawal_is_not_a_label(tmp_path: Path) -> None:

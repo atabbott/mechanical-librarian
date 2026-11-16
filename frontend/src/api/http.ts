@@ -25,6 +25,8 @@ export const lits =
   ) =>
     values
 type LibraryDto = ResponseSchema<'_LibraryResponse'>
+type LibraryCountsDto = ResponseSchema<'_ReviewCounts'>
+type LibraryProgressDto = ResponseSchema<'_LibraryProgressResponse'>
 type LibraryCoverDto = ResponseSchema<'_LibraryCover'>
 type ReportDetailDto = ResponseSchema<'_ReportDetailResponse'>
 type AttentionDto = ResponseSchema<'_AttentionResponse'>
@@ -66,6 +68,7 @@ type DecisionAcknowledgementDto =
   | ResponseSchema<'_DescriptionSelectionAcknowledgement'>
 export type SettingsView = ResponseSchema<'SettingsView'>
 export type SettingsWrite = Schema<'_SettingsWriteRequest'>
+export type PasswordChange = Schema<'_PasswordChangeRequest'>
 export type AppearanceView = ResponseSchema<'_AppearanceResponse'>
 // The closed OpenRouter failures an owner may see, each with its own remedy.
 const reviewerFailureCodes = [
@@ -180,6 +183,8 @@ export const DECISION_OUTCOMES = [
   'reject',
   'owner_entered',
   'withdraw',
+  'pin',
+  'unpin',
 ] as const
 lits<Schema<'_HistoryDecisionItem'>['outcome']>()(DECISION_OUTCOMES)
 export type DecisionOutcome = (typeof DECISION_OUTCOMES)[number]
@@ -617,6 +622,8 @@ export interface LibraryWorkView {
   libraryDisplayName?: string
   mediaKind: MediaKind
   attentionCount: number
+  // The fields an owner pin holds on this work (ADR-0085, Amendment 2).
+  pinnedCount: number
   attention: AttentionState
   // Where this work opens, and what opens there. A work with a review case
   // points at that case; a work with only a published report points at the
@@ -630,14 +637,33 @@ export interface LibraryWorkView {
   summary: WorkSummaryView | null
   cover?: LibraryCoverView
 }
+export interface LibraryCounts {
+  attention: number
+  all: number
+  clear: number
+  notMatched: number
+  failed: number
+}
 export interface LibraryView {
   lens: LibraryLens
   query?: string
   nextCursor?: string
   previousCursor?: string
   page: number
-  counts: { attention: number; all: number; clear: number; notMatched: number; failed: number }
+  counts: LibraryCounts
   works: readonly LibraryWorkView[]
+}
+// Library's counts in total and per library, and the works whose field
+// Attention lists, per field (#1335). Computed by the server on each read.
+export interface LibraryProgressView {
+  totals: LibraryCounts
+  libraries: readonly {
+    connection: string
+    library: string
+    libraryDisplayName: string
+    counts: LibraryCounts
+  }[]
+  fields: readonly { destination: TargetDestination; needYou: number }[]
 }
 export interface AttentionItemView {
   id: string
@@ -729,6 +755,15 @@ export interface ReviewFieldView {
   corroborationSources: readonly string[]
   descriptionAdvice?: DescriptionAdviceView | null
   ownerControl?: OwnerControlView | null
+  // An owner pin on the field with the value it keeps: in force, waiting for
+  // the chosen value to be read back, or changed. And whether a pin or an
+  // unpin is accepted now (ADR-0085, Amendment 2): a pin is available, or
+  // waits for a change to the field to be written (J2).
+  pin: {
+    state: 'in_force' | 'waiting' | 'changed'
+    value: ResponseSchema<'_TargetField'>
+  } | null
+  pinControl: { pin: 'available' | 'change_waiting' | null; unpin: boolean } | null
   currentCoverSelectionId?: string | null
   currentCoverSelectionArtifactId?: string | null
   coverConsideration?: CoverConsiderationView | null
@@ -1072,7 +1107,7 @@ export type PolicyCommandAnswer<P extends PolicyCommandPath> =
   | NoContent<'POST', `/api/v1/metadata-policy/${P}`>
 export type PolicyActivationView = ResponseSchema<'_PolicyActivationResponse'>
 // The activity family is decoded centrally (#1691): its views are the
-// response-truth types, and only the example adds a label of its own.
+// response-truth types.
 type ActivityDto = ResponseSchema<'_ActivityResponse'>
 // The Activity commands `activityCommand` sends, under `/api/v1/`.
 export type ActivityCommandPath =
@@ -1119,7 +1154,6 @@ export interface ActivitySearch {
 }
 export type ActivityLedgerView = ResponseSchema<'_ActivityLedger'>
 export type ActivityWaitingView = ResponseSchema<'_ActivityWaiting'>
-export type ActivityExampleView = ResponseSchema<'_ActivityExample'> & { work_label: string }
 export type ActivitySuspensionView = ResponseSchema<'_ActivitySuspension'>
 export type ProviderRecoveryActivityView = ResponseSchema<'_ProviderRecoveryActivity'>
 export type ProviderRecoveryDispatchReason =
@@ -1129,10 +1163,17 @@ export type ProviderRecoveryFailureReason = ProviderRecoveryActivityView['failur
 export type ActivityLapsedConsentView = ResponseSchema<'_ActivityLapsedConsent'>
 export type ActivityDisplayView = ActivityDto
 
-export type ActivityPermissionReadinessView = Omit<
-  ResponseSchema<'_ActivityPermissionReadiness'>,
-  'example'
-> & { example: ActivityExampleView | null }
+export type ActivityPermissionReadinessView = ResponseSchema<'_ActivityPermissionReadiness'>
+/** Every prepared change, grouped, with a bounded set of example rows (#1336). */
+export type WritePlanView = ResponseSchema<'_WritePlan'>
+export type WritePlanGroupView = WritePlanView['groups'][number]
+export type WritePlanRowView = WritePlanGroupView['rows'][number]
+export type WritePlanFormat = 'csv' | 'json'
+/** A write plan file as received: its bytes, type and the name to save it under. */
+export interface WritePlanFile {
+  readonly blob: Blob
+  readonly filename: string
+}
 
 /**
  * The inputs Activity's consent section reads, and nothing else. Library's
@@ -1264,6 +1305,7 @@ export interface ReviewHttp {
     signal?: AbortSignal,
     workClass?: ReadWorkClass,
   ): Promise<LibraryView>
+  getLibraryProgress(signal?: AbortSignal, workClass?: ReadWorkClass): Promise<LibraryProgressView>
   getReportDetail(
     detailUrl: string,
     signal?: AbortSignal,
@@ -1358,6 +1400,15 @@ export interface ReviewHttp {
     workClass?: ReadWorkClass,
   ): Promise<ActivityPermissionReadinessView>
   getActivityConsent(signal?: AbortSignal, workClass?: ReadWorkClass): Promise<ActivityConsentView>
+  /**
+   * Fetch the whole write plan as one file. `onRows` hears how many changes
+   * have arrived so far, counted from the body's line feeds.
+   */
+  downloadActivityWritePlan(
+    format: WritePlanFormat,
+    signal?: AbortSignal,
+    onRows?: (rows: number) => void,
+  ): Promise<WritePlanFile>
   getActivityTransitions(
     eventId: string,
     afterSequence?: number,
@@ -1370,6 +1421,8 @@ export interface ReviewHttp {
     signal?: AbortSignal,
   ): Promise<ActivityView | undefined>
   logout(signal?: AbortSignal): Promise<void>
+  changePassword(value: PasswordChange, signal?: AbortSignal): Promise<void>
+  logoutOthers(signal?: AbortSignal): Promise<void>
 }
 
 export interface CsrfTokenStore {
@@ -1534,6 +1587,15 @@ export class ReviewApiClient implements ReviewHttp {
   private signingOut = false
   private signedOut = false
   private expiryWhileSigningOut = false
+  // Set while a password change is in flight: the change ends every other
+  // session, so a parallel request may answer 401 although this browser stays
+  // signed in on its new session. Unlike the sign-out mark it always clears:
+  // success discards a held expiry, and any failure replays it.
+  private changingPassword = false
+  private expiryWhileChangingPassword = false
+  // Moves when a password change gives this browser its new session. A 401
+  // for a request that left before then answers the replaced session.
+  private sessionGeneration = 0
   constructor(private readonly options: HttpClientOptions) {
     this.fetch = options.fetch ?? globalThis.fetch.bind(globalThis)
     this.onSessionExpired =
@@ -1554,6 +1616,9 @@ export class ReviewApiClient implements ReviewHttp {
     if (search.q) p.set('q', search.q)
     if (search.cursor) p.set('cursor', search.cursor)
     return mapLibrary(await this.read(`/api/v1/library?${p}`, signal, workClass))
+  }
+  async getLibraryProgress(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
+    return mapLibraryProgress(await this.read('/api/v1/library/progress', signal, workClass))
   }
   // The address is the one the library row handed back, followed rather than
   // rebuilt: an item id may hold any character a target permits, and only the
@@ -2081,12 +2146,42 @@ export class ReviewApiClient implements ReviewHttp {
     signal?: AbortSignal,
     workClass: ReadWorkClass = 'foreground',
   ): Promise<ActivityPermissionReadinessView> {
-    const value = await this.read('/api/v1/activity/permission-readiness', signal, workClass)
-    const { example } = value
-    return {
-      ...value,
-      example: example === null ? null : { ...example, work_label: 'Work details unavailable' },
+    return await this.read('/api/v1/activity/permission-readiness', signal, workClass)
+  }
+
+  async downloadActivityWritePlan(
+    format: WritePlanFormat,
+    signal?: AbortSignal,
+    onRows?: (rows: number) => void,
+  ): Promise<WritePlanFile> {
+    // Fetched rather than linked, so a stale tab, an expired session and a
+    // refusal surface as they do for every read (#1336).
+    const response = await this.request<Response>(
+      `/api/v1/activity/write-plan?format=${format}`,
+      { headers: { 'X-ML-Work-Class': 'foreground' }, ...(signal ? { signal } : {}) },
+      { unsafe: false, raw: true },
+    )
+    const type = format === 'csv' ? 'text/csv;charset=utf-8' : 'application/json'
+    const filename = `mechanical-librarian-write-plan.${format}`
+    const reader = response.body?.getReader()
+    if (!reader) return { blob: await response.blob(), filename }
+    const chunks: Uint8Array[] = []
+    let lines = 0
+    try {
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        chunks.push(value)
+        for (const byte of value) if (byte === 10) lines += 1
+        // Each change is one line, after the head's one line.
+        onRows?.(Math.max(lines - 1, 0))
+      }
+    } catch (error) {
+      // A connection that ends mid-file is never a complete file.
+      if (error instanceof DOMException && error.name === 'AbortError') throw error
+      throw new NetworkUnavailableError()
     }
+    return { blob: new Blob(chunks as BlobPart[], { type }), filename }
   }
 
   async getActivityConsent(
@@ -2134,6 +2229,35 @@ export class ReviewApiClient implements ReviewHttp {
       }
       throw error
     }
+  }
+
+  // Never sent again after a CSRF challenge: the owner presses again. The new
+  // session's token is not in the answer, so the page token is renewed after
+  // the change; a failed renewal is left to the next unsafe request.
+  async changePassword(value: PasswordChange, signal?: AbortSignal) {
+    this.changingPassword = true
+    try {
+      await this.mutate('/api/v1/session/password', value, signal)
+    } catch (error) {
+      const held = this.expiryWhileChangingPassword
+      this.changingPassword = this.expiryWhileChangingPassword = false
+      if (held) this.reportSessionExpiry()
+      throw error
+    }
+    this.changingPassword = this.expiryWhileChangingPassword = false
+    this.sessionGeneration += 1
+    try {
+      await this.options.csrf.renew(signal)
+    } catch {
+      // The next unsafe request renews the token itself.
+    }
+  }
+
+  // Ends every other session and leaves this one, its cookie and its CSRF
+  // token as they were, so nothing is renewed or held back afterwards. Never
+  // sent again after a CSRF challenge: the owner presses again.
+  async logoutOthers(signal?: AbortSignal) {
+    await this.mutate('/api/v1/session/logout-others', undefined, signal)
   }
 
   private async read<P extends RoutablePath<'GET'>>(
@@ -2203,11 +2327,14 @@ export class ReviewApiClient implements ReviewHttp {
       resend = false,
       uncertain = false,
       map,
+      raw = false,
     }: {
       unsafe: boolean
       resend?: boolean
       uncertain?: boolean
       map?: (value: V) => R
+      /** Answer the checked response itself: a file, never a decoded body. */
+      raw?: boolean
     },
   ): Promise<R> {
     // A write the network lost may have landed. Only the network calls make
@@ -2230,6 +2357,7 @@ export class ReviewApiClient implements ReviewHttp {
         this.fetch(path, { ...init, headers, credentials: 'same-origin', cache: 'no-store' }),
       )
     }
+    const session = this.sessionGeneration
     let response = await send(unsafe ? this.options.csrf.current() : undefined)
     if (unsafe && response.status === 403 && (await challengeCode(response)) === 'csrf') {
       let token: string
@@ -2250,7 +2378,7 @@ export class ReviewApiClient implements ReviewHttp {
       throw new BuildMismatchError()
     }
     if (response.status === 401) {
-      this.reportSessionExpiry()
+      this.reportSessionExpiry(session)
       throw new SessionExpiredError()
     }
     if (!response.ok) {
@@ -2265,6 +2393,7 @@ export class ReviewApiClient implements ReviewHttp {
       }
       throw error
     }
+    if (raw) return response as R
     const method = init.method ?? 'GET'
     const operation = matchOperation(method, path)
     const failed = (at: string, reason: string) => {
@@ -2318,9 +2447,14 @@ export class ReviewApiClient implements ReviewHttp {
     }
   }
 
-  private reportSessionExpiry() {
+  private reportSessionExpiry(session = this.sessionGeneration) {
+    if (session !== this.sessionGeneration) return
     if (this.signingOut) {
       this.expiryWhileSigningOut = true
+      return
+    }
+    if (this.changingPassword) {
+      this.expiryWhileChangingPassword = true
       return
     }
     if (this.sessionExpiryReported) return
@@ -2599,8 +2733,8 @@ const mapProviderOutcome = (value: ProviderOutcomeDto): ProviderOutcomeView => (
   reason: value.reason,
   status: value.status,
 })
-// Formats any target or proposed value. It throws nothing: the Activity
-// example's before and after values are decoded to `unknown`.
+// Formats any target or proposed value. It throws nothing: a value decoded
+// to `unknown` reads as unavailable rather than as a shape to decode.
 export const displayValue = (value: unknown): string =>
   value === null
     ? 'Unavailable'
@@ -2775,19 +2909,35 @@ export const mapReportDetail = (value: ReportDetailDto): ReportDetailView => ({
   title: value.title,
 })
 
+const mapLibraryCounts = (value: LibraryCountsDto): LibraryCounts => ({
+  attention: value.needs_attention,
+  all: value.all,
+  clear: value.no_attention_needed,
+  notMatched: value.not_matched,
+  failed: value.preparation_failed,
+})
+
+const mapLibraryProgress = (value: LibraryProgressDto): LibraryProgressView => ({
+  totals: mapLibraryCounts(value.totals),
+  libraries: value.libraries.map((library) => ({
+    connection: library.connection,
+    library: library.library,
+    libraryDisplayName: library.library_display_name,
+    counts: mapLibraryCounts(library.counts),
+  })),
+  fields: value.fields.map((field) => ({
+    destination: field.destination,
+    needYou: field.need_you,
+  })),
+})
+
 export const mapLibrary = (value: LibraryDto): LibraryView => ({
   lens: value.lens,
   ...(value.query ? { query: value.query } : {}),
   ...(value.next_cursor ? { nextCursor: value.next_cursor } : {}),
   ...(value.previous_cursor ? { previousCursor: value.previous_cursor } : {}),
   page: value.page,
-  counts: {
-    attention: value.counts.needs_attention,
-    all: value.counts.all,
-    clear: value.counts.no_attention_needed,
-    notMatched: value.counts.not_matched,
-    failed: value.counts.preparation_failed,
-  },
+  counts: mapLibraryCounts(value.counts),
   works: value.items.map((item) => {
     const preparation = item.preparation
     const summary = item.summary
@@ -2801,6 +2951,7 @@ export const mapLibrary = (value: LibraryDto): LibraryView => ({
       libraryDisplayName: item.library_display_name ?? item.library,
       mediaKind: item.media_kind,
       attentionCount: item.attention_count,
+      pinnedCount: item.pinned_count,
       attention: item.attention_state,
       detailUrl: item.detail_url,
       detailKind: item.detail_kind,
@@ -2984,6 +3135,8 @@ const mapReviewField = (field: ReviewFieldDto): ReviewFieldView => ({
   descriptionAdvice:
     field.description_advice === null ? null : mapDescriptionAdvice(field.description_advice),
   ownerControl: field.owner_control === null ? null : mapOwnerControl(field.owner_control),
+  pin: field.pin,
+  pinControl: field.pin_control,
   coverConsideration:
     field.cover_consideration === null ? null : mapCoverConsideration(field.cover_consideration),
   currentCoverSelectionArtifactId: field.current_cover_selection_artifact_id,

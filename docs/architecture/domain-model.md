@@ -176,11 +176,15 @@ Rationale: [ADR-0031](decisions/0031-persisted-review-preparation.md),
 A `HumanDecision` is one immutable owner fact for one case, proposal and
 destination. Its outcome is `accept` (a retained alternative), `keep_current`,
 `owner_entered` (typed text for title, subtitle or publisher, or an in-order
-genre subset), `withdraw` (the field is undecided again) or `reject`, which
-only a cover's "no action" records. Choosing an earlier value again is a new
-decision. The latest decision for a case and destination counts unless it is
-a withdrawal. Covers and descriptions have their own decision lineages and
-cannot be withdrawn this way
+genre subset), `withdraw` (the field is undecided again), `pin` or `unpin` (a
+standing instruction to keep the library's value, which writes nothing), or
+`reject`, which only a cover's "no action" records. Choosing an earlier value
+again is a new decision. Pin and unpin rows are never a field's latest
+decision; the latest other decision counts unless it is a withdrawal. A pin
+acts through the field's manual hold, which follows the work, and can stand on
+a chosen value before it is written. Covers and descriptions have their own
+decision lineages and cannot be withdrawn this way, and a cover cannot be
+pinned
 ([ADR-0085](decisions/0085-owner-entered-values-withdrawal-and-reselection.md)).
 
 ### Policy and automatic decisions
@@ -217,8 +221,10 @@ one exact consideration
 A description advice attempt sends deduplicated provider descriptions to the
 selected reviewer and stores one authored candidate. An
 `AuthoredDescriptionDecision` (human or automatic) accepts a stored candidate
-by reference for guarded application. The model chooses nothing; see
-[AI trust boundary](ai-boundary.md).
+by reference for guarded application. An automatic one also needs a shipped
+qualification record naming the candidate's adviser
+([ADR-0099](decisions/0099-qualify-automatic-description-advice.md)). The
+model chooses nothing; see [AI trust boundary](ai-boundary.md).
 
 ## Guarded field effects
 

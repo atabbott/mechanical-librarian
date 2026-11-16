@@ -1,9 +1,10 @@
 # Description advice qualification
 
-With **Automatically apply ready description advice** on, the app writes the
-adviser's text without asking and may replace a description you have.
-[ADR-0099](../architecture/decisions/0099-qualify-automatic-description-advice.md)
-uses it only once your decisions show the adviser is right often enough. This
+**Automatically apply ready description advice** writes the adviser's text
+without asking, and may replace a description you have, only once a release
+shows, from your decisions, that the adviser is right often enough
+([ADR-0099](../architecture/decisions/0099-qualify-automatic-description-advice.md)).
+Until then it only suggests. This
 tool lists the descriptions to decide and scores your decisions. It sends
 nothing to a model and writes nothing. Run it from the checkout you built the
 install from.
@@ -46,8 +47,9 @@ It prints the adviser, then one count per line:
   automatically and you can choose it, replacing a description or filling an
   empty one. A link follows for each, up to the labels the bar still needs.
 - Already decided counts works whose decision is already a label.
-- Advice you cannot choose counts works where every source repeats your
-  description, so the page offers no choice
+- Advice you cannot choose counts works whose page offers no choice for the
+  description, such as one the library will not accept changes to. A work
+  where every source repeats your description is counted under To decide
   ([ADR-0099](../architecture/decisions/0099-qualify-automatic-description-advice.md),
   Decision 6).
 - Advice marked as needing you counts text the adviser did not mark ready.
@@ -91,8 +93,10 @@ uv run python scripts/description_advice_labels.py score --database "$COPY" \
 For each adviser identity, the score shows your right and wrong labels, the
 Wilson 95% lower limit, and whether it meets your bar of 0.90: 35 labels with
 no error, 53 with one, 69 with two. The JSON holds counts, digests, engine and
-model only. Attach `description-advice-score.json` to #1886. Then delete the
-folder, which also holds the copy:
+model only. Attach `description-advice-score.json` to #1886. A release that
+records an identity meeting the bar lets the automatic switch write that
+adviser's text with those cleanup choices. Then delete the folder, which also
+holds the copy:
 
 ```
 rm -r ~/ml-labels

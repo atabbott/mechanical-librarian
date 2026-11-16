@@ -93,6 +93,7 @@ def _work(
         "media_kind": media_kind,
         "item": f"synthetic-item-{number}",
         "attention_count": attention,
+        "pinned_count": 0,
         "attention_state": (
             "needs_attention"
             if attention
@@ -511,6 +512,8 @@ def _field(
         ),
         "needs_attention": needs_attention,
         "manual_hold": manual_hold,
+        "pin": None,
+        "pin_control": None,
         "manual_return_requested": manual_return_requested,
         "manual_return_failed": manual_return_failed,
         "manual_required": needs_attention,
@@ -1248,6 +1251,166 @@ def _attention() -> dict[str, object]:
     }
 
 
+def _library_progress() -> dict[str, object]:
+    """Library progress over the same works and fields as the two above (#1335)."""
+    libraries: dict[str, list[dict[str, object]]] = {}
+    for work in LIBRARY_WORKS:
+        libraries.setdefault(str(work["library"]), []).append(work)
+
+    def counts(works: list[dict[str, object]]) -> object:
+        return {
+            "needs_attention": sum(
+                int(cast(int, item["attention_count"])) > 0 for item in works
+            ),
+            "all": len(works),
+            "no_attention_needed": sum(_clear(item) for item in works),
+            "not_matched": sum(
+                item["attention_state"] == "not_matched" for item in works
+            ),
+            "preparation_failed": sum(
+                item["attention_state"] == "preparation_failed" for item in works
+            ),
+        }
+
+    fields: dict[str, int] = {}
+    for item in cast(list[dict[str, object]], _attention()["items"]):
+        destination = str(item["destination"])
+        fields[destination] = fields.get(destination, 0) + 1
+    return {
+        "totals": counts(list(LIBRARY_WORKS)),
+        "libraries": [
+            {
+                "connection": "primary",
+                "library": library,
+                "library_display_name": library,
+                "counts": counts(works),
+            }
+            for library, works in sorted(libraries.items())
+        ],
+        "fields": [
+            {"destination": destination, "need_you": count}
+            for destination, count in sorted(
+                fields.items(), key=lambda item: (-item[1], item[0])
+            )
+        ],
+    }
+
+
+# Library progress states the cohort's screens are drawn in (#1335): the line
+# under a finished run's box and the Activity card. Each keeps its library rows
+# summing to its totals, as the server's do.
+LIBRARY_PROGRESS_LONG_LIBRARY = "Synthetic audiobooks read aloud by their authors"
+
+
+def _progress_counts(
+    all_works: int, needs: int, not_matched: int = 0, failed: int = 0
+) -> dict[str, int]:
+    return {
+        "all": all_works,
+        "needs_attention": needs,
+        "no_attention_needed": all_works - needs - not_matched - failed,
+        "not_matched": not_matched,
+        "preparation_failed": failed,
+    }
+
+
+def _progress(
+    libraries: list[tuple[str, dict[str, int]]], fields: list[tuple[str, int]]
+) -> dict[str, object]:
+    return {
+        "totals": {
+            key: sum(counts[key] for _name, counts in libraries)
+            for key in libraries[0][1]
+        },
+        "libraries": [
+            {
+                "connection": "primary",
+                "library": name.lower().replace(" ", "-"),
+                "library_display_name": name,
+                "counts": counts,
+            }
+            for name, counts in libraries
+        ],
+        "fields": [
+            {"destination": destination, "need_you": count}
+            for destination, count in fields
+        ],
+    }
+
+
+LIBRARY_PROGRESS_STATES: dict[str, dict[str, object]] = {
+    # One library, everything settled: no list of libraries or fields.
+    "one_library": _progress([("Household ebooks", _progress_counts(184, 0))], []),
+    # Two libraries, the second long-named, with fields needing the owner and
+    # both tails of the line.
+    "two_libraries": _progress(
+        [
+            ("Household ebooks", _progress_counts(26, 6)),
+            (LIBRARY_PROGRESS_LONG_LIBRARY, _progress_counts(2000, 168, 9, 3)),
+        ],
+        [("cover", 120), ("description", 31), ("authors", 14), ("isbn", 1)],
+    ),
+    # The largest counts: a million works, every count six or seven digits.
+    "largest_counts": _progress(
+        [
+            ("Household ebooks", _progress_counts(123_456, 12_345, 1_234, 2_345)),
+            (
+                LIBRARY_PROGRESS_LONG_LIBRARY,
+                _progress_counts(876_544, 98_765, 4_321, 7_654),
+            ),
+        ],
+        [("cover", 98_765), ("description", 12_345)],
+    ),
+}
+
+
+def finished_preparation(state: str, *, failed: int = 0) -> dict[str, object]:
+    """`/api/v1/review-preparation` with a finished run in Library's box (#1335)."""
+    payload = cast(dict[str, object], rich_payload("/api/v1/review-preparation"))
+    return payload | {
+        "active": False,
+        "actionable": True,
+        "connections": [],
+        "presentation": {
+            "run_id": "preparation_run_" + "5" * 64,
+            "state": state,
+            "triggers": [
+                {
+                    "trigger": "manual_scan",
+                    "accepted_count": 1,
+                    "first_accepted_at": 100,
+                    "last_accepted_at": 100,
+                }
+            ],
+            "passage": {
+                "read": 20,
+                "searches_finished": 20,
+                "compared": 20,
+                "checked": 20,
+                "ready": 20 - failed,
+                "failed": failed,
+            },
+            "active_books": [],
+            "active_overflow": 0,
+            "recent_completions": [],
+            "throughput_per_minute": 4.0,
+            "started_at": 100,
+            "updated_at": 400,
+            "completed_at": 400,
+            "total": 20,
+            "dismissible": True,
+            "now": {
+                "ready": 20 - failed,
+                "recorded": 0,
+                "not_matched": 0,
+                "failed": failed,
+                "in_progress": 0,
+                "scan_ids": [],
+            },
+        },
+    }
+
+
 # The value shapes an Activity row has to survive: a scalar, a joined list, a
 # series membership with an index, an opaque cover identity, an unbounded
 # description, and a policy setting. Each carries the compact form the row
@@ -1347,6 +1510,295 @@ def _cohort_category(destination: str, origin: str, failure: str | None) -> str:
         "review": "owner",
         "metadata": "automatic",
     }[_cohort_event_type(destination, origin, failure)]
+
+
+def _plan_row(
+    work: str,
+    authors: str,
+    current: str,
+    new: str,
+    reason: str,
+    sources: tuple[str, ...] = (),
+) -> dict[str, object]:
+    return {
+        "work": work,
+        "authors": authors,
+        "current": current,
+        "new": new,
+        "reason": reason,
+        "sources": list(sources),
+    }
+
+
+# Every change listed (9 of at most 25), so the plan's rows and counts agree
+# with ``prepared``: a cover, an empty current value, a long description, an
+# owner-entered, put-back and automatic row, and a row with no sources (#1336).
+_COHORT_WRITE_PLAN_SMALL: dict[str, object] = {
+    "total": 9,
+    "groups": [
+        {
+            "library": "Household ebooks",
+            "destination": "authors",
+            "kind": "human",
+            "count": 2,
+            "rows": [
+                _plan_row(
+                    "Paper Moons",
+                    "Jane Larkspur",
+                    "Jane Larkspur",
+                    "Jane Larkspur, Tom Reed",
+                    "You chose this value",
+                    ("Hardcover", "Open Library"),
+                ),
+                _plan_row(
+                    "The Long and Winding Account of a Very Particular Lighthouse "
+                    "Keeper's Final Year on the Northern Coast",
+                    "Annabel Featherstonehaugh-Wright, Bartholomew Quill and "
+                    "Constance Delacroix-Montgomery",
+                    "Not set",
+                    "Annabel Featherstonehaugh-Wright",
+                    "You entered this value",
+                ),
+            ],
+        },
+        {
+            "library": "Household ebooks",
+            "destination": "title",
+            "kind": "human",
+            "count": 2,
+            "rows": [
+                _plan_row(
+                    "Paper Moons: Larkspur",
+                    "Jane Larkspur",
+                    "Paper Moons: Larkspur",
+                    "Paper Moons",
+                    "You chose to restore the earlier value",
+                ),
+                _plan_row(
+                    "Harbour Lights",
+                    "Mina Ortiz",
+                    "Harbour Lights (Book 2)",
+                    "Harbour Lights",
+                    "You chose this value",
+                    ("Hardcover",),
+                ),
+            ],
+        },
+        {
+            "library": "Household ebooks",
+            "destination": "description",
+            "kind": "automatic",
+            "count": 2,
+            "rows": [
+                _plan_row(
+                    "Harbour Lights",
+                    "Mina Ortiz",
+                    "Not set",
+                    "A lighthouse keeper's daughter returns to the harbour town "
+                    "she left as a child and finds the lamp dark, the keeper "
+                    "gone and a ledger of ships that never arrived. Over one "
+                    "long winter she pieces together what happened, and why "
+                    "the town would rather forget.",
+                    "Description: Fill empty with safe plain text",
+                    ("Hardcover",),
+                ),
+                _plan_row(
+                    "Quiet Orbit",
+                    "Sam Okafor",
+                    "Not set",
+                    "A short novel about a radio operator on a lonely station.",
+                    "Description advice",
+                ),
+            ],
+        },
+        {
+            "library": "Spoken stories",
+            "destination": "cover",
+            "kind": "automatic",
+            "count": 1,
+            "rows": [
+                _plan_row(
+                    "The Night Ferry",
+                    "Ada Brennan",
+                    "Current cover",
+                    "Selected cover",
+                    "Cover: Fill from confirmed covers",
+                    ("Audible",),
+                ),
+            ],
+        },
+        {
+            "library": "Research shelf",
+            "destination": "title",
+            "kind": "human",
+            "count": 2,
+            "rows": [
+                _plan_row(
+                    "Field Notes on Moss",
+                    "R. Almeida",
+                    "field notes on moss",
+                    "Field Notes on Moss",
+                    "You chose this value",
+                    ("Open Library",),
+                ),
+                _plan_row(
+                    "Tidal Atlas",
+                    "K. Svensson",
+                    "Tidal atlas",
+                    "Tidal Atlas",
+                    "You chose this value",
+                    ("Local library record",),
+                ),
+            ],
+        },
+    ],
+}
+
+
+def _large_write_plan(total: int) -> dict[str, object]:
+    """A plan too large to list: two groups show examples, one only a count."""
+    return {
+        "total": total,
+        "groups": [
+            {
+                "library": "Household ebooks",
+                "destination": "authors",
+                "kind": "human",
+                "count": total - 600 - 114 - 26,
+                "rows": [
+                    _plan_row(
+                        "Paper Moons",
+                        "Jane Larkspur",
+                        "Jane Larkspur",
+                        "Jane Larkspur, Tom Reed",
+                        "You chose this value",
+                        ("Hardcover", "Open Library"),
+                    ),
+                    _plan_row(
+                        "Harbour Lights",
+                        "Mina Ortiz",
+                        "Mina Ortiz",
+                        "Mina Ortiz, Ines Calder",
+                        "You chose this value",
+                        ("Hardcover",),
+                    ),
+                ],
+            },
+            {
+                "library": "Household ebooks",
+                "destination": "description",
+                "kind": "automatic",
+                "count": 600,
+                "rows": [
+                    _plan_row(
+                        "Quiet Orbit",
+                        "Sam Okafor",
+                        "Not set",
+                        "A short novel about a radio operator on a lonely station.",
+                        "Description: Fill empty with safe plain text",
+                        ("Hardcover",),
+                    ),
+                    _plan_row(
+                        "Field Notes on Moss",
+                        "R. Almeida",
+                        "Not set",
+                        "A naturalist's year among the mosses of a northern valley.",
+                        "Description: Fill empty with safe plain text",
+                        ("Open Library",),
+                    ),
+                ],
+            },
+            {
+                "library": "Spoken stories",
+                "destination": "cover",
+                "kind": "automatic",
+                "count": 114,
+                "rows": [
+                    _plan_row(
+                        "The Night Ferry",
+                        "Ada Brennan",
+                        "Current cover",
+                        "Selected cover",
+                        "Cover: Fill from confirmed covers",
+                        ("Audible",),
+                    ),
+                ],
+            },
+            {
+                "library": "Research shelf",
+                "destination": "title",
+                "kind": "human",
+                "count": 26,
+                "rows": [],
+            },
+        ],
+    }
+
+
+# The plan states the permission review is seen in: every change listed, a
+# plan of examples and counts, and one past the file's 20,000-change limit.
+# The readiness counts below are read from whichever plan is current, so a
+# field's "prepared" always agrees with the groups listed under it.
+COHORT_WRITE_PLANS: dict[str, dict[str, object]] = {
+    "small": _COHORT_WRITE_PLAN_SMALL,
+    "large": _large_write_plan(1_240),
+    "over_limit": _large_write_plan(24_310),
+}
+_COHORT_WRITE_PLAN = COHORT_WRITE_PLANS["small"]
+
+
+def _plan_groups() -> list[dict[str, object]]:
+    return cast("list[dict[str, object]]", _COHORT_WRITE_PLAN["groups"])
+
+
+def _planned(library: str, destination: str) -> int:
+    return sum(
+        cast("int", group["count"])
+        for group in _plan_groups()
+        if group["library"] == library and group["destination"] == destination
+    )
+
+
+def _planned_by_kind(library: str | None = None) -> dict[str, int]:
+    counts = {"automatic": 0, "human": 0}
+    for group in _plan_groups():
+        if library is None or group["library"] == library:
+            counts[cast("str", group["kind"])] += cast("int", group["count"])
+    return {**counts, "total": counts["automatic"] + counts["human"]}
+
+
+# Each library: (connection, library, state, fields), each field being
+# (destination, state, consented). Every field a plan group names is listed, so
+# each group renders under its field (#1336).
+_COHORT_FIELDS: tuple[tuple[str, str, str, tuple[tuple[str, str, bool], ...]], ...] = (
+    (
+        "primary",
+        "Household ebooks",
+        "partially_allowed",
+        (
+            ("authors", "allowed", True),
+            ("description", "allowed", True),
+            ("subtitle", "field_unavailable", False),
+            ("title", "allowed", True),
+        ),
+    ),
+    (
+        "primary",
+        "Spoken stories",
+        "allowed",
+        (
+            ("authors", "allowed", False),
+            ("cover", "allowed", False),
+            ("title", "allowed", False),
+        ),
+    ),
+    (
+        "archive",
+        "Research shelf",
+        "not_ready",
+        (("title", "unexpected_effect_behavior", False),),
+    ),
+)
 
 
 def _activity(query: dict[str, list[str]]) -> dict[str, object]:
@@ -1496,20 +1948,11 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
         "paused": False,
         "configured_libraries": [
             {
-                "connection": "primary",
-                "library": "Household ebooks",
-                "prepared": {"automatic": 2, "human": 3, "total": 5},
-            },
-            {
-                "connection": "primary",
-                "library": "Spoken stories",
-                "prepared": {"automatic": 1, "human": 1, "total": 2},
-            },
-            {
-                "connection": "archive",
-                "library": "Research shelf",
-                "prepared": {"automatic": 0, "human": 2, "total": 2},
-            },
+                "connection": connection,
+                "library": library,
+                "prepared": _planned_by_kind(library),
+            }
+            for connection, library, _state, _fields in _COHORT_FIELDS
         ],
         "consented_libraries": [
             {"connection": "primary", "library": "Household ebooks", "prepared": None}
@@ -1519,62 +1962,20 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
         ],
         "capabilities": [
             {
-                "connection": "primary",
-                "library": "Household ebooks",
-                "state": "partially_allowed",
+                "connection": connection,
+                "library": library,
+                "state": state,
                 "destinations": [
                     {
-                        "destination": "authors",
-                        "state": "allowed",
-                        "consented": True,
-                        "prepared": 2,
-                    },
-                    {
-                        "destination": "subtitle",
-                        "state": "field_unavailable",
-                        "consented": False,
-                        "prepared": 0,
-                    },
-                    {
-                        "destination": "title",
-                        "state": "allowed",
-                        "consented": True,
-                        "prepared": 4,
-                    },
+                        "destination": destination,
+                        "state": field_state,
+                        "consented": consented,
+                        "prepared": _planned(library, destination),
+                    }
+                    for destination, field_state, consented in fields
                 ],
-            },
-            {
-                "connection": "primary",
-                "library": "Spoken stories",
-                "state": "allowed",
-                "destinations": [
-                    {
-                        "destination": "authors",
-                        "state": "allowed",
-                        "consented": False,
-                        "prepared": 1,
-                    },
-                    {
-                        "destination": "title",
-                        "state": "allowed",
-                        "consented": False,
-                        "prepared": 3,
-                    },
-                ],
-            },
-            {
-                "connection": "archive",
-                "library": "Research shelf",
-                "state": "not_ready",
-                "destinations": [
-                    {
-                        "destination": "title",
-                        "state": "unexpected_effect_behavior",
-                        "consented": False,
-                        "prepared": 2,
-                    },
-                ],
-            },
+            }
+            for connection, library, state, fields in _COHORT_FIELDS
         ],
         "events": [
             {
@@ -1651,7 +2052,7 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
             "range_days": int(query.get("range_days", ["30"])[0]),
             "total": len(events),
         },
-        "prepared": {"automatic": 3, "human": 6, "total": 9},
+        "prepared": _planned_by_kind(),
         # Waiting, split into the four different next steps an owner has plus
         # what is moving now, so this cohort renders #639's summary rather than
         # the single number it replaced.
@@ -1900,6 +2301,8 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
         }
     if path == "/api/v1/library":
         return _library(query)
+    if path == "/api/v1/library/progress":
+        return _library_progress()
     if path == "/api/v1/attention":
         return _attention()
     if path.startswith("/api/v1/review-cases/"):
@@ -2244,14 +2647,16 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
     if path == "/api/v1/activity/permission-readiness":
         value = _activity(query)
         return {
-            key: value[key]
-            for key in (
-                "backup_ready",
-                "configured_libraries",
-                "capabilities",
-                "prepared",
-                "example",
-            )
+            **{
+                key: value[key]
+                for key in (
+                    "backup_ready",
+                    "configured_libraries",
+                    "capabilities",
+                    "prepared",
+                )
+            },
+            "plan": _COHORT_WRITE_PLAN,
         }
     if path == "/api/v1/activity/consent-state":
         value = _activity(query)

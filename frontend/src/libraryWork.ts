@@ -12,7 +12,8 @@ export const authorLine = (work: LibraryWorkView) =>
 export const reportEvidenceUrl = (work: LibraryWorkView) =>
   work.detailKind === 'report' ? work.detailUrl : null
 
-export const workCount = (count: number) => `${String(count)} ${count === 1 ? 'work' : 'works'}`
+export const workCount = (count: number) =>
+  `${count.toLocaleString('en-US')} ${count === 1 ? 'work' : 'works'}`
 /** What to do when a read keeps failing, said once on a screen (#1765). */
 export const RESTART_SENTENCE =
   'If trying again does not help, restart the Mechanical Librarian service.'

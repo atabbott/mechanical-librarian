@@ -123,9 +123,9 @@ _NO_ADVISER = (
     "wait for Preparation idle, then copy the database again."
 )
 _AUTOMATIC_ON = (
-    "Automatically apply ready description advice is on, so the app decides "
-    "these descriptions itself. Turn it off in Policy → Curation, then copy "
-    "the database again."
+    "Automatically apply ready description advice is on. Turn it off in "
+    "Policy → Curation so Automatic decides none of these descriptions, then "
+    "copy the database again."
 )
 _AUTOMATIC_ON_IN_FILE = (
     "Automatically apply ready description advice is on in config.json, so "
@@ -360,13 +360,14 @@ def _case_decisions(connection: sqlite3.Connection) -> list[_Decision]:
     A current authored selection is the latest where it exists, since a later
     human decision on the description removes it; otherwise the latest human
     decision on the case by ordinal, over every episode: the label reads
-    history, not what the case's current episode still holds.
+    history, not what the case's current episode still holds. A pin or an
+    unpin is never the latest decision, so the one before it stands.
     """
     latest: dict[str, _Decision] = {}
     for case_id, outcome, occurred_at in connection.execute(
         "SELECT human.review_case_id,human.outcome,human.occurred_at "
         "FROM human_decisions human WHERE human.destination='description' "
-        "ORDER BY human.ordinal"
+        "AND human.outcome NOT IN ('pin','unpin') ORDER BY human.ordinal"
     ):
         latest[case_id] = _Decision(case_id, occurred_at, outcome, None)
     for case_id, document in connection.execute(

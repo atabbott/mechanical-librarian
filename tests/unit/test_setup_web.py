@@ -302,6 +302,26 @@ class _Sessions:
         del self.records[token]
         return "revoked"
 
+    def end_review_sessions_except(self, token: str) -> int:
+        ended = len(self.records) - (token in self.records)
+        self.records = {
+            key: value for key, value in self.records.items() if key == token
+        }
+        self.failures = []
+        return ended
+
+    def end_other_review_sessions(
+        self, token: str, csrf: str, now: int
+    ) -> tuple[str, int]:
+        record = self.records.get(token)
+        if record is None or record[1] <= now:
+            return "unauthorized", 0
+        if record[0] != csrf:
+            return "csrf", 0
+        ended = len(self.records) - 1
+        self.records = {token: record}
+        return "ended", ended
+
 
 _CLAIM_TOKEN = "deployment-held-claim-token-0123456789abcdef"
 
@@ -585,6 +605,57 @@ def test_setup_surface_exposes_only_health_shell_session_and_redacted_state() ->
         "mounts": [],
     }
     assert "bootstrap_verifier" not in state.text
+
+
+def test_setup_app_does_not_change_the_owner_password() -> None:
+    client, state, _connection = _client()
+    login = _claim(client)
+    verifier = state.owner_verifier
+
+    refused = client.post(
+        "/api/v1/session/password",
+        json={
+            "current_password": "correct horse battery staple",
+            "new_password": "a replacement passphrase",
+            "confirmation": "a replacement passphrase",
+        },
+        headers={
+            "cookie": _session_cookie(login),
+            "origin": "https://setup.invalid",
+            "x-csrf-token": "x" * 32,
+        },
+    )
+
+    assert refused.status_code == 404
+    assert state.owner_verifier == verifier
+    assert not any(
+        isinstance(route, APIRoute) and route.path == "/api/v1/session/password"
+        for route in cast(Any, client.app).routes
+    )
+
+
+def test_setup_app_does_not_sign_out_other_browsers() -> None:
+    client, state, _connection = _client()
+    login = _claim(client)
+    sessions = state.sessions
+    assert sessions is not None
+    before = dict(sessions.records)
+
+    refused = client.post(
+        "/api/v1/session/logout-others",
+        headers={
+            "cookie": _session_cookie(login),
+            "origin": "https://setup.invalid",
+            "x-csrf-token": "x" * 32,
+        },
+    )
+
+    assert refused.status_code == 404
+    assert sessions.records == before
+    assert not any(
+        isinstance(route, APIRoute) and route.path == "/api/v1/session/logout-others"
+        for route in cast(Any, client.app).routes
+    )
 
 
 def test_wrong_setup_password_is_rate_limited() -> None:

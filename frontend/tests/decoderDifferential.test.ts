@@ -15,6 +15,7 @@ import { DecodeFailure, matchOperation, responseDecoders } from '../src/generate
 import descriptionAdviceActivityFixture from './descriptionAdviceActivityFixture.json'
 import descriptionAdviceFixture from './descriptionAdviceFixture.json'
 import descriptionAdvicePreservationFixture from './descriptionAdvicePreservationFixture.json'
+import descriptionAdviceRepeatedFixture from './descriptionAdviceRepeatedFixture.json'
 import identifierEvidenceFixture from './identifierEvidenceFixture.json'
 import * as settingsFixtures from './settingsFixtures'
 import {
@@ -192,6 +193,13 @@ const preserved = accepted(
   get(casePath(descriptionAdvicePreservationFixture.review_case_id)),
   () => descriptionAdvicePreservationFixture,
 )
+accepted(
+  'server',
+  'CaseDetail',
+  'capture:descriptionAdviceRepeatedFixture',
+  get(casePath(descriptionAdviceRepeatedFixture.review_case_id)),
+  () => descriptionAdviceRepeatedFixture,
+)
 const { detail: identifierDetail, evidence: identifierEvidence } = identifierEvidenceFixture
 const identifierCase = identifierDetail.review_case_id
 accepted(
@@ -321,11 +329,36 @@ const consentState = builder(
   get('/api/v1/activity/consent-state'),
   projection('backup_ready', 'capabilities', 'configured_libraries', 'lapsed_consents', 'waiting'),
 )
+// The readiness check carries the write plan in place of Activity's example (#1336).
 const permissionReadiness = builder(
   'Activity',
   'activity.permission-readiness',
   get('/api/v1/activity/permission-readiness'),
-  projection('backup_ready', 'capabilities', 'configured_libraries', 'example', 'prepared'),
+  () => ({
+    ...projection('backup_ready', 'capabilities', 'configured_libraries', 'prepared')(),
+    plan: {
+      total: 3,
+      groups: [
+        {
+          library: 'Fiction',
+          destination: 'title',
+          kind: 'human',
+          count: 2,
+          rows: [
+            {
+              work: 'Real Tigers',
+              authors: 'Mick Herron',
+              current: 'Not set',
+              new: 'Real Tigers',
+              reason: 'You chose this value',
+              sources: ['Hardcover'],
+            },
+          ],
+        },
+        { library: 'Fiction', destination: 'cover', kind: 'automatic', count: 1, rows: [] },
+      ],
+    },
+  }),
 )
 // A recording basis requires the recording scope (`mapAudiobookReviewScope`).
 const recordingBasis = builder('Library', 'reportDetail.recording-basis', REPORT, () =>

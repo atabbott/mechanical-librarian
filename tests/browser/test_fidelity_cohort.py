@@ -13,10 +13,18 @@ from starlette.testclient import TestClient
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
 from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.interfaces.web.app import (
+    _LibraryProgressResponse,
+    _PreparationResponse,
+)
+from tests.browser import fidelity_cohort
 from tests.browser.fidelity_cohort import (
+    COHORT_WRITE_PLANS,
+    LIBRARY_PROGRESS_STATES,
     LIBRARY_WORKS,
     THROTTLE_LONG_LIBRARY,
     RichFidelityApiMiddleware,
+    finished_preparation,
     rich_payload,
 )
 from tests.browser.test_review_browser import _report
@@ -57,6 +65,37 @@ def test_held_case_carries_a_manual_hold() -> None:
     # so the journey can request one (#1755).
     assert not any(field["manual_return_requested"] for field in held["fields"])
     assert not any(field["manual_return_failed"] for field in held["fields"])
+
+
+@pytest.mark.parametrize(
+    "state", tuple(COHORT_WRITE_PLANS), ids=tuple(COHORT_WRITE_PLANS)
+)
+def test_permission_readiness_agrees_with_each_write_plan(
+    state: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every planned field is listed, and its count is its groups' count (#1336)."""
+    plan = COHORT_WRITE_PLANS[state]
+    monkeypatch.setattr(fidelity_cohort, "_COHORT_WRITE_PLAN", plan)
+    readiness = rich_payload("/api/v1/activity/permission-readiness")
+    assert isinstance(readiness, dict)
+    assert readiness["plan"] is plan
+    groups = cast("list[dict[str, object]]", plan["groups"])
+    planned: dict[tuple[str, str], int] = {}
+    for group in groups:
+        key = (cast("str", group["library"]), cast("str", group["destination"]))
+        planned[key] = planned.get(key, 0) + cast("int", group["count"])
+    fields = {
+        (library["library"], field["destination"]): field["prepared"]
+        for library in readiness["capabilities"]
+        for field in library["destinations"]
+    }
+    assert set(planned) <= set(fields)
+    assert {key: count for key, count in fields.items() if count} == planned
+    assert sum(planned.values()) == plan["total"] == readiness["prepared"]["total"]
+    for library in readiness["configured_libraries"]:
+        assert library["prepared"]["total"] == sum(
+            count for (name, _), count in planned.items() if name == library["library"]
+        )
 
 
 def test_activity_carries_a_future_origin_and_every_cover_state() -> None:
@@ -284,3 +323,23 @@ def test_preparation_carries_three_throttled_sources_and_every_remedy() -> None:
     }
     assert {entry["state"] for entry in entries} == {"waiting", "dormant", "exhausted"}
     assert sorted(entry["deferred"] for entry in entries) == [1, 214, 10_000]
+
+
+def test_library_progress_states_are_ones_the_server_could_answer() -> None:
+    """The cohort's progress and finished-run states pass the wire models (#1335)."""
+    library = rich_payload("/api/v1/library?lens=all")
+    assert isinstance(library, dict)
+    default = rich_payload("/api/v1/library/progress")
+    assert isinstance(default, dict)
+    # The cohort's own progress agrees with its Library counts.
+    assert default["totals"] == library["counts"]
+    for state in (default, *LIBRARY_PROGRESS_STATES.values()):
+        _LibraryProgressResponse.model_validate(state)
+        libraries = state["libraries"]
+        assert isinstance(libraries, list)
+        totals = state["totals"]
+        assert isinstance(totals, dict)
+        for key, total in totals.items():
+            assert total == sum(row["counts"][key] for row in libraries)
+    for run, failed in (("completed_clean", 0), ("completed_with_failures", 2)):
+        _PreparationResponse.model_validate(finished_preparation(run, failed=failed))

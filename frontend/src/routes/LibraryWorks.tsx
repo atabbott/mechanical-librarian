@@ -217,7 +217,7 @@ const WorksCount = ({
           <>
             {lensTotal === undefined
               ? `Found ${workCount(data.counts[lensCount])}`
-              : `Found ${String(data.counts[lensCount])} of ${workCount(lensTotal)}`}
+              : `Found ${data.counts[lensCount].toLocaleString('en-US')} of ${workCount(lensTotal)}`}
             {lensWords === undefined ? null : <span className="sr-only">{` ${lensWords}`}</span>}
           </>
         ) : (
@@ -236,7 +236,9 @@ const WorksCount = ({
                   [summaryFailed, 'could not finish'],
                 ] as const
               )
-                .map(([count, words]) => (count === 0 ? '' : ` · ${String(count)} ${words}`))
+                .map(([count, words]) =>
+                  count === 0 ? '' : ` · ${count.toLocaleString('en-US')} ${words}`,
+                )
                 .join(''))
         )
       ) : failed ? (

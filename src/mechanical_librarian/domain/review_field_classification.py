@@ -38,6 +38,8 @@ ReviewFieldClassificationCause = Literal[
     "review_needed",
     "owner_choosable",
     "nothing_to_decide",
+    "pinned",
+    "pin_changed",
 ]
 _CAUSE_GUIDANCE: dict[ReviewFieldCause, str] = {
     "unsupported": "Your library service cannot change this field.",
@@ -93,6 +95,8 @@ def classify_review_field(
     kept_by_fill_policy: bool = False,
     kept_by_tags_off: bool = False,
     single_source: bool = False,
+    pin: Literal["in_force", "changed"] | None = None,
+    repeated_description: bool = False,
 ) -> ReviewFieldClassification:
     """Classify a field consistently for queue, detail, and navigation use.
 
@@ -111,12 +115,19 @@ def classify_review_field(
     optional because the owner's setting only fills empty fields and the
     current value passes the floor, `kept_by_tags_off` because the owner's
     tags setting is off, and `single_source` because only one uncorroborated
-    source proposes a value (#1310).
+    source proposes a value (#1310). `pin` says the owner pinned the field:
+    in force it is recorded and never attention, and changed it asks again
+    unless the field is suspended (ADR-0085, Amendment 2).
+    `repeated_description` says it is a description every source repeats,
+    offered beside description advice (#1905).
     """
     preservation_only = bool(proposed_values) and all(
         _canonical_value(value) == _canonical_value(current_value)
         for value in proposed_values
     )
+    pinned = _pinned_classification(pin, current_value, suspended, preservation_only)
+    if pinned is not None:
+        return pinned
     if has_human_decision:
         # A recorded decision stays revisable for exactly as long as the store
         # will supersede it. `record_human_decision` refuses only while an
@@ -213,7 +224,10 @@ def classify_review_field(
         return ReviewFieldClassification(
             "owner_choosable",
             (
-                "The proposed values only shorten or extend the current one, so "
+                "Every source repeats your current description, so no review is "
+                "needed. You can still keep it or choose the adviser's text."
+                if repeated_description
+                else "The proposed values only shorten or extend the current one, so "
                 "no review is needed. You can still keep the current value or "
                 "choose a proposed one."
                 if immaterial_alternatives
@@ -251,6 +265,52 @@ def classify_review_field(
         "inspect",
         preservation_only,
     )
+
+
+def _pinned_classification(
+    pin: Literal["in_force", "changed"] | None,
+    current_value: object,
+    suspended: bool,
+    preservation_only: bool,
+) -> ReviewFieldClassification | None:
+    """A pinned field's classification, ahead of every other input.
+
+    Kept apart so `classify_review_field` stays under the code-size guide; a
+    changed pin on a suspended field falls through (ADR-0085, Amendment 2).
+    """
+    if pin == "in_force":
+        # `False` is a value, for the explicit field.
+        pinned_empty = current_value is None or (
+            type(current_value) in (str, list, tuple) and len(current_value) == 0  # type: ignore[arg-type]  # reason: the exact type check above admits only sized values.
+        )
+        return ReviewFieldClassification(
+            "human_recorded",
+            (
+                "You pinned this field empty. Mechanical Librarian will not ask "
+                "about it or fill it unless it changes in Audiobookshelf."
+                if pinned_empty
+                else "You pinned this value. Mechanical Librarian will not ask "
+                "about it or change it unless it changes in Audiobookshelf."
+            ),
+            "pinned",
+            False,
+            True,
+            True,
+            "inspect",
+            preservation_only,
+        )
+    if pin == "changed" and not suspended:
+        return ReviewFieldClassification(
+            "needs_attention",
+            "Audiobookshelf shows a different value from the one you pinned.",
+            "pin_changed",
+            True,
+            True,
+            False,
+            "attention",
+            preservation_only,
+        )
+    return None
 
 
 def _canonical_value(value: object) -> object:

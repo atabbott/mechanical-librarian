@@ -208,9 +208,10 @@ not an all-clear.
 Only enabled, referenced providers are contacted. A disabled reference records
 one `disabled` observation with no client, credential access or traffic.
 Results are neutral: zero rows is `no_match`, any valid bounded set is
-`candidates`, and every candidate is kept. There is no winner, score, merge,
-fuzzy search or cache. Lanes converging on one provider work count as one
-source.
+`candidates`, and every candidate is kept. There is no winner, score, merge or
+fuzzy search. An answer already held for the same request is reused instead of
+asking again ([held provider answers](#held-provider-answers)). Lanes
+converging on one provider work count as one source.
 
 ### Ebook lanes
 
@@ -457,6 +458,32 @@ retryability and a saturating count — never values, bodies or credentials.
 Failed, throttled or deadline-stopped dispatches write value-free `provider_*`
 stderr lines ([observability](observability.md)).
 
+### Held provider answers
+
+Every provider asks the
+[provider-response store](../architecture/sqlite-topology.md#provider-response-database)
+before it sends a request
+([ADR-0101](../architecture/decisions/0101-reuse-stored-provider-answers.md)).
+An answer held for the same request is read exactly as a live one: it counts
+against the same attempt, retry and byte ceilings and passes the same decoder
+and parser. Only the pacing wait and the request are skipped. A miss asks the
+provider as before. The provider's `accessed_at` is set by its first request:
+the fetch time of the held answer that served it, or now when that request
+goes live.
+
+- An answer is kept only when the provider's observation and every lane of it
+  ended `candidates`, `no_match` or `insufficient_input`, and only a 200 body
+  the session read and the adapter did not refuse. A failed, incomplete,
+  malformed, oversized or limit-exceeded lane keeps nothing from that
+  observation, and a request that succeeded only on a retry is not kept.
+- A held answer is reused until its book is
+  [searched again](#after-the-report); that search and every
+  [provider recovery](provider-recovery.md) retry ask live and replace what
+  is held.
+- A held answer the decoder or the adapter refuses when it is reused is
+  removed, so that request is asked live the next time.
+- Losing or refusing the store costs only requests: every request goes live.
+
 ### Dates, titles and creators
 
 - Dates keep their exact lexical, precision, event and scope; precision is
@@ -570,10 +597,27 @@ An ebook, or an audiobook whose report admitted a recording, goes on to a
 An audiobook with no admitted recording completes as `evidence_only`. It stays
 browsable, and its library row links to a read-only evidence view. This is not
 a failure and does not fail its scan. Its work is searched again seven days
-after publication
+after publication, or sooner when its 90-day time below comes first
 ([ADR-0089](../architecture/decisions/0089-unmatched-audiobook-research.md)).
-If that still admits nothing, an open case is unchanged; if it admits a
-recording, the case is replaced.
+If that weekly search still admits nothing, an open case is unchanged; if it
+admits a recording, the case is replaced. Once the book's 90-day time has
+passed since its last preparation, the search follows the rules for every
+other book instead.
+
+Every other finished book is searched again every 90 days, at a time fixed for
+that book so that about one ninetieth of the library comes due each day, and
+never within seven days of being prepared
+([ADR-0102](../architecture/decisions/0102-search-every-finished-book-again.md)).
+A search whose proposals equal the current ones leaves the case, its answers
+and its report as they were; one whose proposals differ is prepared again as
+after any change. A search in which a provider could not answer, as
+[provider recovery](provider-recovery.md) counts it, never replaces a report
+in which every provider answered, or its case, and is tried again within the
+week. A search that now identifies nothing never takes a case away. A changed
+file, a requested refresh, a scan reset because its library's settings
+changed, or any other fresh start prepares the book again as before and sets
+its next time anew. Each search keeps its report as history, so the report
+history grows by about four reports per book a year.
 
 For an evidence-only item, a work match or an unavailable provider does not
 mean no recording exists. Check the provider statuses and the title, author and
@@ -586,10 +630,12 @@ If settlement cannot commit, preparation stops; see
 ## Replay and identity
 
 The report ID is derived from the complete canonical document, including each
-provider's `accessed_at`, captured at its first real request (`null` if none
-was sent). Reopening returns the same bytes and contacts nothing. A new
-observation creates a new immutable report even when the facts are unchanged;
-only the current pointer moves. Replay rechecks every invariant above from the
+provider's `accessed_at`, captured at its first request (`null` if none was
+sent), or the fetch time of a [held answer](#held-provider-answers) that
+served it. Reopening returns the same bytes and contacts nothing. A new
+observation creates a new immutable report even when the facts are unchanged,
+unless every provider's first answer and the rest it used were held, which
+yields the same report again; only the current pointer moves. Replay rechecks every invariant above from the
 stored report. Reports from earlier schemas cannot be replayed; do not relabel
 or rewrite them.
 

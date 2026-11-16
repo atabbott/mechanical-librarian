@@ -3,7 +3,7 @@
 Mechanical Librarian keeps the owner's library metadata and the evidence
 needed to explain and recover every change. All of it is private application
 state under `/data`. There is no retention period, pruning, purge or selective
-export: reports, ProposalSets, cases, decisions and Activity events are
+export, except that held provider answers past a size ceiling are removed: reports, ProposalSets, cases, decisions and Activity events are
 append-only, and recovery or deletion works on whole databases. Anyone who can read the volume or a backup can read everything,
 including secrets in store mode. Store `/data` and its backups as private,
 owner-only state with encryption at rest
@@ -35,6 +35,16 @@ Where each store lives is in [SQLite topology](sqlite-topology.md).
   without the mark adds. Never a path, excerpt or association text.
 
 Cover originals and previews are stored once per digest in the artifact store.
+
+**Provider answers.** `/data/private/provider-responses.sqlite` keeps each
+success body a provider returned for an observation that ended clean, so a
+later preparation reuses it instead of asking again
+([ADR-0101](decisions/0101-reuse-stored-provider-answers.md)). A body is kept
+with a digest of its request and when it was fetched, never the request text,
+a header or a credential. The bodies name the owner's books, and a request
+digest can be confirmed by guessing the title it asked for, so the file is
+private evidence like the reports. No report, diagnostic or support bundle
+reads it, and the answers fetched longest ago are removed past 2 GiB.
 
 **Derived records.** ProposalSets, review cases, policy-preview outcome sets
 and preparation work rows hold only bounded values, opaque identities,
@@ -71,7 +81,8 @@ private `/data/reviewer/auth` directory.
 
 No store, log, diagnostic, support bundle or API response contains:
 
-- raw Audiobookshelf, provider or model responses, request URLs or bodies;
+- raw Audiobookshelf or model responses, provider responses outside the
+  provider-answer store above, request URLs or bodies;
 - provider cover URLs, endpoint paths or arbitrary upstream properties;
 - private filesystem paths (only the catalogue database keeps each supported
   item's service and mount path, and no report, list or API response shows
@@ -160,6 +171,9 @@ The product sends no telemetry. It contacts only:
 All owner surfaces need a session and are `private, no-store`.
 
 - **Library, Attention and review** show the owner's own metadata and evidence.
+- **Library progress** returns counts only: works per lens in total and per
+  library, with each library's name, and works needing the owner per field.
+  Never a title, item, path, digest or run identifier.
 - **Covers → Taste profile** shows the profile's rules, versions and build
   state. Rule text is model output or the owner's, shown as text only, and
   never reaches a log, status, diagnostic or support bundle.
@@ -172,6 +186,13 @@ All owner surfaces need a session and are `private, no-store`.
   Opaque identities such as a cover token are described, not printed. It is
   not an export or a write surface. A corrupt stored row fails closed with a
   redacted diagnostic.
+- **Write plan** (Activity's permission review) shows prepared changes before
+  writes are allowed: library names, work titles and authors, field names, the
+  current and new values, the reason and source names. The inline plan holds
+  at most 60 rows; its file at most 20,000 rows in 16 MiB, made on request
+  and never stored, logged or sent anywhere. Neither carries a work,
+  item or decision identity, a path, an artifact key or a cover token: a cover
+  is described in words (#1336).
 - **Policy preview** samples at most 50 records, truncated at 1 MiB. Rich-field
   draft impact shows current and desired values for at most 20 cases per
   library and is not persisted. The `policy-preview` command prints the same

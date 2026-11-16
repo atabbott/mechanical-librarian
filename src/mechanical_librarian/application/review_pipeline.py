@@ -402,10 +402,16 @@ class PipelineAction:
     lineage_checkpoint: int | None = None
     policy_generation: int | None = None
     recovery_attempt: int = 0
+    # An extraction claimed while the item holds the re-search mark (#1451,
+    # ADR-0102): a finished work's scheduled search, or its requeue after a
+    # transient failure. It asks every provider live rather than reusing a
+    # held answer (#1064).
+    research: bool = False
 
     def __post_init__(self) -> None:
         if (
             self.stage not in _STAGES
+            or type(self.research) is not bool
             or type(self.attempt) is not int
             or self.attempt < 1
             or type(self.recovery_attempt) is not int

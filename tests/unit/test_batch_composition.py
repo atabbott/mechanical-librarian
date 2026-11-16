@@ -7,6 +7,7 @@ from collections.abc import Callable
 from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import patch
 
 import pytest
@@ -1054,6 +1055,68 @@ def test_each_path_passes_its_own_pacer_for_the_adapter(adapter):
             composition._ProviderPacers(*(retry[name] for name in _ADAPTERS)),
         )
     assert [foreground[adapter], retry[adapter]] == received
+
+
+@pytest.mark.parametrize("adapter", _ADAPTERS)
+@pytest.mark.parametrize("research", (False, True), ids=("prepare", "research"))
+def test_each_path_binds_its_adapter_to_the_response_store(adapter, research):
+    """Preparation reuses held answers; a re-search and a retry ask live (#1064)."""
+    from mechanical_librarian.adapters.persistence.provider_responses import (
+        SQLiteProviderResponseStore,
+    )
+    from mechanical_librarian.adapters.providers.response_reuse import (
+        ProviderResponseReuse,
+        RetainingProvider,
+    )
+
+    provider = _provider_for(adapter)
+    config = _report_config((provider,))
+    credentials = (
+        {"provider:hardcover": "token", "target:primary": "target"}
+        if adapter == "hardcover"
+        else None
+    )
+    store = cast(SQLiteProviderResponseStore, object())
+    received: list[object] = []
+    with ExitStack() as stack:
+        for client in _PROVIDER_CLIENTS:
+            stack.enter_context(patch.object(composition, client))
+        for name in _ADAPTERS:
+            stack.enter_context(
+                patch.object(
+                    composition,
+                    _PROVIDER_CLASSES[name],
+                    side_effect=lambda *args, **kwargs: (
+                        received.append(kwargs["responses"]) or object()  # type: ignore[func-returns-value]  # reason: the `append(...) or value` recorder idiom is deliberate
+                    ),
+                )
+            )
+        (binding,) = _foreground_bindings(
+            config,
+            credentials,
+            provider_responses=store,
+            review_action=SimpleNamespace(research=research),
+        )
+        built = [
+            binding.factory(),
+            composition._retry_provider(
+                provider,
+                config,
+                credentials,
+                ("us",),
+                composition._provider_pacers((provider,)),
+                store,
+            ),
+        ]
+        (bare,) = _foreground_bindings(config, credentials)
+        built.append(bare.factory())
+    foreground, retry, unbound = received
+    assert all(type(value) is ProviderResponseReuse for value in (foreground, retry))
+    assert [value._adapter for value in (foreground, retry)] == [adapter] * 2
+    assert [value._refresh for value in (foreground, retry)] == [research, True]
+    assert unbound is None
+    assert [type(value) for value in built[:2]] == [RetainingProvider] * 2
+    assert type(built[2]) is not RetainingProvider
 
 
 _PACER_CLASSES = {
