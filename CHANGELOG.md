@@ -132,6 +132,10 @@ brackets are GitHub issues.
   fields: each prepared change's current and new value, who chose it and why.
   Download CSV and Download JSON save the whole plan, up to 20,000 changes, as
   it is made; nothing is stored or granted (#1336).
+- The policy preview now covers title, authors, narrators, publication date,
+  publisher, language and cover. Each changed work shows its current value
+  beside the active policy's and the draft's, grouped by what the draft does.
+  A cover is described in words (#1524).
 - A finished run's box in Library says where the whole library stands, such as
   "1,840 of 2,026 works settled · 174 need you", each count linked to its
   lens, until you dismiss the run. Activity has a Library progress card with
