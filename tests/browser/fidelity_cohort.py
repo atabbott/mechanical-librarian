@@ -1231,6 +1231,8 @@ def _library(query: dict[str, list[str]]) -> dict[str, object]:
         works = [item for item in works if item["attention_state"] == lens]
     elif lens == "flagged":
         works = [item for item in works if item["value_flags"]]
+    elif lens == "new":
+        works = []
     cursor = query.get("cursor", [""])[0]
     page = {"page-2": 2, "page-3": 3, "page-4": 4}.get(cursor, 1)
     start = (page - 1) * 6
@@ -1255,7 +1257,9 @@ def _library(query: dict[str, list[str]]) -> dict[str, object]:
                 item["attention_state"] == "preparation_failed" for item in matched
             ),
             "flagged": sum(bool(item["value_flags"]) for item in matched),
+            "new": 0,
         },
+        "listing": {"packages": 0, "reports": 0, "works": 0},
         "items": deepcopy(works[start:end]),
     }
 
@@ -1318,6 +1322,7 @@ def _library_progress() -> dict[str, object]:
                 item["attention_state"] == "preparation_failed" for item in works
             ),
             "flagged": sum(bool(item["value_flags"]) for item in works),
+            "new": 0,
         }
 
     fields: dict[str, int] = {}

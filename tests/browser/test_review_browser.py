@@ -4243,6 +4243,324 @@ def test_terminal_preparation_row_is_listed_and_found_by_its_library_title() -> 
         )
 
 
+def test_new_lens_is_one_mark_for_every_session_and_moves_at_the_next_visit() -> None:
+    """Two signed-in browsers read one mark, kept through a restart (#1351).
+
+    The first use of Library takes the first mark, so nothing is new. Works
+    that arrive afterwards put New after All, ahead of Looks wrong, with its
+    count inside the lens row's visible width at 1280 px and at 390 px.
+    Opening Library without New moves nothing; opening New marks what it
+    listed as shown, and after half an hour unused those works are no longer
+    new while one that arrived unopened still is.
+    """
+    from tests.support.review_cases import _report as work_report
+    from tests.unit import test_library_progress as library_fixture
+
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        database = root / "review.sqlite"
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        os.chmod(hash_path, 0o600)
+        certificate, key = _certificate(root)
+        now = [1_000]
+        errors: list[str] = []
+        seeded = library_fixture._three_libraries(root)
+        # The fixture's one scan finishes; no visit has been recorded yet.
+        assert seeded.claim_review_pipeline_action(20) is None
+        seeded.close()
+        with closing(sqlite3.connect(database)) as connection:
+            connection.execute(
+                "INSERT INTO owner_settings VALUES(1,?,?)",
+                (
+                    _DEFAULT_SETTINGS_DOCUMENT.revision,
+                    _canonical_json(_DEFAULT_SETTINGS_DOCUMENT.model_dump()),
+                ),
+            )
+            connection.executemany(
+                "INSERT INTO owner_setting_secrets(field_id,value) VALUES(?,?)",
+                [
+                    (f"connection.{item.name}.key", f"synthetic-{item.name}-secret")
+                    for item in _DEFAULT_SETTINGS_DOCUMENT.connections
+                ],
+            )
+            connection.commit()
+
+        def visit() -> tuple[int, ...] | None:
+            with closing(sqlite3.connect(database)) as connection:
+                return cast(
+                    "tuple[int, ...] | None",
+                    connection.execute(
+                        "SELECT seen_packages,shown_packages,active_at "
+                        "FROM library_visit"
+                    ).fetchone(),
+                )
+
+        def arrive(title: str, item: str, digest: str, file: str) -> None:
+            arrivals = open_repository(database)
+            try:
+                library_fixture._admit(
+                    arrivals,
+                    library_fixture._at(
+                        work_report(title, digest, file, actionable=False),
+                        "ebooks",
+                        item,
+                    ),
+                )
+            finally:
+                arrivals.close()
+
+        @contextmanager
+        def running_server(port: int, listener: socket.socket) -> Iterator[str]:
+            repository = open_repository(database, create=True, cross_thread=True)
+            session_store = SQLiteReviewSessionRepository.open(
+                database.with_name("review-sessions.sqlite")
+            )
+            origin = f"https://127.0.0.1:{port}"
+            app = create_transport_test_app(
+                repository,
+                ReviewWebConfiguration(
+                    tls_certificate_file=str(certificate),
+                    tls_private_key_file=str(key),
+                    canonical_origin=origin,
+                    owner_password_hash_file=str(hash_path),
+                    session_lifetime_seconds=86_400,
+                ),
+                session_store=session_store,
+                clock=lambda: now[0],
+                close_repository=True,
+                field_application=_BrowserActivityApplication(),
+                react_asset_loader=ReactAssetLoader(
+                    Path(os.environ["ML_REACT_ASSET_DIR"])
+                ),
+                settings=OwnerSettingsOperations(repository.owner_settings_store()),
+            )
+            server = uvicorn.Server(
+                uvicorn.Config(
+                    app,
+                    host="127.0.0.1",
+                    port=port,
+                    fd=listener.fileno(),
+                    log_level="error",
+                    access_log=False,
+                    ssl_certfile=str(certificate),
+                    ssl_keyfile=str(key),
+                    timeout_keep_alive=30,
+                )
+            )
+            thread = threading.Thread(target=server.run, daemon=True)
+            thread.start()
+            deadline = time.monotonic() + 10
+            while (
+                not server.started and thread.is_alive() and time.monotonic() < deadline
+            ):
+                time.sleep(0.01)
+            if not server.started:
+                raise RuntimeError("library-visit server did not start")
+            try:
+                yield origin
+            finally:
+                server.should_exit = True
+                thread.join(timeout=5)
+                if thread.is_alive():
+                    server.force_exit = True
+                    thread.join(timeout=5)
+                session_store.close()
+
+        def lens_names(page: Page) -> list[str]:
+            return cast(
+                "list[str]",
+                page.get_by_role("navigation", name="Library lenses")
+                .get_by_role("link")
+                .evaluate_all("links => links.map(link => link.textContent)"),
+            )
+
+        def lens_row(page: Page) -> dict[str, Any]:
+            """Where the row, New's count and Looks wrong sit, in page pixels."""
+            return cast(
+                "dict[str, Any]",
+                page.get_by_role("navigation", name="Library lenses").evaluate(
+                    """row => {
+                      const box = (node) => {
+                        if (!node) return null
+                        const { left, right } = node.getBoundingClientRect()
+                        return { left, right }
+                      }
+                      return {
+                        row: box(row),
+                        scrolled: row.scrollLeft,
+                        more: row.dataset.more ?? null,
+                        fade: parseFloat(getComputedStyle(row).scrollPaddingInlineEnd),
+                        count: box(row.querySelector('.lens-count')),
+                        looksWrong: box(
+                          [...row.querySelectorAll('a')].find(
+                            (link) => link.textContent === 'Looks wrong',
+                          ),
+                        ),
+                      }
+                    }"""
+                ),
+            )
+
+        def inside(row: dict[str, Any], name: str) -> bool:
+            """Whether the box is in the row's visible width, clear of a fade."""
+            edge = row["row"]["right"] - (
+                row["fade"] if row["more"] in ("end", "both") else 0
+            )
+            return bool(
+                row[name]["left"] >= row["row"]["left"] and row[name]["right"] <= edge
+            )
+
+        rest = [
+            "Looks wrong",
+            "Needs attention",
+            "No attention needed",
+            "Not matched",
+            "Could not finish",
+        ]
+        status = ".library-works-heading [role='status']"
+        listener = bind_loopback(0)
+        assert listener is not None
+        with sync_playwright() as playwright, closing(listener):
+            port = int(listener.getsockname()[1])
+            browser = playwright.chromium.launch(headless=True)
+            sessions: dict[int, Any] = {}
+
+            @contextmanager
+            def generation() -> Iterator[tuple[str, Page, Page]]:
+                """One server, with a desk and a phone that keep their sessions.
+
+                A browser left open holds the update stream, and the server
+                its store, so each closes before the server does.
+                """
+                contexts = [
+                    browser.new_context(
+                        ignore_https_errors=True,
+                        viewport={"width": width, "height": 900},
+                        storage_state=sessions.get(width),
+                    )
+                    for width in (1280, 390)
+                ]
+                pages = [context.new_page() for context in contexts]
+                for page in pages:
+                    page.on("pageerror", partial(_record_page_error, errors))
+                with running_server(port, listener) as origin:
+                    try:
+                        yield origin, pages[0], pages[1]
+                    finally:
+                        for width, context in zip((1280, 390), contexts, strict=True):
+                            sessions[width] = context.storage_state()
+                            context.close()
+
+            with generation() as (origin, wide, narrow):
+                assert visit() is None
+                with wide.expect_response("**/api/v1/library/visit") as first:
+                    _login(wide, origin)
+                assert first.value.status == 204
+                expect(wide.locator(status)).to_have_text(
+                    "5 works · 1 not matched · 1 could not finish"
+                )
+                # The first use takes the first mark: nothing is new.
+                baseline = visit()
+                assert baseline is not None and baseline[0] == baseline[1]
+                assert baseline[2] == 1_000
+                assert lens_names(wide) == ["All", *rest]
+
+            # The store has one writer, so works arrive between its servers.
+            arrive("Fresh arrival one", "fresh-1", "e", "f")
+            arrive("Fresh arrival two", "fresh-2", "9", "8")
+            now[0] = 1_100
+            with generation() as (origin, wide, narrow):
+                wide.goto(f"{origin}/library?lens=all")
+                fresh = wide.get_by_role("link", name="New, 2 works", exact=True)
+                expect(fresh).to_be_visible()
+                assert lens_names(wide) == ["All", "New2", *rest]
+                expect(wide.locator(status)).to_have_text(
+                    "7 works · 3 not matched · 1 could not finish"
+                )
+                at_1280 = lens_row(wide)
+                assert at_1280["scrolled"] == 0 and inside(at_1280, "count"), at_1280
+                # The works column is narrower here than a phone's: Looks wrong
+                # stays within the row, its end under the row's closing fade.
+                assert at_1280["looksWrong"]["right"] <= at_1280["row"]["right"], (
+                    at_1280
+                )
+
+                # A second signed-in browser reads the same mark.
+                with narrow.expect_response("**/api/v1/library/visit"):
+                    _login(narrow, origin)
+                expect(
+                    narrow.get_by_role("link", name="New, 2 works", exact=True)
+                ).to_be_visible()
+                assert lens_names(narrow) == ["All", "New2", *rest]
+                at_390 = lens_row(narrow)
+                assert at_390["scrolled"] == 0 and inside(at_390, "count"), at_390
+                # Amendment 1: with New present, Looks wrong is still wholly in
+                # the row's visible width on a phone.
+                assert inside(at_390, "looksWrong"), at_390
+                # Opening Library without New has shown nothing.
+                opened = visit()
+                assert opened is not None and opened[:2] == baseline[:2]
+
+                with narrow.expect_response("**/api/v1/library/visit") as shown:
+                    narrow.get_by_role("link", name="New, 2 works", exact=True).click()
+                assert shown.value.status == 204
+                expect(narrow).to_have_url(f"{origin}/library?lens=new")
+                expect(narrow.locator(status)).to_have_text(
+                    "2 new works since your last visit"
+                )
+                expect(narrow.locator(".library-work-row")).to_have_count(2)
+                expect(narrow.locator(".library-work-list")).to_contain_text(
+                    "Fresh arrival one"
+                )
+                listed = visit()
+                assert listed is not None
+                assert listed[0] == baseline[0] and listed[1] > baseline[1]
+                # The works stay new for the rest of this visit, on both.
+                narrow.reload()
+                expect(narrow.locator(status)).to_have_text(
+                    "2 new works since your last visit"
+                )
+
+            # One that arrives now is listed in no open New lens. The mark is
+            # the server's: it survives each restart.
+            arrive("Fresh arrival three", "fresh-3", "7", "6")
+            now[0] = 1_200
+            with generation() as (origin, wide, narrow):
+                wide.goto(f"{origin}/library?lens=all")
+                expect(
+                    wide.get_by_role("link", name="New, 3 works", exact=True)
+                ).to_be_visible()
+                kept = visit()
+                assert kept is not None and kept[:2] == listed[:2]
+
+                # Half an hour unused ends the visit: what New listed is seen.
+                now[0] = 1_200 + 31 * 60
+                with wide.expect_response("**/api/v1/library/visit"):
+                    wide.reload()
+                expect(
+                    wide.get_by_role("link", name="New, 1 work", exact=True)
+                ).to_be_visible()
+                moved = visit()
+                assert moved is not None and moved[0] == listed[1]
+                wide.get_by_role("link", name="New, 1 work", exact=True).click()
+                expect(wide.locator(status)).to_have_text(
+                    "1 new work since your last visit"
+                )
+                expect(wide.locator(".library-work-row")).to_have_count(1)
+                expect(wide.locator(".library-work-list")).to_contain_text(
+                    "Fresh arrival three"
+                )
+                # The phone, opened again later, agrees without being told.
+                narrow.goto(f"{origin}/library?lens=all")
+                expect(
+                    narrow.get_by_role("link", name="New, 1 work", exact=True)
+                ).to_be_visible()
+            browser.close()
+        assert errors == []
+
+
 def test_workspace_paints_the_saved_or_system_theme_before_the_application_loads() -> (
     None
 ):
@@ -14778,11 +15096,11 @@ def test_works_no_provider_matched_have_their_own_lens_and_reasons(
                 browser.close()
 
 
-def test_works_that_look_wrong_have_their_own_lens_second_after_all(
+def test_works_that_look_wrong_have_their_own_lens_after_all(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """#1334: over the real composed app and its stored findings, Looks wrong
-    sits second in the lens row, is counted beside the Works count, lists only
+    sits after All in the lens row, is counted beside the Works count, lists only
     the works with a finding, names each finding on its row, and Back from a
     work keeps the lens."""
     from mechanical_librarian.interfaces.web import app as web_app

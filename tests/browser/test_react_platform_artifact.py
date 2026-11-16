@@ -251,10 +251,11 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 return_automatic_requests += 1
                 route.fulfill(status=204, body="")
                 return
-            if path == "/api/v1/updates":
+            if path in ("/api/v1/updates", "/api/v1/library/visit"):
                 # No stream is available in this stubbed cohort. A 204 closes
                 # EventSource without successful opens or resource-error noise;
                 # the client retains its degraded fallback and explicit retries.
+                # Library's visit post is answered the same way (#1351).
                 route.fulfill(status=204, body="")
                 return
             if path == "/api/v1/session/logout":
@@ -2804,7 +2805,7 @@ def test_activity_gathers_a_preparations_checks_and_names_an_unknown_filter() ->
 
     def fulfill(route: Route) -> None:
         path = urlsplit(route.request.url).path
-        if path == "/api/v1/updates":
+        if path in ("/api/v1/updates", "/api/v1/library/visit"):
             route.fulfill(status=204, body="")
         elif path == "/api/v1/appearance":
             route.fulfill(
@@ -3201,7 +3202,7 @@ def test_library_and_settings_show_provider_throttling_with_one_retry_now() -> N
 
     def fulfill(route: Route) -> None:
         path = urlsplit(route.request.url).path
-        if path == "/api/v1/updates":
+        if path in ("/api/v1/updates", "/api/v1/library/visit"):
             route.fulfill(status=204, body="")
         elif path == "/api/v1/appearance":
             route.fulfill(
@@ -3554,7 +3555,7 @@ def _serve_cohort(
     def fulfill(route: Route) -> None:
         parts = urlsplit(route.request.url)
         path = parts.path
-        if path == "/api/v1/updates":
+        if path in ("/api/v1/updates", "/api/v1/library/visit"):
             route.fulfill(status=204, body="")
         elif path == "/api/v1/appearance":
             route.fulfill(
