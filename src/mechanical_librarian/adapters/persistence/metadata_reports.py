@@ -545,6 +545,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             ),
             previous_field_values=self._field_effect_activity._previous_field_values,
             written_field_values=self._field_effect_activity._written_field_values,
+            human_predecessor=self._field_effect_activity._human_predecessor,
         )
         self._review_projections = SQLiteReviewProjectionRepository(
             connection,

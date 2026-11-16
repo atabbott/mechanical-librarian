@@ -12,6 +12,7 @@ import {
 } from './api/http'
 import type { CaseDetailView, DecisionCommand, DecisionOutcome } from './api/http'
 import { STILL_PINNED } from './fieldPin'
+import { destinationPhrase } from './labels'
 import {
   beginDecisionEcho,
   confirmDecisionCase,
@@ -112,8 +113,14 @@ export const ownerRefusalCopy = (
   if (!(error instanceof ApiError)) return undefined
   const names = field?.destination === 'authors' || field?.destination === 'narrators'
   return {
+    // Keep current on the case that wrote a field it read empty would empty
+    // a field that can't be (#1523).
     owner_value_required:
-      field?.destination === 'authors' ? 'Enter at least one author.' : 'Enter a title.',
+      command?.outcome === 'keep_current' && field
+        ? `The ${destinationPhrase(field.destination)} can’t be emptied. Choose a new value.`
+        : field?.destination === 'authors'
+          ? 'Enter at least one author.'
+          : 'Enter a title.',
     owner_value_invalid:
       field?.destination === 'genres'
         ? 'These genres can’t be recorded. Choose up to 32 from the list.'

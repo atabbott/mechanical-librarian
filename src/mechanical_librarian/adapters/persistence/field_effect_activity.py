@@ -127,6 +127,8 @@ from mechanical_librarian.domain.description_advice import (
     DescriptionAdviceCandidate,
 )
 from mechanical_librarian.domain.field_effect import (
+    CLEARABLE_DESTINATIONS,
+    EMPTY_DECISION_KIND,
     FIELD_EFFECT_EVENT_SCHEMA,
     FIELD_EFFECT_FAILURES,
     SUPPORTED_DESTINATIONS,
@@ -263,7 +265,12 @@ _CORRECTIVE_KEEP_CURRENT_SQL = (
     "human.outcome='keep_current' AND EXISTS (SELECT 1 FROM review_cases review, "
     "json_each(review.document,'$.target.fields') target WHERE review.review_case_id=human.review_case_id "
     "AND json_extract(target.value,'$.destination')=human.destination "
-    "AND json_extract(target.value,'$.state')='value' AND ((human.destination IN "
+    # A clearable field the case read empty goes back to empty (#1523).
+    "AND ((human.destination IN ("
+    + ",".join(f"'{name}'" for name in sorted(CLEARABLE_DESTINATIONS))
+    + ") "
+    "AND json_extract(target.value,'$.state') IN ('null','empty','missing')) OR "
+    "json_extract(target.value,'$.state')='value' AND ((human.destination IN "
     "('authors','genres','narrators','tags','series') AND "
     "json_type(target.value,'$.value')='array' "
     "AND json_array_length(json_extract(target.value,'$.value'))>0) OR "
@@ -272,7 +279,7 @@ _CORRECTIVE_KEEP_CURRENT_SQL = (
     "(human.destination NOT IN "
     "('authors','genres','narrators','tags','series','cover') "
     "AND json_type(target.value,'$.value')='text' "
-    "AND length(json_extract(target.value,'$.value'))>0)) AND EXISTS (SELECT 1 FROM field_effects prior "
+    "AND length(json_extract(target.value,'$.value'))>0))) AND EXISTS (SELECT 1 FROM field_effects prior "
     "JOIN (SELECT decision_id,ordinal FROM human_decisions earlier WHERE "
     "earlier.review_case_id=human.review_case_id AND earlier.destination=human.destination "
     "AND earlier.ordinal<human.ordinal UNION ALL SELECT decision_id,-1 FROM "
@@ -1421,7 +1428,14 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
     def _decision_value_for_target(
         destination: str, value: object
     ) -> dict[str, object]:
+        """The value a keep on a written case writes back: the case's own.
+
+        A clearable field the case read empty goes back to empty, as an
+        owner's clear does (#1523).
+        """
         if value is None:
+            if destination in CLEARABLE_DESTINATIONS:
+                return {"kind": EMPTY_DECISION_KIND, "value": None}
             raise FieldEffectError("authority_binding")
         return {"kind": decision_value_kind(destination), "value": value}
 

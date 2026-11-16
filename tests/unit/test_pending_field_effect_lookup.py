@@ -1372,6 +1372,27 @@ _LINEAGE_REWRITES = {
 }
 # SHA-256 of each statement's text at 2dcf75cd, as this module's store traces it.
 _HUMAN_PLANS = "human.outcome IN ('accept','owner_entered')"
+# #1523 let a keep on a clearable field the case read empty go back to empty.
+_KEEP_GOES_BACK_TO_EMPTY = (
+    (
+        "AND ((human.destination IN ('genres','narrators','publisher','subtitle') "
+        "AND json_extract(target.value,'$.state') IN ('null','empty','missing')) OR "
+        "json_extract(target.value,'$.state')='value' AND ",
+        "AND json_extract(target.value,'$.state')='value' AND ",
+    ),
+    (
+        "length(json_extract(target.value,'$.value'))>0))) AND EXISTS",
+        "length(json_extract(target.value,'$.value'))>0)) AND EXISTS",
+    ),
+)
+
+
+def _before_1523(statement: str) -> str:
+    for after, before in _KEEP_GOES_BACK_TO_EMPTY:
+        statement = statement.replace(after, before)
+    return statement
+
+
 _HELD_DESCRIPTION = (
     " WHERE (json_extract(d.document,'$.origin')='human' OR NOT EXISTS ("
     "SELECT 1 FROM field_effect_manual_holds hold WHERE "
@@ -1475,7 +1496,7 @@ def test_lineage_membership_restores_the_1204_text(
     # of the owner's latest decision.
     restored = {
         name: hashlib.sha256(
-            _before_1568(_before_1573(_before_1205(name, statement)))
+            _before_1523(_before_1568(_before_1573(_before_1205(name, statement))))
             .replace(_HUMAN_PLANS, "human.outcome='accept'", 1)
             .replace(_HELD_DESCRIPTION, "", 1)
             .replace(_FIELD_EFFECT_HOLDS_DECISION_SQL, _HELD_1204)

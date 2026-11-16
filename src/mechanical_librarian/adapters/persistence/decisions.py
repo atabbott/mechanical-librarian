@@ -74,6 +74,7 @@ from mechanical_librarian.domain.description_advice import (
     DescriptionAdviceCandidate,
 )
 from mechanical_librarian.domain.field_effect import (
+    CLEARABLE_DESTINATIONS,
     FieldEffectOperation,
     decision_value_kind,
 )
@@ -87,6 +88,7 @@ from mechanical_librarian.domain.human_decision import (
     HumanDecisionError,
     chosen_value_fingerprint,
     pinned_field_fingerprint,
+    target_value,
 )
 from mechanical_librarian.domain.review_case import (
     ReviewCase,
@@ -276,6 +278,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
             [str, str, str], tuple[tuple[str, object], ...]
         ],
         written_field_values: Callable[[str], tuple[tuple[str, object], ...]],
+        human_predecessor: Callable[[HumanDecision], object],
     ) -> None:
         super().__init__(connection, binding)
         self._requeue_title_projections = requeue_title_projections
@@ -290,6 +293,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
         self._validate_shadow_outcome_row = validate_shadow_outcome_row
         self._previous_field_values = previous_field_values
         self._written_field_values = written_field_values
+        self._human_predecessor = human_predecessor
 
     def _record_automatic_outcomes(
         self, outcome: ShadowOutcomeSet, occurred_at: int
@@ -684,6 +688,16 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 if decision.destination in written
                 else None,
             )
+            if (
+                decision.outcome == "keep_current"
+                and decision.destination not in CLEARABLE_DESTINATIONS
+                and decision.destination != "cover"
+                and target_value(case, decision.destination) is None
+                and self._human_predecessor(decision) is not None
+            ):
+                # Keeping the empty value the case read would go back to
+                # empty, which this field cannot be (#1523).
+                raise HumanDecisionError("owner_value_required")
             self._record_cover_decision_outcome(
                 decision, cover_consideration_id, cover_confirmation, validate_only=True
             )

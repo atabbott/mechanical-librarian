@@ -479,3 +479,31 @@ describe('a clear in History and the recorded outcome', () => {
     expect(recorded).not.toHaveTextContent('Unavailable')
   })
 })
+
+describe('keeping an empty value on the case that wrote it', () => {
+  it('says a field that can’t be emptied stays as written', async () => {
+    const user = userEvent.setup()
+    const isbn: Field = {
+      ...base,
+      destination: 'isbn',
+      decisionActions: ['keep_current', 'accept'],
+      currentValue: '',
+      currentRaw: null,
+      proposedValues: [{ kind: 'text', value: '9780306406157' }],
+      proposalId: 'proposal-isbn',
+      targetFingerprint: 'fingerprint-isbn',
+      ownerControl: null,
+    }
+    const http = owner(isbn, undefined, async () => {
+      throw new ApiError(422, 'owner_value_required')
+    })
+    renderRoute('/library?lens=all&preview=case-1&field=isbn', http)
+    await user.click(await screen.findByRole('radio', { name: /^Choose current value/u }))
+    expect(sent(http)[0]).toMatchObject({ outcome: 'keep_current', destination: 'isbn' })
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'The ISBN can’t be emptied. Choose a new value.',
+      ),
+    )
+  })
+})

@@ -65,7 +65,10 @@ changes nothing. An emptied scalar reads back as `null` and an emptied list as
    previous names and genres marked Previous are offered only while the field
    reads the latest verified write's desired value, and offer the value that
    write replaced. An empty replaced value is never offered: emptying the
-   input is that choice, and the server sends no empty suggestion.
+   input is that choice, and the server sends no empty suggestion. On that
+   case Keep current writes back the value the case read: a clearable field
+   it read empty goes back to empty as a clear does, and any other field
+   refuses the keep as `owner_value_required`.
 5. **The kept case.** When the pipeline admits a ProposalSet with nothing
    actionable while the work's latest verified write, of any origin and
    destination, covers included, is under 2,592,000 seconds old by the

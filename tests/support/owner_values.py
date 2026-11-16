@@ -244,6 +244,9 @@ class OwnerStore:
             target_version=snapshot.target_version,
             dependency_digests=snapshot.dependency_digests,
             capability_digest=CAPABILITY,
+            allow_corrective_keep_current=(
+                type(decision) is HumanDecision and decision.outcome == "keep_current"
+            ),
         )
         assert operation is not None
         if seed:

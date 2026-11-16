@@ -204,7 +204,10 @@ body is refused before parsing.
   with `422`: `owner_value_required` for an empty title or authors,
   `owner_value_invalid` for a value outside its bounds and
   `owner_value_unchanged` for the field's current value, which on the case
-  that wrote the field is the written value.
+  that wrote the field is the written value. On that case `keep_current`
+  writes back the value the case read; where that was empty, a clearable
+  field goes back to empty and any other field is refused as
+  `owner_value_required`.
 - "Use previous value" and the names entry's previous names are offered only
   while the field reads its latest verified write's value, and never when the
   value that write replaced was empty: emptying the field is that choice.

@@ -424,6 +424,68 @@ def test_a_clear_after_a_fill_goes_back_to_the_empty_field(tmp_path: Path) -> No
         store.close()
 
 
+def _pending(store: OwnerStore) -> list[str]:
+    return [
+        json.loads(document)["decision_id"]
+        for document in store.repository.pending_field_effect_decision_documents(50)
+    ]
+
+
+# #1523: on the case that wrote a field the case read empty, Keep current
+# goes back to empty. A clearable field writes the empty value through the
+# guarded path, as a clear does; any other field refuses the keep.
+def test_keeping_an_empty_genres_after_a_write_goes_back_to_empty(
+    store: OwnerStore,
+) -> None:
+    written = store.write(
+        store.decide(
+            "accept", {"kind": "list", "value": ["Fantasy"]}, destination="genres"
+        )
+    )
+    assert (written.plan.pre_value, written.plan.desired_value) == (None, ["Fantasy"])
+    keep = store.decide("keep_current", destination="genres")
+    assert keep.decision_id in _pending(store)
+    back = store.write(keep)
+    assert (back.plan.pre_value, back.plan.desired_value) == (["Fantasy"], None)
+    assert store.target.read(back.plan).value is None
+    assert (
+        store.repository.field_effect_manual_hold_token(
+            store.case.review_case_id, "genres"
+        )
+        == keep.decision_id
+    )
+    assert keep.decision_id not in _pending(store)
+
+
+def test_keeping_an_empty_isbn_after_a_write_is_refused(store: OwnerStore) -> None:
+    written = store.write(
+        store.decide(
+            "accept", {"kind": "text", "value": "9780306406157"}, destination="isbn"
+        )
+    )
+    assert written.plan.pre_value is None
+    effects = store.repository._connection.execute(
+        "SELECT count(*) FROM field_effects"
+    ).fetchone()
+    pending = _pending(store)
+    _refused(store, "owner_value_required", "keep_current", destination="isbn")
+    assert _pending(store) == pending
+    assert (
+        store.repository._connection.execute(
+            "SELECT count(*) FROM field_effects"
+        ).fetchone()
+        == effects
+    )
+    assert store.target.read(written.plan).value == "9780306406157"
+
+
+def test_keeping_an_empty_isbn_before_any_write_is_recorded(
+    store: OwnerStore,
+) -> None:
+    keep = store.decide("keep_current", destination="isbn")
+    assert keep.decision_id not in _pending(store)
+
+
 def test_reselecting_the_previous_value_writes_it_back_under_the_guards(
     store: OwnerStore,
 ) -> None:
