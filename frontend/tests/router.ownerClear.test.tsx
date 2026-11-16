@@ -567,6 +567,30 @@ describe('the keep card on a field this case wrote (#1523)', () => {
       currentValue: before ?? 'Not set in Audiobookshelf',
       currentRaw: before,
       proposedValues: [{ kind: 'text', value: '9781861972712' }],
+      choiceContexts: [
+        {
+          alternativeId: null,
+          evidence: [
+            {
+              language: null,
+              observation: 'Your current value.',
+              role: 'local_presence',
+              source: 'Local library record',
+            },
+            {
+              language: null,
+              observation: 'Printed on the copyright page.',
+              role: 'external_observation',
+              source: 'Open Library',
+            },
+          ],
+          limitations: [],
+          rationale: '',
+          recommendation: 'recommended',
+          recommendationReason: 'Your settings keep the current value.',
+          selection: 'current',
+        },
+      ],
     })
   const keepCardShown = () => screen.queryByText(/^(Keep current value|Before your change)$/u)
   const show = async (field: Field) => {
@@ -588,7 +612,14 @@ describe('the keep card on a field this case wrote (#1523)', () => {
     const card = screen.getByText('Before your change').closest('.current-choice-list')
     if (!(card instanceof HTMLElement)) throw new Error('the before-your-change card is required')
     expect(card).toHaveTextContent('9780306406157')
-    expect(card).not.toHaveTextContent(/current/iu)
+    await user.click(
+      within(card).getByRole('button', {
+        name: 'Evidence for value before your change: 9780306406157',
+      }),
+    )
+    // Its evidence keeps the sources and drops the record that calls it current.
+    expect(card).toHaveTextContent('Printed on the copyright page.')
+    expect(card).not.toHaveTextContent(/current|Already in the library/iu)
     expect(screen.queryByText('Keep current value')).toBeNull()
     expect(screen.queryByRole('radio', { name: /current value/u })).toBeNull()
     await user.click(

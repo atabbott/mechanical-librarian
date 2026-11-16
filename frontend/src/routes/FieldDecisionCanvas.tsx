@@ -182,10 +182,21 @@ export function FieldDecisionCanvas({
       ? 'Not set'
       : valueText(selected.destination, selected.currentValue)
   const keptName = before ? 'value before your change' : 'Current value'
+  // Its evidence leaves out the library record that says the value is current,
+  // and any setting to keep it (#1523).
+  const beforeChangeContext = (context: ReturnType<typeof choiceContext>) =>
+    context && {
+      ...context,
+      evidence: context.evidence.filter((row) => row.role !== 'local_presence'),
+      recommendation: 'no_recommendation' as const,
+      recommendationReason: '',
+    }
   const currentChoice: DirectChoice | null = keepKind
     ? {
         automatic: automaticallySelected(selected, cardProgress),
-        context: choiceContext(selected, null),
+        context: before
+          ? beforeChangeContext(choiceContext(selected, null))
+          : choiceContext(selected, null),
         current: true,
         disabled: controller.checking,
         // The column's header names this card, so the card carries no label
