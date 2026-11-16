@@ -42,8 +42,8 @@ const inside = (start: number, end: number, from: number, to: number, room: numb
 
 // Whether the owner can see a control: it lies below the masthead, inside the
 // window, and inside every ancestor that clips or scrolls it, such as the
-// sideways cover strip. Sideways, its own padding may be cut: nothing the
-// owner reads is in it. Without layout, as in jsdom, it counts as seen.
+// sideways cover strip. Sideways, a cover card's own padding may be cut: nothing
+// the owner reads is in it. Without layout, as in jsdom, it counts as seen.
 const shown = (element: HTMLElement) => {
   const rect = element.getBoundingClientRect()
   if (rect.width === 0 && rect.height === 0) return true
@@ -69,11 +69,14 @@ const shown = (element: HTMLElement) => {
     wide = Math.min(wide, box.clientWidth)
     tall = Math.min(tall, box.clientHeight)
   }
+  // Only a cover card: a value card keeps its radio and its number in its padding.
+  const padding = (side: string) =>
+    element.matches('.library-cover-card') ? Number.parseFloat(side) || 0 : 0
   const { paddingLeft, paddingRight } = getComputedStyle(element)
   return (
     inside(
-      rect.left + (Number.parseFloat(paddingLeft) || 0),
-      rect.right - (Number.parseFloat(paddingRight) || 0),
+      rect.left + padding(paddingLeft),
+      rect.right - padding(paddingRight),
       left,
       right,
       wide,
