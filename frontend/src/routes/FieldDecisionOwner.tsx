@@ -208,6 +208,7 @@ export function OwnerControls({
           ref={trigger}
           type="button"
           className="owner-trigger"
+          data-review-key="e"
           aria-disabled={blocked}
           onClick={() => {
             if (!blocked) openEntry()
@@ -221,6 +222,7 @@ export function OwnerControls({
           ref={trigger}
           type="button"
           className="owner-trigger"
+          data-review-key="e"
           aria-disabled={blocked}
           onClick={() => {
             if (!blocked) openSubset()
@@ -324,6 +326,7 @@ export function OwnerControls({
         <button
           type="button"
           className="owner-trigger"
+          data-review-key="u"
           aria-disabled={blocked}
           onClick={() => send('withdraw', null)}
         >

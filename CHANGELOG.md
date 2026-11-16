@@ -155,6 +155,11 @@ brackets are GitHub issues.
   row names what was found, and the count follows the Works count as "37 look
   wrong". Nothing is changed. The findings are stored with each report, so the
   database records `value-flag-rules-v1` (#1334).
+- Library takes single keys for review: J and K move between fields and works,
+  1 to 3 choose a value, E enters your own value, U withdraws your decision on
+  the open field and ? lists the keys. Keys in the Library toolbar turns them
+  off in this browser. A phone or tablet shows neither the numbers nor Keys
+  (#1337).
 - Settings → Appearance has a Theme choice: Follow system, Light or Dark. It
   applies at once and is saved in this browser. Follow system returns to the
   system theme after a choice here or with the theme switch (#1341).

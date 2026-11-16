@@ -14,7 +14,7 @@ Library, Attention, Evidence and History, Policy, Activity and Settings.
 - Review makes no destructive changes ([PRODUCT.md](../../PRODUCT.md)).
 - The server holds every decision. A refresh, another device, a restart or an
   upgrade cannot lose an acknowledged one, unless the upgrade needs a clean
-  rebuild. Browser storage holds display preferences only.
+  rebuild. Browser storage holds preferences only.
 
 ## Review cases
 
@@ -290,8 +290,8 @@ Each tab names the field's status:
   shows that choice beside the current value and says turning on Automatic
   decides it again.
 
-Fields that are empty and have no proposal sit behind one `Show N more fields`
-tab. Fields with nothing to decide sit in one closed panel headed `No change:`
+Empty fields with no proposal sit behind one `Show N more fields` tab. Fields
+with nothing to decide sit in one closed panel headed `No change:`
 and their names. The heading counts any field waiting or unavailable
 separately, and each row gives its value and why nothing changed.
 
@@ -321,8 +321,9 @@ whether it shows the request.
 
 A field's choices, and a cover comparison's cards, form one radio group with
 one Tab stop and no submit step. Arrow keys move without recording. Space,
-Enter or a tap records the choice once and moves to the next field. The choice
-you recorded says "Your choice".
+Enter or a tap records the choice once and moves to the next field. A recorded
+choice says "Your choice". [Review keys](review-keys.md) lists single keys for
+the same steps.
 
 The canvas moves on only after the server accepts the decision and a fresh
 read of the case confirms it. Counts catch up afterwards. Recording a choice
@@ -330,8 +331,8 @@ does not write it. When every field is recorded, the work lists each field
 and its outcome and offers Review next work.
 
 If a choice could not be confirmed, the page keeps it, and Try the same
-decision again sends it once more, never recording it twice. Mechanical
-Librarian never resends it on its own. If no answer comes back, the page
+decision again resends it, never recording it twice. Mechanical Librarian never
+resends it unasked. If no answer comes back, the page
 reloads the case once and never says the choice was not recorded. If the work
 changed first, the page moves to the current case and says nothing was
 recorded.
