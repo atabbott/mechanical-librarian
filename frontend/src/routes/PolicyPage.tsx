@@ -31,6 +31,7 @@ import { StatusPill } from '../components/StatusPill'
 import { CurrentCoverSettings } from '../components/CurrentCoverSettings'
 import { DescriptionAdviceSettings } from '../components/DescriptionAdviceSettings'
 import { MatchingSettings } from '../components/MatchingSettings'
+import { RowGroup } from '../components/RowGroups'
 import { Disclosure } from '../components/Disclosure'
 import { Dropdown } from '../components/Dropdown'
 import { FinishTray } from '../components/FinishTray'
@@ -49,13 +50,12 @@ import {
   fields,
   operationScopeLabels,
   operationWords,
-  policyDestinationLabels,
   policyRepresentationGuidance,
   readableCategory,
   representationConsequence,
 } from '../policyFields'
 import type { FieldDefinition } from '../policyFields'
-import { policyImpactDisplay, policyImpactTotals } from '../policyImpact'
+import { policyGroups, policyImpactTotals, policyPreviewRows } from '../policyImpact'
 
 type PolicyStage = 'editing' | 'validating' | 'preview' | 'activation' | 'activated'
 // What the page's one policy mutation sends: preview and activation with their
@@ -68,6 +68,8 @@ type PolicyMutation =
 // What a field with no qualified Automatic operation says on a medium. The
 // activation review reads it as written; a field card says "Not offered." instead.
 const noAutomaticEffect = 'No automatic effect. Needs you.'
+/** Up to this many changes, every group of the preview starts open. */
+const POLICY_PREVIEW_OPEN_ALL = 25
 
 // "a, b or c": one comma list, never a chain of "or".
 const plainList = (items: readonly string[], last: 'or' | 'and') =>
@@ -94,7 +96,6 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
   const [snapshotId, setSnapshotId] = useState<string>()
   const [previewActivePolicyId, setPreviewActivePolicyId] = useState<string>()
   const [preview, setPreview] = useState<PolicyPreviewView>()
-  const [expandedPreview, setExpandedPreview] = useState<PolicyPreviewView>()
   const [stage, setStage] = useState<PolicyStage>('editing')
   const [status, setStatus] = useState<{
     tone: 'neutral' | 'success' | 'error' | 'warning'
@@ -380,43 +381,13 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
           unpreviewed: library.affected_categories.filter((field) => !evaluated.has(field)),
         }
       }),
-      previewRows:
-        preview?.libraries
-          .flatMap((library) =>
-            library.cases.flatMap((item, caseIndex) => {
-              const comparison = library.comparisons[caseIndex]
-              if (!comparison) return []
-              return comparison.fields.map((field, fieldIndex) => {
-                const projected = policyImpactDisplay(
-                  field.draft,
-                  field.draft_destination === 'ask',
-                )
-                const before = policyImpactDisplay(field.active, field.active_destination === 'ask')
-                return {
-                  caseId: item.report_id,
-                  order: fieldIndex,
-                  id: `${item.report_id}:${field.draft.field}`,
-                  library: library.library,
-                  media: comparison.media_kind,
-                  work: item.work_label,
-                  field: readableCategory(field.draft.field),
-                  projected,
-                  impact: {
-                    changed: field.changed,
-                    detail: field.changed
-                      ? `${policyDestinationLabels[field.active_destination]} now: ${before.detail.replace(/[^.]$/u, '$&.')} ${policyDestinationLabels[field.draft_destination]} in the draft: ${projected.detail.replace(/[^.]$/u, '$&.')}`
-                      : projected.detail,
-                    technicalDetail: `Active ${before.technicalDetail}; draft ${projected.technicalDetail}`,
-                  },
-                }
-              })
-            }),
-          )
-          .sort((a, b) => a.order - b.order) ?? [],
+      previewRows: policyPreviewRows(preview?.libraries ?? []),
     }),
     [preview],
   )
-  const changedRows = previewRows.filter((row) => row.impact.changed)
+  const changedRows = previewRows.filter((row) => row.changed)
+  // Only what the draft changes is listed, and any row that was not previewed.
+  const listedRows = previewRows.filter((row) => row.changed || row.unpreviewed)
   const sampledWorks = previewLibraries.reduce((count, library) => count + library.cases.length, 0)
   const mediaSummary = (['ebook', 'audiobook'] as const)
     .flatMap((media) => {
@@ -434,7 +405,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
         : []
     })
     .join(' · ')
-  const unchangedRows = previewRows.filter((row) => !row.impact.changed)
+  const unchangedRows = previewRows.filter((row) => !row.changed && !row.unpreviewed)
   const mediaQualification = (
     field: FieldDefinition,
     option: string,
@@ -917,10 +888,6 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                     : '.'}
               </p>
               {mediaSummary ? <p>{mediaSummary}</p> : null}
-              <p>
-                Title, authors, narrators, date, publisher, language and cover are not previewed
-                here.
-              </p>
               {/* A library override can pin every edited field, so a changed draft
                   may still change nothing in any library. */}
               {previewLibraries.length > 0 &&
@@ -928,29 +895,53 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                 <p>No library&apos;s fields change under this draft.</p>
               ) : null}
               <div id="policy-preview-outcomes" className="cm-policy-preview-list">
-                {changedRows.length
-                  ? changedRows.slice(0, expandedPreview === preview ? undefined : 6).map((row) => (
-                      <div key={row.id} className={row.impact.changed ? 'is-change' : ''}>
-                        <span className="cm-policy-work-mark" aria-hidden="true">
-                          {row.work.slice(0, 2).toUpperCase()}
-                        </span>
-                        <span>
-                          <strong>{row.work}</strong>
-                          <small>
-                            {row.media === 'ebook' ? 'Ebook' : 'Audiobook'} ·{' '}
-                            {libraryName(row.library)} · {row.field}
-                          </small>
-                        </span>
-                        <span className="cm-policy-impact">
-                          {/* Only changed rows are listed here (#1765). */}
-                          <b>Policy change</b>
-                          <small>· {row.impact.detail}</small>
-                          <details>
-                            <summary>Technical detail</summary>
-                            <code>{row.impact.technicalDetail}</code>
-                          </details>
-                        </span>
-                      </div>
+                {listedRows.length
+                  ? [...new Set(listedRows.map((row) => row.library))].map((library) => (
+                      <section key={library} className="policy-preview-library">
+                        <h3>{libraryName(library)}</h3>
+                        {[
+                          ...new Set(
+                            listedRows
+                              .filter((row) => row.library === library)
+                              .map((row) => row.field),
+                          ),
+                        ].map((field) => {
+                          const rows = listedRows.filter(
+                            (row) => row.library === library && row.field === field,
+                          )
+                          return (
+                            <div key={field} className="write-plan-field">
+                              <h4>{field}</h4>
+                              {policyGroups.map((group) => {
+                                const grouped = rows.filter(
+                                  (row) => row.changed && row.group === group,
+                                )
+                                return grouped.length ? (
+                                  <RowGroup
+                                    key={group}
+                                    label={group}
+                                    count={grouped.length}
+                                    rows={grouped}
+                                    open={changedRows.length <= POLICY_PREVIEW_OPEN_ALL}
+                                  />
+                                ) : null
+                              })}
+                              {rows
+                                .filter((row) => !row.changed)
+                                .map((row) => (
+                                  <div key={row.id} className="policy-preview-unpreviewed">
+                                    <p className="write-plan-work">
+                                      <strong>{row.work}</strong> <span>{row.aside}</span>
+                                    </p>
+                                    <p className="write-plan-why">
+                                      <b>Not previewed.</b> {row.unpreviewed}
+                                    </p>
+                                  </div>
+                                ))}
+                            </div>
+                          )
+                        })}
+                      </section>
                     ))
                   : previewLibraries
                       .filter((library) => library.previewed.length)
@@ -992,22 +983,6 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                   )),
                 )}
               </div>
-              {changedRows.length > 6 ? (
-                <footer>
-                  <button
-                    type="button"
-                    aria-expanded={expandedPreview === preview}
-                    aria-controls="policy-preview-outcomes"
-                    onClick={() =>
-                      setExpandedPreview(expandedPreview === preview ? undefined : preview)
-                    }
-                  >
-                    {expandedPreview === preview
-                      ? 'Show fewer outcomes'
-                      : `Show ${String(changedRows.length - 6)} more ${changedRows.length === 7 ? 'outcome' : 'outcomes'}`}
-                  </button>
-                </footer>
-              ) : null}
             </div>
             {unchangedRows.length ? (
               <details className="cm-policy-projected-context">
@@ -1019,7 +994,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                 {unchangedRows.map((row) => (
                   <p key={row.id}>
                     <strong>{row.work}</strong> · {row.media === 'ebook' ? 'Ebook' : 'Audiobook'} ·{' '}
-                    {row.field}: {row.projected.detail}
+                    {row.field}: {row.summary}
                   </p>
                 ))}
               </details>

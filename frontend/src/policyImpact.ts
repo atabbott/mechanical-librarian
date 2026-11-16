@@ -2,18 +2,21 @@
 // owner-facing impact. Moved out of the Policy route under the route-size rule
 // (#1571). The preview and activation answers are decoded, and their named
 // checks made, by the HTTP client (#1692).
-import { automaticRefusalReasons, languageName } from './labels'
+import type { PolicyPreviewView } from './api/http'
+import type { GroupedRow } from './components/RowGroups'
+import { automaticRefusalReasons, coverNoteLabel, languageName } from './labels'
+import { readableCategory } from './policyFields'
 
 // A language value reads by its name, `English (en)` (#1286).
 // A preview value as Activity states one: a list joined, a series as
 // `Name (sequence)`, never as raw JSON (#1286).
 const previewValue = (value: unknown, language = false): string => {
-  if (value === null || value === undefined || value === '') return 'empty'
+  if (value === null || value === undefined || value === '') return 'Not set'
   if (typeof value === 'string') return language ? languageName(value) : value
   if (typeof value === 'boolean') return value ? 'Yes' : 'No'
   if (typeof value === 'number') return value.toLocaleString()
   if (Array.isArray(value)) {
-    if (!value.length) return 'empty'
+    if (!value.length) return 'Not set'
     if (value.every((item) => typeof item === 'string'))
       return value.map((item) => (language ? languageName(item) : item)).join(', ')
     const series = value.map((item: unknown) =>
@@ -48,19 +51,18 @@ interface PolicyPreviewField {
   readonly field: string
   readonly outcome: string
   readonly reason: string | null
-  readonly target_state: string
 }
 
-export interface PolicyImpactDisplay {
-  readonly changed: boolean
-  readonly detail: string
-  readonly technicalDetail: string
-  readonly title: 'Change' | 'Needs you' | 'No change' | 'No supported value found'
+/** What one policy does to a field: the cell's words, and what happens. */
+export interface PolicyCell {
+  readonly effect: 'write' | 'ask' | 'none' | 'unpreviewed'
+  readonly value: string
+  readonly note?: string | undefined
 }
 
 export interface PolicyImpactRow {
   readonly caseId: string
-  readonly impact: Pick<PolicyImpactDisplay, 'changed'>
+  readonly changed: boolean
 }
 
 const sameMetadataValue = (left: unknown, right: unknown) =>
@@ -88,84 +90,154 @@ const humanReason = (reason: string | null) => {
   return 'no supported value found'
 }
 
+const coverUnpreviewed: Readonly<Record<string, string>> = {
+  cover_not_compared: 'The covers for this work have not been compared yet.',
+  provider_fetching: 'Sources are still being fetched.',
+  cover_compared_next_scan: 'The covers are compared again on the next scan.',
+}
+
 // The server keeps its closed outcome and reason codes for audit detail. This
 // projection deliberately turns them into owner-facing impact language.
-// Under Ask me nothing is written; the change is what the review would propose.
-export const policyImpactDisplay = (
+// Under Ask me nothing is written; the value is what the review would propose.
+export const policyCell = (
   field: PolicyPreviewField,
-  proposal = false,
-): PolicyImpactDisplay => {
-  const language = field.field === 'language_rendering'
-  const current = previewValue(field.current_value, language)
-  const currentIsDisplayable = hasMetadataValue(field.current_value)
-  const desiredIsDisplayable = hasMetadataValue(field.desired_value)
-  const materialChange =
-    field.outcome === 'projected' &&
-    !sameMetadataValue(field.current_value, field.desired_value) &&
-    (currentIsDisplayable || desiredIsDisplayable)
-  const technicalDetail = `outcome: ${field.outcome}; reason: ${field.reason ?? 'none'}; target state: ${field.target_state}`
-  if (materialChange) {
-    const detail =
-      !currentIsDisplayable && desiredIsDisplayable
-        ? `${proposal ? 'would propose filling' : 'fills'} the empty field with ${previewValue(field.desired_value, language)}`
-        : currentIsDisplayable && !desiredIsDisplayable
-          ? `${proposal ? 'would propose clearing' : 'clears'} ${current}`
-          : `${proposal ? 'would propose changing' : 'changes'} ${current} to ${previewValue(field.desired_value, language)}`
+  destination: string,
+  audiobook = false,
+): PolicyCell => {
+  if (field.outcome === 'not_previewed')
     return {
-      changed: true,
-      title: 'Change',
-      detail:
-        field.reason === 'verified_manifestation_isbn'
-          ? `${detail} because ${humanReason(field.reason)}`
-          : detail,
-      technicalDetail,
+      effect: 'unpreviewed',
+      value: 'Not previewed.',
+      note: coverUnpreviewed[field.reason ?? ''] ?? coverUnpreviewed.cover_compared_next_scan,
+    }
+  // A cover's value is words the application built from the stored comparison.
+  if (field.field === 'cover_order')
+    return {
+      effect:
+        field.outcome === 'projected' ? 'write' : field.outcome === 'suggested' ? 'ask' : 'none',
+      value: typeof field.desired_value === 'string' ? field.desired_value : 'No change',
+      note:
+        field.reason === 'policy_ignored'
+          ? reasonSentence(humanReason(field.reason))
+          : field.reason
+            ? coverNoteLabel(field.reason, audiobook)
+            : undefined,
+    }
+  // A sentence that already says the field is left to the owner stands alone.
+  const refusal =
+    automaticRefusalReasons[field.reason ?? ''] ??
+    'No value would be chosen for you, and no more specific reason is known.'
+  if (field.reason === 'automatic_unqualified') return { effect: 'ask', value: refusal }
+  const language = field.field === 'language_rendering'
+  if (
+    (field.outcome === 'projected' || field.outcome === 'suggested') &&
+    !sameMetadataValue(field.current_value, field.desired_value) &&
+    (hasMetadataValue(field.current_value) || hasMetadataValue(field.desired_value))
+  ) {
+    const ask = field.outcome === 'suggested' || destination === 'ask'
+    return {
+      effect: ask ? 'ask' : 'write',
+      value: previewValue(field.desired_value, language),
+      note: ask
+        ? 'Left to you'
+        : field.reason === 'verified_manifestation_isbn'
+          ? reasonSentence(humanReason(field.reason))
+          : undefined,
     }
   }
   if (field.reason === 'target_state_unusable')
     return {
-      changed: false,
-      title: 'Needs you',
-      detail: 'Current value is unavailable or unreadable. Inspect the source before deciding.',
-      technicalDetail,
+      effect: 'ask',
+      value: 'Current value is unavailable or unreadable. Inspect the source before deciding.',
     }
-  if (field.outcome === 'abstain')
-    return {
-      changed: false,
-      title: field.reason === 'ambiguous_evidence' ? 'Needs you' : 'No change',
-      detail:
-        field.reason === 'policy_ignored'
-          ? `remains ${current}. ${reasonSentence(humanReason(field.reason))}`
-          : (automaticRefusalReasons[field.reason ?? ''] ??
-            'No value would be chosen for you, and no more specific reason is known.'),
-      technicalDetail,
-    }
-  if (field.outcome === 'no_op' || sameMetadataValue(field.current_value, field.desired_value))
-    return {
-      changed: false,
-      title: 'No change',
-      // With no specific reason, the line ends at the value (#1760).
-      detail:
-        !field.reason || field.reason === 'target_preserved' || field.reason === 'unchanged'
-          ? `remains ${current}.`
-          : `remains ${current}. ${reasonSentence(humanReason(field.reason))}`,
-      technicalDetail,
-    }
-  if (!currentIsDisplayable && !desiredIsDisplayable)
-    return {
-      changed: false,
-      title: 'No change',
-      detail: 'remains empty. No supported value found.',
-      technicalDetail,
-    }
+  if (field.outcome === 'abstain' && field.reason !== 'policy_ignored')
+    return field.reason === 'ambiguous_evidence'
+      ? { effect: 'ask', value: refusal }
+      : { effect: 'none', value: 'No change', note: refusal }
   return {
-    changed: false,
-    title: 'No supported value found',
-    detail: `${current} remains. ${reasonSentence(humanReason(field.reason))}`,
-    technicalDetail,
+    effect: 'none',
+    value: 'No change',
+    // With no specific reason, the cell ends at its value (#1760).
+    note:
+      (field.outcome === 'no_op' || sameMetadataValue(field.current_value, field.desired_value)) &&
+      (!field.reason || field.reason === 'target_preserved' || field.reason === 'unchanged')
+        ? undefined
+        : reasonSentence(humanReason(field.reason)),
   }
 }
+
+/** What happens under the draft, in the order the groups are listed. */
+export const policyGroups = ['Filled', 'Changed', 'Left to you', 'No change'] as const
+
+export interface PolicyPreviewRow extends PolicyImpactRow, GroupedRow {
+  readonly id: string
+  readonly library: string
+  readonly media: 'ebook' | 'audiobook'
+  readonly field: string
+  readonly group: (typeof policyGroups)[number]
+  /** Why the row could not be previewed, when it could not. */
+  readonly unpreviewed?: string | undefined
+  /** The draft's result on one line, for the unchanged outcomes. */
+  readonly summary: string
+}
+
+// One policy field governs these library fields, so a row is named for its own.
+const namedByDestination = new Set(['title_layout', 'contributor_names', 'date_precision'])
+
+/** Every compared field of every sampled work, as one row of three values. */
+export const policyPreviewRows = (
+  libraries: PolicyPreviewView['libraries'],
+): readonly PolicyPreviewRow[] =>
+  libraries.flatMap((library) =>
+    library.cases.flatMap((item, caseIndex) => {
+      const comparison = library.comparisons[caseIndex]
+      if (!comparison) return []
+      const audiobook = comparison.media_kind === 'audiobook'
+      return comparison.fields.map((field) => {
+        const active = policyCell(field.active, field.active_destination, audiobook)
+        const draft = policyCell(field.draft, field.draft_destination, audiobook)
+        // A sentence that is the same under both policies is said once.
+        const shared = active.note !== undefined && active.note === draft.note
+        const current = field.draft.current_value
+        return {
+          caseId: item.report_id,
+          id: `${item.report_id}:${field.destination}`,
+          library: library.library,
+          media: comparison.media_kind,
+          field: readableCategory(
+            namedByDestination.has(field.draft.field) ? field.destination : field.draft.field,
+          ),
+          changed: field.changed,
+          group:
+            draft.effect === 'write'
+              ? hasMetadataValue(current)
+                ? 'Changed'
+                : 'Filled'
+              : draft.effect === 'ask'
+                ? 'Left to you'
+                : 'No change',
+          unpreviewed: draft.effect === 'unpreviewed' ? draft.note : undefined,
+          summary: draft.note
+            ? `${draft.value.replace(/[^.]$/u, '$&.')} ${draft.note}`
+            : draft.value,
+          work: item.work_label,
+          aside: audiobook ? 'Audiobook' : 'Ebook',
+          values: [
+            {
+              label: 'Current',
+              value: previewValue(current, field.draft.field === 'language_rendering'),
+            },
+            { label: 'Active policy', value: active.value, note: shared ? undefined : active.note },
+            { label: 'Draft', value: draft.value, note: shared ? undefined : draft.note },
+          ],
+          why: shared ? active.note : undefined,
+        }
+      })
+    }),
+  )
+
 export const policyImpactTotals = (rows: readonly PolicyImpactRow[]) => {
-  const changes = rows.filter((row) => row.impact.changed)
+  const changes = rows.filter((row) => row.changed)
   return {
     changedWorks: new Set(changes.map((row) => row.caseId)).size,
     materialChanges: changes.length,

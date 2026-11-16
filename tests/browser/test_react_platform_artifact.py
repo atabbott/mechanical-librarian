@@ -2659,16 +2659,43 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         # page while it validates (#1288).
         expect(page.locator(".cm-policy-result")).to_be_focused()
         primary = page.locator(".cm-policy-preview-list")
-        assert primary.locator(":scope > div").count() == 6
-        assert (
-            primary.locator(".cm-policy-impact > b").all_text_contents()
-            == ["Policy change"] * 6
+        # Each changed field is a row of three values under its library and
+        # field, grouped by what the draft does (#1524).
+        expect(primary.locator(".policy-preview-library > h3")).to_have_text(
+            ["Household ebooks"]
         )
+        assert [
+            (
+                field.locator("h4").inner_text(),
+                field.locator(".write-plan-chooser").all_text_contents(),
+                field.locator(".write-plan-row").count(),
+            )
+            for field in primary.locator(".write-plan-field").all()
+        ] == [
+            ("Subtitle", ["Filled"], 1),
+            ("Series memberships", ["Changed"], 1),
+            ("Genres", ["Changed"], 1),
+            ("Description", ["Filled"], 1),
+            ("ISBN", ["Filled"], 1),
+            ("ASIN", ["Filled"], 1),
+            ("Publisher", ["Changed"], 1),
+            ("Cover", ["Filled"], 1),
+        ]
+        cover = primary.locator(".write-plan-field").last
+        assert cover.locator("dd").all_text_contents() == [
+            "Not set",
+            "A confirmed cover is suggested",
+            "Filled with a confirmed cover",
+        ]
+        cover.get_by_text(
+            "Confirmed covers are ranked in a fixed order", exact=False
+        ).wait_for()
+        expect(primary.locator("img")).to_have_count(0)
         expect(primary.get_by_text("Tag handling is off.", exact=False)).to_have_count(
             0
         )
         page.get_by_text(
-            "Ebooks: 1 sampled work · 6 changed fields", exact=False
+            "Ebooks: 1 sampled work · 8 changed fields", exact=False
         ).wait_for()
         expect(page.get_by_role("button", name="Show 2 more outcomes")).to_have_count(0)
         projected_context = page.locator(".cm-policy-projected-context")

@@ -65,7 +65,27 @@ const comparisons = (fields: PolicyPreviewView['libraries'][number]['cases'][num
     active_destination: 'ask',
     draft_destination: 'automatic',
     changed: draft.desired_value !== draft.current_value,
+    // The library field: one policy field can govern two (#1524).
+    destination:
+      { contributor_names: 'narrators', title_layout: 'title' }[draft.field] ?? draft.field,
   }))
+
+// The preview's listed rows, each as its work and the group it stands under.
+const groupedRows = () =>
+  [...document.querySelectorAll('#policy-preview-outcomes .write-plan-row')].map(
+    (row) =>
+      `${row.querySelector('strong')?.textContent ?? ''}: ${row.closest('details')?.querySelector('.write-plan-chooser')?.textContent ?? ''}`,
+  )
+// One listed row's three labelled values, each with any sentence beneath it.
+const rowValues = (row: Element): Record<string, (string | null)[]> =>
+  Object.fromEntries(
+    [...row.querySelectorAll('.write-plan-values > div')].map(
+      (cell): [string, (string | null)[]] => [
+        cell.querySelector('dt')?.textContent ?? '',
+        [...(cell.querySelector('dd')?.childNodes ?? [])].map((node) => node.textContent),
+      ],
+    ),
+  )
 
 describe('Policy route', () => {
   // #1756: a state read the client cannot decode names the page and says in
@@ -1158,6 +1178,7 @@ describe('Policy route', () => {
                       active_destination: 'ask',
                       draft_destination: 'automatic',
                       changed: true,
+                      destination: 'narrators',
                     },
                   ],
                 },
@@ -1188,13 +1209,28 @@ describe('Policy route', () => {
     const title = await screen.findByRole('region', { name: 'Title and subtitle' })
     await user.click(within(title).getByRole('button', { name: 'Ignore' }))
     await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
-    expect(
-      await screen.findByText(
-        '· Ask me now: would propose filling the empty field with Proposed cast. Automatic in the draft: fills the empty field with Complete recording cast.',
-        { selector: '.cm-policy-impact small' },
-      ),
-    ).toBeVisible()
+    // The row stands under its library and its own field, in the group that
+    // says what happens under the draft: Automatic fills an empty field.
+    const library = (await screen.findByRole('heading', { level: 3, name: 'Fiction' })).closest(
+      'section',
+    )
+    if (!library) throw new Error('library not shown')
+    expect(within(library).getByRole('heading', { level: 4, name: 'Narrators' })).toBeVisible()
+    const group = within(library).getByRole('group')
+    expect(group).toHaveAttribute('open')
+    expect(within(group).getByText('Filled')).toBeVisible()
+    expect(within(group).getByText('1 change')).toBeVisible()
+    const row = within(group).getByRole('listitem')
+    expect(within(row).getByText('Recording book').tagName).toBe('STRONG')
+    expect(within(row).getByText('Audiobook')).toBeVisible()
+    // Under Ask me nothing is written: the value is left to the owner.
+    expect(rowValues(row)).toEqual({
+      Current: ['Not set'],
+      'Active policy': ['Proposed cast', 'Left to you'],
+      Draft: ['Complete recording cast'],
+    })
     expect(screen.queryByText(/\b(?:ask|automatic|ignore): /u)).toBeNull()
+    expect(screen.queryByText(/not previewed here/u)).toBeNull()
     expect(
       screen.getByText(
         /^Validated · \d+ changed fields? in the sample · you changed Identity\. Activate to make it the active policy\. Reloading the page starts again from the active policy\.$/u,
@@ -1281,10 +1317,8 @@ describe('Policy route', () => {
     const title = await screen.findByRole('region', { name: 'Title and subtitle' })
     await user.click(within(title).getByRole('button', { name: 'Ignore' }))
     await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
-    expect(
-      await screen.findByText('Policy change', { selector: '.cm-policy-impact > b' }),
-    ).toBeVisible()
-    expect(screen.queryByRole('button', { name: 'Show 1 more outcome' })).toBeNull()
+    await screen.findByText('Impact preview ready. The active policy is unchanged.')
+    expect(groupedRows()).toEqual(['Recording book: Changed'])
     expect(screen.getByText('Unchanged outcomes (8)')).toBeVisible()
     expect(
       screen.getByText('Ebooks: 1 sampled work · Audiobooks: 2 sampled works · 1 changed field'),
@@ -1303,20 +1337,24 @@ describe('Policy route', () => {
     expect(
       screen.queryByText(/No policy change/, { selector: '.cm-policy-projected-context p' }),
     ).toBeNull()
-    // Only changed rows carry a title, so with the unchanged outcomes open the
-    // one changed row is the only one titled, and nothing says "No policy
+    // Only changed rows are listed, so with the unchanged outcomes open the
+    // one changed row is still the only one, and nothing says "No policy
     // change" (#1765).
-    expect(
-      screen.getAllByText('Policy change', { selector: '.cm-policy-impact > b' }),
-    ).toHaveLength(1)
+    expect(groupedRows()).toEqual(['Recording book: Changed'])
     expect(screen.queryByText(/No policy change/u)).toBeNull()
-    expect(
-      screen.getByText(/Complete recording cast/, { selector: '.cm-policy-impact small' }),
-    ).toBeVisible()
+    const changedRow = () => {
+      const row = document.querySelector('#policy-preview-outcomes .write-plan-row')
+      if (!row) throw new Error('changed row not shown')
+      return rowValues(row)
+    }
+    // The same facts as before: the current value, and each policy's result.
+    expect(changedRow()).toEqual({
+      Current: ['Previous narrator'],
+      'Active policy': ['No change'],
+      Draft: ['Complete recording cast'],
+    })
     await user.click(screen.getByRole('button', { name: 'Review activation' }))
-    expect(
-      screen.getByText(/Complete recording cast/, { selector: '.cm-policy-impact small' }),
-    ).toBeVisible()
+    expect(changedRow().Draft).toEqual(['Complete recording cast'])
     await user.click(screen.getByRole('button', { name: 'Activate policy' }))
     await waitFor(() =>
       expect(policyCommand).toHaveBeenCalledWith('activate', {
@@ -1412,17 +1450,24 @@ describe('Policy route', () => {
 
     expect((await screen.findAllByText('First book'))[0]).toBeVisible()
     expect(screen.getAllByText('Second book')[0]).toBeVisible()
-    expect(screen.getAllByText('Audiobook · Fiction · Title and subtitle')).toHaveLength(2)
-    expect(screen.getAllByText('Policy change')).toHaveLength(6)
-    expect(screen.getByText(/New one/, { selector: '.cm-policy-impact small' })).toBeVisible()
-    expect(screen.getByText(/New two/, { selector: '.cm-policy-impact small' })).toBeVisible()
+    // Every changed row is listed under its field; a group folds, so no row
+    // is cut off after the sixth.
+    expect(groupedRows()).toHaveLength(16)
+    const titles = screen.getByRole('heading', { level: 4, name: 'Title' }).closest('div')
+    if (!titles) throw new Error('title rows not shown')
+    expect(within(titles).getByText('Changed')).toBeVisible()
+    expect(within(titles).getByText('2 changes')).toBeVisible()
+    expect(within(titles).getAllByText('Audiobook')).toHaveLength(2)
+    expect([...titles.querySelectorAll('.write-plan-row')].map((row) => rowValues(row))).toEqual([
+      { Current: ['Old one'], 'Active policy': ['No change'], Draft: ['New one'] },
+      { Current: ['Old two'], 'Active policy': ['No change'], Draft: ['New two'] },
+    ])
     expect(screen.getByText('2 sampled works with changes')).toBeVisible()
     expect(screen.getByText(/ · 16 changed fields in the sample · /u)).toBeVisible()
-    // No design-document term reaches the owner on Policy (#1286 X5); only
-    // the Technical detail disclosure quotes the server's own codes.
-    const owner = document.body.cloneNode(true) as HTMLElement
-    for (const code of owner.querySelectorAll('code')) code.remove()
-    expect(owner.textContent).not.toMatch(
+    // No design-document term reaches the owner on Policy (#1286 X5), and
+    // the rows quote none of the server's own codes.
+    expect(document.querySelector('#policy-preview-outcomes code')).toBeNull()
+    expect(document.body.textContent).not.toMatch(
       /qualified|admitted|projected|bounded|manifestation|abstain/iu,
     )
     expect(screen.getByLabelText('2 sampled works with changes')).toHaveTextContent('2')
@@ -1563,19 +1608,21 @@ describe('Policy route', () => {
   })
   const tagChange = previewField('tags', 'Old tag', 'New tag')
   const isbnSame = previewField('isbn_form', '9780000000002')
-  const outcomeRows = () =>
-    [...document.querySelectorAll('#policy-preview-outcomes > div')].map((row) =>
+  const outcomeRows = () => [
+    ...groupedRows(),
+    ...[...document.querySelectorAll('#policy-preview-outcomes > div')].map((row) =>
       [row.querySelector('strong'), row.querySelector('.cm-policy-impact > b')]
         .map((node) => node?.textContent)
         .join(': '),
-    )
+    ),
+  ]
 
   it.each([
     {
       name: 'a previewed rule only',
       affected: ['tags'],
       cases: [previewCase(1, [tagChange])],
-      rows: ['Work 1: Policy change'],
+      rows: ['Work 1: Changed'],
       title: '1 sampled work with changes',
       media: 'Ebooks: 1 sampled work · 1 changed field',
     },
@@ -1596,11 +1643,12 @@ describe('Policy route', () => {
       media: 'Ebooks: 1 sampled work',
     },
     {
-      name: 'mixed previewed and unpreviewed rules beyond the six-row limit',
+      name: 'mixed previewed and unpreviewed rules across seven works',
       affected: ['language_rendering', 'tags', 'isbn_form'],
       cases: Array.from({ length: 7 }, (_, index) => previewCase(index + 1, [tagChange, isbnSame])),
       rows: [
-        ...Array.from({ length: 6 }, (_, index) => `Work ${String(index + 1)}: Policy change`),
+        // Groups fold, so every changed row is listed, not the first six.
+        ...Array.from({ length: 7 }, (_, index) => `Work ${String(index + 1)}: Changed`),
         'Language: Not previewed.',
       ],
       title: '7 sampled works with changes',
@@ -1611,7 +1659,7 @@ describe('Policy route', () => {
       affected: ['tags'],
       cases: [previewCase(1, [tagChange])],
       unsampled: 'Nonfiction',
-      rows: ['Work 1: Policy change', 'Tags: Not previewed.'],
+      rows: ['Work 1: Changed', 'Tags: Not previewed.'],
       title: '1 sampled work with changes',
       media: 'Ebooks: 1 sampled work · 1 changed field',
     },
@@ -1711,7 +1759,7 @@ describe('Policy route', () => {
       )
     expect(screen.getByText(example.title)).toBeVisible()
     const material = screen.queryByText(/\d+ changed fields? in the sample/u)
-    if (example.rows.some((row) => row.endsWith('Policy change')))
+    if (example.rows.some((row) => row.endsWith('Changed')))
       expect(material).toHaveTextContent(
         ` · ${String(example.cases.length)} ${example.cases.length === 1 ? 'changed field' : 'changed fields'} in the sample · `,
       )
@@ -1722,6 +1770,308 @@ describe('Policy route', () => {
     else expect(within(preview).queryByText(/^(Ebooks|Audiobooks):/u)).toBeNull()
     expect(screen.queryByText('No changed fields')).toBeNull()
     if (example.sample) expect(within(preview).getByText(example.sample)).toBeVisible()
+  })
+
+  // One compared field as the preview answers it: both sides, the settings,
+  // and the library field the row is about.
+  const compared = (
+    destination: string,
+    field: string,
+    current: unknown,
+    active: readonly [string, unknown, (string | null)?],
+    draft: readonly [string, unknown, (string | null)?],
+    settings: readonly [string, string] = ['automatic', 'automatic'],
+  ) => {
+    const side = ([outcome, desired, reason]: readonly [string, unknown, (string | null)?]) => ({
+      ...previewField(field, ''),
+      current_value: current,
+      desired_value: desired,
+      qualified_value: null,
+      outcome,
+      reason: reason ?? null,
+    })
+    return {
+      active: side(active),
+      draft: side(draft),
+      active_destination: settings[0],
+      draft_destination: settings[1],
+      changed: active[0] !== draft[0] || active[1] !== draft[1],
+      destination,
+    }
+  }
+  const previewOf = (
+    cases: readonly { work: string; media: string; fields: ReturnType<typeof compared>[] }[],
+  ) => ({
+    active_policy_id: 'policy-active',
+    policy_id: 'policy-draft',
+    schema_version: 'metadata-policy-preview-v1',
+    active_generation: 1,
+    libraries: [
+      {
+        library: 'Fiction',
+        affected_categories: [
+          ...new Set(cases.flatMap((item) => item.fields.map((f) => f.draft.field))),
+        ],
+        cases: cases.map((item, index) => ({ ...previewCase(index, []), work_label: item.work })),
+        comparisons: cases.map((item) => ({ media_kind: item.media, fields: item.fields })),
+        cases_total: cases.length,
+        cases_truncated: false,
+        current_unapplied_count: cases.length,
+        resolved_policy_id: 'resolved-policy',
+      },
+    ],
+  })
+  const showPreview = async (preview: ReturnType<typeof previewOf>) => {
+    const user = userEvent.setup()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      policyCommand: <T,>(path: string) =>
+        Promise.resolve(path === 'preview' ? preview : { policy_id: 'policy-draft' }) as Promise<T>,
+    }
+    renderRoute('/policy?section=curation', http)
+    const tags = await screen.findByRole('region', { name: 'Tags' })
+    await user.click(within(tags).getByRole('button', { name: 'Ignore' }))
+    await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
+    await screen.findByText('Impact preview ready. The active policy is unchanged.')
+    return user
+  }
+  const fieldRows = (name: string) => {
+    const field = screen.getByRole('heading', { level: 4, name }).closest('div')
+    if (!field) throw new Error(`${name} not shown`)
+    return field
+  }
+  const previewGroups = () => [
+    ...document.querySelectorAll<HTMLElement>('#policy-preview-outcomes details'),
+  ]
+  const NOT_OFFERED = 'Automatic is not offered for this kind of change, so it is left to you.'
+  const FIXED_ORDER = 'Confirmed covers are ranked in a fixed order'
+
+  it('groups each field of each affected work by what happens under the draft (#1524)', async () => {
+    const user = await showPreview(
+      previewOf([
+        {
+          work: 'The Glass Orchard',
+          media: 'audiobook',
+          fields: [
+            // Left to you: Automatic was asked for and is not offered.
+            compared(
+              'narrators',
+              'contributor_names',
+              null,
+              ['projected', ['Ivo North']],
+              ['suggested', ['Ivo North'], 'automatic_unqualified'],
+            ),
+            // Changed: Automatic replaces the current value.
+            compared(
+              'genres',
+              'genres',
+              ['Mystery'],
+              ['no_op', null],
+              ['projected', ['Mystery', 'Historical']],
+            ),
+            // No change: the draft leaves the field alone where the active policy fills.
+            compared(
+              'language',
+              'language_rendering',
+              null,
+              ['projected', 'English'],
+              ['no_op', null, 'policy_ignored'],
+              ['automatic', 'ignore'],
+            ),
+          ],
+        },
+        {
+          work: 'A Field Guide to Borrowed Weather',
+          media: 'audiobook',
+          fields: [
+            // Filled: Automatic writes a value where none is set.
+            compared(
+              'publishedDate',
+              'date_precision',
+              null,
+              ['suggested', '2019-03-12', 'automatic_unqualified'],
+              ['projected', '2019-03-12'],
+            ),
+            // The draft changes nothing for this work's narrators or language.
+            compared(
+              'narrators',
+              'contributor_names',
+              ['Ada Vale'],
+              ['no_op', null],
+              ['no_op', null],
+            ),
+            compared(
+              'language',
+              'language_rendering',
+              'English',
+              ['no_op', null],
+              ['no_op', null, 'policy_ignored'],
+              ['automatic', 'ignore'],
+            ),
+          ],
+        },
+        {
+          work: 'Paper Moons over Larkspur Station',
+          media: 'ebook',
+          fields: [
+            compared(
+              'cover',
+              'cover_order',
+              null,
+              ['suggested', 'A confirmed cover is suggested', 'deterministic_confirmed_order'],
+              ['projected', 'Filled with a confirmed cover', 'deterministic_confirmed_order'],
+              ['ask', 'automatic'],
+            ),
+          ],
+        },
+        {
+          work: 'Automatic-only edition',
+          media: 'ebook',
+          fields: [
+            compared(
+              'cover',
+              'cover_order',
+              'Current cover',
+              ['not_previewed', null, 'cover_not_compared'],
+              ['not_previewed', null, 'cover_not_compared'],
+              ['ask', 'automatic'],
+            ),
+          ],
+        },
+      ]),
+    )
+
+    // Only what the draft changes is listed, each under its own field, in the
+    // order the works were sampled; a count sits above that many rows.
+    expect(
+      [...document.querySelectorAll('#policy-preview-outcomes h4')].map((node) => node.textContent),
+    ).toEqual(['Narrators', 'Genres', 'Language', 'Publication date', 'Cover'])
+    expect(groupedRows()).toEqual([
+      'The Glass Orchard: Left to you',
+      'The Glass Orchard: Changed',
+      'The Glass Orchard: No change',
+      'A Field Guide to Borrowed Weather: Filled',
+      'Paper Moons over Larkspur Station: Filled',
+    ])
+    for (const group of previewGroups()) {
+      expect(group).toHaveAttribute('open')
+      expect(within(group).getByText('1 change')).toBeVisible()
+      expect(within(group).getAllByRole('listitem')).toHaveLength(1)
+    }
+    const values = (name: string) => {
+      const row = fieldRows(name).querySelector('.write-plan-row')
+      if (!row) throw new Error(`${name} has no row`)
+      return rowValues(row)
+    }
+    // The sentence that already says "left to you" stands alone in its cell.
+    expect(values('Narrators')).toEqual({
+      Current: ['Not set'],
+      'Active policy': ['Ivo North'],
+      Draft: [NOT_OFFERED],
+    })
+    expect(values('Genres')).toEqual({
+      Current: ['Mystery'],
+      'Active policy': ['No change'],
+      Draft: ['Mystery, Historical'],
+    })
+    expect(values('Language')).toEqual({
+      Current: ['Not set'],
+      'Active policy': ['English'],
+      Draft: ['No change', 'Ignore leaves this field unchanged.'],
+    })
+    expect(values('Publication date')).toEqual({
+      Current: ['Not set'],
+      'Active policy': [NOT_OFFERED],
+      Draft: ['2019-03-12'],
+    })
+    // A rule sentence that is the same under both policies is said once.
+    const cover = fieldRows('Cover')
+    expect(values('Cover')).toEqual({
+      Current: ['Not set'],
+      'Active policy': ['A confirmed cover is suggested'],
+      Draft: ['Filled with a confirmed cover'],
+    })
+    expect(within(cover).getAllByText(FIXED_ORDER)).toHaveLength(1)
+    expect(within(cover).getByText(FIXED_ORDER)).toHaveClass('write-plan-why')
+    // A cover that could not be compared is listed with its reason, in no group.
+    const unpreviewed = cover.querySelector('.policy-preview-unpreviewed')
+    expect(unpreviewed).toHaveTextContent(
+      /^Automatic-only edition EbookNot previewed\. The covers for this work have not been compared yet\.$/u,
+    )
+    expect(unpreviewed?.closest('details')).toBeNull()
+    // The sampled work the draft does not change stands under no group; its
+    // unchanged fields are in the disclosure beneath, in one line each.
+    expect(screen.getByLabelText('3 sampled works with changes')).toHaveTextContent('3')
+    await user.click(screen.getByText('Unchanged outcomes (2)'))
+    expect(
+      [...document.querySelectorAll('.cm-policy-projected-context p')]
+        .slice(1)
+        .map((node) => node.textContent),
+    ).toEqual([
+      'A Field Guide to Borrowed Weather · Audiobook · Narrators: No change',
+      'A Field Guide to Borrowed Weather · Audiobook · Language: No change. Ignore leaves this field unchanged.',
+    ])
+    // A group folds and opens again from its own line.
+    const [first] = previewGroups()
+    if (!first) throw new Error('no group shown')
+    await user.click(within(first).getByText('Left to you'))
+    expect(first).not.toHaveAttribute('open')
+    await user.click(within(first).getByText('Left to you'))
+    expect(first).toHaveAttribute('open')
+    expect(screen.queryByText(/not previewed here/u)).toBeNull()
+  })
+
+  it.each([
+    ['cover_not_compared', 'The covers for this work have not been compared yet.'],
+    ['provider_fetching', 'Sources are still being fetched.'],
+    ['cover_compared_next_scan', 'The covers are compared again on the next scan.'],
+  ])('says why a cover is not previewed: %s (#1524)', async (reason, sentence) => {
+    await showPreview(
+      previewOf([
+        {
+          work: 'Automatic-only edition',
+          media: 'ebook',
+          fields: [
+            compared(
+              'cover',
+              'cover_order',
+              null,
+              ['not_previewed', null, reason],
+              ['not_previewed', null, reason],
+            ),
+          ],
+        },
+      ]),
+    )
+
+    expect(document.querySelector('.policy-preview-unpreviewed .write-plan-why')).toHaveTextContent(
+      `Not previewed. ${sentence}`,
+    )
+    expect(groupedRows()).toEqual([])
+    expect(screen.queryByLabelText(/sampled works with changes/u)).toBeNull()
+  })
+
+  it('starts every group folded when the draft changes more than 25 rows (#1524)', async () => {
+    await showPreview(
+      previewOf(
+        Array.from({ length: 13 }, (_, index) => ({
+          work: `Work ${String(index)}`,
+          media: 'ebook',
+          fields: [
+            compared('genres', 'genres', ['Mystery'], ['no_op', null], ['projected', ['Epic']]),
+            compared('tags', 'tags', null, ['no_op', null], ['projected', ['Epic']]),
+          ],
+        })),
+      ),
+    )
+
+    const groups = previewGroups()
+    expect(groups.map((group) => group.querySelector('summary')?.textContent)).toEqual([
+      'Changed13 changes',
+      'Filled13 changes',
+    ])
+    for (const group of groups) expect(group).not.toHaveAttribute('open')
+    expect(groupedRows()).toHaveLength(26)
   })
 
   it('names an edited policy as custom and the matching draft by the active name', async () => {
@@ -1884,7 +2234,11 @@ describe('Policy route', () => {
     await screen.findByText('Impact preview ready. The active policy is unchanged.')
     await waitFor(() => expect(http.getSettings).toHaveBeenCalled())
 
-    await waitFor(() => expect(screen.getByText(`Ebook · ${shown} · Tags`)).toBeVisible())
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { level: 3, name: shown })).toBeVisible(),
+    )
+    expect(screen.getByRole('heading', { level: 4, name: 'Tags' })).toBeVisible()
+    expect(groupedRows()).toEqual(['Work 1: Changed'])
     const unpreviewed = document.querySelector('.is-unpreviewed')
     expect(unpreviewed?.querySelector('small')).toHaveTextContent(shown)
     expect(unpreviewed?.querySelector('.cm-policy-work-mark')).toHaveTextContent(
@@ -3172,6 +3526,7 @@ it('counts a manual availability change without an elected value', async () => {
                       active_destination: 'automatic',
                       draft_destination: 'ignore',
                       changed: true,
+                      destination: 'description',
                     },
                   ],
                 },
@@ -3202,9 +3557,19 @@ it('counts a manual availability change without an elected value', async () => {
   const description = await screen.findByRole('region', { name: 'Description' })
   await user.click(within(description).getByRole('button', { name: 'Ignore' }))
   await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
-  expect(
-    await screen.findByText('Policy change', { selector: '.cm-policy-impact > b' }),
-  ).toBeVisible()
+  await screen.findByText('Impact preview ready. The active policy is unchanged.')
+  // The draft leaves the field alone where the active policy would not.
+  expect(groupedRows()).toEqual(['Synthetic Journey: No change'])
+  const row = document.querySelector('#policy-preview-outcomes .write-plan-row')
+  if (!row) throw new Error('changed row not shown')
+  expect(rowValues(row)).toEqual({
+    Current: ['Not set'],
+    'Active policy': [
+      'No change',
+      'No value would be chosen for you, and no more specific reason is known.',
+    ],
+    Draft: ['No change', 'Ignore leaves this field unchanged.'],
+  })
   expect(screen.getByText('Audiobooks: 1 sampled work · 1 changed field')).toBeVisible()
   expect(screen.queryByText('No changes from the draft in this sample')).toBeNull()
 })
