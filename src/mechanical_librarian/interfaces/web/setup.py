@@ -927,6 +927,7 @@ def create_setup_app(
         @app.post("/api/setup/kick-off", status_code=202)
         def kick_off(
             request: _KickOffRequest,
+            response: Response,
             ml_session: str | None = Cookie(default=None),
             x_csrf_token: str | None = Header(default=None),
             origin: str | None = Header(default=None),
@@ -942,6 +943,17 @@ def create_setup_app(
             except Exception as error:
                 raise HTTPException(503, {"error": "activation_failed"}) from error
             app.state.setup_complete = True
+            # Not a credential: it tells this browser's Library that the first
+            # review guide is owed. The guide reads and clears it in the page.
+            response.set_cookie(
+                "ml_first_review",
+                "owed",
+                httponly=False,
+                secure=canonical_origin.startswith("https://"),
+                samesite="strict",
+                path="/",
+                max_age=2_592_000,
+            )
             return {
                 "status": "active",
                 "message": "Nothing in your library changes. Writes stay off until you turn them on in Activity.",

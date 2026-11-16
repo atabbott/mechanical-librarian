@@ -7,7 +7,7 @@ states the invariants the code must keep; exact shapes live in the
 [configuration reference](../reference/configuration.md) and
 [ADRs](decisions/README.md).
 
-The invariants, in short:
+In short:
 
 - Media is read-only. The only writes are guarded metadata and cover updates
   through Audiobookshelf's supported API, each with a pre-read and a read-back.
@@ -25,8 +25,8 @@ The invariants, in short:
 ## Assets and actors
 
 The assets are the owner's library metadata, the target, provider and
-reviewer credentials, the owner password and sessions, and the private
-evidence the product keeps (reports, cover previews, decisions, history).
+reviewer credentials, the owner password and sessions, and the product's
+private evidence (reports, cover previews, decisions, history).
 
 - Network visitor, untrusted: [unauthenticated reach](#unauthenticated-reach).
 - Signed-in owner, full product authority:
@@ -40,7 +40,7 @@ evidence the product keeps (reports, cover previews, decisions, history).
   [schema admission](#schema-admission).
 - Dependencies, untrusted: [scanning](#automated-scanning-boundary).
 
-Anyone who can write the state volume can already replace the whole store;
+Anyone who can write the state volume can replace the whole store;
 the product refuses corrupt or partial state but never repairs it. Typed
 in-process collaborators are trusted; interpreter-level sabotage is out of
 scope.
@@ -81,7 +81,7 @@ visitor who reaches the port first cannot take the workspace
   `422 invalid_password`. Validation errors echo no input.
 - One transaction compares the token in constant time, claims ownership,
   clears the digest and stores the Argon2id verifier; a concurrent loser gets
-  `409`. The token file is then removed. Later steps need a session, and
+  `409`. The token file is removed. Later steps need a session, and
   kickoff closes setup for good.
 
 Startup admits only the exact seeded predecessor, valid current incomplete
@@ -139,7 +139,7 @@ verification every three seconds.
 
 - Exact Host is enforced on every request, exact Origin on every unsafe one.
   Forwarded Host or scheme is honoured only from a trusted proxy; Uvicorn's
-  own proxy handling is off.
+  proxy handling is off.
 - Every request but `GET`, `HEAD` and `OPTIONS` has its body bounded before
   routing, at 2 KiB unless its route needs more (`413 body_too_large`).
 - Every unsafe request needs the session, the CSRF token and an
@@ -160,7 +160,9 @@ verification every three seconds.
 
 The React workspace uses no browser storage, inline script, external origin,
 worker or source map. The loader verifies every asset's path, size, digest
-and build identity before serving an authenticated shell.
+and build identity before serving an authenticated shell. Setup's Start sets
+a cookie, `ml_first_review`, holding no credential. The workspace clears it
+when the first review guide closes.
 
 ### Responses and caching
 
@@ -268,12 +270,12 @@ Per provider, where *5xx* means 500, 502, 503 and 504:
   limit. A request body over 16 KiB is never sent. An over-limit answer
   sends one retry with the first stored author alone, unless that is the
   author list just sent. An
-  audiobook WORK lane that admits one or two books also sends one constant
+  audiobook WORK lane that admits one or two books sends one constant
   audio-edition document per page, keyed by an integer book id: 100 rows a
   page, at most 2 pages per book, inside the same ceilings. A row naming
   another book refuses the whole fan-out
   ([ADR-0090](decisions/0090-hardcover-audio-edition-witness.md)). Its rows
-  also state each edition's image and language, which feed only the square
+  state each edition's image and language, which feed only the square
   audiobook covers of the pre-filter below. An ebook ISBN or WORK lane that
   accepts a book, when the library lists languages and the connection's
   covers are on, sends one constant edition-covers document per page, keyed
@@ -472,9 +474,9 @@ an XML or container parser.
 **Text.** Every value entering a report passes the shared projection grammar:
 forbidden code points, private paths and credentials are refused, never
 repaired. Comparison never strips diacritics or uses fuzzy distance.
-ADR-0096's creator predicates also fold dotted initials ("R.F." and "R. F."
+ADR-0096's creator predicates fold dotted initials ("R.F." and "R. F."
 agree), only in a name whose dotted tokens are letters and that keeps a token
-of two or more letters. Letter count and order still count, no NFKC,
+of two or more letters. Letter count and order count, no NFKC,
 confusable mapping or other dot character applies, a fold that would merge two
 listed creators is skipped, and the fold never removes an agreement the
 unfolded comparison makes. Sidecar belonging compares creators exactly until
@@ -657,7 +659,7 @@ shown in Activity; adding a destination lapses it, and policy activation
 carries forward only current consent, never wider. A grant must match
 a fresh capability probe. A policy or consent change between the browser's
 re-read and the grant goes undetected; a capability or library change is
-still refused.
+refused.
 
 Every claim rechecks backup readiness, capability, authority, consent,
 dependencies, target pre-state, pause and optimistic state in one transaction.
@@ -672,7 +674,7 @@ change to the same field in that gap can be lost.
 
 - A request with an unknown outcome is never resent. A retry passes every
   guard again; withdrawn authority or consent cancels it without a request,
-  and a pre-read already showing the desired value verifies without one.
+  and a pre-read showing the desired value verifies without one.
 - Paired title and subtitle go in one request; both must verify, and a
   partial result is reconciled, never blindly retried.
 - Descriptions are compared as the text Audiobookshelf shows, so another
@@ -715,7 +717,7 @@ Every store follows
 anything but absence or the exact current schema fails closed before any
 mutation. Admission does not rely on SQLite alone:
 
-- A read-only open re-evaluates every CHECK constraint itself, because
+- A read-only open re-evaluates every CHECK constraint, because
   SQLite's read-only integrity check skips them. A CHECK it cannot extract
   refuses.
 - The permission-readiness check misses a CHECK-breaking row, an
