@@ -330,3 +330,19 @@ def test_an_identifier_link_is_a_lane_input_only_on_its_own_lane() -> None:
 def test_a_key_lookup_needs_a_key_link() -> None:
     with pytest.raises(Exception, match="lookup is invalid"):
         MetadataLookup(ProviderQueryKind.LINK, (_title(),))
+
+
+def test_open_library_a_further_reads_miss_is_a_failure_not_a_missing_record() -> None:
+    # Only the linked record's own 404 is an answer (#1477): its author
+    # vanishing mid-read is a failure to read it, which recovery retries.
+    observation = _open_library(
+        {
+            "/works/OL5W.json": _json(_ol_work()),
+            "/works/OL5W/editions.json": _json({"entries": [{"key": "/books/OL9M"}]}),
+            "/books/OL9M.json": _json(_ol_edition()),
+            "/authors/OL7A.json": httpx.Response(404),
+        }
+    )
+    status, merged = _lane_facts(observation)
+    assert status is ProviderStatus.UNAVAILABLE
+    assert not merged

@@ -233,7 +233,7 @@ class InventaireMetadataProvider:
                     title=plan.title,
                     authors=plan.authors,
                     projection="entities-v5.1.1",
-                    execute=lambda: self._observe_lookup(plan, deadline=deadline),
+                    execute=lambda: self._observe_kind(plan, deadline=deadline),
                 )
                 return replace(
                     observation,
@@ -354,7 +354,7 @@ class InventaireMetadataProvider:
             )
         return QualifiedLaneObservation(
             qualify_provider_observation(
-                self._observe_lookup(lookup, deadline=deadline), lookup
+                self._observe_kind(lookup, deadline=deadline), lookup
             )
         )
 
@@ -370,11 +370,17 @@ class InventaireMetadataProvider:
             query_retry=True,
         )
 
+    def _observe_kind(
+        self, lookup: MetadataLookup, *, deadline: float | None
+    ) -> ProviderObservation:
+        """An owner link's key lookup (#1477), or any other lane's lookup."""
+        if lookup.kind is ProviderQueryKind.LINK:
+            return self._observe_link(lookup, deadline=deadline)
+        return self._observe_lookup(lookup, deadline=deadline)
+
     def _observe_lookup(
         self, lookup: MetadataLookup, *, deadline: float | None
     ) -> ProviderObservation:
-        if lookup.kind is ProviderQueryKind.LINK:
-            return self._observe_link(lookup, deadline=deadline)
         if lookup.kind is ProviderQueryKind.ISBN:
             family = lookup.matched_family or _single_isbn_family(lookup.local_claims)
             if family is None:

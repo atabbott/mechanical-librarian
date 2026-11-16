@@ -99,8 +99,10 @@ response reuse as every other; it adds no origin, credential or host.
 - **Hardcover**: one constant `BookById` document whose only variable is the
   integer book id the link stores.
 - **Open Library**: `GET` of the stored work or edition key's JSON on the
-  fixed origin, then the same counted detail reads a search makes (one
-  edition or work, at most four authors).
+  fixed origin, then counted detail reads: for a work, its edition listing
+  (`/editions.json?limit=1`) and that one edition; for an edition, its work;
+  and at most four authors. Only the linked record's own 404 reads as
+  missing; a further read's failure is a failure.
 - **Inventaire**: one entities `GET` naming the stored `wd:` or `inv:` URI.
 - An edition link is asked as its ISBN and a recording link as its ASIN, on
   each source's existing identifier lane, built from the stored identifier

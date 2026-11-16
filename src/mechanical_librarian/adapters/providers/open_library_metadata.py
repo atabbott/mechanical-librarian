@@ -306,7 +306,7 @@ class OpenLibraryMetadataProvider:
                     title=plan.title,
                     authors=plan.authors,
                     projection=projection,
-                    execute=lambda: self._observe_lookup(plan, deadline=deadline),
+                    execute=lambda: self._observe_kind(plan, deadline=deadline),
                 )
                 return replace(value, request_accounting=ledger.accounting())
         if type(plan) is not MetadataDiscoveryPlan:
@@ -455,9 +455,17 @@ class OpenLibraryMetadataProvider:
             )
         return QualifiedLaneObservation(
             qualify_provider_observation(
-                self._observe_lookup(lookup, deadline=deadline), lookup
+                self._observe_kind(lookup, deadline=deadline), lookup
             )
         )
+
+    def _observe_kind(
+        self, lookup: MetadataLookup, *, deadline: float | None
+    ) -> ProviderObservation:
+        """An owner link's key lookup (#1477), or any other lane's lookup."""
+        if lookup.kind is ProviderQueryKind.LINK:
+            return self._observe_link(lookup, deadline=deadline)
+        return self._observe_lookup(lookup, deadline=deadline)
 
     def _observe_lookup(
         self,
@@ -466,8 +474,6 @@ class OpenLibraryMetadataProvider:
         deadline: float | None,
         _shaped: WorkQuery | None = None,
     ) -> ProviderObservation:
-        if lookup.kind is ProviderQueryKind.LINK:
-            return self._observe_link(lookup, deadline=deadline)
         if lookup.kind is ProviderQueryKind.WORK and _shaped is None:
             if lookup.title is None or not lookup.authors:
                 return ProviderObservation(
@@ -526,8 +532,6 @@ class OpenLibraryMetadataProvider:
                     return last
             return last
         local_claims = lookup.local_claims
-        # A companion or owner-link ISBN is asked on its own lane and never
-        # compared (#1468, #1477): it is read here for the query alone.
         usable = tuple(
             sorted(
                 (
@@ -809,14 +813,16 @@ class OpenLibraryMetadataProvider:
             )
 
         def read(path: str, params: dict[str, str] | None = None) -> dict[str, Any]:
-            # Each read is one counted detail request, as a search's are.
+            # Each read is one counted detail request, as a search's are. Only
+            # the linked record's own miss is an answer; a further read's
+            # failure is a failure to read it.
             def execute() -> _DetailResult:
                 try:
                     value = self._request(
                         OPEN_LIBRARY_ORIGIN + path,
                         params=params,
                         deadline=deadline,
-                        classify=_classify_link,
+                        classify=_classify,
                     )
                 except ProviderFailure as error:
                     return _DetailResult(None, error.status)

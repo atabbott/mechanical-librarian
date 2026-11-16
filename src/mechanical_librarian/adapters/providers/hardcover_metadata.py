@@ -381,7 +381,7 @@ class HardcoverMetadataProvider:
                     title=plan.title,
                     authors=plan.authors,
                     projection=projection,
-                    execute=lambda: self._observe_lookup(plan, deadline=deadline),
+                    execute=lambda: self._observe_kind(plan, deadline=deadline),
                 )
                 return replace(value, request_accounting=ledger.accounting())
         if type(plan) is not MetadataDiscoveryPlan:
@@ -455,7 +455,7 @@ class HardcoverMetadataProvider:
                     title=lookup.title,
                     authors=lookup.authors,
                     projection=_projection(lookup.kind),
-                    execute=lambda: self._observe_lookup(lookup, deadline=deadline),  # noqa: B023 - `ledger.resolve` calls `execute` before it returns, so the lambda only ever sees this lane's lookup
+                    execute=lambda: self._observe_kind(lookup, deadline=deadline),  # noqa: B023 - `ledger.resolve` calls `execute` before it returns, so the lambda only ever sees this lane's lookup
                 )
                 observation = qualify_provider_observation(physical, lookup)
                 audio_editions, audio_covers = self._audio_editions(
@@ -520,6 +520,14 @@ class HardcoverMetadataProvider:
             request_accounting=ledger.accounting(),
         )
 
+    def _observe_kind(
+        self, lookup: MetadataLookup, *, deadline: float | None
+    ) -> ProviderObservation:
+        """An owner link's key lookup (#1477), or any other lane's lookup."""
+        if lookup.kind is ProviderQueryKind.LINK:
+            return self._observe_link(lookup, deadline=deadline)
+        return self._observe_lookup(lookup, deadline=deadline)
+
     def _observe_lookup(
         self,
         lookup: MetadataLookup,
@@ -529,8 +537,6 @@ class HardcoverMetadataProvider:
     ) -> ProviderObservation:
         if lookup.kind is ProviderQueryKind.WORK and _shaped is None:
             return self._observe_work_ladder(lookup, deadline=deadline)
-        if lookup.kind is ProviderQueryKind.LINK:
-            return self._observe_link(lookup, deadline=deadline)
         # The companion ISBN lane (#1468) asks with the companion's ISBN; it
         # is read for the query alone and never compared.
         local_claims = lookup.local_claims
