@@ -19,7 +19,9 @@ from mechanical_librarian.application.metadata_report import (
     ProviderCoverDescriptor,
     ProviderLaneResult,
     merge_phase_observations,
+    owner_link_discovery_lane,
     owner_link_plan,
+    persisted_lane_result,
     provider_observation,
 )
 from mechanical_librarian.domain.metadata_report import (
@@ -27,7 +29,9 @@ from mechanical_librarian.domain.metadata_report import (
     OwnerLinkFacts,
     ProviderCandidate,
     ProviderLaneDispatch,
+    ProviderLaneObservation,
     ProviderObservation,
+    ProviderRequestAccounting,
     ProviderStatus,
     owner_link_anchor_values,
 )
@@ -181,7 +185,23 @@ def settle_owner_link(
             if len(survivors) == len(lane.candidates)
             else _without_records(observation, plan, tuple(survivors))
         )
-    statuses = {lane.status for value in settled for lane in value.lanes}
+    facts = _settled_facts(
+        lookup,
+        tuple(lane for value in settled for lane in value.lanes),
+        tuple(kept),
+        tuple(reasons),
+    )
+    return OwnerLinkPhase(facts, plan, tuple(settled), descriptors)
+
+
+def _settled_facts(
+    lookup: OwnerLinkLookup,
+    lanes: tuple[ProviderLaneObservation, ...],
+    kept: tuple[tuple[str, ProviderCandidate], ...],
+    reasons: tuple[OwnerLinkContradiction, ...],
+) -> OwnerLinkFacts:
+    """Name what the link's lanes found, in the outcome precedence."""
+    statuses = {lane.status for lane in lanes}
     if kept:
         outcome = OwnerLinkOutcome.ADMITTED
     elif reasons:
@@ -191,8 +211,7 @@ def settle_owner_link(
     elif any(
         OWNER_LINK_MERGED_DIAGNOSTIC in lane.diagnostics
         and lane.status is ProviderStatus.NO_MATCH
-        for value in settled
-        for lane in value.lanes
+        for lane in lanes
     ):
         outcome = OwnerLinkOutcome.MERGED
     elif ProviderStatus.NO_MATCH in statuses:
@@ -209,7 +228,7 @@ def settle_owner_link(
         ),
         None,
     )
-    facts = OwnerLinkFacts(
+    return OwnerLinkFacts(
         lookup.medium,
         lookup.scope.value,
         lookup.provider,
@@ -218,7 +237,76 @@ def settle_owner_link(
         reasons[0].value if outcome is OwnerLinkOutcome.CONTRADICTED else None,
         anchor,
     )
-    return OwnerLinkPhase(facts, plan, tuple(settled), descriptors)
+
+
+def resettled_owner_link(
+    facts: OwnerLinkFacts,
+    providers: tuple[ProviderObservation, ...],
+    reason: str | None,
+) -> OwnerLinkFacts:
+    """A recovery successor's link facts, over every provider's link lane.
+
+    The retried lane was re-checked before it joined (`reason` names its
+    failure, if any); every other link lane is the source's, already
+    re-checked, so what each keeps is kept and the earlier contradiction
+    still counts.
+    """
+    lookup = facts.lookup
+    identity = owner_link_discovery_lane(lookup).identity
+    lanes: list[ProviderLaneObservation] = []
+    kept: list[tuple[str, ProviderCandidate]] = []
+    for observation in providers:
+        candidates = {value.identity: value for value in observation.candidates}
+        for lane in observation.lanes:
+            if lane.identity != identity:
+                continue
+            lanes.append(lane)
+            kept.extend(
+                (observation.provider, candidates[member.edition_identity])
+                for member in lane.candidates
+            )
+    reasons = tuple(
+        OwnerLinkContradiction(value)
+        for value in (reason, facts.reason)
+        if value is not None
+    )
+    return _settled_facts(lookup, tuple(lanes), tuple(kept), reasons)
+
+
+def phase_part(
+    plan: MetadataDiscoveryPlan,
+    observation: ProviderObservation,
+    identities: frozenset[str],
+    *,
+    accounted: bool,
+) -> ProviderObservation:
+    """One phase's lanes of a provider's observation, carried byte for byte.
+
+    A recovery successor retries one phase at a time (S22). The retried
+    phase's part carries the observation's request accounting and the other's
+    none, so the two rejoin to exactly what was spent.
+    """
+    planned = {lane.identity: lane for lane in plan.lanes}
+    candidates = {value.identity: value for value in observation.candidates}
+    return provider_observation(
+        observation.provider,
+        tuple(
+            persisted_lane_result(
+                planned[lane.identity],
+                lane,
+                candidates,
+                observation,
+                observation.accessed_at,
+            )
+            for lane in observation.lanes
+            if lane.identity in identities
+        ),
+        authority=observation.authority,
+        diagnostics=observation.diagnostics,
+        request_accounting=(
+            observation.request_accounting if accounted else ProviderRequestAccounting()
+        ),
+    )
 
 
 def _without_records(

@@ -91,6 +91,8 @@ class ProviderRetryReceipt(Protocol):
         self, source_report_id: str, report: MetadataReport, staged_at: int
     ) -> str: ...
 
+    def mark_owner_link_work_fresh(self, report: MetadataReport) -> None: ...
+
 
 class RetrySuccessorObservers(Protocol):
     """Build the reader and inspector one successor observation requires.
@@ -220,6 +222,13 @@ class ProviderRecoveryActivation:
         if mount is None:
             raise CurrentnessError("target or media changed")
         target, inspector, audio_inspector = self._observers(connection, library, mount)
+        admitted: list[MetadataReport] = []
+
+        def link_admitted(bound: ReportRepository, report: MetadataReport) -> None:
+            # The successor's own transaction marks the work fresh (S22).
+            cast("ProviderRetryReceipt", bound).mark_owner_link_work_fresh(report)
+            admitted.append(report)
+
         try:
             serialized = GenerateProviderRetrySuccessor(
                 target=target,
@@ -243,6 +252,7 @@ class ProviderRecoveryActivation:
                 ),
                 heartbeat=heartbeat,
                 operational_evidence=operational_evidence,
+                owner_link_admitted=link_admitted,
             ).run(
                 job.source_report_id,
                 tuple(json.loads(job.lane_ids)),
@@ -270,6 +280,8 @@ class ProviderRecoveryActivation:
                     pipeline.hold_connection(job.target_connection, cause.code)
                 raise TargetConnectionHeld("target connection is held") from None
             raise
+        if admitted and pipeline is not None:
+            _request_scan(pipeline, job.target_connection, job.library)
         return MetadataReport.from_json(serialized).report_id
 
     def _complete_successor(
@@ -416,3 +428,23 @@ class ProviderRecoveryActivation:
             outbox_id,
             delivered_at=max(self._clock(), created_at),
         )
+
+
+def _request_scan(
+    pipeline: ReviewPreparationPipeline, connection: str, library: str
+) -> None:
+    """Ask for the scan that prepares a newly linked work, unless one is owed.
+
+    The successor has committed with its work marked fresh, so a refused
+    request is not raised: the mark stays and the library's next scan
+    prepares the work (#1477, S22), as a verified cover write's does.
+    """
+    try:
+        current = pipeline.progress(connection, library)
+        if current is not None and (
+            current.state == "queued" or current.rescan_requested
+        ):
+            return
+        pipeline.request(connection, library)
+    except ReviewPipelineError:
+        return

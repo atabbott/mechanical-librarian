@@ -1602,6 +1602,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             source_report_id, report, staged_at
         )
 
+    def mark_owner_link_work_fresh(self, report: MetadataReport) -> None:
+        self._review_preparation.mark_owner_link_work_fresh(report)
+
     def provider_retry_work_id(self, report_id: str) -> str:
         return self._review_preparation.provider_retry_work_id(report_id)
 

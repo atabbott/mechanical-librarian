@@ -12,6 +12,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from functools import partial
+from typing import cast
 
 from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.application.configuration import (
@@ -49,12 +50,21 @@ from mechanical_librarian.application.metadata_report import (
     audiobook_carried_plan,
     audiobook_discovery_plan,
     companion_binding_plan,
+    merge_phase_observations,
     metadata_discovery_plan,
+    owner_link_discovery_lane,
+    owner_link_plan,
+    persisted_lane_result,
     provider_binding,
     provider_observation,
     refit_companion_books,
     require_report_current,
     with_lane_dispatch,
+)
+from mechanical_librarian.application.owner_link_preparation import (
+    phase_part,
+    resettled_owner_link,
+    settle_owner_link,
 )
 from mechanical_librarian.application.provider_evidence import (
     ProviderOperationalEvidence,
@@ -75,6 +85,7 @@ from mechanical_librarian.domain.metadata_report import (
     AUDIO_FILE_FORMATS,
     TARGET_ADMISSION_BASIS,
     MetadataReport,
+    OwnerLinkFacts,
     ProviderCandidate,
     ProviderLaneObservation,
     ProviderObservation,
@@ -84,6 +95,11 @@ from mechanical_librarian.domain.metadata_report import (
     ReportValueError,
     TargetFacts,
     candidate_asins,
+)
+from mechanical_librarian.domain.owner_link import (
+    OwnerLinkLookup,
+    OwnerLinkScope,
+    owner_link_anchors,
 )
 from mechanical_librarian.domain.provider_recovery import (
     MAX_RECOVERY_DELAY,
@@ -215,6 +231,9 @@ class GenerateProviderRetrySuccessor:
         heartbeat: Callable[[], None] = lambda: None,
         wall_clock: Callable[[], float] = time.time,
         operational_evidence: Callable[[RecoveryAttemptEvidence], None] | None = None,
+        owner_link_admitted: Callable[
+            [ReportRepository, MetadataReport], object
+        ] = lambda bound, report: None,
     ) -> None:
         self._target = target
         self._inspector = inspector
@@ -225,6 +244,7 @@ class GenerateProviderRetrySuccessor:
             or not callable(after_publication)
             or not callable(heartbeat)
             or not callable(wall_clock)
+            or not callable(owner_link_admitted)
         ):
             raise ProviderRetrySuccessorError("provider retry composition is invalid")
         self._provider_resolver = provider_resolver
@@ -234,6 +254,7 @@ class GenerateProviderRetrySuccessor:
         self._heartbeat = heartbeat
         self._wall_clock = wall_clock
         self._operational_evidence = operational_evidence
+        self._owner_link_admitted = owner_link_admitted
 
     def run(
         self,
@@ -271,14 +292,13 @@ class GenerateProviderRetrySuccessor:
             # plan: which plan a per-ASIN provider was observed under is a fact
             # about that observation, not about the report alone.
             provider = self._provider(source, provider_name, adapter, generation)
-            original = self._observation(source, provider)
-            plan = self._plan(source, original)
-            selected = self._selected(
-                plan,
-                original,
+            scope = self._scope(
+                source,
+                self._observation(source, provider),
                 lane_identities,
                 generation_woken=generation_woken,
             )
+            plan, original, selected = scope.plan, scope.part, scope.selected
             # This is the final external preflight: no factory or provider call
             # may follow a changed source package or rebound configuration.
             if (
@@ -337,7 +357,8 @@ class GenerateProviderRetrySuccessor:
                     else None,
                     evidence=replace(evidence, outcome=failure),
                 )
-            merged = self._merged(plan, original, selected, replacement)
+            replacement, reason = scope.rechecked(replacement)
+            merged = scope.rejoined(self._merged(plan, original, selected, replacement))
             providers = tuple(
                 sorted(
                     (
@@ -348,25 +369,7 @@ class GenerateProviderRetrySuccessor:
                 )
             )
             _refuse_moved_companion_links(source, providers)
-            successor = MetadataReport.create(
-                target=source.target,
-                file=source.file,
-                local_claims=source.local_claims,
-                local_reasons=source.local_reasons,
-                providers=providers,
-                cover_sources=source.cover_sources,
-                # A successor replaces one provider's lanes and nothing the
-                # inspector read. The audio section travels unchanged, and the
-                # report refuses an audio file without one, so a retry over an
-                # audiobook could not publish without carrying it. So do the
-                # library languages it was prepared under (#1315).
-                audio=source.audio,
-                library_languages=source.library_languages,
-                cover_recovery=source.cover_recovery,
-                # The companion EPUB is evidence the source read, and its
-                # lanes replay against it (#1319, #1468).
-                companion=source.companion,
-            )
+            successor = _successor(source, providers, reason)
 
             def currentness() -> bool:
                 if not require_report_current(
@@ -386,6 +389,11 @@ class GenerateProviderRetrySuccessor:
 
             def stage(bound: ReportRepository, report: MetadataReport) -> None:
                 self._after_publication(bound, report)
+                # A link the retry now admits has never anchored the other
+                # sources: the work is prepared afresh, in this transaction,
+                # and the next ordinary preparation runs the anchor (S22).
+                if owner_link_newly_admitted(source, report):
+                    self._owner_link_admitted(bound, report)
 
             published = repository.publish(
                 successor,
@@ -468,9 +476,90 @@ class GenerateProviderRetrySuccessor:
             raise CurrentnessError("target or media changed")
         return document, package
 
+    def _scope(
+        self,
+        source: MetadataReport,
+        original: ProviderObservation,
+        identities: tuple[str, ...],
+        *,
+        generation_woken: bool,
+    ) -> _RetryScope:
+        """Choose the phase a retry dispatches: the link's, or the main one.
+
+        A provider asked through an owner link holds its link lane beside its
+        main lanes (#1477). The link lane is rebuilt from the source's own
+        link facts, as the carried lane is from its claim (ADR-0088 clause 3),
+        and retried alone, first: when it now admits, the work is prepared
+        afresh anyway. Otherwise the main lanes are retried under the plan the
+        source's link anchored.
+        """
+        facts = source.owner_link
+        link_lane = (
+            None
+            if facts is None or facts.outcome == "medium_changed"
+            else owner_link_discovery_lane(facts.lookup)
+        )
+        link_ids = frozenset(
+            lane.identity
+            for lane in original.lanes
+            if link_lane is not None and lane.identity == link_lane.identity
+        )
+        main_lanes = tuple(
+            lane for lane in original.lanes if lane.identity not in link_ids
+        )
+        plan, base = self._plan(source, original.authority, main_lanes)
+        if not link_ids:
+            return _RetryScope(
+                plan,
+                original,
+                self._selected(
+                    plan, original, identities, generation_woken=generation_woken
+                ),
+            )
+        lookup = cast("OwnerLinkFacts", facts).lookup
+        link_plan = owner_link_plan(base, lookup)
+        retry_link = bool(link_ids & set(identities))
+        try:
+            link_part = phase_part(link_plan, original, link_ids, accounted=retry_link)
+            main_part = phase_part(
+                plan,
+                original,
+                frozenset(lane.identity for lane in main_lanes),
+                accounted=not retry_link,
+            )
+        except KeyError as error:
+            raise ProviderRetrySuccessorError(
+                "provider retry source is invalid"
+            ) from error
+        if retry_link:
+            return _RetryScope(
+                link_plan,
+                link_part,
+                self._selected(
+                    link_plan,
+                    link_part,
+                    tuple(sorted(link_ids)),
+                    generation_woken=generation_woken,
+                ),
+                (plan, main_part),
+                lookup,
+                source.target.current_title or "",
+            )
+        return _RetryScope(
+            plan,
+            main_part,
+            self._selected(
+                plan, main_part, identities, generation_woken=generation_woken
+            ),
+            (link_plan, link_part),
+        )
+
     def _plan(
-        self, source: MetadataReport, original: ProviderObservation
-    ) -> MetadataDiscoveryPlan:
+        self,
+        source: MetadataReport,
+        authority: str | None,
+        lanes: tuple[ProviderLaneObservation, ...],
+    ) -> tuple[MetadataDiscoveryPlan, MetadataDiscoveryPlan]:
         """Rebuild the plan the source report was observed under.
 
         The media kind decides which plan builder rebuilds it: an audiobook's
@@ -490,6 +579,10 @@ class GenerateProviderRetrySuccessor:
         product lane added (#1316). That lane is rebuilt from the source's own
         `prior_admission` claim by the same function, so a retry looks the
         carried ASIN up again under the lane identity it failed under.
+
+        While the source's owner link anchors, its WORK lanes were asked with
+        the link's anchor, and are rebuilt so (#1477). The second plan is the
+        unanchored one the link phase was built from.
         """
         snapshot = self._target.read(source.target.item)
         audio = _is_audio(source)
@@ -502,39 +595,55 @@ class GenerateProviderRetrySuccessor:
         # The feed is rebuilt from the whole plan, as preparation built it: a
         # plan whose only lane is the companion ISBN lane feeds its leads on
         # that lane's references, which the binding's own plan drops (#1468).
-        full = (
-            audiobook_discovery_plan(
-                snapshot,
-                source.local_claims,
-                audio=source.audio,
-                library_languages=source.library_languages,
-                companion=source.companion,
-            )
-            if audio
-            else metadata_discovery_plan(
-                snapshot,
-                source.local_claims,
-                library_languages=source.library_languages,
-            )
+        facts = source.owner_link
+        anchored = (
+            facts is not None
+            and facts.outcome != "medium_changed"
+            and owner_link_anchors(OwnerLinkScope(facts.scope))
         )
-        plan = companion_binding_plan(full, original.authority) if audio else full
+        anchor = None if facts is None else facts.anchor
+
+        def built(anchoring: bool) -> MetadataDiscoveryPlan:
+            return (
+                audiobook_discovery_plan(
+                    snapshot,
+                    source.local_claims,
+                    audio=source.audio,
+                    library_languages=source.library_languages,
+                    companion=source.companion,
+                    anchored=anchoring,
+                    anchor=anchor,
+                )
+                if audio
+                else metadata_discovery_plan(
+                    snapshot,
+                    source.local_claims,
+                    library_languages=source.library_languages,
+                    anchored=anchoring,
+                    anchor=anchor,
+                )
+            )
+
+        base = built(False)
+        full = built(True) if anchored else base
+        plan = companion_binding_plan(full, authority) if audio else full
         if plan.overflow:
             raise ProviderRetrySuccessorError("provider retry source is invalid")
-        if audio and original.authority == "audible_catalog":
+        if audio and authority == "audible_catalog":
             carried = audiobook_carried_plan(plan)
             if carried.lanes != plan.lanes:
-                return carried
+                return carried, base
         if (
             audio
-            and original.lanes
-            and all(lane.kind is ProviderQueryKind.ASIN for lane in original.lanes)
+            and lanes
+            and all(lane.kind is ProviderQueryKind.ASIN for lane in lanes)
             and not any(lane.kind is ProviderQueryKind.ASIN for lane in plan.lanes)
         ):
             feed = audiobook_asin_feed_plan(snapshot, full, source.providers)
             if feed is None:
                 raise ProviderRetrySuccessorError("provider retry source is invalid")
-            return feed
-        return plan
+            return feed, base
+        return plan, base
 
     def _provider(
         self, source: MetadataReport, name: str, adapter: str, generation: int
@@ -782,88 +891,13 @@ class GenerateProviderRetrySuccessor:
         aggregate_accessed_at = replacement.accessed_at or original.accessed_at
 
         def result(lane: MetadataDiscoveryLane) -> ProviderLaneResult:
-            observation = (
-                new_lanes[lane.identity]
-                if lane.identity in selected_ids
-                else old_lanes[lane.identity]
-            )
-            candidates = (
-                new_candidates if lane.identity in selected_ids else old_candidates
-            )
-            evidence = replacement if lane.identity in selected_ids else original
-            overflow = (
-                evidence.edition_enrichment_overflow
-                if lane.kind.value == "work"
-                and observation.status is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
-                else None
-            )
-            return ProviderLaneResult(
+            selected_lane = lane.identity in selected_ids
+            return persisted_lane_result(
                 lane,
-                observation.status,
-                tuple(
-                    candidates[item.edition_identity] for item in observation.candidates
-                ),
+                (new_lanes if selected_lane else old_lanes)[lane.identity],
+                new_candidates if selected_lane else old_candidates,
+                replacement if selected_lane else original,
                 aggregate_accessed_at,
-                overflow,
-                observation.diagnostics,
-                observation.dispatch_lineage,
-                observation.transformation_lineage,
-                exhausted_dispatch=observation.exhausted_dispatch,
-                recording_lookup_hints=observation.recording_lookup_hints,
-                dispatch=observation.dispatch,
-                # What an ASIN lane refused stays with the stub it explains.
-                refused_products=tuple(
-                    product
-                    for product in evidence.refused_products
-                    if lane.kind is ProviderQueryKind.ASIN
-                    and any(
-                        item.edition_identity == product.identity
-                        for item in observation.candidates
-                    )
-                ),
-                # Each lane keeps how it kept its recordings (#1723): an
-                # unselected lane its old values, a retried lane its new
-                # dispatch's. A WORK lane's too is copied, never read again
-                # off the merged products, whose evidence another lane's copy
-                # may have widened, so an unselected lane stays byte for byte.
-                admission_bases=tuple(
-                    sorted(
-                        (item.edition_identity, item.admission_basis)
-                        for item in observation.candidates
-                        if item.admission_basis is not None
-                    )
-                ),
-                admission_bases_recorded=True,
-                # A WORK lane's refused answers stay with the lane that added
-                # them (#1355): a retried lane's are its new dispatch's, and an
-                # identity whose record the observation no longer holds stays
-                # counted as truncated.
-                identity_refused_candidates=tuple(
-                    candidate
-                    for candidate in evidence.identity_refused_candidates
-                    if candidate.identity in observation.identity_refused_new
-                ),
-                identity_refused_dropped=tuple(
-                    identity
-                    for identity in observation.identity_refused_new
-                    if identity
-                    not in {
-                        candidate.identity
-                        for candidate in evidence.identity_refused_candidates
-                    }
-                ),
-                # An audio edition stays with the WORK lane that admitted its
-                # book (#962); the aggregate drops any whose work is gone.
-                audio_editions=tuple(
-                    edition
-                    for edition in evidence.audio_editions
-                    if lane.kind in {ProviderQueryKind.WORK, ProviderQueryKind.ISBN}
-                    and observation.status is ProviderStatus.CANDIDATES
-                    and any(
-                        item.edition_identity == edition.work_identity
-                        for item in observation.candidates
-                    )
-                ),
             )
 
         # Merge over the observed lanes only: retrying an asserted lane that
@@ -959,6 +993,90 @@ class GenerateProviderRetrySuccessor:
             if previous.to_data() != lane.to_data():
                 raise ProviderRetrySuccessorError("provider retry lanes conflict")
         return result
+
+
+@dataclass(frozen=True, slots=True)
+class _RetryScope:
+    """The phase of one provider's observation a retry dispatches (#1477).
+
+    `part` is that phase's lanes of the source observation and `other` the
+    rest, rejoined after the merge. `link` is set when the retried phase is
+    the owner link's, whose answer is re-checked as the link phase's is.
+    """
+
+    plan: MetadataDiscoveryPlan
+    part: ProviderObservation
+    selected: tuple[MetadataDiscoveryLane, ...]
+    other: tuple[MetadataDiscoveryPlan, ProviderObservation] | None = None
+    link: OwnerLinkLookup | None = None
+    work_title: str = ""
+
+    def rechecked(
+        self, replacement: ProviderObservation
+    ) -> tuple[ProviderObservation, str | None]:
+        """A retried link lane, re-checked, and why its record failed."""
+        if self.link is None:
+            return replacement, None
+        phase = settle_owner_link(
+            self.link, self.plan, (replacement,), (), work_title=self.work_title
+        )
+        facts = cast("OwnerLinkFacts", phase.facts)
+        return phase.observations[0], facts.reason
+
+    def rejoined(self, merged: ProviderObservation) -> ProviderObservation:
+        """The merged phase beside the other, link lanes first as prepared."""
+        if self.other is None or not self.other[1].lanes:
+            return merged
+        mine = (self.plan, merged)
+        return merge_phase_observations(
+            (mine, self.other) if self.link is not None else (self.other, mine)
+        )
+
+
+def _successor(
+    source: MetadataReport,
+    providers: tuple[ProviderObservation, ...],
+    reason: str | None,
+) -> MetadataReport:
+    """The successor report: the source with one provider's lanes replaced."""
+    return MetadataReport.create(
+        target=source.target,
+        file=source.file,
+        local_claims=source.local_claims,
+        local_reasons=source.local_reasons,
+        providers=providers,
+        cover_sources=source.cover_sources,
+        # A successor replaces one provider's lanes and nothing the inspector
+        # read. The audio section travels unchanged, and the report refuses an
+        # audio file without one, so a retry over an audiobook could not
+        # publish without carrying it. So do the library languages it was
+        # prepared under (#1315).
+        audio=source.audio,
+        library_languages=source.library_languages,
+        cover_recovery=source.cover_recovery,
+        # The companion EPUB is evidence the source read, and its lanes
+        # replay against it (#1319, #1468).
+        companion=source.companion,
+        # The link facts are settled again over every provider's link lane,
+        # the retried one re-checked (#1477, S22).
+        owner_link=(
+            source.owner_link
+            if source.owner_link is None
+            or source.owner_link.outcome == "medium_changed"
+            else resettled_owner_link(source.owner_link, providers, reason)
+        ),
+    )
+
+
+def owner_link_newly_admitted(
+    source: MetadataReport, successor: MetadataReport
+) -> bool:
+    """Whether a successor admits the owner link its source had not."""
+    return (
+        successor.owner_link is not None
+        and successor.owner_link.outcome == "admitted"
+        and (source.owner_link is None or source.owner_link.outcome != "admitted")
+    )
 
 
 def _refuse_moved_companion_links(
