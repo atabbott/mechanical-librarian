@@ -1187,3 +1187,71 @@ def test_a_contributor_candidate_stripping_a_current_mark_is_ineligible(
     proposal["candidates"][0]["value"] = {"kind": "list", "value": candidate}
     decision = decide_shadow_packet(_rebuild(data)).decisions[0]
     assert (decision.recommendation, decision.reason_code) == (recommendation, reason)
+
+
+def _owner_link_packet(*, owner_link_only: bool) -> ShadowReviewPacket:
+    data = json.loads(_packet().to_json())
+    data["proposals"][0]["candidates"][0]["decision_summary"]["owner_link_only"] = (
+        owner_link_only
+    )
+    return _rebuild(data)
+
+
+def test_owner_link_only_candidate_is_not_decided_and_names_its_alternative() -> None:
+    # Shadow-first (#1477, S26): a value only the owner's link or its anchor
+    # admitted stays with the owner; the decision notes what would be admitted.
+    packet = _owner_link_packet(owner_link_only=True)
+    decision = decide_shadow_packet(packet).decisions[0]
+    candidate_id = packet.proposals[0]["candidates"][0]["candidate_id"]
+    assert "manual" == decision.recommendation
+    assert "owner_link_unqualified" == decision.reason_code
+    assert candidate_id == decision.would_admit
+    assert decision.candidate_id is None
+    assert {"alternative_reference": candidate_id, "rule": "owner_link"} == (
+        _decision_outcome(decision).to_data()["would_admit"]
+    )
+
+
+def test_unlinked_candidate_still_decides_without_a_note() -> None:
+    decision = decide_shadow_packet(
+        _owner_link_packet(owner_link_only=False)
+    ).decisions[0]
+    assert "recommend_candidate" == decision.recommendation
+    assert "unique_supported_candidate" == decision.reason_code
+    assert decision.would_admit is None
+    assert "would_admit" not in decision.to_data()
+
+
+def test_owner_link_gate_gives_no_note_when_the_ungated_engine_also_abstains() -> None:
+    data = json.loads(_packet(local_support=0).to_json())
+    data["proposals"][0]["candidates"][0]["decision_summary"]["owner_link_only"] = True
+    decision = decide_shadow_packet(_rebuild(data)).decisions[0]
+    assert "insufficient_support" == decision.reason_code
+    assert decision.would_admit is None
+
+
+def test_would_admit_note_survives_the_decision_set_round_trip() -> None:
+    result = decide_shadow_packet(_owner_link_packet(owner_link_only=True))
+    restored = ShadowDecisionSet.from_json(result.to_json())
+    assert result.decisions[0].would_admit == restored.decisions[0].would_admit
+    assert result.to_json() == restored.to_json()
+
+
+def test_would_admit_note_is_closed_to_its_own_reason() -> None:
+    decision = decide_shadow_packet(
+        _owner_link_packet(owner_link_only=False)
+    ).decisions[0]
+    with pytest.raises(ShadowDecisionError):
+        replace(decision, would_admit="alternative_" + "2" * 64)
+
+
+def _decision_outcome(decision):
+    from mechanical_librarian.domain.shadow_outcome import _decision_field_outcome
+
+    return _decision_field_outcome(
+        decision,
+        catalogue_sha256="0" * 64,
+        category="title_layout",
+        policy_option="preserve",
+        policy_destination="ask",
+    )

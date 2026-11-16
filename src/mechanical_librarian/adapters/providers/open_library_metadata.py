@@ -30,6 +30,7 @@ from mechanical_librarian.adapters.providers.sdk import (
 )
 from mechanical_librarian.adapters.providers.visible_text import stated_description
 from mechanical_librarian.application.metadata_report import (
+    OWNER_LINK_MERGED_DIAGNOSTIC,
     CoverRedirects,
     MetadataDiscoveryPlan,
     MetadataLookup,
@@ -41,6 +42,7 @@ from mechanical_librarian.application.metadata_report import (
     identifier_suppresses_discovery,
     merge_provider_cover_descriptors,
     observe_work_ladder,
+    owner_link_lane_diagnostics,
     provider_discovery_lane_order,
     provider_isbn_applicability,
     provider_observation,
@@ -96,6 +98,7 @@ from mechanical_librarian.domain.metadata_report import (
     normalize_title,
     validate_observed_title,
 )
+from mechanical_librarian.domain.owner_link import OwnerLinkLookup
 from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
     WorkDispatchRung,
@@ -113,8 +116,15 @@ _AUTHOR_KEY = re.compile(r"^/authors/OL[1-9][0-9]*A$")
 _SEARCH_AUTHOR_KEY = re.compile(r"^OL[1-9][0-9]*A$")
 _LANGUAGE_KEY = re.compile(r"^/languages/([a-z]{2,3})$")
 _MAX_SEARCH_ROWS = 3
+# One admitted search row: edition key, work key, and the work's authors.
+_Admitted = tuple[str, str, tuple[tuple[str, str | None], ...]]
 _ISBN_SEARCH_PROJECTION = "key,editions,editions.key,editions.isbn"
 _WORK_SEARCH_PROJECTION = "key,author_name,author_key,publisher,publish_date,language,edition_key,editions,editions.key"
+# An owner's link is read by its key (#1477, ADR-0104): the work or edition
+# record, one edition of a work, and at most four of the work's authors.
+_LINK_PROJECTION = "link-key-v1"
+_LINK_EDITIONS_LIMIT = 1
+_LINK_MAX_AUTHORS = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -282,11 +292,7 @@ class OpenLibraryMetadataProvider:
         self._called = True
         if type(plan) is MetadataLookup:
             ledger = _DiscoveryRequestLedger("open_library", "search-v1")
-            projection = (
-                _ISBN_SEARCH_PROJECTION
-                if plan.kind is ProviderQueryKind.ISBN
-                else _WORK_SEARCH_PROJECTION
-            )
+            projection = _projection(plan.kind)
             ledger.register(
                 kind=plan.kind.value,
                 matched_family=plan.matched_family,
@@ -302,7 +308,7 @@ class OpenLibraryMetadataProvider:
                     title=plan.title,
                     authors=plan.authors,
                     projection=projection,
-                    execute=lambda: self._observe_lookup(plan, deadline=deadline),
+                    execute=lambda: self._observe_kind(plan, deadline=deadline),
                 )
                 return replace(value, request_accounting=ledger.accounting())
         if type(plan) is not MetadataDiscoveryPlan:
@@ -318,7 +324,12 @@ class OpenLibraryMetadataProvider:
             lanes=tuple(
                 lane
                 for lane in plan.lanes
-                if lane.kind in {ProviderQueryKind.ISBN, ProviderQueryKind.WORK}
+                if lane.kind
+                in {
+                    ProviderQueryKind.ISBN,
+                    ProviderQueryKind.WORK,
+                    ProviderQueryKind.LINK,
+                }
             ),
         )
         if not served.lanes:
@@ -332,11 +343,7 @@ class OpenLibraryMetadataProvider:
                 matched_family=lane.matched_family,
                 title=lane.title,
                 authors=lane.authors,
-                projection=(
-                    _ISBN_SEARCH_PROJECTION
-                    if lane.kind is ProviderQueryKind.ISBN
-                    else _WORK_SEARCH_PROJECTION
-                ),
+                projection=_projection(lane.kind),
             )
         self._session.ledger = ledger
         descriptors: tuple[ProviderCoverDescriptor, ...] = ()
@@ -360,6 +367,7 @@ class OpenLibraryMetadataProvider:
                     lane.matched_family,
                     audio=plan.audio,
                     companion=plan.companion,
+                    owner_link=plan.owner_link,
                     companion_linked_asins=plan.companion_linked_asins,
                 )
                 lane_result, _ = ledger.resolve(
@@ -367,11 +375,7 @@ class OpenLibraryMetadataProvider:
                     matched_family=lookup.matched_family,
                     title=lookup.title,
                     authors=lookup.authors,
-                    projection=(
-                        _ISBN_SEARCH_PROJECTION
-                        if lookup.kind is ProviderQueryKind.ISBN
-                        else _WORK_SEARCH_PROJECTION
-                    ),
+                    projection=_projection(lookup.kind),
                     execute=lambda: self._observe_lane(lookup, deadline=deadline),  # noqa: B023 - `ledger.resolve` calls `execute` before it returns, so the lambda only ever sees this lane's lookup
                 )
                 observation = lane_result.observation
@@ -381,7 +385,9 @@ class OpenLibraryMetadataProvider:
                         observation.status,
                         observation.candidates,
                         observation.accessed_at,
-                        diagnostics=lane_result.diagnostics,
+                        diagnostics=owner_link_lane_diagnostics(
+                            observation, lane_result.diagnostics
+                        ),
                         dispatch_lineage=observation.dispatch_lineage,
                         transformation_lineage=observation.transformation_lineage,
                         exhausted_dispatch=lane_result.exhausted_dispatch,
@@ -451,9 +457,17 @@ class OpenLibraryMetadataProvider:
             )
         return QualifiedLaneObservation(
             qualify_provider_observation(
-                self._observe_lookup(lookup, deadline=deadline), lookup
+                self._observe_kind(lookup, deadline=deadline), lookup
             )
         )
+
+    def _observe_kind(
+        self, lookup: MetadataLookup, *, deadline: float | None
+    ) -> ProviderObservation:
+        """An owner link's key lookup (#1477), or any other lane's lookup."""
+        if lookup.kind is ProviderQueryKind.LINK:
+            return self._observe_link(lookup, deadline=deadline)
+        return self._observe_lookup(lookup, deadline=deadline)
 
     def _observe_lookup(
         self,
@@ -463,86 +477,9 @@ class OpenLibraryMetadataProvider:
         _shaped: WorkQuery | None = None,
     ) -> ProviderObservation:
         if lookup.kind is ProviderQueryKind.WORK and _shaped is None:
-            if lookup.title is None or not lookup.authors:
-                return ProviderObservation(
-                    self._name,
-                    ProviderStatus.INSUFFICIENT_INPUT,
-                    query_kind=lookup.kind,
-                )
-            last = ProviderObservation(
-                self._name,
-                ProviderStatus.NO_MATCH,
-                query_kind=lookup.kind,
-            )
-            work_queries = work_query_ladder(
-                lookup.title, lookup.authors, audiobook=lookup.audio is not None
-            )
-            if lookup.audio is not None:
-                # Every Open Library audiobook admission measured on #1294 sat
-                # on the first rung, and no later rung or narrowing retry
-                # admitted anything, so an audiobook asks one rung and no
-                # retry (#1309).
-                work_queries = work_queries[:1]
-            if not work_queries:
-                return ProviderObservation(
-                    self._name,
-                    ProviderStatus.INSUFFICIENT_INPUT,
-                    query_kind=lookup.kind,
-                )
-            for work_query in work_queries:
-                shaped_lookup = replace(
-                    lookup,
-                    title=work_query.title,
-                    authors=work_query.authors,
-                )
-                last = self._observe_lookup(
-                    shaped_lookup,
-                    deadline=deadline,
-                    _shaped=work_query,
-                )
-                if last.status is ProviderStatus.CANDIDATES:
-                    return last
-                if (
-                    last.status is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
-                    and lookup.audio is None
-                ):
-                    narrowed = narrowing_work_query(work_query)
-                    return self._observe_lookup(
-                        replace(
-                            lookup,
-                            title=narrowed.title,
-                            authors=narrowed.authors,
-                        ),
-                        deadline=deadline,
-                        _shaped=narrowed,
-                    )
-                if last.status is not ProviderStatus.NO_MATCH:
-                    return last
-            return last
+            return self._observe_work_ladder(lookup, deadline=deadline)
         local_claims = lookup.local_claims
-        usable = tuple(
-            sorted(
-                (
-                    claim
-                    for claim in local_claims
-                    if claim.kind is ClaimKind.ISBN
-                    and claim.canonical is not None
-                    and (
-                        (
-                            lookup.matched_family is None
-                            and claim.applicability in {"ebook", "unknown"}
-                            and claim.basis == "opening_matter"
-                            and claim.rear_provenance is None
-                        )
-                        or (
-                            lookup.matched_family is not None
-                            and isbn_family(claim.canonical) == lookup.matched_family
-                        )
-                    )
-                ),
-                key=lambda claim: (claim.canonical or "", claim.reference),
-            )
-        )
+        usable = _usable_isbn_claims(lookup)
         families = {
             family
             for claim in usable
@@ -597,54 +534,11 @@ class OpenLibraryMetadataProvider:
         try:
             with nullcontext():
                 if lookup.kind is ProviderQueryKind.ISBN:
-                    search = self._request(
-                        OPEN_LIBRARY_SEARCH_URL,
-                        params={
-                            "q": f"isbn:{family}",
-                            "fields": _ISBN_SEARCH_PROJECTION,
-                            "limit": str(_MAX_SEARCH_ROWS),
-                        },
-                        deadline=deadline,
-                    )
-                    admitted: tuple[
-                        tuple[str, str, tuple[tuple[str, str | None], ...]], ...
-                    ] = tuple(
-                        (edition, work, ())
-                        for edition, work in _admitted_candidates(search, family or "")
-                    )
+                    search, admitted = self._isbn_search(family, deadline=deadline)
                 else:
-                    is_narrowed = (
-                        _shaped is not None and _shaped.candidate_limit_narrowing_retry
+                    search, admitted = self._work_search(
+                        lookup, deadline=deadline, shaped=_shaped
                     )
-                    search = self._request(
-                        OPEN_LIBRARY_SEARCH_URL,
-                        params={
-                            **(
-                                {
-                                    "q": (
-                                        f'"{lookup.title or ""}" '
-                                        f'author:"{" ".join(lookup.authors)}"'
-                                    )
-                                }
-                                if is_narrowed
-                                else {
-                                    "title": lookup.title or "",
-                                    "author": " ".join(lookup.authors),
-                                }
-                            ),
-                            "fields": _WORK_SEARCH_PROJECTION,
-                            "limit": str(_MAX_SEARCH_ROWS),
-                        },
-                        deadline=deadline,
-                        query_retry=(
-                            _shaped is not None
-                            and (
-                                _shaped.rung is not WorkDispatchRung.NORMALIZED
-                                or _shaped.candidate_limit_narrowing_retry
-                            )
-                        ),
-                    )
-                    admitted = _admitted_work_candidates(search)
                 if len(admitted) > 2:
                     return result(ProviderStatus.CANDIDATE_LIMIT_EXCEEDED)
                 if not admitted:
@@ -660,98 +554,8 @@ class OpenLibraryMetadataProvider:
                 for identity in sorted(detail_keys):
                     self._session.ledger.register_detail(identity)
 
-                def detail(identity: str) -> dict[str, Any]:
-                    def execute() -> _DetailResult:
-                        try:
-                            value = self._request(
-                                OPEN_LIBRARY_ORIGIN + identity + ".json",
-                                deadline=deadline,
-                            )
-                        except ProviderFailure as error:
-                            return _DetailResult(None, error.status)
-                        return _DetailResult(
-                            _freeze_detail(value),
-                            None,
-                            _unknown_projection_rejections(
-                                value,
-                                schema=_detail_projection_schema(identity),
-                            )
-                            + _parser_optional_rejections(value),
-                        )
-
-                    replay, _ = self._session.ledger.resolve_detail(
-                        identity, execute=execute
-                    )
-                    if replay.status is not None:
-                        raise ProviderFailure(replay.status)
-                    if identity not in self._diagnosed_detail_identities:
-                        self._diagnosed_detail_identities.add(identity)
-                        self._reject_schema_members(replay.optional_rejections)
-                    return _thaw_detail(replay.payload)
-
-                work_documents: dict[str, dict[str, Any]] = {}
-                diagnosed_search_documents: set[int] = set()
-                candidates: list[ProviderCandidate] = []
-                cover_candidates: list[
-                    tuple[
-                        str,
-                        _CoverId,
-                        str,
-                        _CoverId,
-                        dict[str, Any],
-                        dict[str, Any],
-                    ]
-                ] = []
-                for edition_key, work_key, work_authors in admitted:
-                    edition = detail(edition_key)
-                    if work_key not in work_documents:
-                        work_documents[work_key] = detail(work_key)
-                    candidate, edition_cover, work_cover = _candidate(
-                        self._name,
-                        edition_key,
-                        work_key,
-                        edition,
-                        work_documents[work_key],
-                        local_claims,
-                        family,
-                        work_authors,
-                        _search_work_document(search, work_key),
-                        audiobook_work=lookup.audio is not None
-                        and lookup.kind is ProviderQueryKind.WORK,
-                    )
-                    search_work = _search_work_document(search, work_key)
-                    if (
-                        search_work is not None
-                        and id(search_work) not in diagnosed_search_documents
-                    ):
-                        diagnosed_search_documents.add(id(search_work))
-                        self._reject_schema_members(
-                            _unknown_projection_rejections(
-                                search_work,
-                                schema="search",
-                            )
-                            + _parser_optional_rejections(
-                                search_work,
-                                search_projection=True,
-                            )
-                        )
-                    candidates.append(candidate)
-                    cover_candidates.append(
-                        (
-                            edition_key,
-                            edition_cover,
-                            work_key,
-                            work_cover,
-                            edition,
-                            work_documents[work_key],
-                        )
-                    )
-                self._cover_descriptors = _cover_descriptors(
-                    self._name,
-                    lookup.kind,
-                    cover_candidates,
-                    self._pacer.wait,
-                    self._cover_user_agent,
+                candidates = self._shape_admitted(
+                    lookup, search, admitted, local_claims, family, deadline=deadline
                 )
         except ProviderFailure as error:
             self._session.ledger.finalize_pending_details()
@@ -771,6 +575,368 @@ class OpenLibraryMetadataProvider:
             ProviderStatus.CANDIDATES,
             tuple(sorted(candidates, key=lambda candidate: candidate.identity)),
         )
+
+    def _observe_work_ladder(
+        self, lookup: MetadataLookup, *, deadline: float | None
+    ) -> ProviderObservation:
+        """Ask a WORK lookup down its query ladder, rung by rung."""
+        if lookup.title is None or not lookup.authors:
+            return ProviderObservation(
+                self._name,
+                ProviderStatus.INSUFFICIENT_INPUT,
+                query_kind=lookup.kind,
+            )
+        last = ProviderObservation(
+            self._name,
+            ProviderStatus.NO_MATCH,
+            query_kind=lookup.kind,
+        )
+        work_queries = work_query_ladder(
+            lookup.title, lookup.authors, audiobook=lookup.audio is not None
+        )
+        if lookup.audio is not None:
+            # Every Open Library audiobook admission measured on #1294 sat
+            # on the first rung, and no later rung or narrowing retry
+            # admitted anything, so an audiobook asks one rung and no
+            # retry (#1309).
+            work_queries = work_queries[:1]
+        if not work_queries:
+            return ProviderObservation(
+                self._name,
+                ProviderStatus.INSUFFICIENT_INPUT,
+                query_kind=lookup.kind,
+            )
+        for work_query in work_queries:
+            shaped_lookup = replace(
+                lookup,
+                title=work_query.title,
+                authors=work_query.authors,
+            )
+            last = self._observe_lookup(
+                shaped_lookup,
+                deadline=deadline,
+                _shaped=work_query,
+            )
+            if last.status is ProviderStatus.CANDIDATES:
+                return last
+            if (
+                last.status is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
+                and lookup.audio is None
+            ):
+                narrowed = narrowing_work_query(work_query)
+                return self._observe_lookup(
+                    replace(
+                        lookup,
+                        title=narrowed.title,
+                        authors=narrowed.authors,
+                    ),
+                    deadline=deadline,
+                    _shaped=narrowed,
+                )
+            if last.status is not ProviderStatus.NO_MATCH:
+                return last
+        return last
+
+    def _isbn_search(
+        self, family: str | None, *, deadline: float | None
+    ) -> tuple[Any, tuple[_Admitted, ...]]:
+        search = self._request(
+            OPEN_LIBRARY_SEARCH_URL,
+            params={
+                "q": f"isbn:{family}",
+                "fields": _ISBN_SEARCH_PROJECTION,
+                "limit": str(_MAX_SEARCH_ROWS),
+            },
+            deadline=deadline,
+        )
+        admitted: tuple[_Admitted, ...] = tuple(
+            (edition, work, ())
+            for edition, work in _admitted_candidates(search, family or "")
+        )
+        return search, admitted
+
+    def _work_search(
+        self,
+        lookup: MetadataLookup,
+        *,
+        deadline: float | None,
+        shaped: WorkQuery | None,
+    ) -> tuple[Any, tuple[_Admitted, ...]]:
+        is_narrowed = shaped is not None and shaped.candidate_limit_narrowing_retry
+        search = self._request(
+            OPEN_LIBRARY_SEARCH_URL,
+            params={
+                **(
+                    {
+                        "q": (
+                            f'"{lookup.title or ""}" '
+                            f'author:"{" ".join(lookup.authors)}"'
+                        )
+                    }
+                    if is_narrowed
+                    else {
+                        "title": lookup.title or "",
+                        "author": " ".join(lookup.authors),
+                    }
+                ),
+                "fields": _WORK_SEARCH_PROJECTION,
+                "limit": str(_MAX_SEARCH_ROWS),
+            },
+            deadline=deadline,
+            query_retry=(
+                shaped is not None
+                and (
+                    shaped.rung is not WorkDispatchRung.NORMALIZED
+                    or shaped.candidate_limit_narrowing_retry
+                )
+            ),
+        )
+        admitted = _admitted_work_candidates(search)
+        return search, admitted
+
+    def _read_detail(self, identity: str, *, deadline: float | None) -> dict[str, Any]:
+        def execute() -> _DetailResult:
+            try:
+                value = self._request(
+                    OPEN_LIBRARY_ORIGIN + identity + ".json",
+                    deadline=deadline,
+                )
+            except ProviderFailure as error:
+                return _DetailResult(None, error.status)
+            return _DetailResult(
+                _freeze_detail(value),
+                None,
+                _unknown_projection_rejections(
+                    value,
+                    schema=_detail_projection_schema(identity),
+                )
+                + _parser_optional_rejections(value),
+            )
+
+        replay, _ = self._session.ledger.resolve_detail(identity, execute=execute)
+        if replay.status is not None:
+            raise ProviderFailure(replay.status)
+        if identity not in self._diagnosed_detail_identities:
+            self._diagnosed_detail_identities.add(identity)
+            self._reject_schema_members(replay.optional_rejections)
+        return _thaw_detail(replay.payload)
+
+    def _shape_admitted(
+        self,
+        lookup: MetadataLookup,
+        search: Any,
+        admitted: tuple[_Admitted, ...],
+        local_claims: tuple[LocalClaim, ...],
+        family: str | None,
+        *,
+        deadline: float | None,
+    ) -> list[ProviderCandidate]:
+        """Read each admitted edition and work and shape their candidates."""
+
+        def detail(identity: str) -> dict[str, Any]:
+            return self._read_detail(identity, deadline=deadline)
+
+        work_documents: dict[str, dict[str, Any]] = {}
+        diagnosed_search_documents: set[int] = set()
+        candidates: list[ProviderCandidate] = []
+        cover_candidates: list[
+            tuple[
+                str,
+                _CoverId,
+                str,
+                _CoverId,
+                dict[str, Any],
+                dict[str, Any],
+            ]
+        ] = []
+        for edition_key, work_key, work_authors in admitted:
+            edition = detail(edition_key)
+            if work_key not in work_documents:
+                work_documents[work_key] = detail(work_key)
+            candidate, edition_cover, work_cover = _candidate(
+                self._name,
+                edition_key,
+                work_key,
+                edition,
+                work_documents[work_key],
+                local_claims,
+                family,
+                work_authors,
+                _search_work_document(search, work_key),
+                audiobook_work=lookup.audio is not None
+                and lookup.kind is ProviderQueryKind.WORK,
+            )
+            search_work = _search_work_document(search, work_key)
+            if (
+                search_work is not None
+                and id(search_work) not in diagnosed_search_documents
+            ):
+                diagnosed_search_documents.add(id(search_work))
+                self._reject_schema_members(
+                    _unknown_projection_rejections(
+                        search_work,
+                        schema="search",
+                    )
+                    + _parser_optional_rejections(
+                        search_work,
+                        search_projection=True,
+                    )
+                )
+            candidates.append(candidate)
+            cover_candidates.append(
+                (
+                    edition_key,
+                    edition_cover,
+                    work_key,
+                    work_cover,
+                    edition,
+                    work_documents[work_key],
+                )
+            )
+        self._cover_descriptors = _cover_descriptors(
+            self._name,
+            lookup.kind,
+            cover_candidates,
+            self._pacer.wait,
+            self._cover_user_agent,
+        )
+        return candidates
+
+    def _observe_link(
+        self, lookup: MetadataLookup, *, deadline: float | None
+    ) -> ProviderObservation:
+        """Read the work or edition an owner's link names (#1477, ADR-0104).
+
+        A work key reads the work, its first edition and at most four of its
+        authors; an edition key reads the edition, its work and the same
+        authors. A missing or deleted record is `missing`; a redirect means the
+        record was merged, and the pointer is never followed. The record is
+        then shaped exactly as a search's edition and work are.
+        """
+        link = cast("OwnerLinkLookup", lookup.owner_link)
+
+        def result(
+            status: ProviderStatus,
+            candidates: tuple[ProviderCandidate, ...] = (),
+            diagnostics: tuple[FailureDiagnostic, ...] = (),
+        ) -> ProviderObservation:
+            return ProviderObservation(
+                self._name,
+                status,
+                (),
+                candidates,
+                lookup.kind,
+                accessed_at=self._session.accessed_at,
+                diagnostics=(*self._schema_diagnostics(), *diagnostics),
+            )
+
+        def read(path: str, params: dict[str, str] | None = None) -> dict[str, Any]:
+            # Each read is one counted detail request, as a search's are. Only
+            # the linked record's own miss is an answer; a further read's
+            # failure is a failure to read it.
+            def execute() -> _DetailResult:
+                try:
+                    value = self._request(
+                        OPEN_LIBRARY_ORIGIN + path,
+                        params=params,
+                        deadline=deadline,
+                        classify=_classify,
+                    )
+                except ProviderFailure as error:
+                    return _DetailResult(None, error.status)
+                return _DetailResult(_freeze_detail(value), None)
+
+            replay, _ = self._session.ledger.resolve_detail(
+                "link:" + path, execute=execute
+            )
+            if replay.status is not None:
+                raise ProviderFailure(replay.status)
+            return _thaw_detail(replay.payload)
+
+        try:
+            # The record itself is the lane's own request; every further read
+            # is a counted detail, as a search's edition and work are.
+            first = self._request(
+                OPEN_LIBRARY_ORIGIN + link.identity + ".json",
+                deadline=deadline,
+                classify=_classify_link,
+            )
+            state = _link_record_state(first, link.identity)
+            if state is not None:
+                return result(
+                    ProviderStatus.NO_MATCH,
+                    diagnostics=(
+                        (OWNER_LINK_MERGED_DIAGNOSTIC,) if state == "merged" else ()
+                    ),
+                )
+            if link.identity.startswith("/works/"):
+                work_key, work = link.identity, first
+                entries = _object_list(
+                    read(
+                        link.identity + "/editions.json",
+                        {"limit": str(_LINK_EDITIONS_LIMIT)},
+                    ).get("entries"),
+                    _LINK_EDITIONS_LIMIT,
+                )
+                if not entries:
+                    return result(ProviderStatus.NO_MATCH)
+                edition_key = _key(entries[0].get("key"), _EDITION_KEY)
+                edition = read(edition_key + ".json")
+            else:
+                edition_key, edition = link.identity, first
+                relations = _object_list(edition.get("works"), 8)
+                if not relations:
+                    raise ValueError("edition work relation is malformed")
+                work_key = _key(_mapping(relations[0]).get("key"), _WORK_KEY)
+                work = read(work_key + ".json")
+                if _link_record_state(work, work_key) is not None:
+                    raise ValueError("linked edition names no readable work")
+            authors: list[tuple[str, str | None]] = []
+            for author_key in _work_author_keys(work)[:_LINK_MAX_AUTHORS]:
+                author = read(author_key + ".json")
+                authors.append((_text(author.get("name")), author_key))
+            self._reject_schema_members(
+                _unknown_projection_rejections(
+                    edition, schema=_detail_projection_schema(edition_key)
+                )
+                + _unknown_projection_rejections(
+                    work, schema=_detail_projection_schema(work_key)
+                )
+                + _parser_optional_rejections(edition)
+                + _parser_optional_rejections(work)
+            )
+            candidate, edition_cover, work_cover = _candidate(
+                self._name,
+                edition_key,
+                work_key,
+                edition,
+                work,
+                lookup.local_claims,
+                None,
+                tuple(authors),
+                None,
+                audiobook_work=lookup.audio is not None,
+            )
+            self._cover_descriptors = _cover_descriptors(
+                self._name,
+                ProviderQueryKind.WORK,
+                [(edition_key, edition_cover, work_key, work_cover, edition, work)],
+                self._pacer.wait,
+                self._cover_user_agent,
+            )
+        except ProviderFailure as error:
+            return result(error.status)
+        except (
+            EvidenceValueError,
+            KeyError,
+            TypeError,
+            ValueError,
+            UnicodeError,
+            RecursionError,
+            json.JSONDecodeError,
+        ):
+            return result(ProviderStatus.MALFORMED)
+        return result(ProviderStatus.CANDIDATES, (candidate,))
 
     def _reject_schema_members(self, count: int) -> None:
         if count > 0:
@@ -799,6 +965,7 @@ class OpenLibraryMetadataProvider:
         params: dict[str, str] | None = None,
         deadline: float | None,
         query_retry: bool = False,
+        classify: Callable[[ProviderResponseFacts], ProviderFailure] | None = None,
     ) -> dict[str, Any]:
         return self._session.request_json(
             url,
@@ -809,7 +976,7 @@ class OpenLibraryMetadataProvider:
             },
             deadline=deadline,
             query_retry=query_retry,
-            classify=_classify,
+            classify=classify or _classify,
         )
 
 
@@ -824,6 +991,35 @@ def _classify(facts: ProviderResponseFacts) -> ProviderFailure:
             retryable=True,
         )
     return ProviderFailure(ProviderStatus.UNAVAILABLE, category="http_other")
+
+
+def _classify_link(facts: ProviderResponseFacts) -> ProviderFailure:
+    """A link read's miss is an answer: the record is gone (#1477)."""
+    if facts.status_code == 404:
+        return ProviderFailure(ProviderStatus.NO_MATCH, category="not_found")
+    return _classify(facts)
+
+
+def _link_record_state(record: dict[str, Any], key: str) -> str | None:
+    """`merged` for a redirect, `missing` for a deleted record, else `None`."""
+    stated = record.get("type")
+    kind = stated.get("key") if type(stated) is dict else None
+    if kind == "/type/redirect":
+        return "merged"
+    if kind == "/type/delete":
+        return "missing"
+    if record.get("key") != key:
+        raise ValueError("linked record names another key")
+    return None
+
+
+def _projection(kind: ProviderQueryKind) -> str:
+    """The request family one lane kind sends."""
+    if kind is ProviderQueryKind.ISBN:
+        return _ISBN_SEARCH_PROJECTION
+    if kind is ProviderQueryKind.LINK:
+        return _LINK_PROJECTION
+    return _WORK_SEARCH_PROJECTION
 
 
 def _admitted_candidates(
@@ -2523,3 +2719,30 @@ __all__ = [
     "OpenLibraryMetadataProvider",
     "OpenLibraryPacer",
 ]
+
+
+def _usable_isbn_claims(lookup: MetadataLookup) -> tuple[LocalClaim, ...]:
+    """The ISBN claims an ISBN lookup may ask, in a stable order."""
+    return tuple(
+        sorted(
+            (
+                claim
+                for claim in lookup.query_claims
+                if claim.kind is ClaimKind.ISBN
+                and claim.canonical is not None
+                and (
+                    (
+                        lookup.matched_family is None
+                        and claim.applicability in {"ebook", "unknown"}
+                        and claim.basis == "opening_matter"
+                        and claim.rear_provenance is None
+                    )
+                    or (
+                        lookup.matched_family is not None
+                        and isbn_family(claim.canonical) == lookup.matched_family
+                    )
+                )
+            ),
+            key=lambda claim: (claim.canonical or "", claim.reference),
+        )
+    )

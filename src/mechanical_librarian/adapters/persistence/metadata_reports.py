@@ -62,6 +62,7 @@ from mechanical_librarian.adapters.persistence.library_visit import (
 from mechanical_librarian.adapters.persistence.metadata_policy import (
     SQLiteMetadataPolicyRepository,
 )
+from mechanical_librarian.adapters.persistence.owner_links import current_owner_link
 from mechanical_librarian.adapters.persistence.owner_settings import OwnerSettingsStore
 from mechanical_librarian.adapters.persistence.preparation_presentation import (
     dismiss_preparation_presentation,
@@ -190,6 +191,7 @@ from mechanical_librarian.domain.metadata_policy import (
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
 )
+from mechanical_librarian.domain.owner_link import OwnerLink
 from mechanical_librarian.domain.owner_settings import MatchingCheck
 from mechanical_librarian.domain.preparation_presentation import (
     PreparationPresentation,
@@ -1600,6 +1602,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             source_report_id, report, staged_at
         )
 
+    def mark_owner_link_work_fresh(self, report: MetadataReport) -> None:
+        self._review_preparation.mark_owner_link_work_fresh(report)
+
     def provider_retry_work_id(self, report_id: str) -> str:
         return self._review_preparation.provider_retry_work_id(report_id)
 
@@ -2757,6 +2762,13 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         self, connection: str, library: str, item: str, file_identity: str
     ) -> str | None:
         return self._reports.current_optional(connection, library, item, file_identity)
+
+    @local_operation
+    def current_owner_link(
+        self, connection: str, library: str, item: str
+    ) -> OwnerLink | None:
+        """The item's current owner link, read first by preparation (#1477)."""
+        return current_owner_link(self._connection, connection, library, item)
 
     def preview_digest(
         self, report_id: str, artifact_id: str, preview_variant: str

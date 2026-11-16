@@ -494,8 +494,10 @@ def table_for(version: str) -> Table | None:
     """The clause table that mirrors a source engine, or None when unmirrored.
 
     v22 has its own table. v23 added the degraded-candidate refusal (#1283),
-    and every version from v23 through the checkout's v27 shares that one
-    _candidate_is_eligible.
+    and every version from v23 through v27 shares that one
+    _candidate_is_eligible. The checkout's v28 adds only the owner-link gate
+    (#1477), which no measured snapshot's packet can meet: each predates the
+    owner link, so its summaries never mark a value link-only.
     """
     matched = _ENGINE.match(version)
     if matched is None:
@@ -505,7 +507,7 @@ def table_for(version: str) -> Table | None:
         return "v9"
     if number == 22:
         return "v22"
-    if 23 <= number <= 27:
+    if 23 <= number <= 28:
         return "v23"
     return None
 

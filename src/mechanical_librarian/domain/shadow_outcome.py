@@ -60,8 +60,8 @@ from mechanical_librarian.domain.shadow_decision import (
 from mechanical_librarian.domain.shadow_review import MAX_CITATIONS
 from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 
-ShadowOutcomeSchemaVersion = Literal["shadow-outcome-set-v11"]
-SHADOW_OUTCOME_SCHEMA: Final[ShadowOutcomeSchemaVersion] = "shadow-outcome-set-v11"
+ShadowOutcomeSchemaVersion = Literal["shadow-outcome-set-v12"]
+SHADOW_OUTCOME_SCHEMA: Final[ShadowOutcomeSchemaVersion] = "shadow-outcome-set-v12"
 MAX_SHADOW_OUTCOME_BYTES = 1_048_576
 
 _POLICY_CATEGORY_BY_DESTINATION = {
@@ -240,12 +240,15 @@ _REASON_CODES = _RICH_REASON_CODES | frozenset(
         "insufficient_support",
         "isbn_title_material_conflict",
         "no_eligible_action",
+        "owner_link_unqualified",
         "target_only_preservation",
         "unique_supported_candidate",
         "unique_supported_preservation",
         "unsupported_destination",
     }
 )
+# The rule a would-admit note names when the owner-link gate abstained (#1477).
+OWNER_LINK_WOULD_ADMIT_RULE: Final = "owner_link"
 
 
 class ShadowOutcomeError(ValueError):
@@ -276,9 +279,22 @@ class ShadowFieldOutcome:
     reason_code: str
     rule_id: str
     qualification_candidate_id: str
+    # ADR-0092's would-admit note (#1477, S26): the alternative the ungated
+    # engine selects, under the owner-link rule. It grants nothing.
+    would_admit: str | None = None
 
     def _identity_data(self) -> dict[str, object]:
         return {
+            **(
+                {}
+                if self.would_admit is None
+                else {
+                    "would_admit": {
+                        "alternative_reference": self.would_admit,
+                        "rule": OWNER_LINK_WOULD_ADMIT_RULE,
+                    }
+                }
+            ),
             "action_id": self.action_id,
             "candidate_id": self.candidate_id,
             "citation_ids": list(self.citation_ids),
@@ -376,6 +392,17 @@ class ShadowFieldOutcome:
                 for value in self.combination_ids
             )
             or self.reason_code not in _REASON_CODES
+            or (self.would_admit is not None)
+            != (self.reason_code == "owner_link_unqualified")
+            or (
+                self.would_admit is not None
+                and (
+                    type(self.would_admit) is not str
+                    or re.fullmatch(r"alternative_[0-9a-f]{64}", self.would_admit)
+                    is None
+                    or self.candidate_id is not None
+                )
+            )
             or (
                 self.reason_code in _RICH_REASON_CODES
                 and (
@@ -851,6 +878,20 @@ def _decision_policy_route(
     return category, policy_option, policy_destination
 
 
+def _would_admit_reference(value: object) -> str | None:
+    """The alternative a stored would-admit note names, read closed."""
+    if value is None:
+        return None
+    if (
+        type(value) is not dict
+        or set(value) != {"alternative_reference", "rule"}
+        or value["rule"] != OWNER_LINK_WOULD_ADMIT_RULE
+        or type(value["alternative_reference"]) is not str
+    ):
+        raise ValueError("would-admit note is invalid")
+    return value["alternative_reference"]
+
+
 def _decision_field_outcome(
     decision: ShadowDecision,
     *,
@@ -908,6 +949,16 @@ def _decision_field_outcome(
         "qualification_candidate_id": qualification_candidate_id,
         "reason_code": decision.reason_code,
         "rule_id": rule_id,
+        **(
+            {}
+            if decision.would_admit is None
+            else {
+                "would_admit": {
+                    "alternative_reference": decision.would_admit,
+                    "rule": OWNER_LINK_WOULD_ADMIT_RULE,
+                }
+            }
+        ),
     }
     field_outcome = ShadowFieldOutcome(
         "shadow_outcome_" + _digest(field_data),
@@ -924,6 +975,7 @@ def _decision_field_outcome(
         decision.reason_code,
         rule_id,
         qualification_candidate_id,
+        decision.would_admit,
     )
     return field_outcome
 
@@ -1267,6 +1319,7 @@ class ShadowOutcomeSet:
                     value["reason_code"],
                     value["rule_id"],
                     value["qualification_candidate_id"],
+                    _would_admit_reference(value.get("would_admit")),
                 )
                 for value in raw["outcomes"]
             )

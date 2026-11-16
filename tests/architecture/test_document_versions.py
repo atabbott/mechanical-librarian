@@ -38,7 +38,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.domain.proposal_set",
         "POLICY_VERSION",
-        "fixed-conservative-v47",
+        "fixed-conservative-v48",
     ),
     (
         "mechanical_librarian.domain.metadata_policy",
@@ -180,7 +180,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.domain.shadow_outcome",
         "SHADOW_OUTCOME_SCHEMA",
-        "shadow-outcome-set-v11",
+        "shadow-outcome-set-v12",
     ),
     ("mechanical_librarian.domain.setup_state", "SETUP_STATE_SCHEMA", "setup-state-v5"),
     (
@@ -206,7 +206,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.application.cover_identity",
         "SCHEMA_VERSION",
-        "cover-identity-report-v2",
+        "cover-identity-report-v3",
     ),
     (
         "mechanical_librarian.domain.audio_inspection",
@@ -221,7 +221,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.domain.metadata_report",
         "REPORT_SCHEMA",
-        "metadata-report-v81",
+        "metadata-report-v82",
     ),
     (
         "mechanical_librarian.domain.metadata_report",
@@ -241,7 +241,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.domain.shadow_decision",
         "DECISION_POLICY_VERSION",
-        "deterministic-shadow-decision-policy-v27",
+        "deterministic-shadow-decision-policy-v28",
     ),
     (
         "mechanical_librarian.application.cover_observation",
@@ -256,7 +256,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.domain.shadow_review",
         "PACKET_SCHEMA",
-        "shadow-review-packet-v9",
+        "shadow-review-packet-v10",
     ),
     (
         "mechanical_librarian.domain.epub_inspection",

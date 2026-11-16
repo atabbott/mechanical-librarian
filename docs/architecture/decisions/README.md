@@ -98,7 +98,7 @@ status line that says who accepted it and when.
 | [0085](0085-owner-entered-values-withdrawal-and-reselection.md) | accepted; Amendments 1 and 2 proposed | Admit owner-entered values, withdrawal and reselection |
 | [0086](0086-deployment-held-setup-claim-token.md) | accepted | Require a deployment-held claim token for the first owner |
 | [0087](0087-operation-bound-qualification-authority.md) | accepted | Bind qualification authority to permitted operations |
-| [0088](0088-carried-recording-admission.md) | accepted | Carry an admitted audiobook edition into the next preparation |
+| [0088](0088-carried-recording-admission.md) | accepted; amended by 0104 (proposed) | Carry an admitted audiobook edition into the next preparation |
 | [0089](0089-unmatched-audiobook-research.md) | accepted; amended by 0102 (proposed) | Search an unmatched audiobook again |
 | [0090](0090-hardcover-audio-edition-witness.md) | accepted | Hardcover audio editions witness which recording an audiobook is |
 | [0091](0091-decode-browser-responses-and-report-uncertain-writes.md) | accepted | Decode every browser response and report uncertain writes truthfully |
@@ -114,3 +114,4 @@ status line that says who accepted it and when.
 | [0101](0101-reuse-stored-provider-answers.md) | proposed; amended by 0102 (proposed) | Reuse stored provider answers, with live fallback |
 | [0102](0102-search-every-finished-book-again.md) | proposed | Search every finished book again every 90 days |
 | [0103](0103-keep-the-library-visit-on-the-server.md) | proposed | Keep the owner's Library visit on the server and read New from it |
+| [0104](0104-owner-identity-links.md) | proposed | Link a work to the record that is its book, and read it through that link |

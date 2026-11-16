@@ -60,7 +60,7 @@ from mechanical_librarian.domain.metadata_report import (
     normalize_title,
     provider_candidate_work_identity_contradiction,
     echoed_target_values,
-    target_work_identity_context,
+    report_work_identity_context,
 )
 from mechanical_librarian.domain.proposal_set import (
     RECORDING_ASSOCIATED_ISBN_REASON,
@@ -216,7 +216,7 @@ def _automatic_genre_evidence(
     The level derivation classifies through its level's initials fold
     (#1355, S10); the live derivation keeps the classifier's default.
     """
-    context = target_work_identity_context(report.target)
+    context = report_work_identity_context(report)
     alternatives: list[ProposalAlternative] = []
     references: dict[str, tuple[str, ...]] = {}
     for alternative in result.alternatives:

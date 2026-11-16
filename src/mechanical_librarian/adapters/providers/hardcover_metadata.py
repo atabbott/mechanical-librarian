@@ -37,6 +37,7 @@ from mechanical_librarian.application.failure_diagnostics import (
     provider_attempt_diagnostics,
 )
 from mechanical_librarian.application.metadata_report import (
+    OWNER_LINK_MERGED_DIAGNOSTIC,
     CoverRedirects,
     MetadataDiscoveryPlan,
     MetadataLookup,
@@ -46,6 +47,7 @@ from mechanical_librarian.application.metadata_report import (
     ProviderResult,
     identifier_suppresses_discovery,
     merge_provider_cover_descriptors,
+    owner_link_lane_diagnostics,
     provider_discovery_lane_order,
     provider_isbn_applicability,
     provider_observation,
@@ -118,6 +120,10 @@ from mechanical_librarian.domain.metadata_report import (
     provider_candidate_work_identity_admission,
     validate_observed_title,
 )
+from mechanical_librarian.domain.owner_link import (
+    OwnerLinkLookup,
+    link_record_identity,
+)
 from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
     WorkDispatchRung,
@@ -152,13 +158,34 @@ _ISBN_QUERY = (
 _BOOKS_LIMIT = 11
 _MAX_BOOK_TAG_ROWS = _BOOKS_LIMIT * (MAX_TAGS + 1)
 _MAX_REQUEST_BODY_BYTES = 16_384
+_BOOK_FIELDS = "{id title canonical_id compilation description release_date image{url} contributions(order_by:{id:asc},limit:17){id contribution author{id name}} book_series(order_by:{id:asc},limit:17){id position series{id name}} taggings(order_by:{id:asc},limit:33){id tag_id}} "
 _BOOKS_QUERY = (
     "query BooksByTitleAuthor($titles:[String!]!,$authors:[String!]!){"
     f"books(where:{{title:{{_in:$titles}},contributions:{{author:{{name:{{_in:$authors}}}}}}}},order_by:{{id:asc}},limit:{_BOOKS_LIMIT})"
-    "{id title canonical_id compilation description release_date image{url} contributions(order_by:{id:asc},limit:17){id contribution author{id name}} book_series(order_by:{id:asc},limit:17){id position series{id name}} taggings(order_by:{id:asc},limit:33){id tag_id}} "
-    f"tags:tags(where:{{taggings:{{book:{{title:{{_in:$titles}},contributions:{{author:{{name:{{_in:$authors}}}}}}}}}}}},order_by:{{id:asc}},limit:{_MAX_BOOK_TAG_ROWS + 1})"
+    + _BOOK_FIELDS
+    + f"tags:tags(where:{{taggings:{{book:{{title:{{_in:$titles}},contributions:{{author:{{name:{{_in:$authors}}}}}}}}}}}},order_by:{{id:asc}},limit:{_MAX_BOOK_TAG_ROWS + 1})"
     "{id tag tag_category{id category}}}"
 )
+# An owner's work link reads its one book by id (#1477, ADR-0104): the same
+# constant projection as the books-first search, whose only input is the id.
+_BOOK_BY_ID_QUERY = (
+    "query BookById($id:Int!){"
+    "books(where:{id:{_eq:$id}},order_by:{id:asc},limit:2)"
+    + _BOOK_FIELDS
+    + f"tags:tags(where:{{taggings:{{book:{{id:{{_eq:$id}}}}}}}},order_by:{{id:asc}},limit:{_MAX_BOOK_TAG_ROWS + 1})"
+    "{id tag tag_category{id category}}}"
+)
+
+
+def _projection(kind: ProviderQueryKind) -> str:
+    """The constant query document one lane kind sends."""
+    if kind is ProviderQueryKind.ISBN:
+        return _ISBN_QUERY
+    if kind is ProviderQueryKind.LINK:
+        return _BOOK_BY_ID_QUERY
+    return _BOOKS_QUERY
+
+
 _QUERY = _ISBN_QUERY
 # One accepted book's edition list is read in at most two pages of 100, for at
 # most two books an observation: its audio-format editions (#962, ADR-0089) and
@@ -338,9 +365,7 @@ class HardcoverMetadataProvider:
         self._called = True
         if type(plan) is MetadataLookup:
             ledger = _DiscoveryRequestLedger("hardcover", HARDCOVER_SCHEMA_COMMIT)
-            projection = (
-                _ISBN_QUERY if plan.kind is ProviderQueryKind.ISBN else _BOOKS_QUERY
-            )
+            projection = _projection(plan.kind)
             ledger.register(
                 kind=plan.kind.value,
                 matched_family=plan.matched_family,
@@ -356,7 +381,7 @@ class HardcoverMetadataProvider:
                     title=plan.title,
                     authors=plan.authors,
                     projection=projection,
-                    execute=lambda: self._observe_lookup(plan, deadline=deadline),
+                    execute=lambda: self._observe_kind(plan, deadline=deadline),
                 )
                 return replace(value, request_accounting=ledger.accounting())
         if type(plan) is not MetadataDiscoveryPlan:
@@ -372,7 +397,12 @@ class HardcoverMetadataProvider:
             lanes=tuple(
                 lane
                 for lane in plan.lanes
-                if lane.kind in {ProviderQueryKind.ISBN, ProviderQueryKind.WORK}
+                if lane.kind
+                in {
+                    ProviderQueryKind.ISBN,
+                    ProviderQueryKind.WORK,
+                    ProviderQueryKind.LINK,
+                }
             ),
         )
         if not served.lanes:
@@ -386,9 +416,7 @@ class HardcoverMetadataProvider:
                 matched_family=lane.matched_family,
                 title=lane.title,
                 authors=lane.authors,
-                projection=(
-                    _ISBN_QUERY if lane.kind is ProviderQueryKind.ISBN else _BOOKS_QUERY
-                ),
+                projection=_projection(lane.kind),
             )
         self._session.ledger = ledger
         descriptors: tuple[ProviderCoverDescriptor, ...] = ()
@@ -416,6 +444,7 @@ class HardcoverMetadataProvider:
                     work_title=plan.work_title,
                     work_authors=plan.work_authors,
                     companion=plan.companion,
+                    owner_link=plan.owner_link,
                     companion_linked_asins=plan.companion_linked_asins,
                 )
                 attempts_before = len(self._session.attempt_records)
@@ -425,12 +454,8 @@ class HardcoverMetadataProvider:
                     matched_family=lookup.matched_family,
                     title=lookup.title,
                     authors=lookup.authors,
-                    projection=(
-                        _ISBN_QUERY
-                        if lookup.kind is ProviderQueryKind.ISBN
-                        else _BOOKS_QUERY
-                    ),
-                    execute=lambda: self._observe_lookup(lookup, deadline=deadline),  # noqa: B023 - `ledger.resolve` calls `execute` before it returns, so the lambda only ever sees this lane's lookup
+                    projection=_projection(lookup.kind),
+                    execute=lambda: self._observe_kind(lookup, deadline=deadline),  # noqa: B023 - `ledger.resolve` calls `execute` before it returns, so the lambda only ever sees this lane's lookup
                 )
                 observation = qualify_provider_observation(physical, lookup)
                 audio_editions, audio_covers = self._audio_editions(
@@ -443,12 +468,15 @@ class HardcoverMetadataProvider:
                 self._edition_covers(
                     observation, lookup, served, fan_out, audio_covers, deadline
                 )
-                diagnostics = provider_attempt_diagnostics(
-                    self._session.attempt_records[attempts_before:],
-                    status=observation.status.value,
-                    incomplete_causes=self._session.incomplete_causes[
-                        incomplete_causes_before:
-                    ],
+                diagnostics = owner_link_lane_diagnostics(
+                    observation,
+                    provider_attempt_diagnostics(
+                        self._session.attempt_records[attempts_before:],
+                        status=observation.status.value,
+                        incomplete_causes=self._session.incomplete_causes[
+                            incomplete_causes_before:
+                        ],
+                    ),
                 )
                 results.append(
                     ProviderLaneResult(
@@ -491,6 +519,14 @@ class HardcoverMetadataProvider:
             diagnostics=self._schema_diagnostics(),
             request_accounting=ledger.accounting(),
         )
+
+    def _observe_kind(
+        self, lookup: MetadataLookup, *, deadline: float | None
+    ) -> ProviderObservation:
+        """An owner link's key lookup (#1477), or any other lane's lookup."""
+        if lookup.kind is ProviderQueryKind.LINK:
+            return self._observe_link(lookup, deadline=deadline)
+        return self._observe_lookup(lookup, deadline=deadline)
 
     def _observe_lookup(
         self,
@@ -692,6 +728,98 @@ class HardcoverMetadataProvider:
         )
         return observation
 
+    def _observe_link(
+        self, lookup: MetadataLookup, *, deadline: float | None
+    ) -> ProviderObservation:
+        """Read the one book an owner's work link names (#1477, ADR-0104).
+
+        No book is `missing`. A book whose `canonical_id` names another book
+        was merged into it: the pointer is never followed, and the lane says
+        so with an identity diagnostic. Otherwise the book is read exactly as
+        the books-first search reads one, and kept only when it is the linked
+        book itself.
+        """
+        link = cast("OwnerLinkLookup", lookup.owner_link)
+        book = int(link.identity)
+        expected = link_record_identity(link)
+
+        def result(
+            status: ProviderStatus,
+            candidates: tuple[ProviderCandidate, ...] = (),
+            diagnostics: tuple[FailureDiagnostic, ...] = (),
+        ) -> ProviderObservation:
+            return ProviderObservation(
+                self._name,
+                status,
+                (),
+                candidates,
+                lookup.kind,
+                accessed_at=self._session.accessed_at,
+                diagnostics=(*self._schema_diagnostics(), *diagnostics),
+            )
+
+        body: dict[str, object] = {
+            "operationName": "BookById",
+            "query": _BOOK_BY_ID_QUERY,
+            "variables": {"id": book},
+        }
+        try:
+            payload = self._request(body, deadline=deadline)
+        except ProviderFailure as error:
+            return result(error.status)
+        try:
+            if _has_graphql_errors(payload):
+                self._session.mark_response_attempt("provider_declared_error")
+                return result(ProviderStatus.UNAVAILABLE)
+            canonical = _linked_book_canonical(payload, book)
+            if canonical is None:
+                return result(ProviderStatus.NO_MATCH)
+            if canonical != book:
+                return result(
+                    ProviderStatus.NO_MATCH,
+                    diagnostics=(OWNER_LINK_MERGED_DIAGNOSTIC,),
+                )
+            candidates = tuple(
+                candidate
+                for candidate in _parse_candidates(
+                    payload,
+                    self._name,
+                    lookup.local_claims,
+                    self._optional_rejections,
+                    work_only=True,
+                    books_query=True,
+                    first_publication=lookup.audio is not None,
+                )
+                if expected in {candidate.identity, candidate.work_identity}
+            )
+            self._reject_schema_members(
+                _optional_projection_rejections(payload, books_query=True)
+            )
+        except _CandidateLimit:
+            self._session.mark_response_attempt("candidate_limit_exceeded")
+            return result(ProviderStatus.CANDIDATE_LIMIT_EXCEEDED)
+        except (
+            ValueError,
+            TypeError,
+            UnicodeError,
+            RecursionError,
+            json.JSONDecodeError,
+        ):
+            self._session.mark_response_attempt("response_malformed")
+            return result(ProviderStatus.MALFORMED)
+        self._cover_descriptors = _kept_cover_descriptors(
+            payload,
+            self._name,
+            ProviderQueryKind.WORK,
+            candidates,
+            books_query=True,
+            wait=self._asset_wait,
+        )
+        return result(
+            ProviderStatus.CANDIDATES if candidates else ProviderStatus.NO_MATCH,
+            candidates,
+        )
+
     def _observe_work_ladder(
         self, lookup: MetadataLookup, *, deadline: float | None
     ) -> ProviderObservation:
@@ -766,7 +894,12 @@ class HardcoverMetadataProvider:
             and candidate.identity.startswith("hardcover-work-")
         )
         if (
-            lookup.kind not in {ProviderQueryKind.WORK, ProviderQueryKind.ISBN}
+            lookup.kind
+            not in {
+                ProviderQueryKind.WORK,
+                ProviderQueryKind.ISBN,
+                ProviderQueryKind.LINK,
+            }
             or lookup.audio is None
             or observation.status is not ProviderStatus.CANDIDATES
             or local_runtime is None
@@ -837,7 +970,12 @@ class HardcoverMetadataProvider:
         library_languages = plan.library_languages
         if (
             lookup.audio is not None
-            or lookup.kind not in {ProviderQueryKind.ISBN, ProviderQueryKind.WORK}
+            or lookup.kind
+            not in {
+                ProviderQueryKind.ISBN,
+                ProviderQueryKind.WORK,
+                ProviderQueryKind.LINK,
+            }
             or observation.status is not ProviderStatus.CANDIDATES
             or not library_languages
             or fan_out.stopped
@@ -1518,6 +1656,28 @@ def _kept_cover_descriptors(
         json.JSONDecodeError,
     ):
         return ()
+
+
+def _linked_book_canonical(payload: bytes, book: int) -> int | None:
+    """The book a by-id answer names: itself, the book it was merged into,
+    or `None` when there is no such book (#1477)."""
+    source = json.loads(
+        payload.decode("utf-8", "strict"),
+        object_pairs_hook=_unique_object,
+        parse_constant=_reject_number,
+        parse_float=Decimal,
+    )
+    data = _closed(_closed(source, {"data"})["data"], {"books", "tags"})
+    books = data["books"]
+    if type(books) is not list or len(books) > 1:
+        raise ValueError("linked book answer is malformed")
+    if not books:
+        return None
+    row = books[0]
+    if type(row) is not dict or _identifier(row.get("id")) != book:
+        raise ValueError("linked book answer names another book")
+    canonical = row.get("canonical_id")
+    return book if canonical is None else _identifier(canonical)
 
 
 def _compilation_book_ids(payload: bytes) -> frozenset[int]:

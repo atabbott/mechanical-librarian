@@ -1023,6 +1023,79 @@ _FIELD_EFFECT_CONTROL_SQL = (
     "CREATE TABLE field_effect_control (singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton=1), "
     "paused INTEGER NOT NULL CHECK(paused IN (0,1)), updated_at INTEGER NOT NULL CHECK(updated_at>=0))"
 )
+# #1477, ADR-0104: the owner's book links. Append-only: each row is its own
+# audit record, and the item's current link is its highest-sequence row
+# unless that row withdrew it. The CHECKs are written per action and per
+# source, so a later source widens them in its own clean rebuild.
+_OWNER_LINK_IDENTITY_SQL = (
+    "(scope='edition' AND medium='ebook' AND provider IN ('hardcover','open_library','google_books','inventaire') "
+    "AND length(record_identity)=13 AND record_identity NOT GLOB '*[^0-9]*') "
+    "OR (scope='recording' AND medium='audiobook' AND provider='audible_catalog' "
+    "AND length(record_identity)=10 AND record_identity NOT GLOB '*[^0-9A-Z]*') "
+    "OR (scope='work' AND provider='hardcover' AND length(record_identity) BETWEEN 1 AND 10 "
+    "AND record_identity NOT GLOB '*[^0-9]*' AND record_identity NOT GLOB '0*') "
+    "OR (scope='work' AND provider='open_library' AND length(record_identity) BETWEEN 11 AND 22 "
+    "AND (record_identity GLOB '/works/OL[1-9]*W' OR record_identity GLOB '/books/OL[1-9]*M') "
+    "AND substr(record_identity,10,length(record_identity)-10) NOT GLOB '*[^0-9]*') "
+    "OR (scope='work' AND medium='ebook' AND provider='inventaire' AND ((record_identity GLOB 'wd:Q[1-9]*' "
+    "AND length(record_identity)<=16 AND substr(record_identity,5) NOT GLOB '*[^0-9]*') "
+    "OR (record_identity GLOB 'inv:*' AND length(record_identity)=36 AND substr(record_identity,5) NOT GLOB '*[^0-9a-f]*'))) "
+    "OR (scope='work' AND medium='ebook' AND provider='google_books' AND length(record_identity)=13 "
+    "AND record_identity NOT GLOB '*[^0-9]*') "
+    "OR (scope='work' AND medium='audiobook' AND provider='audible_catalog' AND length(record_identity)=10 "
+    "AND record_identity NOT GLOB '*[^0-9A-Z]*')"
+)
+_OWNER_LINKS_SQL = (
+    "CREATE TABLE owner_links ("
+    "link_row_id TEXT PRIMARY KEY NOT NULL CHECK(typeof(link_row_id)='text' AND link_row_id GLOB 'owner_link_[0-9a-f]*' AND length(link_row_id)=75 AND substr(link_row_id,12) NOT GLOB '*[^0-9a-f]*'), "
+    "connection_name TEXT NOT NULL CHECK(typeof(connection_name)='text' AND length(CAST(connection_name AS BLOB)) BETWEEN 1 AND 128), "
+    "library_name TEXT NOT NULL CHECK(typeof(library_name)='text' AND length(CAST(library_name AS BLOB)) BETWEEN 1 AND 128), "
+    "item_id TEXT NOT NULL CHECK(typeof(item_id)='text' AND length(CAST(item_id AS BLOB)) BETWEEN 1 AND 512), "
+    "sequence INTEGER NOT NULL CHECK(typeof(sequence)='integer' AND sequence>=1), "
+    "action TEXT NOT NULL CHECK(action IN ('link','replace','withdraw')), "
+    "source TEXT NOT NULL CHECK(source IN ('search')), "
+    "medium TEXT NOT NULL CHECK(medium IN ('ebook','audiobook')), "
+    "scope TEXT CHECK(scope IS NULL OR scope IN ('work','edition','recording')), "
+    "provider TEXT CHECK(provider IS NULL OR provider IN ('hardcover','open_library','google_books','inventaire','audible_catalog')), "
+    "record_identity TEXT CHECK(record_identity IS NULL OR typeof(record_identity)='text'), "
+    "display_title TEXT CHECK(display_title IS NULL OR (typeof(display_title)='text' AND length(display_title) BETWEEN 1 AND 512)), "
+    "display_creators TEXT CHECK(display_creators IS NULL OR (typeof(display_creators)='text' AND length(CAST(display_creators AS BLOB))<=65536 AND json_valid(display_creators) AND json_type(display_creators)='array' AND json_array_length(display_creators)<=10)), "
+    "actor TEXT NOT NULL CHECK(typeof(actor)='text' AND length(CAST(actor AS BLOB)) BETWEEN 1 AND 128), "
+    "occurred_at INTEGER NOT NULL CHECK(typeof(occurred_at)='integer' AND occurred_at>=0), "
+    "request_id TEXT NOT NULL UNIQUE CHECK(typeof(request_id)='text' AND length(CAST(request_id AS BLOB)) BETWEEN 16 AND 128), "
+    "request_sha256 TEXT NOT NULL CHECK(typeof(request_sha256)='text' AND length(request_sha256)=64 AND request_sha256 NOT GLOB '*[^0-9a-f]*'), "
+    "link_digest TEXT CHECK(link_digest IS NULL OR (typeof(link_digest)='text' AND length(link_digest)=64 AND link_digest NOT GLOB '*[^0-9a-f]*')), "
+    "CHECK(action<>'withdraw' OR (scope IS NULL AND provider IS NULL AND record_identity IS NULL AND display_title IS NULL AND display_creators IS NULL AND link_digest IS NULL)), "
+    "CHECK(action='withdraw' OR source<>'search' OR (scope IS NOT NULL AND provider IS NOT NULL AND record_identity IS NOT NULL AND display_title IS NOT NULL AND display_creators IS NOT NULL AND link_digest IS NOT NULL)), "
+    "CHECK(record_identity IS NULL OR " + _OWNER_LINK_IDENTITY_SQL + "), "
+    "UNIQUE(connection_name,library_name,item_id,sequence))"
+)
+_OWNER_LINK_LATEST_ACTION_SQL = (
+    "(SELECT latest.action FROM owner_links latest WHERE latest.connection_name=NEW.connection_name "
+    "AND latest.library_name=NEW.library_name AND latest.item_id=NEW.item_id "
+    "ORDER BY latest.sequence DESC LIMIT 1)"
+)
+_OWNER_LINK_SEQUENCE_SQL = (
+    "CREATE TRIGGER owner_links_validate_insert BEFORE INSERT ON owner_links "
+    "WHEN NEW.sequence IS NOT (SELECT COALESCE(MAX(prior.sequence),0)+1 FROM owner_links prior "
+    "WHERE prior.connection_name=NEW.connection_name AND prior.library_name=NEW.library_name "
+    "AND prior.item_id=NEW.item_id) "
+    "OR (NEW.action='link' AND COALESCE("
+    + _OWNER_LINK_LATEST_ACTION_SQL
+    + ",'withdraw')<>'withdraw') "
+    "OR (NEW.action<>'link' AND COALESCE("
+    + _OWNER_LINK_LATEST_ACTION_SQL
+    + ",'withdraw')='withdraw') "
+    "BEGIN SELECT RAISE(ABORT, 'owner link does not follow the current link'); END"
+)
+_OWNER_LINK_NO_UPDATE_SQL = "CREATE TRIGGER owner_links_no_update BEFORE UPDATE ON owner_links BEGIN SELECT RAISE(ABORT, 'owner links are append-only'); END"
+_OWNER_LINK_NO_DELETE_SQL = "CREATE TRIGGER owner_links_no_delete BEFORE DELETE ON owner_links BEGIN SELECT RAISE(ABORT, 'owner links are append-only'); END"
+_CURRENT_OWNER_LINKS_SQL = (
+    "CREATE VIEW current_owner_links AS SELECT link.* FROM owner_links link "
+    "WHERE link.action<>'withdraw' AND link.sequence=(SELECT MAX(other.sequence) "
+    "FROM owner_links other WHERE other.connection_name=link.connection_name "
+    "AND other.library_name=link.library_name AND other.item_id=link.item_id)"
+)
 # #1351, ADR-0103: the owner's one Library visit. `seen_*` is the boundary a
 # work must lie past to be new, `shown_*` the furthest listing a device opened
 # in the New lens, and `active_at` the server's clock at the last recorded use.
@@ -1941,6 +2014,11 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_NO_DELETE_SQL)
     _create_attention_facts(connection)
     connection.execute(_LIBRARY_VISIT_SQL)
+    connection.execute(_OWNER_LINKS_SQL)
+    connection.execute(_OWNER_LINK_SEQUENCE_SQL)
+    connection.execute(_OWNER_LINK_NO_UPDATE_SQL)
+    connection.execute(_OWNER_LINK_NO_DELETE_SQL)
+    connection.execute(_CURRENT_OWNER_LINKS_SQL)
     connection.commit()
 
 
@@ -2177,6 +2255,14 @@ def _decision_and_field_effect_objects() -> tuple[tuple[str, str, str | None], .
         ("table", "automatic_safety_state", _AUTOMATIC_SAFETY_SQL),
         ("table", "field_effect_control", _FIELD_EFFECT_CONTROL_SQL),
         ("table", "library_visit", _LIBRARY_VISIT_SQL),
+        ("table", "owner_links", _OWNER_LINKS_SQL),
+        ("index", "sqlite_autoindex_owner_links_1", None),
+        ("index", "sqlite_autoindex_owner_links_2", None),
+        ("index", "sqlite_autoindex_owner_links_3", None),
+        ("trigger", "owner_links_validate_insert", _OWNER_LINK_SEQUENCE_SQL),
+        ("trigger", "owner_links_no_update", _OWNER_LINK_NO_UPDATE_SQL),
+        ("trigger", "owner_links_no_delete", _OWNER_LINK_NO_DELETE_SQL),
+        ("view", "current_owner_links", _CURRENT_OWNER_LINKS_SQL),
         ("table", "field_effect_suspensions", _FIELD_EFFECT_SUSPENSIONS_SQL),
         ("table", "field_effect_actions", _FIELD_EFFECT_ACTIONS_SQL),
         ("table", "field_effect_authorities", _FIELD_EFFECT_AUTHORITIES_SQL),

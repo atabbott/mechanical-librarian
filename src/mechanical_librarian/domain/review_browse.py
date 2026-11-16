@@ -79,6 +79,7 @@ _REPORT = closed_document(
     "identifier_evidence",
     "library_languages",
     "local",
+    "owner_link",
     "providers",
     "report_id",
     "target",

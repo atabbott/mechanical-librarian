@@ -674,6 +674,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("metadata_report_cover_references",),
             ("metadata_report_value_flags",),
             ("metadata_reports",),
+            ("owner_links",),
             ("owner_setting_secrets",),
             ("owner_settings",),
             ("proposal_set_browse_facts",),
@@ -946,6 +947,8 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
                 "DROP TABLE cover_taste_builds;"
                 "DROP TABLE reviewer_task_requests;"
                 "DROP TABLE library_visit;"
+                "DROP VIEW current_owner_links;"
+                "DROP TABLE owner_links;"
                 "DROP TRIGGER metadata_reports_project_browse_facts;"
                 "DROP TABLE metadata_report_browse_authors;"
                 "DROP TABLE metadata_report_value_flags;"
@@ -2497,6 +2500,8 @@ def test_current_schema_cannot_relabel_falsely_valid_predecessor_title() -> None
     document["companion"] = None
     # v66 added the EPUB cover recovery (#1357).
     document["local"]["cover_recovery"] = None
+    # v82 added what preparation read through an owner link (#1477).
+    document["owner_link"] = None
     document.pop("report_id")
     document["report_id"] = (
         "report_" + hashlib.sha256(canonical_json(document).encode()).hexdigest()
@@ -2752,6 +2757,8 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
                     "DROP TABLE cover_taste_builds;"
                     "DROP TABLE reviewer_task_requests;"
                     "DROP TABLE library_visit;"
+                    "DROP VIEW current_owner_links;"
+                    "DROP TABLE owner_links;"
                     "DROP TRIGGER metadata_reports_project_browse_facts;"
                     "DROP TABLE metadata_report_browse_authors;"
                     "DROP TABLE metadata_report_value_flags;"
@@ -2783,6 +2790,8 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
                 # #1351's Library visit.
                 repository._connection.executescript(
                     "DROP TABLE library_visit;"
+                    "DROP VIEW current_owner_links;"
+                    "DROP TABLE owner_links;"
                     "DROP TABLE metadata_report_value_flags;"
                     "ALTER TABLE browse_fact_identity DROP COLUMN value_flag_rules;"
                     "DROP TABLE retained_cover_listings;"

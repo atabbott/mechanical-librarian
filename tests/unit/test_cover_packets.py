@@ -2670,13 +2670,17 @@ def _classify_sources(
 def test_source_bound_epub_cover_is_verified_manifestation() -> None:
     source = _source(3, _preview(3), embedded=True)
     assert _classify_sources(
-        SimpleNamespace(providers=(), identifier_evidence=(), local_claims=()),
+        SimpleNamespace(
+            providers=(), identifier_evidence=(), local_claims=(), owner_link=None
+        ),
         (source,),
     ) == ("verified_manifestation_match", ["source_bound_epub_cover"], [])
 
     incumbent = _source(4, _preview(4), incumbent=True)
     assert _classify_sources(
-        SimpleNamespace(providers=(), identifier_evidence=(), local_claims=()),
+        SimpleNamespace(
+            providers=(), identifier_evidence=(), local_claims=(), owner_link=None
+        ),
         (incumbent,),
     ) == ("unknown", ["no_provider_identity"], [])
 
@@ -2713,6 +2717,7 @@ def test_title_supported_provider_discovery_is_plausible_despite_edition_noise()
             ),
         ),
         identifier_evidence=(),
+        owner_link=None,
         local_claims=(),
     )
     assert _classify_sources(report, (source,)) == (
@@ -2733,6 +2738,7 @@ def test_title_supported_provider_discovery_is_plausible_despite_edition_noise()
             ),
         ),
         identifier_evidence=(),
+        owner_link=None,
         local_claims=(),
     )
     assert _classify_sources(work_report, (source,)) == (
@@ -2772,6 +2778,7 @@ def test_explicit_creator_disagreement_vetoes_title_supported_plausible_match() 
             ),
         ),
         identifier_evidence=(),
+        owner_link=None,
         local_claims=(),
     )
     assert _classify_sources(report, (source,)) == (
@@ -2811,6 +2818,7 @@ def test_creator_or_contributor_evidence_agreement_defeats_disagreement_noise() 
             ),
         ),
         identifier_evidence=(),
+        owner_link=None,
         local_claims=(),
     )
     assert _classify_sources(report, (source,))[0] == "plausible_match"
@@ -2836,6 +2844,7 @@ def test_missing_creator_is_neutral_for_title_supported_plausible_match() -> Non
             ),
         ),
         identifier_evidence=(),
+        owner_link=None,
         local_claims=(),
     )
     assert _classify_sources(report, (source,))[0] == "plausible_match"
@@ -2866,6 +2875,7 @@ def test_every_outcome_is_closed_and_does_not_project_hostile_values() -> None:
             ),
         ),
         identifier_evidence=(accepted,),
+        owner_link=None,
         local_claims=(),
     )
     with mock.patch(
@@ -2888,6 +2898,7 @@ def test_every_outcome_is_closed_and_does_not_project_hostile_values() -> None:
                 audio=None,
                 providers=report.providers,
                 identifier_evidence=(associated,),
+                owner_link=None,
             ),
             (work_source,),
         )[0]
@@ -2906,6 +2917,7 @@ def test_every_outcome_is_closed_and_does_not_project_hostile_values() -> None:
                 audio=None,
                 providers=report.providers,
                 identifier_evidence=(associated,),
+                owner_link=None,
             ),
             (default_source,),
         )[0]
@@ -2914,7 +2926,10 @@ def test_every_outcome_is_closed_and_does_not_project_hostile_values() -> None:
     assert (
         _classify_sources(
             SimpleNamespace(
-                audio=None, providers=report.providers, identifier_evidence=()
+                audio=None,
+                providers=report.providers,
+                identifier_evidence=(),
+                owner_link=None,
             ),
             (source,),
         )[0]
@@ -2942,6 +2957,7 @@ def test_every_outcome_is_closed_and_does_not_project_hostile_values() -> None:
                     ),
                 ),
                 identifier_evidence=(),
+                owner_link=None,
             ),
             (source,),
         )[0]
@@ -2973,6 +2989,7 @@ def test_deterministic_contradictions_and_title_supported_discovery() -> None:
         audio=None,
         providers=(provider,),
         identifier_evidence=(identifier,),
+        owner_link=None,
         local_claims=(),
     )
     assert _classify_sources(report, (source,)) == (
@@ -3004,6 +3021,7 @@ def test_deterministic_contradictions_and_title_supported_discovery() -> None:
             ),
         ),
         identifier_evidence=(),
+        owner_link=None,
         local_claims=(),
     )
     assert _classify_sources(report, (source,)) == (
@@ -3045,6 +3063,7 @@ def test_deterministic_contradictions_and_title_supported_discovery() -> None:
             ),
         ),
         identifier_evidence=(),
+        owner_link=None,
         local_claims=(),
     )
     assert _classify_sources(report, (source,)) == (
@@ -3081,6 +3100,7 @@ def test_deterministic_contradictions_and_title_supported_discovery() -> None:
             ),
         ),
         identifier_evidence=(),
+        owner_link=None,
         local_claims=(),
     )
     assert _classify_sources(report, (source,)) == (
@@ -3099,6 +3119,7 @@ def test_deterministic_contradictions_and_title_supported_discovery() -> None:
         audio=None,
         providers=(provider,),
         identifier_evidence=(accepted,),
+        owner_link=None,
         local_claims=(),
     )
     with mock.patch(

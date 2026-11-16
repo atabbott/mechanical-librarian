@@ -281,6 +281,7 @@ class GoogleBooksMetadataProvider:
                     lane.title,
                     lane.authors,
                     lane.matched_family,
+                    owner_link=plan.owner_link,
                 )
                 lane_result, _ = ledger.resolve(
                     kind=lookup.kind.value,
@@ -374,10 +375,11 @@ class GoogleBooksMetadataProvider:
                 if len(families) != 1:
                     return self._result(lookup, ProviderStatus.INSUFFICIENT_INPUT)
                 family = next(iter(families))
+            # An owner-link ISBN is asked on its own lane, never compared.
             references = tuple(
                 sorted(
                     claim.reference
-                    for claim in local_claims
+                    for claim in lookup.query_claims
                     if claim.kind is ClaimKind.ISBN
                     and claim.canonical is not None
                     and isbn_family(claim.canonical) == family

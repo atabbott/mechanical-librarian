@@ -52,7 +52,7 @@ from mechanical_librarian.domain.reviewer_decision_summary import (
 )
 from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 
-PACKET_SCHEMA = "shadow-review-packet-v9"
+PACKET_SCHEMA = "shadow-review-packet-v10"
 MAX_PACKET_BYTES = 1_048_576
 # The generated schema is ASCII-only. Embedding it as a JSON string can add at
 # most one escape byte per schema byte; the remaining allowance covers the
