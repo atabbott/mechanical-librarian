@@ -987,6 +987,8 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .context-row-head { display:flex; align-items:flex-start; gap:0 10px; }
 .context-row-head > strong { flex:1; min-width:0; }
 .context-row-head > .choice-pin { margin-block:-.6875rem; }
+/* The first row's pin stays below the panel's summary, so a tap there still opens or closes it. */
+.automatic-resolution-row:first-child .context-row-head > .choice-pin { margin-top:max(-.6875rem,-12px); }
 .automatic-resolution-row p { margin:3px 0 0; font-size:smaller; overflow-wrap:anywhere; }
 .automatic-resolution-row p:empty { margin:0; }
 .automatic-resolution-row [role='alert'] { color:var(--danger); font-weight:650; }
