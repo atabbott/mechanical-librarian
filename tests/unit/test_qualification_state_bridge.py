@@ -90,6 +90,8 @@ def _v26_document(
     # v26 predates the library languages (#1315).
     data.pop("library_languages")
     data.pop("companion")
+    # v26 predates the owner link (#1477).
+    data.pop("owner_link")
     # v26 predates the EPUB cover recovery (#1357).
     data["local"].pop("cover_recovery")
     data["schema_version"] = "metadata-report-v26"
