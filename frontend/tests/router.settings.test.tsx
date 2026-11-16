@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, onTestFinished, vi } from 'vitest'
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import {
   AmbiguousMutationError,
@@ -388,7 +388,12 @@ describe('owner settings route', () => {
     ]) {
       await user.click(screen.getByRole('button', { name }))
       expect(window.document.querySelector('.settings-sheet input')).toBeNull()
-      expect(window.document.querySelector('.settings-sheet .cm-segmented')).toBeNull()
+      // Theme is this browser's own choice, so it is the one control left (#1341).
+      expect(
+        [...window.document.querySelectorAll('.settings-sheet .cm-segmented')].map((node) =>
+          node.getAttribute('aria-label'),
+        ),
+      ).toEqual(name.source === 'Appearance' ? ['Theme'] : [])
       expect(screen.queryByRole('button', { name: 'Save settings' })).not.toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Discard all' })).not.toBeInTheDocument()
     }
@@ -4728,5 +4733,134 @@ describe('taste profile model (#1372)', () => {
     )
     expect(within(taste).getByRole('button', { name: 'Use for taste profile' })).toBeDisabled()
     expect(within(taste).getByRole('combobox', { name: 'Taste profile model' })).toHaveValue('')
+  })
+})
+
+describe('Theme in Settings (#1341)', () => {
+  afterEach(() => {
+    window.document.cookie = 'ml_theme=; Path=/; Max-Age=0'
+    delete window.document.documentElement.dataset.theme
+    vi.unstubAllGlobals()
+  })
+  const openAppearance = async (authority: 'file' | 'store' = 'store') => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view(authority))
+    renderRoute('/settings?group=appearance', http)
+    await screen.findByRole('group', { name: 'Theme' })
+    return http
+  }
+  const pressed = () =>
+    within(screen.getByRole('group', { name: 'Theme' }))
+      .getAllByRole('button')
+      .map((button) => [button.textContent, button.getAttribute('aria-pressed')].join(' '))
+
+  it('offers Follow system, Light and Dark, and presses the saved choice', async () => {
+    await openAppearance()
+    expect(pressed()).toEqual(['Follow system true', 'Light false', 'Dark false'])
+    expect(screen.getByRole('group', { name: 'Theme' })).toHaveAccessibleDescription(
+      'Saved in this browser.',
+    )
+    expect(screen.queryByText('Browser only')).toBeNull()
+    expect(screen.queryByText(/theme button/u)).toBeNull()
+    // The section list names both rows.
+    expect(screen.getByRole('button', { name: /Appearance/ })).toHaveTextContent(
+      'AppearanceMotion and theme',
+    )
+    cleanup()
+    window.document.cookie = 'ml_theme=dark; Path=/'
+    await openAppearance()
+    expect(pressed()).toEqual(['Follow system false', 'Light false', 'Dark true'])
+  })
+
+  it('saves Light or Dark at once, and Follow system forgets the choice and follows the system live', async () => {
+    type Listener = (event: { matches: boolean }) => void
+    const listeners = new Set<Listener>()
+    const dark = {
+      matches: false,
+      media: '(prefers-color-scheme: dark)',
+      addEventListener: (_type: string, listener: Listener) => listeners.add(listener),
+      removeEventListener: (_type: string, listener: Listener) => listeners.delete(listener),
+    }
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn((query: string) => (query === dark.media ? dark : { matches: false, media: query })),
+    )
+    const systemTurns = (matches: boolean) => {
+      act(() => {
+        dark.matches = matches
+        listeners.forEach((listener) => {
+          listener({ matches })
+        })
+      })
+    }
+    const user = userEvent.setup()
+    const http = await openAppearance()
+    const root = window.document.documentElement
+    const written = vi.spyOn(window.document, 'cookie', 'set')
+
+    await user.click(segment('Theme', 'Dark'))
+    expect(written).toHaveBeenLastCalledWith(
+      'ml_theme=dark; Path=/; Max-Age=31536000; SameSite=Strict',
+    )
+    expect(window.document.cookie).toContain('ml_theme=dark')
+    expect([root.dataset.theme, root.style.colorScheme]).toEqual(['dark', 'dark'])
+    expect(pressed()).toEqual(['Follow system false', 'Light false', 'Dark true'])
+
+    await user.click(segment('Theme', 'Light'))
+    expect(written).toHaveBeenLastCalledWith(
+      'ml_theme=light; Path=/; Max-Age=31536000; SameSite=Strict',
+    )
+    expect([root.dataset.theme, root.style.colorScheme]).toEqual(['light', 'light'])
+    systemTurns(true)
+    expect(root.dataset.theme).toBe('light')
+
+    await user.click(segment('Theme', 'Follow system'))
+    expect(written).toHaveBeenLastCalledWith('ml_theme=; Path=/; Max-Age=0; SameSite=Strict')
+    expect(window.document.cookie).not.toContain('ml_theme')
+    expect([root.dataset.theme, root.style.colorScheme]).toEqual(['dark', 'dark'])
+    expect(pressed()).toEqual(['Follow system true', 'Light false', 'Dark false'])
+    systemTurns(false)
+    expect([root.dataset.theme, root.style.colorScheme]).toEqual(['light', 'light'])
+    expect(written).toHaveBeenCalledTimes(3)
+
+    // Theme is never a change to save.
+    expect(
+      screen.getByRole('group', { name: 'Theme' }).closest('.settings-field-row'),
+    ).not.toHaveClass('is-changed')
+    expect(screen.queryByText('Changed')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Save settings' })).toBeNull()
+    expect(http.writeSettings).not.toHaveBeenCalled()
+  })
+
+  it('stays usable beside a locked Motion when a file manages the settings', async () => {
+    const user = userEvent.setup()
+    await openAppearance('file')
+    expect(screen.queryByRole('group', { name: 'Motion' })).toBeNull()
+    expect(screen.getByText('Motion').closest('.settings-field-row')).toHaveTextContent(
+      'MotionLockedFollow system',
+    )
+    await user.click(segment('Theme', 'Dark'))
+    expect(window.document.documentElement.dataset.theme).toBe('dark')
+    expect(pressed()).toEqual(['Follow system false', 'Light false', 'Dark true'])
+    expect(screen.queryByRole('button', { name: 'Save settings' })).toBeNull()
+  })
+
+  it('leaves the tray to Motion, and Discard leaves the theme alone', async () => {
+    const user = userEvent.setup()
+    const http = await openAppearance()
+    await user.click(segment('Motion', 'Always reduced'))
+    await user.click(segment('Theme', 'Dark'))
+    expect(screen.getByText('1 unsaved change')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Review changes' }))
+    const review = screen.getByRole('list')
+    expect(within(review).getAllByRole('listitem')).toHaveLength(1)
+    expect(review).toHaveTextContent('Motion')
+    expect(review).not.toHaveTextContent('Theme')
+    await user.click(screen.getByRole('button', { name: 'Discard all' }))
+    expect(segment('Motion', 'Follow system')).toHaveAttribute('aria-pressed', 'true')
+    expect(segment('Theme', 'Dark')).toHaveAttribute('aria-pressed', 'true')
+    expect(window.document.documentElement.dataset.theme).toBe('dark')
+    expect(window.document.cookie).toContain('ml_theme=dark')
+    expect(http.writeSettings).not.toHaveBeenCalled()
   })
 })

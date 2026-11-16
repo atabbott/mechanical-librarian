@@ -28,6 +28,7 @@ import { controlId, descriptionId, errorId, offOn, unitId } from '../fieldContro
 import { focusAfterRetry } from '../focusAfterRetry'
 import { useOwnerPasswordForm } from '../ownerPasswordForm'
 import { languageName } from '../labels'
+import { chooseTheme, useThemeChoice } from '../theme'
 import { ProviderThrottleNotice, settingsRoute, useReviewContext } from '../router'
 import {
   clone,
@@ -514,6 +515,7 @@ const SettingsEditor = ({
       }
     },
   })
+  const themeChoice = useThemeChoice()
   const errors = useMemo(() => validationErrors(draft, secrets, view), [draft, secrets, view])
   const fieldError = (fieldId: string) => errors.find((item) => item.fieldId === fieldId)?.message
   const changes = useMemo(
@@ -1191,11 +1193,21 @@ const SettingsEditor = ({
                     />
                   )}
                 </FieldRow>
-                <FieldRow
-                  title="Theme"
-                  description="Set with the theme button at the top of the page."
-                >
-                  <span className="settings-immediate-value">Browser only</span>
+                <FieldRow fieldId="theme" group title="Theme" description="Saved in this browser.">
+                  <div className="settings-theme">
+                    <SegmentedControl
+                      id={controlId('theme')}
+                      label="Theme"
+                      describedBy={descriptionId('theme')}
+                      options={[
+                        { value: 'system', label: 'Follow system' },
+                        { value: 'light', label: 'Light' },
+                        { value: 'dark', label: 'Dark' },
+                      ]}
+                      value={themeChoice}
+                      onChange={chooseTheme}
+                    />
+                  </div>
                 </FieldRow>
               </>
             ) : null}
