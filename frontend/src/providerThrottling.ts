@@ -125,6 +125,8 @@ export const retryClass = (current: ProviderThrottleEntry | undefined): RetryCla
 /**
  * The sentence Retry now's outcome is said in, or null while the snapshot has
  * not reached the raised generation or any pressed entry is still pending.
+ * A generation raised again elsewhere settles it too: every sentence is said
+ * from the snapshot's present entries and answers, so it is true of that one.
  * Recovered sources are not named; each other source gets one sentence, its
  * count summed over the libraries in the state the sentence names.
  */
@@ -133,7 +135,7 @@ export const retryOutcome = (
   expected: number,
   throttling: ProviderThrottlingView | null,
 ): string | null => {
-  if (throttling?.generation !== expected + 1) return null
+  if (!throttling || throttling.generation <= expected) return null
   const current = new Map(throttling.entries.map((entry) => [entryKey(entry), entry]))
   const unsettled: ProviderThrottleEntry[] = []
   for (const item of pressed) {

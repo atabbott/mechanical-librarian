@@ -414,6 +414,31 @@ describe('Retry now outcome (#1494 acceptance 6)', () => {
     expect(status).not.toHaveAttribute('data-outcome')
   })
 
+  it('ends the pending line when another press raised the generation again first', async () => {
+    const user = userEvent.setup()
+    let current = preparation([entry()])
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi.fn(async () => current),
+      retryProviderRecovery: vi.fn(async () => settingsView()),
+    }
+    const { queryClient } = renderActivity(http)
+    const popover = await openPopover(user)
+    const status = within(popover).getByRole('status')
+    // The other press is still retrying when this one's answer is read.
+    current = preparation([entry({ state: 'checking' })], {}, 6)
+    await user.click(within(popover).getByRole('button', { name: 'Retry now' }))
+    await waitFor(() => expect(status).toHaveTextContent('Every waiting lookup is retrying now.'))
+    // Generation 5, the one this press raised, is never read.
+    current = preparation([entry()], {}, 6)
+    await act(() => queryClient.invalidateQueries({ queryKey: ['review-preparation'] }))
+    await waitFor(() =>
+      expect(status).toHaveTextContent(
+        'Retried. Google Books is still limiting requests, so 214 lookups are waiting again.',
+      ),
+    )
+  })
+
   it('moves focus to the outcome line when Retry now leaves while focused', async () => {
     const user = userEvent.setup()
     let current = preparation([entry()])

@@ -104,6 +104,21 @@ describe('retryOutcome (#1494 acceptance 6)', () => {
     ).toBeNull()
   })
 
+  it('settles from a generation raised again elsewhere, by the same rules', () => {
+    // Another tab pressed Retry now before this press settled: the snapshot
+    // never shows the generation this press raised it to.
+    expect(retryOutcome([google], 4, throttling([entry()], 6))).toBe(
+      'Retried. Google Books is still limiting requests, so 214 lookups are waiting again.',
+    )
+    expect(retryOutcome([google], 4, throttling([], 7, [google]))).toBe(
+      'Retried. Every waiting lookup got an answer.',
+    )
+    expect(retryOutcome([google], 4, throttling([], 6))).toBe('Retried. No lookups are waiting.')
+    expect(retryOutcome([google], 4, throttling([entry({ reasons: [] })], 6))).toBeNull()
+    expect(retryOutcome([google], 4, throttling([entry({ state: 'checking' })], 6))).toBeNull()
+    expect(retryOutcome([google], 4, throttling([], 3))).toBeNull()
+  })
+
   it.each([
     [
       [entry()],
