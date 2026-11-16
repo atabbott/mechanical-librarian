@@ -52,9 +52,9 @@ _READERS: dict[str, str] = {
     # cites (#1336): the provider's name only, never the record or an offer.
     "adapters/persistence/field_effect_activity.py::"
     "SQLiteFieldEffectActivityRepository._plan_source_labels": "write_plan_source_name",
-    # A retry successor keeps each carried lane's own records (AC6).
-    "application/provider_retry_successor.py::"
-    "GenerateProviderRetrySuccessor._merged.result": "producer",
+    # A retry successor keeps each carried lane's own records (AC6); since
+    # #1477 it and preparation's link phase merge lanes through one producer.
+    "application/metadata_report.py::persisted_lane_result": "producer",
     # The offline ledger replay counts them per level through the seam and
     # prints aggregates only; it is not installed (amendment 13).
     "scripts/admission_rule_levels.py::_count_records": "offline_ledger",
