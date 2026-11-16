@@ -12515,6 +12515,12 @@ def test_review_keys_show_nothing_on_a_phone_or_tablet(size):
         expect(keys).to_be_hidden()
         expect(page.locator("html")).to_have_attribute("data-review-keys", "on")
         expect(toggle).to_be_hidden()
+        # Keys opened the list and is gone: its toolbar has focus, not the page.
+        expect(page.locator("header.library-header")).to_be_focused()
+        expect(page.locator("header.library-header")).to_have_accessible_name(
+            "Library controls"
+        )
+        assert not page.evaluate("document.activeElement === document.body")
         expect(badges.locator("visible=true")).to_have_count(0)
         assert heights() == with_keys
         page.keyboard.press("j")

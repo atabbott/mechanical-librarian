@@ -234,7 +234,13 @@ export function ReviewKeys({ ready }: { ready: boolean }) {
         onClose={() => {
           const previous = returnFocus.current
           returnFocus.current = null
-          if (previous instanceof HTMLElement) previous.focus()
+          if (!(previous instanceof HTMLElement)) return
+          // Keys is not shown once the keys are on again on a phone or tablet, and a control that is not shown cannot take focus: its toolbar does.
+          const hidden = getComputedStyle(previous).display === 'none'
+          const target = hidden
+            ? previous.parentElement?.closest<HTMLElement>('[tabindex]')
+            : previous
+          target?.focus()
         }}
       >
         <h2 id="review-keys-heading" tabIndex={-1}>
