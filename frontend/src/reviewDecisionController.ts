@@ -19,9 +19,12 @@ import {
 } from './decisionEcho'
 import { detailQuery, useReviewContext } from './router'
 
+// A changed pin asks even where no source offers a value: the pin itself is
+// what the owner settles (ADR-0085, Amendment 2).
 export const actionable = (field: CaseDetailView['fields'][number]) =>
   field.needsAttention &&
   (field.decisionActions.length > 0 ||
+    field.pin?.state === 'changed' ||
     (field.destination === 'cover' && field.editable && field.coverConsideration?.current !== true))
 export const choiceAvailable = (field: CaseDetailView['fields'][number]) =>
   field.editable &&

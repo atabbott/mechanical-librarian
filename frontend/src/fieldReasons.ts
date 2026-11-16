@@ -137,6 +137,9 @@ export const questionNotice = (field: ReviewField) =>
     ? field.notices.find((notice) => materialReasonLabel(notice) !== undefined)
     : undefined
 export const questionReason = (field: ReviewField, mediaKind: string) => {
+  // A changed pin is the question: the server's sentence says what changed.
+  if (field.pin?.state === 'changed' && field.classificationReason)
+    return field.classificationReason
   const notice = questionNotice(field)
   const label = notice === undefined ? undefined : noticeText(field, notice, mediaKind)
   return (
