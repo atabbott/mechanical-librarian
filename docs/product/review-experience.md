@@ -521,11 +521,11 @@ appear beside each option and in activation review.
 A preview runs the draft on recorded evidence and changes nothing. Under each
 library and field are the works the draft changes, grouped as Filled, Changed,
 Left to you or No change. Each sets the current value beside both policies'
-results. Unchanged outcomes are listed apart; changed fields count only what
-the draft causes. A rule no sampled work reached reads "Not previewed. This
-rule takes effect on the next preparation." An edited draft is named "Custom
-policy". Activation names the libraries that keep write permission, or says
-none has it and activating grants none.
+results. Results that read the same under both policies are listed apart and
+not counted. "Not previewed" holds what the preview could not reach, each
+with its reason. An edited draft is named "Custom policy". Activation names
+the libraries that keep write permission, or says none has it and activating
+grants none.
 
 ## Activity
 
