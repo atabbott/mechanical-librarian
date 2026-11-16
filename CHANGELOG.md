@@ -106,8 +106,8 @@ brackets are GitHub issues.
   it chooses that value and pins it: while Audiobookshelf shows the pinned value,
   Mechanical Librarian does not ask about the field again and Automatic leaves it
   alone. If the value changes there, the field asks again and shows what you
-  pinned. Covers have no pin. Library shows how many fields of each work are
-  pinned (#1346).
+  pinned. A field with nothing to decide is pinned in the `No change:` panel.
+  Covers have no pin. Library counts each work's pinned fields (#1346).
 
 ## 0.33.0 — First library (in progress)
 

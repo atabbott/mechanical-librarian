@@ -476,7 +476,8 @@ proposed value, values are serif and left-aligned, and a choice is as tall as
 its words. Each choice's foot holds Evidence on the left, a small underlined
 link with a 44px target, and the value's pin on the right: an icon button with
 a 44px target, an outline when off and filled when pinned, with the word
-"Pinned" on the choice. A field's
+"Pinned" on the choice. A row of the closed `No change:` panel carries the
+same pin beside the field's name, and says "Pinned" when it is on. A field's
 choices are one radio group: each states its state with a 20px ring in the
 field-line colour, set in a gutter and centred on the value's first line, which hover previews with a dot. The recorded choice fills
 the ring, takes the Archive Teal Wash with a 2px inner accent edge, and says

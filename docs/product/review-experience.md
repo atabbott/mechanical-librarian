@@ -291,8 +291,8 @@ Each tab names the field's status:
 
 Empty fields with no proposal sit behind one `Show N more fields` tab, and
 fields with nothing to decide in one closed panel headed `No change:` and their
-names. The heading counts any field waiting or unavailable separately, and each
-row gives its value and why nothing changed.
+names. The heading counts any field waiting, unavailable or pinned, and each
+row gives its value, why nothing changed and a pin.
 
 The canvas shows the question, one line under it with the field's own reason,
 and its choices under Keep current value and Choose a new value: one panel, or
@@ -361,8 +361,9 @@ Pressing a value's pin chooses that value and pins it, and the page stays on
 the field; if only the choice was recorded, the page says so. Pressing it
 again unpins. The pinned card says Pinned. When Audiobookshelf shows another
 value, the field needs you again and shows what you pinned, with Unpin. Covers
-and fields under `No change:` have no pin. A Library row counts its work's
-pinned fields ([pinned fields](automation-policy.md#pinned-fields)).
+have no pin. A field pinned under `No change:` stays there. A Library row
+counts its work's pinned fields
+([pinned fields](automation-policy.md#pinned-fields)).
 
 ### Audiobooks
 
