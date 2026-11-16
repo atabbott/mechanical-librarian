@@ -1127,3 +1127,25 @@ def test_deciding_again_closes_the_earlier_episodes_plan(store: OwnerStore) -> N
     store.decide("owner_entered", {"kind": "text", "value": "Another Orchard"})
     closed = store.repository.get_field_effect(earlier.plan.plan_id)
     assert (closed.state, closed.failure) == ("superseded", "authority_superseded")
+
+
+# #1346, K-D19: a pin's history row carries no value, as an unpin's; the
+# value a pin keeps is its answer's or its case's.
+def test_pin_and_unpin_history_events(store: OwnerStore) -> None:
+    pin = store.decide("pin")
+    unpin = store.decide("unpin")
+    events = {
+        event["decision_id"]: event
+        for event in store.repository.get_review_case_history(
+            store.case.review_case_id, 50
+        )
+        if event.get("kind") == "human_decision_recorded"
+    }
+    assert (
+        events[pin.decision_id]["outcome"],
+        events[pin.decision_id]["selected_value"],
+    ) == ("pin", None)
+    assert (
+        events[unpin.decision_id]["outcome"],
+        events[unpin.decision_id]["selected_value"],
+    ) == ("unpin", None)
