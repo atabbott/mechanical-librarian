@@ -2154,6 +2154,7 @@ def _throttling_entries() -> list[dict[str, object]]:
             "next_retry_at": int(time.time()) + 26 * 3600,
             "remedy": "add_api_key",
             "notice_at": int(time.time()) + 20 * 3600,
+            "untried": False,
         },
         {
             "library": "Synthetic ebooks",
@@ -2164,6 +2165,7 @@ def _throttling_entries() -> list[dict[str, object]]:
             "next_retry_at": None,
             "remedy": "check_api_key",
             "notice_at": None,
+            "untried": False,
         },
         {
             "library": THROTTLE_LONG_LIBRARY,
@@ -2175,6 +2177,7 @@ def _throttling_entries() -> list[dict[str, object]]:
             "remedy": None,
             # Waited past a day: needs the owner on time as well as by state.
             "notice_at": int(time.time()) - 3600,
+            "untried": False,
         },
         {
             "library": "Synthetic ebooks",
@@ -2185,6 +2188,7 @@ def _throttling_entries() -> list[dict[str, object]]:
             "next_retry_at": int(time.time()) + 3600,
             "remedy": None,
             "notice_at": int(time.time()) + 23 * 3600,
+            "untried": False,
         },
     ]
 

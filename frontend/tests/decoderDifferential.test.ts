@@ -305,6 +305,7 @@ const throttleEntry = {
   next_retry_at: 1_800_000_000,
   remedy: 'add_api_key',
   notice_at: 1_800_086_400,
+  untried: false,
 }
 const throttled = builder('Preparation', 'preparation.throttling', PREPARATION, () =>
   preparation({

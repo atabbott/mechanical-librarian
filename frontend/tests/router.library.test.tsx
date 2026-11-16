@@ -15384,6 +15384,7 @@ describe('library provider throttling notice (#1282)', () => {
     // Waiting a day since long ago, so the default entry needs the owner and
     // shows in the notice; a routine wait says `notice_at: null` (#1494).
     notice_at: 1,
+    untried: false,
     ...overrides,
   })
   const throttled = (

@@ -2387,6 +2387,7 @@ class _PreparationThrottleEntry(_ClosedModel):
     next_retry_at: int | None = Field(ge=0, le=8_640_000_000_000)
     remedy: Literal["add_api_key", "check_api_key"] | None
     notice_at: int | None = Field(ge=0, le=8_640_000_000_000)
+    untried: bool
 
 
 class _PreparationThrottleSource(_ClosedModel):

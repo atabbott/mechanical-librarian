@@ -361,6 +361,10 @@ def provider_throttling_view(
     API key; it is read only to choose a remedy, and no instance name leaves.
     ``notice_at`` is when the entry's longest current wait reaches a day; the
     browser compares it with its own clock, so no clock is read here.
+    ``untried`` is true while a member due an automatic retry, or in one, has
+    no outcome in this generation: its connection has not been tried since
+    Retry now, so another member's reason is not yet the entry's outcome
+    (#1494). A dormant or exhausted member is not waited for.
     ``answered`` names each library and source a provider answered in this
     generation, so Retry now's outcome claims answers only where there were
     some: a source also stops waiting when its lookups went stale (#1494).
@@ -414,6 +418,11 @@ def provider_throttling_view(
                 "notice_at": min(min(started) + _PROLONGED_WAIT, MAX_TIMESTAMP)
                 if started
                 else None,
+                "untried": any(
+                    item["reason"] is None
+                    and item["state"] in {"waiting", "checking", "fanout"}
+                    for item in members
+                ),
             }
         )
     return {

@@ -9812,6 +9812,10 @@
             ],
             "title": "State",
             "type": "string"
+          },
+          "untried": {
+            "title": "Untried",
+            "type": "boolean"
           }
         },
         "required": [
@@ -9822,7 +9826,8 @@
           "deferred",
           "next_retry_at",
           "remedy",
-          "notice_at"
+          "notice_at",
+          "untried"
         ],
         "title": "_PreparationThrottleEntry",
         "type": "object"

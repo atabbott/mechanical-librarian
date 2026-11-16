@@ -5596,6 +5596,59 @@ def _retry_now_view(
     return (run.state, run.fanout, run.settled), view
 
 
+def test_a_source_reads_as_untried_until_each_of_its_connections_is_retried(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
+    jobs = {
+        name: replace(_job(f"m-{name}"), connection=name)
+        for name in ("google", "google-two")
+    }
+    for name, job in jobs.items():
+        store.observe_failure(
+            connection=name,
+            adapter="google_books",
+            scope="books",
+            generation=1,
+            failure="transient",
+            now=1_000,
+        )
+        store.enqueue_jobs((job,), enqueued_at=1_000, outcomes={job: "transient"})
+
+    def entry() -> tuple[object, ...]:
+        ((item),) = cast(
+            "list[dict[str, object]]",
+            provider_throttling_view(store.throttling_snapshot(), {}, 2, "available")[
+                "entries"
+            ],
+        )
+        return item["state"], item["reasons"], item["deferred"], item["untried"]
+
+    assert ("waiting", ["transient"], 2, False) == entry()
+    # Retry now: neither connection has an outcome in the raised generation.
+    assert 2 == store.reconcile_generation(generation=2, now=2_000)
+    assert ("waiting", [], 2, True) == entry()
+    for tried, (state, untried) in enumerate(
+        (("waiting", True), ("waiting", False)), start=1
+    ):
+        claimed = store.claim_one(generation=2, now=2_000, token="owner")
+        assert claimed is not None
+        canary = store.claim_job(recovery=claimed, token="owner", now=2_000)
+        assert canary is not None
+        store.complete_canary_failure(
+            job=canary,
+            token="owner",
+            recovery=claimed,
+            now=2_001,
+            failure="transient",
+            retry_after=None,
+        )
+        # One connection failed while the other still awaits its first retry:
+        # the entry already reads waiting with a reason and both lookups.
+        assert (state, ["transient"], 2, untried) == entry(), tried
+    store.close()
+
+
 def test_a_retry_whose_lookups_all_went_stale_does_not_read_as_answered(
     tmp_path: Path,
 ) -> None:

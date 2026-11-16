@@ -21,7 +21,7 @@ import type {
 import { BackgroundActivity } from '../src/components/BackgroundActivity'
 import { StatusIcon } from '../src/components/MastheadIcons'
 import { ThemeControl } from '../src/components/ThemeControl'
-import { useProviderRetry } from '../src/providerThrottling'
+import { providerRetryPressKey, useProviderRetry } from '../src/providerThrottling'
 import { createHttp, idlePreparation } from './fixtures'
 import { view as settingsView } from './settingsFixtures'
 
@@ -34,6 +34,7 @@ const entry = (overrides: Partial<ProviderThrottleEntry> = {}): ProviderThrottle
   next_retry_at: null,
   remedy: null,
   notice_at: null,
+  untried: false,
   ...overrides,
 })
 const library = (
@@ -435,6 +436,38 @@ describe('Retry now outcome (#1494 acceptance 6)', () => {
     await waitFor(() =>
       expect(status).toHaveTextContent(
         'Retried. Google Books is still limiting requests, so 214 lookups are waiting again.',
+      ),
+    )
+  })
+
+  it('keeps the pending line while one of a source’s connections is untried', async () => {
+    const user = userEvent.setup()
+    let current = preparation([entry({ reasons: ['transient'], deferred: 3 })])
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi.fn(async () => current),
+      retryProviderRecovery: vi.fn(async () => settingsView()),
+    }
+    const { queryClient } = renderActivity(http)
+    const popover = await openPopover(user)
+    const status = within(popover).getByRole('status')
+    // One connection failed; the other still awaits its first retry.
+    current = preparation([entry({ reasons: ['transient'], deferred: 2, untried: true })], {}, 5)
+    await user.click(within(popover).getByRole('button', { name: 'Retry now' }))
+    await waitFor(() => expect(status).toHaveTextContent('Every waiting lookup is retrying now.'))
+    await waitFor(() => expect(within(popover).getByText(/2 lookups waiting/)).toBeInTheDocument())
+    // The raised generation is read and no outcome is saved for the press.
+    expect(queryClient.getQueryData(providerRetryPressKey)).toMatchObject({
+      accepted: true,
+      outcome: null,
+    })
+    expect(status).toHaveTextContent('Every waiting lookup is retrying now.')
+    // The other connection is answered: one lookup waits again.
+    current = preparation([entry({ reasons: ['transient'], deferred: 1 })], {}, 5)
+    await act(() => queryClient.invalidateQueries({ queryKey: ['review-preparation'] }))
+    await waitFor(() =>
+      expect(status).toHaveTextContent(
+        'Retried. Google Books still did not answer, so 1 lookup is waiting again.',
       ),
     )
   })

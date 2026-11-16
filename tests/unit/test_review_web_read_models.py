@@ -5103,6 +5103,7 @@ def test_provider_throttling_view_totals_each_library_and_source(
             "next_retry_at",
             "remedy",
             "notice_at",
+            "untried",
         }
         for entry in cast("list[dict[str, object]]", view["entries"])
     )
@@ -5144,6 +5145,88 @@ def test_provider_throttling_notice_is_a_day_after_the_longest_wait(
     view = provider_throttling_view(rows, {}, 1, "available")
     assert [notice_at] == [
         entry["notice_at"] for entry in cast("list[dict[str, object]]", view["entries"])
+    ]
+
+
+@pytest.mark.parametrize(
+    ("members", "state", "reasons", "untried"),
+    (
+        pytest.param(
+            (("waiting", "transient"), ("waiting", None)),
+            "waiting",
+            ["transient"],
+            True,
+            id="one-connection-failed-and-one-not-tried-yet",
+        ),
+        pytest.param(
+            (("waiting", "transient"), ("exhausted", None)),
+            "waiting",
+            ["transient"],
+            False,
+            id="a-connection-with-no-retry-left-is-not-waited-for",
+        ),
+        pytest.param(
+            (("waiting", "transient"), ("waiting", "rate_limited")),
+            "waiting",
+            ["rate_limited", "transient"],
+            False,
+            id="every-connection-tried",
+        ),
+        pytest.param(
+            (("waiting", "transient"), ("dormant", None)),
+            "waiting",
+            ["transient"],
+            False,
+            id="a-dormant-connection-is-not-waited-for",
+        ),
+        pytest.param(
+            (("waiting", None),), "waiting", [], True, id="one-connection-untried"
+        ),
+        pytest.param(
+            (("checking", None),), "checking", [], True, id="one-connection-checking"
+        ),
+        pytest.param(
+            (("fanout", None),), "checking", [], True, id="one-connection-in-fanout"
+        ),
+        pytest.param(
+            (("dormant", None),), "dormant", [], False, id="one-connection-dormant"
+        ),
+        pytest.param(
+            (("exhausted", None),),
+            "exhausted",
+            [],
+            False,
+            id="one-connection-exhausted",
+        ),
+    ),
+)
+def test_provider_throttling_entry_says_while_a_connection_is_untried(
+    members: tuple[tuple[str, str | None], ...],
+    state: str,
+    reasons: list[str],
+    untried: bool,
+) -> None:
+    from mechanical_librarian.application.review_application import (
+        provider_throttling_view,
+    )
+
+    rows = tuple(
+        _throttle_row(
+            f"google-{index}",
+            "google_books",
+            "books",
+            member,
+            reason,
+            1,
+            90 if member == "waiting" else None,
+        )
+        for index, (member, reason) in enumerate(members)
+    )
+    view = provider_throttling_view(rows, {}, 2, "available")
+    # The state, reasons and count the owner reads are as they were (#1494).
+    assert [(state, reasons, len(members), untried)] == [
+        (entry["state"], entry["reasons"], entry["deferred"], entry["untried"])
+        for entry in cast("list[dict[str, object]]", view["entries"])
     ]
 
 
@@ -5205,6 +5288,7 @@ def test_preparation_read_carries_value_free_provider_throttling(
                 "next_retry_at": 90,
                 "remedy": "add_api_key",
                 "notice_at": 86_500,
+                "untried": False,
             }
         ],
         "answered": [{"library": "books", "adapter": "google_books"}],

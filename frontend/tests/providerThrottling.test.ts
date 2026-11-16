@@ -27,6 +27,7 @@ const entry = (overrides: Partial<ProviderThrottleEntry> = {}): ProviderThrottle
   next_retry_at: null,
   remedy: null,
   notice_at: null,
+  untried: false,
   ...overrides,
 })
 const throttling = (
@@ -91,6 +92,7 @@ describe('retryOutcome (#1494 acceptance 6)', () => {
     ['exhausted with a reason', entry({ state: 'exhausted' }), 'waiting_again'],
     ['waiting with no reason yet', entry({ reasons: [] }), 'pending'],
     ['checking', entry({ state: 'checking' }), 'pending'],
+    ['waiting with a reason while a connection is untried', entry({ untried: true }), 'pending'],
   ] as const)('classifies %s', (_name, current, expected) => {
     expect(retryClass(current)).toBe(expected)
   })
@@ -102,6 +104,22 @@ describe('retryOutcome (#1494 acceptance 6)', () => {
     expect(
       retryOutcome([google, hardcover], 4, throttling([entry({ state: 'checking' })], 5)),
     ).toBeNull()
+  })
+
+  it('waits while one of a source’s connections is untried, then says what is true', () => {
+    // Two connections of one source total one entry. The first failed; the
+    // second has not been tried since the press.
+    const half = entry({ reasons: ['transient'], deferred: 2, untried: true })
+    expect(retryOutcome([google], 4, throttling([half], 5))).toBeNull()
+    expect(retryOutcome([google], 4, throttling([{ ...half, state: 'checking' }], 5))).toBeNull()
+    // The second fails too.
+    expect(retryOutcome([google], 4, throttling([{ ...half, untried: false }], 5))).toBe(
+      'Retried. Google Books still did not answer, so 2 lookups are waiting again.',
+    )
+    // Or it is answered: only the first connection's lookup waits again.
+    expect(
+      retryOutcome([google], 4, throttling([{ ...half, deferred: 1, untried: false }], 5)),
+    ).toBe('Retried. Google Books still did not answer, so 1 lookup is waiting again.')
   })
 
   it('settles from a generation raised again elsewhere, by the same rules', () => {

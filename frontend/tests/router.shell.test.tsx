@@ -683,6 +683,7 @@ describe('Application shell', () => {
                 next_retry_at: null,
                 remedy: 'add_api_key',
                 notice_at: null,
+                untried: false,
               },
             ],
             answered: [],

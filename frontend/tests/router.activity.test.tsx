@@ -5239,6 +5239,7 @@ describe('owner language in Activity (#1286)', () => {
       deferred: 3,
       next_retry_at: null,
       notice_at: null,
+      untried: false,
       ...overrides,
     }
     const http: ReviewHttp = {

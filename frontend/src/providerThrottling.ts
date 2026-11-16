@@ -112,15 +112,22 @@ export const retryCleared = 'Retried. No lookups are waiting.'
 export type RetryClass = 'recovered' | 'failed' | 'waiting_again' | 'pending'
 export type PressedEntry = Pick<ProviderThrottleEntry, 'library' | 'adapter'>
 
-/** How one pressed library and source stands once the raised generation is read. */
+/**
+ * How one pressed library and source stands once the raised generation is read.
+ * An entry can total several connections of one source: while one of them has
+ * not been tried since the press, another's reason is not yet the outcome.
+ */
 export const retryClass = (current: ProviderThrottleEntry | undefined): RetryClass =>
   current === undefined
     ? 'recovered'
-    : current.state === 'dormant'
-      ? 'failed'
-      : current.reasons.length > 0 && (current.state === 'waiting' || current.state === 'exhausted')
-        ? 'waiting_again'
-        : 'pending'
+    : current.untried
+      ? 'pending'
+      : current.state === 'dormant'
+        ? 'failed'
+        : current.reasons.length > 0 &&
+            (current.state === 'waiting' || current.state === 'exhausted')
+          ? 'waiting_again'
+          : 'pending'
 
 /**
  * The sentence Retry now's outcome is said in, or null while the snapshot has

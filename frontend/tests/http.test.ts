@@ -2920,6 +2920,7 @@ describe('ReviewApiClient', () => {
       next_retry_at: 1_800_000_000,
       remedy: 'add_api_key',
       notice_at: 1_800_086_400,
+      untried: false,
     }
     const throttling = {
       generation: 3,
@@ -2948,6 +2949,11 @@ describe('ReviewApiClient', () => {
     await expect(
       readPreparation({ ...base, provider_throttling: { ...throttling, entries: [missing] } }),
     ).rejects.toMatchObject(refused('required@/provider_throttling/entries/0/notice_at'))
+    const unsaid: Record<string, unknown> = { ...entry }
+    delete unsaid.untried
+    await expect(
+      readPreparation({ ...base, provider_throttling: { ...throttling, entries: [unsaid] } }),
+    ).rejects.toMatchObject(refused('required@/provider_throttling/entries/0/untried'))
     const maximal = { ...throttling, entries: Array.from({ length: 256 }, () => entry) }
     expect(
       (await readPreparation({ ...base, provider_throttling: maximal })).provider_throttling
