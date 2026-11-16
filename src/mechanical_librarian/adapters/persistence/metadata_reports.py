@@ -151,6 +151,7 @@ from mechanical_librarian.application.review_web import (
     LibraryLabels,
     LibraryLensFilter,
     ReviewAttentionSnapshot,
+    ReviewLibraryProgress,
     ReviewLibrarySnapshot,
     ValidatedDocumentCache,
 )
@@ -529,9 +530,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 )
             ),
             set_field_effect_manual_hold=(
-                lambda review_case_id, destination, changed_at, decision_id: (
+                lambda review_case_id, destination, changed_at, decision_id, pin: (
                     self._set_field_effect_manual_hold(
-                        review_case_id, destination, changed_at, decision_id
+                        review_case_id, destination, changed_at, decision_id, pin=pin
                     )
                 )
             ),
@@ -596,6 +597,11 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                     self.read_current_attention_page(
                         search, limit, offset, library_labels
                     )
+                )
+            ),
+            read_current_library_progress=(
+                lambda library_labels: self.read_current_library_progress(
+                    library_labels
                 )
             ),
             current_cover_authority=(lambda: self._cover_read_authority()),
@@ -964,7 +970,8 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 "AND human.destination=automatic.destination "
                 "AND human.ordinal=(SELECT MAX(current.ordinal) FROM human_decisions current "
                 "WHERE current.review_case_id=human.review_case_id AND "
-                "current.destination=human.destination) "
+                "current.destination=human.destination "
+                "AND current.outcome NOT IN ('pin','unpin')) "
                 "WHERE automatic.review_case_id=? AND automatic.destination=? AND "
                 # Only the active generation's decision is superseded (#1573).
                 + _active_generation_automatic_sql("automatic"),
@@ -994,12 +1001,15 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         destination: str,
         changed_at: int,
         decision_id: str,
+        *,
+        pin: dict[str, object] | None = None,
     ) -> None:
         self._field_effects._set_field_effect_manual_hold(
             review_case_id,
             destination,
             changed_at,
             decision_id,
+            pin=pin,
         )
 
     def field_effect_manual_hold_context(
@@ -1750,6 +1760,26 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 search, limit, offset, library_labels
             )
 
+    def read_review_library_progress(
+        self, library_labels: LibraryLabels = ()
+    ) -> ReviewLibraryProgress:
+        # Attached as `read_review_library` attaches it, so the terminal
+        # failures Library counts are the ones counted here (#1335).
+        try:
+            with (
+                self.browse_observation(),
+                (
+                    self._library_catalogue.attach(self._connection)
+                    if self._library_catalogue is not None
+                    else nullcontext()
+                ),
+            ):
+                return self._review_projections.read_review_library_progress(
+                    library_labels
+                )
+        except (CatalogueError, OSError, sqlite3.Error) as error:
+            raise MetadataReportError("review library is unavailable") from error
+
     def read_review_covers(
         self,
         view: CoverView,
@@ -1803,6 +1833,12 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 search, limit, offset, library_labels
             )
 
+    def read_current_library_progress(
+        self, library_labels: LibraryLabels = ()
+    ) -> ReviewLibraryProgress:
+        with self.browse_observation():
+            return self._review_cases.read_current_library_progress(library_labels)
+
     def list_current_review_case_documents(
         self,
         search: str | None,
@@ -1831,7 +1867,8 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         offset: int,
         library_labels: LibraryLabels = (),
     ) -> tuple[
-        tuple[str, str, str, int, str | None, ReviewFieldCause | None, bool], ...
+        tuple[str, str, str, int, str | None, ReviewFieldCause | None, bool, bool],
+        ...,
     ]:
         with self.browse_observation():
             return self._review_cases.list_current_attention_documents(

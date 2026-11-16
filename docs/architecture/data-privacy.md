@@ -171,6 +171,9 @@ The product sends no telemetry. It contacts only:
 All owner surfaces need a session and are `private, no-store`.
 
 - **Library, Attention and review** show the owner's own metadata and evidence.
+- **Library progress** returns counts only: works per lens in total and per
+  library, with each library's name, and works needing the owner per field.
+  Never a title, item, path, digest or run identifier.
 - **Covers → Taste profile** shows the profile's rules, versions and build
   state. Rule text is model output or the owner's, shown as text only, and
   never reaches a log, status, diagnostic or support bundle.

@@ -25,6 +25,8 @@ export const lits =
   ) =>
     values
 type LibraryDto = ResponseSchema<'_LibraryResponse'>
+type LibraryCountsDto = ResponseSchema<'_ReviewCounts'>
+type LibraryProgressDto = ResponseSchema<'_LibraryProgressResponse'>
 type LibraryCoverDto = ResponseSchema<'_LibraryCover'>
 type ReportDetailDto = ResponseSchema<'_ReportDetailResponse'>
 type AttentionDto = ResponseSchema<'_AttentionResponse'>
@@ -181,6 +183,8 @@ export const DECISION_OUTCOMES = [
   'reject',
   'owner_entered',
   'withdraw',
+  'pin',
+  'unpin',
 ] as const
 lits<Schema<'_HistoryDecisionItem'>['outcome']>()(DECISION_OUTCOMES)
 export type DecisionOutcome = (typeof DECISION_OUTCOMES)[number]
@@ -618,6 +622,8 @@ export interface LibraryWorkView {
   libraryDisplayName?: string
   mediaKind: MediaKind
   attentionCount: number
+  // The fields an owner pin holds on this work (ADR-0085, Amendment 2).
+  pinnedCount: number
   attention: AttentionState
   // Where this work opens, and what opens there. A work with a review case
   // points at that case; a work with only a published report points at the
@@ -631,14 +637,33 @@ export interface LibraryWorkView {
   summary: WorkSummaryView | null
   cover?: LibraryCoverView
 }
+export interface LibraryCounts {
+  attention: number
+  all: number
+  clear: number
+  notMatched: number
+  failed: number
+}
 export interface LibraryView {
   lens: LibraryLens
   query?: string
   nextCursor?: string
   previousCursor?: string
   page: number
-  counts: { attention: number; all: number; clear: number; notMatched: number; failed: number }
+  counts: LibraryCounts
   works: readonly LibraryWorkView[]
+}
+// Library's counts in total and per library, and the works whose field
+// Attention lists, per field (#1335). Computed by the server on each read.
+export interface LibraryProgressView {
+  totals: LibraryCounts
+  libraries: readonly {
+    connection: string
+    library: string
+    libraryDisplayName: string
+    counts: LibraryCounts
+  }[]
+  fields: readonly { destination: TargetDestination; needYou: number }[]
 }
 export interface AttentionItemView {
   id: string
@@ -730,6 +755,15 @@ export interface ReviewFieldView {
   corroborationSources: readonly string[]
   descriptionAdvice?: DescriptionAdviceView | null
   ownerControl?: OwnerControlView | null
+  // An owner pin on the field with the value it keeps: in force, waiting for
+  // the chosen value to be read back, or changed. And whether a pin or an
+  // unpin is accepted now (ADR-0085, Amendment 2): a pin is available, or
+  // waits for a change to the field to be written (J2).
+  pin: {
+    state: 'in_force' | 'waiting' | 'changed'
+    value: ResponseSchema<'_TargetField'>
+  } | null
+  pinControl: { pin: 'available' | 'change_waiting' | null; unpin: boolean } | null
   currentCoverSelectionId?: string | null
   currentCoverSelectionArtifactId?: string | null
   coverConsideration?: CoverConsiderationView | null
@@ -1265,6 +1299,7 @@ export interface ReviewHttp {
     signal?: AbortSignal,
     workClass?: ReadWorkClass,
   ): Promise<LibraryView>
+  getLibraryProgress(signal?: AbortSignal, workClass?: ReadWorkClass): Promise<LibraryProgressView>
   getReportDetail(
     detailUrl: string,
     signal?: AbortSignal,
@@ -1566,6 +1601,9 @@ export class ReviewApiClient implements ReviewHttp {
     if (search.q) p.set('q', search.q)
     if (search.cursor) p.set('cursor', search.cursor)
     return mapLibrary(await this.read(`/api/v1/library?${p}`, signal, workClass))
+  }
+  async getLibraryProgress(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
+    return mapLibraryProgress(await this.read('/api/v1/library/progress', signal, workClass))
   }
   // The address is the one the library row handed back, followed rather than
   // rebuilt: an item id may hold any character a target permits, and only the
@@ -2822,19 +2860,35 @@ export const mapReportDetail = (value: ReportDetailDto): ReportDetailView => ({
   title: value.title,
 })
 
+const mapLibraryCounts = (value: LibraryCountsDto): LibraryCounts => ({
+  attention: value.needs_attention,
+  all: value.all,
+  clear: value.no_attention_needed,
+  notMatched: value.not_matched,
+  failed: value.preparation_failed,
+})
+
+const mapLibraryProgress = (value: LibraryProgressDto): LibraryProgressView => ({
+  totals: mapLibraryCounts(value.totals),
+  libraries: value.libraries.map((library) => ({
+    connection: library.connection,
+    library: library.library,
+    libraryDisplayName: library.library_display_name,
+    counts: mapLibraryCounts(library.counts),
+  })),
+  fields: value.fields.map((field) => ({
+    destination: field.destination,
+    needYou: field.need_you,
+  })),
+})
+
 export const mapLibrary = (value: LibraryDto): LibraryView => ({
   lens: value.lens,
   ...(value.query ? { query: value.query } : {}),
   ...(value.next_cursor ? { nextCursor: value.next_cursor } : {}),
   ...(value.previous_cursor ? { previousCursor: value.previous_cursor } : {}),
   page: value.page,
-  counts: {
-    attention: value.counts.needs_attention,
-    all: value.counts.all,
-    clear: value.counts.no_attention_needed,
-    notMatched: value.counts.not_matched,
-    failed: value.counts.preparation_failed,
-  },
+  counts: mapLibraryCounts(value.counts),
   works: value.items.map((item) => {
     const preparation = item.preparation
     const summary = item.summary
@@ -2848,6 +2902,7 @@ export const mapLibrary = (value: LibraryDto): LibraryView => ({
       libraryDisplayName: item.library_display_name ?? item.library,
       mediaKind: item.media_kind,
       attentionCount: item.attention_count,
+      pinnedCount: item.pinned_count,
       attention: item.attention_state,
       detailUrl: item.detail_url,
       detailKind: item.detail_kind,
@@ -3031,6 +3086,8 @@ const mapReviewField = (field: ReviewFieldDto): ReviewFieldView => ({
   descriptionAdvice:
     field.description_advice === null ? null : mapDescriptionAdvice(field.description_advice),
   ownerControl: field.owner_control === null ? null : mapOwnerControl(field.owner_control),
+  pin: field.pin,
+  pinControl: field.pin_control,
   coverConsideration:
     field.cover_consideration === null ? null : mapCoverConsideration(field.cover_consideration),
   currentCoverSelectionArtifactId: field.current_cover_selection_artifact_id,

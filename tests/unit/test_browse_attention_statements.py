@@ -194,9 +194,18 @@ def _oracle_attention(
             offset,
         ),
     ).fetchall()
+    # The oracle predates pins (#1346), so it holds only for a store without
+    # one; a pin's own attention is compared in test_review_attention_facts.
+    assert (
+        repository._connection.execute(
+            "SELECT 1 FROM field_effect_manual_holds "
+            "WHERE json_type(document,'$.pin')='object'"
+        ).fetchone()
+        is None
+    )
     return (
         tuple(
-            (row[0], row[1], row[3], row[4], row[5], row[6], bool(row[7]))
+            (row[0], row[1], row[3], row[4], row[5], row[6], bool(row[7]), False)
             for row in rows
             if row[8] == 1
         ),

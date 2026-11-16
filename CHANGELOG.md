@@ -100,6 +100,12 @@ brackets are GitHub issues.
   Activity hides a one-page pager. Phones get a 16 px margin, and the masthead
   scrolls away when taller than a sixth of the window (#1894).
 
+## 0.36.0 — Standing owner instructions (in progress)
+
+- **Clean rebuild required.** Stored owner decisions and field holds changed
+  shape, ready for pinning a field of a work. Nothing looks different yet
+  (#1346).
+
 ## 0.33.0 — First library (in progress)
 
 - **Clean rebuild required** only for an install whose setup was interrupted.
@@ -122,6 +128,11 @@ brackets are GitHub issues.
 - Setup and Settings round the cover cost the same way and count in works
   (#1863).
 - The preparation detail fits a 320 px window at 200% text (#1864).
+- A finished run's box in Library says where the whole library stands, such as
+  "1,840 of 2,026 works settled · 174 need you", each count linked to its
+  lens, until you dismiss the run. Activity has a Library progress card with
+  the same counts per library and the works that need you per field. Counts of
+  works group their digits (#1335).
 - Library takes single keys for review: J and K move between fields and works,
   1 to 3 choose a value, E enters your own value, U withdraws your decision on
   the open field and ? lists the keys. Keys in the Library toolbar turns them

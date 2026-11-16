@@ -11,8 +11,9 @@ audiobook with a review case and no admitted recording, the work route offers
 a value for it while it is strictly empty (the measurement's ``_qualifies``),
 and Hardcover or Open Library, through an exact work source naming one work,
 offers that value (``offered_fields``). A field whose latest qualifying owner
-decision (``latest_labels``) is anything but a withdrawal is left out and
-counted as already decided, which is the measurement's ``labels.labelled``.
+decision (``latest_labels``, which passes over a pin or an unpin) is
+anything but a withdrawal is left out and counted as already decided, which
+is the measurement's ``labels.labelled``.
 Each link names the providers that offer the value. Links are listed in the
 measurement's item order, and every count is read inside one read
 transaction.

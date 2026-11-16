@@ -36,6 +36,7 @@ from typing import Iterator, cast
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
 from mechanical_librarian.adapters.persistence.decisions import (
     _automatic_decision_documents,
+    field_change_waiting_sql,
 )
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.field_effect_validation import (
@@ -86,6 +87,7 @@ from mechanical_librarian.application.review_web import (
     LibraryLabels,
     LibraryLensFilter,
     ReviewAttentionSnapshot,
+    ReviewLibraryProgress,
     ReviewLibrarySnapshot,
     ValidatedDocumentCache,
 )
@@ -135,6 +137,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         read_current_attention_page: Callable[
             [str | None, int, int, LibraryLabels], ReviewAttentionPage
         ],
+        read_current_library_progress: Callable[[LibraryLabels], ReviewLibraryProgress],
         current_cover_authority: Callable[[], tuple[str | None, str | None]],
         current_resolved_metadata_policy: Callable[
             [str], ResolvedMetadataPolicy | None
@@ -156,6 +159,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         self.cover_consideration_history = cover_consideration_history
         self.read_current_library_page = read_current_library_page
         self.read_current_attention_page = read_current_attention_page
+        self.read_current_library_progress = read_current_library_progress
         self._current_cover_authority = current_cover_authority
         self.current_resolved_metadata_policy = current_resolved_metadata_policy
         self._previous_field_values = previous_field_values
@@ -358,6 +362,57 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                         (review_case_id,),
                     )
                 ),
+                # The pinned value is the chosen value where the hold's
+                # decision chose one, and otherwise the value of that
+                # decision's case; a hold breaking that reads no pin. The
+                # chosen value is parsed here, not extracted in SQL, which
+                # would read a JSON boolean as an integer.
+                pins=tuple(
+                    (
+                        row[0],
+                        row[1] == 1,
+                        _canonical_json(
+                            {
+                                "destination": row[0],
+                                "state": "value",
+                                "value": json.loads(row[3])["value"],
+                            }
+                        )
+                        if row[2] in {"accept", "owner_entered"}
+                        else row[4],
+                    )
+                    for row in self._connection.execute(
+                        "SELECT hold.destination,"
+                        "json_extract(hold.document,'$.pin.in_force'),"
+                        "human.outcome,human.selected_value_document,target.value "
+                        "FROM field_effect_manual_holds hold JOIN human_decisions human "
+                        "ON human.decision_id=json_extract(hold.document,'$.decision_id') "
+                        "AND human.outcome IN ('pin','keep_current','accept','owner_entered') "
+                        "JOIN review_cases review "
+                        "ON review.review_case_id=human.review_case_id,"
+                        "json_each(review.document,'$.target.fields') target "
+                        "WHERE hold.review_case_id=? AND hold.active=1 "
+                        "AND json_type(hold.document,'$.pin')='object' "
+                        "AND json_extract(target.value,'$.destination')=hold.destination "
+                        "ORDER BY hold.destination",
+                        (review_case_id,),
+                    )
+                ),
+                change_waiting_destinations=tuple(
+                    row[0]
+                    for row in self._connection.execute(
+                        "SELECT field.destination FROM (SELECT destination FROM "
+                        "human_decisions WHERE review_case_id=:review_case_id UNION "
+                        "SELECT destination FROM automatic_decisions WHERE "
+                        "review_case_id=:review_case_id UNION SELECT 'description') "
+                        "field WHERE "
+                        + field_change_waiting_sql(
+                            ":review_case_id", "field.destination"
+                        )
+                        + " ORDER BY field.destination",
+                        {"review_case_id": review_case_id},
+                    )
+                ),
                 return_requested_destinations=self._return_destinations(
                     review_case_id, failed=False
                 ),
@@ -445,7 +500,8 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             + _episode_decision_sql("human")
             + " AND human.ordinal=(SELECT MAX(latest.ordinal) "
             "FROM human_decisions latest WHERE latest.review_case_id=human.review_case_id "
-            "AND latest.destination=human.destination) GROUP BY human.destination "
+            "AND latest.destination=human.destination "
+            "AND latest.outcome NOT IN ('pin','unpin')) GROUP BY human.destination "
             "ORDER BY human.destination",
             (review_case_id,),
         ).fetchall()
@@ -636,6 +692,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                     tuple[str, ...],
                     str | None,
                     int,
+                    int,
                 ]
             ] = []
             scopes: list[DecisionScope | None] = []
@@ -647,7 +704,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                     and '"schema_version":"review-terminal-work-v1"' in report_document
                 ):
                     projected_rows.append(
-                        (case_document, report_document, (), (), (), (), None, 0)
+                        (case_document, report_document, (), (), (), (), None, 0, 0)
                     )
                     scopes.append(None)
                     continue
@@ -723,6 +780,14 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                         0
                         if case_id is None
                         else self._current_attention_count(case_id),
+                        0
+                        if case_id is None
+                        else self._connection.execute(
+                            "SELECT COUNT(*) FROM field_effect_manual_holds "
+                            "WHERE review_case_id=? AND active=1 "
+                            "AND json_type(document,'$.pin')='object'",
+                            (case_id,),
+                        ).fetchone()[0],
                     )
                 )
             projected = tuple(projected_rows)
@@ -1047,3 +1112,11 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             )
             snapshot = ReviewAttentionSnapshot(rows=page.rows, total=page.total)
         return snapshot
+
+    def read_review_library_progress(
+        self, library_labels: LibraryLabels = ()
+    ) -> ReviewLibraryProgress:
+        # Its work and field statements are one answer only on one snapshot.
+        with self._consistent_review_read():
+            progress = self.read_current_library_progress(library_labels)
+        return progress

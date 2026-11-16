@@ -6801,6 +6801,136 @@ def test_automatic_tuple_replay_is_exact_and_date_and_title_bundles_are_atomic()
         reopened.close()
 
 
+def test_a_pinned_destination_blocks_its_automatic_bundle() -> None:
+    """A pin on a bundle's field mints none of the bundle (#1346, AC7)."""
+    from mechanical_librarian.adapters.persistence.field_effect_validation import (
+        FIELD_EFFECT_MANUAL_HOLD_SCHEMA,
+    )
+    from mechanical_librarian.domain.field_effect import (
+        canonical_json as canonical_effect_json,
+    )
+
+    with tempfile.TemporaryDirectory() as temporary:
+        repository = open_repository(Path(temporary) / "reports.sqlite")
+        case_id = _case(repository)
+        title = _synthetic_automatic_tuple(repository, case_id, "title_layout")
+        dates = _synthetic_automatic_tuple(repository, case_id, "date_precision")
+        # The title tuple forms one bundle, so the pin removes it through the
+        # bundle check rather than by skipping a single decision.
+        assert {field.destination for field in title.outcomes} == {"title"}
+        assert all(field.combination_ids for field in title.outcomes)
+        document = {
+            "active": True,
+            "decision_id": "human_decision_" + "1" * 64,
+            "destination": "title",
+            "pending_return": None,
+            "pin": {"fingerprint": "2" * 64, "in_force": True},
+            "review_case_id": case_id,
+            "schema_version": FIELD_EFFECT_MANUAL_HOLD_SCHEMA,
+            "updated_at": 6,
+        }
+        repository._connection.execute(
+            "INSERT INTO field_effect_manual_holds(review_case_id,destination,"
+            "active,updated_at,document) VALUES(?,'title',1,6,?)",
+            (case_id, canonical_effect_json(document)),
+        )
+        repository._record_automatic_outcomes(title, 7)
+        repository._record_automatic_outcomes(dates, 8)
+        documents = [
+            json.loads(value) for value in repository.get_review_case_decisions(case_id)
+        ]
+        assert [value["destination"] for value in documents] == ["publishedDate"]
+        assert documents[0]["bundle_id"] is not None
+        # A hold without a pin does not refuse the decision (ADR-0085).
+        repository._connection.execute(
+            "UPDATE field_effect_manual_holds SET document=? WHERE review_case_id=?",
+            (canonical_effect_json({**document, "pin": None}), case_id),
+        )
+        repository._record_automatic_outcomes(title, 9)
+        assert sorted(
+            json.loads(value)["destination"]
+            for value in repository.get_review_case_decisions(case_id)
+        ) == ["publishedDate", "title"]
+        repository.close()
+
+
+def test_a_pinned_subtitle_blocks_the_corroborated_split_bundle() -> None:
+    """A pin on the split's subtitle mints no title either (#1346, AC7)."""
+    from mechanical_librarian.adapters.persistence.field_effect_validation import (
+        FIELD_EFFECT_MANUAL_HOLD_SCHEMA,
+    )
+    from mechanical_librarian.domain.field_effect import (
+        canonical_json as canonical_effect_json,
+    )
+
+    with tempfile.TemporaryDirectory() as temporary:
+        repository = open_repository(Path(temporary) / "reports.sqlite")
+        case_id = _case(repository)
+        packet = _synthetic_automatic_tuple(repository, case_id, "title_layout")
+        (title,) = packet.outcomes
+
+        def replace_namespace(value: SimpleNamespace, **changes: object):
+            return SimpleNamespace(**{**vars(value), **changes})
+
+        # The corroborated split binds the title and the subtitle into one
+        # bundle over the same combination.
+        split = replace_namespace(
+            packet,
+            outcomes=(
+                replace_namespace(
+                    title, policy_option="title_and_subtitle:audiobook_title_replace"
+                ),
+                replace_namespace(
+                    title,
+                    destination="subtitle",
+                    policy_category="subtitle",
+                    policy_option="corroborated_split:audiobook_subtitle_fill",
+                    proposal_id="review_proposal_" + "e" * 64,
+                    candidate_id="alternative_" + "e" * 64,
+                    rule_id="shadow_rule_" + "e" * 64,
+                    outcome_id="shadow_outcome_" + "e" * 64,
+                ),
+            ),
+        )
+        dates = _synthetic_automatic_tuple(repository, case_id, "date_precision")
+        document = {
+            "active": True,
+            "decision_id": "human_decision_" + "1" * 64,
+            "destination": "subtitle",
+            "pending_return": None,
+            "pin": {"fingerprint": "2" * 64, "in_force": True},
+            "review_case_id": case_id,
+            "schema_version": FIELD_EFFECT_MANUAL_HOLD_SCHEMA,
+            "updated_at": 6,
+        }
+        repository._connection.execute(
+            "INSERT INTO field_effect_manual_holds(review_case_id,destination,"
+            "active,updated_at,document) VALUES(?,'subtitle',1,6,?)",
+            (case_id, canonical_effect_json(document)),
+        )
+        repository._record_automatic_outcomes(split, 7)
+        repository._record_automatic_outcomes(dates, 8)
+        documents = [
+            json.loads(value) for value in repository.get_review_case_decisions(case_id)
+        ]
+        assert [value["destination"] for value in documents] == ["publishedDate"]
+        # Without the pin the same split records both members as one bundle.
+        repository._connection.execute(
+            "UPDATE field_effect_manual_holds SET document=? WHERE review_case_id=?",
+            (canonical_effect_json({**document, "pin": None}), case_id),
+        )
+        repository._record_automatic_outcomes(split, 9)
+        recorded = [
+            json.loads(value) for value in repository.get_review_case_decisions(case_id)
+        ]
+        bundle = [
+            value for value in recorded if value["destination"] in {"title", "subtitle"}
+        ]
+        assert sorted(value["destination"] for value in bundle) == ["subtitle", "title"]
+        assert len({value["bundle_id"] for value in bundle}) == 1
+        repository.close()
+
+
 def _decision_generations(repository) -> list[tuple[str, int]]:
     return repository._connection.execute(
         "SELECT destination,policy_generation FROM automatic_decisions "

@@ -499,6 +499,20 @@ KEYWORDS: tuple[tuple[str, str, str, str, object], ...] = (
         "enum",
         _strings(review_web.AutomaticWithheldCondition),
     ),
+    # Library progress: a field Attention lists, and only one it lists (#1335).
+    ("S90", "_LibraryProgressField", "/properties/destination", "enum", TARGETS),
+    ("S91", "_LibraryProgressField", "/properties/need_you", "minimum", 1),
+    ("S92", "_LibraryProgressResponse", "/properties/fields", "maxItems", 16),
+    ("S93", "_LibraryProgressResponse", "/properties/libraries", "maxItems", 256),
+    # An owner pin's state and a work's pinned fields (#1346).
+    (
+        "S94",
+        "_FieldPin",
+        "/properties/state",
+        "enum",
+        ("in_force", "waiting", "changed"),
+    ),
+    ("S95", "_LibraryWork", "/properties/pinned_count", "minimum", 0),
 )
 
 
@@ -615,6 +629,8 @@ REFUSALS: tuple[tuple[type[BaseModel], str, object, str], ...] = (
     ),
     (app._LibraryResponse, "lens", "unmatched", "literal_error"),
     (app._ReviewCounts, "all", -1, "greater_than_equal"),
+    (app._LibraryProgressField, "destination", "shelf", "literal_error"),
+    (app._LibraryProgressField, "need_you", 0, "greater_than_equal"),
     (app._LibraryWork, "media_kind", "ebook", "literal_error"),
     (app._PreparationFailure, "stage", "reading", "literal_error"),
     (app._TargetField, "state", "absent", "literal_error"),

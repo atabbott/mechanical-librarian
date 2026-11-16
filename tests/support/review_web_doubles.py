@@ -50,6 +50,7 @@ from mechanical_librarian.application.review_web import (
     LibraryLabels,
     LibraryLensFilter,
     ReviewAttentionSnapshot,
+    ReviewLibraryProgress,
     ReviewLibrarySnapshot,
     ValidatedDocumentCache,
     _single_source_choice,
@@ -115,7 +116,9 @@ _LIMITING_STATUSES = frozenset(
         "query_limit_exceeded",
     }
 )
-_AttentionRow = tuple[str, str, str, int, str | None, ReviewFieldCause | None, bool]
+_AttentionRow = tuple[
+    str, str, str, int, str | None, ReviewFieldCause | None, bool, bool
+]
 
 # The exact library row `ReviewLibrarySnapshot` declares, annotated for the
 # same reason (#711). The double emitted five of these seven columns behind a
@@ -131,6 +134,7 @@ _LibraryRow = tuple[
     tuple[str, ...],
     tuple[str, ...],
     str | None,
+    int,
     int,
 ]
 
@@ -910,6 +914,8 @@ class FakeReviewRepository:
                         ).proposals
                     ),
                 ),
+                # The double holds no pin.
+                0,
             )
             for case_id, case_document, report_document in identified
         ]
@@ -954,6 +960,7 @@ class FakeReviewRepository:
                 self.attention_dispositions.get(cast(str, proposal["destination"])),
                 self.attention_causes.get(cast(str, proposal["destination"])),
                 proposal["destination"] in self.policy_attention_destinations,
+                False,
             )
             for case, report, proposal in rows[offset : offset + limit]
         ]
@@ -983,6 +990,38 @@ class FakeReviewRepository:
                 search, limit, offset, library_labels
             ),
             total=self.count_current_attention_fields(search, library_labels),
+        )
+
+    def read_review_library_progress(
+        self, library_labels: LibraryLabels = ()
+    ) -> ReviewLibraryProgress:
+        # The Library and Attention answers above, grouped as the adapter
+        # groups them; the double holds no terminal row of its own.
+        works: dict[tuple[str, str], list[int]] = {}
+        fields: dict[tuple[str, str, str], int] = {}
+        for case, report in self._current_review_cases(None, None, library_labels):
+            key = (report.target.connection, report.target.library)
+            counts = works.setdefault(key, [0, 0, 0, 0])
+            counts[0] += 1
+            counts[1] += case is not None and self._attention(case)
+            counts[2] += case is None and self._match_reason(report) is not None
+            if case is None:
+                continue
+            for proposal in case.proposals:
+                if self._field_attention(case, proposal):
+                    field = (*key, cast(str, proposal["destination"]))
+                    fields[field] = fields.get(field, 0) + 1
+        return ReviewLibraryProgress(
+            tuple(
+                (connection, library, total, attention, not_matched, failed)
+                for (connection, library), (
+                    total,
+                    attention,
+                    not_matched,
+                    failed,
+                ) in sorted(works.items())
+            ),
+            tuple((*field, count) for field, count in sorted(fields.items())),
         )
 
     def read_review_covers(

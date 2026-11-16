@@ -533,6 +533,43 @@ def test_unmatched_fill_and_owner_labels_count_work_route_offers(
 
 
 @pytest.mark.parametrize(
+    ("outcomes", "labelled", "counts"),
+    [
+        (("keep_current",), 1, (1, 0, 1, {})),
+        (("keep_current", "pin"), 1, (1, 0, 1, {})),
+        (("keep_current", "pin", "unpin"), 1, (1, 0, 1, {})),
+        (("pin",), 0, (0, 0, 0, {})),
+        (("pin", "unpin"), 0, (0, 0, 0, {})),
+    ],
+    ids=["keep", "keep-then-pin", "keep-then-unpin", "pin-only", "unpin-only"],
+)
+def test_a_pin_or_unpin_leaves_the_earlier_label_standing(
+    tmp_path: Path,
+    outcomes: tuple[str, ...],
+    labelled: int,
+    counts: tuple[int, int, int, dict[str, int]],
+) -> None:
+    """A pin or unpin is a standing instruction, not a label on an offered
+    value: the decision before it labels the field as if it were absent, and
+    a field with only pins has no label and nothing withdrawn."""
+    database = tmp_path / "application.sqlite3"
+    repository = open_repository(database)
+    pinned = _publish(repository, _unmatched("u1"))
+    for outcome in outcomes:
+        _decide(repository, pinned, outcome, outcome, destination="genres")
+    repository.close()
+
+    report = _measure(database)
+
+    assert _fields(report)["genres"]["labels"] == {
+        "labelled": labelled,
+        "outside_work_route_fill": 0,
+        "withdrawn": 0,
+    }
+    assert _counts(_provider(report, "genres", "hardcover"))[:4] == counts
+
+
+@pytest.mark.parametrize(
     "recording",
     [
         _with_claims(
