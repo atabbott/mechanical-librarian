@@ -308,6 +308,7 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .selected-work-surface > aside h2, .library-selection h2 { font-family:Georgia,serif; }
 .compact-back { display:none; }
 .empty-copy { padding:1rem; color:var(--soft); }
+.empty-copy p { text-wrap:pretty; }
 
 .page-heading, .policy-layout, .activity-layout { display:grid; grid-template-columns:minmax(0,2fr) minmax(16rem,1fr); gap:1.5rem; }
 .detail-layout { display:grid; grid-template-columns:minmax(12rem,15rem) minmax(0,1fr); align-items:start; gap:1.5rem; }

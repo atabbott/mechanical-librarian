@@ -70,7 +70,7 @@ Works that New listed when you opened it stop being new at your next visit.
 Works that arrived after that stay new. Every device shares one last visit.
 Nothing is new until the first preparation has finished, so the works of a
 first library are not new. A work that left the library and came back counts
-as new. So does a work that could not finish and is read later
+as new. So does a work that could not finish and finishes later
 ([ADR-0103](../architecture/decisions/0103-keep-the-library-visit-on-the-server.md)).
 
 ## Counting
