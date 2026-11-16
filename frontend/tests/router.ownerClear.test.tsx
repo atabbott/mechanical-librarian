@@ -760,6 +760,33 @@ describe('the keep card on a field this case wrote (#1523)', () => {
       expect(keepCardShown()).toBeNull()
     },
   )
+
+  it('says it in the plural on authors written over nothing', async () => {
+    const written = decided(
+      offered('authors', {
+        currentValue: 'Not set in Audiobookshelf',
+        currentRaw: null,
+        proposedValues: [{ kind: 'list', value: ['Mick Herron'] }],
+      }),
+      { kind: 'list', value: ['Mick Herron'] },
+    )
+    if (!written.humanDecision) throw new Error('a recorded decision is required')
+    renderRoute(
+      '/library?lens=all&preview=case-1&field=authors',
+      owner({
+        ...written,
+        editable: true,
+        needsAttention: false,
+        ownerControl: control({ withdraw: 'written' }),
+        pinControl: null,
+        humanDecision: { ...written.humanDecision, outcome: 'accept' },
+      }),
+    )
+    const heading = await screen.findByRole('heading', { name: 'Authors' })
+    expect(heading.parentElement?.querySelector('p')).toHaveTextContent(
+      'The authors were empty before your change, and they can’t be emptied.',
+    )
+  })
 })
 
 describe('an emptied form that clears nothing (#1523)', () => {

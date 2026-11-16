@@ -56,6 +56,15 @@ export const destinationPhrase = (destination: TargetDestination) =>
   /^[A-Z]{2,}$/u.test(destinationLabels[destination])
     ? destinationLabels[destination]
     : destinationLabels[destination].toLowerCase()
+// Fields named in the plural take a plural verb: `The authors were empty`.
+const pluralDestinations: ReadonlySet<TargetDestination> = new Set([
+  'authors',
+  'narrators',
+  'genres',
+  'tags',
+])
+export const destinationIsPlural = (destination: TargetDestination) =>
+  pluralDestinations.has(destination)
 // An owner's clear, said the same way where it was recorded and in History.
 export const clearedSentence = (destination: TargetDestination, already = false) =>
   `You ${already ? 'already ' : ''}cleared the ${destinationPhrase(destination)}.`

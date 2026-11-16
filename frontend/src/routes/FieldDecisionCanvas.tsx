@@ -28,7 +28,7 @@ import {
   questionReason,
   selectedAutomaticLanguageForm,
 } from '../fieldReasons'
-import { destinationLabel, destinationPhrase } from '../labels'
+import { destinationIsPlural, destinationLabel, destinationPhrase } from '../labels'
 import type { useReviewDecisionController } from '../reviewDecisionController'
 import { AutomaticHandlingPanel } from './AutomaticHandling'
 import { MetadataChoice, RecordedFieldObservations } from './FieldDecisionChoices'
@@ -407,7 +407,7 @@ export function FieldDecisionCanvas({
                   ? 'Your earlier decision still holds this field. '
                   : 'The recorded outcome is marked below. '}
               {noWayBack(selected)
-                ? `The ${destinationPhrase(selected.destination)} was empty before your change, and it can’t be emptied.${anotherOffered ? ' ' : ''}`
+                ? `The ${destinationPhrase(selected.destination)} ${destinationIsPlural(selected.destination) ? 'were' : 'was'} empty before your change, and ${destinationIsPlural(selected.destination) ? 'they' : 'it'} can’t be emptied.${anotherOffered ? ' ' : ''}`
                 : ''}
               {anotherOffered ? 'You can choose another value.' : ''}
             </p>
