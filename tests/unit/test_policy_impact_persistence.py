@@ -408,8 +408,10 @@ def test_immutable_preview_refuses_a_changed_database(tmp_path):
         "changed",
     ),
     [
-        (("Exploration",), "fill_empty", "ask", "fill_empty", "automatic", True),
-        (("Exploration",), "fill_empty", "automatic", "fill_empty", "ask", True),
+        # A kept value reads "No change" under both settings, so the row is
+        # not listed (#1524, one listing rule for all fourteen fields).
+        (("Exploration",), "fill_empty", "ask", "fill_empty", "automatic", False),
+        (("Exploration",), "fill_empty", "automatic", "fill_empty", "ask", False),
         (None, "fill_empty", "ask", "fill_empty", "ignore", True),
         (None, "off", "ask", "off", "ask", False),
         (None, "fill_empty", "automatic", "fill_empty", "automatic", False),
@@ -676,7 +678,9 @@ def test_preserved_genre_routing_requires_qualified_work_evidence(
             for field in preview.libraries[0].comparisons[0].fields
             if field.draft.field == "genres"
         )
-        assert field.changed is not contradictory
+        # Both cells read "No change" for the kept genres, with or without
+        # the contradicting evidence, so neither is listed (#1524).
+        assert not field.changed
         for projected in (field.active, field.draft):
             assert (
                 projected.outcome,
@@ -829,7 +833,9 @@ def test_real_activation_api_rejects_aba_and_requires_preview_generation(tmp_pat
     ]
     + [("description_fill", "automatic", "ignore", True, True, False, True)]
     + [
-        ("genres", active, draft, True, recording, True, recording)
+        # Kept genres read "No change" under Ask me and Automatic alike, on a
+        # recording too, so the row is not listed (#1524).
+        ("genres", active, draft, True, recording, True, False)
         for active, draft in (("automatic", "ask"), ("ask", "automatic"))
         for recording in (False, True)
     ],
@@ -1071,6 +1077,7 @@ def _record_cover_comparison(
     reason: str | None = None,
     fetching: bool = False,
     schema_version: str | None = None,
+    policy_report_document: str | None = None,
 ) -> str:
     """Record a synthetic current comparison whose policy report has a stage."""
     from mechanical_librarian.adapters.persistence.cover_considerations import (
@@ -1118,9 +1125,8 @@ def _record_cover_comparison(
                 else [],
                 "consideration_id": consideration_id,
                 "policy_reference": f"cover-policy-reference-{index}",
-                "policy_report_document": json.dumps(
-                    policy_report, separators=(",", ":"), sort_keys=True
-                ),
+                "policy_report_document": policy_report_document
+                or json.dumps(policy_report, separators=(",", ":"), sort_keys=True),
                 "provider_fetching": fetching,
                 "replay_digest": replay_digest,
                 "replay_reference": f"cover-replay-reference-{index}",
@@ -1230,9 +1236,9 @@ def test_cover_rows_come_from_each_stored_stage_without_a_write_or_an_identity(
         for case in preview.libraries[0].comparisons
     ]
     assert [
-        ("projected", "Filled with a confirmed cover", True),
-        ("suggested", "A replacement is suggested", False),
-        ("suggested", "A replacement is suggested", False),
+        ("projected", "Fills the empty cover", True),
+        ("suggested", "Suggests a replacement", False),
+        ("suggested", "Suggests a replacement", False),
         ("no_op", "Current cover kept", False),
         ("no_op", "Current cover kept", False),
         ("no_op", None, False),
@@ -1254,3 +1260,57 @@ def test_cover_rows_come_from_each_stored_stage_without_a_write_or_an_identity(
     for identity in ("reference", "artifact", "cover_consideration", "replay"):
         assert identity not in serialised
     assert re.search(r"[0-9a-f]{16}", serialised) is None
+
+
+def test_an_unreadable_cover_document_is_not_previewed_for_its_work_alone(
+    tmp_path,
+) -> None:
+    """A stored document the SQL cannot read never fails the whole preview."""
+    from mechanical_librarian.application.metadata_policy import (
+        PolicyPreviewCover,
+        preview_policy,
+    )
+    from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
+
+    database = tmp_path / "state.sqlite3"
+    repository = open_repository(database)
+    for index in range(2):
+        report = _case_report(index)
+        repository.publish(report, lambda: True)
+        proposal = evaluate_report(report)
+        repository.publish_proposal(proposal)
+        review_case_id = json.loads(repository.admit_review_case(proposal))[
+            "review_case_id"
+        ]
+        _record_cover_comparison(
+            repository,
+            report,
+            review_case_id,
+            index,
+            outcome="fill",
+            policy_report_document=None if index else "not json",
+        )
+    repository.close()
+    reader = open_shadow_preview_repository(database)
+
+    assert (
+        PolicyPreviewCover(False, None, None, False),
+        PolicyPreviewCover(False, "fill", None, True),
+    ) == reader.capture_policy_preview(("ebooks",), 20).libraries[0].covers
+    active = MetadataPolicyProfile.builtin()
+    draft = MetadataPolicyProfile.create(
+        "Draft",
+        dict(active.options),
+        dict(active.destinations) | {"cover_order": "ask"},
+    )
+    preview = preview_policy(draft, ("ebooks",), {}, reader)
+    reader.close()
+    assert [
+        ("not_previewed", "cover_compared_next_scan"),
+        ("suggested", None),
+    ] == [
+        (field.draft.outcome, field.draft.reason)
+        for case in preview.libraries[0].comparisons
+        for field in case.fields
+        if field.destination == "cover"
+    ]

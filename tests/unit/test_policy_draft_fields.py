@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from mechanical_librarian.application import metadata_policy as policy_application
@@ -24,6 +26,9 @@ from mechanical_librarian.domain.metadata_report import (
     ClaimScope,
     LocalClaim,
     MetadataReport,
+    TargetDestination,
+    TargetField,
+    TargetFieldState,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
@@ -35,6 +40,7 @@ from tests.support.audiobook_reports import (
     synthetic_audiobook_bibliographic_report,
     synthetic_audiobook_original_date_report,
 )
+from tests.support.cover_producers import adapter_cover_value
 from tests.support.evidence_led_titles import isbn_title_report
 from tests.support.language_reports import language_report
 from tests.support.proposal_evidence import _fields, _report
@@ -334,44 +340,28 @@ _FILLABLE = PolicyPreviewCover(False, "fill", None, True)
         # Filled: Automatic fills an empty ebook cover; Ask me suggests it.
         (
             _FILLABLE,
-            (
-                "suggested",
-                "A confirmed cover is suggested",
-                "deterministic_confirmed_order",
-            ),
-            (
-                "projected",
-                "Filled with a confirmed cover",
-                "deterministic_confirmed_order",
-            ),
+            ("suggested", "Suggests a confirmed cover", None),
+            ("projected", "Fills the empty cover", None),
             True,
         ),
         # A fill the comparison does not recommend for a known-empty cover.
         (
             PolicyPreviewCover(False, "fill", None, False),
-            (
-                "suggested",
-                "A confirmed cover is suggested",
-                "deterministic_confirmed_order",
-            ),
-            (
-                "suggested",
-                "A confirmed cover is suggested",
-                "deterministic_confirmed_order",
-            ),
+            ("suggested", "Suggests a confirmed cover", None),
+            ("suggested", "Suggests a confirmed cover", None),
             False,
         ),
         # No replacement is automatic in this release.
         (
             PolicyPreviewCover(False, "replace", "below_floor", False),
-            ("suggested", "A replacement is suggested", "below_floor"),
-            ("suggested", "A replacement is suggested", "below_floor"),
+            ("suggested", "Suggests a replacement", "below_floor"),
+            ("suggested", "Suggests a replacement", "below_floor"),
             False,
         ),
         (
             PolicyPreviewCover(False, "suggest", "sharper_copy", False),
-            ("suggested", "A replacement is suggested", "sharper_copy"),
-            ("suggested", "A replacement is suggested", "sharper_copy"),
+            ("suggested", "Suggests a replacement", "sharper_copy"),
+            ("suggested", "Suggests a replacement", "sharper_copy"),
             False,
         ),
         (
@@ -430,7 +420,7 @@ def test_a_cover_row_is_words_from_the_stored_stage(
     assert active == (row.active.outcome, row.active.desired_value, row.active.reason)
     assert draft == (row.draft.outcome, row.draft.desired_value, row.draft.reason)
     assert changed == row.changed
-    assert row.draft.current_value in {None, "Current cover"}
+    assert row.draft.current_value in {None, "Has a cover"}
 
 
 def test_ignore_leaves_a_suggested_cover_alone_and_an_audiobook_fill_is_suggested() -> (
@@ -442,7 +432,7 @@ def test_ignore_leaves_a_suggested_cover_alone_and_an_audiobook_fill_is_suggeste
         covers=(PolicyPreviewCover(False, "suggest", "sharper_copy", False),),
     )["cover"]
     assert ignored.changed
-    assert ("suggested", "A replacement is suggested", "sharper_copy") == (
+    assert ("suggested", "Suggests a replacement", "sharper_copy") == (
         ignored.active.outcome,
         ignored.active.desired_value,
         ignored.active.reason,
@@ -462,4 +452,70 @@ def test_ignore_leaves_a_suggested_cover_alone_and_an_audiobook_fill_is_suggeste
         covers=(_FILLABLE,),
     )["cover"]
     assert not audiobook.changed
-    assert "A confirmed cover is suggested" == audiobook.draft.desired_value
+    assert "Suggests a confirmed cover" == audiobook.draft.desired_value
+
+
+@pytest.mark.parametrize("stage", ("keep", "hold"))
+@pytest.mark.parametrize("ignored", ("active", "draft"))
+def test_a_kept_cover_is_not_a_change_when_one_policy_ignores_it(
+    stage: str, ignored: str
+) -> None:
+    """Two results that leave the cover alone are equal, whatever their words."""
+    ignore = _draft(destinations={"cover_order": "ignore"})
+    source = isbn_title_report()
+    # A kept cover is one the work has, and "Current" says so in words.
+    report = MetadataReport.create(
+        target=replace(
+            source.target,
+            fields=tuple(
+                TargetField(
+                    field.destination, TargetFieldState.VALUE, adapter_cover_value()
+                )
+                if field.destination is TargetDestination.COVER
+                else field
+                for field in source.target.fields
+            ),
+        ),
+        file=source.file,
+        local_claims=source.local_claims,
+        local_reasons=source.local_reasons,
+        providers=source.providers,
+        cover_sources=source.cover_sources,
+    )
+    row = _rows(
+        ignore if ignored == "draft" else BUILTIN,
+        report,
+        active=ignore if ignored == "active" else BUILTIN,
+        covers=(PolicyPreviewCover(False, stage, None, False),),
+    )["cover"]
+
+    sides = {"active": row.active, "draft": row.draft}
+    kept = sides.pop("draft" if ignored == "active" else "active")
+    assert ("no_op", "Has a cover", "Current cover kept") == _result(kept)[:3]
+    assert ("no_op", None, "policy_ignored") == _result(sides[ignored])[::2] + (
+        sides[ignored].reason,
+    )
+    assert not row.changed
+
+
+def test_an_ask_and_an_automatic_that_is_not_offered_read_the_same() -> None:
+    """The same value left to the owner under both policies is not a change."""
+    report = corroborated_audiobook_report()
+    active = _draft({"contributor_names": "preserve"})
+    row = _rows(
+        _draft(destinations={"contributor_names": "ask"}, active=active),
+        report,
+        active=active,
+    )["narrators"]
+
+    assert ("suggested", ["Ilsa Brandt"], "automatic_unqualified") == (
+        row.active.outcome,
+        row.active.desired_value,
+        row.active.reason,
+    )
+    assert ("suggested", ["Ilsa Brandt"], None) == (
+        row.draft.outcome,
+        row.draft.desired_value,
+        row.draft.reason,
+    )
+    assert not row.changed

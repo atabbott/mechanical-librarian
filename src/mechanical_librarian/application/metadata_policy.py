@@ -22,7 +22,6 @@ from mechanical_librarian.domain.cover_qualification_policy import (
     COVER_ELECTION_QUALIFICATION_MANIFEST_SHA256,
     cover_aware_qualified_policy_options,
 )
-from mechanical_librarian.domain.human_decision import decision_actions
 from mechanical_librarian.domain.metadata_policy import (
     OPTION_CATALOGUE,
     MetadataPolicyError,
@@ -37,7 +36,6 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import (
     ProposalSet,
-    audiobook_review_scope,
     evaluate_report,
 )
 from mechanical_librarian.domain.review_case import ReviewCase
@@ -46,7 +44,6 @@ from mechanical_librarian.domain.rich_metadata_preview import (
     RichFieldPreview,
     RichMetadataPreview,
     compile_rich_metadata_preview,
-    select_automatic_taxonomy_candidate,
 )
 from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_PASSING_AUTOMATIC_OPTIONS,
@@ -415,59 +412,42 @@ class PolicyImpactRepository(PolicyPreviewRepository, Protocol):
     def list_shadow_outcomes(self, limit: int) -> tuple[tuple[str, int], ...]: ...
 
 
-def _rich_field_changed(
-    before: RichFieldPreview,
-    after: RichFieldPreview,
-    active_destination: str,
-    draft_destination: str,
-    report: MetadataReport,
-    compiled: tuple[ProposalSet, ProposalSet],
-) -> bool:
-    """Whether the draft, and not the library's own state, changes this field."""
+def _cell(side: RichFieldPreview, setting: str) -> tuple[str, str | None]:
+    """What the owner reads a policy doing to one field: what happens and the value.
+
+    Every one of the fourteen fields is listed by this one rule (D3, D13): a
+    row is a change when its two cells differ here, and two results that both
+    leave the field alone are equal whatever their words. A value is compared
+    as it is serialised, never by an identity that moves with the policy. The
+    page's cells are built from the same reading.
+    """
+    desired = json.dumps(side.desired_value, default=list)
+    offered = (
+        side.outcome in {"projected", "suggested"}
+        and desired != json.dumps(side.current_value, default=list)
+        and (
+            side.current_value not in (None, "") or side.desired_value not in (None, "")
+        )
+    )
+    if side.field == "cover_order":
+        return (
+            ("write" if side.outcome == "projected" else "ask", desired)
+            if offered
+            else ("none", None)
+        )
+    if side.reason == "automatic_unqualified":
+        return ("ask", desired if side.desired_value not in (None, "") else None)
+    if offered:
+        return (
+            "ask" if side.outcome == "suggested" or setting == "ask" else "write",
+            desired,
+        )
     return (
-        (before.outcome, before.desired_value, before.qualified_value)
-        != (after.outcome, after.desired_value, after.qualified_value)
-        or (
-            audiobook_review_scope(report) == "work"
-            and before.field in {"description_fill", "genres", "series"}
-            and any(
-                bool(decision_actions({"result": previous.to_data()}))
-                != bool(decision_actions({"result": following.to_data()}))
-                for previous, following in zip(
-                    compiled[0].results, compiled[1].results, strict=True
-                )
-                if previous.destination is RICH_PREVIEW_DESTINATIONS[before.field]
-            )
-        )
-        or (
-            active_destination != draft_destination
-            and (
-                before.source_candidate_id is not None
-                or after.source_candidate_id is not None
-                or (
-                    {active_destination, draft_destination} == {"ask", "automatic"}
-                    and before.field in {"genres", "tags"}
-                    and audiobook_review_scope(report) != "work"
-                    and any(
-                        projected.outcome == "no_op"
-                        and projected.reason == "target_preserved"
-                        and projected.option == "fill_empty"
-                        and projected.target_state == "value"
-                        and select_automatic_taxonomy_candidate(
-                            report, result, projected.field, projected.option
-                        )[0]
-                        is not None
-                        for route, projected, proposal in (
-                            (active_destination, before, compiled[0]),
-                            (draft_destination, after, compiled[1]),
-                        )
-                        if route == "automatic"
-                        for result in proposal.results
-                        if result.destination.value == projected.field
-                    )
-                )
-            )
-        )
+        "ask"
+        if side.reason == "target_state_unusable"
+        or (side.outcome == "abstain" and side.reason == "ambiguous_evidence")
+        else "none",
+        None,
     )
 
 
@@ -568,8 +548,8 @@ _COVER_STAGES: Final[dict[str, tuple[str, str | None, str | None]]] = {
     "keep": ("no_op", "Current cover kept", "current_cover_kept"),
     "hold": ("no_op", "Current cover kept", None),
     "empty": ("no_op", None, "no_confirmed_candidates"),
-    "replace": ("suggested", "A replacement is suggested", None),
-    "suggest": ("suggested", "A replacement is suggested", None),
+    "replace": ("suggested", "Suggests a replacement", None),
+    "suggest": ("suggested", "Suggests a replacement", None),
 }
 
 
@@ -607,10 +587,10 @@ def _cover_field(
         result = ("no_op", None, "policy_ignored")
     elif cover.outcome == "fill":
         result = (
-            ("projected", "Filled with a confirmed cover")
+            ("projected", "Fills the empty cover", None)
             if setting == "automatic" and cover.fillable and report.audio is None
-            else ("suggested", "A confirmed cover is suggested")
-        ) + ("deterministic_confirmed_order",)
+            else ("suggested", "Suggests a confirmed cover", None)
+        )
     else:
         outcome, words, reason = _COVER_STAGES[cover.outcome]
         result = (outcome, words, cover.reason or reason)
@@ -618,7 +598,7 @@ def _cover_field(
         "cover_order",
         dict(policy.options)["cover_order"],
         target.state.value,
-        "Current cover" if target.state is TargetFieldState.VALUE else None,
+        "Has a cover" if target.state is TargetFieldState.VALUE else None,
         *result,
     )
 
@@ -664,8 +644,8 @@ def _outcome_comparisons(
             after,
             settings[0][before.field],
             settings[1][after.field],
-            (before.outcome, before.desired_value)
-            != (after.outcome, after.desired_value),
+            _cell(before, settings[0][before.field])
+            != _cell(after, settings[1][after.field]),
             destination,
         )
         for (destination, before), (_, after) in zip(*sides, strict=True)
@@ -730,14 +710,8 @@ def _library_impact(
                         after,
                         active_destinations[before.field],
                         resolved_destinations[after.field],
-                        _rich_field_changed(
-                            before,
-                            after,
-                            active_destinations[before.field],
-                            resolved_destinations[after.field],
-                            report,
-                            compiled,
-                        ),
+                        _cell(before, active_destinations[before.field])
+                        != _cell(after, resolved_destinations[after.field]),
                         RICH_PREVIEW_DESTINATIONS[before.field].value,
                     )
                     for before, after in zip(old.fields, new.fields, strict=True)

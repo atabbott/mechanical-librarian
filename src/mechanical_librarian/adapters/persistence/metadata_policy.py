@@ -502,27 +502,31 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
         that is stale, was made for another report or carries no stage at the
         current schema keeps its fetching flag and loses its outcome.
         """
-        row = self._connection.execute(
-            "SELECT json_extract(c.document,'$.provider_fetching'),"
-            "json_extract(c.document,'$.policy_report_document'),"
-            "c.report_id=l.report_id AND NOT EXISTS (SELECT 1 FROM "
-            "cover_consideration_events e WHERE e.consideration_id=c.consideration_id "
-            "AND e.kind='stale'),"
-            "EXISTS (SELECT 1 FROM json_each(c.document,'$.candidates') candidate "
-            "WHERE json_extract(candidate.value,'$.reference')=json_extract("
-            "json_extract(c.document,'$.policy_report_document'),"
-            "'$.recommended_candidate_reference') "
-            "AND json_extract(candidate.value,'$.incumbent')=0 "
-            "AND json_extract(candidate.value,'$.selectable')=1 "
-            "AND json_array_length(candidate.value,'$.deterministic_citations')>0 "
-            "AND json_type(candidate.value,'$.deterministic_rank_key')='array') "
-            "FROM current_review_case_lineages l "
-            "JOIN current_cover_considerations current "
-            "ON current.review_case_id=l.review_case_id "
-            "JOIN cover_considerations c ON c.consideration_id=current.consideration_id "
-            "WHERE l.report_id=?",
-            (report.report_id,),
-        ).fetchone()
+        try:
+            row = self._connection.execute(
+                "SELECT json_extract(c.document,'$.provider_fetching'),"
+                "json_extract(c.document,'$.policy_report_document'),"
+                "c.report_id=l.report_id AND NOT EXISTS (SELECT 1 FROM "
+                "cover_consideration_events e WHERE e.consideration_id=c.consideration_id "
+                "AND e.kind='stale'),"
+                "EXISTS (SELECT 1 FROM json_each(c.document,'$.candidates') candidate "
+                "WHERE json_extract(candidate.value,'$.reference')=json_extract("
+                "json_extract(c.document,'$.policy_report_document'),"
+                "'$.recommended_candidate_reference') "
+                "AND json_extract(candidate.value,'$.incumbent')=0 "
+                "AND json_extract(candidate.value,'$.selectable')=1 "
+                "AND json_array_length(candidate.value,'$.deterministic_citations')>0 "
+                "AND json_type(candidate.value,'$.deterministic_rank_key')='array') "
+                "FROM current_review_case_lineages l "
+                "JOIN current_cover_considerations current "
+                "ON current.review_case_id=l.review_case_id "
+                "JOIN cover_considerations c ON c.consideration_id=current.consideration_id "
+                "WHERE l.report_id=?",
+                (report.report_id,),
+            ).fetchone()
+        except sqlite3.Error:
+            # A stored document the SQL cannot read is this work's alone.
+            return PolicyPreviewCover(False, None, None, False)
         if row is None:
             return None
         try:

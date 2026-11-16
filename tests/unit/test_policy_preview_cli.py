@@ -405,7 +405,7 @@ def test_the_command_and_the_route_return_the_same_comparisons(tmp_path) -> None
         [field["destination"] for field in case["fields"][8:]] for case in comparisons
     ]
     filled, uncompared = (case["fields"][-1] for case in comparisons)
-    assert ("Filled with a confirmed cover", "A confirmed cover is suggested") == (
+    assert ("Fills the empty cover", "Suggests a confirmed cover") == (
         filled["active"]["desired_value"],
         filled["draft"]["desired_value"],
     )
