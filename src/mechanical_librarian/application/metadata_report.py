@@ -3047,32 +3047,8 @@ def _identifier_lane_candidates(
         or observation.authority not in AUDIOBOOK_PROVIDER_AUTHORITIES
     ):
         return observation.candidates, (), ()
-    independent = _identifier_lane_independent(lookup)
-    if independent:
-        passed = tuple(
-            _shaped_with_runtime_comparison(
-                candidate,
-                not candidate_recording_runtime_veto(
-                    candidate, lookup.local_claims, lookup.audio
-                )
-                and recording_variant_conflict(
-                    candidate,
-                    lookup.local_claims,
-                    lookup.work_title or "",
-                    lookup.library_languages,
-                    lookup.echoed_languages,
-                )
-                is None,
-                lookup.local_claims,
-                recording_hints=True,
-            )
-            for candidate in observation.candidates
-        )
-        return (
-            passed,
-            (),
-            _kept_recording_bases(passed, lambda _identity: TARGET_ADMISSION_BASIS),
-        )
+    if _identifier_lane_independent(lookup):
+        return _independent_lane_candidates(observation, lookup)
     # A carried admission is looked up again only to be re-verified, so a
     # product whose narrators the recording's own credits never name is a
     # different recording of the work and is refused here (#1316, ADR-0088).
@@ -3198,6 +3174,85 @@ def _identifier_lane_candidates(
         runtime_candidates, lookup.local_claims
     )
     admitted = None if corroborated is None else corroborated[0].identity
+    shaped, refused, chapters = _shape_identifier_lane_candidates(
+        observation,
+        lookup,
+        work_admitted=work_admitted,
+        narrator_refused=narrator_refused,
+        alternative_admitted=alternative_admitted,
+        admitted=admitted,
+    )
+
+    def route(identity: str) -> str | None:
+        # A target route first, the corroborated rule among them while the
+        # plan permits it; then the alternative routes in the total order.
+        if (
+            identity in work_admitted
+            or identity in chapters
+            or identity in corroborated_admitted
+        ):
+            return TARGET_ADMISSION_BASIS
+        if identity in linked_admitted:
+            return COMPANION_ISBN_WORK_BASIS
+        if identity in title_admitted and alternative is not None:
+            return alternative[2]
+        return None
+
+    return (
+        tuple(shaped),
+        tuple(sorted(refused, key=lambda value: value.identity)),
+        _kept_recording_bases(tuple(shaped), route),
+    )
+
+
+def _independent_lane_candidates(
+    observation: ProviderObservation, lookup: MetadataLookup
+) -> tuple[
+    tuple[ProviderCandidate, ...],
+    tuple[ProviderCandidate, ...],
+    tuple[tuple[str, str], ...],
+]:
+    """Pass an ASIN lane the item's own identifier named through unchanged.
+
+    Each product keeps its runtime comparison and is admitted unless its
+    runtime or variant names another recording.
+    """
+    passed = tuple(
+        _shaped_with_runtime_comparison(
+            candidate,
+            not candidate_recording_runtime_veto(
+                candidate, lookup.local_claims, lookup.audio
+            )
+            and recording_variant_conflict(
+                candidate,
+                lookup.local_claims,
+                lookup.work_title or "",
+                lookup.library_languages,
+                lookup.echoed_languages,
+            )
+            is None,
+            lookup.local_claims,
+            recording_hints=True,
+        )
+        for candidate in observation.candidates
+    )
+    return (
+        passed,
+        (),
+        _kept_recording_bases(passed, lambda _identity: TARGET_ADMISSION_BASIS),
+    )
+
+
+def _shape_identifier_lane_candidates(
+    observation: ProviderObservation,
+    lookup: MetadataLookup,
+    *,
+    work_admitted: set[str],
+    narrator_refused: set[str],
+    alternative_admitted: set[str],
+    admitted: str | None,
+) -> tuple[list[ProviderCandidate], list[ProviderCandidate], set[str]]:
+    """Shape a gated ASIN lane's products, and name its refused and chapter ones."""
     # A candidate without exact work admission keeps only its identifier
     # (#1257), with or without a title to admit against: its runtime would reach
     # stated-runtime admission downstream, and its work statements and
@@ -3258,27 +3313,7 @@ def _identifier_lane_candidates(
                 recording_hints=True,
             )
         )
-
-    def route(identity: str) -> str | None:
-        # A target route first, the corroborated rule among them while the
-        # plan permits it; then the alternative routes in the total order.
-        if (
-            identity in work_admitted
-            or identity in chapters
-            or identity in corroborated_admitted
-        ):
-            return TARGET_ADMISSION_BASIS
-        if identity in linked_admitted:
-            return COMPANION_ISBN_WORK_BASIS
-        if identity in title_admitted and alternative is not None:
-            return alternative[2]
-        return None
-
-    return (
-        tuple(shaped),
-        tuple(sorted(refused, key=lambda value: value.identity)),
-        _kept_recording_bases(tuple(shaped), route),
-    )
+    return shaped, refused, chapters
 
 
 def _kept_recording_bases(
