@@ -457,6 +457,9 @@ export const useReviewDecisionController = ({
         return
       }
       if (!refreshed) {
+        // The reloaded case is what says whether it was recorded; left
+        // recording, the command would keep every pin busy after Reload.
+        forget(command)
         await returnTo(command.destination)
         lock(
           command.destination,

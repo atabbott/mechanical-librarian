@@ -637,6 +637,9 @@ describe('a pin after a value command', () => {
       expect(failed.hook.result.current.messageFor('title')).toBe(
         'This work could not be reloaded after your choice. Choose Reload current case before choosing again.',
       )
+      // The reloaded case says whether it stands; nothing stays recording to
+      // keep the pins busy once Reload lifts the lock.
+      expect(failed.hook.result.current.recording).toBe(false)
       still(failed.moves)
     })
   })

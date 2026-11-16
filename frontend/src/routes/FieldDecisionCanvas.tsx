@@ -328,9 +328,14 @@ export function FieldDecisionCanvas({
     selected.humanDecision?.outcome === 'owner_entered'
       ? pinControl(valuePin(selected, 'entered'))
       : undefined
+  // An answer the owner typed has its pin with Owner value; anything else
+  // recorded without choice cards has it beside the recorded value.
+  const outcomePin =
+    outcomeShown && selected.humanDecision?.outcome !== 'owner_entered' ? contextPin : undefined
   const pinOnScreen =
     (choicesShown && directChoices.some((choice) => choice.pin?.on)) ||
     (!choicesShown && !outcomeShown && contextPin?.on === true) ||
+    outcomePin?.on === true ||
     (!controller.reloadRequired && enteredPin?.on === true)
   const staleNotice =
     ownerNotice?.caseId === selectedReviewCaseId && ownerNotice.destination === selected.destination
@@ -477,6 +482,7 @@ export function FieldDecisionCanvas({
           mediaKind={mediaKind}
           expanded={expandedChoices.has(`${selected.destination}:recorded`)}
           toggle={() => toggleChoiceEvidence(`${selected.destination}:recorded`)}
+          pin={outcomePin ?? undefined}
         />
       ) : (
         <SettledFieldContext

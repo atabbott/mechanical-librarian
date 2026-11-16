@@ -234,11 +234,14 @@ export function RecordedOutcome({
   mediaKind,
   expanded,
   toggle,
+  pin,
 }: {
   field: ReviewField
   mediaKind: string
   expanded: boolean
   toggle: () => void
+  // The pin beside a recorded value the library already shows (#1346).
+  pin?: PinControl | undefined
 }) {
   const decision = field.humanDecision ?? field.automaticDecision
   if (!decision) return null
@@ -258,7 +261,20 @@ export function RecordedOutcome({
       : choiceContext(field, null)
   const combinedTags = combinedAutomaticTags(field, mediaKind)
   const evidenceId = `recorded-evidence-${field.destination}`
+  const valueId = `recorded-value-${field.destination}`
+  const pinned = pin && field.pin?.state === 'in_force' ? ' · Pinned' : ''
   const accepted = decision.outcome === 'accept' || decision.outcome === 'candidate'
+  const evidenceToggle = (
+    <button
+      type="button"
+      className="context-evidence-toggle"
+      aria-controls={evidenceId}
+      aria-expanded={expanded}
+      onClick={toggle}
+    >
+      {expanded ? 'Hide evidence' : 'Evidence'}
+    </button>
+  )
   return (
     <section
       className="recorded-outcome"
@@ -274,8 +290,8 @@ export function RecordedOutcome({
       <dl>
         {accepted ? (
           <div>
-            <dt>Chosen value</dt>
-            <dd>
+            <dt>Chosen value{pinned}</dt>
+            <dd id={valueId}>
               {field.destination === 'description' ? (
                 <DescriptionText key={decisionValue(field)} value={decisionValue(field)} />
               ) : (
@@ -287,14 +303,14 @@ export function RecordedOutcome({
           <div>
             <dt>
               {decision.outcome === 'keep_current'
-                ? 'Kept value'
+                ? `Kept value${pinned}`
                 : decision.outcome === 'owner_entered'
                   ? field.pin && field.pin.state !== 'changed'
                     ? 'Your value · Pinned'
                     : 'Your value'
-                  : 'Current value'}
+                  : `Current value${pinned}`}
             </dt>
-            <dd>
+            <dd id={valueId}>
               {field.destination === 'description' ? (
                 <DescriptionText key={decisionValue(field)} value={decisionValue(field)} />
               ) : (
@@ -316,15 +332,14 @@ export function RecordedOutcome({
       <NarratorsAutomaticStatement field={field} />
       <AsinAutomaticStatement field={field} />
       <VerifiedManifestationIsbnAutomaticStatement field={field} />
-      <button
-        type="button"
-        className="context-evidence-toggle"
-        aria-controls={evidenceId}
-        aria-expanded={expanded}
-        onClick={toggle}
-      >
-        {expanded ? 'Hide evidence' : 'Evidence'}
-      </button>
+      {pin ? (
+        <div className="recorded-outcome-actions">
+          {evidenceToggle}
+          <PinButton {...pin} describedBy={valueId} />
+        </div>
+      ) : (
+        evidenceToggle
+      )}
       {expanded ? (
         combinedTags ? (
           <div id={evidenceId}>

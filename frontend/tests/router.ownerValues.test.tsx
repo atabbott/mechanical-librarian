@@ -1286,6 +1286,27 @@ describe('a pin on each value', () => {
     expect(within(value).getByRole('button', { name: 'Pin this value' })).toHaveFocus()
   })
 
+  it('P6b pins the value Automatic kept where the field shows no choice cards', async () => {
+    const user = userEvent.setup()
+    const { http } = pins({
+      ...contextTitle,
+      ownerControl: null,
+      classification: 'automatic_recorded',
+      classificationCause: 'automatic_decided',
+      automaticDecision: { outcome: 'keep_current', selected_value: null } as never,
+      pinControl: { pin: 'available', unpin: false },
+    })
+    const foot = await show(http)
+    const outcome = screen.getByRole('region', { name: 'Title recorded outcome' })
+    const pin = within(outcome).getByRole('button', { name: 'Pin this value' })
+    expect(pin).toHaveAccessibleDescription('THE SILENT ORCHARD (Disc 2)')
+    // The foot offers nothing of its own while the pin sits beside the value.
+    expect(within(foot).queryByRole('button')).toBeNull()
+    await user.click(pin)
+    await waitFor(() => expect(within(foot).getByRole('status')).toHaveTextContent('Pinned.'))
+    expect(outcomes(http)).toEqual(['pin'])
+  })
+
   it('P7 asks again for a changed pin and shows what was pinned, with Unpin', async () => {
     const user = userEvent.setup()
     const changed: Field = {
