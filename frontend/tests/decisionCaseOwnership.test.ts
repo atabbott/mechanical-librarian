@@ -13,7 +13,7 @@ const acknowledgement = (id: string, current = true): DecisionAcknowledgementVie
   recordedAcknowledgement(
     { ...detail, current },
     {
-      schema_version: 'review-decision-v1',
+      schema_version: 'human-decision-ack-v2' as const,
       actor: 'owner',
       application: 'apply',
       application_reason: null,

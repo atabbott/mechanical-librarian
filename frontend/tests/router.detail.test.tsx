@@ -889,7 +889,7 @@ describe('Library review ownership', () => {
     const recordDecision = vi.fn(async () => {
       current = settled
       return {
-        schema_version: 'review-decision-v1' as const,
+        schema_version: 'human-decision-ack-v2' as const,
         actor: 'owner' as const,
         application: 'apply' as const,
         application_reason: null,

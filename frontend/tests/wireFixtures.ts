@@ -325,7 +325,7 @@ export const decisionAcknowledgement = (overrides: Overrides = {}) => ({
   ...decisionProjection({ destination: 'title' }),
   confirmation: { case: caseDetail(), status: 'confirmed' },
   invalidation_sequences: [],
-  schema_version: 'review-decision-v1',
+  schema_version: 'human-decision-ack-v2' as const,
   ...overrides,
 })
 

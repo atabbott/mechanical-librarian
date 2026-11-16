@@ -24,6 +24,9 @@ if (!base) throw new Error('workspace fixture requires a title field')
 const control = (value: Partial<OwnerControlView>): OwnerControlView => ({
   entry: null,
   subset: null,
+  names: null,
+  clear: false,
+  current: null,
   withdraw: null,
   ...value,
 })
@@ -171,7 +174,7 @@ const store = (
           { ...detail, id: caseId, fields: [...fields()] },
           {
             invalidation_sequences: [],
-            schema_version: 'review-decision-v1',
+            schema_version: 'human-decision-ack-v2' as const,
             actor: 'owner',
             application: 'apply',
             application_reason: null,

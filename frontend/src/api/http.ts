@@ -803,6 +803,13 @@ export interface OwnerControlView {
     maxItems: number
     options: readonly { value: string; current: boolean; proposed: boolean; previous: boolean }[]
   } | null
+  // Names entry, one per line: authors, and narrators on an audiobook (#1523).
+  names: { maxItems: number; maxCharacters: number; previous: readonly string[] | null } | null
+  // An emptied field records a clear here (#1523).
+  clear: boolean
+  // What owner entry compares with: on the case that wrote the field, the
+  // written value (#1523).
+  current: string | readonly string[] | null
   withdraw: 'available' | 'automatic_hold' | 'in_progress' | 'written' | null
 }
 export interface CoverObservationView {
@@ -2780,6 +2787,9 @@ const mapProviderOutcome = (value: ProviderOutcomeDto): ProviderOutcomeView => (
 })
 // Formats any target or proposed value. It throws nothing: a value decoded
 // to `unknown` reads as unavailable rather than as a shape to decode.
+// An owner's clear carries no value; it reads as what happened (#1523).
+export const CLEARED_TEXT = 'Cleared'
+export const isClear = (value: { kind: string } | null | undefined) => value?.kind === 'empty'
 export const displayValue = (value: unknown): string =>
   value === null
     ? 'Unavailable'
@@ -3201,7 +3211,14 @@ const mapReviewField = (field: ReviewFieldDto): ReviewFieldView => ({
   currentCoverSelectionId: field.current_cover_selection_id,
 })
 
-const mapOwnerControl = ({ entry, subset, withdraw }: OwnerControlDto): OwnerControlView => ({
+const mapOwnerControl = ({
+  entry,
+  subset,
+  names,
+  clear,
+  current,
+  withdraw,
+}: OwnerControlDto): OwnerControlView => ({
   entry:
     entry === null
       ? null
@@ -3221,6 +3238,16 @@ const mapOwnerControl = ({ entry, subset, withdraw }: OwnerControlDto): OwnerCon
             previous,
           })),
         },
+  names:
+    names === null
+      ? null
+      : {
+          maxItems: names.max_items,
+          maxCharacters: names.max_characters,
+          previous: names.previous,
+        },
+  clear,
+  current,
   withdraw,
 })
 

@@ -20,6 +20,7 @@ from playwright.sync_api import (
     TimeoutError as PlaywrightTimeoutError,
 )
 
+from mechanical_librarian.application.review_web import HUMAN_DECISION_ACK_SCHEMA
 from tests.support.continuous_review_scale import (
     _FOREGROUND_RESPONSE_BUDGET_MS,
     _MEASUREMENT_SAMPLES,
@@ -355,7 +356,7 @@ class _WorkspaceProbe:
             elapsed_ms = (time.monotonic() - started) * 1_000
             assert response.status == 200, response.text()
             acknowledgement = response.json()
-            assert acknowledgement["schema_version"] == "human-decision-ack-v1"
+            assert acknowledgement["schema_version"] == HUMAN_DECISION_ACK_SCHEMA
             assert acknowledgement["outcome"] == "accept"
             page.get_by_role("heading", name="Review complete").wait_for(
                 timeout=_FOREGROUND_RESPONSE_BUDGET_MS

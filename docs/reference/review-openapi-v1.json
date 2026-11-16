@@ -5735,6 +5735,7 @@
             "type": "string"
           },
           "schema_version": {
+            "const": "human-decision-ack-v2",
             "title": "Schema Version",
             "type": "string"
           },

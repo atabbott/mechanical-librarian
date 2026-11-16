@@ -251,6 +251,9 @@ describe('owner controls while the work waits for its check', () => {
     choiceContexts: [],
     ownerControl: {
       entry: null,
+      names: null,
+      clear: true,
+      current: ['Drama'],
       withdraw: null,
       subset: {
         maxItems: 32,

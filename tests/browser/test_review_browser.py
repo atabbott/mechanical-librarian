@@ -12799,10 +12799,11 @@ def test_owner_enters_a_title_at_enlarged_text():
         panel.get_by_role("button", name="Enter a value", exact=True).click()
         field = panel.get_by_role("textbox", name="Your value for Title")
         expect(field).to_be_focused()
+        # The count is said only once the value is too long (#1523).
+        field.fill("x" * 513)
+        expect(panel.locator(".owner-count")).to_have_text("513 of 512 characters")
         field.fill(_LONG_TITLE)
-        expect(panel.locator(".owner-count")).to_have_text(
-            f"{len(_LONG_TITLE)} of 512 characters"
-        )
+        expect(panel.locator(".owner-count")).to_have_text("")
         _owner_layout_holds(page)
         page.set_viewport_size({"width": 1440, "height": 900})
         with page.expect_response(
@@ -12925,6 +12926,51 @@ def test_owner_chooses_a_genre_subset_then_withdraws_it():
         page.get_by_role("link", name="History", exact=True).click()
         expect(page.get_by_text("You withdrew your choice.")).to_be_visible()
         expect(page.get_by_text("You entered a value.")).to_be_visible()
+
+
+def test_owner_clears_the_genres_in_one_press():
+    """#1523: unticking every genre turns Record into Clear genres; one press
+    records the closed empty value, said once beside its pin and in History."""
+    with _owner_page(genre_fixture=("Fantasy",), genre_current=("Drama",)) as (
+        page,
+        origin,
+        case_id,
+    ):
+        page.goto(f"{origin}/library?lens=all&preview={case_id}&field=genres")
+        panel = page.get_by_role("region", name="Your value for Genres")
+        panel.get_by_role("button", name="Choose genres", exact=True).click()
+        group = panel.get_by_role("group", name="Choose genres")
+        group.get_by_role("checkbox", name=re.compile("^Drama")).uncheck()
+        clear = panel.get_by_role("button", name="Clear genres", exact=True)
+        expect(clear).to_be_visible()
+        expect(panel).not_to_contain_text("Clearing removes")
+        _owner_layout_holds(page)
+        page.set_viewport_size({"width": 1440, "height": 900})
+        with page.expect_request(
+            lambda request: request.url.endswith("/decisions")
+        ) as sent:
+            clear.click()
+        body = json.loads(sent.value.post_data or "{}")
+        assert (body["outcome"], body["selected_value"]) == (
+            "owner_entered",
+            {"kind": "empty", "value": None},
+        )
+        recorded = panel.get_by_text("You cleared the genres.", exact=True)
+        expect(recorded).to_be_focused()
+        expect(
+            panel.locator(".owner-recorded-pin").get_by_role(
+                "button", name="Pin this value"
+            )
+        ).to_be_visible()
+        expect(page.get_by_text("Your value is recorded.", exact=True)).to_have_count(0)
+        expect(panel).not_to_contain_text("Unavailable")
+        _owner_layout_holds(page)
+        page.set_viewport_size({"width": 1440, "height": 900})
+        page.get_by_role("link", name="History", exact=True).click()
+        entry = page.locator("article", has_text="You cleared the genres.")
+        expect(entry).to_be_visible()
+        expect(entry).to_contain_text("Cleared")
+        expect(entry).not_to_contain_text("Unavailable")
 
 
 def _field_tab(page: Page, name: str):

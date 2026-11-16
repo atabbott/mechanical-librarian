@@ -374,6 +374,44 @@ def test_a_clear_after_a_fill_goes_back_to_the_empty_field(tmp_path: Path) -> No
             )
             == clear.decision_id
         )
+        # History and Activity read the clear as a removal, never as a value.
+        history = InspectCurrentReviewCase(store.repository).history(
+            store.case.review_case_id
+        )
+        assert [
+            (item["outcome"], item["previous_value"], item["selected_value"])
+            for item in history["items"]
+            if item.get("destination") == "subtitle"
+            and item.get("outcome") == "owner_entered"
+        ] == [
+            (
+                "owner_entered",
+                {"kind": "text", "value": "A Quiet Subtitle"},
+                {"kind": "empty", "value": None},
+            )
+        ]
+        target = store.case.target
+        events = ContinuousGuardedApplication(
+            store.repository,
+            {},
+            {},
+            PersistedFieldEffectAuthority(store.repository),
+            ((str(target["connection"]), str(target["library"])),),
+            lambda: 2_000,
+            lambda *_: None,
+            activity_only=True,
+        ).activity()["events"]
+        cleared = [
+            (event["state"], event["change"], event["evidence"])
+            for event in events
+            if event["field_label"] == "Subtitle"
+            and event["change"] == "Removed subtitle"
+        ]
+        assert [state for state, *_ in cleared] == ["verified", "owner_entered"]
+        assert all(
+            {"label": "New value", "value": "Not set"} in evidence
+            for *_, evidence in cleared
+        )
         # Cleared again, the field is empty, so another clear is unchanged.
         _refused(
             store,

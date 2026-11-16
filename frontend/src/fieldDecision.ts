@@ -4,7 +4,7 @@ import type {
   DecisionCommand,
   TargetDestination,
 } from './api/http'
-import { displayValue } from './api/http'
+import { CLEARED_TEXT, displayValue, isClear } from './api/http'
 import { coverSourceLabels, destinationPhrase, languageName, writeHoldReasons } from './labels'
 import { automaticChoiceSelected, humanChoiceSelected } from './reviewAutomaticSelection'
 
@@ -190,7 +190,11 @@ export const decisionValue = (field: ReviewField) => {
   }
   return valueText(
     field.destination,
-    selected === null || selected === undefined ? field.currentValue : displayValue(selected.value),
+    selected === null || selected === undefined
+      ? field.currentValue
+      : isClear(selected)
+        ? CLEARED_TEXT
+        : displayValue(selected.value),
   )
 }
 export const completionOutcome = (field: ReviewField) =>

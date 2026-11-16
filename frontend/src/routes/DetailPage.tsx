@@ -12,12 +12,13 @@ import type {
   HistoryView,
   TargetDestination,
 } from '../api/http'
-import { BuildMismatchError, displayValue } from '../api/http'
+import { BuildMismatchError, CLEARED_TEXT, displayValue, isClear } from '../api/http'
 import { humanReasons } from '../fieldReasons'
 import { StaleBuildRead } from '../components/StaleBuildRead'
 import { railOffers } from '../reviewChoiceCounts'
 import { RecordedTime } from '../components/RecordedTime'
 import {
+  clearedSentence,
   coverHistoryLabels,
   coverNoteLabel,
   coverReviewerLabel,
@@ -37,9 +38,11 @@ import { detailRoute, normalizeDetailSearch, useReviewContext } from '../router'
 const historyValue = (destination: TargetDestination, value: HistoryValueView | null) =>
   value === null
     ? 'No value is recorded.'
-    : destination === 'language' && typeof value.value === 'string'
-      ? languageName(value.value)
-      : displayValue(value.value)
+    : isClear(value)
+      ? CLEARED_TEXT
+      : destination === 'language' && typeof value.value === 'string'
+        ? languageName(value.value)
+        : displayValue(value.value)
 const reviewerStatusWords = {
   completed: 'looked at',
   failed: 'failed on',
@@ -121,7 +124,9 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
           : item.outcome === 'keep_current'
             ? 'You kept the current value.'
             : item.outcome === 'owner_entered'
-              ? 'You entered a value.'
+              ? isClear(item.selectedValue)
+                ? clearedSentence(item.destination)
+                : 'You entered a value.'
               : item.outcome === 'withdraw'
                 ? 'You withdrew your choice.'
                 : item.outcome === 'pin' || item.outcome === 'unpin'

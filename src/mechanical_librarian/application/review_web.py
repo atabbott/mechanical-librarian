@@ -148,7 +148,11 @@ REVIEW_CASE_EVIDENCE_SCHEMA: Final[ReviewCaseEvidenceSchemaVersion] = (
     "review-case-evidence-v5"
 )
 
-HUMAN_DECISION_ACK_SCHEMA: Final = "human-decision-ack-v1"
+# v2: an owner's clear selects the closed empty value (#1523).
+HumanDecisionAckSchemaVersion = Literal["human-decision-ack-v2"]
+HUMAN_DECISION_ACK_SCHEMA: Final[HumanDecisionAckSchemaVersion] = (
+    "human-decision-ack-v2"
+)
 ReviewAttentionSchemaVersion = Literal["review-attention-v1"]
 REVIEW_ATTENTION_SCHEMA: Final[ReviewAttentionSchemaVersion] = "review-attention-v1"
 ReviewCaseHistorySchemaVersion = Literal["review-case-history-v5"]

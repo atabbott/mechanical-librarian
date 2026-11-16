@@ -56,6 +56,9 @@ export const destinationPhrase = (destination: TargetDestination) =>
   /^[A-Z]{2,}$/u.test(destinationLabels[destination])
     ? destinationLabels[destination]
     : destinationLabels[destination].toLowerCase()
+// An owner's clear, said the same way where it was recorded and in History.
+export const clearedSentence = (destination: TargetDestination) =>
+  `You cleared the ${destinationPhrase(destination)}.`
 
 // The comparison conditions a review names beside a field. This map is the
 // whole set: a notice outside it is not a comparison condition and is never

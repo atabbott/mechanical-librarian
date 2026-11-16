@@ -93,6 +93,7 @@ from mechanical_librarian.application.review_application import (
 )
 from mechanical_librarian.application.review_web import (
     AutomaticWithheldCondition,
+    HumanDecisionAckSchemaVersion,
     OwnerCredential,
     OwnerVerifierStore,
     ReviewAttentionSchemaVersion,
@@ -2524,7 +2525,7 @@ class _DecisionAcknowledgement(_DecisionProjection):
     # row, and the write queue. Bounded because it is a fixed set of
     # announcements, not a log.
     invalidation_sequences: list[Annotated[int, Field(ge=1)]] = Field(max_length=8)
-    schema_version: str
+    schema_version: HumanDecisionAckSchemaVersion
 
 
 class _PolicyDraftRequest(_ClosedModel):
