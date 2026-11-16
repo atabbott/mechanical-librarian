@@ -1043,7 +1043,8 @@ def test_attention_search_membership_uses_full_package_key(tmp_path):
         expected = browser.attention(search="alias-only", limit=10, cursor=None)
         assert expected["total"] == 0
         repository._connection.execute(
-            "INSERT INTO current_review_packages "
+            "INSERT INTO current_review_packages(connection_name,library_name,"
+            "item_id,proposal_set_id,report_id,review_case_id,checkpoint,outcome) "
             "SELECT connection_name,library_name,'alias-only',proposal_set_id,"
             "report_id,review_case_id,checkpoint,outcome FROM current_review_packages"
         )
