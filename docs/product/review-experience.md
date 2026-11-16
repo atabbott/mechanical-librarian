@@ -291,8 +291,8 @@ Each tab names the field's status:
 
 Empty fields with no proposal sit behind one `Show N more fields` tab, and
 fields with nothing to decide in one closed panel headed `No change:` and their
-names. The heading counts any field waiting, unavailable or pinned, and each
-row gives its value, why nothing changed and a pin.
+names. The heading counts any field waiting, unavailable or pinned; each row
+gives its value and reason, unchanged rows a pin.
 
 The canvas shows the question, one line under it with the field's own reason,
 and its choices under Keep current value and Choose a new value: one panel, or
