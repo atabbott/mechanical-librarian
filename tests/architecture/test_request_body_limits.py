@@ -182,3 +182,44 @@ def test_the_largest_valid_consent_and_suspend_bodies_are_admitted(
             content=body,
         )
         assert response.status_code == 401, (path, response.status_code)
+
+
+def test_find_this_book_bodies_are_bounded_by_what_each_route_takes(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    """#1477: a search carries owner text; a choice and a withdrawal do not."""
+    limits = _limits()
+    assert limits.limit_for("/api/v1/library/find/searches") == 16_384
+    assert limits.limit_for("/api/v1/library/link/withdraw") == 4_096
+    # `{position, scope}` is far under the default, which it keeps.
+    assert limits.limit_for("/api/v1/library/find/searches/x/choice") == 2_048
+    search = json.dumps(
+        {
+            "connection": "c" * 512,
+            "library": "l" * 512,
+            "item": "i" * 512,
+            "provider": "open_library",
+            "lane": "title_authors",
+            "title": "t" * 4_096,
+            "authors": ["a" * 2_048] * 4,
+        }
+    ).encode()
+    withdraw = json.dumps(
+        {
+            "connection": "c" * 512,
+            "library": "l" * 512,
+            "item": "i" * 512,
+            "link_row_id": "owner_link_" + "0" * 64,
+        }
+    ).encode()
+    for path, body in (
+        ("/api/v1/library/find/searches", search),
+        ("/api/v1/library/link/withdraw", withdraw),
+    ):
+        assert len(body) <= limits.limit_for(path)
+        response = web.client.post(
+            path,
+            headers={**web.origin, "Content-Type": "application/json"},
+            content=body,
+        )
+        assert response.status_code == 401, (path, response.status_code)

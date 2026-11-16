@@ -22,6 +22,10 @@ from mechanical_librarian.application.cover_taste_build import (
     CoverTasteBuildService,
     CoverTasteRetryError,
 )
+from mechanical_librarian.application.failure_diagnostics import (
+    emit_owner_events,
+    owner_link_event,
+)
 from mechanical_librarian.application.field_effects import (
     GuardedApplicationError,
     GuardedFieldApplication,
@@ -48,7 +52,11 @@ from mechanical_librarian.application.operations import (
     SupportExporter,
     TimingRepository,
 )
-from mechanical_librarian.application.owner_search import OwnerSearchService
+from mechanical_librarian.application.owner_search import (
+    OwnerSearchRefused,
+    OwnerSearchRequest,
+    OwnerSearchService,
+)
 from mechanical_librarian.application.owner_settings import OwnerSettingsOperations
 from mechanical_librarian.application.review_covers import (
     CoverBrowseStore,
@@ -77,6 +85,7 @@ from mechanical_librarian.application.review_web import (
     ReviewWebError,
     SessionTokens,
     ValidatedDocumentCache,
+    owner_link_view,
 )
 from mechanical_librarian.application.reviewer_access import ReviewerAccessOperations
 from mechanical_librarian.application.write_plan import PlanFormat, ProducedStream
@@ -94,6 +103,7 @@ from mechanical_librarian.domain.field_effect import SUPPORTED_DESTINATIONS
 from mechanical_librarian.domain.library_visit import ListingPositions
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
 from mechanical_librarian.domain.metadata_report import MetadataReport
+from mechanical_librarian.domain.owner_link import OwnerLink, OwnerLinkTarget
 from mechanical_librarian.domain.owner_settings import (
     OwnerSettingsDocument,
     OwnerSettingsError,
@@ -166,6 +176,43 @@ class BrowserStateOwner(Protocol):
     def record_library_visit(
         self, listing: ListingPositions | None, now: int
     ) -> bool: ...
+
+    # The owner-link store (#1477, S16): a replay read and the two writes,
+    # each its own BEGIN IMMEDIATE transaction, and the link view's read.
+    def owner_link_replay(self, request_id: str) -> dict[str, object] | None: ...
+
+    def choose_owner_link(
+        self,
+        connection: str,
+        library: str,
+        item: str,
+        *,
+        medium: str,
+        expected_current: str | None,
+        target: OwnerLinkTarget,
+        actor: str,
+        occurred_at: int,
+        request_id: str,
+        request_sha256: str,
+    ) -> dict[str, object]: ...
+
+    def withdraw_owner_link(
+        self,
+        connection: str,
+        library: str,
+        item: str,
+        *,
+        medium: str,
+        expected_current: str,
+        actor: str,
+        occurred_at: int,
+        request_id: str,
+        request_sha256: str,
+    ) -> dict[str, object]: ...
+
+    def owner_link_view_inputs(
+        self, connection: str, library: str, item: str
+    ) -> tuple[OwnerLink, OwnerLinkTarget, dict[str, object] | None] | None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -676,6 +723,196 @@ class ReviewApplication:
     def owner_search(self) -> OwnerSearchService | None:
         """This generation's owner search service (#1477), if composed."""
         return self._owner_search
+
+    def _require_owner_search(self) -> OwnerSearchService:
+        if self._owner_search is None:
+            raise ReviewApplicationError("unavailable")
+        return self._owner_search
+
+    def owner_link_view(
+        self, connection: str, library: str, item: str
+    ) -> dict[str, object]:
+        """The selected work's Find this book offer and link (#1477, S29)."""
+        subject = self._require_owner_search().subject(connection, library, item)
+        inputs = self.serialized(
+            lambda: self._state_owner.owner_link_view_inputs(connection, library, item)
+        )
+        paused = False
+        next_retry_at: int | None = None
+        if inputs is not None:
+            if self._preparation is not None:
+                paused = self._preparation.paused()
+            provider = inputs[1].provider
+            for entry in cast(
+                "list[dict[str, object]]",
+                (self._provider_throttling() if self._provider_throttling else {}).get(
+                    "entries", []
+                ),
+            ):
+                due = entry.get("next_retry_at")
+                if (entry.get("library"), entry.get("adapter")) == (
+                    library,
+                    provider,
+                ) and type(due) is int:
+                    next_retry_at = due
+        return owner_link_view(
+            subject.to_offer(), inputs, paused=paused, next_retry_at=next_retry_at
+        )
+
+    def search_owner_link(
+        self, session_token: str, request: OwnerSearchRequest
+    ) -> dict[str, object]:
+        """One owner search (S11). It runs outside the operation gate: its one
+        request may wait up to ten seconds on the shared pacer and twenty on
+        the source, and nothing it holds is a database write."""
+        result = self._require_owner_search().search(session_token, request)
+        return {**result.to_data(), "schema_version": "owner-search-v1"}
+
+    def owner_link_preview(
+        self, session_token: str, search_id: str, position: int
+    ) -> bytes:
+        return self._require_owner_search().preview(session_token, search_id, position)
+
+    def choose_owner_link(
+        self,
+        session_token: str,
+        actor: str,
+        search_id: str,
+        position: int,
+        scope: str,
+        request_id: str,
+        request_sha256: str,
+    ) -> dict[str, object]:
+        """Record the chosen card as the work's link (S16 steps 3-8).
+
+        The replay is read first, so a lost answer is given again after the
+        search expired; the record is the retained card, never the browser's.
+        """
+        search = self._require_owner_search()
+        resolved: list[OwnerLinkTarget] = []
+
+        def write() -> dict[str, object]:
+            replay = self._owner_link_replayed(request_id, request_sha256)
+            if replay is not None:
+                return replay
+            choice = search.resolve_choice(session_token, search_id, position, scope)
+            resolved.append(choice.target)
+            return self._state_owner.choose_owner_link(
+                choice.connection,
+                choice.library,
+                choice.item,
+                medium=choice.medium,
+                expected_current=choice.expected_current,
+                target=choice.target,
+                actor=actor,
+                occurred_at=self._clock(),
+                request_id=request_id,
+                request_sha256=request_sha256,
+            )
+
+        return self._owner_link_written(
+            write,
+            "link",
+            lambda: (
+                (resolved[0].provider, resolved[0].scope.value)
+                if resolved
+                else (None, None)
+            ),
+        )
+
+    def withdraw_owner_link(
+        self,
+        actor: str,
+        connection: str,
+        library: str,
+        item: str,
+        link_row_id: str,
+        request_id: str,
+        request_sha256: str,
+    ) -> dict[str, object]:
+        """Withdraw the work's current link, named by its row (S16)."""
+        search = self._require_owner_search()
+
+        def write() -> dict[str, object]:
+            replay = self._owner_link_replayed(request_id, request_sha256)
+            if replay is not None:
+                return replay
+            subject = search.resolve_withdraw(connection, library, item, link_row_id)
+            return self._state_owner.withdraw_owner_link(
+                connection,
+                library,
+                item,
+                medium=subject.medium,
+                expected_current=link_row_id,
+                actor=actor,
+                occurred_at=self._clock(),
+                request_id=request_id,
+                request_sha256=request_sha256,
+            )
+
+        return self._owner_link_written(write, "withdraw", lambda: (None, None))
+
+    def _owner_link_replayed(
+        self, request_id: str, request_sha256: str
+    ) -> dict[str, object] | None:
+        """S16 step 3: the stored answer, or `idempotency_conflict`."""
+        replay = self._state_owner.owner_link_replay(request_id)
+        if replay is not None and replay["request_sha256"] != request_sha256:
+            raise OwnerSearchRefused("idempotency_conflict")
+        return replay
+
+    def _owner_link_written(
+        self,
+        write: Callable[[], dict[str, object]],
+        attempted: str,
+        target: Callable[[], tuple[str | None, str | None]],
+    ) -> dict[str, object]:
+        """Run one link write under the gate, then ask for the scan.
+
+        After the commit the library's scan is asked for with `book_linked`,
+        a replay included (Q-F): the request is coalesced, and a refusal is
+        swallowed because the work's fresh mark makes the next scan prepare
+        it (S20). Only the existing live topics are announced.
+        """
+        try:
+            answer = self.serialized(write)
+        except OwnerSearchRefused as refusal:
+            adapter, scope = target()
+            _emit_owner_link(adapter, scope, attempted, refusal.code)
+            raise
+        except Exception:
+            adapter, scope = target()
+            _emit_owner_link(adapter, scope, attempted, "failed")
+            raise
+        adapter, scope = target()
+        _emit_owner_link(
+            adapter,
+            scope,
+            cast(str, answer["action"]),
+            "replayed" if answer["replayed"] else "recorded",
+        )
+        connection, library = (
+            cast(str, answer["connection"]),
+            cast(str, answer["library"]),
+        )
+        try:
+            self._preparation_request(
+                "request", connection, library, trigger=PreparationTrigger.BOOK_LINKED
+            )
+            scan_requested = True
+        except Exception:
+            scan_requested = False
+        review_case_id = cast("str | None", answer["review_case_id"])
+        self._updates.publish("library", review_case_id)
+        self._updates.publish("activity")
+        if review_case_id is not None:
+            self._updates.publish("case", review_case_id)
+        return {
+            "action": answer["action"],
+            "link_row_id": answer["link_row_id"],
+            "scan_requested": scan_requested,
+            "schema_version": "owner-link-change-v1",
+        }
 
     def _reviewer_changed(self) -> None:
         # Other sessions still invalidate when a rescan request is refused.
@@ -2192,6 +2429,14 @@ def compose_review_application(
         owner_search=owner_search,
     )
     return application
+
+
+def _emit_owner_link(
+    adapter: str | None, scope: str | None, action: str, outcome: str
+) -> None:
+    emit_owner_events(
+        owner_link_event, adapter=adapter, scope=scope, action=action, outcome=outcome
+    )
 
 
 __all__ = [

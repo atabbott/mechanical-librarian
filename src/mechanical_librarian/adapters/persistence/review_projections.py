@@ -48,6 +48,7 @@ from mechanical_librarian.adapters.persistence.level_reconciliation import (
     stored_level_offer_documents,
     target_level,
 )
+from mechanical_librarian.adapters.persistence.owner_links import current_owner_link
 from mechanical_librarian.adapters.persistence.review_cases import (
     ReviewAttentionPage,
     ReviewLibraryPage,
@@ -86,6 +87,7 @@ from mechanical_librarian.application.review_web import (
     CurrentReviewCaseSnapshot,
     LibraryLabels,
     LibraryLensFilter,
+    LibraryRowLink,
     ReviewAttentionSnapshot,
     ReviewLibraryProgress,
     ReviewLibrarySnapshot,
@@ -699,6 +701,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 ]
             ] = []
             scopes: list[DecisionScope | None] = []
+            links: list[LibraryRowLink | None] = []
             for (case_document, report_document), envelope in zip(
                 page.rows, page.envelopes, strict=True
             ):
@@ -710,6 +713,8 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                         (case_document, report_document, (), (), (), (), None, 0, 0)
                     )
                     scopes.append(None)
+                    # A work with no report was never searched, so never linked.
+                    links.append(None)
                     continue
                 # The page read validated these envelopes from these bytes.
                 if envelope is None:
@@ -763,6 +768,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                     )
                 )
                 scopes.append(scope)
+                links.append(self._library_row_link(target, report_document))
                 projected_rows.append(
                     (
                         case_document,
@@ -805,8 +811,30 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 new_total=page.new_total,
                 listing=page.listing,
                 decision_scopes=tuple(scopes),
+                links=tuple(links),
             )
         return snapshot
+
+    def _library_row_link(
+        self, target: dict[str, object], report_document: str
+    ) -> LibraryRowLink | None:
+        """One visible row's current link and its report's link facts (#1477).
+
+        A point read per page row, inside the page's consistent read and
+        never on the count path; the report is parsed only for a linked work.
+        """
+        link = current_owner_link(
+            self._connection,
+            cast(str, target["connection"]),
+            cast(str, target["library"]),
+            cast(str, target["item"]),
+        )
+        if link is None:
+            return None
+        facts = self._connection.execute(
+            "SELECT json_extract(?,'$.owner_link')", (report_document,)
+        ).fetchone()[0]
+        return link, None if facts is None else json.loads(facts)
 
     def _browse_decision_documents(
         self,

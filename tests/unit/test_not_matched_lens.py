@@ -8,11 +8,13 @@ reason, and only a scheduled recovery job lets that reason promise a retry.
 from __future__ import annotations
 
 import json
+import sqlite3
 from collections.abc import Callable, Iterator
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
+import httpx
 import pytest
 
 from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
@@ -20,18 +22,36 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
     open_repository,
 )
+from mechanical_librarian.adapters.persistence.owner_links import (
+    OwnerLinkItem,
+    record_owner_link,
+)
 from mechanical_librarian.adapters.persistence.provider_recovery import (
     ProviderRecoveryJob,
     ProviderRecoveryStoreError,
     SQLiteProviderRecoveryStore,
 )
+from mechanical_librarian.adapters.providers.hardcover_metadata import (
+    HardcoverMetadataProvider,
+)
 from mechanical_librarian.application.catalogue import CatalogueEntry
+from mechanical_librarian.application.configuration import (
+    LibraryConfiguration,
+    MediaMountConfiguration,
+    ReportLimits,
+    TargetConnectionConfiguration,
+)
 from mechanical_librarian.application.failure_diagnostics import (
     ADAPTER_FAULT_DIAGNOSTIC,
 )
 from mechanical_librarian.application.metadata_report import (
+    GenerateMetadataReport,
+    InspectionResult,
+    ProviderBinding,
     ProviderLaneResult,
     ReportRepository,
+    TargetFile,
+    TargetSnapshot,
     provider_observation,
 )
 from mechanical_librarian.application.review_pipeline import PipelineAction
@@ -61,6 +81,11 @@ from mechanical_librarian.domain.metadata_report import (
     work_discovery_lane_payloads,
     work_ladder_diagnostics,
 )
+from mechanical_librarian.domain.owner_link import (
+    OwnerLinkAction,
+    OwnerLinkScope,
+    OwnerLinkTarget,
+)
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_browse import (
     ProviderLaneFacts,
@@ -86,6 +111,8 @@ from tests.support.audiobook_reports import (
     recording_lookup_hint_report,
     single_track_audio_facts,
 )
+from tests.support.hardcover_evidence import books_envelope
+from tests.support.metadata_report_doubles import FakeInspector, FakeTarget
 from tests.support.proposal_evidence import (
     _claim as _proposal_claim,
 )
@@ -1164,3 +1191,146 @@ def test_a_cover_only_lane_keeps_the_companion_lane_precedence(
     )
     assert outcome["cover_only"] is True
     assert outcome["reason"] == reason
+
+
+# -- A linked work (#1477 D3) -------------------------------------------------
+#
+# The owner's book link adds a `link` lane: its candidates are a match like any
+# other, and its failure is the outage a later attempt can change. A work with
+# no link searches as before. The reports are prepared through the real
+# producer, against Hardcover answering only the link's key lookup.
+
+_LINKED_TITLE = "Linked Title"
+
+
+def _hardcover_answering(answer: httpx.Response) -> HardcoverMetadataProvider:
+    def handle(request: httpx.Request) -> httpx.Response:
+        if json.loads(request.content)["operationName"] == "BookById":
+            return answer
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json={"data": {"books": [], "tags": []}},
+        )
+
+    return HardcoverMetadataProvider(
+        "hardcover",
+        httpx.Client(transport=httpx.MockTransport(handle)),
+        65_536,
+        sleep=lambda _: None,
+        jitter=lambda: 0.0,
+    )
+
+
+def _linked_ebook(path: Path, answer: httpx.Response, *, linked: bool) -> None:
+    if linked:
+        connection = sqlite3.connect(path, isolation_level=None)
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            record_owner_link(
+                connection,
+                item=OwnerLinkItem("primary", "ebooks", "item-1"),
+                action=OwnerLinkAction.LINK,
+                expected_current=None,
+                target=OwnerLinkTarget(
+                    OwnerLinkScope.WORK, "hardcover", "4321", _LINKED_TITLE
+                ),
+                source="search",
+                medium="ebook",
+                actor="owner",
+                occurred_at=1_700_000_000,
+                request_id="request-0000000001",
+                request_sha256="a" * 64,
+            )
+            connection.execute("COMMIT")
+        finally:
+            connection.close()
+    selected = TargetFile("a" * 64, "book.epub", "epub")
+    snapshot = TargetSnapshot(
+        "ebook", "Local Title", (selected,), fields=default_target_fields("Local Title")
+    )
+    GenerateMetadataReport(
+        target=FakeTarget([snapshot, snapshot]),
+        inspector=FakeInspector(InspectionResult("c" * 64, ())),
+        repository_factory=lambda: open_repository(path),
+        providers=(
+            ProviderBinding(
+                "hardcover",
+                True,
+                lambda: _hardcover_answering(answer),
+                authority="hardcover",
+            ),
+        ),
+        connection=TargetConnectionConfiguration(
+            "primary", "https://example.invalid", "/private/target"
+        ),
+        library=LibraryConfiguration(
+            "ebooks", "primary", "library-id", "ebook", "books", ("hardcover",)
+        ),
+        mount=MediaMountConfiguration("books", "/media", "/library", True),
+        limits=ReportLimits(),
+    ).run("item-1", 0)
+
+
+_LINKED_BOOK = httpx.Response(
+    200,
+    headers={"content-type": "application/json"},
+    json=books_envelope(
+        [
+            {
+                "id": 4321,
+                "title": _LINKED_TITLE,
+                "contributions": [
+                    {
+                        "id": 1,
+                        "contribution": None,
+                        "author": {"id": 9, "name": "Linked Author"},
+                    }
+                ],
+            }
+        ]
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("linked", "answer", "state", "link"),
+    [
+        (True, _LINKED_BOOK, "matched", {"state": "linked"}),
+        (True, httpx.Response(502), "unavailable", {"state": "waiting"}),
+        (False, _LINKED_BOOK, "no_match", None),
+    ],
+    ids=["link-lane-candidates", "link-lane-outage", "control-unlinked"],
+)
+def test_a_link_lane_is_a_match_or_an_outage_and_the_row_names_its_link(
+    tmp_path: Path,
+    linked: bool,
+    answer: httpx.Response,
+    state: str,
+    link: dict[str, str] | None,
+) -> None:
+    path = tmp_path / "state.sqlite3"
+    open_repository(path).close()
+    _linked_ebook(path, answer, linked=linked)
+    repository = open_repository(path)
+    try:
+        lanes = [
+            json.loads(row[0])
+            for row in repository._connection.execute(
+                "SELECT lane.value FROM metadata_reports report,"
+                "json_each(report.document,'$.providers') provider,"
+                "json_each(provider.value,'$.lanes') lane"
+            )
+        ]
+        kinds = {lane["kind"] for lane in lanes}
+        # A linked work's only lane is its link lane; an unlinked one has none.
+        assert kinds == {"link"} if linked else "link" not in kinds
+        assert _browse_facts(repository) == {
+            "item-1": (int(state == "unavailable"), state)
+        }
+        page = BrowseReviewLibrary(repository).library(
+            lens="all", search=None, limit=50, cursor=None
+        )
+        assert _items(page)["item-1"]["link"] == link
+    finally:
+        repository.close()

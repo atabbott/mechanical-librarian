@@ -115,7 +115,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.application.review_web",
         "REVIEW_CASE_HISTORY_SCHEMA",
-        "review-case-history-v4",
+        "review-case-history-v5",
     ),
     (
         "mechanical_librarian.application.metadata_policy",
@@ -130,7 +130,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.application.review_web",
         "REVIEW_LIBRARY_SCHEMA",
-        "review-library-v8",
+        "review-library-v9",
     ),
     (
         "mechanical_librarian.application.review_web",

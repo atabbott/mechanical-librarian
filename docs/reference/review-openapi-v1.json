@@ -3637,6 +3637,114 @@
         "title": "_AutomaticSuspendRequest",
         "type": "object"
       },
+      "_CardContradiction": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "enum": [
+              "identifier",
+              "compilation",
+              "language",
+              "creators_disjoint",
+              "runtime"
+            ],
+            "title": "Code",
+            "type": "string"
+          },
+          "identifier": {
+            "anyOf": [
+              {
+                "enum": [
+                  "isbn",
+                  "asin"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Identifier"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "record": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Record"
+          },
+          "work": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Work"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "title": "_CardContradiction",
+        "type": "object"
+      },
+      "_CardScopeWithheld": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "enum": [
+              "no_isbn",
+              "format",
+              "no_runtime",
+              "runtime",
+              "narrators",
+              "variant"
+            ],
+            "title": "Reason",
+            "type": "string"
+          },
+          "scope": {
+            "enum": [
+              "work",
+              "edition",
+              "recording"
+            ],
+            "title": "Scope",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "reason"
+        ],
+        "title": "_CardScopeWithheld",
+        "type": "object"
+      },
       "_CaseDetailResponse": {
         "additionalProperties": false,
         "properties": {
@@ -7177,6 +7285,79 @@
         "title": "_HistoryMatchingChangedItem",
         "type": "object"
       },
+      "_HistoryOwnerLinkItem": {
+        "additionalProperties": false,
+        "description": "A book link the owner made, changed or withdrew (#1477, S31).\n\nA withdrawal names the link it withdrew.",
+        "properties": {
+          "kind": {
+            "enum": [
+              "linked",
+              "link_changed",
+              "link_withdrawn"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "link_row_id": {
+            "pattern": "^owner_link_[0-9a-f]{64}$",
+            "title": "Link Row Id",
+            "type": "string"
+          },
+          "occurred_at": {
+            "maximum": 8640000000000.0,
+            "minimum": 0.0,
+            "title": "Occurred At",
+            "type": "integer"
+          },
+          "provider": {
+            "enum": [
+              "audible_catalog",
+              "google_books",
+              "hardcover",
+              "inventaire",
+              "open_library"
+            ],
+            "title": "Provider",
+            "type": "string"
+          },
+          "review_case_id": {
+            "title": "Review Case Id",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "owner-link-history-event-v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "scope": {
+            "enum": [
+              "work",
+              "edition",
+              "recording"
+            ],
+            "title": "Scope",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "link_row_id",
+          "occurred_at",
+          "provider",
+          "review_case_id",
+          "schema_version",
+          "scope",
+          "title"
+        ],
+        "title": "_HistoryOwnerLinkItem",
+        "type": "object"
+      },
       "_HistoryPreviewItem": {
         "additionalProperties": false,
         "properties": {
@@ -7274,6 +7455,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/_HistoryDescriptionItem"
+                },
+                {
+                  "$ref": "#/components/schemas/_HistoryOwnerLinkItem"
                 }
               ]
             },
@@ -7297,7 +7481,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "review-case-history-v4",
+            "const": "review-case-history-v5",
             "title": "Schema Version",
             "type": "string"
           }
@@ -7547,6 +7731,28 @@
         "title": "_LibraryCover",
         "type": "object"
       },
+      "_LibraryLink": {
+        "additionalProperties": false,
+        "description": "A row's book link state; the selected work reads the rest (#1477).",
+        "properties": {
+          "state": {
+            "enum": [
+              "linked",
+              "preparing",
+              "waiting",
+              "contradicted",
+              "needs_replacing"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "_LibraryLink",
+        "type": "object"
+      },
       "_LibraryListing": {
         "additionalProperties": false,
         "description": "How far Library's listing had got when a page was read (#1351).",
@@ -7747,7 +7953,7 @@
             "title": "Query"
           },
           "schema_version": {
-            "const": "review-library-v8",
+            "const": "review-library-v9",
             "title": "Schema Version",
             "type": "string"
           }
@@ -7909,6 +8115,16 @@
             ],
             "title": "Library Display Name"
           },
+          "link": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_LibraryLink"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "media_kind": {
             "enum": [
               "epub",
@@ -7991,6 +8207,7 @@
           "dispositions",
           "item",
           "library",
+          "link",
           "media_kind",
           "review_case_id",
           "title",
@@ -8479,6 +8696,734 @@
           "suggestions"
         ],
         "title": "_OwnerEntry",
+        "type": "object"
+      },
+      "_OwnerLinkChange": {
+        "additionalProperties": false,
+        "description": "What a choose or withdraw recorded (`owner-link-change-v1`).",
+        "properties": {
+          "action": {
+            "enum": [
+              "link",
+              "replace",
+              "withdraw"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "link_row_id": {
+            "pattern": "^owner_link_[0-9a-f]{64}$",
+            "title": "Link Row Id",
+            "type": "string"
+          },
+          "scan_requested": {
+            "title": "Scan Requested",
+            "type": "boolean"
+          },
+          "schema_version": {
+            "const": "owner-link-change-v1",
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "link_row_id",
+          "action",
+          "scan_requested",
+          "schema_version"
+        ],
+        "title": "_OwnerLinkChange",
+        "type": "object"
+      },
+      "_OwnerLinkChoiceBody": {
+        "additionalProperties": false,
+        "properties": {
+          "position": {
+            "maximum": 99.0,
+            "minimum": 0.0,
+            "title": "Position",
+            "type": "integer"
+          },
+          "scope": {
+            "enum": [
+              "work",
+              "edition",
+              "recording"
+            ],
+            "title": "Scope",
+            "type": "string"
+          }
+        },
+        "required": [
+          "position",
+          "scope"
+        ],
+        "title": "_OwnerLinkChoiceBody",
+        "type": "object"
+      },
+      "_OwnerLinkCurrent": {
+        "additionalProperties": false,
+        "properties": {
+          "creators": {
+            "items": {
+              "maxLength": 512,
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Creators",
+            "type": "array"
+          },
+          "identifier": {
+            "anyOf": [
+              {
+                "maxLength": 13,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Identifier"
+          },
+          "link_row_id": {
+            "pattern": "^owner_link_[0-9a-f]{64}$",
+            "title": "Link Row Id",
+            "type": "string"
+          },
+          "paused": {
+            "title": "Paused",
+            "type": "boolean"
+          },
+          "provider": {
+            "enum": [
+              "audible_catalog",
+              "google_books",
+              "hardcover",
+              "inventaire",
+              "open_library"
+            ],
+            "title": "Provider",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "format",
+                  "runtime",
+                  "narrators",
+                  "variant",
+                  "missing",
+                  "merged",
+                  "source_disabled",
+                  "medium_changed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "retry_at": {
+            "anyOf": [
+              {
+                "maximum": 8640000000000.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry At"
+          },
+          "scope": {
+            "enum": [
+              "work",
+              "edition",
+              "recording"
+            ],
+            "title": "Scope",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "linked",
+              "preparing",
+              "waiting",
+              "contradicted",
+              "needs_replacing"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "link_row_id",
+          "scope",
+          "provider",
+          "title",
+          "creators",
+          "identifier",
+          "state",
+          "reason",
+          "retry_at",
+          "paused"
+        ],
+        "title": "_OwnerLinkCurrent",
+        "type": "object"
+      },
+      "_OwnerLinkPrefill": {
+        "additionalProperties": false,
+        "properties": {
+          "asin": {
+            "anyOf": [
+              {
+                "maxLength": 10,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asin"
+          },
+          "authors": {
+            "items": {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            "maxItems": 4,
+            "title": "Authors",
+            "type": "array"
+          },
+          "isbn": {
+            "anyOf": [
+              {
+                "maxLength": 13,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Isbn"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "title",
+          "authors",
+          "isbn",
+          "asin"
+        ],
+        "title": "_OwnerLinkPrefill",
+        "type": "object"
+      },
+      "_OwnerLinkSource": {
+        "additionalProperties": false,
+        "properties": {
+          "lanes": {
+            "items": {
+              "enum": [
+                "title_authors",
+                "isbn",
+                "asin"
+              ],
+              "type": "string"
+            },
+            "maxItems": 3,
+            "title": "Lanes",
+            "type": "array"
+          },
+          "marketplaces": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 16,
+                  "type": "string"
+                },
+                "maxItems": 16,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Marketplaces"
+          },
+          "provider": {
+            "enum": [
+              "audible_catalog",
+              "google_books",
+              "hardcover",
+              "inventaire",
+              "open_library"
+            ],
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "lanes"
+        ],
+        "title": "_OwnerLinkSource",
+        "type": "object"
+      },
+      "_OwnerLinkView": {
+        "additionalProperties": false,
+        "description": "The selected work's offer and link (`owner-link-view-v1`).",
+        "properties": {
+          "link": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_OwnerLinkCurrent"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "offered": {
+            "title": "Offered",
+            "type": "boolean"
+          },
+          "prefill": {
+            "$ref": "#/components/schemas/_OwnerLinkPrefill"
+          },
+          "schema_version": {
+            "const": "owner-link-view-v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/_OwnerLinkSource"
+            },
+            "maxItems": 5,
+            "title": "Sources",
+            "type": "array"
+          }
+        },
+        "required": [
+          "offered",
+          "sources",
+          "prefill",
+          "link",
+          "schema_version"
+        ],
+        "title": "_OwnerLinkView",
+        "type": "object"
+      },
+      "_OwnerLinkWithdrawBody": {
+        "additionalProperties": false,
+        "properties": {
+          "connection": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Connection",
+            "type": "string"
+          },
+          "item": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Item",
+            "type": "string"
+          },
+          "library": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Library",
+            "type": "string"
+          },
+          "link_row_id": {
+            "pattern": "^owner_link_[0-9a-f]{64}$",
+            "title": "Link Row Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "connection",
+          "library",
+          "item",
+          "link_row_id"
+        ],
+        "title": "_OwnerLinkWithdrawBody",
+        "type": "object"
+      },
+      "_OwnerSearchBody": {
+        "additionalProperties": false,
+        "properties": {
+          "asin": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asin"
+          },
+          "authors": {
+            "items": {
+              "maxLength": 4096,
+              "type": "string"
+            },
+            "maxItems": 16,
+            "title": "Authors",
+            "type": "array"
+          },
+          "connection": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Connection",
+            "type": "string"
+          },
+          "isbn": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Isbn"
+          },
+          "item": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Item",
+            "type": "string"
+          },
+          "lane": {
+            "enum": [
+              "title_authors",
+              "isbn",
+              "asin"
+            ],
+            "title": "Lane",
+            "type": "string"
+          },
+          "library": {
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Library",
+            "type": "string"
+          },
+          "marketplace": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Marketplace"
+          },
+          "provider": {
+            "maxLength": 64,
+            "title": "Provider",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "connection",
+          "library",
+          "item",
+          "provider",
+          "lane"
+        ],
+        "title": "_OwnerSearchBody",
+        "type": "object"
+      },
+      "_OwnerSearchCard": {
+        "additionalProperties": false,
+        "properties": {
+          "asin": {
+            "anyOf": [
+              {
+                "maxLength": 10,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asin"
+          },
+          "choosable": {
+            "title": "Choosable",
+            "type": "boolean"
+          },
+          "contradictions": {
+            "items": {
+              "$ref": "#/components/schemas/_CardContradiction"
+            },
+            "maxItems": 5,
+            "title": "Contradictions",
+            "type": "array"
+          },
+          "creators": {
+            "items": {
+              "maxLength": 512,
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Creators",
+            "type": "array"
+          },
+          "isbn": {
+            "anyOf": [
+              {
+                "maxLength": 13,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Isbn"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "narrators": {
+            "items": {
+              "maxLength": 512,
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Narrators",
+            "type": "array"
+          },
+          "position": {
+            "maximum": 9.0,
+            "minimum": 0.0,
+            "title": "Position",
+            "type": "integer"
+          },
+          "preview": {
+            "title": "Preview",
+            "type": "boolean"
+          },
+          "publisher": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publisher"
+          },
+          "runtime_seconds": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runtime Seconds"
+          },
+          "scopes": {
+            "items": {
+              "enum": [
+                "work",
+                "edition",
+                "recording"
+              ],
+              "type": "string"
+            },
+            "maxItems": 3,
+            "title": "Scopes",
+            "type": "array"
+          },
+          "subtitle": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subtitle"
+          },
+          "title": {
+            "maxLength": 512,
+            "title": "Title",
+            "type": "string"
+          },
+          "withheld": {
+            "items": {
+              "$ref": "#/components/schemas/_CardScopeWithheld"
+            },
+            "maxItems": 3,
+            "title": "Withheld",
+            "type": "array"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          }
+        },
+        "required": [
+          "position",
+          "title",
+          "subtitle",
+          "creators",
+          "narrators",
+          "year",
+          "publisher",
+          "language",
+          "isbn",
+          "asin",
+          "runtime_seconds",
+          "choosable",
+          "scopes",
+          "withheld",
+          "contradictions",
+          "preview"
+        ],
+        "title": "_OwnerSearchCard",
+        "type": "object"
+      },
+      "_OwnerSearchResponse": {
+        "additionalProperties": false,
+        "description": "One held search's cards (`owner-search-v1`).",
+        "properties": {
+          "cards": {
+            "items": {
+              "$ref": "#/components/schemas/_OwnerSearchCard"
+            },
+            "maxItems": 10,
+            "title": "Cards",
+            "type": "array"
+          },
+          "dropped": {
+            "maximum": 11.0,
+            "minimum": 0.0,
+            "title": "Dropped",
+            "type": "integer"
+          },
+          "lane": {
+            "enum": [
+              "title_authors",
+              "isbn",
+              "asin"
+            ],
+            "title": "Lane",
+            "type": "string"
+          },
+          "marketplace": {
+            "anyOf": [
+              {
+                "maxLength": 16,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Marketplace"
+          },
+          "more": {
+            "title": "More",
+            "type": "boolean"
+          },
+          "provider": {
+            "enum": [
+              "audible_catalog",
+              "google_books",
+              "hardcover",
+              "inventaire",
+              "open_library"
+            ],
+            "title": "Provider",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "owner-search-v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "search_id": {
+            "maxLength": 64,
+            "title": "Search Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "search_id",
+          "provider",
+          "lane",
+          "marketplace",
+          "cards",
+          "more",
+          "dropped",
+          "schema_version"
+        ],
+        "title": "_OwnerSearchResponse",
         "type": "object"
       },
       "_OwnerSubset": {
@@ -10037,7 +10982,8 @@
               "library_added",
               "title_recovery",
               "automatic_confirmed",
-              "matching_changed"
+              "matching_changed",
+              "book_linked"
             ],
             "title": "Trigger",
             "type": "string"
@@ -10751,6 +11697,86 @@
           "candidate"
         ],
         "title": "_RecordingIdentityBasis",
+        "type": "object"
+      },
+      "_Refusal": {
+        "additionalProperties": false,
+        "description": "A refused search, preview or link write: one closed code.",
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/_RefusalCode"
+          },
+          "schema_version": {
+            "const": "review-error-v1",
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "error",
+          "schema_version"
+        ],
+        "title": "_Refusal",
+        "type": "object"
+      },
+      "_RefusalCode": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "maxLength": 64,
+            "title": "Code",
+            "type": "string"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "unavailable",
+                  "unreadable",
+                  "key"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "rate_limited",
+                  "quota_exhausted",
+                  "key"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "retry_at": {
+            "anyOf": [
+              {
+                "maximum": 8640000000000.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry At"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "title": "_RefusalCode",
         "type": "object"
       },
       "_ReportChapter": {
@@ -14961,6 +15987,746 @@
           }
         ],
         "summary": "Library Cover"
+      }
+    },
+    "/api/v1/library/find/searches": {
+      "post": {
+        "description": "Search one source for the work's book (S11). Nothing is recorded.",
+        "operationId": "search_owner_link_api_v1_library_find_searches_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_OwnerSearchBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_OwnerSearchResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Search Owner Link"
+      }
+    },
+    "/api/v1/library/find/searches/{search_id}/choice": {
+      "post": {
+        "description": "Link the work to the chosen card's record (S16).",
+        "operationId": "choose_owner_link_api_v1_library_find_searches__search_id__choice_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "search_id",
+            "required": true,
+            "schema": {
+              "title": "Search Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[\\x21-\\x7e]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_OwnerLinkChoiceBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_OwnerLinkChange"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Choose Owner Link"
+      }
+    },
+    "/api/v1/library/find/searches/{search_id}/previews/{position}": {
+      "get": {
+        "description": "A card's cover preview, held in memory only (S14).",
+        "operationId": "owner_link_preview_api_v1_library_find_searches__search_id__previews__position__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "search_id",
+            "required": true,
+            "schema": {
+              "title": "Search Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "position",
+            "required": true,
+            "schema": {
+              "title": "Position",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "image/png": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Owner Link Preview"
+      }
+    },
+    "/api/v1/library/link": {
+      "get": {
+        "description": "Read-only: whether Find this book is offered, and the current link.",
+        "operationId": "owner_link_view_api_v1_library_link_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "connection",
+            "required": true,
+            "schema": {
+              "maxLength": 512,
+              "title": "Connection",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "library",
+            "required": true,
+            "schema": {
+              "maxLength": 512,
+              "title": "Library",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "item",
+            "required": true,
+            "schema": {
+              "maxLength": 512,
+              "title": "Item",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_OwnerLinkView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Owner Link View"
+      }
+    },
+    "/api/v1/library/link/withdraw": {
+      "post": {
+        "description": "Withdraw the work's current link, named by its row (S16).",
+        "operationId": "withdraw_owner_link_api_v1_library_link_withdraw_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[\\x21-\\x7e]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_OwnerLinkWithdrawBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_OwnerLinkChange"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_Refusal"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Withdraw Owner Link"
       }
     },
     "/api/v1/library/progress": {

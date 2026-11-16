@@ -86,12 +86,21 @@ from mechanical_librarian.domain.metadata_report import (
     ClaimScope,
     FieldState,
     MetadataReport,
+    ReportValueError,
     TargetDestination,
     TargetFacts,
     TargetField,
     echoed_target_values,
     field_evidence_providers,
+    owner_link_facts_from_data,
     recording_variant_conflict,
+)
+from mechanical_librarian.domain.owner_link import (
+    OwnerLink,
+    OwnerLinkError,
+    OwnerLinkScope,
+    OwnerLinkTarget,
+    link_state,
 )
 from mechanical_librarian.domain.owner_settings import (
     PROVIDER_LABELS,
@@ -146,13 +155,13 @@ REVIEW_CASE_EVIDENCE_SCHEMA: Final[ReviewCaseEvidenceSchemaVersion] = (
 HUMAN_DECISION_ACK_SCHEMA: Final = "human-decision-ack-v1"
 ReviewAttentionSchemaVersion = Literal["review-attention-v1"]
 REVIEW_ATTENTION_SCHEMA: Final[ReviewAttentionSchemaVersion] = "review-attention-v1"
-ReviewCaseHistorySchemaVersion = Literal["review-case-history-v4"]
+ReviewCaseHistorySchemaVersion = Literal["review-case-history-v5"]
 REVIEW_CASE_HISTORY_SCHEMA: Final[ReviewCaseHistorySchemaVersion] = (
-    "review-case-history-v4"
+    "review-case-history-v5"
 )
 
-ReviewLibrarySchemaVersion = Literal["review-library-v8"]
-REVIEW_LIBRARY_SCHEMA: Final[ReviewLibrarySchemaVersion] = "review-library-v8"
+ReviewLibrarySchemaVersion = Literal["review-library-v9"]
+REVIEW_LIBRARY_SCHEMA: Final[ReviewLibrarySchemaVersion] = "review-library-v9"
 
 ReviewReportDetailSchemaVersion = Literal["review-report-detail-v6"]
 REVIEW_REPORT_DETAIL_SCHEMA: Final[ReviewReportDetailSchemaVersion] = (
@@ -349,6 +358,10 @@ class CurrentReviewCaseSnapshot:
     check_given_up: bool = False
 
 
+# A row's current link and the `owner_link` facts its report records (#1477).
+LibraryRowLink = tuple[OwnerLink, dict[str, object] | None]
+
+
 @dataclass(frozen=True, slots=True)
 class ReviewLibrarySnapshot:
     rows: tuple[
@@ -384,6 +397,9 @@ class ReviewLibrarySnapshot:
     decision_scopes: tuple[DecisionScope | None, ...] = dataclass_field(
         default=(), compare=False, repr=False
     )
+    # #1477: each row's current book link and its report's link facts, or
+    # None for an unlinked work. Empty when the store read none.
+    links: tuple[LibraryRowLink | None, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -2406,6 +2422,12 @@ class RecordHumanDecision:
             document = self._repository.record_authored_description_decision(
                 candidate_id, binding, digest, self._clock()
             )
+        except HumanDecisionError as error:
+            # `link_changed` (#1477 L9) keeps its own code; every other
+            # refusal of the selection is a stale binding, as before.
+            raise ReviewWebError(
+                "link_changed" if error.code == "link_changed" else "stale"
+            ) from error
         except ValueError as error:
             raise ReviewWebError("stale") from error
         except Exception as error:
@@ -2684,6 +2706,7 @@ class BrowseReviewLibrary:
             )
             items = []
             scopes = snapshot.decision_scopes or (None,) * len(snapshot.rows)
+            links = snapshot.links or (None,) * len(snapshot.rows)
             visible = tuple(
                 zip(snapshot.rows, scopes, snapshot.match_reasons, strict=True)
             )[:bounded_limit]
@@ -2745,6 +2768,7 @@ class BrowseReviewLibrary:
                             else match_reason
                         ),
                         report_facts=unavailable.get(index),
+                        link=_library_link(links[index]),
                     )
                 )
         except Exception as error:
@@ -4635,6 +4659,8 @@ def _terminal_library_item(document: str) -> dict[str, object] | None:
                 "dispositions": ["terminal_failure"],
                 "item": item,
                 "library": library,
+                # A work with no report was never searched, so never linked.
+                "link": None,
                 "media_kind": media_kind,
                 "review_case_id": None,
                 "title": title,
@@ -4737,6 +4763,70 @@ def _decided_destinations(
     return decisions, automatic_outcomes
 
 
+OWNER_LINK_VIEW_SCHEMA: Final = "owner-link-view-v1"
+
+
+def owner_link_view(
+    offer: dict[str, object],
+    inputs: tuple[OwnerLink, OwnerLinkTarget, dict[str, object] | None] | None,
+    *,
+    paused: bool,
+    next_retry_at: int | None,
+) -> dict[str, object]:
+    """The selected work's link view (`owner-link-view-v1`, S7, S29, L4).
+
+    `offer` says whether Find this book is offered, from which sources and
+    with what prefill; a Could not finish work is not offered but still
+    shows its link, so it can be withdrawn. `inputs` is the current link,
+    its display snapshot and the current report's link facts.
+    """
+    link: dict[str, object] | None = None
+    if inputs is not None:
+        current, target, facts = inputs
+        try:
+            state = link_state(
+                current,
+                owner_link_facts_from_data(facts),
+                paused=paused,
+                next_retry_at=next_retry_at,
+            )
+        except (OwnerLinkError, ReportValueError) as error:
+            raise ReviewWebError("unavailable") from error
+        link = {
+            "creators": list(target.display_creators),
+            "identifier": None
+            if target.scope is OwnerLinkScope.WORK
+            else target.identity,
+            "link_row_id": current.row_id,
+            "paused": state.paused,
+            "provider": target.provider,
+            "reason": state.reason,
+            "retry_at": state.retry_at,
+            "scope": target.scope.value,
+            "state": state.state,
+            "title": target.display_title,
+        }
+    return {**offer, "link": link, "schema_version": OWNER_LINK_VIEW_SCHEMA}
+
+
+def _library_link(entry: LibraryRowLink | None) -> dict[str, object] | None:
+    """A row's `link: {state}` from its current link and report facts (S29).
+
+    The row says only the state; the selected work reads the full link view.
+    """
+    if entry is None:
+        return None
+    link, facts = entry
+    try:
+        return {
+            "state": link_state(
+                link, owner_link_facts_from_data(facts), paused=False
+            ).state
+        }
+    except (OwnerLinkError, ReportValueError) as error:
+        raise ReviewWebError("unavailable") from error
+
+
 def _library_item(
     case_document: str | None,
     report_document: str,
@@ -4752,6 +4842,7 @@ def _library_item(
     validated: ValidatedDocumentCache | None = None,
     match_state: str | None = None,
     report_facts: LibraryReportFacts | None = None,
+    link: dict[str, object] | None = None,
 ) -> dict[str, object]:
     if case_document is None:
         stopped = _terminal_library_item(report_document)
@@ -4879,6 +4970,8 @@ def _library_item(
         "dispositions": outcomes,
         "item": report.target.item,
         "library": report.target.library,
+        # The work's book link state, or None when it has none (#1477, S29).
+        "link": link,
         "media_kind": report.file.format,
         "review_case_id": None if case is None else case.review_case_id,
         "title": report.target.current_title or "Untitled",
