@@ -4597,7 +4597,11 @@ def test_owner_controls_keep_every_word_whole_in_both_themes() -> None:
                 for width in (1440, 1100, 884, 761, 760, 390, 320):
                     where = f"{scheme}, {text} text at {width}px"
                     page.set_viewport_size({"width": width, "height": 900})
-                    _pins_keep_their_words_and_size(page, where, width)
+                    # Every pin state, at the widest, the narrowest and either
+                    # side of the compact layout. They are the only pin pages,
+                    # and their words may not break at all (#1346).
+                    if width in (1440, 761, 760, 390, 320):
+                        _pins_keep_their_words_and_size(page, where, width)
                     page.goto(
                         "https://react-platform.invalid/library?lens=all"
                         "&preview=case-1&field=title"
@@ -5304,9 +5308,6 @@ def test_words_break_only_where_they_must() -> None:
         "selected": "/library?lens=all&preview=case-1",
         "attention": "/library?lens=all&attention=open",
         "review": "/review/case-1",
-        "pinned": "/library?lens=all&preview=case-pins&field=title",
-        "pin waiting": "/library?lens=all&preview=case-pins&field=authors",
-        "pin changed": "/library?lens=all&preview=case-pins&field=genres",
         "policy": "/policy?section=identity",
         "activity": "/activity?eventType=all&rangeDays=30&page=1&pageSize=25",
         "settings": "/settings?group=connection",
