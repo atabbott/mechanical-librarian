@@ -1507,6 +1507,30 @@ def _authored_description_selection(
     return authored_selection
 
 
+def _pin_control(
+    case: ReviewCase,
+    destination: str,
+    pin_state: str | None,
+    *,
+    change_waiting: bool,
+) -> dict[str, object] | None:
+    """Return whether a field offers Pin and Unpin (#1346, J2).
+
+    A readable field other than the cover can have a value pinned, or says
+    that a change to it waits to be written.
+    """
+    pin_offer = (
+        None
+        if destination == "cover" or pinned_field_fingerprint(case, destination) is None
+        else "change_waiting"
+        if change_waiting
+        else "available"
+    )
+    if pin_offer is None and pin_state is None:
+        return None
+    return {"pin": pin_offer, "unpin": pin_state is not None}
+
+
 class InspectCurrentReviewCase:
     def __init__(
         self,
@@ -1867,21 +1891,6 @@ class InspectCurrentReviewCase:
                 or (decision is not None and automatic_decision is not None)
             )
         )
-        # A readable field can have a value pinned, or says a change
-        # to it waits to be written (#1346, J2).
-        pin_offer = (
-            None
-            if destination == "cover"
-            or pinned_field_fingerprint(context.case, destination) is None
-            else "change_waiting"
-            if destination in snapshot.change_waiting_destinations
-            else "available"
-        )
-        pin_control: dict[str, object] | None = (
-            None
-            if pin_offer is None and pin_state is None
-            else {"pin": pin_offer, "unpin": pin_state is not None}
-        )
         return self._field_document(
             context,
             proposal,
@@ -1904,7 +1913,12 @@ class InspectCurrentReviewCase:
             pin=None
             if pin_state is None
             else {"state": pin_state, "value": pinned_field},
-            pin_control=pin_control,
+            pin_control=_pin_control(
+                context.case,
+                destination,
+                pin_state,
+                change_waiting=destination in snapshot.change_waiting_destinations,
+            ),
         )
 
     def _field_document(
