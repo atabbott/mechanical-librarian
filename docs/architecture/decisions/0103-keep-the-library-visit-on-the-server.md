@@ -82,6 +82,12 @@ itself.
   removed after two successful discoveries without it is listed again on a
   fresh row, and a work that could not be read is given a fresh row when it
   fails again after a discovery without it.
+- A work that could not finish and is later read counts as new: its first
+  report gives it a package row past `seen_packages`. New lists it once and
+  drops it at the next visit after New was opened.
+- A newcomer that fails at once can be missed by New when the newest work row
+  was deleted, because its work row can reuse a position at or before
+  `seen_works`. It is still listed under Could not finish.
 - A work first listed and removed between two visits is never shown as new.
   A search or a later page of New marks the whole lens as shown.
 - A Library read now depends on the server's clock. A clock set back reads as

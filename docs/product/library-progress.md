@@ -61,16 +61,16 @@ While works have arrived since your last visit, Library has a New lens,
 straight after All, with their count: "New 2". With nothing new the lens is
 not there. Chosen, it lists those works in All's order under "2 new works
 since your last visit", or "1 new work since your last visit". Under a search
-the status reads "Found 1 of 2 works"; a screen reader also hears "new since
-your last visit". An address that names the lens when nothing is new opens it
-and says "No works here."
+the status reads "Found 1 of 2 works". A screen reader also hears "new since
+your last visit". A link to New when nothing is new opens the lens and says
+"Nothing new since your last visit."
 
-Nothing is dismissed. A visit ends when Library has not been used for half an
-hour on any device. Works you opened New on stop being new at your next visit;
-works that arrived without that stay new. The mark is kept on the server, so
-every device agrees, and the first mark is taken once the first preparation
-has finished, so a first library is not new. A work that left the library and
-came back counts as new
+A visit ends when Library has not been used for half an hour on any device.
+Works that New listed when you opened it stop being new at your next visit.
+Works that arrived after that stay new. Every device shares one last visit.
+Nothing is new until the first preparation has finished, so the works of a
+first library are not new. A work that left the library and came back counts
+as new. So does a work that could not finish and is read later
 ([ADR-0103](../architecture/decisions/0103-keep-the-library-visit-on-the-server.md)).
 
 ## Counting

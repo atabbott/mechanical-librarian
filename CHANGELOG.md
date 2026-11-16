@@ -143,11 +143,9 @@ brackets are GitHub issues.
   row names what was found, and the count follows the Works count as "37 look
   wrong". Nothing is changed. The findings are stored with each report, so the
   database records `value-flag-rules-v1` (#1334).
-- **Clean rebuild required.** Library has a New lens, after All, while works
-  have arrived since your last visit, with their count. Chosen, it lists them
-  under "2 new works since your last visit". A visit ends when Library has not
-  been used for half an hour on any device. The mark is kept on the server
-  (#1351).
+- **Clean rebuild required.** While works have arrived since your last visit,
+  Library has a New lens after All, with their count. Every device shares the
+  same last visit (#1351).
 
 ## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
 
