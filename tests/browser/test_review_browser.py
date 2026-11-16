@@ -12071,22 +12071,29 @@ def test_keyboard_only_triage_journey(width):
             assert (page.url, len(decisions)) == (url, sent), key
 
         def press_on(key: str, control) -> None:
-            """Press a key for a control. With its centre off screen, the first
-            press only shows and focuses it, with the whole of its card."""
-            box = control.bounding_box()
-            assert box is not None
-            if box["y"] + box["height"] / 2 > height:
+            """Press a key for a control. Unless all of it is on screen, the
+            first press only shows and focuses it, with the whole of its card."""
+            if not control.evaluate(
+                """control => {
+                  const root = document.documentElement
+                  const top = root.dataset.masthead === 'static' ? 0
+                    : parseFloat(getComputedStyle(root).getPropertyValue('--masthead-clearance'))
+                  const box = control.getBoundingClientRect()
+                  return box.top >= top && box.bottom <= innerHeight
+                }"""
+            ):
                 unmoved(key)
                 expect(control).to_be_focused()
                 expect(control).to_be_in_viewport(ratio=1)
                 card = page.locator(".metadata-choice").filter(has=control)
                 if card.count():
                     # Its source line and Evidence link are on screen too.
-                    expect(control.locator("span").last).to_be_in_viewport(ratio=1)
-                    expect(
-                        card.get_by_role("button", name=re.compile("^Evidence"))
-                    ).to_be_in_viewport(ratio=1)
                     expect(card).to_be_in_viewport(ratio=1)
+                    if control is proposed:
+                        expect(control.locator("span").last).to_be_in_viewport(ratio=1)
+                        expect(
+                            card.get_by_role("button", name=re.compile("^Evidence"))
+                        ).to_be_in_viewport(ratio=1)
             page.keyboard.press(key)
 
         page.set_viewport_size({"width": width, "height": height})
@@ -12161,6 +12168,71 @@ def test_keyboard_only_triage_journey(width):
             )
         ).to_be_focused()
         assert [sent["outcome"] for sent in decisions] == ["accept", "withdraw"]
+
+        if width == 390:
+            # The masthead scrolls away at this width and covers nothing, so a
+            # card at the very top of a short window is in view.
+            page.set_viewport_size({"width": width, "height": 480})
+            expect(page.locator("html")).to_have_attribute("data-masthead", "static")
+            current = page.get_by_role("radio", name="Choose current value: Drama")
+
+            def place(control, top: int) -> None:
+                """Scroll the page so the control's top edge is there."""
+                control.evaluate(
+                    "(control, top) => scrollBy(0, control.getBoundingClientRect().top - top)",
+                    top,
+                )
+                page.wait_for_function(
+                    "([control, top]) => Math.abs(control.getBoundingClientRect().top - top) < 1",
+                    arg=[control.element_handle(), top],
+                )
+
+            # A card in the top 150 px records on the first press.
+            place(proposed, 40)
+            box = proposed.bounding_box()
+            assert box is not None and box["y"] + box["height"] <= 150
+            with page.expect_response(
+                lambda response: response.url.endswith("/decisions")
+            ) as recorded:
+                page.keyboard.press("2")
+            assert recorded.value.status == 200
+            expect(page).to_have_url(re.compile("field=description"))
+            page.keyboard.press("k")
+            expect(_field_tab(page, "Genres")).to_be_focused()
+            with page.expect_response(
+                lambda response: response.url.endswith("/decisions")
+            ):
+                press_on("u", page.get_by_role("button", name="Withdraw", exact=True))
+            expect(
+                page.get_by_text(
+                    "Withdrawn. This field needs a decision again.", exact=True
+                )
+            ).to_be_focused()
+            # A card above the window is shown by the first press and recorded
+            # by the second.
+            place(current, -200)
+            with page.expect_response(
+                lambda response: response.url.endswith("/decisions")
+            ) as recorded:
+                press_on("1", current)
+            assert recorded.value.status == 200
+            expect(page).to_have_url(re.compile("field=description"))
+            page.keyboard.press("k")
+            expect(_field_tab(page, "Genres")).to_be_focused()
+            # Withdraw with its lower edge below the window is shown first too.
+            withdraw = page.get_by_role("button", name="Withdraw", exact=True)
+            place(withdraw, 450)
+            with page.expect_response(
+                lambda response: response.url.endswith("/decisions")
+            ):
+                press_on("u", withdraw)
+            assert [sent["outcome"] for sent in decisions[2:]] == [
+                "accept",
+                "withdraw",
+                "keep_current",
+                "withdraw",
+            ]
+            page.set_viewport_size({"width": width, "height": height})
 
         # E opens the entry empty: the key itself is not typed into it.
         for name in ("Description", "ISBN", "Title"):
@@ -12240,7 +12312,7 @@ def test_keyboard_only_triage_journey(width):
         for key in ("?", "k", "1", "e"):
             unmoved(key)
         expect(keys).to_be_hidden()
-        assert len(decisions) == 3
+        assert len(decisions) == (7 if width == 390 else 3)
 
 
 @pytest.mark.parametrize("width", (1440, 390))

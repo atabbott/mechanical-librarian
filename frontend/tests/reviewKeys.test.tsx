@@ -217,6 +217,68 @@ const tab = (name: string) =>
   })
 const box = (left: number, top: number, width: number, height: number) =>
   ({ left, top, right: left + width, bottom: top + height, width, height }) as DOMRect
+// A scrolling page for mocked boxes. Each box is placed where it lies with
+// nothing scrolled, and scrollIntoView moves the page, or the sideways strip
+// for a box inside it, by the standard's rules and the shell's scroll padding.
+// So a test can press a key, let the reveal happen, and press it again.
+const align = (
+  mode: ScrollLogicalPosition,
+  start: number,
+  end: number,
+  from: number,
+  to: number,
+) =>
+  mode === 'start'
+    ? start - from
+    : mode === 'center'
+      ? (start + end) / 2 - (from + to) / 2
+      : (start >= from && end <= to) || (start <= from && end >= to)
+        ? 0
+        : start < from === end - start <= to - from
+          ? start - from
+          : end - to
+const scrollingPage = (paddingTop: number, strip?: { box: HTMLElement; at: DOMRect }) => {
+  const scrolled = { x: 0, y: 0 }
+  const placed = new Map<Element, () => DOMRect>()
+  const sideways = new Set<Element>()
+  const place = (element: HTMLElement, at: DOMRect, inStrip = false) => {
+    const rect = () =>
+      box(at.left - (inStrip ? scrolled.x : 0), at.top - scrolled.y, at.width, at.height)
+    placed.set(element, rect)
+    if (inStrip) sideways.add(element)
+    vi.spyOn(element, 'getBoundingClientRect').mockImplementation(rect)
+    vi.spyOn(element, 'offsetHeight', 'get').mockReturnValue(at.height)
+  }
+  if (strip) {
+    place(strip.box, strip.at)
+    strip.box.style.overflowX = 'auto'
+    vi.spyOn(strip.box, 'clientWidth', 'get').mockReturnValue(strip.at.width)
+    vi.spyOn(strip.box, 'clientHeight', 'get').mockReturnValue(strip.at.height)
+  }
+  vi.mocked(Element.prototype.scrollIntoView).mockImplementation(function (this: Element, options) {
+    // The product also scrolls boxes of its own after a decision.
+    const rect = placed.get(this)?.()
+    if (!rect) return
+    const { block = 'start', inline = 'nearest' } = typeof options === 'object' ? options : {}
+    // The shell keeps 1rem clear at the foot of the window.
+    scrolled.y += align(block, rect.top, rect.bottom, paddingTop, innerHeight - 16)
+    if (strip && sideways.has(this))
+      scrolled.x += align(inline, rect.left, rect.right, strip.at.left, strip.at.right)
+  })
+  vi.mocked(scrollBy).mockImplementation((...by: [ScrollToOptions?] | [number, number]) => {
+    if (typeof by[1] === 'number') scrolled.y += by[1]
+  })
+  return {
+    place,
+    scrollTo: (y: number) => {
+      scrolled.y = y
+    },
+  }
+}
+const masthead = (mode: 'sticky' | 'static', clearance: number) => {
+  document.documentElement.style.setProperty('--masthead-clearance', `${String(clearance)}px`)
+  if (mode === 'static') document.documentElement.dataset.masthead = 'static'
+}
 const press = (key: string, init: KeyboardEventInit = {}) =>
   act(async () => {
     fireEvent.keyDown(document.activeElement ?? document.body, { key, ...init })
@@ -224,6 +286,9 @@ const press = (key: string, init: KeyboardEventInit = {}) =>
 
 afterEach(() => {
   document.cookie = 'ml_review_keys=; Path=/; Max-Age=0'
+  document.documentElement.style.removeProperty('--masthead-clearance')
+  delete document.documentElement.dataset.masthead
+  document.querySelector('body > dialog')?.remove()
 })
 
 describe('reviewKey', () => {
@@ -379,6 +444,11 @@ describe('review keys', () => {
     await press('k')
     await waitFor(() => expect(router.state.location.search.field).toBe('title'))
     expect(tab('Title')).toHaveFocus()
+    // A tab that cannot be pressed is not pressed.
+    tab('Subtitle').setAttribute('aria-disabled', 'true')
+    await press('j')
+    expect(tab('Title')).toHaveFocus()
+    expect(router.state.location.search.field).toBe('title')
   })
 
   it('J past the last tab opens the next work and K before the first opens the previous one', async () => {
@@ -530,7 +600,13 @@ describe('review keys', () => {
       },
     ]
     await press('1')
-    expect(await screen.findByRole('button', { name: 'Review next work →' })).toBeVisible()
+    const next = await screen.findByRole('button', { name: 'Review next work →' })
+    expect(next).toBeVisible()
+    // Hidden, it is not pressed.
+    next.hidden = true
+    await press('j')
+    expect(again.router.state.location.search.preview).toBe('case-1')
+    next.hidden = false
     await press('j')
     await waitFor(() => expect(again.router.state.location.search.preview).toBe('case-2'))
   })
@@ -687,6 +763,50 @@ describe('review keys', () => {
     expect(http.recordDecision).not.toHaveBeenCalled()
   })
 
+  it('does nothing under any open dialog, and acts again once it closes', async () => {
+    const http = store(() => [
+      { ...title, ownerControl: control({ ...entry, withdraw: 'available' }) },
+      subtitle,
+    ])
+    const { router } = await openAt(http, 'title')
+    const other = document.createElement('dialog')
+    other.setAttribute('open', '')
+    document.body.append(other)
+    for (const key of ['2', 'e', 'u', 'j', '?']) await press(key)
+    expect(http.recordDecision).not.toHaveBeenCalled()
+    expect(screen.queryByRole('textbox', { name: 'Your value for Title' })).toBeNull()
+    expect(router.state.location.search.field).toBe('title')
+    expect(document.querySelector<HTMLDialogElement>('.review-keys-dialog')?.open).toBe(false)
+    other.remove()
+    await press('j')
+    await waitFor(() => expect(router.state.location.search.field).toBe('subtitle'))
+  })
+
+  it('does nothing while owner entry is open, wherever focus is', async () => {
+    const user = userEvent.setup()
+    const http = store(() => [
+      { ...title, ownerControl: control({ ...entry, withdraw: 'available' }) },
+      subtitle,
+    ])
+    const { router } = await openAt(http, 'title')
+    await user.click(screen.getByRole('button', { name: 'Enter a value' }))
+    const input = screen.getByRole('textbox', { name: 'Your value for Title' })
+    expect(input.closest('.library-page form.owner-entry')).not.toBeNull()
+    expect(screen.getByRole('button', { name: 'Withdraw' })).toBeVisible()
+    input.blur()
+    expect(document.body).toHaveFocus()
+    for (const key of ['2', 'u', 'j', '?']) await press(key)
+    expect(http.recordDecision).not.toHaveBeenCalled()
+    expect(router.state.location.search.field).toBe('title')
+    expect(document.querySelector<HTMLDialogElement>('.review-keys-dialog')?.open).toBe(false)
+    // Closed again, the keys act.
+    input.focus()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(document.querySelector('form.owner-entry')).toBeNull())
+    await press('j')
+    await waitFor(() => expect(router.state.location.search.field).toBe('subtitle'))
+  })
+
   it('sends nothing more while a choice records, checks or needs a reload', async () => {
     let release: () => void = () => undefined
     const http = store(() => [title], {
@@ -740,54 +860,185 @@ describe('review keys', () => {
     expect(router.state.location.search.preview).toBe('case-1')
   })
 
-  it('brings an off-screen card into view first, and the next press records it', async () => {
+  it('shows a card that is not wholly in view first, and the next press records it', async () => {
     const http = store(() => [title])
     await openAt(http, 'title')
     const card = present(screen.getAllByRole('radio')[1])
     const whole = present(card.closest<HTMLElement>('.metadata-choice'))
-    // Its top edge is inside the window, its centre is not.
-    const rect = vi
-      .spyOn(card, 'getBoundingClientRect')
-      .mockReturnValue(box(40, innerHeight - 20, 300, 160))
+    masthead('sticky', 100)
+    const page = scrollingPage(100)
+    // More than half of the control is in the window; its end is not.
+    page.place(whole, box(40, innerHeight - 100, 300, 200))
+    page.place(card, box(40, innerHeight - 100, 300, 160))
     await press('2')
     expect(card).toHaveFocus()
     // The whole card is shown, with its source line and Evidence link.
     const reveal = vi.mocked(whole.scrollIntoView).mock
     expect(reveal.contexts).toEqual([whole])
     expect(reveal.calls).toEqual([[{ block: 'nearest', inline: 'nearest' }]])
+    expect(card.getBoundingClientRect().bottom).toBeLessThan(innerHeight)
     expect(http.recordDecision).not.toHaveBeenCalled()
-    // Taller than the window, it is shown from its top.
-    vi.spyOn(whole, 'offsetHeight', 'get').mockReturnValue(innerHeight + 1)
-    await press('2')
-    expect(reveal.calls[1]).toEqual([{ block: 'start', inline: 'nearest' }])
-    expect(http.recordDecision).not.toHaveBeenCalled()
-    // With its centre in the window it records, though its end is still cut off.
-    rect.mockReturnValue(box(40, innerHeight - 100, 300, 160))
     await press('2')
     await waitFor(() => expect(http.recordDecision).toHaveBeenCalledTimes(1))
   })
+
+  it('lets a control one pixel past the edge count as seen, and not two', async () => {
+    const http = store(() => [title])
+    await openAt(http, 'title')
+    const card = present(screen.getAllByRole('radio')[1])
+    const page = scrollingPage(8)
+    page.place(present(card.closest<HTMLElement>('.metadata-choice')), box(40, 300, 300, 200))
+    page.place(card, box(40, innerHeight - 158, 300, 160))
+    await press('2')
+    expect(card).toHaveFocus()
+    expect(http.recordDecision).not.toHaveBeenCalled()
+    page.place(card, box(40, innerHeight - 159, 300, 160))
+    await press('2')
+    await waitFor(() => expect(http.recordDecision).toHaveBeenCalledTimes(1))
+  })
+
+  it.each([
+    ['below the window', 'sticky', 100, 2000],
+    ['above the window under a sticky masthead', 'sticky', 100, -600],
+    ['above the window with a masthead that scrolls away', 'static', 8, -600],
+  ] as const)(
+    'shows a card %s on the first press and records it on the second',
+    async (_, mode, paddingTop, top) => {
+      const http = store(() => [title])
+      await openAt(http, 'title')
+      const card = present(screen.getAllByRole('radio')[1])
+      const whole = present(card.closest<HTMLElement>('.metadata-choice'))
+      masthead(mode, 100)
+      const page = scrollingPage(paddingTop)
+      page.place(whole, box(40, top, 300, 200))
+      page.place(card, box(40, top, 300, 160))
+      await press('2')
+      expect(card).toHaveFocus()
+      // Bringing the card into view is enough to show its control.
+      expect(vi.mocked(whole.scrollIntoView).mock.contexts).toEqual([whole])
+      expect(http.recordDecision).not.toHaveBeenCalled()
+      await press('2')
+      await waitFor(() => expect(http.recordDecision).toHaveBeenCalledTimes(1))
+    },
+  )
+
+  it('counts the band under a sticky masthead as covered, and under one that scrolls away as seen', async () => {
+    const http = store(() => [title])
+    await openAt(http, 'title')
+    const card = present(screen.getAllByRole('radio')[1])
+    const whole = present(card.closest<HTMLElement>('.metadata-choice'))
+    masthead('sticky', 100)
+    const page = scrollingPage(100)
+    page.place(whole, box(40, 30, 300, 100))
+    page.place(card, box(40, 30, 300, 60))
+    await press('2')
+    expect(card).toHaveFocus()
+    expect(card.getBoundingClientRect().top).toBe(100)
+    expect(http.recordDecision).not.toHaveBeenCalled()
+    // The same place in a window whose masthead has scrolled away with the page.
+    page.scrollTo(0)
+    masthead('static', 100)
+    await press('2')
+    await waitFor(() => expect(http.recordDecision).toHaveBeenCalledTimes(1))
+    expect(
+      vi.mocked(whole.scrollIntoView).mock.contexts.filter((box) => box === whole),
+    ).toHaveLength(1)
+  })
+
+  it('shows the control itself when its card is taller than the window', async () => {
+    // A long description comes before its control in the card.
+    const description: Field = {
+      ...base,
+      destination: 'description',
+      currentValue: 'Old words. '.repeat(40),
+      currentRaw: 'Old words. '.repeat(40),
+      proposedValues: [{ kind: 'text', value: 'New words. '.repeat(40) }],
+    }
+    const http = store(() => [description])
+    await openAt(http, 'description')
+    const card = screen.getByRole('radio', { name: 'Choose proposed description' })
+    const whole = present(card.closest<HTMLElement>('.metadata-choice'))
+    expect(whole.firstElementChild).toHaveClass('description-choice-content')
+    masthead('sticky', 100)
+    const page = scrollingPage(100)
+    page.place(whole, box(40, 900, 300, innerHeight + 400))
+    page.place(card, box(40, 900 + innerHeight + 340, 300, 60))
+    await press('2')
+    expect(card).toHaveFocus()
+    const reveal = vi.mocked(card.scrollIntoView).mock
+    // First the card from its top, which leaves the control below the window.
+    expect(reveal.contexts).toEqual([whole, card])
+    expect(reveal.calls).toEqual([
+      [{ block: 'start', inline: 'nearest' }],
+      [{ block: 'nearest', inline: 'nearest' }],
+    ])
+    expect(http.recordDecision).not.toHaveBeenCalled()
+    await press('2')
+    await waitFor(() => expect(http.recordDecision).toHaveBeenCalledTimes(1))
+    expect(reveal.contexts.filter((box) => box === whole || box === card)).toHaveLength(2)
+  })
+
+  it.each([
+    ['longer than the window', 'sticky', 100, 3 * innerHeight],
+    // Brought to the top it would sit below the scroll padding and run past the foot.
+    ['that only just fits the window', 'static', 8, innerHeight - 3],
+  ] as const)(
+    'shows the middle of a control %s, and the next press records it',
+    async (_, mode, paddingTop, height) => {
+      const http = store(() => [title])
+      await openAt(http, 'title')
+      const card = present(screen.getAllByRole('radio')[1])
+      const whole = present(card.closest<HTMLElement>('.metadata-choice'))
+      masthead(mode, 100)
+      const page = scrollingPage(paddingTop)
+      page.place(whole, box(40, 900, 300, height + 40))
+      page.place(card, box(40, 900, 300, height))
+      await press('2')
+      expect(card).toHaveFocus()
+      const { top, bottom } = card.getBoundingClientRect()
+      expect((top + bottom) / 2).toBe(((mode === 'sticky' ? 100 : 0) + innerHeight) / 2)
+      expect(http.recordDecision).not.toHaveBeenCalled()
+      await press('2')
+      await waitFor(() => expect(http.recordDecision).toHaveBeenCalledTimes(1))
+    },
+  )
 
   it('shows a cover the strip hides to one side before a digit records it', async () => {
     const http = store(() => [coverField])
     await openAt(http, 'cover')
     const card = present(screen.getAllByRole('radio')[1])
     const whole = present(card.closest<HTMLElement>('.cover-choice'))
-    // A strip 390 wide that scrolls sideways; the window is wider and taller.
-    const strip = present(whole.parentElement)
-    strip.style.overflowX = 'auto'
-    vi.spyOn(strip, 'clientWidth', 'get').mockReturnValue(390)
-    vi.spyOn(strip, 'clientHeight', 'get').mockReturnValue(400)
-    vi.spyOn(strip, 'getBoundingClientRect').mockReturnValue(box(0, 100, 390, 400))
+    // A strip 343 wide that scrolls sideways; the window is wider and taller.
     expect(innerWidth).toBeGreaterThan(700)
-    const rect = vi.spyOn(card, 'getBoundingClientRect').mockReturnValue(box(480, 120, 240, 360))
+    const page = scrollingPage(8, { box: present(whole.parentElement), at: box(16, 100, 343, 400) })
+    // Most of the cover is inside the strip; its far edge is not.
+    page.place(whole, box(260, 110, 168, 380), true)
+    page.place(card, box(260, 110, 168, 337), true)
     await press('2')
     expect(card).toHaveFocus()
     const reveal = vi.mocked(whole.scrollIntoView).mock
     expect(reveal.contexts).toEqual([whole])
     expect(reveal.calls).toEqual([[{ block: 'nearest', inline: 'nearest' }]])
+    expect(card.getBoundingClientRect().right).toBe(359)
     expect(http.recordDecision).not.toHaveBeenCalled()
-    // Half of the card is past the strip's edge, but its centre is inside.
-    rect.mockReturnValue(box(260, 120, 240, 360))
+    await press('2')
+    await waitFor(() => expect(http.recordDecision).toHaveBeenCalledTimes(1))
+  })
+
+  it('shows a cover whose caption is below the window first, though the strip leaves it little room', async () => {
+    const http = store(() => [coverField])
+    await openAt(http, 'cover')
+    const card = present(screen.getAllByRole('radio')[1])
+    const whole = present(card.closest<HTMLElement>('.cover-choice'))
+    // The strip starts near the foot of the window, so less of it is in view
+    // than the cover is tall; the cover still fits the window.
+    const top = innerHeight - 250
+    const page = scrollingPage(8, { box: present(whole.parentElement), at: box(16, top, 343, 400) })
+    page.place(whole, box(20, top + 10, 168, 380), true)
+    page.place(card, box(20, top + 10, 168, 337), true)
+    await press('2')
+    expect(card).toHaveFocus()
+    expect(http.recordDecision).not.toHaveBeenCalled()
     await press('2')
     await waitFor(() => expect(http.recordDecision).toHaveBeenCalledTimes(1))
   })

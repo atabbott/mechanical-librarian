@@ -315,6 +315,8 @@ export function MetadataChoice({
           ) : null}
         </small>
         <strong>
+          {/* Keeps the first line clear of the key badge (styles.css). */}
+          <i className="review-key-space" />
           {longDescription
             ? `Choose ${advice ? 'advised' : current ? 'current' : 'proposed'} description`
             : value}

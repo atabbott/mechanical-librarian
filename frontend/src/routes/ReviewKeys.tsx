@@ -25,20 +25,29 @@ const press = (element: HTMLElement) => {
   element.click()
 }
 
+// A masthead that scrolls away with the page covers nothing.
 const clearance = () =>
-  Number.parseFloat(
-    getComputedStyle(document.documentElement).getPropertyValue('--masthead-clearance'),
-  ) || 0
+  document.documentElement.dataset.masthead === 'static'
+    ? 0
+    : Number.parseFloat(
+        getComputedStyle(document.documentElement).getPropertyValue('--masthead-clearance'),
+      ) || 0
 
-// Whether the owner can see a control: its centre lies below the masthead,
-// inside the window, and inside every ancestor that clips or scrolls it, such
-// as the sideways cover strip. Without layout, as in jsdom, it counts as seen.
+// On one axis: all of a control that fits, to the pixel, or the centre of one
+// longer than the room the window and its scrolling boxes give it.
+const inside = (start: number, end: number, from: number, to: number, room: number) =>
+  end - start <= room
+    ? start >= from - 1 && end <= to + 1
+    : (start + end) / 2 >= from && (start + end) / 2 <= to
+
+// Whether the owner can see a control: it lies below the masthead, inside the
+// window, and inside every ancestor that clips or scrolls it, such as the
+// sideways cover strip. Without layout, as in jsdom, it counts as seen.
 const shown = (element: HTMLElement) => {
   const rect = element.getBoundingClientRect()
   if (rect.width === 0 && rect.height === 0) return true
-  const x = rect.left + rect.width / 2
-  const y = rect.top + rect.height / 2
-  if (x < 0 || x > innerWidth || y < clearance() || y > innerHeight) return false
+  let [left, top, right, bottom] = [0, clearance(), innerWidth, innerHeight]
+  let [wide, tall] = [right - left, bottom - top]
   for (
     let box = element.parentElement;
     box && box !== document.body && box !== document.documentElement;
@@ -52,18 +61,28 @@ const shown = (element: HTMLElement) => {
     )
       continue
     const bounds = box.getBoundingClientRect()
-    const left = bounds.left + box.clientLeft
-    const top = bounds.top + box.clientTop
-    if (x < left || x > left + box.clientWidth || y < top || y > top + box.clientHeight)
-      return false
+    left = Math.max(left, bounds.left + box.clientLeft)
+    top = Math.max(top, bounds.top + box.clientTop)
+    right = Math.min(right, bounds.left + box.clientLeft + box.clientWidth)
+    bottom = Math.min(bottom, bounds.top + box.clientTop + box.clientHeight)
+    wide = Math.min(wide, box.clientWidth)
+    tall = Math.min(tall, box.clientHeight)
   }
-  return true
+  return (
+    inside(rect.left, rect.right, left, right, wide) &&
+    inside(rect.top, rect.bottom, top, bottom, tall)
+  )
 }
 
 // A choice the owner cannot see is shown and focused first, and the next
 // press records it. Focus goes first: a cover card's own focus handler slides
 // the strip to its snap point. Then the whole card, with its source line and
-// Evidence link, is brought into view, from its top when it is too tall.
+// Evidence link, is brought into view, from its top when it is too tall. The
+// control itself must end up shown, or the key would only ever reveal. A tall
+// card can hold it at its end, so the control is brought in next. Scroll
+// padding can keep one that just fits the window off its edge, and a longer
+// one has only its centre to show, so the last step puts its centre at the
+// middle of the window.
 const pressInView = (element: HTMLElement | null) => {
   if (!element || blocked(element)) return false
   if (shown(element)) press(element)
@@ -74,6 +93,11 @@ const pressInView = (element: HTMLElement | null) => {
       block: card.offsetHeight > innerHeight - clearance() ? 'start' : 'nearest',
       inline: 'nearest',
     })
+    if (!shown(element)) element.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    if (!shown(element)) {
+      const { top, bottom } = element.getBoundingClientRect()
+      scrollBy(0, (top + bottom - clearance() - innerHeight) / 2)
+    }
   }
   return true
 }
@@ -98,7 +122,7 @@ const move = (step: 1 | -1) => {
   if (document.querySelector('.review-complete')) {
     const target =
       step === 1 ? document.querySelector<HTMLElement>('[data-next-work]') : tabs[current]
-    if (!target) return false
+    if (!target || blocked(target)) return false
     press(target)
     return true
   }
@@ -106,6 +130,7 @@ const move = (step: 1 | -1) => {
   if (current < 0) return false
   const target = tabs[current + step]
   if (!target) return pressWork(step)
+  if (blocked(target)) return false
   press(target)
   return true
 }
@@ -168,9 +193,10 @@ export function ReviewKeys({ ready }: { ready: boolean }) {
       const key = reviewKey(event)
       if (
         key === null ||
-        dialog.current?.open ||
+        // Quiet under any open dialog, popover or Attention, and while the
+        // owner entry form is open, wherever focus is.
         document.querySelector(
-          '.masthead [aria-expanded="true"], [aria-haspopup][aria-expanded="true"], .library-page .attention-toggle[aria-expanded="true"]',
+          'dialog[open], .library-page form.owner-entry, .masthead [aria-expanded="true"], [aria-haspopup][aria-expanded="true"], .library-page .attention-toggle[aria-expanded="true"]',
         )
       )
         return

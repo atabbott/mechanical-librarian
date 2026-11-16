@@ -13,8 +13,8 @@ Library, Attention, Evidence and History, Policy, Activity and Settings.
 - Every decision covers one field of one library item and stands alone.
 - Review makes no destructive changes ([PRODUCT.md](../../PRODUCT.md)).
 - The server holds every decision. A refresh, another device, a restart or an
-  upgrade cannot lose an acknowledged one, unless it needs a clean rebuild.
-  Browser storage holds preferences only.
+  upgrade cannot lose an acknowledged one, unless the upgrade needs a clean
+  rebuild. Browser storage holds preferences only.
 
 ## Review cases
 
@@ -332,7 +332,7 @@ and its outcome and offers Review next work.
 
 If a choice could not be confirmed, the page keeps it, and Try the same
 decision again resends it, never recording it twice. Mechanical Librarian never
-resends it itself. If no answer comes back, the page
+resends it unasked. If no answer comes back, the page
 reloads the case once and never says the choice was not recorded. If the work
 changed first, the page moves to the current case and says nothing was
 recorded.
