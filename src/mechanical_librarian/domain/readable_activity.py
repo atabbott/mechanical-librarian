@@ -363,6 +363,12 @@ def went_back_change(
     """State a keep that went back on the case's own write: from the written
     value to the value before it, never as a value kept (#1523)."""
     field = destination_label(destination)
+    if destination == "cover":
+        # Cover values are opaque image identities, as in ``set_change``.
+        return ReadableChange(
+            f"Written cover {_ARROW} earlier cover",
+            f"Set {field} back from the written image to the earlier image",
+        )
     was = value_text(destination, written, limit=CHANGE_LIMIT)
     back = value_text(destination, before, limit=CHANGE_LIMIT)
     return ReadableChange(

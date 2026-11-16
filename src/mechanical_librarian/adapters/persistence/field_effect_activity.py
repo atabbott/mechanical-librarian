@@ -1270,6 +1270,32 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 predecessor = authored_predecessor
         return predecessor
 
+    def _unplanned_keep_values(
+        self, decision: HumanDecision
+    ) -> dict[str, object] | None:
+        """What a keep with no plan yet will write back, as planning would
+        bind it: from the write it follows to the case's own value (#1523).
+
+        A keep that follows no write of the case is a plain keep: ``None``.
+        """
+        predecessor = self._human_predecessor(decision)
+        if predecessor is None:
+            return None
+        try:
+            case = self._current_case(decision.review_case_id)
+            before = self._case_target_pre_value(case, decision.destination)
+            written = _written_plan(
+                predecessor[0], decision.review_case_id, decision.destination
+            ).desired_value
+        except FieldEffectError:
+            return None
+        return {
+            "written": written,
+            "before": before,
+            "state": None,
+            "failure": None,
+        }
+
     def _cover_pre_value(self, case: ReviewCase) -> str | None:
         """Bind a cover write to the bytes its case's report read (#1362)."""
         row = self._connection.execute(
@@ -2794,12 +2820,18 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 + ") ORDER BY rowid DESC",
                 human_ids,
             ):
-                plan = FieldEffectOperation.from_json(effect_document).plan
+                effect = FieldEffectOperation.from_json(effect_document)
+                plan = effect.plan
                 replaced[decision_id] = plan.pre_value
+                # Rows come newest first: the first seen is where the
+                # decision's write stands now (#1523).
+                latest = went_back.get(decision_id, {})
                 went_back[decision_id] = {
                     "destination": plan.destination,
                     "written": plan.pre_value,
                     "before": plan.desired_value,
+                    "state": latest.get("state", effect.state),
+                    "failure": latest.get("failure", effect.failure),
                 }
         projected_events: list[dict[str, object]] = []
         decision: (
@@ -3302,16 +3334,19 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     and decision.decision_id in replaced
                 ):
                     durable["pre_value"] = replaced[decision.decision_id]
-                planned = went_back.get(decision.decision_id)
-                if (
-                    decision.outcome == "keep_current"
-                    and planned is not None
-                    and planned["destination"] == decision.destination
-                ):
-                    durable["went_back"] = {
-                        "written": planned["written"],
-                        "before": planned["before"],
-                    }
+                if decision.outcome == "keep_current":
+                    planned = went_back.get(decision.decision_id)
+                    if planned is None:
+                        # Not planned yet (writes off for the field, say):
+                        # the write it follows names what it will undo.
+                        unplanned = self._unplanned_keep_values(decision)
+                        if unplanned is not None:
+                            durable["went_back"] = unplanned
+                    elif planned["destination"] == decision.destination:
+                        durable["went_back"] = {
+                            key: planned[key]
+                            for key in ("written", "before", "state", "failure")
+                        }
             elif source_kind == "isbn_refusal":
                 if isbn is None:
                     raise FieldEffectError("persistence")

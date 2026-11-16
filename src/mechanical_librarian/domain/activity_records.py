@@ -139,6 +139,7 @@ _RESULT_LABELS = {
     "stale": ActivityResult.CLOSED,
     "superseded": ActivityResult.REPLACED,
     "abandoned": ActivityResult.STOPPED,
+    "recorded": ActivityResult.RECORDED,
 }
 
 
@@ -416,7 +417,12 @@ def _decision_facts(
                 "value": value_text(destination, went_back.get("before")),
             },
             chosen,
-        ]
+        ] + (
+            # A write-back that did not land says why, as its write's row does.
+            [{"label": "What happened", "value": failure_reason(failure)}]
+            if type(failure := went_back.get("failure")) is str and failure
+            else []
+        )
     if state == "keep_current":
         return keep_change(destination, current), [
             {"label": "Current value", "value": value_text(destination, current)},
@@ -579,9 +585,21 @@ def readable_activity_event(
         change, facts = _write_facts(record, destination, origin, state, failure)
     elif source_kind == "human_decision":
         change, facts = _decision_facts(record, destination, state, report)
-        if state == "keep_current" and type(record.get("went_back")) is dict:
-            # Its result says it went back, as History does, not Kept current.
-            event["state"] = "went_back"
+        went_back = record.get("went_back")
+        if state == "keep_current" and type(went_back) is dict:
+            # Its result says it went back, as History does, once its write
+            # back has verified. Until then it reads as the change it is
+            # making, in its write's own word, as that write's row does: a
+            # keep not yet planned is recorded, one refused or failed closed
+            # (#1523). Never Kept current.
+            written = went_back.get("state")
+            if written == "verified":
+                event["state"] = "went_back"
+            elif type(written) is str:
+                event["state"] = written
+                event["failure"] = went_back.get("failure")
+            else:
+                event["state"] = "recorded"
     elif source_kind == "description_preparation":
         description = {
             "requested": "Description advice requested",

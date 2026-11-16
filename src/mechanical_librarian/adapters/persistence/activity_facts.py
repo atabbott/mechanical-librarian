@@ -342,6 +342,9 @@ def _bindings(
         aliases.add(_key("human_identity", row["decision_id"]))
     elif table == "human_decision_events":
         dependency("human_identity", row["decision_id"])
+        # An owner decision's row reads its own write: what an accept replaced
+        # (#1286) and whether a keep's write-back has landed (#1523).
+        dependency("decision_effects", row["decision_id"])
         candidate("human_decision", row["event_id"])
     elif table == "automatic_decisions":
         document = json.loads(row["document"])
@@ -387,6 +390,7 @@ def _bindings(
         dependency("field_effects", row["plan_id"])
         candidate("field_effect", row["plan_id"])
     elif table == "field_effects":
+        aliases.add(_key("decision_effects", row["decision_id"]))
         for name in (
             "human_identity",
             "automatic_decisions",

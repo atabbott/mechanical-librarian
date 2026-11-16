@@ -971,6 +971,43 @@ def test_a_corrective_restore_writes_back_only_a_form_the_service_keeps_exactly(
             # report, read after the owner restores it, admits a new case.
             summary = repository.field_effect_activity_summary
             assert summary()["owner_action_required"] == 1
+            # Its own row reads as the change it tried, closed in the word its
+            # write's row uses and saying why; it never went back (#1523).
+            from mechanical_librarian.application.continuous_field_effects import (
+                ContinuousGuardedApplication,
+            )
+            from mechanical_librarian.domain.activity_records import (
+                activity_result_label,
+            )
+
+            (refused,) = [
+                event
+                for event in ContinuousGuardedApplication(
+                    repository,
+                    {},
+                    {},
+                    PersistedFieldEffectAuthority(repository),
+                    (("primary", "ebooks"),),
+                    lambda: 9_000,
+                    lambda *_: None,
+                    activity_only=True,
+                ).activity()["events"]
+                if event["destination"] == "description"
+                and event["category"] == "owner"
+                and str(event["change"]).startswith(f"{desired} \u2192 ")
+            ]
+            assert (refused["state"], refused["failure"]) == (
+                "stale",
+                "restore_unavailable",
+            )
+            assert activity_result_label("stale", "restore_unavailable") == "Closed"
+            said = {
+                str(item["label"]): str(item["value"])
+                for item in cast(list[dict[str, object]], refused["evidence"])
+            }
+            assert said["Written value"] == desired
+            assert said["What happened"] == failure_reason("restore_unavailable")
+            assert "Kept" not in str(refused["change"])
             later = MetadataReport.create(
                 target=TargetFacts(
                     "primary",

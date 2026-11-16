@@ -18,6 +18,7 @@ from mechanical_librarian.adapters.field_effect_authority import (
     PersistedFieldEffectAuthority,
 )
 from mechanical_librarian.adapters.field_effect_fakes import FakeCapabilityObserver
+from mechanical_librarian.adapters.persistence.activity_facts import ActivityFactStore
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.persistence.review_sql import (
     _ATTENTION_FACT_SOURCE_SQL,
@@ -493,6 +494,90 @@ def _activity(store: OwnerStore) -> list[dict[str, Any]]:
         activity_only=True,
     ).activity()["events"]
     return cast("list[dict[str, Any]]", events)
+
+
+def _genres_keep(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    (row,) = (
+        event
+        for event in rows
+        if event["field_label"] == "Genres"
+        and event["category"] == "owner"
+        and event["change"] == "Fantasy → Not set"
+    )
+    return row
+
+
+def test_a_keep_reads_went_back_only_once_its_write_back_verifies(
+    store: OwnerStore,
+) -> None:
+    """Not planned, it is recorded; planned, it is planned; verified, it went
+    back. Every step reads as the change it makes, never Kept current, with
+    the written value its plan or the write it follows names (#1523)."""
+    store.write(
+        store.decide(
+            "accept", {"kind": "list", "value": ["Fantasy"]}, destination="genres"
+        )
+    )
+    keep = store.decide("keep_current", destination="genres")
+    for step in ("recorded", "planned", "went_back"):
+        if step == "planned":
+            store.plan(keep)
+        elif step == "went_back":
+            store.service.apply(
+                store.repository._connection.execute(
+                    "SELECT plan_id FROM field_effects WHERE decision_id=?",
+                    (keep.decision_id,),
+                ).fetchone()[0]
+            )
+        row = _genres_keep(_activity(store))
+        assert row["state"] == step
+        assert row["evidence"][:2] == [
+            {"label": "Written value", "value": "Fantasy"},
+            {"label": "Value before your change", "value": "Not set"},
+        ]
+        assert "Kept" not in str(row) and "Current value" not in str(row)
+
+
+def test_the_served_activity_follows_a_keep_write_back(store: OwnerStore) -> None:
+    """The Activity a borrowed fact store serves re-reads an owner decision's
+    row when its own write moves, as the canonical read does (ADR-0082,
+    #1286, #1523)."""
+    store.write(
+        store.decide(
+            "accept", {"kind": "list", "value": ["Fantasy"]}, destination="genres"
+        )
+    )
+    keep = store.decide("keep_current", destination="genres")
+    borrower = open_repository(
+        store.root / "owner.sqlite",
+        create=False,
+        authority=store.repository.authority,
+    )
+    try:
+        borrower.configure_activity_page_reader(ActivityFactStore())
+
+        def served() -> list[dict[str, Any]]:
+            target = store.case.target
+            return cast(
+                "list[dict[str, Any]]",
+                ContinuousGuardedApplication(
+                    borrower,
+                    {},
+                    {},
+                    PersistedFieldEffectAuthority(borrower),
+                    ((str(target["connection"]), str(target["library"])),),
+                    lambda: 2_000,
+                    lambda *_: None,
+                    activity_only=True,
+                ).activity()["events"],
+            )
+
+        assert _genres_keep(served())["state"] == "recorded"
+        store.write(keep)
+        assert _genres_keep(served())["state"] == "went_back"
+        assert served() == _activity(store)
+    finally:
+        borrower.close()
 
 
 def test_a_plain_keep_still_reads_kept_in_activity(store: OwnerStore) -> None:

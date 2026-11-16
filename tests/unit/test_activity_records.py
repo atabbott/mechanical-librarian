@@ -297,9 +297,25 @@ def test_an_owner_keep_states_one_retained_value_and_no_new_one() -> None:
     assert "New value" not in _facts(event)
 
 
-def test_a_keep_that_went_back_on_a_write_reads_as_that_change() -> None:
-    """A keep whose own plan wrote back the value before the case's write
-    reads from the written value to that value, with Went back (#1523)."""
+@pytest.mark.parametrize(
+    "written, failure, state, result",
+    (
+        ("verified", None, "went_back", "Went back"),
+        # Until its write back verifies, it reads in that write's own word.
+        ("planned", None, "planned", "Planned"),
+        ("applying", None, "applying", "Applying"),
+        ("stale", "restore_unavailable", "stale", "Closed"),
+        ("stale", "connection", "stale", "Waiting to retry"),
+        # Not planned yet: recorded, never Kept current.
+        (None, None, "recorded", "Recorded"),
+    ),
+)
+def test_a_keep_that_goes_back_on_a_write_reads_as_that_change(
+    written: str | None, failure: str | None, state: str, result: str
+) -> None:
+    """A keep that goes back on the case's write reads from the written value
+    to the value before it; only a verified write back reads Went back
+    (#1523)."""
     report = _titled("The Dispossessed")
     event = _project(
         _event(
@@ -308,20 +324,59 @@ def test_a_keep_that_went_back_on_a_write_reads_as_that_change() -> None:
                 "source_kind": "human_decision",
                 "target_fingerprint": report.target.fingerprint,
                 "selected_value": None,
-                "went_back": {"written": "Anarres", "before": "The Dispossessed"},
+                "went_back": {
+                    "written": "Anarres",
+                    "before": "The Dispossessed",
+                    "state": written,
+                    "failure": failure,
+                },
+            },
+        ),
+        report,
+    )
+    assert event["state"] == state
+    assert activity_result_label(state, event.get("failure")).value == result
+    assert event["change"] == "Anarres → The Dispossessed"
+    assert event["change_detail"] == "Set Title back from Anarres to The Dispossessed"
+    facts = _facts(event)
+    assert {key: facts[key] for key in list(facts)[:3]} == {
+        "Written value": "Anarres",
+        "Value before your change": "The Dispossessed",
+        "Chosen by": "You",
+    }
+    assert ("What happened" in facts) is (failure is not None)
+    assert "Kept" not in str(event) and "Current value" not in str(event)
+
+
+def test_a_cover_keep_that_goes_back_names_no_image_identity() -> None:
+    """A cover's values are opaque images, so its keep reads as set_change's
+    cover row does (#1523)."""
+    report = _titled("The Dispossessed")
+    event = _project(
+        _event(
+            state="keep_current",
+            destination="cover",
+            record={
+                "source_kind": "human_decision",
+                "target_fingerprint": report.target.fingerprint,
+                "selected_value": None,
+                "went_back": {
+                    "written": "cover_" + "a" * 64,
+                    "before": "cover_" + "b" * 64,
+                    "state": "verified",
+                    "failure": None,
+                },
             },
         ),
         report,
     )
     assert event["state"] == "went_back"
-    assert event["change"] == "Anarres → The Dispossessed"
-    assert event["change_detail"] == "Set Title back from Anarres to The Dispossessed"
-    assert _facts(event) == {
-        "Written value": "Anarres",
-        "Value before your change": "The Dispossessed",
-        "Chosen by": "You",
-    }
-    assert "Kept" not in str(event)
+    assert event["change"] == "Written cover → earlier cover"
+    assert (
+        event["change_detail"]
+        == "Set Cover back from the written image to the earlier image"
+    )
+    assert "cover_" not in str(event)
 
 
 def test_an_owner_rejection_prepares_nothing_and_invents_nothing() -> None:
