@@ -62,6 +62,7 @@ from mechanical_librarian.domain.field_effect import LIST_DESTINATIONS
 from mechanical_librarian.domain.human_decision import (
     HumanDecision,
 )
+from mechanical_librarian.domain.library_visit import ListingPositions
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyProfile,
     ResolvedMetadataPolicy,
@@ -219,6 +220,9 @@ class FakeReviewRepository:
         self.preparation_presentation_value: PreparationPresentation | None = None
         self.dismissed_preparation_runs: list[str] = []
         self.dismiss_preparation_error: Exception | None = None
+        # Each recorded use of Library, and what the next one answers (#1351).
+        self.library_visits: list[tuple[ListingPositions | None, int]] = []
+        self.library_visit_moves: bool | Exception = False
         # The durable safety posture a fresh store starts with (#780). The
         # double previously had none, so every safety read through it was
         # "automatic safety is unavailable" whether or not a test meant it.
@@ -289,6 +293,12 @@ class FakeReviewRepository:
             raise PreparationPresentationError("not_dismissible")
         self.dismissed_preparation_runs.append(run_id)
         self.preparation_presentation_value = None
+
+    def record_library_visit(self, listing: ListingPositions | None, now: int) -> bool:
+        if isinstance(self.library_visit_moves, Exception):
+            raise self.library_visit_moves
+        self.library_visits.append((listing, now))
+        return self.library_visit_moves
 
     def review_case_ready_at(self, review_case_id: str) -> int | None:
         if review_case_id != self.case.review_case_id:
@@ -767,6 +777,9 @@ class FakeReviewRepository:
         # A case is in attention or it is not; a caseless report is matched,
         # or it is the Not matched lens's (#1407). Looks wrong reads every
         # work through the rules the adapter stored (#1334).
+        if lens == "new":
+            # The double holds no visit, so nothing is new (#1351).
+            return []
         if lens == "flagged":
             return [
                 row
@@ -885,6 +898,7 @@ class FakeReviewRepository:
         lens: LibraryLensFilter | None,
         library_labels: LibraryLabels = (),
         validated: ValidatedDocumentCache | None = None,
+        now: int = 0,
     ) -> ReviewLibrarySnapshot:
         rows = self.list_current_review_case_documents(
             search, limit, offset, lens, library_labels
@@ -957,6 +971,8 @@ class FakeReviewRepository:
             flagged_total=sum(
                 _flagged(report) for _case, report in everything[:100_000]
             ),
+            new_total=0,
+            listing=ListingPositions(0, 0, 0),
         )
 
     def list_current_attention_documents(
@@ -1015,7 +1031,7 @@ class FakeReviewRepository:
         )
 
     def read_review_library_progress(
-        self, library_labels: LibraryLabels = ()
+        self, library_labels: LibraryLabels = (), now: int = 0
     ) -> ReviewLibraryProgress:
         # The Library and Attention answers above, grouped as the adapter
         # groups them; the double holds no terminal row of its own.
@@ -1036,7 +1052,7 @@ class FakeReviewRepository:
                     fields[field] = fields.get(field, 0) + 1
         return ReviewLibraryProgress(
             tuple(
-                (connection, library, total, attention, not_matched, failed, flagged)
+                (connection, library, total, attention, not_matched, failed, flagged, 0)
                 for (connection, library), (
                     total,
                     attention,

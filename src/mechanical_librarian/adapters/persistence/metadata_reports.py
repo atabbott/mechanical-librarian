@@ -56,6 +56,9 @@ from mechanical_librarian.adapters.persistence.level_reconciliation import (
     case_level_unreconciled,
     reconcile_case_level_in_transaction,
 )
+from mechanical_librarian.adapters.persistence.library_visit import (
+    record_library_visit,
+)
 from mechanical_librarian.adapters.persistence.metadata_policy import (
     SQLiteMetadataPolicyRepository,
 )
@@ -177,6 +180,7 @@ from mechanical_librarian.domain.human_decision import (
     HumanDecision,
     HumanDecisionError,
 )
+from mechanical_librarian.domain.library_visit import ListingPositions
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyError,
     MetadataPolicyProfile,
@@ -586,9 +590,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 )
             ),
             read_current_library_page=(
-                lambda search, limit, offset, lens, library_labels: (
+                lambda search, limit, offset, lens, library_labels, now: (
                     self.read_current_library_page(
-                        search, limit, offset, lens, library_labels
+                        search, limit, offset, lens, library_labels, now
                     )
                 )
             ),
@@ -600,8 +604,8 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 )
             ),
             read_current_library_progress=(
-                lambda library_labels: self.read_current_library_progress(
-                    library_labels
+                lambda library_labels, now: self.read_current_library_progress(
+                    library_labels, now
                 )
             ),
             current_cover_authority=(lambda: self._cover_read_authority()),
@@ -1452,6 +1456,19 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             failure = error
         raise failure from None
 
+    @local_operation
+    def record_library_visit(self, listing: ListingPositions | None, now: int) -> bool:
+        transaction = self._transaction("record_library_visit")
+        try:
+            transaction.begin()
+            moved = record_library_visit(self._connection, listing, now)
+            transaction.commit()
+            return moved
+        except BaseException as error:
+            transaction.rollback()
+            failure = error
+        raise failure from None
+
     def review_pipeline_progress(
         self, connection: str, library: str
     ) -> PipelineProgress | None:
@@ -1726,6 +1743,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         lens: LibraryLensFilter | None,
         library_labels: LibraryLabels = (),
         validated: ValidatedDocumentCache | None = None,
+        now: int = 0,
     ) -> ReviewLibrarySnapshot:
         try:
             with (
@@ -1737,7 +1755,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 ),
             ):
                 return self._review_projections.read_review_library(
-                    search, limit, offset, lens, library_labels, validated
+                    search, limit, offset, lens, library_labels, validated, now
                 )
         except (CatalogueError, OSError, sqlite3.Error) as error:
             raise MetadataReportError("review library is unavailable") from error
@@ -1761,7 +1779,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             )
 
     def read_review_library_progress(
-        self, library_labels: LibraryLabels = ()
+        self, library_labels: LibraryLabels = (), now: int = 0
     ) -> ReviewLibraryProgress:
         # Attached as `read_review_library` attaches it, so the terminal
         # failures Library counts are the ones counted here (#1335).
@@ -1775,7 +1793,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 ),
             ):
                 return self._review_projections.read_review_library_progress(
-                    library_labels
+                    library_labels, now
                 )
         except (CatalogueError, OSError, sqlite3.Error) as error:
             raise MetadataReportError("review library is unavailable") from error
@@ -1815,10 +1833,11 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         offset: int,
         lens: LibraryLensFilter | None,
         library_labels: LibraryLabels = (),
+        now: int = 0,
     ) -> ReviewLibraryPage:
         with self.browse_observation():
             return self._review_cases.read_current_library_page(
-                search, limit, offset, lens, library_labels
+                search, limit, offset, lens, library_labels, now
             )
 
     def read_current_attention_page(
@@ -1834,10 +1853,10 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             )
 
     def read_current_library_progress(
-        self, library_labels: LibraryLabels = ()
+        self, library_labels: LibraryLabels = (), now: int = 0
     ) -> ReviewLibraryProgress:
         with self.browse_observation():
-            return self._review_cases.read_current_library_progress(library_labels)
+            return self._review_cases.read_current_library_progress(library_labels, now)
 
     def list_current_review_case_documents(
         self,

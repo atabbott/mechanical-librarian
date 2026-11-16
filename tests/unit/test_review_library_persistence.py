@@ -2204,6 +2204,7 @@ def test_sqlite_library_excludes_epub_conflicting_narrators_from_attention() -> 
             "not_matched": 0,
             "preparation_failed": 0,
             "flagged": 0,
+            "new": 0,
         }
         assert [item["title"] for item in first["items"]] == ["Mistborn Secret History"]
         assert first["next_cursor"] is not None
@@ -2868,6 +2869,7 @@ def test_retained_component_ask_agrees_across_detail_library_and_attention(
                 "not_matched": 0,
                 "preparation_failed": 0,
                 "flagged": 0,
+                "new": 0,
             }
         )
         assert {"title", component} <= {
@@ -3576,6 +3578,7 @@ def test_terminal_catalogue_identity_uses_current_full_key_before_page_and_count
             "not_matched": 0,
             "preparation_failed": 3,
             "flagged": 0,
+            "new": 0,
         }
         items = cast(list[dict[str, object]], first["items"])
         assert [item["title"] for item in items] == ["Shared 100%_ title"] * 2
@@ -3635,8 +3638,9 @@ def test_terminal_catalogue_identity_uses_current_full_key_before_page_and_count
             offset: int,
             attention: bool | None,
             library_labels=(),
+            now: int = 0,
         ) -> ReviewLibraryPage:
-            rows = original_list(search, limit, offset, attention, library_labels)
+            rows = original_list(search, limit, offset, attention, library_labels, now)
             catalogue.acquire_refresh()
             catalogue.publish("a" * 64, refreshed)
             return rows
@@ -3910,7 +3914,7 @@ def test_combined_browse_validates_empty_marker_and_totals(
 
     def corrupt_row(cursor, row):
         nonlocal reached
-        if len(cursor.description) != (14 if surface == "library" else 11):
+        if len(cursor.description) != (18 if surface == "library" else 11):
             return row
         reached = True
         values = list(row)
@@ -3942,9 +3946,24 @@ def test_combined_browse_validates_empty_marker_and_totals(
         repository.close()
 
 
-@pytest.mark.parametrize("corruption", ("over_total", "boolean", "negative", "text"))
-def test_library_page_refuses_an_invalid_looks_wrong_total(tmp_path, corruption):
-    """The Looks wrong total is a count no larger than All (#1334)."""
+@pytest.mark.parametrize(
+    ("corruption", "column"),
+    [
+        (corruption, column)
+        for column in (13, 14, 15, 16, 17)
+        for corruption in ("over_total", "boolean", "negative", "text")
+        # A listing position is not a count of works, so All does not bound it.
+        if corruption != "over_total" or column <= 14
+    ],
+)
+def test_library_page_refuses_an_invalid_cross_cutting_total(
+    tmp_path, corruption, column
+):
+    """Looks wrong (#1334) and New (#1351) are counts no larger than All.
+
+    The three listing positions after them are non-negative integers, with no
+    bound against All.
+    """
     from mechanical_librarian.application.metadata_report import MetadataReportError
 
     repository = open_repository(tmp_path / "review.sqlite")
@@ -3952,12 +3971,12 @@ def test_library_page_refuses_an_invalid_looks_wrong_total(tmp_path, corruption)
 
     def corrupt_row(cursor, row):
         nonlocal reached
-        if len(cursor.description) != 14:
+        if len(cursor.description) != 18:
             return row
         reached = True
         values = list(row)
-        values[-1] = {
-            "over_total": values[-5] + 1,
+        values[column] = {
+            "over_total": values[9] + 1,
             "boolean": False,
             "negative": -1,
         }.get(corruption, "0")
@@ -4052,6 +4071,7 @@ def test_library_counts_are_one_summary_across_lens_cursor_and_limit() -> None:
             "not_matched": 1,
             "preparation_failed": 1,
             "flagged": 0,
+            "new": 0,
         }
         observed = []
         for lens in (
@@ -4093,6 +4113,7 @@ def test_library_counts_are_one_summary_across_lens_cursor_and_limit() -> None:
                     "not_matched": 0,
                     "preparation_failed": 0,
                     "flagged": 0,
+                    "new": 0,
                 },
             ),
             (
@@ -4104,6 +4125,7 @@ def test_library_counts_are_one_summary_across_lens_cursor_and_limit() -> None:
                     "not_matched": 0,
                     "preparation_failed": 1,
                     "flagged": 0,
+                    "new": 0,
                 },
             ),
             (
@@ -4115,6 +4137,7 @@ def test_library_counts_are_one_summary_across_lens_cursor_and_limit() -> None:
                     "not_matched": 1,
                     "preparation_failed": 0,
                     "flagged": 0,
+                    "new": 0,
                 },
             ),
             (
@@ -4126,6 +4149,7 @@ def test_library_counts_are_one_summary_across_lens_cursor_and_limit() -> None:
                     "not_matched": 0,
                     "preparation_failed": 0,
                     "flagged": 0,
+                    "new": 0,
                 },
             ),
         ):
@@ -4229,6 +4253,7 @@ def test_a_failed_preparation_leaves_an_open_decision_in_needs_attention(
                 "not_matched": 0,
                 "preparation_failed": 1,
                 "flagged": 0,
+                "new": 0,
             }
             listed[lens] = [
                 (cast(str, item["item"]), cast(str, item["attention_state"]))

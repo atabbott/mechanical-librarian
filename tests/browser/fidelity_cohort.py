@@ -1361,6 +1361,7 @@ def _progress_counts(
         "preparation_failed": failed,
         # The progress card reads no Looks wrong count (#1334).
         "flagged": 0,
+        "new": 0,
     }
 
 

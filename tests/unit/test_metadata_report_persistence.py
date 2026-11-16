@@ -662,6 +662,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("human_decisions",),
             ("level_decision_notes",),
             ("level_proposal_sets",),
+            ("library_visit",),
             ("metadata_policy_drafts",),
             ("metadata_policy_resolutions",),
             ("metadata_policy_state",),
@@ -939,6 +940,7 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
                 "DROP TABLE cover_taste_profile_versions;"
                 "DROP TABLE cover_taste_builds;"
                 "DROP TABLE reviewer_task_requests;"
+                "DROP TABLE library_visit;"
                 "DROP TRIGGER metadata_reports_project_browse_facts;"
                 "DROP TABLE metadata_report_browse_authors;"
                 "DROP TABLE metadata_report_value_flags;"
@@ -2741,6 +2743,7 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
                     "DROP TABLE cover_taste_profile_versions;"
                     "DROP TABLE cover_taste_builds;"
                     "DROP TABLE reviewer_task_requests;"
+                    "DROP TABLE library_visit;"
                     "DROP TRIGGER metadata_reports_project_browse_facts;"
                     "DROP TABLE metadata_report_browse_authors;"
                     "DROP TABLE metadata_report_value_flags;"
@@ -2768,8 +2771,10 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
             else:
                 # The v20 producer predates #1358's case episodes, #1310's
                 # resolution index led by the resolved id, #1363's retained
-                # cover tables, #1355's level storage and #1334's value flags.
+                # cover tables, #1355's level storage, #1334's value flags and
+                # #1351's Library visit.
                 repository._connection.executescript(
+                    "DROP TABLE library_visit;"
                     "DROP TABLE metadata_report_value_flags;"
                     "ALTER TABLE browse_fact_identity DROP COLUMN value_flag_rules;"
                     "DROP TABLE retained_cover_listings;"

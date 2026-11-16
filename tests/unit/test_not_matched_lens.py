@@ -280,6 +280,7 @@ def test_each_not_matched_work_names_one_reason_in_precedence(tmp_path: Path) ->
             "not_matched": 6,
             "preparation_failed": 0,
             "flagged": 0,
+            "new": 0,
         }
         clear = browse.library(
             lens="no_attention_needed", search=None, limit=50, cursor=None
@@ -777,6 +778,7 @@ def test_a_terminal_preparation_failure_is_counted_as_failed(tmp_path: Path) -> 
             "not_matched": 0,
             "preparation_failed": 1,
             "flagged": 0,
+            "new": 0,
         }
         (item,) = cast("list[dict[str, object]]", page["items"])
         assert item["attention_state"] == "preparation_failed"
@@ -851,6 +853,7 @@ def test_a_later_terminal_failure_over_an_unmatched_report_is_counted_as_failed(
             "not_matched": 0,
             "preparation_failed": 1,
             "flagged": 0,
+            "new": 0,
         }
         (item,) = cast("list[dict[str, object]]", page["items"])
         assert item["attention_state"] == "preparation_failed"

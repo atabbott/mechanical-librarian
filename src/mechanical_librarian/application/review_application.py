@@ -89,6 +89,7 @@ from mechanical_librarian.domain.cover_taste import (
 )
 from mechanical_librarian.domain.description_advice import DescriptionAdviceBinding
 from mechanical_librarian.domain.field_effect import SUPPORTED_DESTINATIONS
+from mechanical_librarian.domain.library_visit import ListingPositions
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from mechanical_librarian.domain.owner_settings import (
@@ -158,6 +159,10 @@ class BrowserStateOwner(Protocol):
     def dismiss_preparation_presentation(
         self, run_id: str, dismissed_at: int
     ) -> None: ...
+
+    def record_library_visit(
+        self, listing: ListingPositions | None, now: int
+    ) -> bool: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -234,6 +239,7 @@ class LibraryView:
     counts: dict[str, int]
     items: tuple[dict[str, object], ...]
     lens: str
+    listing: dict[str, int]
     next_cursor: str | None
     page: int
     previous_cursor: str | None
@@ -244,12 +250,15 @@ class LibraryView:
     def from_data(cls, value: dict[str, object]) -> "LibraryView":
         counts = value["counts"]
         items = value["items"]
+        listing = value["listing"]
         assert isinstance(counts, dict)
         assert isinstance(items, list)
+        assert isinstance(listing, dict)
         return cls(
             {str(key): int(count) for key, count in counts.items()},
             tuple(dict(item) for item in items),
             str(value["lens"]),
+            {str(key): int(position) for key, position in listing.items()},
             value["next_cursor"] if isinstance(value["next_cursor"], str) else None,
             int(cast("int", value["page"])),
             value["previous_cursor"]
@@ -264,6 +273,7 @@ class LibraryView:
             "counts": dict(self.counts),
             "items": [dict(item) for item in self.items],
             "lens": self.lens,
+            "listing": dict(self.listing),
             "next_cursor": self.next_cursor,
             "page": self.page,
             "previous_cursor": self.previous_cursor,
@@ -1175,12 +1185,29 @@ class ReviewApplication:
                         limit=limit,
                         cursor=cursor,
                         library_labels=snapshot,
+                        now=self._clock(),
                     ),
                     labels,
                 )
             )
 
         return self._browse_serialized(read, check_active)
+
+    def record_library_visit(self, listing: ListingPositions | None) -> None:
+        """Record one use of Library by the owner (#1351, ADR-0103).
+
+        `listing` is how far a New lens the browser showed had got, or None
+        for any other use. Other tabs are told to read Library again only
+        when what counts as new changed: the first mark changes nothing.
+        """
+        try:
+            moved = self.serialized(
+                lambda: self._state_owner.record_library_visit(listing, self._clock())
+            )
+        except MetadataReportError:
+            raise ReviewApplicationError("persistence") from None
+        if moved:
+            self._updates.publish("library")
 
     def library_progress(
         self, *, check_active: Callable[[], None] | None = None
@@ -1190,7 +1217,7 @@ class ReviewApplication:
                 (connection, library, label)
                 for (connection, library), label in self._library_labels().items()
             )
-            return self._browse.progress(snapshot)
+            return self._browse.progress(snapshot, self._clock())
 
         return self._browse_serialized(read, check_active)
 

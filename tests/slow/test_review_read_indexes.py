@@ -164,10 +164,24 @@ def test_production_surfaces_use_measured_indexes_within_scale_budget() -> None:
                 "Attention",
                 lambda: browse.attention(search=None, limit=50, cursor=None),
             ),
+            # With a visit recorded and 300 works past its boundary, the New
+            # lens reads the same relation plus one report probe a work (#1351).
+            (
+                "Library new lens",
+                lambda: browse.library(
+                    lens="new", search=None, limit=50, cursor=None, now=1_000
+                ),
+            ),
             # Library progress counts every candidate, as each page's totals
             # do, and reads no shadow outcome (#1335).
             ("Library progress", lambda: browse.progress()),
         )
+        seen = support._WORKS - 300
+        connection.execute(
+            "INSERT INTO library_visit VALUES(1,?,?,?,?,?,?,1000)",
+            (seen, support._WORKS, seen, seen, support._WORKS, seen),
+        )
+        connection.commit()
         library_steps = 0
         for name, call in calls:
             result, steps, elapsed = support._call_with_step_limit(

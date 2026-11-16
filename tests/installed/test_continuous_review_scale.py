@@ -344,6 +344,7 @@ def test_current_authority_and_predecessor_refusal_without_history(
                 "DROP TABLE cover_taste_profile_versions;"
                 "DROP TABLE cover_taste_builds;"
                 "DROP TABLE reviewer_task_requests;"
+                "DROP TABLE library_visit;"
                 "DROP TRIGGER metadata_reports_project_browse_facts;"
                 "DROP TABLE metadata_report_browse_authors;"
                 "DROP TABLE metadata_report_value_flags;"

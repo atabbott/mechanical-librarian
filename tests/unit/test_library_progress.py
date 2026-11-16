@@ -30,7 +30,10 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
 )
 from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.metadata_report import MetadataReportError
-from mechanical_librarian.application.review_web import BrowseReviewLibrary
+from mechanical_librarian.application.review_web import (
+    BrowseReviewLibrary,
+    ReviewWebError,
+)
 from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
@@ -194,6 +197,7 @@ def test_progress_totals_are_library_counts_and_its_fields_attention_rows(
             "not_matched": 1,
             "preparation_failed": 1,
             "flagged": 0,
+            "new": 0,
         }
         # Equal to every Library answer's counts, whatever its lens and page.
         for lens in _LENSES:
@@ -221,6 +225,7 @@ def test_progress_totals_are_library_counts_and_its_fields_attention_rows(
                     "not_matched": 0,
                     "preparation_failed": 0,
                     "flagged": 0,
+                    "new": 0,
                 },
             ),
             (
@@ -233,6 +238,7 @@ def test_progress_totals_are_library_counts_and_its_fields_attention_rows(
                     "not_matched": 1,
                     "preparation_failed": 0,
                     "flagged": 0,
+                    "new": 0,
                 },
             ),
             (
@@ -245,6 +251,7 @@ def test_progress_totals_are_library_counts_and_its_fields_attention_rows(
                     "not_matched": 0,
                     "preparation_failed": 1,
                     "flagged": 0,
+                    "new": 0,
                 },
             ),
         ]
@@ -309,6 +316,7 @@ def test_progress_refuses_counts_whose_lenses_do_not_partition_all(
         ("negative", "library"),
         ("boolean", "library"),
         ("over_total_flagged", "library"),
+        ("over_total_new", "library"),
         ("over_attention", "field"),
         ("unknown_library", "field"),
     ),
@@ -321,7 +329,7 @@ def test_progress_refuses_an_invalid_row(
 
     def corrupt(cursor: sqlite3.Cursor, row: tuple[object, ...]) -> tuple[object, ...]:
         nonlocal reached
-        width = 8 if statement == "library" else 4
+        width = 9 if statement == "library" else 4
         if len(cursor.description) != width:
             return row
         reached = True
@@ -334,6 +342,8 @@ def test_progress_refuses_an_invalid_row(
             values[3] = 2
         elif corruption == "over_total_flagged":
             values[7] = cast(int, values[2]) + 1
+        elif corruption == "over_total_new":
+            values[8] = cast(int, values[2]) + 1
         else:
             values[1] = "elsewhere"
         return tuple(values)
@@ -349,17 +359,17 @@ def test_progress_refuses_an_invalid_row(
 
 
 # The Library page statement as it was before #1335 extracted its candidate
-# relation, plus #1334's Looks wrong column and total: the trace of each read
-# below, as its SHA-256. Without exactly those four additions each statement
-# is byte for byte the one #1335 pinned.
+# relation, plus #1334's Looks wrong column and total and #1351's visit
+# boundary, New column, New total and listing end: the trace of each read
+# below, as its SHA-256.
 _PAGE_STATEMENT_DIGESTS = {
-    (False, None): "cd1da80fb72d18824f792d70f4984b1f3681e194e9989d30463059a47e26fa83",
+    (False, None): "dbd8e7d2a8a161df6e27f8b74b6e91691cca054c9f061027cc272f7ea642fd93",
     (False, "needs_attention"): (
-        "0c1744992cd3df5f136631c3436dea392fb19f78b46a862e5220b23ff0a5faa3"
+        "9613cadc44ecb0d064d0581630f57dfeab2b7f15fd2a0e4e78268be87529ccca"
     ),
-    (True, None): "919f858bd4312b9e4f298d61d694aae2fd96ed3049e8ce394ada68008d20355a",
+    (True, None): "fa6f5ecceb5f0d9b59653f8d9155d9ec64ff77cc445be685f75f26d1c2a44f27",
     (True, "needs_attention"): (
-        "a846a032eb815b83e8882954eb9b228d7dbb3a32024c1dfd105c3d714ac1848a"
+        "7bdb65482c96ae339f5f5e7beae9e6aa7364401092f2114a0a73bac865b1d6d0"
     ),
 }
 
@@ -555,9 +565,301 @@ def test_progress_reads_its_two_statements_on_one_snapshot() -> None:
         finally:
             reader._connection.set_trace_callback(None)
         assert started and errors == []
-        assert before.libraries == (("primary", "ebooks", 1, 1, 0, 0, 0),)
+        assert before.libraries == (("primary", "ebooks", 1, 1, 0, 0, 0, 0),)
         assert before.fields == (("primary", "ebooks", "title", 1),)
         after = reader.read_review_library_progress(())
-        assert after.libraries == (("primary", "ebooks", 1, 0, 0, 0, 0),)
+        assert after.libraries == (("primary", "ebooks", 1, 0, 0, 0, 0, 0),)
         assert after.fields == ()
         reader.close()
+
+
+def _start_visit(repository: SQLiteMetadataReportRepository, now: int) -> None:
+    """Finish the fixture's scan, then take the first mark (#1351)."""
+    assert repository.claim_review_pipeline_action(now) is None
+    assert repository.record_library_visit(None, now) is False
+
+
+def _new_works(
+    browser: BrowseReviewLibrary, now: int, search: str | None = None
+) -> tuple[int, list[str]]:
+    page = browser.library(lens="new", search=search, limit=50, cursor=None, now=now)
+    counts = cast(dict[str, int], page["counts"])
+    items = cast(list[dict[str, object]], page["items"])
+    return counts["new"], sorted(str(item["title"]) for item in items)
+
+
+def _stop_before_report(
+    repository: SQLiteMetadataReportRepository, library: str, item: str, now: int
+) -> None:
+    """Discover one item in a library of its own and fail it for good."""
+    entry = CatalogueEntry(
+        "primary",
+        library,
+        "lib-" + library,
+        item,
+        1,
+        "Stopped later",
+        (),
+        True,
+        False,
+        "singular-supported",
+        "2" * 64,
+        "/synthetic-later.epub",
+        "epub",
+        "/media",
+    )
+    repository.request_review_scan("primary", library, "lib-" + library, "f" * 64, now)
+    discovery = repository.claim_review_pipeline_action(now + 1)
+    assert discovery is not None
+    repository.complete_review_discovery(discovery, 2, "b" * 64, (entry,), now + 2)
+    action = repository.claim_review_pipeline_action(now + 3)
+    assert action is not None
+    repository.fail_review_pipeline_action(
+        action, "unreadable_media", False, now + 4, "track_1"
+    )
+    assert repository.claim_review_pipeline_action(now + 5) is None
+
+
+def test_new_is_a_work_first_listed_after_the_boundary_and_nothing_else(
+    tmp_path: Path,
+) -> None:
+    """AC1: an arrival is new; a re-search or a decision makes nothing new."""
+    repository = _three_libraries(tmp_path)
+    try:
+        browser = BrowseReviewLibrary(repository)
+        _start_visit(repository, 100)
+        assert _new_works(browser, 100) == (0, [])
+        positions = dict(
+            repository._connection.execute(
+                "SELECT item_id,rowid FROM current_review_packages"
+            )
+        )
+
+        _admit(repository, _at(_report("Arrived work", "5", "6"), "ebooks", "arrived"))
+        assert _new_works(browser, 110) == (1, ["Arrived work"])
+
+        # A later report for a work already listed: the package row is
+        # written in place, so the work keeps its position.
+        reports = repository._connection.execute(
+            "SELECT count(*) FROM metadata_reports"
+        ).fetchone()[0]
+        _admit(
+            repository,
+            _at(
+                _report("Needle attention work", "7", "b", actionable=True),
+                "ebooks",
+                "attention",
+            ),
+        )
+        assert (
+            repository._connection.execute(
+                "SELECT count(*) FROM metadata_reports"
+            ).fetchone()[0]
+            == reports + 1
+        )
+        assert (
+            dict(
+                repository._connection.execute(
+                    "SELECT item_id,rowid FROM current_review_packages"
+                )
+            )["attention"]
+            == positions["attention"]
+        )
+        # An owner decision on a listed work.
+        case_id = repository._connection.execute(
+            "SELECT review_case_id FROM current_review_packages "
+            "WHERE item_id='series-attention'"
+        ).fetchone()[0]
+        case = ReviewCase.create_from_data(
+            json.loads(repository.get_review_case(case_id))["case"]
+        )
+        proposal = next(
+            value for value in case.proposals if value["destination"] == "series"
+        )
+        repository.record_human_decision(
+            HumanDecision.create(
+                case,
+                proposal_id=cast(str, proposal["proposal_id"]),
+                target_fingerprint=case.target_fingerprint,
+                destination="series",
+                actor="owner",
+                outcome="keep_current",
+                selected_value=None,
+                idempotency_key="new-lens-decision",
+                occurred_at=120,
+            )
+        )
+        assert _new_works(browser, 130) == (1, ["Arrived work"])
+
+        # A work that could not be read has no package: it is new by the
+        # order it was discovered in. The one found before the mark is not.
+        _stop_before_report(repository, "drama", "stopped-later", 140)
+        assert _new_works(browser, 150) == (
+            2,
+            ["Arrived work", "Preparation unavailable"],
+        )
+
+        # The negative control: once a later visit has seen them, none is new.
+        shown = repository.read_current_library_page(None, 1, 0, "new", (), 160)
+        assert repository.record_library_visit(shown.listing, 160) is False
+        assert _new_works(browser, 160)[0] == 2
+        assert repository.record_library_visit(None, 160 + 1_800) is True
+        assert _new_works(browser, 160 + 1_800) == (0, [])
+    finally:
+        repository.close()
+
+
+def test_a_newcomer_on_a_reused_position_and_one_in_flight_are_new(
+    tmp_path: Path,
+) -> None:
+    """AC2: the report clause catches a newcomer that takes a deleted row's place."""
+    repository = _three_libraries(tmp_path)
+    try:
+        browser = BrowseReviewLibrary(repository)
+        # Discovered before the mark, and still being prepared at it.
+        in_flight = CatalogueEntry(
+            "primary",
+            "drama",
+            "lib-drama",
+            "in-flight",
+            1,
+            "In flight",
+            (),
+            True,
+            False,
+            "singular-supported",
+            "3" * 64,
+            "/synthetic-flight.epub",
+            "epub",
+            "/media",
+        )
+        assert repository.claim_review_pipeline_action(20) is None
+        repository.request_review_scan("primary", "drama", "lib-drama", "f" * 64, 21)
+        discovery = repository.claim_review_pipeline_action(22)
+        assert discovery is not None
+        repository.complete_review_discovery(discovery, 2, "b" * 64, (in_flight,), 23)
+        assert repository.record_library_visit(None, 100) is False
+        boundary = repository._connection.execute(
+            "SELECT seen_packages,seen_works,seen_reports FROM library_visit"
+        ).fetchone()
+        assert _new_works(browser, 100) == (0, [])
+
+        # The last listed work leaves the library, and its row with it.
+        last = repository._connection.execute(
+            "SELECT item_id,rowid FROM current_review_packages "
+            "ORDER BY rowid DESC LIMIT 1"
+        ).fetchone()
+        assert last[1] == boundary[0]
+        repository._connection.execute(
+            "DELETE FROM current_review_packages WHERE rowid=?", (last[1],)
+        )
+        repository._connection.commit()
+        _admit(repository, _at(_report("Reused place", "8", "9"), "ebooks", "reuser"))
+        assert repository._connection.execute(
+            "SELECT rowid FROM current_review_packages WHERE item_id='reuser'"
+        ).fetchone() == (boundary[0],)
+        assert _new_works(browser, 110) == (1, ["Reused place"])
+
+        _admit(repository, _at(_report("In flight", "a", "c"), "drama", "in-flight"))
+        assert _new_works(browser, 120) == (2, ["In flight", "Reused place"])
+    finally:
+        repository.close()
+
+
+def test_the_new_lens_lists_counts_and_pages_across_the_partition(
+    tmp_path: Path,
+) -> None:
+    """AC5: New cuts across the four lenses, whose counts it does not change."""
+    repository = _three_libraries(tmp_path)
+    try:
+        browser = BrowseReviewLibrary(repository)
+        _start_visit(repository, 100)
+        for index, (title, actionable) in enumerate(
+            (("Arrival one", True), ("Arrival two", False), ("Arrival three", False))
+        ):
+            _admit(
+                repository,
+                _at(
+                    _report(
+                        title, f"{index + 4}", f"{index + 7}", actionable=actionable
+                    ),
+                    "ebooks" if index else "shelf",
+                    f"arrival-{index}",
+                ),
+            )
+        everything = browser.library(
+            lens="all", search=None, limit=50, cursor=None, now=110
+        )
+        counts = cast(dict[str, int], everything["counts"])
+        assert counts["new"] == 3 <= counts["all"] == 8
+        assert sum(counts[lens] for lens in _LENSES[1:]) == counts["all"]
+        # The same counts on every lens, and what a clockless read gives the
+        # partition: New changes none of them.
+        clockless = cast(
+            dict[str, int],
+            browser.library(lens="all", search=None, limit=50, cursor=None)["counts"],
+        )
+        assert clockless == counts
+        for lens in (*_LENSES, "new", "flagged"):
+            assert (
+                browser.library(lens=lens, search=None, limit=1, cursor=None, now=110)[
+                    "counts"
+                ]
+                == counts
+            ), lens
+
+        first = browser.library(lens="new", search=None, limit=2, cursor=None, now=110)
+        assert (first["lens"], first["page"], first["previous_cursor"]) == (
+            "new",
+            1,
+            None,
+        )
+        second = browser.library(
+            lens="new",
+            search=None,
+            limit=2,
+            cursor=cast(str, first["next_cursor"]),
+            now=110,
+        )
+        assert second["next_cursor"] is None and second["page"] == 2
+        listed = [
+            str(item["title"])
+            for page in (first, second)
+            for item in cast(list[dict[str, object]], page["items"])
+        ]
+        # Library's own order: the work needing attention first, then by title.
+        assert listed == ["Arrival one", "Arrival three", "Arrival two"]
+        # A cursor is bound to its lens.
+        with pytest.raises(ReviewWebError):
+            browser.library(
+                lens="all",
+                search=None,
+                limit=2,
+                cursor=cast(str, first["next_cursor"]),
+                now=110,
+            )
+        # Search composes under New.
+        assert _new_works(browser, 110, "three") == (1, ["Arrival three"])
+        assert _new_works(browser, 110, "Needle") == (0, [])
+        # The listing every page hands back is the end of the three tables.
+        assert first["listing"] == everything["listing"]
+        assert cast(dict[str, int], first["listing"]) == dict(
+            zip(
+                ("packages", "works", "reports"),
+                repository._connection.execute(
+                    "SELECT (SELECT max(rowid) FROM current_review_packages),"
+                    "(SELECT max(rowid) FROM review_preparation_work),"
+                    "(SELECT max(rowid) FROM metadata_reports)"
+                ).fetchone(),
+                strict=True,
+            )
+        )
+
+        progress = browser.progress((), 110)
+        assert progress["totals"] == counts
+        assert {
+            str(row["library"]): cast(dict[str, int], row["counts"])["new"]
+            for row in cast(list[dict[str, object]], progress["libraries"])
+        } == {"ebooks": 2, "fiction": 0, "shelf": 1}
+    finally:
+        repository.close()

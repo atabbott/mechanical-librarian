@@ -178,6 +178,7 @@ KEYWORDS: tuple[tuple[str, str, str, str, object], ...] = (
         for name in (
             "all",
             "flagged",
+            "new",
             "needs_attention",
             "no_attention_needed",
             "not_matched",
@@ -531,6 +532,11 @@ KEYWORDS: tuple[tuple[str, str, str, str, object], ...] = (
         {"title", "authors", "narrators"},
     ),
     ("S98", "_LibraryWork", "/properties/value_flags", "maxItems", 9),
+    *(
+        ("S99", "_LibraryListing", f"/properties/{name}", keyword, bound)
+        for name in ("packages", "reports", "works")
+        for keyword, bound in (("minimum", 0), ("maximum", 9_007_199_254_740_991))
+    ),
 )
 
 
@@ -649,6 +655,10 @@ REFUSALS: tuple[tuple[type[BaseModel], str, object, str], ...] = (
     (app._LibraryValueFlag, "rule", "title_in_capitals", "literal_error"),
     (app._LibraryValueFlag, "destination", "subtitle", "literal_error"),
     (app._ReviewCounts, "all", -1, "greater_than_equal"),
+    (app._ReviewCounts, "new", -1, "greater_than_equal"),
+    (app._LibraryListing, "works", -1, "greater_than_equal"),
+    (app._LibraryListing, "works", 2**53, "less_than_equal"),
+    (app._LibraryListing, "works", True, "int_type"),
     (app._LibraryProgressField, "destination", "shelf", "literal_error"),
     (app._LibraryProgressField, "need_you", 0, "greater_than_equal"),
     (app._LibraryWork, "media_kind", "ebook", "literal_error"),

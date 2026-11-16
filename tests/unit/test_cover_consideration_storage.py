@@ -242,7 +242,8 @@ def test_actual_embedded_predecessor_refused_without_mutation(
             f"DROP {kind.upper()} {name};"
             for kind, name, _ in reversed(PRIOR_ATTENTION_FACT_OBJECTS)
         )
-        + "DROP TRIGGER metadata_reports_project_browse_facts;"
+        + "DROP TABLE library_visit;"
+        "DROP TRIGGER metadata_reports_project_browse_facts;"
         "DROP TABLE metadata_report_browse_authors;"
         "DROP TABLE metadata_report_value_flags;"
         "DROP TABLE metadata_report_browse_facts;"

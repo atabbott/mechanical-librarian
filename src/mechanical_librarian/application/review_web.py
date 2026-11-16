@@ -79,6 +79,7 @@ from mechanical_librarian.domain.human_decision import (
     pinned_field_fingerprint,
     preserved_description,
 )
+from mechanical_librarian.domain.library_visit import ListingPositions
 from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
@@ -145,8 +146,8 @@ REVIEW_CASE_HISTORY_SCHEMA: Final[ReviewCaseHistorySchemaVersion] = (
     "review-case-history-v4"
 )
 
-ReviewLibrarySchemaVersion = Literal["review-library-v7"]
-REVIEW_LIBRARY_SCHEMA: Final[ReviewLibrarySchemaVersion] = "review-library-v7"
+ReviewLibrarySchemaVersion = Literal["review-library-v8"]
+REVIEW_LIBRARY_SCHEMA: Final[ReviewLibrarySchemaVersion] = "review-library-v8"
 
 ReviewReportDetailSchemaVersion = Literal["review-report-detail-v6"]
 REVIEW_REPORT_DETAIL_SCHEMA: Final[ReviewReportDetailSchemaVersion] = (
@@ -369,6 +370,10 @@ class ReviewLibrarySnapshot:
     preparation_failed_total: int
     # #1334: the works whose current report holds a value flag.
     flagged_total: int
+    # #1351: the works first listed since the owner's last visit, and how far
+    # the listing had got when this page was read.
+    new_total: int
+    listing: ListingPositions
     # The scope each row's human decisions were validated in, when the store
     # projected one, so the row projection need not project the case again.
     decision_scopes: tuple[DecisionScope | None, ...] = dataclass_field(
@@ -395,8 +400,8 @@ class ReviewLibraryProgress:
     """
 
     # (connection, library, all, needs_attention, not_matched,
-    # preparation_failed, flagged), one row per library that has works.
-    libraries: tuple[tuple[str, str, int, int, int, int, int], ...]
+    # preparation_failed, flagged, new), one row per library that has works.
+    libraries: tuple[tuple[str, str, int, int, int, int, int, int], ...]
     # (connection, library, destination, works whose field needs the owner),
     # one row per field with at least one such work.
     fields: tuple[tuple[str, str, str, int], ...]
@@ -488,16 +493,19 @@ LibraryLabels = tuple[tuple[str, str, str], ...]
 # A work no provider matched is neither needing attention nor needing none, so
 # it has a lens of its own (#1407), and so has a work with nothing open whose
 # latest preparation failed (#1413). Looks wrong cuts across all four: a work
-# whose current values have a shape that is usually a mistake (#1334).
+# whose current values have a shape that is usually a mistake (#1334). So does
+# New: a work first listed since the owner's last visit (#1351).
 LibraryLensFilter = Literal[
     "needs_attention",
     "no_attention_needed",
     "not_matched",
     "preparation_failed",
     "flagged",
+    "new",
 ]
 _LIBRARY_LENSES: dict[str, LibraryLensFilter | None] = {
     "all": None,
+    "new": "new",
     "flagged": "flagged",
     "needs_attention": "needs_attention",
     "no_attention_needed": "no_attention_needed",
@@ -514,14 +522,17 @@ def _library_counts(
     not_matched: int,
     preparation_failed: int,
     flagged: int,
+    new: int,
 ) -> dict[str, int]:
     """Library's lens counts: what is left of All is the no-attention lens.
 
-    Looks wrong is counted on its own, across the four that partition All.
+    Looks wrong and New are each counted on their own, across the four that
+    partition All.
     """
     return {
         "all": total,
         "flagged": flagged,
+        "new": new,
         "needs_attention": needs_attention,
         "no_attention_needed": total
         - needs_attention
@@ -661,6 +672,7 @@ class ReviewLibraryStore(Protocol):
         lens: LibraryLensFilter | None,
         library_labels: LibraryLabels = (),
         validated: ValidatedDocumentCache | None = None,
+        now: int = 0,
     ) -> ReviewLibrarySnapshot: ...
     def read_review_attention(
         self,
@@ -670,7 +682,7 @@ class ReviewLibraryStore(Protocol):
         library_labels: LibraryLabels = (),
     ) -> ReviewAttentionSnapshot: ...
     def read_review_library_progress(
-        self, library_labels: LibraryLabels = ()
+        self, library_labels: LibraryLabels = (), now: int = 0
     ) -> ReviewLibraryProgress: ...
     def read_current_report_document(
         self, connection: str, library: str, item: str
@@ -2629,7 +2641,11 @@ class BrowseReviewLibrary:
         limit: int,
         cursor: str | None,
         library_labels: LibraryLabels = (),
+        now: int = 0,
     ) -> dict[str, object]:
+        """One Library page. `now` is the clock the visit boundary is read at:
+        a caller with no clock reads the boundary of the visit in progress.
+        """
         normalized = _review_search(search)
         if type(lens) is not str or lens not in _LIBRARY_LENSES:
             raise ReviewWebError("request")
@@ -2643,6 +2659,7 @@ class BrowseReviewLibrary:
                 _LIBRARY_LENSES[lens],
                 library_labels,
                 self._validated,
+                now,
             )
             items = []
             scopes = snapshot.decision_scopes or (None,) * len(snapshot.rows)
@@ -2722,9 +2739,17 @@ class BrowseReviewLibrary:
                 snapshot.not_matched_total,
                 snapshot.preparation_failed_total,
                 snapshot.flagged_total,
+                snapshot.new_total,
             ),
             "items": items,
             "lens": lens,
+            # How far the listing had got at this read (#1351): what the
+            # browser hands back when it has shown the New lens.
+            "listing": {
+                "packages": snapshot.listing.packages,
+                "reports": snapshot.listing.reports,
+                "works": snapshot.listing.works,
+            },
             "next_cursor": (
                 _encode_cursor(offset + bounded_limit, "library", lens, normalized)
                 if len(snapshot.rows) > bounded_limit
@@ -2746,14 +2771,18 @@ class BrowseReviewLibrary:
             "schema_version": REVIEW_LIBRARY_SCHEMA,
         }
 
-    def progress(self, library_labels: LibraryLabels = ()) -> dict[str, object]:
+    def progress(
+        self, library_labels: LibraryLabels = (), now: int = 0
+    ) -> dict[str, object]:
         """Library's counts in total and per library, and Attention's fields.
 
         Libraries follow the active settings, then any stable name they no
         longer configure alphabetically. Fields come most-needed first.
         """
         try:
-            snapshot = self._repository.read_review_library_progress(library_labels)
+            snapshot = self._repository.read_review_library_progress(
+                library_labels, now
+            )
         except Exception as error:
             raise ReviewWebError("unavailable") from error
         order = {
@@ -2778,6 +2807,7 @@ class BrowseReviewLibrary:
                 sum(row[4] for row in libraries),
                 sum(row[5] for row in libraries),
                 sum(row[6] for row in libraries),
+                sum(row[7] for row in libraries),
             ),
             "libraries": [
                 {

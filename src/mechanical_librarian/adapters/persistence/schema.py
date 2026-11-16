@@ -1015,6 +1015,21 @@ _FIELD_EFFECT_CONTROL_SQL = (
     "CREATE TABLE field_effect_control (singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton=1), "
     "paused INTEGER NOT NULL CHECK(paused IN (0,1)), updated_at INTEGER NOT NULL CHECK(updated_at>=0))"
 )
+# #1351, ADR-0103: the owner's one Library visit. `seen_*` is the boundary a
+# work must lie past to be new, `shown_*` the furthest listing a device opened
+# in the New lens, and `active_at` the server's clock at the last recorded use.
+# One row, overwritten in place, created by the first use once a preparation
+# has finished: no row means nothing is new.
+_LIBRARY_VISIT_SQL = (
+    "CREATE TABLE library_visit (singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton=1), "
+    "seen_packages INTEGER NOT NULL CHECK(seen_packages>=0), "
+    "seen_works INTEGER NOT NULL CHECK(seen_works>=0), "
+    "seen_reports INTEGER NOT NULL CHECK(seen_reports>=0), "
+    "shown_packages INTEGER NOT NULL CHECK(shown_packages>=seen_packages), "
+    "shown_works INTEGER NOT NULL CHECK(shown_works>=seen_works), "
+    "shown_reports INTEGER NOT NULL CHECK(shown_reports>=seen_reports), "
+    "active_at INTEGER NOT NULL CHECK(active_at>=0))"
+)
 _FIELD_EFFECT_SUSPENSIONS_SQL = (
     "CREATE TABLE field_effect_suspensions ("
     "scope TEXT NOT NULL CHECK(scope IN ('connection','destination')), "
@@ -1917,6 +1932,7 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_REVIEW_CASE_LEVEL_OFFER_NO_DELETE_SQL)
     connection.execute(_NO_DELETE_SQL)
     _create_attention_facts(connection)
+    connection.execute(_LIBRARY_VISIT_SQL)
     connection.commit()
 
 
@@ -2178,6 +2194,7 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
             ("table", "automatic_decisions", _AUTOMATIC_DECISIONS_SQL),
             ("table", "automatic_safety_state", _AUTOMATIC_SAFETY_SQL),
             ("table", "field_effect_control", _FIELD_EFFECT_CONTROL_SQL),
+            ("table", "library_visit", _LIBRARY_VISIT_SQL),
             ("table", "field_effect_suspensions", _FIELD_EFFECT_SUSPENSIONS_SQL),
             ("table", "field_effect_actions", _FIELD_EFFECT_ACTIONS_SQL),
             ("table", "field_effect_authorities", _FIELD_EFFECT_AUTHORITIES_SQL),
