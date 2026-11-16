@@ -47,7 +47,7 @@ from collections import deque
 from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager, nullcontext
 from copy import deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import KW_ONLY, dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 from threading import Event, Lock, RLock
@@ -530,6 +530,552 @@ _PENDING_PREPARED_FROM_SQL = (
 # Entries each plan-read cache keeps. A plan file lists a work's rows together,
 # so this bounds memory at any plan size without losing reuse (#1336).
 _PLAN_REUSE = 256
+
+
+_ACTIVITY_SOURCE_KINDS = frozenset(
+    {
+        "field_effect",
+        "field_effect_no_change",
+        "human_decision",
+        "description_decision",
+        "description_preparation",
+        "automatic_decision",
+        "isbn_refusal",
+        "cover_safeguard",
+        "policy_transition",
+    }
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _ActivityDependencies:
+    """The immutable records one bounded Activity batch names, read once."""
+
+    report_documents: dict[str, str]
+    reports: dict[str, MetadataReport]
+    policy_profiles: dict[str, MetadataPolicyProfile]
+    automatic_decisions: dict[str, AutomaticDecision | CoverAutomaticDecision]
+    automatic_authority: dict[
+        tuple[str, str, str, str, int],
+        tuple[ReviewCase, ProposalSet, ShadowOutcomeSet],
+    ]
+    authored_records: dict[
+        str, tuple[AuthoredDescriptionDecision, DescriptionAdviceCandidate]
+    ]
+    replaced: dict[str, object]
+
+
+@dataclass(slots=True)
+class _ActivityRow:
+    """One union row, in its selected column order.
+
+    ``_activity_row`` checks what every source kind shares and fills ``raw``
+    and ``change_id``; ``_shared_activity_record`` settles ``connection``,
+    ``event_title`` and ``failure`` once the source's own checks have passed.
+    """
+
+    event_id: Any
+    connection: Any
+    destination: Any
+    library: Any
+    occurred_at: Any
+    origin: Any
+    report_id: Any
+    state: Any
+    work_id: Any
+    document: Any
+    projected_type: Any
+    title: Any
+    detail: Any
+    source_kind: Any
+    source_document: Any
+    source_parent_id: Any
+    source_sequence: Any
+    source_identity: Any
+    policy_from: Any
+    policy_to: Any
+    source_valid: Any
+    _: KW_ONLY
+    raw: dict[str, Any]
+    change_id: str = ""
+    event_title: str | None = None
+    failure: str | None = None
+
+
+def _activity_scalar(
+    value: object, maximum: int = 512, *, nullable: bool = False
+) -> str | None:
+    if value is None and nullable:
+        return None
+    if type(value) is not str or not value or len(value) > maximum:
+        raise FieldEffectError("persistence")
+    return value
+
+
+def _activity_row(values: tuple[Any, ...], document_limit: int) -> _ActivityRow:
+    """Check what every Activity source shares before its own builder runs."""
+    row = _ActivityRow(*values, raw={})
+    if (
+        row.source_valid != 1
+        or type(row.document) is not str
+        or not 2 <= len(row.document.encode("utf-8")) <= document_limit
+    ):
+        raise FieldEffectError("persistence")
+    raw = json.loads(row.document)
+    if type(raw) is not dict:
+        raise FieldEffectError("persistence")
+    row.raw = raw
+    row.event_id = _activity_scalar(row.event_id, 128)
+    _activity_scalar(row.connection, nullable=True)
+    row.destination = _activity_scalar(row.destination)
+    row.library = _activity_scalar(row.library)
+    row.origin = _activity_scalar(row.origin)
+    row.state = _activity_scalar(row.state)
+    row.work_id = _activity_scalar(row.work_id)
+    row.projected_type = _activity_scalar(row.projected_type, 32)
+    if row.projected_type not in {
+        "review",
+        "policy",
+        "metadata",
+        "safety",
+        "unknown",
+    }:
+        raise FieldEffectError("persistence")
+    row.source_kind = _activity_scalar(row.source_kind)
+    if row.source_kind not in _ACTIVITY_SOURCE_KINDS:
+        raise FieldEffectError("persistence")
+    change_id = (
+        row.source_parent_id if row.source_kind == "field_effect" else row.event_id
+    )
+    if type(change_id) is not str or not change_id or len(change_id) > 128:
+        raise FieldEffectError("persistence")
+    row.change_id = change_id
+    if row.source_document is not None and (
+        type(row.source_document) is not str
+        or not 2 <= len(row.source_document.encode("utf-8")) <= document_limit
+    ):
+        raise FieldEffectError("persistence")
+    return row
+
+
+@contextmanager
+def _persisted_source_checks() -> Iterator[None]:
+    """Refuse a source document its own checks cannot parse as persistence."""
+    try:
+        yield
+    except (
+        AutomaticDecisionError,
+        HumanDecisionError,
+        TypeError,
+        ValueError,
+    ) as error:
+        raise FieldEffectError("persistence") from error
+
+
+def _shared_activity_record(
+    row: _ActivityRow,
+    authored_records: dict[
+        str, tuple[AuthoredDescriptionDecision, DescriptionAdviceCandidate]
+    ],
+) -> dict[str, object]:
+    """Finish the checks every source shares and begin its closed record."""
+    row.event_title = _activity_scalar(row.title, nullable=True)
+    row.failure = _activity_scalar(row.raw.get("failure"), nullable=True)
+    if row.report_id is not None:
+        _activity_scalar(row.report_id)
+    if row.source_kind == "field_effect" and row.report_id is None:
+        # An older field-effect event may not have a persisted
+        # decision-to-report lineage. Keep that canonical event
+        # value-free rather than substituting a later current report.
+        row.connection = None
+    # Every fact below leaves its builder from the document that was just
+    # checked against its own identity, or, for an owner decision that chose
+    # a value, from that decision's own first plan (the value its write
+    # replaced), so an Activity row is a function of immutable records -- a
+    # later catalogue change cannot move it.
+    # The owner-facing words are composed one layer out, where the
+    # pinned report is already parsed; ``record`` is the closed
+    # private carrier the application consumes and removes, the
+    # same way ``connection`` and ``report_id`` are consumed there.
+    durable: dict[str, object] = {"source_kind": row.source_kind}
+    if row.source_kind == "description_preparation":
+        durable.update(advised=True, engine=row.raw["engine"], model=row.raw["model"])
+    if row.source_identity in authored_records:
+        authored, candidate = authored_records[row.source_identity]
+        durable["advised"] = True
+        durable["engine"] = candidate.engine
+        durable["model"] = candidate.model
+        durable["target_fingerprint"] = authored.target_fingerprint
+        if row.source_kind == "description_decision":
+            durable["selected_value"] = {
+                "kind": "text",
+                "value": candidate.output.description,
+            }
+    return durable
+
+
+def _activity_event(
+    row: _ActivityRow, failure: str | None, durable: dict[str, object]
+) -> dict[str, object]:
+    return {
+        "change_id": row.change_id,
+        **(
+            {"transition_id": row.change_id}
+            if row.source_kind == "field_effect"
+            else {}
+        ),
+        "connection": row.connection,
+        "destination": row.destination,
+        "event_id": row.event_id,
+        "event_type": row.projected_type,
+        "failure": failure,
+        "library": row.library,
+        "occurred_at": row.occurred_at,
+        "origin": row.origin,
+        "report_id": row.report_id,
+        "state": row.state,
+        "work_id": row.work_id,
+        **({"work_label": row.event_title} if row.event_title else {}),
+        "record": durable,
+    }
+
+
+def _finished_activity_event(
+    row: _ActivityRow, durable: dict[str, object]
+) -> dict[str, object]:
+    if row.failure is not None:
+        durable["failure"] = row.failure
+    if type(row.occurred_at) is not int or not 0 <= row.occurred_at <= 253_402_300_799:
+        raise FieldEffectError("persistence")
+    return _activity_event(row, row.failure, durable)
+
+
+def _activity_automatic_decisions(
+    rows: list[tuple[Any, ...]], document_limit: int
+) -> dict[str, AutomaticDecision | CoverAutomaticDecision]:
+    """Parse each automatic decision the batch names exactly once."""
+    # An automatic Activity row needs the value the policy selected,
+    # not only the policy's name. Reconstruct it from the immutable
+    # authority documents the decision names. Several decisions can
+    # share one review aggregate, so retrieve and parse each aggregate
+    # once rather than duplicating its bounded private documents for
+    # every field on the page.
+    automatic_decisions: dict[str, AutomaticDecision | CoverAutomaticDecision] = {}
+    try:
+        for row in rows:
+            if row[13] != "automatic_decision":
+                continue
+            document = row[9]
+            if (
+                row[20] != 1
+                or type(document) is not str
+                or not 2 <= len(document.encode("utf-8")) <= document_limit
+            ):
+                raise FieldEffectError("persistence")
+            automatic_decision = parse_automatic_authority(document)
+            if (
+                automatic_decision.decision_id != row[17]
+                or automatic_decision.decision_id in automatic_decisions
+            ):
+                raise FieldEffectError("persistence")
+            automatic_decisions[automatic_decision.decision_id] = automatic_decision
+    except (AutomaticDecisionError, TypeError, ValueError) as error:
+        raise FieldEffectError("persistence") from error
+    return automatic_decisions
+
+
+_ActivityArmScope = Callable[[str, str, str], str]
+
+# Only the selected non-search ledger page needs guarded report scalars.
+# Search retains its streaming projection and validate-before-match order.
+_ACTIVITY_REPORT_SCALARS = {
+    "connection": "CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.connection') END",
+    "library": "CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.library') END",
+    "work_id": "CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.item') END",
+    "title": "CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END",
+}
+_ACTIVITY_ISBN_TITLE = "CASE WHEN json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END"
+_ACTIVITY_LEDGER_COLUMNS = (
+    "event_id,connection,destination,library,occurred_at,origin,report_id,state,"
+    "work_id,document,event_type,title,detail,source_kind,source_document,"
+    "source_parent_id,source_sequence,source_identity,policy_from,policy_to,source_valid"
+    ",report_target"
+)
+_ACTIVITY_GROUP_IDENTITY = (
+    "CASE WHEN source_kind='field_effect' THEN source_parent_id ELSE event_id END"
+)
+# One total order everywhere: a ranked row is unique on its window
+# partition, so the kind and group identity break any remaining tie
+# explicitly rather than through sorter stability (#1218).
+_ACTIVITY_ORDER = " ORDER BY occurred_at DESC,event_id DESC,source_kind," + (
+    _ACTIVITY_GROUP_IDENTITY
+)
+_ACTIVITY_SELECT = (
+    "SELECT event_id,connection,destination,library,occurred_at,origin,"
+    "report_id,state,work_id,document,event_type,title,detail,source_kind,"
+    "source_document,source_parent_id,source_sequence,source_identity,"
+    "policy_from,policy_to,source_valid FROM activity_events"
+)
+_SELECTED_ACTIVITY_PROJECTION = ", selected_activity_events AS MATERIALIZED ("
+_RESTORED_ACTIVITY_PROJECTION = (
+    " FROM selected_activity_events event LEFT JOIN metadata_reports report "
+    "ON report.report_id=event.report_id "
+    "ORDER BY event.occurred_at DESC,event.event_id DESC,event.source_kind,"
+    "CASE WHEN event.source_kind='field_effect' THEN event.source_parent_id "
+    "ELSE event.event_id END"
+)
+
+
+def _activity_projection(requested: str, events: str) -> str:
+    """Rank the union arms into one row per (source kind, group identity)."""
+    # Rows of one ranking partition tie on time and identifier only as
+    # out-of-band duplicates: candidates of one attempt, an ISBN outcome
+    # and its BLOB twin, or one automatic decision id in both decision
+    # ledgers. The lowest witnessed identifier ranks first, and a cover
+    # selection before an automatic decision, so the choice never depends
+    # on scan, storage or arm order (#1218).
+    return (
+        "WITH "
+        + requested
+        + "raw_activity_events("
+        + _ACTIVITY_LEDGER_COLUMNS
+        + ",source_tiebreak) AS ("
+        + events
+        + "), ranked_activity_events AS (SELECT raw_activity_events.*, "
+        "row_number() OVER (PARTITION BY source_kind,"
+        + _ACTIVITY_GROUP_IDENTITY
+        + " ORDER BY CASE WHEN source_kind='field_effect' THEN source_sequence END DESC, "
+        "occurred_at DESC,event_id DESC,source_tiebreak) AS activity_rank, "
+        "min(source_valid) OVER (PARTITION BY source_kind,"
+        + _ACTIVITY_GROUP_IDENTITY
+        + ") AS group_valid FROM raw_activity_events), "
+        "activity_events("
+        + _ACTIVITY_LEDGER_COLUMNS
+        + ") AS (SELECT "
+        + _ACTIVITY_LEDGER_COLUMNS.replace(
+            "source_valid", "CASE WHEN group_valid=1 THEN source_valid ELSE 0 END"
+        )
+        + " FROM ranked_activity_events WHERE activity_rank=1) "
+    )
+
+
+def _restored_activity_columns() -> str:
+    """Re-read guarded report scalars for the selected rows only."""
+    # Materialization makes guarded report scalar extraction a page-bounded
+    # operation, after grouping, filtering, count and offset selection.
+    restored_columns = []
+    for name in _ACTIVITY_LEDGER_COLUMNS.split(",")[:-1]:
+        if name in _ACTIVITY_REPORT_SCALARS:
+            source_condition = (
+                "event.source_kind IN ('field_effect','human_decision',"
+                "'automatic_decision','field_effect_no_change','cover_safeguard')"
+                if name == "title"
+                else "(event.report_target=1 OR event.source_kind IN "
+                "('human_decision','cover_safeguard'))"
+            )
+            isbn_case = (
+                " WHEN event.source_kind='isbn_refusal' THEN " + _ACTIVITY_ISBN_TITLE
+                if name == "title"
+                else ""
+            )
+            restored_columns.append(
+                "CASE WHEN "
+                + source_condition
+                + " THEN "
+                + _ACTIVITY_REPORT_SCALARS[name]
+                + isbn_case
+                + " ELSE event."
+                + name
+                + " END AS "
+                + name
+            )
+        else:
+            restored_columns.append("event." + name)
+    return ",".join(restored_columns)
+
+
+def _field_effect_arm(scope: _ActivityArmScope, scalar: dict[str, str]) -> str:
+    """Every field-effect transition, grouped by plan."""
+    return f"""
+            SELECT event.event_id, effect.connection_name, effect.destination,
+                   effect.library_name, event.occurred_at,
+                   COALESCE(CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN json_extract(event.document, '$.origin') END, 'unknown'),
+                   COALESCE(human_review.report_id,automatic_review.report_id,cover_review.report_id,description_review.report_id), event.kind, effect.work_id, event.document,
+                   CASE WHEN event.kind IN ('retryable','stale','superseded','abandoned')
+                             OR CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN json_extract(event.document, '$.failure') END IS NOT NULL
+                        THEN 'safety'
+                        WHEN CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN json_extract(event.document, '$.origin') END='human' THEN 'review'
+                        WHEN CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN json_extract(event.document, '$.origin') END='automatic_policy' THEN 'metadata'
+                        ELSE 'unknown' END,
+                   {scalar["title"]}, NULL, 'field_effect', NULL, event.plan_id, event.sequence, effect.decision_id, NULL, NULL,
+                   CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN 1 ELSE 0 END, 0, 0
+              FROM field_effect_events event
+              JOIN field_effects effect ON effect.plan_id=event.plan_id
+         LEFT JOIN human_decisions human ON human.decision_id=effect.decision_id
+         LEFT JOIN review_cases human_review ON human_review.review_case_id=human.review_case_id
+         LEFT JOIN automatic_decisions automatic ON automatic.decision_id=effect.decision_id
+         LEFT JOIN review_cases automatic_review ON automatic_review.review_case_id=automatic.review_case_id
+         LEFT JOIN cover_selection_authorities cover_selection ON cover_selection.decision_id=effect.decision_id AND cover_selection.kind='automatic'
+         LEFT JOIN cover_considerations cover_consideration ON cover_consideration.consideration_id=cover_selection.consideration_id
+         LEFT JOIN review_cases cover_review ON cover_review.review_case_id=cover_consideration.review_case_id
+         LEFT JOIN description_decisions description_decision ON description_decision.decision_id=effect.decision_id
+         LEFT JOIN review_cases description_review ON description_review.review_case_id=description_decision.review_case_id
+         LEFT JOIN metadata_reports report ON report.report_id=COALESCE(human_review.report_id,automatic_review.report_id,cover_review.report_id,description_review.report_id){scope("field_effect", "event.plan_id", "WHERE")}"""
+
+
+def _human_decision_arm(scope: _ActivityArmScope, scalar: dict[str, str]) -> str:
+    """Every recorded owner decision."""
+    return f"""
+            SELECT event.event_id, {scalar["connection"]}, event.destination,
+                   {scalar["library"]}, event.occurred_at, 'human', review.report_id,
+                   decision.outcome, {scalar["work_id"]}, event.document, 'review', {scalar["title"]}, NULL, 'human_decision', decision.document, event.review_case_id, NULL, event.decision_id, NULL, NULL,
+                   CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN 1 ELSE 0 END, 0, 0
+              FROM human_decision_events event
+              JOIN human_decisions decision ON decision.decision_id=event.decision_id
+              JOIN review_cases review ON review.review_case_id=event.review_case_id
+              JOIN metadata_reports report ON report.report_id=review.report_id{scope("human_decision", "event.event_id", "WHERE")}"""
+
+
+def _automatic_decision_arm(scope: _ActivityArmScope, scalar: dict[str, str]) -> str:
+    """Every recorded automatic policy decision."""
+    return f"""
+            SELECT decision.decision_id, {scalar["connection"]}, decision.destination,
+                   {scalar["library"]}, decision.occurred_at, 'automatic_policy', review.report_id,
+                   'recorded', {scalar["work_id"]}, decision.document, 'metadata', {scalar["title"]}, NULL, 'automatic_decision', NULL, decision.review_case_id, NULL, decision.decision_id, NULL, NULL,
+                   CASE WHEN typeof(decision.document)='text' AND length(CAST(decision.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(decision.document) THEN 1 ELSE 0 END, 1, 1
+              FROM automatic_decisions decision
+              JOIN review_cases review ON review.review_case_id=decision.review_case_id
+              JOIN metadata_reports report ON report.report_id=review.report_id{scope("automatic_decision", "decision.decision_id", "WHERE")}"""
+
+
+def _description_preparation_arm(
+    scope: _ActivityArmScope, scalar: dict[str, str]
+) -> str:
+    """Every description adviser attempt."""
+    return f"""
+            SELECT attempt.attempt_id, json_extract(report.document,'$.target.connection'), 'description',
+                   json_extract(report.document,'$.target.library'), attempt.updated_at, 'adviser', review.report_id,
+                   attempt.state, json_extract(report.document,'$.target.item'),
+                   json_object('attempt_id',attempt.attempt_id,'engine',attempt.engine,'model',attempt.model,'state',attempt.state,'failure',attempt.failure,'updated_at',attempt.updated_at),
+                   'metadata', json_extract(report.document,'$.target.fields[0].value'), NULL,
+                   'description_preparation', candidate.document, review.review_case_id, NULL, attempt.attempt_id, NULL, NULL, 1, 0, candidate.candidate_id
+              FROM description_advice_attempts attempt
+              JOIN review_cases review ON review.review_case_id=json_extract(attempt.binding_document,'$.review_case_id')
+              JOIN metadata_reports report ON report.report_id=review.report_id
+              LEFT JOIN description_advice_candidates candidate ON candidate.attempt_id=attempt.attempt_id{scope("description_preparation", "attempt.attempt_id", "WHERE")}"""
+
+
+def _description_decision_arm(scope: _ActivityArmScope, scalar: dict[str, str]) -> str:
+    """Every authored description decision."""
+    return f"""
+            SELECT decision.decision_id, json_extract(report.document,'$.target.connection'), 'description',
+                   json_extract(report.document,'$.target.library'), json_extract(decision.document,'$.occurred_at'), json_extract(decision.document,'$.origin'), review.report_id,
+                   'recorded', json_extract(report.document,'$.target.item'), decision.document,
+                   CASE json_extract(decision.document,'$.origin') WHEN 'human' THEN 'review' ELSE 'metadata' END,
+                   json_extract(report.document,'$.target.fields[0].value'), NULL, 'description_decision', candidate.document, decision.review_case_id, NULL, decision.decision_id, NULL, NULL,
+                   CASE WHEN length(CAST(decision.document AS BLOB)) BETWEEN 2 AND 16384 AND json_valid(decision.document) THEN 1 ELSE 0 END, 0, 0
+              FROM description_decisions decision
+              JOIN description_advice_candidates candidate ON candidate.candidate_id=decision.candidate_id
+              JOIN review_cases review ON review.review_case_id=decision.review_case_id
+              JOIN metadata_reports report ON report.report_id=review.report_id{scope("description_decision", "decision.decision_id", "WHERE")}"""
+
+
+def _cover_selection_arm(scope: _ActivityArmScope, scalar: dict[str, str]) -> str:
+    """Every automatic cover selection, as an automatic decision."""
+    return f"""
+            SELECT selection.decision_id, selection.connection_name, 'cover',
+                   selection.library_name, selection.occurred_at, 'automatic_policy', review.report_id,
+                   'recorded', selection.item_id, json_extract(selection.document,'$.decision_document'), 'metadata', {scalar["title"]}, NULL, 'automatic_decision', NULL, review.review_case_id, NULL, selection.decision_id, NULL, NULL,
+                   CASE WHEN typeof(selection.document)='text' AND length(CAST(selection.document AS BLOB)) BETWEEN 2 AND 131072 AND json_valid(selection.document) AND json_valid(json_extract(selection.document,'$.decision_document')) THEN 1 ELSE 0 END, 0, 0
+              FROM cover_selection_authorities selection
+              JOIN cover_considerations consideration ON consideration.consideration_id=selection.consideration_id
+              JOIN review_cases review ON review.review_case_id=consideration.review_case_id
+         LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id
+             WHERE selection.kind='automatic'{scope("automatic_decision", "selection.decision_id", "AND")}"""
+
+
+def _field_effect_no_change_arm(
+    scope: _ActivityArmScope, scalar: dict[str, str]
+) -> str:
+    """Every decision that needed no write."""
+    return f"""
+            SELECT no_change.event_id, no_change.connection_name, no_change.destination,
+                   no_change.library_name, no_change.occurred_at, no_change.origin,
+                   no_change.report_id, 'no_change_required', no_change.work_id, '{{}}',
+                   'metadata', {scalar["title"]},
+                   NULL, 'field_effect_no_change', NULL, no_change.review_case_id,
+                   NULL, no_change.decision_id, NULL, NULL, 1, 0, 0
+              FROM field_effect_no_changes no_change
+              JOIN metadata_reports report ON report.report_id=no_change.report_id{scope("field_effect_no_change", "no_change.event_id", "WHERE")}"""
+
+
+def _cover_safeguard_arm(scope: _ActivityArmScope, scalar: dict[str, str]) -> str:
+    """Every cover consideration event an automatic selection does not own."""
+    return f"""
+            SELECT event.event_id, {scalar["connection"]}, 'cover', {scalar["library"]},
+                   event.occurred_at, CASE event.kind WHEN 'automatic_prepared' THEN 'automatic_pipeline' WHEN 'owner_retry_prepared' THEN 'owner_retry' WHEN 'selected' THEN 'human' WHEN 'kept_incumbent' THEN 'human' WHEN 'no_action' THEN 'human' ELSE 'unknown' END, review.report_id,
+                   CASE WHEN event.kind IN ('automatic_prepared','owner_retry_prepared') THEN json_extract(consideration.document, '$.reviewer_status') ELSE event.kind END, {scalar["work_id"]},
+                   event.document,
+                   CASE WHEN event.kind IN ('stale','superseded') THEN 'safety' WHEN event.kind='automatic_prepared' THEN 'metadata' WHEN event.kind IN ('owner_retry_prepared','selected','kept_incumbent','no_action') THEN 'review' ELSE 'unknown' END,
+                   {scalar["title"]}, NULL, 'cover_safeguard', CASE WHEN json_extract(consideration.document, '$.reviewer_status') IN ('completed','unavailable','failed') THEN json_object('reviewer_status', json_extract(consideration.document, '$.reviewer_status')) ELSE '{{}}' END, event.review_case_id, NULL, event.consideration_id, NULL, NULL,
+                   CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) AND typeof(consideration.document)='text' AND length(CAST(consideration.document AS BLOB)) BETWEEN 2 AND 12582912 AND json_valid(consideration.document) AND report.report_id=review.report_id AND report.document_digest=json_extract(consideration.document,'$.report_document_digest') THEN 1 ELSE 0 END, 0, 0
+              FROM cover_consideration_events event
+              JOIN cover_considerations consideration ON consideration.consideration_id=event.consideration_id
+              JOIN review_cases review ON review.review_case_id=event.review_case_id
+         LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id
+             WHERE (event.kind<>'selected' OR NOT EXISTS (
+                   SELECT 1 FROM cover_selection_authorities selection
+                    WHERE selection.decision_id=event.decision_id
+                      AND selection.kind='automatic')){scope("cover_safeguard", "event.event_id", "AND")}"""
+
+
+def _policy_transition_arm(scope: _ActivityArmScope, scalar: dict[str, str]) -> str:
+    """Every library policy transition."""
+    return f"""
+            SELECT transition.transition_id, NULL, 'policy', 'Library policy', transition.updated_at,
+                   'policy', NULL, transition.state, 'Library policy', '{{}}', 'policy',
+                   'Library policy', 'Policy generation ' || transition.generation, 'policy_transition', NULL, NULL, NULL, NULL, transition.from_policy_id, transition.to_policy_id, 1, 0, 0
+              FROM metadata_policy_transitions transition{scope("policy_transition", "transition.transition_id", "WHERE")}"""
+
+
+def _isbn_refusal_arm(scoped: bool, title: str) -> str:
+    """Every ISBN the policy refused, one row per outcome set."""
+    # Concatenation reads a BLOB identifier as text, so a BLOB row stays
+    # in the arm and the candidate predicate decides it.
+    isbn_scope = (
+        ""
+        if not scoped
+        else " AND (outcome.outcome_set_id IN (SELECT substr(identity,1,"
+        "length(identity)-5) FROM requested WHERE kind='isbn_refusal' AND "
+        "substr(identity,-5)=':isbn') OR outcome.outcome_set_id>=x'')"
+    )
+    return f"""
+            SELECT outcome.outcome_set_id || ':isbn', report.connection_name, 'isbn',
+                   report.library_name, outcome.evaluated_at, 'automatic_policy', outcome.report_id,
+                   'unchanged', report.item_id, outcome.document, 'metadata',
+                   {title},
+                   NULL, 'isbn_refusal', NULL, outcome.review_case_id, NULL,
+                   outcome.outcome_set_id, NULL, NULL, 1, 0, outcome.outcome_set_id
+              FROM shadow_decision_outcomes outcome
+              JOIN metadata_reports report ON report.report_id=outcome.report_id
+              JOIN json_each(CASE WHEN json_valid(outcome.document) THEN outcome.document ELSE '{{}}' END, '$.outcomes') field
+             WHERE json_extract(field.value, '$.destination')='isbn'
+               AND json_extract(field.value, '$.reason_code') IN (
+                   'source_value_absent','source_unavailable','source_value_malformed_or_incomplete',
+                   'source_values_conflict','source_value_insufficient_association'){isbn_scope}"""
+
+
+_ACTIVITY_ARMS: tuple[Callable[[_ActivityArmScope, dict[str, str]], str], ...] = (
+    _field_effect_arm,
+    _human_decision_arm,
+    _automatic_decision_arm,
+    _description_preparation_arm,
+    _description_decision_arm,
+    _cover_selection_arm,
+    _field_effect_no_change_arm,
+    _cover_safeguard_arm,
+    _policy_transition_arm,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -2444,7 +2990,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         This substantial single-caller extraction is intentional: it gives the
         cursor search a directly testable memory-safety and type-validation
         boundary, so immutable report, policy, and authority maps cannot grow
-        beyond the batch that names them.
+        beyond the batch that names them. Each source kind's own checks and
+        record live in its ``_project_<source>`` builder below.
         """
         # Search hands this boundary 64 rows; the established no-search page
         # still has a 100-row public maximum and invokes it once.
@@ -2462,6 +3009,49 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         except FieldEffectError as error:
             raise FieldEffectError("persistence") from error
         dependency_limit = 64 if searched else 100
+        report_documents, reports = self._activity_reports(
+            rows, dependency_limit, document_limit
+        )
+        policy_profiles = self._activity_policy_profiles(rows, dependency_limit)
+        automatic_decisions = _activity_automatic_decisions(rows, document_limit)
+        dependencies = _ActivityDependencies(
+            report_documents=report_documents,
+            reports=reports,
+            policy_profiles=policy_profiles,
+            automatic_decisions=automatic_decisions,
+            automatic_authority=self._activity_automatic_authority(
+                automatic_decisions, dependency_limit, document_limit
+            ),
+            authored_records=self._activity_authored_records(rows),
+            replaced=self._activity_replaced_values(rows),
+        )
+        builders: dict[
+            str,
+            Callable[[_ActivityRow, _ActivityDependencies], dict[str, object]],
+        ] = {
+            "field_effect": self._project_field_effect,
+            "field_effect_no_change": self._project_field_effect_no_change,
+            "human_decision": self._project_human_decision,
+            "description_decision": self._project_description_decision,
+            "description_preparation": self._project_description_preparation,
+            "automatic_decision": self._project_automatic_decision,
+            "isbn_refusal": self._project_isbn_refusal,
+            "cover_safeguard": self._project_cover_safeguard,
+            "policy_transition": self._project_policy_transition,
+        }
+        projected_events: list[dict[str, object]] = []
+        for values in rows:
+            row = _activity_row(values, document_limit)
+            projected_events.append(builders[row.source_kind](row, dependencies))
+        return projected_events, report_documents, reports
+
+    def _activity_reports(
+        self,
+        rows: list[tuple[Any, ...]],
+        dependency_limit: int,
+        document_limit: int,
+    ) -> tuple[dict[str, str], dict[str, MetadataReport]]:
+        """Read and validate every report the batch joins, and nothing else."""
         report_ids = sorted({row[6] for row in rows if row[6] is not None})
         report_rows = (
             []
@@ -2497,6 +3087,12 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         # a bounded poll proportional to unrelated history.
         if set(report_documents) != set(report_ids):
             raise FieldEffectError("persistence")
+        return report_documents, reports
+
+    def _activity_policy_profiles(
+        self, rows: list[tuple[Any, ...]], dependency_limit: int
+    ) -> dict[str, MetadataPolicyProfile]:
+        """Read the immutable policy profiles the batch's transitions name."""
         # A Policy row's exact From/To comes from the two immutable
         # profiles its own transition names, not from whatever policy is
         # active now. At most two per row on a closed page, each capped at
@@ -2526,33 +3122,18 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 raise FieldEffectError("persistence") from error
             if set(policy_profiles) != set(policy_ids):
                 raise FieldEffectError("persistence")
-        # An automatic Activity row needs the value the policy selected,
-        # not only the policy's name. Reconstruct it from the immutable
-        # authority documents the decision names. Several decisions can
-        # share one review aggregate, so retrieve and parse each aggregate
-        # once rather than duplicating its bounded private documents for
-        # every field on the page.
-        automatic_decisions: dict[str, AutomaticDecision | CoverAutomaticDecision] = {}
-        try:
-            for row in rows:
-                if row[13] != "automatic_decision":
-                    continue
-                document = row[9]
-                if (
-                    row[20] != 1
-                    or type(document) is not str
-                    or not 2 <= len(document.encode("utf-8")) <= document_limit
-                ):
-                    raise FieldEffectError("persistence")
-                automatic_decision = parse_automatic_authority(document)
-                if (
-                    automatic_decision.decision_id != row[17]
-                    or automatic_decision.decision_id in automatic_decisions
-                ):
-                    raise FieldEffectError("persistence")
-                automatic_decisions[automatic_decision.decision_id] = automatic_decision
-        except (AutomaticDecisionError, TypeError, ValueError) as error:
-            raise FieldEffectError("persistence") from error
+        return policy_profiles
+
+    def _activity_automatic_authority(
+        self,
+        automatic_decisions: dict[str, AutomaticDecision | CoverAutomaticDecision],
+        dependency_limit: int,
+        document_limit: int,
+    ) -> dict[
+        tuple[str, str, str, str, int],
+        tuple[ReviewCase, ProposalSet, ShadowOutcomeSet],
+    ]:
+        """Read each review aggregate the batch's automatic decisions name once."""
         automatic_identities = sorted(
             {
                 (
@@ -2655,6 +3236,12 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             # the page and let the per-event projection below emit the
             # bounded degraded row; do not turn it into a whole-ledger
             # storage failure (#786).
+        return automatic_authority
+
+    def _activity_authored_records(
+        self, rows: list[tuple[Any, ...]]
+    ) -> dict[str, tuple[AuthoredDescriptionDecision, DescriptionAdviceCandidate]]:
+        """Read the authored description decisions the batch names."""
         authored_ids = sorted({row[17] for row in rows if type(row[17]) is str})
         authored_records: dict[
             str, tuple[AuthoredDescriptionDecision, DescriptionAdviceCandidate]
@@ -2671,9 +3258,15 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 if candidate.candidate_id != authored.candidate_id:
                     raise FieldEffectError("persistence")
                 authored_records[authored.decision_id] = authored, candidate
-        # What each owner decision's own first plan replaced: an earlier write
-        # on the same case can leave it different from the pinned report, and
-        # the decision's row names the same value its Verified row does (#1286).
+        return authored_records
+
+    def _activity_replaced_values(
+        self, rows: list[tuple[Any, ...]]
+    ) -> dict[str, object]:
+        """Return what each owner decision's own first plan replaced."""
+        # An earlier write on the same case can leave it different from the
+        # pinned report, and the decision's row names the same value its
+        # Verified row does (#1286).
         human_ids = sorted(
             {
                 row[17]
@@ -2692,671 +3285,533 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 replaced[decision_id] = FieldEffectOperation.from_json(
                     effect_document
                 ).plan.pre_value
-        projected_events: list[dict[str, object]] = []
-        decision: (
-            HumanDecision
-            | AutomaticDecision
-            | CoverAutomaticDecision
-            | AuthoredDescriptionDecision
-        )
-        for (
-            event_id,
-            connection,
-            destination,
-            library,
-            occurred_at,
-            origin,
-            report_id,
-            state,
-            work_id,
-            document,
-            projected_type,
-            title,
-            detail,
-            source_kind,
-            source_document,
-            source_parent_id,
-            source_sequence,
-            source_identity,
-            policy_from,
-            policy_to,
-            source_valid,
-        ) in rows:
-            if (
-                source_valid != 1
-                or type(document) is not str
-                or not 2 <= len(document.encode("utf-8")) <= document_limit
-            ):
-                raise FieldEffectError("persistence")
-            raw = json.loads(document)
-            if type(raw) is not dict:
-                raise FieldEffectError("persistence")
+        return replaced
 
-            def scalar(
-                value: object, maximum: int = 512, *, nullable: bool = False
-            ) -> str | None:
-                if value is None and nullable:
-                    return None
-                if type(value) is not str or not value or len(value) > maximum:
-                    raise FieldEffectError("persistence")
-                return value
-
-            event_id = scalar(event_id, 128)
-            scalar(connection, nullable=True)
-            destination = scalar(destination)
-            library = scalar(library)
-            origin = scalar(origin)
-            state = scalar(state)
-            work_id = scalar(work_id)
-            projected_type = scalar(projected_type, 32)
-            if projected_type not in {
-                "review",
-                "policy",
-                "metadata",
-                "safety",
-                "unknown",
-            }:
-                raise FieldEffectError("persistence")
-            source_kind = scalar(source_kind)
-            if source_kind not in {
-                "field_effect",
-                "field_effect_no_change",
-                "human_decision",
-                "description_decision",
-                "description_preparation",
-                "automatic_decision",
-                "isbn_refusal",
-                "cover_safeguard",
-                "policy_transition",
-            }:
-                raise FieldEffectError("persistence")
-            change_id = source_parent_id if source_kind == "field_effect" else event_id
-            if type(change_id) is not str or not change_id or len(change_id) > 128:
-                raise FieldEffectError("persistence")
-            if source_document is not None and (
-                type(source_document) is not str
-                or not 2 <= len(source_document.encode("utf-8")) <= document_limit
-            ):
-                raise FieldEffectError("persistence")
-            try:
-                if source_kind == "field_effect":
-                    event_keys = {
-                        "attempt",
-                        "decision_id",
-                        "desired_value",
-                        "destination",
-                        "event_id",
-                        "failure",
-                        "kind",
-                        "occurred_at",
-                        "origin",
-                        "plan_id",
-                        "pre_value",
-                        "schema_version",
-                        "sequence",
-                        "state",
-                    }
-                    paired_event = (
-                        raw.get("schema_version")
-                        == "field-effect-title-subtitle-event-v1"
-                    )
-                    if paired_event:
-                        event_keys.add("subtitle_companion")
-                        operation_row = self._connection.execute(
-                            "SELECT document FROM field_effects WHERE plan_id=?",
-                            (source_parent_id,),
-                        ).fetchone()
-                        operation = (
-                            None
-                            if operation_row is None
-                            else FieldEffectOperation.from_json(operation_row[0])
-                        )
-                        if (
-                            operation is None
-                            or operation.plan.subtitle_companion is None
-                            or raw.get("subtitle_companion")
-                            != operation.plan.subtitle_companion.to_data()
-                        ):
-                            raise FieldEffectError("persistence")
-                    if (
-                        set(raw) != event_keys
-                        or raw.get("schema_version")
-                        != (
-                            "field-effect-title-subtitle-event-v1"
-                            if paired_event
-                            else FIELD_EFFECT_EVENT_SCHEMA
-                        )
-                        or raw.get("event_id") != event_id
-                        or raw.get("plan_id") != source_parent_id
-                        or raw.get("decision_id") != source_identity
-                        or raw.get("sequence") != source_sequence
-                        or type(raw.get("sequence")) is not int
-                        or raw["sequence"] < 1
-                        or type(raw.get("attempt")) is not int
-                        or not 0 <= raw["attempt"] <= 3
-                        or raw.get("failure") not in FIELD_EFFECT_FAILURES
-                        or raw.get("destination") != destination
-                        or raw.get("kind") != state
-                        or raw.get("state") != state
-                        or raw.get("occurred_at") != occurred_at
-                        or raw.get("origin") != origin
-                        or canonical_effect_json(raw) != document
-                        or event_id
-                        != "effect_event_"
-                        + hashlib.sha256(
-                            canonical_effect_json(
-                                {
-                                    key: value
-                                    for key, value in raw.items()
-                                    if key != "event_id"
-                                }
-                            ).encode()
-                        ).hexdigest()
-                    ):
-                        raise FieldEffectError("persistence")
-                elif source_kind == "field_effect_no_change":
-                    if raw or document != "{}" or source_document is not None:
-                        raise FieldEffectError("persistence")
-                    record = FieldEffectNoChange.create(
-                        decision_id=source_identity,
-                        review_case_id=source_parent_id,
-                        # scalar() without nullable=True raises rather than
-                        # returning None, so these are always str here.
-                        report_id=report_id,
-                        connection=connection,
-                        library=cast(str, library),
-                        work_id=cast(str, work_id),
-                        destination=cast(str, destination),
-                        target_fingerprint=self._connection.execute(
-                            "SELECT target_fingerprint FROM field_effect_no_changes WHERE decision_id=?",
-                            (source_identity,),
-                        ).fetchone()[0],
-                        target_version=self._connection.execute(
-                            "SELECT target_version FROM field_effect_no_changes WHERE decision_id=?",
-                            (source_identity,),
-                        ).fetchone()[0],
-                        occurred_at=occurred_at,
-                        origin=cast("Literal['human', 'automatic_policy']", origin),
-                    )
-                    if (
-                        state != "no_change_required"
-                        or origin != record.origin
-                        or event_id != record.event_id
-                    ):
-                        raise FieldEffectError("persistence")
-                elif source_kind == "description_preparation":
-                    if (
-                        set(raw)
-                        != {
-                            "attempt_id",
-                            "engine",
-                            "model",
-                            "state",
-                            "failure",
-                            "updated_at",
-                        }
-                        or raw["attempt_id"] != event_id
-                        or raw["state"] != state
-                        or raw["updated_at"] != occurred_at
-                        or raw["engine"] not in {"codex", "openrouter"}
-                        or state
-                        not in {
-                            "requested",
-                            "running",
-                            "succeeded",
-                            "failed",
-                            "interrupted",
-                        }
-                        or raw["failure"]
-                        not in {None, "unavailable", "invalid_output", "interrupted"}
-                        or destination != "description"
-                        or origin != "adviser"
-                    ):
-                        raise FieldEffectError("persistence")
-                    scalar(raw["model"], 256)
-                    if source_document is not None:
-                        candidate = DescriptionAdviceCandidate.from_json(
-                            source_document
-                        )
-                        if (
-                            candidate.attempt_id != event_id
-                            or candidate.engine != raw["engine"]
-                            or candidate.model != raw["model"]
-                        ):
-                            raise FieldEffectError("persistence")
-                elif source_kind == "description_decision":
-                    authored_record = authored_records.get(source_identity)
-                    if authored_record is None:
-                        raise FieldEffectError("persistence")
-                    authored, candidate = authored_record
-                    if (
-                        authored.to_json() != document
-                        or authored.decision_id != event_id
-                        or authored.review_case_id != source_parent_id
-                        or authored.report_id != report_id
-                        or authored.origin != origin
-                        or authored.occurred_at != occurred_at
-                        or destination != "description"
-                        or state != "recorded"
-                        or candidate.to_json() != source_document
-                    ):
-                        raise FieldEffectError("persistence")
-                elif source_kind == "human_decision":
-                    if source_document is None:
-                        raise FieldEffectError("persistence")
-                    decision = HumanDecision.from_json(source_document)
-                    event_keys = {
-                        "actor",
-                        "decision_id",
-                        "destination",
-                        "event_id",
-                        "kind",
-                        "occurred_at",
-                        "outcome",
-                        "review_case_id",
-                        "schema_version",
-                    }
-                    if (
-                        set(raw) != event_keys
-                        or raw.get("schema_version") != HUMAN_DECISION_EVENT_SCHEMA
-                        or raw.get("kind") != "human_decision_recorded"
-                        or raw.get("event_id") != event_id
-                        or raw.get("decision_id") != decision.decision_id
-                        or raw.get("decision_id") != source_identity
-                        or raw.get("destination") != destination
-                        or raw.get("actor") != decision.actor
-                        or raw.get("outcome") != state
-                        or raw.get("outcome") != decision.outcome
-                        or raw.get("occurred_at") != occurred_at
-                        or raw.get("occurred_at") != decision.occurred_at
-                        or raw.get("review_case_id") != decision.review_case_id
-                        or raw.get("review_case_id") != source_parent_id
-                        or decision.destination != destination
-                        or decision.to_json() != source_document
-                        or _canonical_json(raw) != document
-                        or event_id
-                        != "human_decision_event_"
-                        + hashlib.sha256(
-                            (
-                                HUMAN_DECISION_EVENT_SCHEMA + ":" + decision.decision_id
-                            ).encode("utf-8")
-                        ).hexdigest()
-                    ):
-                        raise FieldEffectError("persistence")
-                elif source_kind == "automatic_decision":
-                    projected_automatic = automatic_decisions.get(
-                        cast(str, source_identity)
-                    )
-                    if (
-                        projected_automatic is None
-                        or projected_automatic.decision_id != event_id
-                        or projected_automatic.decision_id != source_identity
-                        or projected_automatic.destination != destination
-                        or projected_automatic.occurred_at != occurred_at
-                        or origin != "automatic_policy"
-                        or projected_automatic.review_case_id != source_parent_id
-                        or projected_automatic.report_id != report_id
-                        or projected_automatic.to_json() != document
-                    ):
-                        raise FieldEffectError("persistence")
-                elif source_kind == "isbn_refusal":
-                    outcome_row = self._connection.execute(
-                        "SELECT outcome_set_id,review_case_id,report_id,proposal_set_id,"
-                        "resolved_policy_id,source_decision_set_id,evaluated_at,document "
-                        "FROM shadow_decision_outcomes WHERE outcome_set_id=?",
-                        (source_identity,),
-                    ).fetchone()
-                    if outcome_row is None:
-                        raise FieldEffectError("persistence")
-                    checked_document, checked_at = self._validate_shadow_outcome_row(
-                        outcome_row
-                    )
-                    outcome = (self._reused_outcome or ShadowOutcomeSet.from_json)(
-                        checked_document
-                    )
-                    isbn = next(
-                        (
-                            field
-                            for field in outcome.outcomes
-                            if field.destination == "isbn"
-                        ),
-                        None,
-                    )
-                    if (
-                        checked_document != document
-                        or checked_at != occurred_at
-                        or event_id != outcome.outcome_set_id + ":isbn"
-                        or outcome.review_case_id != source_parent_id
-                        or outcome.report_id != report_id
-                        or destination != "isbn"
-                        or state != "unchanged"
-                        or origin != "automatic_policy"
-                        or projected_type != "metadata"
-                        or isbn is None
-                        or isbn.candidate_id is not None
-                        or isbn.reason_code not in ISBN_REFUSAL_REASONS
-                    ):
-                        raise FieldEffectError("persistence")
-                elif source_kind == "cover_safeguard":
-                    if source_document is None:
-                        raise FieldEffectError("persistence")
-                    consideration = json.loads(source_document)
-                    if type(consideration) is not dict:
-                        raise FieldEffectError("persistence")
-                    reviewer_status = consideration.get("reviewer_status")
-                    event_keys = {
-                        "consideration_id",
-                        "decision_id",
-                        "kind",
-                        "occurred_at",
-                        "review_case_id",
-                        "schema_version",
-                    }
-                    if (
-                        set(raw) != event_keys
-                        or raw.get("schema_version") != "cover-consideration-event-v1"
-                        or raw.get("consideration_id") != source_identity
-                        or raw.get("kind")
-                        not in {
-                            "automatic_prepared",
-                            "owner_retry_prepared",
-                            "superseded",
-                            "selected",
-                            "kept_incumbent",
-                            "no_action",
-                            "stale",
-                        }
-                        or (
-                            raw.get("kind")
-                            in {"automatic_prepared", "owner_retry_prepared"}
-                            and reviewer_status
-                            not in {"completed", "unavailable", "failed"}
-                        )
-                        or state
-                        != (
-                            reviewer_status
-                            if raw.get("kind")
-                            in {"automatic_prepared", "owner_retry_prepared"}
-                            else raw.get("kind")
-                        )
-                        or (
-                            raw.get("kind") == "automatic_prepared"
-                            and (origin, projected_type)
-                            != ("automatic_pipeline", "metadata")
-                        )
-                        or (
-                            raw.get("kind") == "owner_retry_prepared"
-                            and (origin, projected_type) != ("owner_retry", "review")
-                        )
-                        or (
-                            raw.get("kind")
-                            in {"selected", "kept_incumbent", "no_action"}
-                            and (origin, projected_type) != ("human", "review")
-                        )
-                        or (
-                            raw.get("kind") in {"stale", "superseded"}
-                            and (origin, projected_type) != ("unknown", "safety")
-                        )
-                        or raw.get("occurred_at") != occurred_at
-                        or raw.get("review_case_id") != source_parent_id
-                        or _canonical_json(raw) != document
-                        or event_id
-                        != "cover_consideration_event_"
-                        + hashlib.sha256(document.encode("utf-8")).hexdigest()
-                    ):
-                        raise FieldEffectError("persistence")
-                elif raw or document != "{}" or source_document is not None:
-                    raise FieldEffectError("persistence")
-            except (
-                AutomaticDecisionError,
-                HumanDecisionError,
-                TypeError,
-                ValueError,
-            ) as error:
-                raise FieldEffectError("persistence") from error
-            event_title = scalar(title, nullable=True)
-            failure = scalar(raw.get("failure"), nullable=True)
-            if report_id is not None:
-                scalar(report_id)
-            if source_kind == "field_effect" and report_id is None:
-                # An older field-effect event may not have a persisted
-                # decision-to-report lineage. Keep that canonical event
-                # value-free rather than substituting a later current report.
-                connection = None
-            # Every fact below leaves this loop from the document that
-            # was just checked against its own identity above, or, for an
-            # owner decision that chose a value, from that decision's own
-            # first plan (the value its write replaced), so an Activity row
-            # is a function of immutable records -- a later catalogue
-            # change cannot move it.
-            # The owner-facing words are composed one layer out, where the
-            # pinned report is already parsed; ``record`` is the closed
-            # private carrier the application consumes and removes, the
-            # same way ``connection`` and ``report_id`` are consumed there.
-            durable: dict[str, object] = {"source_kind": source_kind}
-            if source_kind == "description_preparation":
-                durable.update(advised=True, engine=raw["engine"], model=raw["model"])
-            if source_identity in authored_records:
-                authored, candidate = authored_records[source_identity]
-                durable["advised"] = True
-                durable["engine"] = candidate.engine
-                durable["model"] = candidate.model
-                durable["target_fingerprint"] = authored.target_fingerprint
-                if source_kind == "description_decision":
-                    durable["selected_value"] = {
-                        "kind": "text",
-                        "value": candidate.output.description,
-                    }
-            if source_kind == "field_effect":
-                durable["pre_value"] = raw["pre_value"]
-                durable["desired_value"] = raw["desired_value"]
-                if "subtitle_companion" in raw:
-                    durable["subtitle_companion"] = raw["subtitle_companion"]
-                if raw["kind"] == "stale" and failure == "connection":
-                    # The decision's connection stales up to this one, from
-                    # its immutable ledger: earlier seconds, or earlier in this
-                    # plan, so a row never counts a later event (#1402).
-                    durable["connection_stales"] = self._connection.execute(
-                        "SELECT count(*) FROM field_effect_events event "
-                        "JOIN field_effects effect ON effect.plan_id=event.plan_id "
-                        "WHERE effect.decision_id=? AND event.kind='stale' AND "
-                        "json_extract(event.document,'$.failure')='connection' AND "
-                        "(event.occurred_at<? OR (event.plan_id=? AND event.sequence<=?))",
-                        (
-                            raw["decision_id"],
-                            raw["occurred_at"],
-                            source_parent_id,
-                            source_sequence,
-                        ),
-                    ).fetchone()[0]
-                if raw["kind"] == "superseded":
-                    # A withdrawn plan sent nothing when no attempt of it ever
-                    # reached the applying step before this event (#1402).
-                    durable["unsent"] = (
-                        self._connection.execute(
-                            "SELECT 1 FROM field_effect_events WHERE plan_id=? "
-                            "AND kind='applying' AND sequence<? LIMIT 1",
-                            (source_parent_id, source_sequence),
-                        ).fetchone()
-                        is None
-                    )
-            elif source_kind == "human_decision":
-                if type(decision) is not HumanDecision:
-                    raise FieldEffectError("persistence")
-                durable["selected_value"] = decision.selected_value
-                durable["target_fingerprint"] = decision.target_fingerprint
-                # Only a decision that chose a new value names what its write
-                # replaced; a keep-current restore states the value it kept,
-                # not the one its corrective write overwrote (#1286).
-                if (
-                    decision.outcome in VALUE_OUTCOMES
-                    and decision.decision_id in replaced
-                ):
-                    durable["pre_value"] = replaced[decision.decision_id]
-            elif source_kind == "isbn_refusal":
-                if isbn is None:
-                    raise FieldEffectError("persistence")
-                durable["reason_code"] = isbn.reason_code
-                durable["target_fingerprint"] = outcome.target_fingerprint
-            elif source_kind == "automatic_decision":
-                if projected_automatic is None:
-                    raise FieldEffectError("persistence")
-                automatic_report_document = report_documents.get(
-                    projected_automatic.report_id
-                )
-                if automatic_report_document is None:
-                    raise FieldEffectError("persistence")
-                try:
-                    if type(projected_automatic) is CoverAutomaticDecision:
-                        cover_rows = self._connection.execute(
-                            "SELECT review.document,proposal.document,consideration.document,report.document,report.document_digest,consideration.document_digest,consideration.report_id "
-                            "FROM review_cases review JOIN proposal_sets proposal "
-                            "ON proposal.proposal_set_id=review.proposal_set_id "
-                            "JOIN current_cover_considerations current ON current.review_case_id=review.review_case_id "
-                            "JOIN cover_considerations consideration ON consideration.consideration_id=current.consideration_id "
-                            "LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id "
-                            "WHERE review.review_case_id=? AND consideration.consideration_id=?",
-                            (
-                                projected_automatic.review_case_id,
-                                projected_automatic.consideration_id,
-                            ),
-                        ).fetchone()
-                        if cover_rows is None:
-                            raise FieldEffectError("authority_binding")
-                        cover_case = (self._reused_case or ReviewCase.from_json)(
-                            cover_rows[0]
-                        )
-                        selected_value = _cover_automatic_decision_value(
-                            self._connection,
-                            projected_automatic,
-                            cover_case,
-                            reports[projected_automatic.report_id],
-                            cover_case.proposal_set
-                            if cover_rows[1] == cover_case.proposal_document
-                            else ProposalSet.from_json(cover_rows[1]),
-                            expand_cover_consideration(
-                                *cover_rows[2:], parse_report=self._reused_report
-                            ),
-                        )
-                    else:
-                        authority = automatic_authority.get(
-                            (
-                                projected_automatic.review_case_id,
-                                projected_automatic.report_id,
-                                projected_automatic.proposal_set_id,
-                                projected_automatic.resolved_policy_id,
-                                cast(
-                                    AutomaticDecision, projected_automatic
-                                ).policy_generation,
-                            )
-                        )
-                        if authority is None:
-                            raise FieldEffectError("authority_binding")
-                        case, proposal, outcome = authority
-                        report = reports[projected_automatic.report_id]
-                        if projected_automatic.outcome in {"candidate", "keep_current"}:
-                            selected_value = _automatic_decision_value(
-                                cast(AutomaticDecision, projected_automatic),
-                                case,
-                                report,
-                                proposal,
-                                outcome,
-                            )
-                        else:
-                            _validate_automatic_decision_authority(
-                                cast(AutomaticDecision, projected_automatic),
-                                case,
-                                report,
-                                proposal,
-                                outcome,
-                            )
-                            selected_value = None
-                except FieldEffectError as error:
-                    # A retained decision can outlive the exact authority
-                    # aggregate it names. That is an event-local inability
-                    # to disclose its selected value, not a reason to hide
-                    # unrelated audit truth. Only the closed authority
-                    # binding refusal degrades; corrupt persistence still
-                    # reaches the outer fail-closed boundary.
-                    if error.code != "authority_binding":
-                        raise
-                    durable["source_kind"] = "degraded"
-                    durable["degraded_reason"] = AUTOMATIC_AUTHORITY_UNAVAILABLE
-                    projected_events.append(
-                        {
-                            "change_id": change_id,
-                            "connection": connection,
-                            "destination": destination,
-                            "event_id": event_id,
-                            "event_type": projected_type,
-                            "failure": None,
-                            "library": library,
-                            "occurred_at": occurred_at,
-                            "origin": origin,
-                            "report_id": report_id,
-                            "state": state,
-                            "work_id": work_id,
-                            **({"work_label": event_title} if event_title else {}),
-                            "record": durable,
-                        }
-                    )
-                    continue
-                except (
-                    MetadataReportError,
-                    ReportValueError,
-                    ProposalValueError,
-                    RichMetadataPreviewError,
-                    ShadowOutcomeError,
-                    TypeError,
-                    ValueError,
-                ) as error:
-                    raise FieldEffectError("persistence") from error
-                durable["policy_category"] = projected_automatic.policy_category
-                durable["policy_option"] = projected_automatic.policy_option
-                durable["policy_generation"] = projected_automatic.policy_generation
-                durable["outcome"] = projected_automatic.outcome
-                durable["selected_value"] = selected_value
-                durable["target_fingerprint"] = projected_automatic.target_fingerprint
-            elif source_kind == "field_effect_no_change":
-                durable["target_fingerprint"] = self._connection.execute(
-                    "SELECT target_fingerprint FROM field_effect_no_changes WHERE decision_id=?",
-                    (source_identity,),
-                ).fetchone()[0]
-            elif source_kind == "cover_safeguard":
-                durable["kind"] = raw["kind"]
-            elif source_kind == "policy_transition":
-                durable["generation"] = scalar(detail)
-                durable["policy_changes"] = _policy_changes(
-                    policy_profiles, policy_from, policy_to
-                )
-            if failure is not None:
-                durable["failure"] = failure
-            if type(occurred_at) is not int or not 0 <= occurred_at <= 253_402_300_799:
-                raise FieldEffectError("persistence")
-            projected_events.append(
-                {
-                    "change_id": change_id,
-                    **(
-                        {"transition_id": change_id}
-                        if source_kind == "field_effect"
-                        else {}
-                    ),
-                    "connection": connection,
-                    "destination": destination,
-                    "event_id": event_id,
-                    "event_type": projected_type,
-                    "failure": failure,
-                    "library": library,
-                    "occurred_at": occurred_at,
-                    "origin": origin,
-                    "report_id": report_id,
-                    "state": state,
-                    "work_id": work_id,
-                    **({"work_label": event_title} if event_title else {}),
-                    "record": durable,
-                }
+    def _project_field_effect(
+        self, row: _ActivityRow, dependencies: _ActivityDependencies
+    ) -> dict[str, object]:
+        raw = row.raw
+        with _persisted_source_checks():
+            event_keys = {
+                "attempt",
+                "decision_id",
+                "desired_value",
+                "destination",
+                "event_id",
+                "failure",
+                "kind",
+                "occurred_at",
+                "origin",
+                "plan_id",
+                "pre_value",
+                "schema_version",
+                "sequence",
+                "state",
+            }
+            paired_event = (
+                raw.get("schema_version") == "field-effect-title-subtitle-event-v1"
             )
-        return projected_events, report_documents, reports
+            if paired_event:
+                event_keys.add("subtitle_companion")
+                operation_row = self._connection.execute(
+                    "SELECT document FROM field_effects WHERE plan_id=?",
+                    (row.source_parent_id,),
+                ).fetchone()
+                operation = (
+                    None
+                    if operation_row is None
+                    else FieldEffectOperation.from_json(operation_row[0])
+                )
+                if (
+                    operation is None
+                    or operation.plan.subtitle_companion is None
+                    or raw.get("subtitle_companion")
+                    != operation.plan.subtitle_companion.to_data()
+                ):
+                    raise FieldEffectError("persistence")
+            if (
+                set(raw) != event_keys
+                or raw.get("schema_version")
+                != (
+                    "field-effect-title-subtitle-event-v1"
+                    if paired_event
+                    else FIELD_EFFECT_EVENT_SCHEMA
+                )
+                or raw.get("event_id") != row.event_id
+                or raw.get("plan_id") != row.source_parent_id
+                or raw.get("decision_id") != row.source_identity
+                or raw.get("sequence") != row.source_sequence
+                or type(raw.get("sequence")) is not int
+                or raw["sequence"] < 1
+                or type(raw.get("attempt")) is not int
+                or not 0 <= raw["attempt"] <= 3
+                or raw.get("failure") not in FIELD_EFFECT_FAILURES
+                or raw.get("destination") != row.destination
+                or raw.get("kind") != row.state
+                or raw.get("state") != row.state
+                or raw.get("occurred_at") != row.occurred_at
+                or raw.get("origin") != row.origin
+                or canonical_effect_json(raw) != row.document
+                or row.event_id
+                != "effect_event_"
+                + hashlib.sha256(
+                    canonical_effect_json(
+                        {key: value for key, value in raw.items() if key != "event_id"}
+                    ).encode()
+                ).hexdigest()
+            ):
+                raise FieldEffectError("persistence")
+        durable = _shared_activity_record(row, dependencies.authored_records)
+        durable["pre_value"] = raw["pre_value"]
+        durable["desired_value"] = raw["desired_value"]
+        if "subtitle_companion" in raw:
+            durable["subtitle_companion"] = raw["subtitle_companion"]
+        if raw["kind"] == "stale" and row.failure == "connection":
+            # The decision's connection stales up to this one, from
+            # its immutable ledger: earlier seconds, or earlier in this
+            # plan, so a row never counts a later event (#1402).
+            durable["connection_stales"] = self._connection.execute(
+                "SELECT count(*) FROM field_effect_events event "
+                "JOIN field_effects effect ON effect.plan_id=event.plan_id "
+                "WHERE effect.decision_id=? AND event.kind='stale' AND "
+                "json_extract(event.document,'$.failure')='connection' AND "
+                "(event.occurred_at<? OR (event.plan_id=? AND event.sequence<=?))",
+                (
+                    raw["decision_id"],
+                    raw["occurred_at"],
+                    row.source_parent_id,
+                    row.source_sequence,
+                ),
+            ).fetchone()[0]
+        if raw["kind"] == "superseded":
+            # A withdrawn plan sent nothing when no attempt of it ever
+            # reached the applying step before this event (#1402).
+            durable["unsent"] = (
+                self._connection.execute(
+                    "SELECT 1 FROM field_effect_events WHERE plan_id=? "
+                    "AND kind='applying' AND sequence<? LIMIT 1",
+                    (row.source_parent_id, row.source_sequence),
+                ).fetchone()
+                is None
+            )
+        return _finished_activity_event(row, durable)
+
+    def _project_field_effect_no_change(
+        self, row: _ActivityRow, dependencies: _ActivityDependencies
+    ) -> dict[str, object]:
+        with _persisted_source_checks():
+            if row.raw or row.document != "{}" or row.source_document is not None:
+                raise FieldEffectError("persistence")
+            record = FieldEffectNoChange.create(
+                decision_id=row.source_identity,
+                review_case_id=row.source_parent_id,
+                # _activity_scalar() without nullable=True raises rather than
+                # returning None, so these are always str here.
+                report_id=row.report_id,
+                connection=row.connection,
+                library=cast(str, row.library),
+                work_id=cast(str, row.work_id),
+                destination=cast(str, row.destination),
+                target_fingerprint=self._connection.execute(
+                    "SELECT target_fingerprint FROM field_effect_no_changes WHERE decision_id=?",
+                    (row.source_identity,),
+                ).fetchone()[0],
+                target_version=self._connection.execute(
+                    "SELECT target_version FROM field_effect_no_changes WHERE decision_id=?",
+                    (row.source_identity,),
+                ).fetchone()[0],
+                occurred_at=row.occurred_at,
+                origin=cast("Literal['human', 'automatic_policy']", row.origin),
+            )
+            if (
+                row.state != "no_change_required"
+                or row.origin != record.origin
+                or row.event_id != record.event_id
+            ):
+                raise FieldEffectError("persistence")
+        durable = _shared_activity_record(row, dependencies.authored_records)
+        durable["target_fingerprint"] = self._connection.execute(
+            "SELECT target_fingerprint FROM field_effect_no_changes WHERE decision_id=?",
+            (row.source_identity,),
+        ).fetchone()[0]
+        return _finished_activity_event(row, durable)
+
+    def _project_description_preparation(
+        self, row: _ActivityRow, dependencies: _ActivityDependencies
+    ) -> dict[str, object]:
+        raw = row.raw
+        with _persisted_source_checks():
+            if (
+                set(raw)
+                != {
+                    "attempt_id",
+                    "engine",
+                    "model",
+                    "state",
+                    "failure",
+                    "updated_at",
+                }
+                or raw["attempt_id"] != row.event_id
+                or raw["state"] != row.state
+                or raw["updated_at"] != row.occurred_at
+                or raw["engine"] not in {"codex", "openrouter"}
+                or row.state
+                not in {
+                    "requested",
+                    "running",
+                    "succeeded",
+                    "failed",
+                    "interrupted",
+                }
+                or raw["failure"]
+                not in {None, "unavailable", "invalid_output", "interrupted"}
+                or row.destination != "description"
+                or row.origin != "adviser"
+            ):
+                raise FieldEffectError("persistence")
+            _activity_scalar(raw["model"], 256)
+            if row.source_document is not None:
+                candidate = DescriptionAdviceCandidate.from_json(row.source_document)
+                if (
+                    candidate.attempt_id != row.event_id
+                    or candidate.engine != raw["engine"]
+                    or candidate.model != raw["model"]
+                ):
+                    raise FieldEffectError("persistence")
+        return _finished_activity_event(
+            row, _shared_activity_record(row, dependencies.authored_records)
+        )
+
+    def _project_description_decision(
+        self, row: _ActivityRow, dependencies: _ActivityDependencies
+    ) -> dict[str, object]:
+        with _persisted_source_checks():
+            authored_record = dependencies.authored_records.get(row.source_identity)
+            if authored_record is None:
+                raise FieldEffectError("persistence")
+            authored, candidate = authored_record
+            if (
+                authored.to_json() != row.document
+                or authored.decision_id != row.event_id
+                or authored.review_case_id != row.source_parent_id
+                or authored.report_id != row.report_id
+                or authored.origin != row.origin
+                or authored.occurred_at != row.occurred_at
+                or row.destination != "description"
+                or row.state != "recorded"
+                or candidate.to_json() != row.source_document
+            ):
+                raise FieldEffectError("persistence")
+        return _finished_activity_event(
+            row, _shared_activity_record(row, dependencies.authored_records)
+        )
+
+    def _project_human_decision(
+        self, row: _ActivityRow, dependencies: _ActivityDependencies
+    ) -> dict[str, object]:
+        raw = row.raw
+        with _persisted_source_checks():
+            if row.source_document is None:
+                raise FieldEffectError("persistence")
+            decision = HumanDecision.from_json(row.source_document)
+            event_keys = {
+                "actor",
+                "decision_id",
+                "destination",
+                "event_id",
+                "kind",
+                "occurred_at",
+                "outcome",
+                "review_case_id",
+                "schema_version",
+            }
+            if (
+                set(raw) != event_keys
+                or raw.get("schema_version") != HUMAN_DECISION_EVENT_SCHEMA
+                or raw.get("kind") != "human_decision_recorded"
+                or raw.get("event_id") != row.event_id
+                or raw.get("decision_id") != decision.decision_id
+                or raw.get("decision_id") != row.source_identity
+                or raw.get("destination") != row.destination
+                or raw.get("actor") != decision.actor
+                or raw.get("outcome") != row.state
+                or raw.get("outcome") != decision.outcome
+                or raw.get("occurred_at") != row.occurred_at
+                or raw.get("occurred_at") != decision.occurred_at
+                or raw.get("review_case_id") != decision.review_case_id
+                or raw.get("review_case_id") != row.source_parent_id
+                or decision.destination != row.destination
+                or decision.to_json() != row.source_document
+                or _canonical_json(raw) != row.document
+                or row.event_id
+                != "human_decision_event_"
+                + hashlib.sha256(
+                    (HUMAN_DECISION_EVENT_SCHEMA + ":" + decision.decision_id).encode(
+                        "utf-8"
+                    )
+                ).hexdigest()
+            ):
+                raise FieldEffectError("persistence")
+        durable = _shared_activity_record(row, dependencies.authored_records)
+        if type(decision) is not HumanDecision:
+            raise FieldEffectError("persistence")
+        durable["selected_value"] = decision.selected_value
+        durable["target_fingerprint"] = decision.target_fingerprint
+        # Only a decision that chose a new value names what its write
+        # replaced; a keep-current restore states the value it kept,
+        # not the one its corrective write overwrote (#1286).
+        if (
+            decision.outcome in VALUE_OUTCOMES
+            and decision.decision_id in dependencies.replaced
+        ):
+            durable["pre_value"] = dependencies.replaced[decision.decision_id]
+        return _finished_activity_event(row, durable)
+
+    def _project_automatic_decision(
+        self, row: _ActivityRow, dependencies: _ActivityDependencies
+    ) -> dict[str, object]:
+        with _persisted_source_checks():
+            projected_automatic = dependencies.automatic_decisions.get(
+                cast(str, row.source_identity)
+            )
+            if (
+                projected_automatic is None
+                or projected_automatic.decision_id != row.event_id
+                or projected_automatic.decision_id != row.source_identity
+                or projected_automatic.destination != row.destination
+                or projected_automatic.occurred_at != row.occurred_at
+                or row.origin != "automatic_policy"
+                or projected_automatic.review_case_id != row.source_parent_id
+                or projected_automatic.report_id != row.report_id
+                or projected_automatic.to_json() != row.document
+            ):
+                raise FieldEffectError("persistence")
+        durable = _shared_activity_record(row, dependencies.authored_records)
+        if projected_automatic is None:
+            raise FieldEffectError("persistence")
+        automatic_report_document = dependencies.report_documents.get(
+            projected_automatic.report_id
+        )
+        if automatic_report_document is None:
+            raise FieldEffectError("persistence")
+        try:
+            if type(projected_automatic) is CoverAutomaticDecision:
+                cover_rows = self._connection.execute(
+                    "SELECT review.document,proposal.document,consideration.document,report.document,report.document_digest,consideration.document_digest,consideration.report_id "
+                    "FROM review_cases review JOIN proposal_sets proposal "
+                    "ON proposal.proposal_set_id=review.proposal_set_id "
+                    "JOIN current_cover_considerations current ON current.review_case_id=review.review_case_id "
+                    "JOIN cover_considerations consideration ON consideration.consideration_id=current.consideration_id "
+                    "LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id "
+                    "WHERE review.review_case_id=? AND consideration.consideration_id=?",
+                    (
+                        projected_automatic.review_case_id,
+                        projected_automatic.consideration_id,
+                    ),
+                ).fetchone()
+                if cover_rows is None:
+                    raise FieldEffectError("authority_binding")
+                cover_case = (self._reused_case or ReviewCase.from_json)(cover_rows[0])
+                selected_value = _cover_automatic_decision_value(
+                    self._connection,
+                    projected_automatic,
+                    cover_case,
+                    dependencies.reports[projected_automatic.report_id],
+                    cover_case.proposal_set
+                    if cover_rows[1] == cover_case.proposal_document
+                    else ProposalSet.from_json(cover_rows[1]),
+                    expand_cover_consideration(
+                        *cover_rows[2:], parse_report=self._reused_report
+                    ),
+                )
+            else:
+                authority = dependencies.automatic_authority.get(
+                    (
+                        projected_automatic.review_case_id,
+                        projected_automatic.report_id,
+                        projected_automatic.proposal_set_id,
+                        projected_automatic.resolved_policy_id,
+                        cast(AutomaticDecision, projected_automatic).policy_generation,
+                    )
+                )
+                if authority is None:
+                    raise FieldEffectError("authority_binding")
+                case, proposal, outcome = authority
+                report = dependencies.reports[projected_automatic.report_id]
+                if projected_automatic.outcome in {"candidate", "keep_current"}:
+                    selected_value = _automatic_decision_value(
+                        cast(AutomaticDecision, projected_automatic),
+                        case,
+                        report,
+                        proposal,
+                        outcome,
+                    )
+                else:
+                    _validate_automatic_decision_authority(
+                        cast(AutomaticDecision, projected_automatic),
+                        case,
+                        report,
+                        proposal,
+                        outcome,
+                    )
+                    selected_value = None
+        except FieldEffectError as error:
+            # A retained decision can outlive the exact authority
+            # aggregate it names. That is an event-local inability
+            # to disclose its selected value, not a reason to hide
+            # unrelated audit truth. Only the closed authority
+            # binding refusal degrades; corrupt persistence still
+            # reaches the outer fail-closed boundary.
+            if error.code != "authority_binding":
+                raise
+            durable["source_kind"] = "degraded"
+            durable["degraded_reason"] = AUTOMATIC_AUTHORITY_UNAVAILABLE
+            return _activity_event(row, None, durable)
+        except (
+            MetadataReportError,
+            ReportValueError,
+            ProposalValueError,
+            RichMetadataPreviewError,
+            ShadowOutcomeError,
+            TypeError,
+            ValueError,
+        ) as error:
+            raise FieldEffectError("persistence") from error
+        durable["policy_category"] = projected_automatic.policy_category
+        durable["policy_option"] = projected_automatic.policy_option
+        durable["policy_generation"] = projected_automatic.policy_generation
+        durable["outcome"] = projected_automatic.outcome
+        durable["selected_value"] = selected_value
+        durable["target_fingerprint"] = projected_automatic.target_fingerprint
+        return _finished_activity_event(row, durable)
+
+    def _project_isbn_refusal(
+        self, row: _ActivityRow, dependencies: _ActivityDependencies
+    ) -> dict[str, object]:
+        with _persisted_source_checks():
+            outcome_row = self._connection.execute(
+                "SELECT outcome_set_id,review_case_id,report_id,proposal_set_id,"
+                "resolved_policy_id,source_decision_set_id,evaluated_at,document "
+                "FROM shadow_decision_outcomes WHERE outcome_set_id=?",
+                (row.source_identity,),
+            ).fetchone()
+            if outcome_row is None:
+                raise FieldEffectError("persistence")
+            checked_document, checked_at = self._validate_shadow_outcome_row(
+                outcome_row
+            )
+            outcome = (self._reused_outcome or ShadowOutcomeSet.from_json)(
+                checked_document
+            )
+            isbn = next(
+                (field for field in outcome.outcomes if field.destination == "isbn"),
+                None,
+            )
+            if (
+                checked_document != row.document
+                or checked_at != row.occurred_at
+                or row.event_id != outcome.outcome_set_id + ":isbn"
+                or outcome.review_case_id != row.source_parent_id
+                or outcome.report_id != row.report_id
+                or row.destination != "isbn"
+                or row.state != "unchanged"
+                or row.origin != "automatic_policy"
+                or row.projected_type != "metadata"
+                or isbn is None
+                or isbn.candidate_id is not None
+                or isbn.reason_code not in ISBN_REFUSAL_REASONS
+            ):
+                raise FieldEffectError("persistence")
+        durable = _shared_activity_record(row, dependencies.authored_records)
+        if isbn is None:
+            raise FieldEffectError("persistence")
+        durable["reason_code"] = isbn.reason_code
+        durable["target_fingerprint"] = outcome.target_fingerprint
+        return _finished_activity_event(row, durable)
+
+    def _project_cover_safeguard(
+        self, row: _ActivityRow, dependencies: _ActivityDependencies
+    ) -> dict[str, object]:
+        raw = row.raw
+        with _persisted_source_checks():
+            if row.source_document is None:
+                raise FieldEffectError("persistence")
+            consideration = json.loads(row.source_document)
+            if type(consideration) is not dict:
+                raise FieldEffectError("persistence")
+            reviewer_status = consideration.get("reviewer_status")
+            event_keys = {
+                "consideration_id",
+                "decision_id",
+                "kind",
+                "occurred_at",
+                "review_case_id",
+                "schema_version",
+            }
+            origin_type = (row.origin, row.projected_type)
+            if (
+                set(raw) != event_keys
+                or raw.get("schema_version") != "cover-consideration-event-v1"
+                or raw.get("consideration_id") != row.source_identity
+                or raw.get("kind")
+                not in {
+                    "automatic_prepared",
+                    "owner_retry_prepared",
+                    "superseded",
+                    "selected",
+                    "kept_incumbent",
+                    "no_action",
+                    "stale",
+                }
+                or (
+                    raw.get("kind") in {"automatic_prepared", "owner_retry_prepared"}
+                    and reviewer_status not in {"completed", "unavailable", "failed"}
+                )
+                or row.state
+                != (
+                    reviewer_status
+                    if raw.get("kind") in {"automatic_prepared", "owner_retry_prepared"}
+                    else raw.get("kind")
+                )
+                or (
+                    raw.get("kind") == "automatic_prepared"
+                    and origin_type != ("automatic_pipeline", "metadata")
+                )
+                or (
+                    raw.get("kind") == "owner_retry_prepared"
+                    and origin_type != ("owner_retry", "review")
+                )
+                or (
+                    raw.get("kind") in {"selected", "kept_incumbent", "no_action"}
+                    and origin_type != ("human", "review")
+                )
+                or (
+                    raw.get("kind") in {"stale", "superseded"}
+                    and origin_type != ("unknown", "safety")
+                )
+                or raw.get("occurred_at") != row.occurred_at
+                or raw.get("review_case_id") != row.source_parent_id
+                or _canonical_json(raw) != row.document
+                or row.event_id
+                != "cover_consideration_event_"
+                + hashlib.sha256(row.document.encode("utf-8")).hexdigest()
+            ):
+                raise FieldEffectError("persistence")
+        durable = _shared_activity_record(row, dependencies.authored_records)
+        durable["kind"] = raw["kind"]
+        return _finished_activity_event(row, durable)
+
+    def _project_policy_transition(
+        self, row: _ActivityRow, dependencies: _ActivityDependencies
+    ) -> dict[str, object]:
+        if row.raw or row.document != "{}" or row.source_document is not None:
+            raise FieldEffectError("persistence")
+        durable = _shared_activity_record(row, dependencies.authored_records)
+        durable["generation"] = _activity_scalar(row.detail)
+        durable["policy_changes"] = _policy_changes(
+            dependencies.policy_profiles, row.policy_from, row.policy_to
+        )
+        return _finished_activity_event(row, durable)
 
     @local_operation
     def _activity_projection_revision(self) -> tuple[int, int]:
@@ -4159,25 +4614,14 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             raise
         # This is deliberately a read-only union over the existing immutable
         # ledgers.  It neither broadens write authority nor invents a second
-        # audit store just for presentation.
-        # ``events`` is deliberately rebound below from the union SQL text to
-        # the projected event list; both shapes are declared here.
-        # Only the selected non-search ledger page needs guarded report scalars.
-        # Search retains its streaming projection and validate-before-match order.
-        report_scalars = {
-            "connection": "CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.connection') END",
-            "library": "CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.library') END",
-            "work_id": "CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.item') END",
-            "title": "CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END",
-        }
-        isbn_title = "CASE WHEN json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END"
+        # audit store just for presentation. Each arm is its own module-level
+        # builder; ``events`` is deliberately rebound below from the union SQL
+        # text to the projected event list; both shapes are declared here.
+        guarded = search is not None and _collect is None
         scalar = (
-            report_scalars
-            if search is not None and _collect is None
-            else dict.fromkeys(report_scalars, "NULL")
-        )
-        selected_isbn_title = (
-            isbn_title if search is not None and _collect is None else "NULL"
+            _ACTIVITY_REPORT_SCALARS
+            if guarded
+            else dict.fromkeys(_ACTIVITY_REPORT_SCALARS, "NULL")
         )
 
         # A candidate set names whole (source_kind, group identity) window
@@ -4189,120 +4633,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 return ""
             return f" {joiner} {identity} IN (SELECT identity FROM requested WHERE kind='{kind}')"
 
-        # Concatenation reads a BLOB identifier as text, so a BLOB row stays
-        # in the arm and the candidate predicate decides it.
-        isbn_scope = (
-            ""
-            if _candidates is None
-            else " AND (outcome.outcome_set_id IN (SELECT substr(identity,1,"
-            "length(identity)-5) FROM requested WHERE kind='isbn_refusal' AND "
-            "substr(identity,-5)=':isbn') OR outcome.outcome_set_id>=x'')"
+        events: str | list[dict[str, object]] = (
+            "\n            UNION ALL".join(arm(scope, scalar) for arm in _ACTIVITY_ARMS)
+            + "\n        "
         )
-        events: str | list[dict[str, object]] = f"""
-            SELECT event.event_id, effect.connection_name, effect.destination,
-                   effect.library_name, event.occurred_at,
-                   COALESCE(CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN json_extract(event.document, '$.origin') END, 'unknown'),
-                   COALESCE(human_review.report_id,automatic_review.report_id,cover_review.report_id,description_review.report_id), event.kind, effect.work_id, event.document,
-                   CASE WHEN event.kind IN ('retryable','stale','superseded','abandoned')
-                             OR CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN json_extract(event.document, '$.failure') END IS NOT NULL
-                        THEN 'safety'
-                        WHEN CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN json_extract(event.document, '$.origin') END='human' THEN 'review'
-                        WHEN CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN json_extract(event.document, '$.origin') END='automatic_policy' THEN 'metadata'
-                        ELSE 'unknown' END,
-                   {scalar["title"]}, NULL, 'field_effect', NULL, event.plan_id, event.sequence, effect.decision_id, NULL, NULL,
-                   CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN 1 ELSE 0 END, 0, 0
-              FROM field_effect_events event
-              JOIN field_effects effect ON effect.plan_id=event.plan_id
-         LEFT JOIN human_decisions human ON human.decision_id=effect.decision_id
-         LEFT JOIN review_cases human_review ON human_review.review_case_id=human.review_case_id
-         LEFT JOIN automatic_decisions automatic ON automatic.decision_id=effect.decision_id
-         LEFT JOIN review_cases automatic_review ON automatic_review.review_case_id=automatic.review_case_id
-         LEFT JOIN cover_selection_authorities cover_selection ON cover_selection.decision_id=effect.decision_id AND cover_selection.kind='automatic'
-         LEFT JOIN cover_considerations cover_consideration ON cover_consideration.consideration_id=cover_selection.consideration_id
-         LEFT JOIN review_cases cover_review ON cover_review.review_case_id=cover_consideration.review_case_id
-         LEFT JOIN description_decisions description_decision ON description_decision.decision_id=effect.decision_id
-         LEFT JOIN review_cases description_review ON description_review.review_case_id=description_decision.review_case_id
-         LEFT JOIN metadata_reports report ON report.report_id=COALESCE(human_review.report_id,automatic_review.report_id,cover_review.report_id,description_review.report_id){scope("field_effect", "event.plan_id", "WHERE")}
-            UNION ALL
-            SELECT event.event_id, {scalar["connection"]}, event.destination,
-                   {scalar["library"]}, event.occurred_at, 'human', review.report_id,
-                   decision.outcome, {scalar["work_id"]}, event.document, 'review', {scalar["title"]}, NULL, 'human_decision', decision.document, event.review_case_id, NULL, event.decision_id, NULL, NULL,
-                   CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN 1 ELSE 0 END, 0, 0
-              FROM human_decision_events event
-              JOIN human_decisions decision ON decision.decision_id=event.decision_id
-              JOIN review_cases review ON review.review_case_id=event.review_case_id
-              JOIN metadata_reports report ON report.report_id=review.report_id{scope("human_decision", "event.event_id", "WHERE")}
-            UNION ALL
-            SELECT decision.decision_id, {scalar["connection"]}, decision.destination,
-                   {scalar["library"]}, decision.occurred_at, 'automatic_policy', review.report_id,
-                   'recorded', {scalar["work_id"]}, decision.document, 'metadata', {scalar["title"]}, NULL, 'automatic_decision', NULL, decision.review_case_id, NULL, decision.decision_id, NULL, NULL,
-                   CASE WHEN typeof(decision.document)='text' AND length(CAST(decision.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(decision.document) THEN 1 ELSE 0 END, 1, 1
-              FROM automatic_decisions decision
-              JOIN review_cases review ON review.review_case_id=decision.review_case_id
-              JOIN metadata_reports report ON report.report_id=review.report_id{scope("automatic_decision", "decision.decision_id", "WHERE")}
-            UNION ALL
-            SELECT attempt.attempt_id, json_extract(report.document,'$.target.connection'), 'description',
-                   json_extract(report.document,'$.target.library'), attempt.updated_at, 'adviser', review.report_id,
-                   attempt.state, json_extract(report.document,'$.target.item'),
-                   json_object('attempt_id',attempt.attempt_id,'engine',attempt.engine,'model',attempt.model,'state',attempt.state,'failure',attempt.failure,'updated_at',attempt.updated_at),
-                   'metadata', json_extract(report.document,'$.target.fields[0].value'), NULL,
-                   'description_preparation', candidate.document, review.review_case_id, NULL, attempt.attempt_id, NULL, NULL, 1, 0, candidate.candidate_id
-              FROM description_advice_attempts attempt
-              JOIN review_cases review ON review.review_case_id=json_extract(attempt.binding_document,'$.review_case_id')
-              JOIN metadata_reports report ON report.report_id=review.report_id
-              LEFT JOIN description_advice_candidates candidate ON candidate.attempt_id=attempt.attempt_id{scope("description_preparation", "attempt.attempt_id", "WHERE")}
-            UNION ALL
-            SELECT decision.decision_id, json_extract(report.document,'$.target.connection'), 'description',
-                   json_extract(report.document,'$.target.library'), json_extract(decision.document,'$.occurred_at'), json_extract(decision.document,'$.origin'), review.report_id,
-                   'recorded', json_extract(report.document,'$.target.item'), decision.document,
-                   CASE json_extract(decision.document,'$.origin') WHEN 'human' THEN 'review' ELSE 'metadata' END,
-                   json_extract(report.document,'$.target.fields[0].value'), NULL, 'description_decision', candidate.document, decision.review_case_id, NULL, decision.decision_id, NULL, NULL,
-                   CASE WHEN length(CAST(decision.document AS BLOB)) BETWEEN 2 AND 16384 AND json_valid(decision.document) THEN 1 ELSE 0 END, 0, 0
-              FROM description_decisions decision
-              JOIN description_advice_candidates candidate ON candidate.candidate_id=decision.candidate_id
-              JOIN review_cases review ON review.review_case_id=decision.review_case_id
-              JOIN metadata_reports report ON report.report_id=review.report_id{scope("description_decision", "decision.decision_id", "WHERE")}
-            UNION ALL
-            SELECT selection.decision_id, selection.connection_name, 'cover',
-                   selection.library_name, selection.occurred_at, 'automatic_policy', review.report_id,
-                   'recorded', selection.item_id, json_extract(selection.document,'$.decision_document'), 'metadata', {scalar["title"]}, NULL, 'automatic_decision', NULL, review.review_case_id, NULL, selection.decision_id, NULL, NULL,
-                   CASE WHEN typeof(selection.document)='text' AND length(CAST(selection.document AS BLOB)) BETWEEN 2 AND 131072 AND json_valid(selection.document) AND json_valid(json_extract(selection.document,'$.decision_document')) THEN 1 ELSE 0 END, 0, 0
-              FROM cover_selection_authorities selection
-              JOIN cover_considerations consideration ON consideration.consideration_id=selection.consideration_id
-              JOIN review_cases review ON review.review_case_id=consideration.review_case_id
-         LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id
-             WHERE selection.kind='automatic'{scope("automatic_decision", "selection.decision_id", "AND")}
-            UNION ALL
-            SELECT no_change.event_id, no_change.connection_name, no_change.destination,
-                   no_change.library_name, no_change.occurred_at, no_change.origin,
-                   no_change.report_id, 'no_change_required', no_change.work_id, '{{}}',
-                   'metadata', {scalar["title"]},
-                   NULL, 'field_effect_no_change', NULL, no_change.review_case_id,
-                   NULL, no_change.decision_id, NULL, NULL, 1, 0, 0
-              FROM field_effect_no_changes no_change
-              JOIN metadata_reports report ON report.report_id=no_change.report_id{scope("field_effect_no_change", "no_change.event_id", "WHERE")}
-            UNION ALL
-            SELECT event.event_id, {scalar["connection"]}, 'cover', {scalar["library"]},
-                   event.occurred_at, CASE event.kind WHEN 'automatic_prepared' THEN 'automatic_pipeline' WHEN 'owner_retry_prepared' THEN 'owner_retry' WHEN 'selected' THEN 'human' WHEN 'kept_incumbent' THEN 'human' WHEN 'no_action' THEN 'human' ELSE 'unknown' END, review.report_id,
-                   CASE WHEN event.kind IN ('automatic_prepared','owner_retry_prepared') THEN json_extract(consideration.document, '$.reviewer_status') ELSE event.kind END, {scalar["work_id"]},
-                   event.document,
-                   CASE WHEN event.kind IN ('stale','superseded') THEN 'safety' WHEN event.kind='automatic_prepared' THEN 'metadata' WHEN event.kind IN ('owner_retry_prepared','selected','kept_incumbent','no_action') THEN 'review' ELSE 'unknown' END,
-                   {scalar["title"]}, NULL, 'cover_safeguard', CASE WHEN json_extract(consideration.document, '$.reviewer_status') IN ('completed','unavailable','failed') THEN json_object('reviewer_status', json_extract(consideration.document, '$.reviewer_status')) ELSE '{{}}' END, event.review_case_id, NULL, event.consideration_id, NULL, NULL,
-                   CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) AND typeof(consideration.document)='text' AND length(CAST(consideration.document AS BLOB)) BETWEEN 2 AND 12582912 AND json_valid(consideration.document) AND report.report_id=review.report_id AND report.document_digest=json_extract(consideration.document,'$.report_document_digest') THEN 1 ELSE 0 END, 0, 0
-              FROM cover_consideration_events event
-              JOIN cover_considerations consideration ON consideration.consideration_id=event.consideration_id
-              JOIN review_cases review ON review.review_case_id=event.review_case_id
-         LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id
-             WHERE (event.kind<>'selected' OR NOT EXISTS (
-                   SELECT 1 FROM cover_selection_authorities selection
-                    WHERE selection.decision_id=event.decision_id
-                      AND selection.kind='automatic')){scope("cover_safeguard", "event.event_id", "AND")}
-            UNION ALL
-            SELECT transition.transition_id, NULL, 'policy', 'Library policy', transition.updated_at,
-                   'policy', NULL, transition.state, 'Library policy', '{{}}', 'policy',
-                   'Library policy', 'Policy generation ' || transition.generation, 'policy_transition', NULL, NULL, NULL, NULL, transition.from_policy_id, transition.to_policy_id, 1, 0, 0
-              FROM metadata_policy_transitions transition{scope("policy_transition", "transition.transition_id", "WHERE")}
-        """
         where = ["occurred_at>=?"]
         parameters: list[object] = [occurred_after]
         requested = ""
@@ -4317,68 +4651,13 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         predicate = " WHERE " + " AND ".join(where)
         events = (
             cast(str, events)
-            + f"""
-            UNION ALL
-            SELECT outcome.outcome_set_id || ':isbn', report.connection_name, 'isbn',
-                   report.library_name, outcome.evaluated_at, 'automatic_policy', outcome.report_id,
-                   'unchanged', report.item_id, outcome.document, 'metadata',
-                   {selected_isbn_title},
-                   NULL, 'isbn_refusal', NULL, outcome.review_case_id, NULL,
-                   outcome.outcome_set_id, NULL, NULL, 1, 0, outcome.outcome_set_id
-              FROM shadow_decision_outcomes outcome
-              JOIN metadata_reports report ON report.report_id=outcome.report_id
-              JOIN json_each(CASE WHEN json_valid(outcome.document) THEN outcome.document ELSE '{{}}' END, '$.outcomes') field
-             WHERE json_extract(field.value, '$.destination')='isbn'
-               AND json_extract(field.value, '$.reason_code') IN (
-                   'source_value_absent','source_unavailable','source_value_malformed_or_incomplete',
-                   'source_values_conflict','source_value_insufficient_association'){isbn_scope}
-        """
-        )
-        columns = (
-            "event_id,connection,destination,library,occurred_at,origin,report_id,state,"
-            "work_id,document,event_type,title,detail,source_kind,source_document,"
-            "source_parent_id,source_sequence,source_identity,policy_from,policy_to,source_valid"
-        )
-        group_identity = (
-            "CASE WHEN source_kind='field_effect' THEN source_parent_id "
-            "ELSE event_id END"
-        )
-        # One total order everywhere: a ranked row is unique on its window
-        # partition, so the kind and group identity break any remaining tie
-        # explicitly rather than through sorter stability (#1218).
-        activity_order = (
-            " ORDER BY occurred_at DESC,event_id DESC,source_kind," + group_identity
-        )
-        ledger_columns = columns + ",report_target"
-        # Rows of one ranking partition tie on time and identifier only as
-        # out-of-band duplicates: candidates of one attempt, an ISBN outcome
-        # and its BLOB twin, or one automatic decision id in both decision
-        # ledgers. The lowest witnessed identifier ranks first, and a cover
-        # selection before an automatic decision, so the choice never depends
-        # on scan, storage or arm order (#1218).
-        projection = (
-            "WITH "
-            + requested
-            + "raw_activity_events("
-            + ledger_columns
-            + ",source_tiebreak) AS ("
-            + events
-            + "), ranked_activity_events AS (SELECT raw_activity_events.*, "
-            "row_number() OVER (PARTITION BY source_kind,"
-            + group_identity
-            + " ORDER BY CASE WHEN source_kind='field_effect' THEN source_sequence END DESC, "
-            "occurred_at DESC,event_id DESC,source_tiebreak) AS activity_rank, "
-            "min(source_valid) OVER (PARTITION BY source_kind,"
-            + group_identity
-            + ") AS group_valid FROM raw_activity_events), "
-            "activity_events("
-            + ledger_columns
-            + ") AS (SELECT "
-            + ledger_columns.replace(
-                "source_valid", "CASE WHEN group_valid=1 THEN source_valid ELSE 0 END"
+            + "\n            UNION ALL"
+            + _isbn_refusal_arm(
+                _candidates is not None, _ACTIVITY_ISBN_TITLE if guarded else "NULL"
             )
-            + " FROM ranked_activity_events WHERE activity_rank=1) "
+            + "\n        "
         )
+        projection = _activity_projection(requested, events)
 
         try:
             if _candidates is not None:
@@ -4387,131 +4666,12 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 if any("\x00" in identity for _, identity in _candidates):
                     raise FieldEffectError("persistence")
                 parameters.insert(0, json.dumps(sorted(_candidates)))
-            columns = (
-                "SELECT event_id,connection,destination,library,occurred_at,origin,"
-                "report_id,state,work_id,document,event_type,title,detail,source_kind,"
-                "source_document,source_parent_id,source_sequence,source_identity,"
-                "policy_from,policy_to,source_valid FROM activity_events"
-            )
-
-            # Materialization makes guarded report scalar extraction a page-bounded
-            # operation, after grouping, filtering, count and offset selection.
-            restored_columns = []
-            for name in ledger_columns.split(",")[:-1]:
-                if name in report_scalars:
-                    source_condition = (
-                        "event.source_kind IN ('field_effect','human_decision',"
-                        "'automatic_decision','field_effect_no_change','cover_safeguard')"
-                        if name == "title"
-                        else "(event.report_target=1 OR event.source_kind IN "
-                        "('human_decision','cover_safeguard'))"
-                    )
-                    isbn_case = (
-                        " WHEN event.source_kind='isbn_refusal' THEN " + isbn_title
-                        if name == "title"
-                        else ""
-                    )
-                    restored_columns.append(
-                        "CASE WHEN "
-                        + source_condition
-                        + " THEN "
-                        + report_scalars[name]
-                        + isbn_case
-                        + " ELSE event."
-                        + name
-                        + " END AS "
-                        + name
-                    )
-                else:
-                    restored_columns.append("event." + name)
-            selected_projection = ", selected_activity_events AS MATERIALIZED ("
-            restored_projection = (
-                " FROM selected_activity_events event LEFT JOIN metadata_reports report "
-                "ON report.report_id=event.report_id "
-                "ORDER BY event.occurred_at DESC,event.event_id DESC,event.source_kind,"
-                "CASE WHEN event.source_kind='field_effect' THEN event.source_parent_id "
-                "ELSE event.event_id END"
-            )
             if search is None:
-                # The page total is a window over the same immutable ledger
-                # projection as the selected rows.  The former count-then-page
-                # shape evaluated the expensive union twice for every ordinary
-                # Activity refresh.  An out-of-range page is deliberately a
-                # rare fallback: only then do we need its total before we know
-                # the clamped offset.
-                page_rows = self._connection.execute(
-                    projection
-                    + selected_projection
-                    + columns.replace(
-                        " FROM activity_events", ",report_target FROM activity_events"
-                    ).replace(
-                        " FROM activity_events",
-                        ",count(*) OVER () AS activity_total,"
-                        "min(occurred_at) OVER () AS oldest_included "
-                        "FROM activity_events",
+                rows, total, page_count, selected_page, oldest_included = (
+                    self._activity_ledger_page(
+                        projection, predicate, parameters, page, page_size
                     )
-                    + predicate
-                    + activity_order
-                    + " LIMIT ? OFFSET ?) SELECT "
-                    + ",".join(restored_columns)
-                    + ",event.activity_total,event.oldest_included"
-                    + restored_projection,
-                    (*parameters, page_size, (page - 1) * page_size),
-                ).fetchall()
-                if page_rows:
-                    total = int(page_rows[0][-2])
-                    oldest_included = page_rows[0][-1]
-                    if type(oldest_included) is not int:
-                        raise FieldEffectError("persistence")
-                    rows = [row[:-2] for row in page_rows]
-                    page_count = max(1, (total + page_size - 1) // page_size)
-                    selected_page = page
-                else:
-                    count_row = self._connection.execute(
-                        projection
-                        + "SELECT count(*),min(occurred_at) FROM activity_events"
-                        + predicate,
-                        parameters,
-                    ).fetchone()
-                    if (
-                        count_row is None
-                        or type(count_row[0]) is not int
-                        or count_row[0] < 0
-                        or (count_row[1] is not None and type(count_row[1]) is not int)
-                    ):
-                        raise FieldEffectError("persistence")
-                    total = count_row[0]
-                    oldest_included = count_row[1]
-                    page_count = max(1, (total + page_size - 1) // page_size)
-                    selected_page = min(page, page_count)
-                    rows = (
-                        []
-                        if total == 0
-                        else self._connection.execute(
-                            projection
-                            + selected_projection
-                            + columns.replace(
-                                " FROM activity_events",
-                                ",report_target FROM activity_events",
-                            )
-                            + predicate
-                            + activity_order
-                            + " LIMIT ? OFFSET ?) SELECT "
-                            + ",".join(restored_columns)
-                            + restored_projection,
-                            (*parameters, page_size, (selected_page - 1) * page_size),
-                        ).fetchall()
-                    )
-            else:
-                # Searching is allowed to scan the selected immutable corpus.
-                # It renders and validates each row below before deciding a
-                # match, rather than indexing raw JSON or consulting current
-                # library state.
-                total = 0
-                page_count = 1
-                selected_page = page
-                oldest_included = None
-            if search is None:
+                )
                 projected_events, report_documents, validated_reports = (
                     self._project_activity_rows(
                         rows,
@@ -4521,105 +4681,30 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     )
                 )
             else:
-                matched: list[tuple[dict[str, object], str | None]] = []
-                trailing: deque[tuple[dict[str, object], str | None]] = deque(
-                    maxlen=page_size
+                # Searching is allowed to scan the selected immutable corpus.
+                # It renders and validates each row below before deciding a
+                # match, rather than indexing raw JSON or consulting current
+                # library state.
+                (
+                    projected_events,
+                    report_documents,
+                    total,
+                    page_count,
+                    selected_page,
+                    oldest_included,
+                ) = self._activity_search_page(
+                    projection,
+                    predicate,
+                    parameters,
+                    search=search,
+                    page=page,
+                    page_size=page_size,
+                    document_limit=document_limit,
+                    scalar_limit=scalar_limit,
+                    collect=_collect,
+                    candidates=_candidates,
+                    collect_max_bytes=_collect_max_bytes,
                 )
-                matched_count = 0
-                collected_bytes = 0
-                if _candidates is not None:
-                    predicate += (
-                        " AND (source_kind,"
-                        + group_identity
-                        + ") IN (SELECT kind,identity FROM requested)"
-                    )
-                query = projection + columns + predicate + activity_order
-                if _collect is not None:
-                    query = (
-                        projection
-                        + selected_projection
-                        + columns.replace(
-                            " FROM activity_events",
-                            ",report_target FROM activity_events",
-                        )
-                        + predicate
-                        + ") SELECT "
-                        + ",".join(restored_columns)
-                        # Rows sharing a report reach the bounded parser
-                        # reuse together; the fact store orders the facts.
-                        + restored_projection.replace(
-                            "ORDER BY ", "ORDER BY event.report_id,"
-                        )
-                    )
-                cursor = self._connection.execute(query, parameters)
-                while batch := cursor.fetchmany(64):
-                    batch_events, batch_documents, reports = (
-                        self._project_activity_rows(
-                            batch,
-                            document_limit=document_limit,
-                            scalar_limit=scalar_limit,
-                            searched=True,
-                        )
-                    )
-                    for source_row, event in zip(batch, batch_events, strict=True):
-                        report_id = event.get("report_id")
-                        report = (
-                            reports.get(report_id) if type(report_id) is str else None
-                        )
-                        if _collect is not None:
-                            candidate = (
-                                source_row[13],
-                                source_row[15]
-                                if source_row[13] == "field_effect"
-                                else source_row[0],
-                            )
-                            fact = ActivityFact(
-                                ReadableActivityEvent.compose(event, report),
-                                activity_search_text(event, report),
-                                cast(int, event["occurred_at"]),
-                                cast(str, event["event_type"]),
-                                cast(str, event["event_id"]),
-                            )
-                            collected_bytes += activity_fact_bytes(candidate, fact)
-                            if collected_bytes > _collect_max_bytes:
-                                raise ActivityFactCapacity
-                            _collect[candidate] = fact
-                            continue
-                        if search not in activity_search_text(event, report):
-                            continue
-                        occurred_at = event.get("occurred_at")
-                        if type(occurred_at) is not int:
-                            raise FieldEffectError("persistence")
-                        oldest_included = (
-                            occurred_at
-                            if oldest_included is None
-                            else min(oldest_included, occurred_at)
-                        )
-                        report_document = (
-                            batch_documents.get(report_id)
-                            if type(report_id) is str
-                            else None
-                        )
-                        retained = (event, report_document)
-                        if (page - 1) * page_size <= matched_count < page * page_size:
-                            matched.append(retained)
-                        trailing.append(retained)
-                        matched_count += 1
-                total = matched_count
-                page_count = max(1, (total + page_size - 1) // page_size)
-                selected_page = min(page, page_count)
-                final_page_size = total % page_size or page_size
-                selected = (
-                    matched
-                    if selected_page == page
-                    else list(trailing)[-final_page_size:]
-                )
-                projected_events = [event for event, _ in selected]
-                report_documents = {
-                    cast(str, event["report_id"]): document
-                    for event, document in selected
-                    if type(event.get("report_id")) is str and document is not None
-                }
             waiting = self._activity_current_waiting()
             result = {
                 "events": projected_events,
@@ -4649,6 +4734,201 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         except (FieldEffectError, ActivityFactCapacity, MetadataReportError):
             transaction.rollback()
             raise
+
+    def _activity_ledger_page(
+        self,
+        projection: str,
+        predicate: str,
+        parameters: list[object],
+        page: int,
+        page_size: int,
+    ) -> tuple[list[tuple[Any, ...]], int, int, int, int | None]:
+        """Select one non-search page with its total and oldest included time."""
+        restored_columns = _restored_activity_columns()
+        # The page total is a window over the same immutable ledger
+        # projection as the selected rows.  The former count-then-page
+        # shape evaluated the expensive union twice for every ordinary
+        # Activity refresh.  An out-of-range page is deliberately a
+        # rare fallback: only then do we need its total before we know
+        # the clamped offset.
+        page_rows = self._connection.execute(
+            projection
+            + _SELECTED_ACTIVITY_PROJECTION
+            + _ACTIVITY_SELECT.replace(
+                " FROM activity_events", ",report_target FROM activity_events"
+            ).replace(
+                " FROM activity_events",
+                ",count(*) OVER () AS activity_total,"
+                "min(occurred_at) OVER () AS oldest_included "
+                "FROM activity_events",
+            )
+            + predicate
+            + _ACTIVITY_ORDER
+            + " LIMIT ? OFFSET ?) SELECT "
+            + restored_columns
+            + ",event.activity_total,event.oldest_included"
+            + _RESTORED_ACTIVITY_PROJECTION,
+            (*parameters, page_size, (page - 1) * page_size),
+        ).fetchall()
+        if page_rows:
+            total = int(page_rows[0][-2])
+            oldest_included = page_rows[0][-1]
+            if type(oldest_included) is not int:
+                raise FieldEffectError("persistence")
+            rows = [row[:-2] for row in page_rows]
+            page_count = max(1, (total + page_size - 1) // page_size)
+            return rows, total, page_count, page, oldest_included
+        count_row = self._connection.execute(
+            projection
+            + "SELECT count(*),min(occurred_at) FROM activity_events"
+            + predicate,
+            parameters,
+        ).fetchone()
+        if (
+            count_row is None
+            or type(count_row[0]) is not int
+            or count_row[0] < 0
+            or (count_row[1] is not None and type(count_row[1]) is not int)
+        ):
+            raise FieldEffectError("persistence")
+        total = count_row[0]
+        oldest_included = count_row[1]
+        page_count = max(1, (total + page_size - 1) // page_size)
+        selected_page = min(page, page_count)
+        rows = (
+            []
+            if total == 0
+            else self._connection.execute(
+                projection
+                + _SELECTED_ACTIVITY_PROJECTION
+                + _ACTIVITY_SELECT.replace(
+                    " FROM activity_events",
+                    ",report_target FROM activity_events",
+                )
+                + predicate
+                + _ACTIVITY_ORDER
+                + " LIMIT ? OFFSET ?) SELECT "
+                + restored_columns
+                + _RESTORED_ACTIVITY_PROJECTION,
+                (*parameters, page_size, (selected_page - 1) * page_size),
+            ).fetchall()
+        )
+        return rows, total, page_count, selected_page, oldest_included
+
+    def _activity_search_page(
+        self,
+        projection: str,
+        predicate: str,
+        parameters: list[object],
+        *,
+        search: str,
+        page: int,
+        page_size: int,
+        document_limit: int,
+        scalar_limit: int,
+        collect: dict[Candidate, ActivityFact] | None,
+        candidates: set[Candidate] | None,
+        collect_max_bytes: int,
+    ) -> tuple[list[dict[str, object]], dict[str, str], int, int, int, int | None]:
+        """Stream, render and match the corpus, or collect its facts."""
+        oldest_included: int | None = None
+        matched: list[tuple[dict[str, object], str | None]] = []
+        trailing: deque[tuple[dict[str, object], str | None]] = deque(maxlen=page_size)
+        matched_count = 0
+        collected_bytes = 0
+        if candidates is not None:
+            predicate += (
+                " AND (source_kind,"
+                + _ACTIVITY_GROUP_IDENTITY
+                + ") IN (SELECT kind,identity FROM requested)"
+            )
+        query = projection + _ACTIVITY_SELECT + predicate + _ACTIVITY_ORDER
+        if collect is not None:
+            query = (
+                projection
+                + _SELECTED_ACTIVITY_PROJECTION
+                + _ACTIVITY_SELECT.replace(
+                    " FROM activity_events",
+                    ",report_target FROM activity_events",
+                )
+                + predicate
+                + ") SELECT "
+                + _restored_activity_columns()
+                # Rows sharing a report reach the bounded parser
+                # reuse together; the fact store orders the facts.
+                + _RESTORED_ACTIVITY_PROJECTION.replace(
+                    "ORDER BY ", "ORDER BY event.report_id,"
+                )
+            )
+        cursor = self._connection.execute(query, parameters)
+        while batch := cursor.fetchmany(64):
+            batch_events, batch_documents, reports = self._project_activity_rows(
+                batch,
+                document_limit=document_limit,
+                scalar_limit=scalar_limit,
+                searched=True,
+            )
+            for source_row, event in zip(batch, batch_events, strict=True):
+                report_id = event.get("report_id")
+                report = reports.get(report_id) if type(report_id) is str else None
+                if collect is not None:
+                    candidate = (
+                        source_row[13],
+                        source_row[15]
+                        if source_row[13] == "field_effect"
+                        else source_row[0],
+                    )
+                    fact = ActivityFact(
+                        ReadableActivityEvent.compose(event, report),
+                        activity_search_text(event, report),
+                        cast(int, event["occurred_at"]),
+                        cast(str, event["event_type"]),
+                        cast(str, event["event_id"]),
+                    )
+                    collected_bytes += activity_fact_bytes(candidate, fact)
+                    if collected_bytes > collect_max_bytes:
+                        raise ActivityFactCapacity
+                    collect[candidate] = fact
+                    continue
+                if search not in activity_search_text(event, report):
+                    continue
+                occurred_at = event.get("occurred_at")
+                if type(occurred_at) is not int:
+                    raise FieldEffectError("persistence")
+                oldest_included = (
+                    occurred_at
+                    if oldest_included is None
+                    else min(oldest_included, occurred_at)
+                )
+                report_document = (
+                    batch_documents.get(report_id) if type(report_id) is str else None
+                )
+                retained = (event, report_document)
+                if (page - 1) * page_size <= matched_count < page * page_size:
+                    matched.append(retained)
+                trailing.append(retained)
+                matched_count += 1
+        total = matched_count
+        page_count = max(1, (total + page_size - 1) // page_size)
+        selected_page = min(page, page_count)
+        final_page_size = total % page_size or page_size
+        selected = (
+            matched if selected_page == page else list(trailing)[-final_page_size:]
+        )
+        projected_events = [event for event, _ in selected]
+        report_documents = {
+            cast(str, event["report_id"]): document
+            for event, document in selected
+            if type(event.get("report_id")) is str and document is not None
+        }
+        return (
+            projected_events,
+            report_documents,
+            total,
+            page_count,
+            selected_page,
+            oldest_included,
+        )
 
     def _activity_current_waiting(self) -> dict[str, object] | None:
         document_limit = 12_582_912
