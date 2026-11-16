@@ -983,7 +983,9 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .choice-pin:focus-visible { outline-offset:-4px; }
 .choice-pin.is-on .head { fill:currentColor; }
 /* A busy pin dims its own colour, never the element, so its focus outline stays whole. */
-.context-row-head { display:flex; flex-wrap:wrap; align-items:center; gap:0 10px; }
+/* The name and its pill wrap beside the pin, which keeps the first line. */
+.context-row-head { display:flex; align-items:flex-start; gap:0 10px; }
+.context-row-head > strong { flex:1; min-width:0; }
 .context-row-head > .choice-pin { margin-block:-.6875rem; }
 .automatic-resolution-row p { margin:3px 0 0; font-size:smaller; overflow-wrap:anywhere; }
 .automatic-resolution-row p:empty { margin:0; }

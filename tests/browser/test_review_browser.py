@@ -12408,9 +12408,27 @@ def test_owner_pins_values_and_sees_a_pin_the_library_changed():
         assert not panel.evaluate("node => node.open")
         expect(summary).not_to_contain_text("pinned")
         summary.click()
+        expect(summary).to_contain_text("Hide")
         row = panel.locator(".automatic-resolution-row", has_text="Publisher")
+        # On a phone at 200% text the word Pinned wraps under the name: the
+        # pin keeps the first line, and the row grows by no line of its own.
+        page.set_viewport_size({"width": 390, "height": 900})
+        set_root_text(page, "200%")
+
+        def pin_top() -> float:
+            return (
+                row.locator(".choice-pin").bounding_box()["y"] - row.bounding_box()["y"]
+            )
+
+        before = pin_top()
         row.get_by_role("button", name="Pin this value", exact=True).click()
         expect(row.get_by_role("status")).to_have_text("Pinned.")
+        expect(row.get_by_text("Pinned", exact=True)).to_be_visible()
+        assert abs(pin_top() - before) < 1, (before, pin_top())
+        status = row.get_by_role("status").bounding_box()
+        assert status["width"] <= 1 and status["height"] <= 1, status
+        set_root_text(page, "")
+        page.set_viewport_size({"width": 1440, "height": 900})
         assert posts == ["pin"]
         assert "field=genres" in page.url
         assert panel.evaluate("node => node.open")

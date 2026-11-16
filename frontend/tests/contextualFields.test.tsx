@@ -95,6 +95,16 @@ describe('the pin on a field with nothing to decide', () => {
     )
     await openPanel(details)
     expect(details).toHaveAttribute('open')
+    // Open, the control says what a press now does; closed, it offers the reasons again.
+    expect(details.querySelector('summary')).toHaveTextContent(
+      /^No change: Publisher, LanguageHide$/u,
+    )
+    await openPanel(details)
+    expect(details).not.toHaveAttribute('open')
+    expect(details.querySelector('summary')).toHaveTextContent(
+      /^No change: Publisher, LanguageShow why$/u,
+    )
+    await openPanel(details)
     for (const [name, value] of [
       ['Publisher', 'Example House'],
       ['Language', 'English'],
@@ -150,9 +160,12 @@ describe('the pin on a field with nothing to decide', () => {
     await userEvent.click(pin)
     await userEvent.click(within(rowOf('Publisher')).getByRole('button'))
     expect(choose).toHaveBeenCalledTimes(1)
-    // What the press is doing is said in the pressed row alone.
+    // What the press is doing is announced in the pressed row alone, and adds no line to it.
     expect(within(rowOf('Language')).getByRole('status')).toHaveTextContent('Pinning…')
-    expect(within(rowOf('Language')).getByRole('status')).not.toHaveClass('sr-only')
+    expect(within(rowOf('Language')).getByRole('status')).toHaveClass('sr-only')
+    again({ controller: { ...quiet, recording: true, statusFor: () => 'Unpinning…' } })
+    expect(within(rowOf('Language')).getByRole('status')).toHaveTextContent('Unpinning…')
+    expect(within(rowOf('Language')).getByRole('status')).toHaveClass('sr-only')
     expect(within(rowOf('Publisher')).getByRole('status')).toBeEmptyDOMElement()
     expect(within(rowOf('Publisher')).queryByRole('alert')).toBeNull()
   })
@@ -183,16 +196,18 @@ describe('the pin on a field with nothing to decide', () => {
     expect(within(rowOf('Publisher')).getByRole('alert')).toBeEmptyDOMElement()
     expect(within(rowOf('Language')).getByRole('status')).toBeEmptyDOMElement()
     const summary = details.querySelector('summary')
-    expect(summary).toHaveTextContent(/^No change: Publisher, Language · 1 pinnedShow why$/u)
+    expect(summary).toHaveTextContent(/^No change: Publisher, Language · 1 pinnedHide$/u)
+    // The dot and the count never part from the word at a line end.
+    expect(summary?.textContent).toContain('Language ·\u00a01\u00a0pinned')
     again({ fields: [pinned(publisher), pinned(language, true)] })
-    expect(summary).toHaveTextContent(/^No change: Publisher, Language · 2 pinnedShow why$/u)
+    expect(summary).toHaveTextContent(/^No change: Publisher, Language · 2 pinnedHide$/u)
     expect(rowOf('Language')).toHaveTextContent('You pinned this field empty.')
     await userEvent.click(within(rowOf('Publisher')).getByRole('button', { name: 'Unpin' }))
     expect(choose).toHaveBeenLastCalledWith(pinned(publisher), 'unpin')
     again({ fields: [publisher, language], controller: { ...quiet, statusFor: () => 'Unpinned.' } })
-    expect(summary).toHaveTextContent(/^No change: Publisher, LanguageShow why$/u)
+    expect(summary).toHaveTextContent(/^No change: Publisher, LanguageHide$/u)
     expect(within(rowOf('Publisher')).getByRole('status')).toHaveTextContent('Unpinned.')
-    expect(within(rowOf('Publisher')).getByRole('status')).not.toHaveClass('sr-only')
+    expect(within(rowOf('Publisher')).getByRole('status')).toHaveClass('sr-only')
   })
 
   it('says a failed pin and a reload lock in the pressed row’s alert', async () => {
@@ -202,6 +217,7 @@ describe('the pin on a field with nothing to decide', () => {
     const failure = 'The pin was not recorded. Press the pin again.'
     again({ controller: { ...quiet, statusFor: () => failure, alertFor: () => true } })
     expect(within(rowOf('Publisher')).getByRole('alert')).toHaveTextContent(failure)
+    expect(within(rowOf('Publisher')).getByRole('alert')).not.toHaveClass('sr-only')
     expect(within(rowOf('Publisher')).getByRole('status')).toBeEmptyDOMElement()
     expect(rowOf('Language')).not.toHaveTextContent(failure)
     const lock = 'This work could not be reloaded after your choice.'
@@ -216,7 +232,7 @@ describe('the pin on a field with nothing to decide', () => {
     expect(within(rowOf('Publisher')).getByRole('button')).toHaveAttribute('aria-disabled', 'true')
   })
 
-  it('opens on a notice for one of its rows and puts focus on it', async () => {
+  it('opens on a notice for one of its rows and puts focus on that row’s pin, described by it', async () => {
     const text = 'Not recorded: the work changed. Review it again.'
     const { details, again } = show([publisher, language])
     expect(details).not.toHaveAttribute('open')
@@ -227,10 +243,29 @@ describe('the pin on a field with nothing to decide', () => {
     expect(details).toHaveAttribute('open')
     const status = within(rowOf('Language')).getByRole('status')
     expect(status).toHaveTextContent(text)
-    await waitFor(() => expect(status).toHaveFocus())
+    expect(status).not.toHaveClass('sr-only')
+    const pin = within(rowOf('Language')).getByRole('button', { name: 'Pin this value' })
+    await waitFor(() => expect(pin).toHaveFocus())
+    expect(pin).toHaveAccessibleDescription(`Language English ${text}`)
+    expect(
+      within(rowOf('Publisher')).getByRole('button', { name: 'Pin this value' }),
+    ).toHaveAccessibleDescription('Publisher Example House')
     expect(within(rowOf('Publisher')).getByRole('status')).toBeEmptyDOMElement()
     // The owner can still close the panel.
     await act(() => openPanel(details))
     expect(details).not.toHaveAttribute('open')
+  })
+
+  it('puts focus on the notice itself in a row that has no pin', async () => {
+    const text = 'Not recorded: the work changed. Review it again.'
+    const { details } = show(
+      [publisher, row('language', 'English', { classificationCause: 'external_field_failure' })],
+      { notice: { destination: 'language', text } },
+    )
+    expect(details).toHaveAttribute('open')
+    expect(within(rowOf('Language')).queryByRole('button')).toBeNull()
+    const status = within(rowOf('Language')).getByRole('status')
+    expect(status).toHaveTextContent(text)
+    await waitFor(() => expect(status).toHaveFocus())
   })
 })

@@ -58,7 +58,7 @@ import { ReviewCompletion } from './ReviewCompletion'
 import { useStaleCoverReview } from './StaleCoverReview'
 import { useCoverPrepareFailure } from '../coverChoices'
 import { ContextualFields } from './ContextualFields'
-import { FieldDecisionCanvas } from './FieldDecisionCanvas'
+import { FieldDecisionCanvas, ReloadCase } from './FieldDecisionCanvas'
 import { fieldDecisionMode, optionalChoice, ownerOutcome } from '../fieldDecisionMode'
 import { PreparationDetail } from './PreparationDetail'
 import {
@@ -1823,6 +1823,12 @@ export default function LibraryPage({
               ) : (
                 <p>This work has no fields requiring a decision.</p>
               )}
+              {/* With no canvas on screen its Reload is offered here (#1346). */}
+              {controller.reloadRequired &&
+              (!selected ||
+                (complete?.id === selectedReviewCaseId && completionInspection === null)) ? (
+                <ReloadCase reloading={detail.isFetching} settle={controller.settle} />
+              ) : null}
               {detail.data.recordingIdentityBasis ||
               detail.data.recordingAdmissionBasis ||
               detail.data.audiobookReviewScope === 'work' ? (
@@ -1840,6 +1846,7 @@ export default function LibraryPage({
               ) : null}
               {contextualFields.length ? (
                 <ContextualFields
+                  key={selectedReviewCaseId}
                   fields={contextualFields}
                   controller={controller}
                   choose={choose}

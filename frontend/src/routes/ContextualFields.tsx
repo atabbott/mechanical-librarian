@@ -13,6 +13,9 @@ import { destinationLabel } from '../labels'
 import type { useReviewDecisionController } from '../reviewDecisionController'
 import { PinButton } from './FieldDecisionPin'
 
+// What a press is doing or did: announced in the row, never printed under it.
+const QUIET = new Set(['Pinning…', 'Unpinning…', 'Pinned.', 'Unpinned.'])
+
 const heldPhrase = (count: number, kind: 'waiting' | 'unavailable') =>
   `${String(count)} ${count === 1 ? 'field' : 'fields'} ${kind === 'waiting' ? 'waiting' : 'unavailable'}`
 
@@ -47,7 +50,10 @@ export function ContextualFields({
   useEffect(() => {
     if (!opened) return
     const frame = requestAnimationFrame(() =>
-      list.current?.querySelector<HTMLElement>('[data-told]')?.focus({ preventScroll: true }),
+      // The row's pin, described by the notice; a row with no pin, the notice itself.
+      list.current
+        ?.querySelector<HTMLElement>('[data-told] .choice-pin, [data-told] [role="status"]')
+        ?.focus({ preventScroll: true }),
     )
     return () => cancelAnimationFrame(frame)
   }, [opened])
@@ -75,7 +81,8 @@ export function ContextualFields({
               {contextualSummary.unchanged
                 .map((field) => destinationLabel(field.destination))
                 .join(', ')}
-              {pinnedCount ? ` · ${String(pinnedCount)} pinned` : null}
+              {/* No-break spaces: the dot and the count never part from the word. */}
+              {pinnedCount ? ` ·\u00a0${String(pinnedCount)}\u00a0pinned` : null}
             </span>
           ) : null}
           {contextualSummary.waiting ? (
@@ -85,7 +92,7 @@ export function ContextualFields({
             <span>{heldPhrase(contextualSummary.unavailable, 'unavailable')}</span>
           ) : null}
         </span>
-        <small>Show why</small>
+        <small>{open ? 'Hide' : 'Show why'}</small>
       </summary>
       <div className="automatic-resolution-list" ref={list}>
         {fields.map((field) => {
@@ -103,8 +110,13 @@ export function ContextualFields({
           const status = toldHere ? told.text : alert ? '' : said
           const nameId = `${id}-${destination}-name`
           const valueId = `${id}-${destination}-value`
+          const noticeId = `${id}-${destination}-notice`
           return (
-            <div className={`automatic-resolution-row is-${kind}`} key={destination}>
+            <div
+              className={`automatic-resolution-row is-${kind}`}
+              key={destination}
+              data-told={toldHere || undefined}
+            >
               <div className="context-row-head">
                 <strong>
                   <span id={nameId}>{destinationLabel(destination)}</span>
@@ -119,7 +131,7 @@ export function ContextualFields({
                   <PinButton
                     on={pin.on}
                     busy={busy}
-                    describedBy={`${nameId} ${valueId}`}
+                    describedBy={`${nameId} ${valueId}${toldHere ? ` ${noticeId}` : ''}`}
                     onPress={() => {
                       if (busy) return
                       setPressed(destination)
@@ -143,8 +155,8 @@ export function ContextualFields({
                 <p
                   role="status"
                   tabIndex={-1}
-                  data-told={toldHere || undefined}
-                  className={pinned && status === 'Pinned.' ? 'sr-only' : undefined}
+                  id={noticeId}
+                  className={QUIET.has(status) ? 'sr-only' : undefined}
                 >
                   {status}
                 </p>

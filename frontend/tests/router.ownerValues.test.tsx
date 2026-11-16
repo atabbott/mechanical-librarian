@@ -1760,7 +1760,7 @@ describe('a pin in the No change panel', () => {
     expect(within(row()).getByRole('button', { name: 'Unpin' })).toHaveFocus()
     expect(row()).toHaveTextContent('You pinned this value.')
     expect(within(row()).getByText('Pinned')).toHaveClass('status-pill')
-    expect(summary()).toHaveTextContent(/^No change: Publisher · 1 pinnedShow why$/u)
+    expect(summary()).toHaveTextContent(/^No change: Publisher · 1 pinnedHide$/u)
     expect(
       within(screen.getByRole('navigation', { name: 'Review fields' })).queryByText('Publisher'),
     ).toBeNull()
@@ -1777,7 +1777,7 @@ describe('a pin in the No change panel', () => {
     expect(within(row()).getByRole('button', { name: 'Pin this value' })).toHaveFocus()
     expect(row()).toHaveTextContent('No source offered a different value.')
     expect(row()).not.toHaveTextContent('Pinned')
-    expect(summary()).toHaveTextContent(/^No change: PublisherShow why$/u)
+    expect(summary()).toHaveTextContent(/^No change: PublisherHide$/u)
     expect(router.state.location.search.field).toBe('title')
   })
 
@@ -1841,9 +1841,16 @@ describe('a pin in the No change panel', () => {
       ),
     )
     expect(panel()).toHaveAttribute('open')
-    await waitFor(() => expect(within(row()).getByRole('status')).toHaveFocus())
+    // Focus lands on the row's pin, which the notice describes.
+    const pin = () => within(row()).getByRole('button', { name: 'Pin this value' })
+    await waitFor(() => expect(pin()).toHaveFocus())
+    expect(pin()).toHaveAccessibleDescription(
+      'Publisher Example House Not recorded: the work changed. Review it again.',
+    )
     expect(heading()).not.toHaveFocus()
     expect(row()).not.toHaveTextContent('Pinned')
+    // The press belonged to the replaced case: this one's row holds nothing of it.
+    expect(within(row()).queryByRole('alert')).toBeNull()
     // A later choice on Title is recorded on the successor and moves on as usual.
     await user.click(screen.getByRole('radio', { name: 'Choose proposed value: New title' }))
     await waitFor(() => expect(router.state.location.search.field).toBe('subtitle'))
@@ -1852,5 +1859,114 @@ describe('a pin in the No change panel', () => {
       ['case-2', 'accept'],
     ])
     expect(within(row()).getByRole('status')).toBeEmptyDOMElement()
+  })
+
+  it('N4 offers Reload where a pin locks a work that shows no field to decide', async () => {
+    const user = userEvent.setup()
+    const made = work()
+    made.state.fields = [publisher]
+    const recorded = made.http.recordDecision.getMockImplementation()
+    if (!recorded) throw new Error('the fixture records no decision')
+    made.http.recordDecision.mockImplementation(async (...args) => ({
+      ...(await recorded(...args)),
+      confirmation: { status: 'unavailable' },
+    }))
+    renderRoute('/library?lens=all&preview=case-1', made.http)
+    await screen.findByText('This work has no fields requiring a decision.')
+    expect(screen.queryByRole('button', { name: 'Reload current case' })).toBeNull()
+    await user.click(summary())
+    await user.click(within(row()).getByRole('button', { name: 'Pin this value' }))
+    await waitFor(() =>
+      expect(within(row()).getByRole('alert')).toHaveTextContent(
+        'Choose Reload current case before choosing again.',
+      ),
+    )
+    expect(within(row()).getByRole('button')).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByText('This work has no fields requiring a decision.')).toBeVisible()
+    // No canvas is on screen, so the page offers its Reload.
+    await user.click(screen.getByRole('button', { name: 'Reload current case' }))
+    await waitFor(() =>
+      expect(within(row()).getByRole('button', { name: 'Unpin' })).not.toHaveAttribute(
+        'aria-disabled',
+      ),
+    )
+    expect(screen.queryByRole('button', { name: /Reload/u })).toBeNull()
+    expect(within(row()).getByRole('alert')).toBeEmptyDOMElement()
+    expect(panel()).toHaveAttribute('open')
+    expect(made.http.recordDecision).toHaveBeenCalledTimes(1)
+  })
+
+  it('N5 offers Reload under Review complete when a pin pressed there locks the work', async () => {
+    const user = userEvent.setup()
+    const made = work()
+    made.state.fields = [title, publisher]
+    const recorded = made.http.recordDecision.getMockImplementation()
+    if (!recorded) throw new Error('the fixture records no decision')
+    made.http.recordDecision.mockImplementation(async (...args) => {
+      const answer = await recorded(...args)
+      return args[1].outcome === 'pin'
+        ? { ...answer, confirmation: { status: 'unavailable' } }
+        : answer
+    })
+    await show(made.http)
+    await user.click(screen.getByRole('radio', { name: 'Choose proposed value: New title' }))
+    await screen.findByText('Review complete')
+    expect(document.querySelector('.decision-canvas')).toBeNull()
+    await user.click(summary())
+    await user.click(within(row()).getByRole('button', { name: 'Pin this value' }))
+    await waitFor(() =>
+      expect(within(row()).getByRole('alert')).toHaveTextContent(
+        'Choose Reload current case before choosing again.',
+      ),
+    )
+    expect(document.querySelector('.decision-canvas')).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Reload current case' }))
+    await waitFor(() =>
+      expect(within(row()).getByRole('button', { name: 'Unpin' })).not.toHaveAttribute(
+        'aria-disabled',
+      ),
+    )
+    expect(screen.queryByRole('button', { name: /Reload/u })).toBeNull()
+  })
+
+  it('N6 opens the panel closed on another work, with nothing said from the last one', async () => {
+    const user = userEvent.setup()
+    const { http } = work()
+    const [listed] = quietLibrary.works
+    if (!listed) throw new Error('the library fixture lists no work')
+    const other = { ...listed, id: 'case-2', reviewCaseId: 'case-2', detailUrl: '/review/case-2' }
+    http.getLibrary.mockResolvedValue({
+      ...quietLibrary,
+      counts: { ...quietLibrary.counts, all: 2, clear: 2 },
+      works: [listed, other],
+    })
+    const router = await show(http)
+    await user.click(summary())
+    await user.click(within(row()).getByRole('button', { name: 'Pin this value' }))
+    await waitFor(() => expect(within(row()).getByRole('status')).toHaveTextContent('Pinned.'))
+    const first = panel()
+    await act(() =>
+      router.navigate({
+        to: '/library',
+        search: { lens: 'all', preview: 'case-2', field: 'title' },
+      }),
+    )
+    await waitFor(() => expect(panel()).not.toBe(first))
+    expect(panel()).not.toHaveAttribute('open')
+    expect(summary()).toHaveTextContent(/^No change: Publisher · 1 pinnedShow why$/u)
+    expect(within(row()).getByRole('status', { hidden: true })).toBeEmptyDOMElement()
+    // Also on a work already read, which is on screen at once.
+    await user.click(summary())
+    const second = panel()
+    await act(() =>
+      router.navigate({
+        to: '/library',
+        search: { lens: 'all', preview: 'case-1', field: 'title' },
+      }),
+    )
+    await waitFor(() => expect(router.state.location.search.preview).toBe('case-1'))
+    await screen.findByRole('navigation', { name: 'Review fields' })
+    expect(panel()).not.toBe(second)
+    expect(panel()).not.toHaveAttribute('open')
   })
 })

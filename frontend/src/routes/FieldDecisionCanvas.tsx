@@ -58,6 +58,22 @@ type Choose = (
   authoredDescription?: DecisionCommand['authoredDescription'],
 ) => string
 
+// Reads the case again after a choice whose reload did not come back; the
+// page offers the same control where it shows no canvas.
+export function ReloadCase({
+  reloading,
+  settle,
+}: {
+  reloading: boolean
+  settle: () => Promise<unknown>
+}) {
+  return (
+    <button type="button" disabled={reloading} onClick={() => void settle()}>
+      {reloading ? 'Reloading current case…' : 'Reload current case'}
+    </button>
+  )
+}
+
 export function FieldDecisionCanvas({
   field,
   mode,
@@ -543,9 +559,7 @@ export function FieldDecisionCanvas({
         </p>
       ) : null}
       {controller.reloadRequired ? (
-        <button type="button" disabled={reloading} onClick={() => void controller.settle()}>
-          {reloading ? 'Reloading current case…' : 'Reload current case'}
-        </button>
+        <ReloadCase reloading={reloading} settle={controller.settle} />
       ) : null}
       {selectedChoiceMode && effect ? (
         <aside className="field-apply-context" aria-label="Writing to the library">

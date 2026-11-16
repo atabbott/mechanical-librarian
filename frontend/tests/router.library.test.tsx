@@ -12830,6 +12830,8 @@ describe('Library route', () => {
       const details = await open([context('subtitle', 'nothing_to_decide', unchanged)])
       expect(details.querySelector('summary')).toHaveTextContent(/^No change: SubtitleShow why$/u)
       await userEvent.setup().click(within(details).getByText('Show why'))
+      // Open, the control says what a press now does.
+      expect(details.querySelector('summary')).toHaveTextContent(/^No change: SubtitleHide$/u)
       const row = rowOf(details, 'Subtitle')
       expect(row).toHaveTextContent('No source offered a different value.')
       expect(row).not.toHaveTextContent(/✓|No eligible change|nothing to decide/u)
@@ -12887,7 +12889,7 @@ describe('Library route', () => {
 
     it('reads a reworded unchanged reason as No change', async () => {
       const { details, row } = await shown('nothing_to_decide', 'Reworded: nothing differs here.')
-      expect(details.querySelector('summary')).toHaveTextContent(/^No change: PublisherShow why$/u)
+      expect(details.querySelector('summary')).toHaveTextContent(/^No change: PublisherHide$/u)
       expect(row).toHaveClass('is-unchanged')
       expect(row).toHaveTextContent('No source offered a different value.')
       expect(within(row).queryByText(/Waiting|Unavailable/u)).toBeNull()
@@ -12896,7 +12898,7 @@ describe('Library route', () => {
     it('reads a waiting code as Waiting whatever its reason says', async () => {
       const reason = 'The library connection is down.'
       const { details, row } = await shown('external_connection_failure', reason)
-      expect(details.querySelector('summary')).toHaveTextContent(/^1 field waitingShow why$/u)
+      expect(details.querySelector('summary')).toHaveTextContent(/^1 field waitingHide$/u)
       expect(row).toHaveClass('is-waiting')
       expect(within(row).getByText('Waiting')).toBeVisible()
       expect(row).toHaveTextContent(reason)
@@ -12905,7 +12907,7 @@ describe('Library route', () => {
     it('reads an unavailable code as Unavailable though its reason says waiting', async () => {
       const reason = 'This field is waiting for the library connection to recover.'
       const { details, row } = await shown('unsupported', reason)
-      expect(details.querySelector('summary')).toHaveTextContent(/^1 field unavailableShow why$/u)
+      expect(details.querySelector('summary')).toHaveTextContent(/^1 field unavailableHide$/u)
       expect(row).toHaveClass('is-unavailable')
       expect(within(row).getByText('Unavailable')).toBeVisible()
       expect(row).toHaveTextContent(reason)
@@ -12913,7 +12915,7 @@ describe('Library route', () => {
 
     it('reads an unchanged code as No change though its reason says waiting', async () => {
       const { details, row } = await shown('nothing_to_decide', waiting)
-      expect(details.querySelector('summary')).toHaveTextContent(/^No change: PublisherShow why$/u)
+      expect(details.querySelector('summary')).toHaveTextContent(/^No change: PublisherHide$/u)
       expect(row).toHaveClass('is-unchanged')
       expect(row).not.toHaveTextContent(waiting)
       expect(within(row).queryByText(/Waiting|Unavailable/u)).toBeNull()
