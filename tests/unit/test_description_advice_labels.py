@@ -731,11 +731,35 @@ def test_sample_refusals_keep_their_order(
 # sample (S9-S11).
 
 
-def test_unchoosable_advice_is_counted_not_listed(tmp_path: Path) -> None:
+def test_advice_on_a_description_every_source_repeats_is_listed(
+    tmp_path: Path,
+) -> None:
     """Every source repeats the library's description: the advice is ready
+    and differs, and the work's page offers it beside Keep current (#1905)."""
+    prepared = _store(tmp_path, library=LIBRARY, source=LIBRARY)
+    assert _sample(prepared.copy()) == [
+        *_sample_lines(replacing=1),
+        _link(prepared.case),
+    ]
+
+
+def test_unchoosable_advice_is_counted_not_listed(tmp_path: Path) -> None:
+    """The library refuses writes to the description: the advice is ready
     and differs, but the work's page offers no choice (finding 6)."""
-    database = _store(tmp_path, library=LIBRARY, source=LIBRARY).copy()
-    assert _sample(database) == _sample_lines(cannot=1)
+    prepared = _store(tmp_path)
+    (connection,) = prepared.repository._connection.execute(
+        "SELECT connection_name FROM current_review_case_lineages "
+        "WHERE review_case_id=?",
+        (prepared.case,),
+    ).fetchone()
+    prepared.repository.suspend_field_effect_capability(
+        scope="destination",
+        connection=connection,
+        destination="description",
+        reason="field_unavailable",
+        changed_at=prepared.tick(),
+    )
+    assert _sample(prepared.copy()) == _sample_lines(cannot=1)
 
 
 @pytest.mark.parametrize(

@@ -339,41 +339,45 @@ _DESCRIPTION_CHOICE_SQL = (
 )
 
 
-def test_automatic_advice_never_admits_a_description_the_owner_cannot_choose(
+def test_automatic_advice_admits_a_description_every_source_repeats(
     tmp_path: Path,
 ) -> None:
+    """The field offers the adviser's text and Keep current here (#1905)."""
     from mechanical_librarian.application.review_web import InspectCurrentReviewCase
 
     repository, store, binding, candidate, _ = _prepared(
         tmp_path, report_override=_preserved_description_report()
     )
     case_id = binding.review_case_id
-    # Every source repeats the current description: no Keep current, no choice.
+    # Every source repeats the current description: the facts still count no
+    # choice, and the advice is what the owner chooses or keeps against.
     assert repository._connection.execute(
         _DESCRIPTION_CHOICE_SQL, (case_id,)
     ).fetchone() == (0,)
-    with pytest.raises(ValueError, match="description automatic admission unavailable"):
-        store.admit(candidate.candidate_id, binding, "automatic_policy", "a" * 64, 11)
-    assert repository._connection.execute(
-        "SELECT count(*) FROM description_decisions"
-    ).fetchone() == (0,)
-    advice = store.read(case_id)
-    assert advice["candidate"]["candidate_id"] == candidate.candidate_id
-    assert advice["selection"] is None
-    assert not any(
-        candidate.candidate_id in document
-        for document in repository.pending_field_effect_decision_documents(100)
+    decision = store.admit(
+        candidate.candidate_id, binding, "automatic_policy", "a" * 64, 11
     )
+    assert decision.origin == "automatic_policy"
+    assert PersistedFieldEffectAuthority(repository).resolve(
+        decision
+    ).decision_value == {"kind": "text", "value": "Authored synthetic description."}
+    assert decision.to_json() in repository.pending_field_effect_decision_documents(100)
     description = next(
         field
         for field in InspectCurrentReviewCase(repository).run(case_id)["fields"]
         if field["destination"] == "description"
     )
-    assert description["editable"] is False
-    assert description["decision_actions"] == []
-    assert description["description_advice"]["candidate"]["candidate_id"] == (
-        candidate.candidate_id
+    assert description["classification"] == "automatic_recorded"
+    assert description["editable"] is True
+    assert description["needs_attention"] is False
+    assert description["decision_actions"] == ["keep_current", "accept"]
+    assert description["proposed_values"] == []
+    assert description["description_advice"]["selection"]["decision_id"] == (
+        decision.decision_id
     )
+    assert repository._connection.execute(
+        _DESCRIPTION_CHOICE_SQL, (case_id,)
+    ).fetchone() == (0,)
     repository.close()
 
 
@@ -408,33 +412,44 @@ def test_description_authority_lapses_for_automatic_only_when_the_field_stops_of
     repository.close()
 
 
-def test_owner_cannot_select_advice_on_a_field_without_a_choice(
+def test_owner_can_choose_advice_on_a_description_every_source_repeats(
     tmp_path: Path,
 ) -> None:
+    """Choosing the adviser's text there is the owner's to make (#1905)."""
     from mechanical_librarian.application.review_web import (
+        InspectCurrentReviewCase,
         RecordHumanDecision,
-        ReviewWebError,
     )
 
     repository, store, binding, candidate, _ = _prepared(
         tmp_path, automatic=False, report_override=_preserved_description_report()
     )
-    with pytest.raises(ValueError, match="description choice unavailable"):
-        store.admit(candidate.candidate_id, binding, "human", "a" * 64, 11)
-    with pytest.raises(ReviewWebError, match="stale"):
-        RecordHumanDecision(repository, clock=lambda: 12).select_description(
-            binding.review_case_id,
-            candidate.candidate_id,
-            binding,
-            "choose-advice-without-a-choice",
-        )
+    acknowledgement = RecordHumanDecision(
+        repository, clock=lambda: 12
+    ).select_description(
+        binding.review_case_id,
+        candidate.candidate_id,
+        binding,
+        "choose-advice-every-source-repeats",
+    )
+    assert acknowledgement["advised"] is True
     assert (
         repository.field_effect_manual_hold_token(binding.review_case_id, "description")
-        is None
+        is not None
     )
     assert repository._connection.execute(
         "SELECT count(*) FROM description_decisions"
-    ).fetchone() == (0,)
+    ).fetchone() == (1,)
+    description = next(
+        field
+        for field in InspectCurrentReviewCase(repository).run(binding.review_case_id)[
+            "fields"
+        ]
+        if field["destination"] == "description"
+    )
+    assert description["classification"] == "human_recorded"
+    assert description["editable"] is True
+    assert description["decision_actions"] == ["keep_current", "accept"]
     repository.close()
 
 
@@ -1675,10 +1690,12 @@ def test_verified_deterministic_fill_retires_advice_before_successor_scan(
     assert len(calls) == 1
     assert store.read(case_id)["current"] is True
     assert store.read(case_id)["binding"] == fresh.model_dump()
-    # The successor's binding is current (no "stale" refusal), but its sources
-    # now repeat the written description, so the field offers no choice to make.
-    with pytest.raises(ValueError, match="description choice unavailable"):
-        store.admit(candidate.candidate_id, fresh, "human", "f" * 64, 41)
+    # The successor's binding is current (no "stale" refusal), and its sources
+    # now repeat the written description, so the field offers the advice and
+    # Keep current beside it (#1905).
+    assert store.admit(
+        candidate.candidate_id, fresh, "human", "f" * 64, 41
+    ).binding == (fresh)
     repository.close()
 
 
@@ -2919,6 +2936,14 @@ def test_real_projection_consumes_disabled_description_intent_once(tmp_path):
         requested_at = repository._connection.execute(
             "SELECT max(requested_at) FROM review_preparation_scans"
         ).fetchone()[0]
+        # The fixture prepared this book at time 10 and the scan below runs at
+        # the wall clock, long after its scheduled search fell due (ADR-0102).
+        # That search is upstream work this test is not about, so the book
+        # stands as one finished before scheduled searches: it has no mark.
+        with repository._connection:
+            repository._connection.execute(
+                "UPDATE review_preparation_work SET research_not_before=NULL"
+            )
         pipeline._clock = lambda: requested_at
         for _ in range(64):
             if not pipeline.run_next(1):

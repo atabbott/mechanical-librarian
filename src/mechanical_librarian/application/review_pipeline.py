@@ -402,8 +402,8 @@ class PipelineAction:
     lineage_checkpoint: int | None = None
     policy_generation: int | None = None
     recovery_attempt: int = 0
-    # An extraction claimed while the item holds the re-search mark (#1451):
-    # the weekly re-search of an unmatched audiobook, or its requeue after a
+    # An extraction claimed while the item holds the re-search mark (#1451,
+    # ADR-0102): a finished work's scheduled search, or its requeue after a
     # transient failure. It asks every provider live rather than reusing a
     # held answer (#1064).
     research: bool = False
