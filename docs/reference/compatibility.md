@@ -43,6 +43,9 @@ owner runs it offline, and the changelog says when one ships.
 - **Unicode is part of the schema.** Browse facts record the Unicode version
   they were folded under. A database opened by a Python with different Unicode
   data is refused and needs a clean rebuild.
+- **Looks wrong flags are part of the schema.** Each report's flags are stored
+  with the rule list that derived them (`value-flag-rules-v1`). A database
+  derived under a different rule list is refused and needs a clean rebuild.
 - **Consent is bound to the write destinations.** A build that changes the
   destination set lapses every existing consent; see
   [Upgrades](../operations/upgrades.md#changes-that-need-owner-action-without-a-rebuild).
@@ -100,6 +103,7 @@ refused.
 | `deterministic-shadow-decision-policy-v27` | The shadow decision policy |
 | `shadow-review-action-policy-v5` | Which actions a decision may take |
 | `shadow-outcome-set-v11` | Automatic outcomes; action identities embed the qualification digest ([ADR-0087](../architecture/decisions/0087-operation-bound-qualification-authority.md)) |
+| `value-flag-rules-v1` | The Looks wrong rules: which titles, authors and narrators the Library flags as probably wrong, stored beside each report |
 
 ### Decisions, covers and field effects
 
@@ -140,7 +144,7 @@ exact schemas of their own and no separate version string.
 
 The owner API is served under `/api/v1`, and each response names its version
 in `schema_version`. The main ones are `review-session-v1`,
-`review-library-v6`, `review-preparation-v2`, `review-case-detail-v9`,
+`review-library-v7`, `review-preparation-v2`, `review-case-detail-v9`,
 `review-case-evidence-v5`, `review-report-detail-v6`, `review-case-history-v4`,
 `review-attention-v1` and `continuous-field-activity-v3`. The generated
 [OpenAPI document](review-openapi-v1.json) pins each of them except

@@ -20,7 +20,7 @@ install from.
    `config.json`, set them there instead, with the
    [description fields](../reference/configuration.md#description-advice) of
    its `review` section, and restart the service.
-3. Wait until the app shows "Preparation idle".
+3. Wait until the status icon in the masthead says "Preparation idle".
 
 ## List the descriptions
 

@@ -62,6 +62,7 @@ from mechanical_librarian.domain.review_case import (
     proposal_manual_requirements,
 )
 from mechanical_librarian.domain.validation import closed_document, literal
+from mechanical_librarian.domain.value_flags import report_source_titles
 
 
 class ReviewBrowseValueError(ValueError):
@@ -236,6 +237,9 @@ class LibraryReportFacts:
     # against holding none, so a page can say "Image unavailable" rather than
     # "No cover" (#1633).
     cover_unreadable: bool = False
+    # The title every provider candidate states, which the row's value flags
+    # read beside the target (#1334, D8).
+    source_titles: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -313,8 +317,9 @@ def library_report_facts(report: dict[str, object]) -> LibraryReportFacts:
     are then reconstructed by their own canonical readers, and each provider lane's
     authority, kinds, statuses, dispatch outcome and request count are checked
     against the enums and bounds the canonical provider reader applies to them.
-    Its candidates and evidence are not read, and of its diagnostics only
-    whether one names an adapter fault.
+    Of its candidates only the title claims are read, for the value flags;
+    its evidence is not read, and of its diagnostics only whether one names
+    an adapter fault.
     """
     try:
         identity = {key: value for key, value in report.items() if key != "report_id"}
@@ -433,6 +438,7 @@ def library_report_facts(report: dict[str, object]) -> LibraryReportFacts:
                 }
                 for field in target.fields
             ),
+            report_source_titles(providers),
         )
     except (KeyError, TypeError, ValueError) as error:
         raise ReviewBrowseValueError("review browse report is invalid") from error

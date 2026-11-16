@@ -553,9 +553,9 @@ def test_a_scope_for_another_case_is_set_aside_and_the_case_projected(
     assert pages["absent"] == pages["shared"] == pages["foreign"]
     assert counts == {
         "shared": {},
-        "absent": {"_library_item": len(decided)},
+        "absent": {"_decided_destinations": len(decided)},
         # The row whose scope is its own reuses it.
-        "foreign": {"_library_item": len(decided) - 1},
+        "foreign": {"_decided_destinations": len(decided) - 1},
     }
 
 

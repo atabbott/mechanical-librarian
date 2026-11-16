@@ -798,6 +798,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 not_matched_total=page.not_matched_total,
                 match_reasons=page.match_reasons,
                 preparation_failed_total=page.preparation_failed_total,
+                flagged_total=page.flagged_total,
                 decision_scopes=tuple(scopes),
             )
         return snapshot

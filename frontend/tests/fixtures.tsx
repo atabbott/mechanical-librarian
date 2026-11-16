@@ -78,7 +78,7 @@ export const recordedAcknowledgement = (
 export const library: LibraryView = {
   lens: 'all',
   page: 1,
-  counts: { attention: 1, all: 1, clear: 0, notMatched: 0, failed: 0 },
+  counts: { attention: 1, all: 1, clear: 0, notMatched: 0, failed: 0, flagged: 0 },
   works: [
     {
       id: 'case-1',
@@ -96,6 +96,7 @@ export const library: LibraryView = {
       detailKind: 'case' as const,
       preparation: null,
       preparationOutcomes: [],
+      valueFlags: [],
     },
   ],
 }
