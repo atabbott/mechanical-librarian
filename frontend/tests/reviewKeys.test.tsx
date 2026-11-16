@@ -156,7 +156,7 @@ const work = (id: string, name: string): LibraryView['works'][number] => ({
 })
 const twoWorks: LibraryView = {
   ...library,
-  counts: { attention: 2, all: 2, clear: 0, notMatched: 0, failed: 0 },
+  counts: { attention: 2, all: 2, clear: 0, notMatched: 0, failed: 0, flagged: 0 },
   works: [work('case-1', 'A Book'), work('case-2', 'Second Book')],
 }
 
