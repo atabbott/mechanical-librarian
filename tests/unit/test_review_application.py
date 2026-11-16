@@ -1109,6 +1109,85 @@ def test_reviewer_change_publishes_when_preparation_refuses(
         application.updates.release(subscription)
 
 
+def test_library_progress_follows_settings_order_and_names(repository):
+    """Configured libraries in Settings order, then the rest alphabetically (#1335)."""
+    from mechanical_librarian.domain.metadata_report import (
+        MetadataReport,
+        TargetFacts,
+    )
+
+    for library in ("zeta", "alpha"):
+        source = _report(title=f"{library} work", actionable=False)
+        repository.browse_without_cases.append(
+            MetadataReport.create(
+                target=TargetFacts(
+                    source.target.connection,
+                    library,
+                    f"{library}-item",
+                    source.target.fields,
+                ),
+                file=source.file,
+                local_claims=source.local_claims,
+                local_reasons=source.local_reasons,
+                providers=source.providers,
+            )
+        )
+    document = OwnerSettingsDocument.model_validate(
+        {
+            "schema_version": OWNER_SETTINGS_SCHEMA,
+            "revision": 1,
+            "connections": [{"name": "primary", "endpoint": "https://example.invalid"}],
+            "libraries": [
+                {
+                    "name": name,
+                    "connection": "primary",
+                    "library_id": name,
+                    "media_kind": "ebook",
+                    **({"display_name": label} if label else {}),
+                }
+                for name, label in (
+                    ("ebooks", "Reading Room"),
+                    ("empty", None),
+                    ("zeta", "Last Shelf"),
+                )
+            ],
+        }
+    )
+
+    class Settings:
+        def read(self):
+            return SimpleNamespace(document=document)
+
+    application = compose_review_application(
+        state_owner=repository,
+        session_store=repository,
+        case_store=repository,
+        decision_store=repository,
+        library_store=repository,
+        policy_store=repository,
+        verify_password=lambda _: True,
+        session_digest=lambda token: hashlib.sha256(token.encode()).hexdigest(),
+        client_digest=lambda value: hashlib.sha256(value.encode()).hexdigest(),
+        clock=lambda: _NOW,
+        session_lifetime_seconds=600,
+        graceful_shutdown_seconds=30,
+        settings=OwnerSettingsOperations(cast("OwnerSettingsRepository", Settings())),
+    )
+    progress = application.library_progress()
+    libraries = cast("list[dict[str, object]]", progress["libraries"])
+    # A configured library with no works has no row; `alpha`, which no
+    # setting names, follows every configured one.
+    assert [(row["library"], row["library_display_name"]) for row in libraries] == [
+        ("ebooks", "Reading Room"),
+        ("zeta", "Last Shelf"),
+        ("alpha", "alpha"),
+    ]
+    assert (
+        progress["totals"]
+        == application.library(lens="all", search=None, limit=20, cursor=None).counts
+    )
+
+
 def test_library_display_rename_preserves_case_and_target_identity(repository):
     document = OwnerSettingsDocument.model_validate(
         {
