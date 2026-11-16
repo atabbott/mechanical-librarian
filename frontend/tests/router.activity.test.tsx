@@ -4105,7 +4105,9 @@ it.each([false, true])(
     const review = await screen.findByRole('region', { name: 'Write permissions' })
     await waitFor(() => expect(review).toHaveFocus())
     await screen.findByText('Checking the backup and write permissions…')
-    expect(http.getActivityPermissionReadiness).toHaveBeenCalledOnce()
+    // The busy text is drawn from the query's optimistic state, one effect
+    // before the request itself starts.
+    await waitFor(() => expect(http.getActivityPermissionReadiness).toHaveBeenCalledOnce())
     expect(signal?.aborted).toBe(false)
     // The busy check stays in the tab order, announced as unavailable, so a
     // keyboard owner who pressed it never loses focus to <body>.

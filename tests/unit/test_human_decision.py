@@ -623,3 +623,63 @@ def test_identity_contradiction_is_shared_with_owner_cover_eligibility(
     assert identity_contradicts(identity) is contradicts
     candidate = {"incumbent": False, "identity": identity}
     assert manual_cover_eligible(candidate) is not contradicts
+
+
+def _description_proposal(
+    *assessments: str, destination: str = "description", outcome: str = "keep"
+) -> dict[str, object]:
+    """A proposal whose alternatives carry these assessments, in order."""
+    return {
+        "destination": destination,
+        "manual_required": False,
+        "result": {
+            "outcome": outcome,
+            "alternatives": [
+                {
+                    "assessment": assessment,
+                    "value": {"kind": "text", "value": f"Source {index}."},
+                }
+                for index, assessment in enumerate(assessments)
+            ],
+        },
+    }
+
+
+def test_keep_current_is_admitted_on_a_description_every_source_repeats() -> None:
+    """Keep current stands beside description advice there (#1905)."""
+    from mechanical_librarian.domain.human_decision import (
+        preserved_description,
+        validate_decision_action,
+    )
+
+    repeated = _description_proposal("preserves_target", "preserves_target")
+    assert preserved_description(repeated)
+    # The domain's own choices stay empty: the offer is advice's to make.
+    assert decision_actions(repeated) == ()
+    validate_decision_action(repeated, "keep_current", None)
+    with pytest.raises(HumanDecisionError) as selected:
+        validate_decision_action(
+            repeated, "keep_current", {"kind": "text", "value": "Source 0."}
+        )
+    assert selected.value.code == "invalid_selection"
+    with pytest.raises(HumanDecisionError) as accepted:
+        validate_decision_action(
+            repeated, "accept", {"kind": "text", "value": "Source 0."}
+        )
+    assert accepted.value.code == "unsupported"
+    for negative in (
+        _description_proposal("preserves_target", destination="title"),
+        _description_proposal(),
+        _description_proposal("preserves_target", "replaces_target"),
+    ):
+        assert not preserved_description(negative)
+    with pytest.raises(HumanDecisionError) as other_field:
+        validate_decision_action(
+            _description_proposal("preserves_target", destination="title"),
+            "keep_current",
+            None,
+        )
+    assert other_field.value.code == "unsupported"
+    with pytest.raises(HumanDecisionError) as empty:
+        validate_decision_action(_description_proposal(), "keep_current", None)
+    assert empty.value.code == "unsupported"
