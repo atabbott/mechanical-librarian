@@ -1266,7 +1266,7 @@ def test_cover_rows_come_from_each_stored_stage_without_a_write_or_an_identity(
 
 
 def test_a_comparison_without_a_policy_report_still_says_sources_are_fetching(
-    tmp_path,
+    tmp_path, monkeypatch
 ) -> None:
     """A comparison stored before any cover preview arrived keeps its reason.
 
@@ -1298,7 +1298,7 @@ def test_a_comparison_without_a_policy_report_still_says_sources_are_fetching(
             json.dumps(value, separators=(",", ":"), sort_keys=True), **options
         )
 
-    repository.record_cover_consideration = without_policy_report
+    monkeypatch.setattr(repository, "record_cover_consideration", without_policy_report)
     _record_cover_comparison(
         repository, report, review_case_id, 0, outcome="empty", fetching=True
     )
