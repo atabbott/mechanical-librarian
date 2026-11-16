@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import type { ReviewHttp } from '../src/api/http'
+import { drawerQuery } from '../src/attentionRail'
 import { createHttp, createLiveStream, renderRoute } from './fixtures'
 
 // jsdom has no native dialog methods. The top layer, the inert page and Escape
@@ -142,7 +143,10 @@ describe('first review guide', () => {
     const live = dialog.querySelector('[aria-live="polite"]')
     const step = () => live?.textContent
 
-    expect(stepHeading(dialog)).toEqual(['Which title should this work use?', 'Evidence'])
+    // The step's words come first, above the example they describe.
+    expect(stepHeading(dialog)).toEqual(['Evidence', 'Which title should this work use?'])
+    expect(live).toHaveAttribute('aria-atomic', 'true')
+    expect(button(dialog, 'Next')).not.toHaveAttribute('aria-describedby')
     expect(step()).toBe(
       'EvidenceStep 1 of 3Each field asks one question. Evidence under a value lists the sources that gave it.',
     )
@@ -164,6 +168,10 @@ describe('first review guide', () => {
     // Next is gone, so focus moves to the step's main button.
     expect(button(dialog, 'Open your first field')).toHaveFocus()
     expect(button(dialog, 'Open your first field')).toHaveClass('button-primary')
+    // Focus gets there before the sentence is read, so the button carries it.
+    expect(button(dialog, 'Open your first field')).toHaveAccessibleDescription(
+      /^Writes Step 3 of 3 A choice records your decision/u,
+    )
     // The example is not live on the last step.
     expect(dialog.querySelector('.first-review-example')).toHaveAttribute('inert')
 
@@ -301,6 +309,93 @@ describe('first review guide', () => {
     await waitFor(() => expect(button(dialog, 'Close')).toHaveClass('button-primary'))
     expect(within(dialog).queryByRole('button', { name: 'Open your first field' })).toBeNull()
     expect(dialog).toHaveAttribute('open')
+  })
+
+  it('moves focus to Close when the queue empties under the last step’s main button', async () => {
+    const updates = createLiveStream()
+    owe()
+    const http = withQueue()
+    renderRoute(queueOpen, http, updates)
+    const dialog = await screen.findByRole('dialog', { name: 'How a decision works' })
+    const user = userEvent.setup()
+    await user.click(button(dialog, 'Next'))
+    await user.click(button(dialog, 'Next'))
+    expect(button(dialog, 'Open your first field')).toHaveFocus()
+
+    http.getAttention = vi.fn<ReviewHttp['getAttention']>(async () => ({ total: 0, items: [] }))
+    act(() => updates.announce({ sequence: 1, subject: null, topic: 'library' }))
+
+    await waitFor(() =>
+      expect(within(dialog).queryByRole('button', { name: 'Open your first field' })).toBeNull(),
+    )
+    expect(button(dialog, 'Close')).toHaveFocus()
+    expect(button(dialog, 'Close')).toHaveAccessibleDescription(/^Writes Step 3 of 3 /u)
+  })
+
+  it('leaves the control that had focus when it opens the first field', async () => {
+    owe()
+    const http = createHttp()
+    const updates = createLiveStream()
+    renderRoute(queueOpen, http, updates)
+    const search = await screen.findByRole('searchbox')
+    await waitFor(() => expect(http.getAttention).toHaveBeenCalled())
+    await act(() => new Promise((resolve) => setTimeout(resolve, 100)))
+    search.focus()
+    http.getAttention = vi.fn<ReviewHttp['getAttention']>(async () => waiting)
+    act(() => updates.announce({ sequence: 1, subject: null, topic: 'library' }))
+    const dialog = await screen.findByRole('dialog', { name: 'How a decision works' })
+    const user = userEvent.setup()
+    await user.click(button(dialog, 'Next'))
+    await user.click(button(dialog, 'Next'))
+    // What Library focuses for the page, as it stands when the button is pressed.
+    const target = document.querySelector('#main-content [data-route-focus]')
+    const focused: (EventTarget | null)[] = []
+    const note = (event: FocusEvent) => focused.push(event.target)
+    document.addEventListener('focusin', note)
+    onTestFinished(() => document.removeEventListener('focusin', note))
+
+    fireEvent.click(button(dialog, 'Open your first field'))
+
+    await waitFor(() => expect(document.querySelector('dialog')).toBeNull())
+    expect(focused[0]).toBe(target)
+    expect(focused).not.toContain(search)
+    expect(search).not.toHaveFocus()
+  })
+
+  it('stays usable when the open Attention rail becomes a drawer', async () => {
+    const listeners = new Set<() => void>()
+    const drawer = { matches: false }
+    const previous = window.matchMedia
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn((query: string) => ({
+        get matches() {
+          return query === drawerQuery && drawer.matches
+        },
+        media: query,
+        onchange: null,
+        addEventListener: (_: string, listener: () => void) =>
+          query === drawerQuery && listeners.add(listener),
+        removeEventListener: (_: string, listener: () => void) => listeners.delete(listener),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    )
+    onTestFinished(() => {
+      vi.stubGlobal('matchMedia', previous)
+    })
+    const { dialog } = await openGuide()
+    await screen.findByRole('complementary', { name: 'Attention queue' })
+    expect(document.querySelectorAll('[inert]')).toHaveLength(0)
+
+    // The window narrows into the range where the rail is a drawer.
+    drawer.matches = true
+    act(() => listeners.forEach((listener) => listener()))
+
+    expect(document.querySelectorAll('[inert]').length).toBeGreaterThan(0)
+    expect(dialog).toHaveAttribute('open')
+    expect(dialog).not.toHaveAttribute('inert')
   })
 
   it('reaches no API and no storage, and writes only its cookie’s removal', () => {

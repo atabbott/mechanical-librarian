@@ -160,8 +160,8 @@ verification every three seconds.
 
 The React workspace uses no browser storage, inline script, external origin,
 worker or source map. The loader verifies every asset's path, size, digest
-and build identity before serving an authenticated shell. Setup's Start also
-sets `ml_first_review`, which holds no credential. The workspace clears it
+and build identity before serving an authenticated shell. Setup's Start sets
+a cookie, `ml_first_review`, holding no credential. The workspace clears it
 when the first review guide closes.
 
 ### Responses and caching

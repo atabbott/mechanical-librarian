@@ -171,24 +171,35 @@ function Guide({ onClose, onOpenFirst }: { onClose: () => void; onOpenFirst?: ()
     }
   }, [])
   // Closes at once, so the page is live again before anything else moves focus.
-  const end = (then: () => void) => {
+  const end = (then: () => void, handOff = false) => {
     dialog.current?.close()
-    // Back to the control that had focus. A place Library focused for a
-    // screen reader gives way to the one it would focus now.
+    // Close and Escape go back to the control that had focus. A place Library
+    // focused for a screen reader gives way to the one it would focus now, and
+    // so does any control when the first field opens, as after the queue's row.
     const was = before.current
     const back =
-      was instanceof HTMLElement && was.tabIndex >= 0 && was.isConnected
+      !handOff && was instanceof HTMLElement && was.tabIndex >= 0 && was.isConnected
         ? was
         : document.querySelector<HTMLElement>('#main-content [data-route-focus]')
     back?.focus({ preventScroll: true })
     then()
   }
+  const opens = Boolean(onOpenFirst)
   useLayoutEffect(() => {
-    // A step change removes Back or Next. Focus stays on the pressed button
-    // while it is still there, and otherwise moves to the step's main button.
-    if (dialog.current?.open && !footer.current?.contains(document.activeElement))
+    // A step change removes Back or Next, and an emptied queue removes the
+    // last step's main button. Focus stays on the pressed button while it is
+    // still there, and otherwise moves to the main button.
+    const active = document.activeElement
+    if (dialog.current?.open && (active === document.body || active === dialog.current))
       footer.current?.querySelector<HTMLElement>('.button-primary')?.focus()
+  }, [step, opens])
+  useLayoutEffect(() => {
+    // A new step starts at its words, wherever the example was scrolled to.
+    const body = dialog.current?.querySelector('.first-review-body')
+    if (body) body.scrollTop = 0
   }, [step])
+  // Focus reaches the last step's main button before its sentence is read.
+  const described = step === last ? { 'aria-describedby': 'first-review-step' } : {}
   return createPortal(
     <dialog
       ref={dialog}
@@ -203,12 +214,16 @@ function Guide({ onClose, onOpenFirst }: { onClose: () => void; onOpenFirst?: ()
         <h2 id="first-review-heading" ref={heading} tabIndex={-1}>
           How a decision works
         </h2>
-        <ExampleField locked={step === last} pick={pick} setPick={setPick} />
         {/* The live step and a hidden copy of every step share one cell, so
             the dialog keeps the height of its tallest step. */}
         <div className="first-review-steps">
           <div className="first-review-step">
-            <div className="first-review-text" aria-live="polite">
+            <div
+              id="first-review-step"
+              className="first-review-text"
+              aria-live="polite"
+              aria-atomic="true"
+            >
               {stepText(step)}
             </div>
             <p className="first-review-status" role="status">
@@ -218,10 +233,11 @@ function Guide({ onClose, onOpenFirst }: { onClose: () => void; onOpenFirst?: ()
           {steps.map((each, index) => (
             <div key={each.name} className="first-review-step" aria-hidden="true">
               <div className="first-review-text">{stepText(index)}</div>
-              <p className="first-review-status" />
+              <p className="first-review-status">{index < last ? recordedNothing : null}</p>
             </div>
           ))}
         </div>
+        <ExampleField locked={step === last} pick={pick} setPick={setPick} />
       </div>
       <footer className="first-review-footer" ref={footer}>
         {step > 0 ? (
@@ -234,6 +250,7 @@ function Guide({ onClose, onOpenFirst }: { onClose: () => void; onOpenFirst?: ()
           type="button"
           className={step === last && !onOpenFirst ? 'button-primary' : undefined}
           onClick={() => end(onClose)}
+          {...(onOpenFirst ? {} : described)}
         >
           Close
         </button>
@@ -242,7 +259,12 @@ function Guide({ onClose, onOpenFirst }: { onClose: () => void; onOpenFirst?: ()
             Next
           </button>
         ) : onOpenFirst ? (
-          <button type="button" className="button-primary" onClick={() => end(onOpenFirst)}>
+          <button
+            type="button"
+            className="button-primary"
+            onClick={() => end(onOpenFirst, true)}
+            {...described}
+          >
             Open your first field
           </button>
         ) : null}

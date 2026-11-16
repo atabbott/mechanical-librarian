@@ -7647,6 +7647,16 @@ _GUIDE_BOX = """() => {
   const footer = document.querySelector('.first-review-footer').getBoundingClientRect()
   return [box.height, heading.top, footer.top]
 }"""
+_GUIDE_WORDS_SEEN = """dialog => {
+  const body = dialog.querySelector('.first-review-body')
+  const seen = body.getBoundingClientRect()
+  return body.scrollTop === 0 && [...body.querySelectorAll(
+    '[aria-live] h3, [aria-live] > p'
+  )].every(each => {
+    const box = each.getBoundingClientRect()
+    return box.height > 0 && box.top >= seen.top && box.bottom <= seen.bottom
+  })
+}"""
 _GUIDE_FOCUS = (
     "() => [location.search.replace(/^\\?/, '').split('&').sort().join('&'),"
     " document.activeElement?.className ?? '']"
@@ -7763,9 +7773,11 @@ def test_first_review_guide_follows_setup_once_and_opens_the_first_field() -> No
                     if cookie["name"] == "ml_first_review"
                 ]
 
-            for width, height in ((1440, 900), (390, 844)):
+            for width, height in ((1440, 900), (390, 844), (1366, 650), (390, 664)):
                 results: dict[str, list[str]] = {}
-                for guided in (False, True):
+                # An ordinary laptop or phone window only has to show the words.
+                flows = ("fold",) if height < 700 else ("queue", "guide", "search")
+                for flow in flows:
                     context = browser.new_context(
                         ignore_https_errors=True,
                         viewport={"width": width, "height": height},
@@ -7786,7 +7798,7 @@ def test_first_review_guide_follows_setup_once_and_opens_the_first_field() -> No
                             page.route(origin + "/assets/" + asset, setup_asset)
                         dialog = page.locator("dialog.first-review-guide")
                         queue = page.locator(".attention-toggle strong")
-                        if not guided:
+                        if flow == "queue":
                             # Control: Start without the cookie shows no guide.
                             start(page, None)
                             expect(queue).to_have_text(re.compile(r"\d+ works?"))
@@ -7809,6 +7821,51 @@ def test_first_review_guide_follows_setup_once_and_opens_the_first_field() -> No
                             "**/api/v1/attention**",
                             partial(_fulfil_json, empty),
                         )
+                        if flow != "guide":
+                            start(page, owed)
+                            expect(queue).to_have_text(re.compile(r"\d+ works?"))
+                            if flow == "search":
+                                # He is typing in Library when the field arrives.
+                                search = page.locator(
+                                    "#main-content input[type=search]"
+                                )
+                                if not search.is_visible():
+                                    page.locator(".compact-workspace-back").click()
+                                search.focus()
+                                expect(search).to_be_focused()
+                            page.unroute("**/api/v1/attention**")
+                            channels[0].publish("library", None)
+                            expect(dialog).to_be_visible()
+                            words = dialog.locator("[aria-live='polite']")
+                            for step in (1, 2, 3):
+                                expect(words).to_contain_text(f"Step {step} of 3")
+                                # The step's name and sentence need no scrolling.
+                                assert dialog.evaluate(_GUIDE_WORDS_SEEN), (
+                                    width,
+                                    height,
+                                    step,
+                                )
+                                if step < 3:
+                                    # Wherever he scrolled the example to.
+                                    dialog.locator(".first-review-body").evaluate(
+                                        "body => body.scrollTo(0, body.scrollHeight)"
+                                    )
+                                    dialog.get_by_role("button", name="Next").click()
+                            # The example no longer answers, and looks it.
+                            assert dialog.locator(".first-review-example").evaluate(
+                                "element => [element.inert,"
+                                " getComputedStyle(element).opacity]"
+                            ) == [True, "0.55"]
+                            if flow == "search":
+                                dialog.get_by_role(
+                                    "button", name="Open your first field"
+                                ).click()
+                                expect(dialog).to_have_count(0)
+                                page.wait_for_url(re.compile(r"field="))
+                                page.wait_for_timeout(700)
+                                results["search"] = page.evaluate(_GUIDE_FOCUS)
+                            assert page_errors == []
+                            continue
                         start(page, owed)
                         # The browser kept exactly what the real Start set.
                         (kept,) = owed_now(context)
@@ -7941,8 +7998,12 @@ def test_first_review_guide_follows_setup_once_and_opens_the_first_field() -> No
                         page.wait_for_timeout(500)
                         expect(dialog).to_have_count(0)
                         assert page_errors == []
-                assert results["guide"] == results["queue"], (width, results)
-                assert "field=" in results["guide"][0], results
+                if "queue" in flows:
+                    # The same address and focus as the queue's own row, even
+                    # when a control of Library's held focus before the guide.
+                    assert results["guide"] == results["queue"], (width, results)
+                    assert results["search"] == results["queue"], (width, results)
+                    assert "field=" in results["guide"][0], results
             browser.close()
         setup_client.close()
 
