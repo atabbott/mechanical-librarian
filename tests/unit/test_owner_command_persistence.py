@@ -1394,7 +1394,10 @@ def test_pin_and_unpin_history_events(store: OwnerStore) -> None:
 # #1523 review B1: a keep on a case that returned as a new episode (#1358)
 # has nothing in its own episode to go back from. It is not pending work, and
 # it never stops the scheduler from applying another write.
-_KEPT_THEN_RETURNED = {
+_KEPT_THEN_RETURNED: dict[
+    str,
+    tuple[dict[str, object], dict[str, tuple[str, ...]], str, dict[str, object]],
+] = {
     # A clearable field the case read empty: filled on it, cleared on the
     # kept case, and read empty again.
     "genres": (
