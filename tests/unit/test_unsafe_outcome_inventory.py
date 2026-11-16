@@ -112,8 +112,10 @@ _CASE_CALL: Row = {
 # and no decision is recorded (#1355, amendment 4). `offer_changed` with
 # `digest_mismatch` is raised inside the decision transaction.
 # `decision_written` refuses a withdrawal of a decision already written to the
-# target. A read after the commit is absorbed by `_decision_confirmation`; the
-# `run` catch-all is `unavailable`.
+# target. The pin refusals and a pinned field's refused withdrawal (#1346) are
+# raised inside the decision transaction before any insert. A read after the
+# commit is absorbed by `_decision_confirmation`; the `run` catch-all is
+# `unavailable`.
 _DECISION: Row = {
     **{
         (409, code): "pre-commit"
@@ -125,6 +127,10 @@ _DECISION: Row = {
             "automatic_hold",
             "decision_written",
             "offer_changed",
+            "pin_change_waiting",
+            "already_pinned",
+            "not_pinned",
+            "pinned",
         )
     },
     **{

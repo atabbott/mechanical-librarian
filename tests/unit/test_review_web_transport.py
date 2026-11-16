@@ -4184,3 +4184,152 @@ def test_a_400_code_point_rule_fits_the_body_cap_in_any_json_encoding(
             },
         )
     assert refused.status_code == 413
+
+
+def _decision_poster(web: Any, login: dict[str, Any], case_id: str, prefix: str):
+    """Post owner decisions on the case's fields as the page shows them now."""
+    keys = iter(f"{prefix}-{index:04d}" for index in range(10))
+
+    def decide(destination: str, outcome: str, selected_value: object = None):
+        field = next(
+            field
+            for field in web.client.get(f"/api/v1/review-cases/{case_id}").json()[
+                "fields"
+            ]
+            if field["destination"] == destination
+        )
+        return web.client.post(
+            f"/api/v1/review-cases/{case_id}/decisions",
+            headers={
+                **web.origin,
+                "X-CSRF-Token": login["csrf_token"],
+                "Idempotency-Key": next(keys),
+            },
+            json={
+                "destination": destination,
+                "outcome": outcome,
+                "proposal_id": field["proposal_id"],
+                "selected_value": selected_value,
+                "target_fingerprint": field["target_fingerprint"],
+                "offered_alternatives_digest": field["offer_digest"],
+            },
+        )
+
+    return decide
+
+
+def test_pin_and_unpin_through_the_decision_route(tmp_path: Path) -> None:
+    """Pin and unpin are owner decisions on the guarded route, and each store
+    refusal is a conflict (#1346, AC1, AC12-AC14)."""
+    from tests.unit.test_owner_answer_holds import _queued, _store
+
+    store, report, _ = _store(tmp_path)
+    store.publish(report)
+    context = review_web_context(lambda *_: cast(Any, store.repository))
+    web = next(context)
+    try:
+        decide = _decision_poster(
+            web, web.login(), store.case.review_case_id, "pin-request"
+        )
+        # Automatic's planned change to the title waits to be written.
+        queued = _queued(store)
+        assert queued is not None
+        store.plan(queued)
+        waiting = decide("title", "pin")
+        assert (waiting.status_code, waiting.json()["error"]["code"]) == (
+            409,
+            "pin_change_waiting",
+        )
+        pinned = decide("subtitle", "pin")
+        assert pinned.status_code == 200, pinned.text
+        assert (pinned.json()["outcome"], pinned.json()["selected_value"]) == (
+            "pin",
+            None,
+        )
+        repeated = decide("subtitle", "pin")
+        assert (repeated.status_code, repeated.json()["error"]["code"]) == (
+            409,
+            "already_pinned",
+        )
+        unpinned = decide("subtitle", "unpin")
+        assert unpinned.status_code == 200, unpinned.text
+        assert unpinned.json()["outcome"] == "unpin"
+        again = decide("subtitle", "unpin")
+        assert (again.status_code, again.json()["error"]["code"]) == (
+            409,
+            "not_pinned",
+        )
+        assert store.repository._connection.execute(
+            "SELECT outcome FROM human_decisions ORDER BY ordinal"
+        ).fetchall() == [("pin",), ("unpin",)]
+    finally:
+        next(context, None)
+        store.close()
+
+
+@pytest.mark.parametrize(
+    "destination,selected",
+    [
+        ("genres", {"kind": "list", "value": ["Fantasy"]}),
+        ("explicit", {"kind": "boolean", "value": True}),
+    ],
+    ids=["list", "boolean"],
+)
+def test_choose_then_pin_through_the_decision_route(
+    tmp_path: Path, destination: str, selected: dict[str, Any]
+) -> None:
+    """The one press is two requests: the value command, then the pin, each
+    accepted before the write lands; the answer then cannot be withdrawn
+    while its field is pinned. The pinned value is read back with its own
+    JSON type, in the acknowledgement and the case (#1346, KC9, K-D18)."""
+    from tests.support.audiobook_reports import (
+        synthetic_audiobook_bibliographic_report,
+    )
+    from tests.support.genre_reports import genre_report
+    from tests.support.owner_values import OwnerStore
+
+    store = OwnerStore(
+        tmp_path,
+        genre_report()
+        if destination == "genres"
+        else synthetic_audiobook_bibliographic_report(adult_product=True),
+    )
+    context = review_web_context(lambda *_: cast(Any, store.repository))
+    web = next(context)
+    try:
+        case_id = store.case.review_case_id
+        decide = _decision_poster(web, web.login(), case_id, "choose-pin-request")
+        chosen = decide(destination, "accept", selected)
+        assert chosen.status_code == 200, chosen.text
+        pinned = decide(destination, "pin")
+        assert pinned.status_code == 200, pinned.text
+        read = web.client.get(f"/api/v1/review-cases/{case_id}")
+        assert read.status_code == 200, read.text
+        field = next(
+            field
+            for field in read.json()["fields"]
+            if field["destination"] == destination
+        )
+        assert field["pin"] == {
+            "state": "waiting",
+            "value": {
+                "destination": destination,
+                "state": "value",
+                "value": selected["value"],
+            },
+        }
+        assert type(field["pin"]["value"]["value"]) is type(selected["value"])
+        assert field["pin_control"] == {"pin": "available", "unpin": True}
+        assert field["human_decision"]["decision_id"] == chosen.json()["decision_id"]
+        assert (field["owner_control"] or {"withdraw": None})["withdraw"] is None
+        withdrawn = decide(destination, "withdraw")
+        assert (withdrawn.status_code, withdrawn.json()["error"]["code"]) == (
+            409,
+            "pinned",
+        )
+        assert store.repository._connection.execute(
+            "SELECT outcome FROM human_decisions ORDER BY ordinal"
+        ).fetchall() == [("accept",), ("pin",)]
+    finally:
+        next(context, None)
+        store.close()

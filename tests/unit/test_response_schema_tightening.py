@@ -504,6 +504,15 @@ KEYWORDS: tuple[tuple[str, str, str, str, object], ...] = (
     ("S91", "_LibraryProgressField", "/properties/need_you", "minimum", 1),
     ("S92", "_LibraryProgressResponse", "/properties/fields", "maxItems", 16),
     ("S93", "_LibraryProgressResponse", "/properties/libraries", "maxItems", 256),
+    # An owner pin's state and a work's pinned fields (#1346).
+    (
+        "S94",
+        "_FieldPin",
+        "/properties/state",
+        "enum",
+        ("in_force", "waiting", "changed"),
+    ),
+    ("S95", "_LibraryWork", "/properties/pinned_count", "minimum", 0),
 )
 
 

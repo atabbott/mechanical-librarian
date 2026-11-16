@@ -42,6 +42,8 @@ const outcomeWords = (outcome: DecisionOutcome) =>
       reject: 'your choice',
       owner_entered: 'your value',
       withdraw: 'the withdrawal',
+      pin: 'the pin',
+      unpin: 'the unpin',
     }) satisfies Record<DecisionOutcome, string>
   )[outcome]
 // One sentence for a written decision, shared by the refusal and the note.

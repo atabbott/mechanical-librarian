@@ -95,7 +95,7 @@ status line that says who accepted it and when.
 | [0082](0082-runtime-activity-facts.md) | accepted | Reuse Activity facts with exact source witnesses |
 | [0083](0083-validated-browse-document-reuse.md) | accepted | Reuse validated browse documents by exact bytes |
 | [0084](0084-persisted-attention-facts.md) | accepted | Persist which fields need the owner |
-| [0085](0085-owner-entered-values-withdrawal-and-reselection.md) | accepted; Amendment 1 proposed | Admit owner-entered values, withdrawal and reselection |
+| [0085](0085-owner-entered-values-withdrawal-and-reselection.md) | accepted; Amendments 1 and 2 proposed | Admit owner-entered values, withdrawal and reselection |
 | [0086](0086-deployment-held-setup-claim-token.md) | accepted | Require a deployment-held claim token for the first owner |
 | [0087](0087-operation-bound-qualification-authority.md) | accepted | Bind qualification authority to permitted operations |
 | [0088](0088-carried-recording-admission.md) | accepted | Carry an admitted audiobook edition into the next preparation |

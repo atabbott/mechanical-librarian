@@ -530,9 +530,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 )
             ),
             set_field_effect_manual_hold=(
-                lambda review_case_id, destination, changed_at, decision_id: (
+                lambda review_case_id, destination, changed_at, decision_id, pin: (
                     self._set_field_effect_manual_hold(
-                        review_case_id, destination, changed_at, decision_id
+                        review_case_id, destination, changed_at, decision_id, pin=pin
                     )
                 )
             ),
@@ -970,7 +970,8 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 "AND human.destination=automatic.destination "
                 "AND human.ordinal=(SELECT MAX(current.ordinal) FROM human_decisions current "
                 "WHERE current.review_case_id=human.review_case_id AND "
-                "current.destination=human.destination) "
+                "current.destination=human.destination "
+                "AND current.outcome NOT IN ('pin','unpin')) "
                 "WHERE automatic.review_case_id=? AND automatic.destination=? AND "
                 # Only the active generation's decision is superseded (#1573).
                 + _active_generation_automatic_sql("automatic"),
@@ -1000,12 +1001,15 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         destination: str,
         changed_at: int,
         decision_id: str,
+        *,
+        pin: dict[str, object] | None = None,
     ) -> None:
         self._field_effects._set_field_effect_manual_hold(
             review_case_id,
             destination,
             changed_at,
             decision_id,
+            pin=pin,
         )
 
     def field_effect_manual_hold_context(
@@ -1863,7 +1867,8 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         offset: int,
         library_labels: LibraryLabels = (),
     ) -> tuple[
-        tuple[str, str, str, int, str | None, ReviewFieldCause | None, bool], ...
+        tuple[str, str, str, int, str | None, ReviewFieldCause | None, bool, bool],
+        ...,
     ]:
         with self.browse_observation():
             return self._review_cases.list_current_attention_documents(
