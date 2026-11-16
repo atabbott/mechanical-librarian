@@ -52,6 +52,7 @@ def _file(
     *,
     total: int | None = None,
     unreadable: int = 0,
+    changed: int = 0,
     labels: dict[str, str] | None = None,
 ) -> bytes:
     encoder = PlanFileEncoder(format, labels or {"books": "Household books"})
@@ -64,6 +65,7 @@ def _file(
     return body + encoder.tail(
         total=len(rows) if total is None else total,
         unreadable=unreadable,
+        changed=changed,
         made_at=1_700_000_000,
     )
 
@@ -123,6 +125,7 @@ def test_json_keeps_exact_values_and_round_trips() -> None:
     }
     assert document["changes"][1]["current_value"] is None
     assert {key: document[key] for key in document if key != "changes"} == {
+        "changed": 0,
         "listed": 2,
         "made_at": 1_700_000_000,
         "total": 2,
@@ -201,6 +204,31 @@ def test_a_short_file_says_so_inside_itself() -> None:
     ]
     # Every change accounted for, so no shortfall note: header, rows, one note.
     assert len(plural) == 1 + 2 + 1
+
+
+def test_a_change_that_moved_is_counted_and_never_reads_as_cut_short() -> None:
+    rows = [_row(), _row()]
+
+    # Listed, unreadable and changed account for every change: not truncated.
+    whole = json.loads(_file("json", rows, total=6, unreadable=1, changed=3))
+    assert (whole["changed"], whole["truncated"]) == (3, False)
+    assert _csv(_file("csv", rows, total=6, unreadable=1, changed=3))[-2:] == [
+        ["1 prepared change was not listed because it could not be read."],
+        [
+            "3 prepared changes were not listed because they changed while "
+            "this file was being made."
+        ],
+    ]
+    short = _csv(_file("csv", rows, total=1_004, changed=1))
+    assert short[-2:] == [
+        ["Lists 2 of 1,004 prepared changes. The rest are not in this file."],
+        [
+            "1 prepared change was not listed because it changed while this "
+            "file was being made."
+        ],
+    ]
+    assert json.loads(_file("json", rows, total=1_004, changed=1))["truncated"] is True
+    assert json.loads(_file("json", rows))["changed"] == 0
 
 
 @pytest.mark.parametrize("format", ("csv", "json"), ids=("csv", "json"))

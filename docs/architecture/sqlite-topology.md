@@ -352,17 +352,23 @@ it is read again every time.
 
 The write plan file has a third query-only reader of its own, beside the
 history and permission readers, so a download never waits for, or holds up,
-either of them. The export reader holds one deferred read transaction for the
-length of the download: the counts, the rows and every value are read in it,
-so the file is one consistent snapshot. Its length is bounded by the file's
-caps, 20,000 rows and 16 MiB, not by time. A writer can commit while it runs;
-the file reflects the state when the download began. The transaction always
-ends: when the file is complete, on a fault, when the browser goes away, or
-within 100 rows once the application starts closing. A download nobody is
-reading is stopped after a minute, and the page then says the file was not
-downloaded; a second download waits for the first to end. Besides the shared
-report cache every Activity reader uses (#1231), parsed documents are reused
-only inside that read, in bounded caches cleared when it ends (#1336).
+either of them. The store keeps a rollback journal, so an open read
+transaction refuses every other connection's commit; a download can last
+minutes and its browser can stall. The export reader therefore reads in
+bounded deferred transactions and holds none while bytes are sent. One short
+transaction reads the total and the ordered list of changes, at most 20,000.
+Each chunk of rows is then read in a transaction of its own, of at most 100
+rows and about a quarter of a second of work, which checks that each listed
+change is still prepared and ends before the chunk is sent. A busy begin is
+retried, so a commit waits at most for the chunk being read and only delays
+the next one. The file is therefore not one snapshot: a change that stopped being
+prepared after the list was read is left out and counted, and one prepared
+later is absent. A fault, a browser that goes away or a closing application
+ends the file at the next chunk. A download nobody is reading is stopped
+after a minute, and the page then says the file was not downloaded; a second
+download waits for the first to end. Besides the shared report cache every
+Activity reader uses (#1231), parsed documents are reused only inside one
+such transaction, in bounded caches cleared when it ends (#1336).
 
 ### Library and Attention
 

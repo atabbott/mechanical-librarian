@@ -1341,6 +1341,116 @@ def _resolved_with_and_without_reuse(repository: Any, decisions: list[Any]) -> N
     assert fresh == reused == again
 
 
+def _owner_choice(effects: _EffectEnvironment) -> HumanDecision:
+    _owner_accepted(effects)
+    repository = effects.repository
+    ((*_, decision_id, _),) = repository.pending_field_effect_plan_entries(
+        None, 100, ()
+    )
+    return HumanDecision.from_json(
+        repository.field_effect_plan_documents((decision_id,))[decision_id]
+    )
+
+
+def _report_again(effects: _EffectEnvironment) -> None:
+    """The work is reported again, so its earlier case is no longer current."""
+    report = metadata_report("Old title", "3", "4", item_id="book-1")
+    effects.repository.publish(report, lambda: True)
+    proposal_set = evaluate_report(report)
+    effects.repository.publish_proposal(proposal_set)
+    effects.repository.admit_review_case(proposal_set)
+
+
+def test_a_value_committed_between_two_plan_snapshots_is_read_fresh(
+    effects: _EffectEnvironment,
+) -> None:
+    """What one snapshot of a file validated is never served in the next (#1336)."""
+    decision = _owner_choice(effects)
+    repository = effects.repository
+    activity = repository._field_effect_activity
+    read: list[object] = []
+
+    def snapshot() -> dict[str, object]:
+        assert repository._connection.in_transaction
+        read.append(repository.prepared_field_effect_decisions((decision.decision_id,)))
+        for _ in range(2):
+            try:
+                read.append(repository.field_effect_plan_row(decision)["work"])
+            except FieldEffectError as error:
+                read.append(error.code)
+        # Inside a snapshot a validated case is reused; a refusal never is.
+        assert activity._plan_reuse is not None
+        read.append(activity._plan_reuse.case.cache_info().hits)
+        return {}
+
+    repository.field_effect_write_plan_snapshot(snapshot)
+    assert not repository._connection.in_transaction
+    assert activity._plan_reuse is None
+    _report_again(effects)
+    repository.field_effect_write_plan_snapshot(snapshot)
+
+    prepared = frozenset({decision.decision_id})
+    assert read == [
+        prepared,
+        "Old title",
+        "Old title",
+        1,
+        frozenset(),
+        "authority_binding",
+        "authority_binding",
+        0,
+    ]
+    with pytest.raises(FieldEffectError, match="invalid_limit"):
+        repository.prepared_field_effect_decisions(("x",) * 101)
+    assert repository.prepared_field_effect_decisions(()) == frozenset()
+
+
+@pytest.mark.parametrize("moved", (False, True), ids=("still-prepared", "moved"))
+def test_a_plan_file_holds_no_transaction_while_it_sends(
+    effects: _EffectEnvironment, monkeypatch: pytest.MonkeyPatch, moved: bool
+) -> None:
+    """Each read of a file has ended before bytes are sent, and a change that
+    moved after it was listed is left out and counted (#1336)."""
+    from mechanical_librarian.application.write_plan import ProducedStream
+
+    _owner_choice(effects)
+    repository = effects.repository
+    open_at_emit: list[bool] = []
+    emit = ProducedStream._emit
+
+    def recording(stream: ProducedStream, chunk: bytes) -> None:
+        open_at_emit.append(repository._connection.in_transaction)
+        if moved and len(open_at_emit) == 1:
+            # Between the list read and the read of its rows.
+            _report_again(effects)
+        emit(stream, chunk)
+
+    monkeypatch.setattr(ProducedStream, "_emit", recording)
+    stream = _plan_application(repository).activity_write_plan_file(
+        "json", lambda: False, {}
+    )
+    chunks = []
+    try:
+        while (chunk := stream.next_chunk()) is not None:
+            chunks.append(chunk)
+    finally:
+        stream.close()
+
+    # The head, the one chunk of rows and the summary.
+    assert open_at_emit == [False, False, False]
+    assert not repository._connection.in_transaction
+    document = json.loads(b"".join(chunks))
+    assert len(document["changes"]) == document["listed"]
+    assert {key: document[key] for key in document if key != "changes"} == {
+        "changed": int(moved),
+        "listed": int(not moved),
+        "made_at": 2_000_000_000,
+        "total": 1,
+        "truncated": False,
+        "unreadable": 0,
+    }
+
+
 def test_an_automatic_decision_is_planned_under_its_policy_setting(
     effects: _EffectEnvironment,
 ) -> None:

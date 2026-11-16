@@ -1236,6 +1236,7 @@ def test_the_write_plan_downloads_as_a_saved_file_without_granting_anything() ->
                 assert b'"\'=Before"' in csv_lines[1]
                 document = json.loads(saved["mechanical-librarian-write-plan.json"])
                 assert set(document) == {
+                    "changed",
                     "changes",
                     "listed",
                     "made_at",

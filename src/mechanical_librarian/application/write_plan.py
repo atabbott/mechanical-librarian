@@ -1,7 +1,9 @@
 """The write plan: every prepared change, as the owner reads it before writes.
 
-A plan is computed on request inside one read snapshot and never stored. Its
-rows are words only: no work, item or decision identity, path, artifact key or
+A plan is computed on request and never stored: the inline plan inside one
+read snapshot, a file in short snapshots that each end before their rows are
+sent, so no download holds up another connection's commit. Its rows are words
+only: no work, item or decision identity, path, artifact key or
 cover token reaches the inline plan or either file (#1336).
 """
 
@@ -49,8 +51,13 @@ INLINE_ROWS: Final = 60
 # so inside itself when it stops short. Neither bound depends on load.
 FILE_ROWS: Final = 20_000
 FILE_BYTES: Final = 16_777_216
-# A closing application is noticed within this many resolved rows.
+# A closing application is noticed within this many resolved rows, and one
+# snapshot of a file read resolves no more than this many.
 CLOSING_CHECK_ROWS: Final = 100
+# A file's snapshot takes no further row once it has worked this long, so a
+# commit on another connection waits about this long at most. The row being
+# resolved when the time passes is finished.
+CHUNK_SNAPSHOT_SECONDS: Final = 0.25
 
 # A source the library itself holds: its own cover or local claims (D4).
 LOCAL_LIBRARY_RECORD: Final = "Local library record"
@@ -280,13 +287,14 @@ class PlanFileEncoder:
         self.listed += 1
         return line
 
-    def tail(self, *, total: int, unreadable: int, made_at: int) -> bytes:
-        truncated = self.listed + unreadable < total
+    def tail(self, *, total: int, unreadable: int, changed: int, made_at: int) -> bytes:
+        truncated = self.listed + unreadable + changed < total
         if self._format == "json":
             return (
                 b"],"
                 + json.dumps(
                     {
+                        "changed": changed,
                         "listed": self.listed,
                         "made_at": made_at,
                         "total": total,
@@ -313,13 +321,23 @@ class PlanFileEncoder:
                     "they could not be read.",
                 )
             )
+        if changed:
+            notes += _csv_line(
+                (
+                    "1 prepared change was not listed because it changed while "
+                    "this file was being made."
+                    if changed == 1
+                    else f"{changed:,} prepared changes were not listed because "
+                    "they changed while this file was being made.",
+                )
+            )
         return notes
 
 
 class ProducedStream:
     """Bytes one producer thread makes and the response sends as they arrive.
 
-    The producer owns its reader for the whole read and ends by itself: when
+    The producer owns its reader for the whole file and ends by itself: when
     the file is made, on a fault, when the application is closing, when the
     consumer stops it, or when no chunk has been taken for
     ``STALLED_CONSUMER_SECONDS`` (a download nobody is reading). Giving up is

@@ -1501,7 +1501,7 @@ class ReviewApplication:
                 library: label for (_, library), label in self._library_labels().items()
             }
             # Never the permission reader, which can be the writer: a file
-            # holds its read for minutes.
+            # keeps its reader for minutes.
             reader = self._export_projection
             if reader is None:
                 raise ReviewApplicationError("unavailable")

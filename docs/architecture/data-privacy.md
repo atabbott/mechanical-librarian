@@ -186,8 +186,8 @@ All owner surfaces need a session and are `private, no-store`.
 - **Write plan** (Activity's permission review) shows prepared changes before
   writes are allowed: library names, work titles and authors, field names, the
   current and new values, the reason and source names. The inline plan holds
-  at most 60 rows; its file at most 20,000 rows in 16 MiB, made on request in
-  one read and never stored, logged or sent anywhere. Neither carries a work,
+  at most 60 rows; its file at most 20,000 rows in 16 MiB, made on request
+  and never stored, logged or sent anywhere. Neither carries a work,
   item or decision identity, a path, an artifact key or a cover token: a cover
   is described in words (#1336).
 - **Policy preview** samples at most 50 records, truncated at 1 MiB. Rich-field

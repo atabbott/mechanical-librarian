@@ -1352,7 +1352,7 @@ class FakeActivityApplication(ContinuousGuardedApplication):
                 )
                 or b""
             )
-            emit(encoder.tail(total=1, unreadable=0, made_at=1))
+            emit(encoder.tail(total=1, unreadable=0, changed=0, made_at=1))
 
         return ProducedStream(produce, closing)
 

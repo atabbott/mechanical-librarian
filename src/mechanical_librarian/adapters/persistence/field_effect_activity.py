@@ -626,8 +626,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         self._reused_report: Callable[[str], MetadataReport] | None = None
         self._reused_case: Callable[[str], ReviewCase] | None = None
         self._reused_outcome: Callable[[str], ShadowOutcomeSet] | None = None
-        # Within one write-plan read, the one snapshot it reads, each current
-        # case is validated once however many of its decisions are listed.
+        # Within one write-plan snapshot, each current case is validated once
+        # however many of its decisions are listed.
         self._plan_reuse: _PlanReuse | None = None
         # Held by readiness from its fresh check to its snapshot; a background
         # projector takes no step inside it (#1231).
@@ -944,12 +944,14 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
 
     @contextmanager
     def _plan_documents(self) -> Iterator[None]:
-        """Reuse what one write-plan read validates, for that read only.
+        """Reuse what one write-plan snapshot validates, for that snapshot only.
 
         Each cache is bounded and keyed by an exact identity or document, so a
         work's rows, which a plan file lists together, read its case, report,
-        proposal set and outcome set once. Safe because the read is one fixed
-        snapshot; nothing outlives it, and nothing is shared with a writer.
+        proposal set and outcome set once. Safe because the caches live inside
+        one fixed snapshot: a file's next snapshot starts empty, so a value
+        another connection committed in between is read fresh. Nothing is
+        shared with a writer.
         """
         self._plan_reuse = _PlanReuse(
             case=lru_cache(maxsize=_PLAN_REUSE)(self._read_current_case),
@@ -1929,6 +1931,37 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     f"WHERE selection.kind='automatic' AND selection.decision_id IN ({marks})",
                     decision_ids * 4,
                 ).fetchall()
+            )
+        except sqlite3.Error as error:
+            raise FieldEffectError("persistence") from error
+
+    @local_operation
+    def prepared_field_effect_decisions(
+        self, decision_ids: tuple[str, ...]
+    ) -> frozenset[str]:
+        """Return which of up to 100 decisions are prepared changes now.
+
+        The relation and its filters are the counts statement's own, so a plan
+        file lists a row only while the snapshot that reads it still counts it.
+        """
+        if (
+            type(decision_ids) is not tuple
+            or len(decision_ids) > 100
+            or any(type(value) is not str for value in decision_ids)
+        ):
+            raise FieldEffectError("invalid_limit")
+        if not decision_ids:
+            return frozenset()
+        try:
+            return frozenset(
+                row[0]
+                for row in self._connection.execute(
+                    _PENDING_PREPARED_SQL
+                    + "SELECT pending.decision_id "
+                    + _PENDING_PREPARED_FROM_SQL
+                    + f"AND pending.decision_id IN ({','.join('?' * len(decision_ids))})",
+                    decision_ids,
+                )
             )
         except sqlite3.Error as error:
             raise FieldEffectError("persistence") from error
@@ -3434,9 +3467,14 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
     def field_effect_write_plan_snapshot(
         self, call: Callable[[], dict[str, object]]
     ) -> dict[str, object]:
-        """Run one write-plan file read in one exact snapshot, catching up no facts.
+        """Run one bounded write-plan file read in its own exact snapshot.
 
-        Its inputs are canonical rows, as the consent read's are (#1236).
+        A file is read as a list snapshot and then one snapshot per chunk of
+        rows, each ended before its rows are sent: the store keeps a rollback
+        journal, so a read left open would refuse every other connection's
+        commit. A busy begin is retried, so a writer that is committing delays
+        the next chunk. Its inputs are canonical rows, as the consent read's
+        are (#1236), so it catches up no facts.
         """
         with self._activity_page_cache_lock, self._plan_documents():
             return self._activity_snapshot(call)

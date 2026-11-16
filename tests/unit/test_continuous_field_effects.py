@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
+from mechanical_librarian.application import continuous_field_effects
 from mechanical_librarian.application.continuous_field_effects import (
     CONTINUOUS_FIELD_ACTIVITY_SCHEMA,
     ContinuousGuardedApplication,
@@ -284,6 +285,9 @@ class _PagedRepository:
             for decision_id in decision_ids
             if decision_id in documents
         }
+
+    def prepared_field_effect_decisions(self, decision_ids):
+        return frozenset(decision_ids) & {value.decision_id for value in self.decisions}
 
     def field_effect_plan_row(self, _decision):
         return {"work": "A Work", "authors": "An Author", "sources": ["Hardcover"]}
@@ -731,7 +735,7 @@ def _drain(stream) -> bytes:
     return b"".join(chunks)
 
 
-def test_write_plan_file_lists_every_change_inside_one_snapshot() -> None:
+def test_write_plan_file_lists_every_change_in_snapshots_that_end() -> None:
     repository = _FileRepository(_two_libraries(3))
     released: list[str] = []
 
@@ -748,6 +752,7 @@ def test_write_plan_file_lists_every_change_inside_one_snapshot() -> None:
         0,
         7,
     )
+    assert document["changed"] == 0
     # Configured library order first, so alpha's rows precede beta's.
     assert [row["library"] for row in document["changes"]] == [
         "Alpha books",
@@ -766,8 +771,83 @@ def test_write_plan_file_lists_every_change_inside_one_snapshot() -> None:
         "sources": ["Hardcover"],
     }
     assert body.count(b"\n") == 3 + 1
-    assert repository.snapshots == ["enter", "exit"]
+    # The list is one snapshot and the rows another, each ended.
+    assert repository.snapshots == ["enter", "exit"] * 2
     assert released == ["released"]
+
+
+def test_write_plan_file_sends_nothing_inside_a_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each snapshot is bounded and has ended before its rows are sent."""
+    monkeypatch.setattr(continuous_field_effects, "CLOSING_CHECK_ROWS", 2)
+    repository = _FileRepository(_decisions(5))
+    sent: list[tuple[int, str]] = []
+    service = _file_service(repository)
+
+    def emit(chunk: bytes) -> None:
+        sent.append((chunk.count(b"\n"), repository.snapshots[-1]))
+
+    service._write_plan_file("json", emit, lambda: False, {})
+
+    # The head, three chunks of at most two rows, the summary: none of them
+    # sent while a snapshot was open.
+    assert sent == [(1, "exit"), (2, "exit"), (2, "exit"), (1, "exit"), (0, "exit")]
+    assert repository.snapshots == ["enter", "exit"] * 4
+
+    # A snapshot that has worked its time takes no further row.
+    monkeypatch.setattr(continuous_field_effects, "CHUNK_SNAPSHOT_SECONDS", 0)
+    repository.snapshots.clear()
+    sent.clear()
+    service._write_plan_file("json", emit, lambda: False, {})
+    assert [rows for rows, _ in sent] == [1, 1, 1, 1, 1, 1, 0]
+    assert repository.snapshots == ["enter", "exit"] * 6
+
+
+@pytest.mark.parametrize("format", ("csv", "json"), ids=("csv", "json"))
+def test_write_plan_file_leaves_out_a_change_that_moved_and_counts_it(
+    format: PlanFormat,
+) -> None:
+    """Listed, then no longer prepared when its rows are read: left out and
+    counted as changed, never as unreadable."""
+    decisions = _decisions(4)
+
+    class Repository(_FileRepository):
+        def prepared_field_effect_decisions(self, decision_ids):
+            return super().prepared_field_effect_decisions(decision_ids) - {
+                decisions[1].decision_id
+            }
+
+    class SkippingAuthority(_Authority):
+        def resolve(self, decision):
+            if decision.decision_id == decisions[2].decision_id:
+                raise FieldEffectError("authority_binding")
+            return super().resolve(decision)
+
+    body = _drain(
+        _file_service(
+            Repository(decisions), SkippingAuthority()
+        ).activity_write_plan_file(format, lambda: False, {})
+    )
+
+    if format == "json":
+        document = json.loads(body)
+        assert len(document["changes"]) == document["listed"] == 2
+        assert (document["total"], document["unreadable"], document["changed"]) == (
+            4,
+            1,
+            1,
+        )
+        # Every listed entry is accounted for, so nothing was cut short.
+        assert document["truncated"] is False
+    else:
+        lines = body.decode("utf-8-sig").split("\r\n")
+        assert lines[3:] == [
+            '"1 prepared change was not listed because it could not be read."',
+            '"1 prepared change was not listed because it changed while this '
+            'file was being made."',
+            "",
+        ]
 
 
 def test_write_plan_file_counts_an_unreadable_change_and_says_so() -> None:
@@ -806,7 +886,8 @@ def test_write_plan_file_stops_when_the_application_closes() -> None:
 
     with pytest.raises(GuardedApplicationError, match="^unavailable$"):
         _drain(stream)
-    assert repository.snapshots == ["enter", "exit"]
+    # The list and the first chunk were read; both snapshots ended.
+    assert repository.snapshots == ["enter", "exit"] * 2
 
 
 def test_write_plan_file_storage_fault_reaches_the_consumer_after_the_head() -> None:

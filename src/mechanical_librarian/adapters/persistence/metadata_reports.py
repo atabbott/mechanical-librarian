@@ -924,6 +924,11 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     ) -> dict[str, str]:
         return self._field_effect_activity.field_effect_plan_documents(decision_ids)
 
+    def prepared_field_effect_decisions(
+        self, decision_ids: tuple[str, ...]
+    ) -> frozenset[str]:
+        return self._field_effect_activity.prepared_field_effect_decisions(decision_ids)
+
     def field_effect_plan_row(
         self,
         decision: HumanDecision

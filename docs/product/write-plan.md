@@ -34,10 +34,14 @@ from Audiobookshelf.
 
 ## The file
 
-Download CSV and Download JSON save the whole plan as one file, made at that
-moment from one consistent read. A file lists at most 20,000 changes in at
-most 16 MiB; when it lists fewer than are prepared, or a change could not be
-read, a note inside the file says how many. Each work's changes sit together,
+Download CSV and Download JSON save the whole plan as one file. The list of
+changes is taken at that moment and each change is read as the file is
+written, so saving is never held up by a download. A change that moves
+meanwhile, because it was written, replaced or withdrawn, is left out and
+counted in a note; one prepared after the list was taken is not in the file.
+A file lists at most 20,000 changes in at most 16 MiB; when it lists fewer
+than are prepared, or a change could not be read, a note inside the file says
+how many. Each work's changes sit together,
 libraries in their configured order. Values are exact in JSON and written out
 in full in CSV, where a cell a spreadsheet would read as a formula starts with
 an apostrophe so it reads as text.

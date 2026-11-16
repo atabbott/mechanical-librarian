@@ -14,6 +14,7 @@ from unittest.mock import patch
 import httpx
 import pytest
 
+from mechanical_librarian.application import continuous_field_effects, write_plan
 from mechanical_librarian.application.field_effects import GuardedApplicationError
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_web import (
@@ -1719,7 +1720,7 @@ def _accept_offered_values(fixture: OwnerResponsivenessFixture) -> int:
 
 
 def test_write_plan_export_reads_its_own_query_only_snapshot(tmp_path: Path) -> None:
-    """The file is read on a third query-only reader, in one snapshot (#1336)."""
+    """The file is read on a third query-only reader of its own (#1336)."""
     fixture = OwnerResponsivenessFixture(tmp_path, 20, mixed=True, prepare=True)
     try:
         assert _accept_offered_values(fixture) > 0
@@ -1743,7 +1744,7 @@ def test_write_plan_export_reads_its_own_query_only_snapshot(tmp_path: Path) -> 
         assert document["truncated"] is False
         assert not connection.in_transaction
 
-        # Hold an export open inside its snapshot: the owner's consent and
+        # Hold an export open inside a snapshot: the owner's consent and
         # ledger reads still answer, and a closing application ends the file.
         repository = export._repository
         read = repository.field_effect_plan_documents
@@ -1779,6 +1780,86 @@ def test_write_plan_export_reads_its_own_query_only_snapshot(tmp_path: Path) -> 
         # The snapshot ended and its accepted read was released.
         assert not connection.in_transaction
         assert application._active_browses == 0
+    finally:
+        fixture.close()
+
+
+def test_write_plan_export_never_holds_up_an_owner_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A file being made, read or not, leaves every other commit free (#1336).
+
+    The store keeps a rollback journal, so a read transaction left open while
+    a download waits for its reader would refuse an owner's write.
+    """
+    monkeypatch.setattr(continuous_field_effects, "CLOSING_CHECK_ROWS", 1)
+    monkeypatch.setattr(write_plan, "_QUEUED_CHUNKS", 1)
+    fixture = OwnerResponsivenessFixture(tmp_path, 20, mixed=True, prepare=True)
+    try:
+        assert _accept_offered_values(fixture) > 0
+        application = fixture.application
+        prepared = application.activity_permission_readiness()["prepared"]["total"]
+        # Enough rows that the producer waits on a reader who takes nothing.
+        assert prepared >= 4
+        waits: list[float] = []
+
+        def write(paused: bool) -> None:
+            started = time.monotonic()
+            fixture.repository.set_field_effect_paused(paused, 2_000 + len(waits))
+            waits.append(time.monotonic() - started)
+
+        stream = application.activity_write_plan_file("json")
+        chunks = []
+        try:
+            head = stream.next_chunk()
+            assert head is not None
+            chunks.append(head)
+            deadline = time.monotonic() + 5
+            while not stream._chunks.full():
+                assert time.monotonic() < deadline
+                time.sleep(0.01)
+            # Nobody is reading: the owner's write still commits at once.
+            write(True)
+            write(False)
+            assert max(waits) < 2
+
+            # A slow reader: writes keep committing while the file is made.
+            done = threading.Event()
+            errors: list[BaseException] = []
+
+            def writer() -> None:
+                try:
+                    # Paced as any writer is; one that commits back to back
+                    # can keep a chunk's begin busy past its bounded retry.
+                    while not done.wait(0.02):
+                        write(len(waits) % 2 == 0)
+                except BaseException as error:  # noqa: BLE001 - asserted below
+                    errors.append(error)
+
+            thread = threading.Thread(target=writer)
+            thread.start()
+            try:
+                while (chunk := stream.next_chunk()) is not None:
+                    chunks.append(chunk)
+                    time.sleep(0.02)
+            finally:
+                done.set()
+                thread.join(10)
+        finally:
+            stream.close()
+        assert not errors
+        assert len(waits) > 2 and max(waits) < 2
+        document = json.loads(b"".join(chunks))
+        assert document["total"] == prepared
+        assert (
+            document["listed"] + document["unreadable"] + document["changed"]
+            == prepared
+        )
+        assert document["listed"] == len(document["changes"]) > 0
+        assert document["truncated"] is False
+        export = application._export_projection
+        assert export is not None
+        assert not export._repository._connection.in_transaction
     finally:
         fixture.close()
 

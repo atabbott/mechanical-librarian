@@ -22,6 +22,7 @@ from mechanical_librarian.application.operation_admission import (
 )
 from mechanical_librarian.application.operations import StageTimer
 from mechanical_librarian.application.write_plan import (
+    CHUNK_SNAPSHOT_SECONDS,
     CLOSING_CHECK_ROWS,
     EXAMPLES_PER_GROUP,
     FILE_ROWS,
@@ -150,6 +151,9 @@ class ContinuousFieldEffectRepository(Protocol):
     def field_effect_plan_documents(
         self, decision_ids: tuple[str, ...]
     ) -> dict[str, str]: ...
+    def prepared_field_effect_decisions(
+        self, decision_ids: tuple[str, ...]
+    ) -> frozenset[str]: ...
     def field_effect_plan_row(
         self,
         decision: HumanDecision
@@ -1422,9 +1426,11 @@ class ContinuousGuardedApplication:
     ) -> ProducedStream:
         """Make the complete write plan as one CSV or JSON file, sent as made.
 
-        Every row is read in one snapshot on this reader, with no Activity
-        catch-up. A work's rows are adjacent, so the read's bounded caches
-        reuse its case and documents. Nothing is stored, sent or granted.
+        The list of changes is read in one short snapshot and each chunk of
+        rows in a bounded one of its own, with no Activity catch-up; none is
+        open while bytes are sent. A work's rows are adjacent, so a snapshot's
+        bounded caches reuse its case and documents. Nothing is stored, sent
+        or granted.
         """
         if format not in {"csv", "json"}:
             raise GuardedApplicationError("activity_query")
@@ -1432,17 +1438,13 @@ class ContinuousGuardedApplication:
         def produce(
             emit: Callable[[bytes], None], cancelled: Callable[[], bool]
         ) -> None:
-            def read() -> dict[str, object]:
-                self._write_plan_file(format, emit, cancelled, library_labels)
-                return {}
-
             # A second download waits for the first to end, which it does by
             # itself, and gives up at once when it is stopped or closing.
             while not self._activity_reader_lock.acquire(timeout=_READER_WAIT_SECONDS):
                 if cancelled():
                     raise GuardedApplicationError("unavailable")
             try:
-                self._repository.field_effect_write_plan_snapshot(read)
+                self._write_plan_file(format, emit, cancelled, library_labels)
             finally:
                 self._activity_reader_lock.release()
 
@@ -1455,39 +1457,74 @@ class ContinuousGuardedApplication:
         cancelled: Callable[[], bool],
         library_labels: Mapping[str, str],
     ) -> None:
-        total = sum(
-            int(cast(int, row["count"]))
-            for row in self._repository.pending_field_effect_decision_counts()
+        # The store keeps a rollback journal: a read transaction refuses every
+        # other connection's commit. So each read below is a snapshot of its
+        # own that has ended before anything is emitted.
+        snapshot = self._repository.field_effect_write_plan_snapshot
+        listing = snapshot(
+            lambda: {
+                "total": sum(
+                    int(cast(int, row["count"]))
+                    for row in self._repository.pending_field_effect_decision_counts()
+                ),
+                "entries": self._repository.pending_field_effect_plan_entries(
+                    None, FILE_ROWS, tuple(name for _, name in self._libraries)
+                ),
+            }
         )
-        entries = self._repository.pending_field_effect_plan_entries(
-            None, FILE_ROWS, tuple(name for _, name in self._libraries)
+        made_at = self._clock()
+        entries = cast(
+            "tuple[tuple[str, str, str, str, str, str], ...]", listing["entries"]
         )
         encoder = PlanFileEncoder(format, library_labels)
         emit(encoder.head)
-        unreadable = 0
-        for start in range(0, len(entries), CLOSING_CHECK_ROWS):
+        position = unreadable = changed = 0
+        rows: list[PlanRow] = []
+
+        def read_chunk() -> dict[str, object]:
+            nonlocal position, unreadable, changed
+            decision_ids = tuple(
+                entry[4] for entry in entries[position : position + CLOSING_CHECK_ROWS]
+            )
+            deadline = time.monotonic() + CHUNK_SNAPSHOT_SECONDS
+            # Listed a moment ago; applied, replaced or withdrawn since, it is
+            # no longer a prepared change and is not listed.
+            prepared = self._repository.prepared_field_effect_decisions(decision_ids)
+            documents = self._repository.field_effect_plan_documents(decision_ids)
+            for decision_id in decision_ids:
+                position += 1
+                if decision_id not in prepared:
+                    changed += 1
+                elif (row := self._plan_row(documents.get(decision_id))) is None:
+                    unreadable += 1
+                else:
+                    rows.append(row)
+                if time.monotonic() >= deadline:
+                    break
+            return {}
+
+        while position < len(entries):
             if cancelled():
                 raise GuardedApplicationError("unavailable")
-            batch = entries[start : start + CLOSING_CHECK_ROWS]
-            documents = self._repository.field_effect_plan_documents(
-                tuple(entry[4] for entry in batch)
-            )
+            rows.clear()
+            snapshot(read_chunk)
             chunk = []
-            full = False
-            for entry in batch:
-                row = self._plan_row(documents.get(entry[4]))
-                if row is None:
-                    unreadable += 1
-                    continue
+            for row in rows:
                 line = encoder.row(row)
                 if line is None:
-                    full = True
                     break
                 chunk.append(line)
             emit(b"".join(chunk))
-            if full:
+            if len(chunk) < len(rows):
                 break
-        emit(encoder.tail(total=total, unreadable=unreadable, made_at=self._clock()))
+        emit(
+            encoder.tail(
+                total=cast(int, listing["total"]),
+                unreadable=unreadable,
+                changed=changed,
+                made_at=made_at,
+            )
+        )
 
     def _permission_projection(
         self, data: dict[str, object]
