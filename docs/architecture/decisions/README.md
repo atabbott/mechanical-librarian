@@ -25,7 +25,7 @@ status line that says who accepted it and when.
 | [0011](0011-isolated-epub-inspector.md) | accepted | Keep EPUB inspection private to an isolated child |
 | [0012](0012-metadata-report-activation.md) | accepted; schema policy superseded by 0013 | Activate the two-table metadata-report runtime |
 | [0013](0013-pre-release-clean-schema.md) | accepted | Require clean schemas until the first production release |
-| [0014](0014-review-case-admission.md) | accepted | Admit immutable review cases atomically |
+| [0014](0014-review-case-admission.md) | accepted; amended by 0104 (proposed) | Admit immutable review cases atomically |
 | [0015](0015-isolated-shadow-reviewer.md) | superseded by 0016 | Isolate one qualification-only shadow reviewer |
 | [0016](0016-freeze-explainable-shadow-reviewer.md) | partly superseded by 0019 and 0026 | Freeze explainable publication-date shadow review |
 | [0017](0017-bounded-failure-diagnostics.md) | accepted | Bound provider and reviewer failure diagnostics |
@@ -41,7 +41,7 @@ status line that says who accepted it and when.
 | [0028](0028-normalize-transient-reviewer-json-and-partition-combinations.md) | accepted | Normalise reviewer JSON and partition actions by combination |
 | [0029](0029-provider-independent-shadow-decision-preview.md) | accepted | Preview decisions deterministically without a provider |
 | [0030](0030-authenticated-review-web-boundary.md) | accepted | Use one authenticated review web boundary |
-| [0031](0031-persisted-review-preparation.md) | accepted; partly superseded by 0032 | Persist progressive review preparation |
+| [0031](0031-persisted-review-preparation.md) | accepted; partly superseded by 0032; amended by 0104 (proposed) | Persist progressive review preparation |
 | [0032](0032-continuous-review-reconciliation.md) | accepted | Reconcile reviews continuously |
 | [0033](0033-versioned-policy-draft-preview.md) | accepted | Persist immutable policy drafts before activation |
 | [0034](0034-atomic-policy-generation-cutover.md) | accepted | Cut over metadata policy in one atomic generation |
@@ -95,7 +95,7 @@ status line that says who accepted it and when.
 | [0082](0082-runtime-activity-facts.md) | accepted | Reuse Activity facts with exact source witnesses |
 | [0083](0083-validated-browse-document-reuse.md) | accepted | Reuse validated browse documents by exact bytes |
 | [0084](0084-persisted-attention-facts.md) | accepted | Persist which fields need the owner |
-| [0085](0085-owner-entered-values-withdrawal-and-reselection.md) | accepted; Amendments 1 and 2 proposed | Admit owner-entered values, withdrawal and reselection |
+| [0085](0085-owner-entered-values-withdrawal-and-reselection.md) | accepted; Amendments 1 and 2 proposed; amended by 0104 (proposed) | Admit owner-entered values, withdrawal and reselection |
 | [0086](0086-deployment-held-setup-claim-token.md) | accepted | Require a deployment-held claim token for the first owner |
 | [0087](0087-operation-bound-qualification-authority.md) | accepted | Bind qualification authority to permitted operations |
 | [0088](0088-carried-recording-admission.md) | accepted | Carry an admitted audiobook edition into the next preparation |
@@ -114,3 +114,4 @@ status line that says who accepted it and when.
 | [0101](0101-reuse-stored-provider-answers.md) | proposed; amended by 0102 (proposed) | Reuse stored provider answers, with live fallback |
 | [0102](0102-search-every-finished-book-again.md) | proposed | Search every finished book again every 90 days |
 | [0103](0103-keep-the-library-visit-on-the-server.md) | proposed | Keep the owner's Library visit on the server and read New from it |
+| [0104](0104-going-back-after-a-write.md) | proposed | Go back after a write: clear a field, enter names, and keep a written work's case for 30 days |

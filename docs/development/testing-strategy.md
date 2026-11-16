@@ -355,10 +355,16 @@ disposable library holds one generated audiobook for the audiobook
 destinations. A destination whose shape the service rejects is recorded as
 `field_unavailable`, and the other destinations still run. An unreachable
 service, a key without write authority, or a write the service accepted but
-did not make fails the run instead. Every run also drives the installed
+did not make fails the run instead. On the audiobook, owner values are
+entered, gone back on and cleared for subtitle, publisher, genres and
+narrators, and names entered for authors and narrators; each clear must read
+back raw as `null` or `[]`. Every run also drives the installed
 application against two disposable libraries through preparation, owner
 decisions, consent, continuous scheduling, pause and resume, rescan,
-external-drift regeneration and restart recovery. It composes that
+external-drift regeneration and restart recovery. On the work whose subtitle
+the owner chose, it goes back by clearing the subtitle, which offers no empty
+previous value, pins the clear, and checks that the next scan keeps the field
+held, pinned and out of Attention. It composes that
 application as the product does: preparation, continuous scheduling and the
 review application all queue at the root repository's one operation
 admission.
@@ -366,10 +372,10 @@ admission.
 `--corpus` replaces those libraries' two generated EPUBs with a private
 operator batch: a directory outside the repository holding 6 to 8 `*.epub`
 files, or the run fails `operator_corpus_invalid`. The aggregate
-`audiobookshelf-field-effect-v3` receipt holds the source SHA, image digests,
+`audiobookshelf-field-effect-v4` receipt holds the source SHA, image digests,
 field outcomes, the installed lifecycle summary, the outcome for each of seven
-synthetic descriptions and, with a batch, `operator_corpus: true` and each
-image's `operator_cases`. It never holds credentials, tokens, source metadata
+synthetic descriptions, the owner-value steps, the going-back summary and,
+with a batch, `operator_corpus: true` and each image's `operator_cases`. It never holds credentials, tokens, source metadata
 or image bytes.
 
 The container lifecycle (`scripts/qualify_container_lifecycle.py`) and the

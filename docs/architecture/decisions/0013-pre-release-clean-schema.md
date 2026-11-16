@@ -623,3 +623,15 @@ at the owner's last visit, and `current_review_packages` gains
 ([ADR-0103](0103-keep-the-library-visit-on-the-server.md)). No stored
 document version moves. Every earlier application database is rejected before mutation
 and needs a clean rebuild; no adoption is supplied.
+
+Issue #1523 takes the clean-rebuild branch. `human-decision-v6` admits the
+owner's clear, the closed valueless `empty` kind on `owner_entered` only, and
+names for authors and narrators, so a v5 document is refused. The
+`human_decisions` table gains two `CHECK`s: a selected value is null or one
+closed kind, and the `empty` kind carries no value and appears only on an
+`owner_entered` row. Both `review_case_transitions` `CHECK`s admit the reason
+`recent_write`, only on an `admitted` or `superseded` row
+([ADR-0104](0104-going-back-after-a-write.md)). The proposal set, metadata
+report, field-effect plan, manual hold and Library versions do not move. Every
+earlier application database is rejected before mutation and needs a clean
+rebuild; no adoption is supplied.
