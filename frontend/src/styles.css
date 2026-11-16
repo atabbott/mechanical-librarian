@@ -984,7 +984,7 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .choice-pin.is-on .head { fill:currentColor; }
 /* A busy pin dims its own colour, never the element, so its focus outline stays whole. */
 .context-row-head { display:flex; flex-wrap:wrap; align-items:center; gap:0 10px; }
-.context-row-head > .choice-pin { margin-block:-8px; }
+.context-row-head > .choice-pin { margin-block:-.6875rem; }
 .automatic-resolution-row p { margin:3px 0 0; font-size:smaller; overflow-wrap:anywhere; }
 .automatic-resolution-row p:empty { margin:0; }
 .automatic-resolution-row [role='alert'] { color:var(--danger); font-weight:650; }
