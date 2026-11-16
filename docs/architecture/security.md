@@ -197,6 +197,50 @@ New settings start a dormant successor runtime under one cutover lock. A
 commit failure keeps the predecessor; a fault after commit stops the server
 rather than run mismatched authority.
 
+### Find this book
+
+The [Find this book](../product/find-this-book.md) routes read and write
+only through named application operations, addressed by connection, library
+and item. The link view, search and preview need the session; search, choose
+and withdraw are unsafe requests under every check above, with the CSRF token
+checked before the body is read. Bodies are bounded at 16 KiB for a search
+and 4 KiB for a withdrawal. A work that could not finish, or whose library
+has no searchable source, is refused before any request is sent.
+
+A search is refused, before any request, unless its title and authors pass
+the owner-entered text rule, its ISBN has a valid checksum and its ASIN
+matches the ASIN grammar. One runs at a time per session and 30 per source per
+sliding hour. A source with a current recovery deferral is refused, and one
+whose shared pacer cannot admit it within 10 seconds is refused as busy. The
+search then sends one request in the source's existing shape
+([provider egress](provider-egress.md#owner-search)), on a worker thread,
+never in the event loop.
+
+Search state is held only in process memory, keyed by a digest of the session
+token, under a 256-bit random search ID, for 15 minutes. A new search replaces
+it, and logout, a settings change or a restart discards it. A foreign search
+and an expired one get the same `search_not_found`. Results are text only.
+
+A preview is served only to the session that owns the search, only for a
+position on that search's cards, and refused when `Sec-Fetch-Site` is present
+and not `same-origin`. It is fetched only from the cover URL the source's
+adapter already admits, only while the connection's cover switch is on, and
+decoded and re-encoded to a bounded PNG in the cover child. It is kept with the
+search, served `private, no-store`, never written to disk or the artifact
+store, and never a cover candidate.
+
+Choose records from the server's retained card, never from an identity the
+browser sends. Choose and withdraw each need an `Idempotency-Key` of 16 to 128
+printable characters. The key is read from the database first: the same
+request returns the stored answer, even after the search expired, and a
+different request under it is refused `idempotency_conflict`. Choose then
+refuses a card that names no record, a scope the card does not offer, a work
+whose catalogue identity changed, and a link that changed since the search.
+Withdraw is refused unless the row it names is current. The link row and the
+work's fresh mark commit in one write transaction or not at all. A fault after
+it answers `503 unavailable`, and the browser asks the owner to check the
+link before choosing again.
+
 ### Transport
 
 Transport modes and their rules are in
@@ -466,7 +510,12 @@ An owner link names the provider record that is a work's book
 `record_owner_link` inside the caller's write transaction: the row is its own
 audit record, append-only (update and delete abort), keyed by connection,
 library and item, and sequenced so one link is current. Writing it marks the
-work fresh in the same transaction. No web route writes one yet. A link grants
+work fresh in the same transaction. Only the owner's choose and withdraw
+routes write one, under the checks in [Find this book](#find-this-book). While
+a case's report binds another link than the current one, or a link where none
+stands now, every owner decision on it, pin, unpin, withdrawal and description
+choice is refused `link_changed`, checked inside the decision's own write
+transaction, until preparation records a new report. A link grants
 no write authority: it never fills an identifier field and never withdraws an
 owner decision. Preparation re-reads it each time and re-checks an edition or
 recording link against the book's own facts; one that fails admits nothing.

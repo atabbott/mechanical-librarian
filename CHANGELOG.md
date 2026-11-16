@@ -18,6 +18,14 @@ brackets are GitHub issues.
 - Settings can sign out every other browser from Access and diagnostics, in
   store and file mode, and keeps this browser signed in (#1385).
 
+## 0.38.0 — Owner-directed matching (in progress)
+
+- **Clean rebuild required.** Find this book, in a work's header in Library,
+  searches one source by title and authors, ISBN or ASIN and links the work to
+  the record that is its book. Preparation then reads that record first and
+  asks the other sources about that book. Evidence only the link supports is
+  never decided automatically. History moves under More (#1477).
+
 ## 0.37.0 — Provider economy (in progress)
 
 - Mechanical Librarian keeps each source's answers and reuses them when it asks

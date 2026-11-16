@@ -214,12 +214,11 @@ The lenses are All (default),
 [Looks wrong](looks-wrong.md), Needs attention, No attention needed, Not
 matched and Could not finish, in one row that scrolls sideways. Lens, search,
 page, selected work and field live in the URL, so links, Back and Forward
-work. An empty list says so in one line; with no library connected it links
-to Settings.
+work. An empty list says so; with no library connected it links to
+Settings.
 
 Works that need a decision come first, under "Every lookup finished" and then
-"Some lookups gave no usable answer". The first heading does not promise a
-match, and the second does not promise a retry. Works that could not finish
+"Some lookups gave no usable answer". Works that could not finish
 follow under Could not finish, then Not matched, then the rest. The other
 lenses, except Looks wrong, are alphabetical.
 
@@ -256,9 +255,10 @@ counts as recorded, and its summary shows its evidence
 
 Selecting a work never moves the workspace. Above 760 pixels, Library opens
 the first reviewable work and records nothing. At 760 or narrower the list
-comes first. Library reads the selected work on its own, so a search or
-outcome that moves it off the page leaves it open. It says it could not be
-loaded only when that read fails.
+comes first. A search or outcome that moves the selected work off the page
+leaves it open. It says it could not be loaded only when its own read fails.
+[Find this book](find-this-book.md), in a work's header, links the work to the
+record that is its book.
 
 ## Attention
 
@@ -510,7 +510,8 @@ has decision controls or shows internal identifiers.
   its time. It shows a value only where the record links it exactly.
 
 Both keep your place in Library, and Back to work returns to the same work and
-field. History across works is in Activity.
+field. In Library, History is under More. History across works is in
+Activity.
 
 An audiobook can carry a Media health section about its audio, such as an
 unexpected container or format, encrypted audio, or a running time missing or
