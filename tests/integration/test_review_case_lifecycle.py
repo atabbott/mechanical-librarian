@@ -995,9 +995,10 @@ def test_a_corrective_restore_writes_back_only_a_form_the_service_keeps_exactly(
             # The library holds the bytes it held before the first write.
             assert library.detail["media"]["metadata"]["description"] == stored
             assert [request.method for request in library.requests].count("PATCH") == 1
-            # The restore's own row says what it kept, never the value its
-            # corrective write overwrote; the accept row still names what
-            # its write replaced (#1286).
+            # The restore's own row reads as the change it made, from the
+            # value the accept wrote to the value before that change, never
+            # as a keep of a current value (#1286, #1523); the accept row
+            # still names what its write replaced.
             from mechanical_librarian.application.continuous_field_effects import (
                 ContinuousGuardedApplication,
             )
@@ -1022,21 +1023,15 @@ def test_a_corrective_restore_writes_back_only_a_form_the_service_keeps_exactly(
                     for item in cast(list[dict[str, object]], event["evidence"])
                 }
                 for event in events
-                if event["state"] in {"keep_current", "accept"}
+                if event["state"] in {"went_back", "accept"}
             }
-            (kept,) = [event for event in events if event["state"] == "keep_current"]
-            assert str(kept["change"]).startswith("Kept ")
-            assert desired not in str(kept["change"])
-            assert (
-                facts["keep_current"]["Current value"]
-                == facts["keep_current"]["Selected value"]
-                != desired
-            )
+            assert not [e for e in events if e["state"] == "keep_current"]
+            (back,) = [event for event in events if event["state"] == "went_back"]
+            before = facts["went_back"]["Value before your change"]
+            assert facts["went_back"]["Written value"] == desired != before
+            assert str(back["change"]) == f"{desired} \u2192 {before}"
             assert facts["accept"]["New value"] == desired
-            assert (
-                facts["accept"]["Previous value"]
-                == facts["keep_current"]["Current value"]
-            )
+            assert facts["accept"]["Previous value"] == before
     finally:
         repository.close()
         library.close()

@@ -3295,8 +3295,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 durable["selected_value"] = decision.selected_value
                 durable["target_fingerprint"] = decision.target_fingerprint
                 # Only a decision that chose a new value names what its write
-                # replaced; a keep-current restore states the value it kept,
-                # not the one its corrective write overwrote (#1286).
+                # replaced as its pre-value (#1286); a keep-current restore
+                # reads below as the change its own plan made (#1523).
                 if (
                     decision.outcome in VALUE_OUTCOMES
                     and decision.decision_id in replaced
