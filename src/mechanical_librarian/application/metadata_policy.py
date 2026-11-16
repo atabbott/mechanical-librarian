@@ -36,6 +36,7 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import (
     ProposalSet,
+    canonical_target_fields,
     evaluate_report,
 )
 from mechanical_librarian.domain.review_case import ReviewCase
@@ -51,7 +52,10 @@ from mechanical_librarian.domain.rich_metadata_qualification import (
     public_summary,
 )
 from mechanical_librarian.domain.shadow_decision import decide_shadow_packet
-from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
+from mechanical_librarian.domain.shadow_outcome import (
+    CONFLICT_REASONS,
+    ShadowOutcomeSet,
+)
 from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
 
 if TYPE_CHECKING:
@@ -435,7 +439,10 @@ def _cell(side: RichFieldPreview, setting: str) -> tuple[str, str | None]:
             if offered
             else ("none", None)
         )
-    if side.reason == "automatic_unqualified":
+    # A value left to the owner, or a conflict left to them with none.
+    if side.reason == "automatic_unqualified" or (
+        side.outcome == "suggested" and side.desired_value in (None, "")
+    ):
         return ("ask", desired if side.desired_value not in (None, "") else None)
     if offered:
         return (
@@ -477,6 +484,8 @@ def _outcome_fields(
     refuses afterwards is not previewed (ADR-0048). A result is what the
     policy does, never the identity it does it under: a write is `projected`,
     a value left to the owner is `suggested`, and anything else is `no_op`.
+    A conflict the owner must settle is `suggested` with no value and its
+    reason. The current value is the canonical one the pipeline compares.
     """
     case = ReviewCase.create(proposal, report)
     decisions = decide_shadow_packet(
@@ -499,7 +508,10 @@ def _outcome_fields(
         for result in proposal.results
         for alternative in result.alternatives
     }
-    targets = {field.destination.value: field for field in report.target.fields}
+    targets = {
+        destination.value: field
+        for destination, field in canonical_target_fields(report.target.fields).items()
+    }
     settings, options = dict(policy.destinations), dict(policy.options)
     previews = []
     for destination, field in fields:
@@ -511,7 +523,14 @@ def _outcome_fields(
             and outcome.disposition in {"candidate", "manual"}
             else None
         )
-        asked = (
+        # Review asks the owner to settle a conflict even with no value chosen.
+        conflict = (
+            outcome is not None
+            and outcome.candidate_id is None
+            and outcome.disposition in {"conflict", "manual"}
+            and outcome.reason_code in CONFLICT_REASONS
+        )
+        asked = conflict or (
             desired is not None
             and outcome is not None
             and outcome.disposition == "manual"
@@ -526,14 +545,16 @@ def _outcome_fields(
                     target.to_data()["value"]
                     if target.state is TargetFieldState.VALUE
                     else None,
-                    "no_op"
-                    if desired is None
-                    else "suggested"
+                    "suggested"
                     if asked
+                    else "no_op"
+                    if desired is None
                     else "projected",
                     desired,
                     "policy_ignored"
                     if settings[field] == "ignore"
+                    else outcome.reason_code
+                    if conflict and outcome is not None
                     else "automatic_unqualified"
                     if asked and settings[field] == "automatic"
                     else None,

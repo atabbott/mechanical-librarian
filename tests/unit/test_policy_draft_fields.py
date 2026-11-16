@@ -519,3 +519,58 @@ def test_an_ask_and_an_automatic_that_is_not_offered_read_the_same() -> None:
         row.draft.reason,
     )
     assert not row.changed
+
+
+def test_a_publication_year_is_the_current_date_the_pipeline_compares() -> None:
+    """Audiobookshelf's year stands for a missing date, as in the pipeline."""
+    source = synthetic_audiobook_original_date_report()
+    report = MetadataReport.create(
+        target=replace(
+            source.target,
+            fields=tuple(
+                TargetField(field.destination, TargetFieldState.VALUE, "2025")
+                if field.destination is TargetDestination.PUBLISHED_YEAR
+                else field
+                for field in source.target.fields
+            ),
+        ),
+        file=source.file,
+        local_claims=source.local_claims,
+        local_reasons=source.local_reasons,
+        providers=source.providers,
+        cover_sources=source.cover_sources,
+        audio=source.audio,
+    )
+    active = _draft(destinations={"date_precision": "ignore"})
+    date = _rows(
+        _draft(destinations={"date_precision": "ask"}, active=active),
+        report,
+        active=active,
+    )["publishedDate"]
+
+    assert date.changed
+    assert ("no_op", "2025", None, "policy_ignored") == _result(date.active)
+    assert ("suggested", "2025", "2025-02-03", None) == _result(date.draft)
+    assert "value" == date.draft.target_state
+
+
+@pytest.mark.parametrize("setting,changed", (("ignore", True), ("ask", False)))
+def test_a_title_conflict_is_left_to_the_owner_with_no_value(
+    setting: str, changed: bool
+) -> None:
+    """Review asks the owner to settle conflicting titles; Ignore does not."""
+    report = isbn_title_report(
+        current="Example Title",
+        titles=("Example Title", "Example Title", "Other Work"),
+    )
+    title = _rows(_draft(destinations={"title_layout": setting}), report)["title"]
+
+    conflict = ("suggested", "Example Title", None, "isbn_title_material_conflict")
+    assert conflict == _result(title.active)
+    assert changed == title.changed
+    if setting == "ignore":
+        assert ("no_op", "Example Title", None, "policy_ignored") == _result(
+            title.draft
+        )
+    else:
+        assert conflict == _result(title.draft)

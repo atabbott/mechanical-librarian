@@ -106,6 +106,18 @@ describe('policy impact projections', () => {
     ).toEqual({ effect: 'ask', value: sentence })
   })
 
+  it('leaves a conflict to the owner in its own sentence, with no value (#1524)', () => {
+    const conflict = field({
+      field: 'title_layout',
+      outcome: 'suggested',
+      current_value: 'Example Title',
+      reason: 'isbn_title_material_conflict',
+    })
+    const sentence = 'The sources disagree about the work or title. Choose the title yourself.'
+    expect(policyCell(conflict, 'automatic')).toEqual({ effect: 'ask', value: sentence })
+    expect(policyCell(conflict, 'ask')).toEqual({ effect: 'ask', value: sentence })
+  })
+
   it('reads a cover as the words the application built, with its rule (#1524)', () => {
     const cover = (values: Parameters<typeof field>[0], audiobook = false) =>
       policyCell(field({ field: 'cover_order', ...values }), 'automatic', audiobook)

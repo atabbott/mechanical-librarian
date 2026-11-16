@@ -129,8 +129,12 @@ export const policyCell = (
     'No value would be chosen for you, and no more specific reason is known.'
   const language = field.field === 'language_rendering'
   // The sentence that says the field is left to the owner sits under the value
-  // it leaves, and stands alone only where no value is proposed.
-  if (field.reason === 'automatic_unqualified')
+  // it leaves, and stands alone only where no value is proposed, as a
+  // conflict left to the owner's review does.
+  if (
+    field.reason === 'automatic_unqualified' ||
+    (field.outcome === 'suggested' && !hasMetadataValue(field.desired_value))
+  )
     return hasMetadataValue(field.desired_value)
       ? { effect: 'ask', value: previewValue(field.desired_value, language), note: refusal }
       : { effect: 'ask', value: refusal }

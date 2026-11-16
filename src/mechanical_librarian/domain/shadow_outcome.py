@@ -131,7 +131,7 @@ _DISPOSITIONS = frozenset(
         "unsupported",
     }
 )
-_CONFLICT_REASONS = frozenset(
+CONFLICT_REASONS = frozenset(
     {
         "ambiguous_eligible_actions",
         "bibliographic_combination_unresolved",
@@ -318,7 +318,7 @@ class ShadowFieldOutcome:
             else "keep_current"
             if self.reason_code == "unique_supported_preservation"
             else "conflict"
-            if self.reason_code in _CONFLICT_REASONS
+            if self.reason_code in CONFLICT_REASONS
             else "unsupported"
             if self.reason_code == "unsupported_destination"
             else "abstention"
@@ -870,7 +870,7 @@ def _decision_field_outcome(
         disposition = "candidate"
     elif decision.recommendation == "recommend_keep_current":
         disposition = "keep_current"
-    elif decision.reason_code in _CONFLICT_REASONS:
+    elif decision.reason_code in CONFLICT_REASONS:
         disposition = "conflict"
     elif decision.reason_code == "unsupported_destination":
         disposition = "unsupported"
