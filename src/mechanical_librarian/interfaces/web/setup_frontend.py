@@ -519,6 +519,11 @@ const renderClaim=async()=>{
       password.removeAttribute('aria-invalid')
     },{once:true});
     password.focus();
+    // The step's heading takes focus on the frame after the card renders; a
+    // refusal that lands before that frame takes it back, as error() does.
+    const moved=new AbortController();
+    const settle=requestAnimationFrame(()=>{moved.abort();if(password.isConnected)password.focus({preventScroll:true})});
+    form.addEventListener('focusin',event=>{if(event.target!==password&&event.target.matches('input,select,textarea')){cancelAnimationFrame(settle);moved.abort()}},{signal:moved.signal});
     lengthRule.scrollIntoView?.({block:'nearest'});
     announce(lengthRule.textContent)
   };

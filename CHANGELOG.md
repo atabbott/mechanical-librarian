@@ -166,6 +166,8 @@ brackets are GitHub issues.
 - Settings → Appearance has a Theme choice: Follow system, Light or Dark. It
   applies at once and is saved in this browser. Follow system returns to the
   system theme after a choice here or with the theme switch (#1341).
+- When setup refuses an owner password the moment its step opens, focus stays
+  in the password field instead of moving to the step's heading (#1934).
 
 ## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
 

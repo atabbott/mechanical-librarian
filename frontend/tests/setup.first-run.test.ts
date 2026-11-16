@@ -3,7 +3,7 @@ import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 
 import { fireEvent, screen, waitFor, within } from '@testing-library/dom'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import settingsVocabulary from '../../src/mechanical_librarian/interfaces/web/settings_vocabulary.json'
 
@@ -598,6 +598,56 @@ describe('shipped first-run setup script', () => {
     fireEvent.submit(form)
     await waitFor(() => expect(nonces).toHaveLength(2))
     expect(nonces).toEqual(['1'.repeat(32), '2'.repeat(32)])
+  })
+
+  it('keeps a refused password focused when the refusal comes before the heading’s frame', async () => {
+    // Frames run only when the test says, so the refusal can land before the
+    // frame in which the step's heading takes focus.
+    const frames: FrameRequestCallback[] = []
+    const { requestAnimationFrame: request, cancelAnimationFrame: cancel } = window
+    onTestFinished(() => {
+      vi.stubGlobal('requestAnimationFrame', request)
+      vi.stubGlobal('cancelAnimationFrame', cancel)
+    })
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) =>
+      frames.push(callback),
+    )
+    vi.stubGlobal('cancelAnimationFrame', (handle: number) => {
+      frames[handle - 1] = () => undefined
+    })
+    const flush = () => {
+      // A frame that asks for another runs it in the same flush.
+      for (const frame of frames) frame(0)
+      frames.length = 0
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+        const url = requestUrl(request)
+        if (url === '/api/setup/claim')
+          return response({ claimed: false, nonce: '1'.repeat(32), revision: 1 })
+        if (url === '/api/setup/session' && init?.method === 'POST')
+          return response({ detail: { error: 'invalid_password' } }, 422)
+        return response({ error: 'unauthorized' }, 401)
+      }),
+    )
+    runSetup()
+
+    const password = await screen.findByLabelText('Owner password')
+    const form = password.closest('form')
+    if (!form) throw new Error('claim form missing')
+    fireEvent.input(screen.getByLabelText('Setup claim token'), {
+      target: { value: 'synthetic-claim-token' },
+    })
+    fireEvent.input(password, { target: { value: 'correct horse battery staple' } })
+    fireEvent.input(screen.getByLabelText('Confirm owner password'), {
+      target: { value: 'correct horse battery staple' },
+    })
+    fireEvent.submit(form)
+    await waitFor(() => expect(password).toHaveAttribute('aria-invalid', 'true'))
+    expect(password).toHaveFocus()
+    flush()
+    expect(password).toHaveFocus()
   })
 
   it.each([
