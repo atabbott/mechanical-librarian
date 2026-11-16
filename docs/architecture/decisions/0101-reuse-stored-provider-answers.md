@@ -199,3 +199,10 @@ evict a full library's oldest answers and defeat reuse.
   setup; a link, directory, FIFO, wider mode, lone journal, any other name or
   an unsafe `private/` fails closed; a real kept store still serves its
   answer after setup has started.
+
+## Amendment: a scheduled search asks live (#747, ADR-0102, proposed)
+
+Decision 5 gains a third thing that asks live: every finished book's search
+at its 90-day slot (ADR-0102), which replaces what is held like ADR-0089's
+weekly search. A held answer is therefore at most about 97 days older than its
+book's last preparation, unless that search failed.

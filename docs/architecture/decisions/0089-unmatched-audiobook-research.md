@@ -137,3 +137,13 @@ found 250 audiobooks:
 - All six items behind the five wrong-recording cases are unmatched, so each is
   searched again weekly. The 2026-10-28 probe found a fresh search reaches three
   of the five.
+
+## Amendment: every finished book is searched again (#747, ADR-0102, proposed)
+
+Every finished work, not only an unmatched audiobook, now carries a mark and
+is searched again at a slot fixed by its work id in a 90-day period. An
+unmatched audiobook keeps its weekly search unless its slot comes first, and a
+weekly search keeps this ADR's rule. A search on the slot, of any book, keeps
+everything only when its proposals equal the current ones, when it failed at a
+provider over a complete report, or when it now identifies nothing over a
+case. A matched report sets the slot mark rather than clearing it.

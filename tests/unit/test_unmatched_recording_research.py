@@ -1,10 +1,13 @@
-"""An audiobook that admitted no recording is searched again (#1451).
+"""A finished work is searched again on a schedule (#1451, ADR-0102).
 
 The discovery scan keeps a finished item whose file has not moved, so before
-this an unmatched audiobook was never asked again. Its work now carries a mark
-that brings it back to extraction once `RESEARCH_INTERVAL_SECONDS` has passed.
-A search that still admits no recording leaves an open case as it was; one
-that admits a recording flows through like any refreshed preparation.
+#1451 nothing was asked again. Every prepared work now carries a mark that
+brings it back to extraction at its slot in `REFRESH_INTERVAL_SECONDS`, and an
+audiobook that admitted no recording also weekly, after
+`RESEARCH_INTERVAL_SECONDS`. A search whose proposals equal the current ones,
+one that failed over a complete report, and a weekly search that still admits
+no recording leave everything as it was; any other search flows through like
+any refreshed preparation.
 
 The persistence mechanics are media-blind, so the case-bearing tests drive the
 synthetic ebook cohort through the real pipeline and say what the publication
@@ -23,12 +26,17 @@ from pathlib import Path
 import pytest
 
 from mechanical_librarian.adapters.persistence.metadata_reports import (
+    SQLiteMetadataReportRepository,
     open_repository,
 )
 from mechanical_librarian.adapters.persistence.review_preparation import (
+    REFRESH_INTERVAL_SECONDS,
     RESEARCH_INTERVAL_SECONDS,
+    next_research_slot,
+    preparation_work_id,
 )
 from mechanical_librarian.application.catalogue import CatalogueEntry
+from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_pipeline import (
     PipelineAction,
     ReviewPreparationPipeline,
@@ -37,10 +45,13 @@ from mechanical_librarian.domain.audiobook_corroboration import recording_admitt
 from mechanical_librarian.domain.metadata_report import (
     FileFacts,
     MetadataReport,
+    ProviderObservation,
+    ProviderStatus,
     TargetFacts,
     default_target_fields,
+    provider_access_time,
 )
-from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from tests.support.metadata_report_doubles import single_track_audio_facts
 from tests.support.review_cases import _report
 from tests.unit.test_review_pipeline import (
@@ -51,6 +62,10 @@ from tests.unit.test_review_pipeline import (
 )
 
 _WEEK = RESEARCH_INTERVAL_SECONDS
+_PERIOD = REFRESH_INTERVAL_SECONDS
+# The one work of the synthetic ebook cohort. Its phase is about 41 days into
+# the period, so a weekly mark set near time zero comes before its slot.
+_WORK = preparation_work_id("primary", "ebooks", "item-1")
 
 
 @pytest.fixture
@@ -64,25 +79,79 @@ def application_path() -> Iterator[Path]:
         yield path
 
 
+def _restamped(report: MetadataReport, accessed: int) -> MetadataReport:
+    """The same evidence, asked live at another time: a new report id."""
+    return MetadataReport.create(
+        target=report.target,
+        file=report.file,
+        local_claims=report.local_claims,
+        local_reasons=report.local_reasons,
+        providers=tuple(
+            replace(value, accessed_at=provider_access_time(accessed))
+            for value in report.providers
+        ),
+        cover_sources=report.cover_sources,
+        audio=report.audio,
+        companion=report.companion,
+        library_languages=report.library_languages,
+    )
+
+
+def _failed(
+    report: MetadataReport, status: ProviderStatus = ProviderStatus.UNAVAILABLE
+) -> MetadataReport:
+    """The same search with one more provider that ended on `status`: by
+    default one that could not be reached."""
+    return MetadataReport.create(
+        target=report.target,
+        file=report.file,
+        local_claims=report.local_claims,
+        local_reasons=report.local_reasons,
+        providers=(
+            *report.providers,
+            ProviderObservation(
+                "open_library_primary", status, authority="open_library"
+            ),
+        ),
+    )
+
+
+def _item_report(item: str, title: str) -> MetadataReport:
+    report = _report(title, "a", "b")
+    return MetadataReport.create(
+        target=TargetFacts("primary", "ebooks", item, default_target_fields(title)),
+        file=report.file,
+        local_claims=report.local_claims,
+        local_reasons=report.local_reasons,
+        providers=report.providers,
+    )
+
+
 def _pipeline(
     path: Path,
-    report: MetadataReport,
+    report: MetadataReport | tuple[MetadataReport, ...],
     now: int,
     *,
     unmatched: bool,
     researched: list[bool] | None = None,
+    disposition: str | None = None,
 ) -> ReviewPreparationPipeline:
-    proposal = evaluate_report(report)
-    entry: CatalogueEntry = replace(
-        _entry("item-1", report.file.identity), library="ebooks"
+    reports = {
+        value.target.item: value
+        for value in (report if isinstance(report, tuple) else (report,))
+    }
+    entries: tuple[CatalogueEntry, ...] = tuple(
+        replace(_entry(item, value.file.identity), library="ebooks")
+        for item, value in reports.items()
     )
 
     def extract(repository, action: PipelineAction, claim_next: bool):
         if researched is not None:
             researched.append(action.research)
+        report = reports[action.item_id]
         # As preparation does, the item's current report is the one replaced.
         current = repository.current_optional(
-            "primary", "ebooks", "item-1", report.file.identity
+            "primary", "ebooks", action.item_id, report.file.identity
         )
         repository.publish(
             report,
@@ -94,7 +163,7 @@ def _pipeline(
                     current.report_id,
                     now,
                     0,
-                    None,
+                    disposition,
                     claim_next,
                     None,
                     unmatched,
@@ -103,11 +172,13 @@ def _pipeline(
         )
         return report.report_id, True
 
-    def propose(repository, _: str) -> str:
+    def propose(repository, report_id: str) -> str:
+        proposal = evaluate_report(MetadataReport.from_json(repository.get(report_id)))
         repository.publish_proposal(proposal)
         return proposal.proposal_set_id
 
-    def admit(repository, _: str) -> tuple[str, str | None]:
+    def admit(repository, proposal_set_id: str) -> tuple[str, str | None]:
+        proposal = ProposalSet.from_json(repository.get_proposal(proposal_set_id))
         value = json.loads(repository.admit_review_case(proposal))
         return value["status"], value.get("review_case_id")
 
@@ -120,7 +191,7 @@ def _pipeline(
     return ReviewPreparationPipeline(
         repository_factory=lambda: open_repository(path),
         libraries=(("primary", "ebooks", "lib-1", _PRODUCER),),
-        discover=lambda *_: (1, "a" * 64, (entry,)),
+        discover=lambda *_: (1, "a" * 64, entries),
         extract=extract,
         providers=lambda *_: (),
         propose=propose,
@@ -239,24 +310,42 @@ def test_a_research_that_admits_a_recording_replaces_the_case(
 
     assert work[:4] == ("complete", "complete", "case", new.report_id)
     assert work[4] != old_case
-    # A matched report is not searched again.
-    assert work[5] is None
+    # A matched report is searched again at its slot, not weekly.
+    assert work[5] == next_research_slot(_WORK, later + _WEEK)
     assert current == new.report_id
     assert package == (new.report_id, work[4])
 
 
-def test_a_matched_preparation_is_never_searched_again(
+def test_a_matched_preparation_comes_due_at_its_slot(
     application_path: Path,
 ) -> None:
     report = _report("Matched first time", "a", "b")
-    _drain(_pipeline(application_path, report, 20, unmatched=False))
-    work = _state(application_path)[0]
-    assert work[5] is None
-
-    assert 1 == _drain(
-        _pipeline(application_path, report, 20 + 10 * _WEEK, unmatched=False)
+    researched: list[bool] = []
+    _drain(
+        _pipeline(application_path, report, 20, unmatched=False, researched=researched)
     )
+    work = _state(application_path)[0]
+    due = work[5]
+    assert type(due) is int
+    # Never within a week of being prepared, and never more than a period
+    # after that week, at the work's own phase.
+    assert due == next_research_slot(_WORK, 20 + _WEEK)
+    assert 20 + _WEEK < due <= 20 + _WEEK + _PERIOD
+    assert due % _PERIOD == int(_WORK[-16:], 16) % _PERIOD
+
+    # Until then a scan finds nothing to do.
+    assert 1 == _drain(_pipeline(application_path, report, due - 1, unmatched=False))
     assert _state(application_path)[0] == work
+
+    # At its slot the work is extracted again and asks live (#1064). The same
+    # evidence asked again keeps everything, and the next slot is a period on.
+    again = _restamped(report, 1)
+    assert again.report_id != report.report_id
+    assert 2 == _drain(
+        _pipeline(application_path, again, due, unmatched=False, researched=researched)
+    )
+    assert researched == [False, True]
+    assert _state(application_path)[0] == (*work[:5], due + _PERIOD)
 
 
 def _audio_report(title: str) -> MetadataReport:
@@ -399,7 +488,7 @@ def _stage_successor(path: Path, report: MetadataReport, at: int) -> object:
         repository.close()
 
 
-def test_a_matched_provider_retry_successor_clears_the_mark(
+def test_a_matched_provider_retry_successor_waits_for_its_slot(
     application_path: Path,
 ) -> None:
     old = _report("Prepared once", "a", "b")
@@ -407,10 +496,10 @@ def test_a_matched_provider_retry_successor_clears_the_mark(
     assert _state(application_path)[0][5] == 20 + _WEEK
 
     # An ebook successor is never unmatched, as a recovered audiobook that
-    # now admits a recording is not: it is not searched again.
+    # now admits a recording is not: it is searched again at its slot.
     assert _stage_successor(application_path, _report("Recovered", "a", "c"), 30) == (
         "provider",
-        None,
+        next_research_slot(_WORK, 30 + _WEEK),
     )
 
 
@@ -423,4 +512,543 @@ def test_an_unmatched_provider_retry_successor_waits_its_own_interval(
     assert _stage_successor(application_path, _audio_report("Recovered"), 30) == (
         "provider",
         30 + _WEEK,
+    )
+
+
+def test_a_slot_is_the_next_time_at_the_works_phase() -> None:
+    """The slot is strictly after `t`, at the phase, within one period."""
+    for item in range(40):
+        work_id = preparation_work_id("primary", "ebooks", f"item-{item}")
+        phase = int(work_id[-16:], 16) % _PERIOD
+        for after in (0, 1, phase - 1, phase, phase + 1, 7 * _PERIOD + 12_345):
+            slot = next_research_slot(work_id, after)
+            assert after < slot <= after + _PERIOD
+            assert slot % _PERIOD == phase
+            # The next one is exactly one period on, and a slot is its own.
+            assert next_research_slot(work_id, slot) == slot + _PERIOD
+            assert next_research_slot(work_id, slot - 1) == slot
+
+
+def test_slots_spread_evenly_across_the_period() -> None:
+    """About a ninetieth of the works come due on each day of the period."""
+    days = [0] * 90
+    for item in range(9_000):
+        work_id = preparation_work_id("primary", "ebooks", f"item-{item}")
+        days[next_research_slot(work_id, 0) % _PERIOD // 86_400] += 1
+    # 100 a day in expectation; a binomial spread stays well inside this.
+    assert 60 < min(days) and max(days) < 140
+
+
+def test_a_legacy_finished_work_takes_its_slot_at_the_next_scan(
+    application_path: Path,
+) -> None:
+    """A work finished before scheduled searches is marked, not re-queued."""
+    report = _report("Finished before", "a", "b")
+    _drain(_pipeline(application_path, report, 20, unmatched=False))
+    repository = open_repository(application_path)
+    try:
+        repository._connection.execute(
+            "UPDATE review_preparation_work SET research_not_before=NULL"
+        )
+    finally:
+        repository.close()
+    work = _state(application_path)[0]
+
+    scanned_at = 5 * _PERIOD
+    assert 1 == _drain(_pipeline(application_path, report, scanned_at, unmatched=False))
+    assert _state(application_path)[0] == (
+        *work[:5],
+        next_research_slot(_WORK, scanned_at + _WEEK),
+    )
+
+
+def _case_rows(path: Path) -> tuple[object, ...]:
+    repository = open_repository(path)
+    try:
+        return tuple(
+            repository._connection.execute(query).fetchall()
+            for query in (
+                "SELECT * FROM current_review_case_lineages",
+                "SELECT * FROM current_review_packages",
+                "SELECT * FROM review_cases",
+                "SELECT * FROM review_case_transitions",
+                "SELECT * FROM human_decisions",
+                "SELECT * FROM proposal_sets",
+            )
+        )
+    finally:
+        repository.close()
+
+
+def test_a_slot_search_with_the_same_proposals_keeps_everything(
+    application_path: Path,
+) -> None:
+    report = _report("Prepared once", "a", "b")
+    _drain(_pipeline(application_path, report, 20, unmatched=False))
+    work, current, lineage, package = _state(application_path)
+    before = _case_rows(application_path)
+    due = work[5]
+    assert type(due) is int
+
+    again = _restamped(report, 1)
+    # Raw ids differ on every live ask: only the content is compared.
+    assert evaluate_report(again).proposal_set_id != (
+        evaluate_report(report).proposal_set_id
+    )
+    assert 2 == _drain(_pipeline(application_path, again, due, unmatched=False))
+
+    # The case, its lineage, package, transitions and decisions, and both
+    # report pointers are as they were; no proposal set was stored.
+    assert _case_rows(application_path) == before
+    assert _state(application_path) == (
+        (*work[:5], next_research_slot(_WORK, due + _WEEK)),
+        current,
+        lineage,
+        package,
+    )
+    # The new report is kept as history only.
+    repository = open_repository(application_path)
+    try:
+        assert repository.get(again.report_id)
+        assert json.loads(repository.get_review_case(str(work[4])))["current"]
+    finally:
+        repository.close()
+
+
+def test_a_slot_search_with_different_proposals_takes_the_ordinary_path(
+    application_path: Path,
+) -> None:
+    report = _report("Prepared once", "a", "b")
+    _drain(_pipeline(application_path, report, 20, unmatched=False))
+    work = _state(application_path)[0]
+    due = work[5]
+    assert type(due) is int
+
+    changed = _report("Titled differently", "a", "b")
+    assert 5 == _drain(_pipeline(application_path, changed, due, unmatched=False))
+    after, current, lineage, package = _state(application_path)
+    assert after[:4] == ("complete", "complete", "case", changed.report_id)
+    assert after[4] != work[4]
+    assert after[5] == next_research_slot(_WORK, due + _WEEK)
+    assert current == lineage == changed.report_id
+    assert package == (changed.report_id, after[4])
+    repository = open_repository(application_path)
+    try:
+        transitions = repository._connection.execute(
+            "SELECT kind,from_review_case_id,to_review_case_id "
+            "FROM review_case_transitions ORDER BY checkpoint"
+        ).fetchall()
+    finally:
+        repository.close()
+    assert transitions[-1] == ("superseded", work[4], after[4])
+
+
+def test_a_failed_search_over_a_complete_report_replaces_nothing(
+    application_path: Path,
+) -> None:
+    report = _report("Prepared once", "a", "b")
+    _drain(_pipeline(application_path, report, 20, unmatched=False))
+    work, current, lineage, package = _state(application_path)
+    before = _case_rows(application_path)
+    due = work[5]
+    assert type(due) is int
+
+    # Even a search that would propose something else changes nothing when a
+    # provider failed, and it is asked again within the week.
+    failed = _failed(_report("Titled differently", "a", "b"))
+    assert 2 == _drain(_pipeline(application_path, failed, due, unmatched=False))
+    assert _case_rows(application_path) == before
+    assert _state(application_path) == (
+        (*work[:5], due + _WEEK),
+        current,
+        lineage,
+        package,
+    )
+
+
+def test_a_failed_search_over_an_incomplete_report_takes_the_ordinary_path(
+    application_path: Path,
+) -> None:
+    report = _failed(_report("Prepared once", "a", "b"))
+    _drain(_pipeline(application_path, report, 20, unmatched=False))
+    work = _state(application_path)[0]
+    due = work[5]
+    assert type(due) is int
+
+    failed = _failed(_report("Titled differently", "a", "b"))
+    assert 5 == _drain(_pipeline(application_path, failed, due, unmatched=False))
+    after, current, _lineage, package = _state(application_path)
+    assert after[:4] == ("complete", "complete", "case", failed.report_id)
+    assert after[4] != work[4]
+    assert current == failed.report_id
+    assert package == (failed.report_id, after[4])
+
+
+def test_an_unmatched_audiobook_takes_the_content_rule_on_its_slot(
+    application_path: Path,
+) -> None:
+    """Its weekly search keeps a case that admits no recording; its slot
+    search keeps only what proposes the same (ADR-0089, ADR-0102)."""
+    phase = int(_WORK[-16:], 16) % _PERIOD
+    # Prepared three days before its slot, so the slot comes before the week.
+    prepared = phase - 3 * 86_400
+    report = _report("Prepared once", "a", "b")
+    _drain(_pipeline(application_path, report, prepared, unmatched=True))
+    work = _state(application_path)[0]
+    assert work[5] == phase
+
+    changed = _report("Titled differently", "a", "b")
+    assert 5 == _drain(_pipeline(application_path, changed, phase, unmatched=True))
+    after = _state(application_path)[0]
+    assert after[:4] == ("complete", "complete", "case", changed.report_id)
+    assert after[4] != work[4]
+    # Back on its weekly cadence, which now comes before its next slot.
+    assert after[5] == phase + _WEEK
+
+    # That weekly search proposes something else again, and admits no
+    # recording: the case stays, as ADR-0089 decided.
+    weekly = _report("Titled a third way", "a", "b")
+    assert 2 == _drain(
+        _pipeline(application_path, weekly, phase + _WEEK, unmatched=True)
+    )
+    assert _state(application_path)[0] == (*after[:5], phase + 2 * _WEEK)
+
+
+def test_the_comparison_reads_the_policy_through_the_injected_seam(
+    application_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The seam resolves through the composing repository at call time. With
+    no policy bound, the report is evaluated as the proposal stage evaluates
+    it then; a policy that cannot be read counts as a change."""
+    report = _report("Prepared once", "a", "b")
+    _drain(_pipeline(application_path, report, 20, unmatched=False))
+    work = _state(application_path)[0]
+    due = work[5]
+    assert type(due) is int
+    libraries: list[str] = []
+    original = SQLiteMetadataReportRepository.current_resolved_metadata_policy
+
+    def unbound(self: SQLiteMetadataReportRepository, library: str) -> None:
+        libraries.append(library)
+        assert original(self, library) is None
+
+    monkeypatch.setattr(
+        SQLiteMetadataReportRepository, "current_resolved_metadata_policy", unbound
+    )
+    assert 2 == _drain(
+        _pipeline(application_path, _restamped(report, 1), due, unmatched=False)
+    )
+    assert libraries == ["ebooks"]
+    assert _state(application_path)[0][4] == work[4]
+
+    def unreadable(self: SQLiteMetadataReportRepository, library: str) -> None:
+        # Only publication's read fails; the proposal stage reads it again.
+        libraries.append(library)
+        if len(libraries) == 2:
+            raise MetadataReportError("active metadata policy is unavailable")
+        assert original(self, library) is None
+
+    monkeypatch.setattr(
+        SQLiteMetadataReportRepository, "current_resolved_metadata_policy", unreadable
+    )
+    later = next_research_slot(_WORK, due + _WEEK)
+    assert 5 == _drain(
+        _pipeline(application_path, _restamped(report, 2), later, unmatched=False)
+    )
+    # Taken as a change: the ordinary path proposes and admits again.
+    assert len(libraries) > 2
+    assert _state(application_path)[0][3] == _restamped(report, 2).report_id
+
+
+def test_a_backlog_after_downtime_drains_and_relocks_to_each_phase(
+    application_path: Path,
+) -> None:
+    reports = tuple(_item_report(f"item-{item}", "Prepared once") for item in range(4))
+    _drain(_pipeline(application_path, reports, 20, unmatched=False))
+
+    # A year without a scan: every work is long overdue. The next scan queues
+    # them all and the pipeline claims them one at a time.
+    resumed = 20 + 4 * _PERIOD
+    researched: list[bool] = []
+    again = tuple(_restamped(value, 1) for value in reports)
+    assert 1 + len(reports) == _drain(
+        _pipeline(
+            application_path, again, resumed, unmatched=False, researched=researched
+        )
+    )
+    assert researched == [True] * len(reports)
+    repository = open_repository(application_path)
+    try:
+        marks = dict(
+            repository._connection.execute(
+                "SELECT work_id,research_not_before FROM review_preparation_work "
+                "WHERE state='complete'"
+            ).fetchall()
+        )
+    finally:
+        repository.close()
+    assert len(marks) == len(reports)
+    for work_id, mark in marks.items():
+        assert mark == next_research_slot(work_id, resumed + _WEEK)
+        assert mark % _PERIOD == int(work_id[-16:], 16) % _PERIOD
+
+
+def test_a_search_that_now_identifies_nothing_never_takes_a_case_away(
+    application_path: Path,
+) -> None:
+    """A slot search whose report admits no work identity keeps the case, and
+    a later search that admits it again returns the work to its slot."""
+    report = _report("Prepared once", "a", "b")
+    _drain(_pipeline(application_path, report, 20, unmatched=False))
+    work, current, lineage, package = _state(application_path)
+    before = _case_rows(application_path)
+    due = work[5]
+    assert type(due) is int
+
+    lost = _report("Identified as nothing", "a", "b")
+    assert 1 + 1 == _drain(
+        _pipeline(
+            application_path, lost, due, unmatched=True, disposition="evidence_only"
+        )
+    )
+    assert _case_rows(application_path) == before
+    # Searched weekly while it admits no recording, as ADR-0089 says.
+    assert _state(application_path) == (
+        (*work[:5], due + _WEEK),
+        current,
+        lineage,
+        package,
+    )
+    repository = open_repository(application_path)
+    try:
+        assert json.loads(repository.get_review_case(str(work[4])))["current"]
+    finally:
+        repository.close()
+
+    # Found again, with the same proposals: everything stays and the work
+    # is back on its slot.
+    found = _restamped(report, 1)
+    assert 2 == _drain(_pipeline(application_path, found, due + _WEEK, unmatched=False))
+    assert _case_rows(application_path) == before
+    assert _state(application_path)[0] == (*work[:5], due + _PERIOD)
+
+
+def test_a_search_that_identifies_nothing_over_no_case_names_no_case(
+    application_path: Path,
+) -> None:
+    """With no case to keep, the ordinary path records the evidence, and no
+    pointer is left naming a case."""
+    report = _report("Nothing to ask", "a", "b", actionable=False)
+    _drain(_pipeline(application_path, report, 20, unmatched=False))
+    work, _current, _lineage, package = _state(application_path)
+    assert work[2] == "no_case" and package[1] is None
+    due = work[5]
+    assert type(due) is int
+
+    lost = _report("Identified as nothing", "a", "b", actionable=False)
+    assert 2 == _drain(
+        _pipeline(
+            application_path, lost, due, unmatched=True, disposition="evidence_only"
+        )
+    )
+    after, current, lineage, package = _state(application_path)
+    assert after[:5] == ("complete", "complete", "evidence_only", lost.report_id, None)
+    assert current == lineage == lost.report_id
+    assert package == (lost.report_id, None)
+    repository = open_repository(application_path)
+    try:
+        assert repository._connection.execute(
+            "SELECT outcome,review_case_id FROM current_review_case_lineages"
+        ).fetchall() == [("no_case", None)]
+        assert repository._connection.execute(
+            "SELECT outcome FROM current_review_packages"
+        ).fetchall() == [("evidence_only",)]
+    finally:
+        repository.close()
+
+
+@pytest.mark.parametrize("disposition", [None, "evidence_only"])
+@pytest.mark.parametrize("leftover", [False, True], ids=["no-lineage", "leftover"])
+def test_a_failed_search_over_complete_evidence_replaces_nothing(
+    application_path: Path, leftover: bool, disposition: str | None
+) -> None:
+    """A complete evidence-only report stays current through a failed search,
+    whether or not an earlier preparation left a caseless lineage beside it."""
+    report = _report("Nothing to ask", "a", "b", actionable=False)
+    if leftover:
+        # Prepared to no case, then a search that identified nothing.
+        _drain(_pipeline(application_path, report, 20, unmatched=False))
+        due = _state(application_path)[0][5]
+        assert type(due) is int
+        report = _report("Identified as nothing", "a", "b", actionable=False)
+        _drain(
+            _pipeline(
+                application_path,
+                report,
+                due,
+                unmatched=False,
+                disposition="evidence_only",
+            )
+        )
+    else:
+        _drain(
+            _pipeline(
+                application_path,
+                report,
+                20,
+                unmatched=False,
+                disposition="evidence_only",
+            )
+        )
+    work, current, lineage, package = _state(application_path)
+    assert work[2] == "evidence_only" and current == report.report_id
+    before = _case_rows(application_path)
+    assert bool(before[0]) is leftover
+    due = work[5]
+    assert type(due) is int
+
+    failed = _failed(_report("Titled differently", "a", "b", actionable=False))
+    assert 2 == _drain(
+        _pipeline(
+            application_path, failed, due, unmatched=False, disposition=disposition
+        )
+    )
+    assert _case_rows(application_path) == before
+    assert _state(application_path) == (
+        (*work[:5], due + _WEEK),
+        current,
+        lineage,
+        package,
+    )
+
+
+def test_a_deterministic_provider_status_is_an_answer_not_a_failure(
+    application_path: Path,
+) -> None:
+    """A status a later ask would repeat is not a failed search: the content
+    rule decides, and the work keeps its slot."""
+    report = _report("Prepared once", "a", "b")
+    _drain(_pipeline(application_path, report, 20, unmatched=False))
+    work, current, lineage, package = _state(application_path)
+    due = work[5]
+    assert type(due) is int
+
+    limited = _failed(report, ProviderStatus.CANDIDATE_LIMIT_EXCEEDED)
+    assert 2 == _drain(_pipeline(application_path, limited, due, unmatched=False))
+    assert _state(application_path) == (
+        (*work[:5], next_research_slot(_WORK, due + _WEEK)),
+        current,
+        lineage,
+        package,
+    )
+
+
+def test_a_slot_passed_since_a_weekly_mark_makes_a_slot_search(
+    application_path: Path,
+) -> None:
+    """A weekly mark that fires late, after the work's slot has gone by since
+    its last preparation, is that period's slot search (ADR-0102)."""
+    phase = int(_WORK[-16:], 16) % _PERIOD
+    prepared = phase - _WEEK - 86_400
+    report = _report("Prepared once", "a", "b")
+    _drain(_pipeline(application_path, report, prepared, unmatched=True))
+    work = _state(application_path)[0]
+    # Its weekly mark comes a day before its slot.
+    assert work[5] == phase - 86_400
+
+    # The search runs a day after the slot: proposals that differ replace
+    # the case, though the audiobook again admits no recording.
+    changed = _report("Titled differently", "a", "b")
+    late = phase + 86_400
+    assert 5 == _drain(_pipeline(application_path, changed, late, unmatched=True))
+    after = _state(application_path)[0]
+    assert after[:4] == ("complete", "complete", "case", changed.report_id)
+    assert after[4] != work[4]
+    assert after[5] == late + _WEEK
+
+
+def test_a_recovery_reset_is_a_fresh_start_not_a_scheduled_search(
+    application_path: Path,
+) -> None:
+    """A changed producer resets a scan's work and its marks, so the work is
+    claimed to reuse held answers and its publication takes the ordinary path."""
+    report = _report("Prepared once", "a", "b")
+    _drain(_pipeline(application_path, report, 20, unmatched=False))
+    entry = replace(_entry("item-1", report.file.identity), library="ebooks")
+    repository = open_repository(application_path)
+    try:
+        # The scan that prepared it is still processing other work when the
+        # library's producer changes.
+        repository._connection.execute(
+            "UPDATE review_preparation_scans SET state='processing'"
+        )
+        assert repository._connection.execute(
+            "SELECT state FROM review_preparation_work"
+        ).fetchone() == ("complete",)
+        repository.recover_review_pipeline((("primary", "ebooks", "lib-1", "e" * 64),))
+        assert repository._connection.execute(
+            "SELECT stage,research_not_before FROM review_preparation_work"
+        ).fetchone() == ("extraction", None)
+        discovery = repository.claim_review_pipeline_action(40)
+        assert discovery is not None and discovery.stage == "discovery"
+        repository.complete_review_discovery(discovery, 1, "a" * 64, (entry,), 41)
+        action = repository.claim_review_pipeline_action(42)
+        assert action is not None and action.stage == "extraction"
+        assert action.research is False
+        _publish_receipt(repository, action, _restamped(report, 1), 43)
+        assert repository._connection.execute(
+            "SELECT stage,state FROM review_preparation_work"
+        ).fetchone() == ("proposal", "queued")
+    finally:
+        repository.close()
+
+
+def test_only_a_fired_mark_makes_a_scheduled_search(application_path: Path) -> None:
+    """A work back at extraction while its mark is still ahead is claimed to
+    reuse held answers, and its publication takes the ordinary path."""
+    report = _report("Prepared once", "a", "b")
+    _drain(_pipeline(application_path, report, 20, unmatched=False))
+    due = _state(application_path)[0][5]
+    assert type(due) is int
+    entry = replace(_entry("item-1", report.file.identity), library="ebooks")
+    repository = open_repository(application_path)
+    try:
+        repository.request_review_scan("primary", "ebooks", "lib-1", _PRODUCER, 30)
+        discovery = repository.claim_review_pipeline_action(31)
+        assert discovery is not None
+        repository.complete_review_discovery(discovery, 1, "a" * 64, (entry,), 32)
+        repository._connection.execute(
+            "UPDATE review_preparation_work SET stage='extraction',state='queued',"
+            "outcome=NULL"
+        )
+        action = repository.claim_review_pipeline_action(33)
+        assert action is not None and action.stage == "extraction"
+        assert action.research is False
+        assert due > 34
+        _publish_receipt(repository, action, _restamped(report, 1), 34)
+        assert repository._connection.execute(
+            "SELECT stage,state FROM review_preparation_work"
+        ).fetchone() == ("proposal", "queued")
+    finally:
+        repository.close()
+
+
+def _publish_receipt(
+    repository: SQLiteMetadataReportRepository,
+    action: PipelineAction,
+    report: MetadataReport,
+    at: int,
+) -> None:
+    current = repository.current_optional(
+        "primary", "ebooks", "item-1", report.file.identity
+    )
+    repository.publish(
+        report,
+        lambda: True,
+        None if current is None else MetadataReport.from_json(current).report_id,
+        after_publication=lambda bound, value: (
+            bound.complete_review_extraction_publication(
+                action, value.report_id, at, 0, None, False, None, False
+            )
+        ),
     )
