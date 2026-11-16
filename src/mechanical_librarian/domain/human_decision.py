@@ -14,6 +14,8 @@ from mechanical_librarian.domain.evidence_bounds import (
     validate_projection_text,
 )
 from mechanical_librarian.domain.field_effect import (
+    CLEARABLE_DESTINATIONS,
+    EMPTY_DECISION_KIND,
     FieldEffectError,
     field_value_version,
     project_decision_value,
@@ -33,7 +35,7 @@ COVER_SELECTION_AUTHORITY_SCHEMA: Final = "cover-selection-authority-v3"
 # An automatic cover choice keeps the first selection version.
 AUTOMATIC_COVER_SELECTION_AUTHORITY_SCHEMA: Final = "cover-selection-authority-v1"
 
-HUMAN_DECISION_SCHEMA: Final = "human-decision-v5"
+HUMAN_DECISION_SCHEMA: Final = "human-decision-v6"
 HumanDecisionEventSchemaVersion = Literal["human-decision-event-v1"]
 HUMAN_DECISION_EVENT_SCHEMA: Final[HumanDecisionEventSchemaVersion] = (
     "human-decision-event-v1"
@@ -58,8 +60,17 @@ VALUE_OUTCOMES = frozenset({"accept", "owner_entered"})
 # other destination keeps the proposal-only choices (ADR-0085).
 OWNER_TEXT_DESTINATIONS = ("title", "subtitle", "publisher")
 OWNER_SUBSET_DESTINATION = "genres"
+# Authors on both media and narrators on audiobooks take a list of names, one
+# per line, in the owner's order (ADR-0104).
+OWNER_NAMES_DESTINATIONS = ("authors", "narrators")
 OWNER_TEXT_MAXIMUM = 512
 OWNER_SUBSET_MAXIMUM = 32
+OWNER_NAMES_MAXIMUM = 32
+# These refuse an empty owner value as required: identity admission and
+# provider searches read them (ADR-0104).
+OWNER_REQUIRED_DESTINATIONS = frozenset({"title", "authors"})
+# An owner's clear: the one closed empty envelope, only on `owner_entered`.
+EMPTY_VALUE: Final[Mapping[str, object]] = {"kind": EMPTY_DECISION_KIND, "value": None}
 OWNER_SUBSET_OPTIONS_MAXIMUM = 160
 # A cover and a description each have their own decision lineage; neither can
 # be withdrawn here.
@@ -405,13 +416,40 @@ def owner_text(value: object) -> bool:
 
 
 def owner_value_admitted(proposal: Mapping[str, object]) -> bool:
-    """Whether this field takes an owner-entered value or genre subset at all."""
+    """Whether this field takes an owner-entered value, subset or names at all."""
     result = proposal.get("result")
     return (
         proposal.get("destination")
-        in (*OWNER_TEXT_DESTINATIONS, OWNER_SUBSET_DESTINATION)
+        in (
+            *OWNER_TEXT_DESTINATIONS,
+            OWNER_SUBSET_DESTINATION,
+            *OWNER_NAMES_DESTINATIONS,
+        )
         and type(result) is dict
         and result.get("outcome") != "ineligible"
+    )
+
+
+def owner_entry_admitted(proposal: Mapping[str, object], media_kind: str) -> bool:
+    """Whether owner entry reaches this field on a case of this medium.
+
+    Narrators are entered on audiobooks only (ADR-0104).
+    """
+    return owner_value_admitted(proposal) and (
+        proposal.get("destination") != "narrators" or media_kind == "audiobook"
+    )
+
+
+def empty_owner_value(selected_value: object) -> bool:
+    """Whether a submitted owner value empties its field, in any spelling.
+
+    Only the closed empty envelope is a clear; an empty text or list is the
+    same intent, which a field that cannot be emptied refuses as required and
+    any other field refuses as invalid, never rewritten (ADR-0104).
+    """
+    return type(selected_value) is dict and (
+        selected_value.get("kind") == EMPTY_DECISION_KIND
+        or selected_value.get("value") in ("", [])
     )
 
 
@@ -454,13 +492,11 @@ def genre_subset_available(
     proposal: Mapping[str, object], current: object, previous: object = None
 ) -> bool:
     options = list_union(proposal, current, previous)
+    # A single current genre is offered too, so it can be cleared (ADR-0104).
     return (
         owner_value_admitted(proposal)
         and proposal.get("destination") == OWNER_SUBSET_DESTINATION
-        and (
-            2 <= len(options) <= OWNER_SUBSET_OPTIONS_MAXIMUM
-            or (len(options) == 1 and not options[0][1])
-        )
+        and 1 <= len(options) <= OWNER_SUBSET_OPTIONS_MAXIMUM
     )
 
 
@@ -485,12 +521,25 @@ def _validate_owner_command(
         return
     if not owner_value_admitted(proposal):
         raise HumanDecisionError("unsupported")
+    if destination in OWNER_REQUIRED_DESTINATIONS and empty_owner_value(selected_value):
+        raise HumanDecisionError("owner_value_required")
     value = selected_value.get("value") if type(selected_value) is dict else None
-    if destination == OWNER_SUBSET_DESTINATION:
+    if type(selected_value) is dict and selected_value.get("kind") == (
+        EMPTY_DECISION_KIND
+    ):
+        valid = destination in CLEARABLE_DESTINATIONS
+    elif destination == OWNER_SUBSET_DESTINATION:
         valid = (
             type(value) is list
             and 1 <= len(value) <= OWNER_SUBSET_MAXIMUM
             and all(type(item) is str for item in value)
+            and len(set(value)) == len(value)
+        )
+    elif destination in OWNER_NAMES_DESTINATIONS:
+        valid = (
+            type(value) is list
+            and 1 <= len(value) <= OWNER_NAMES_MAXIMUM
+            and all(owner_text(item) for item in value)
             and len(set(value)) == len(value)
         )
     else:
@@ -556,8 +605,10 @@ def chosen_value_fingerprint(destination: str, selected_value: object) -> str:
     (ADR-0085, Amendment 2).
     """
     value = project_decision_value(destination, selected_value)
+    # A chosen clear is pinned as the one empty state (ADR-0104).
+    state = "empty" if value is None else "value"
     return _sha256(
-        _canonical({"destination": destination, "state": "value", "value": value})
+        _canonical({"destination": destination, "state": state, "value": value})
     )
 
 
@@ -577,7 +628,8 @@ def validate_owner_value(
     assert type(selected_value) is dict
     value = selected_value["value"]
     current = target_value(case, destination)
-    if destination == OWNER_SUBSET_DESTINATION:
+    # A clear needs no union: an empty field refuses it as unchanged below.
+    if destination == OWNER_SUBSET_DESTINATION and value is not None:
         order = {
             item: index
             for index, (item, *_) in enumerate(list_union(proposal, current, previous))
@@ -1015,6 +1067,7 @@ class HumanDecision:
         if offered_alternatives_digest is None:
             offered_alternatives_digest = current_digest
         _require_offer(destination, offered_alternatives_digest, current_digest)
+        _require_owner_medium(case, proposal, outcome)
         validate_decision_action(proposal, outcome, selected_value)
         if outcome == "owner_entered":
             validate_owner_value(case, proposal, selected_value, previous)
@@ -1193,6 +1246,9 @@ class HumanDecision:
         verified write.
         """
         proposals = case.proposals if offer is None else offer
+        proposal = _proposal(proposals, self.destination, self.proposal_id)
+        if proposal is not None:
+            _require_owner_medium(case, proposal, self.outcome)
         self._validate_for(
             case.review_case_id,
             case.target_fingerprint,
@@ -1360,6 +1416,14 @@ class HumanDecision:
                 or (value.outcome in VALUE_OUTCOMES)
                 != (type(value.selected_value) is dict)
                 or (
+                    type(value.selected_value) is dict
+                    and value.selected_value.get("kind") == EMPTY_DECISION_KIND
+                    and (
+                        value.outcome != "owner_entered"
+                        or value.selected_value != EMPTY_VALUE
+                    )
+                )
+                or (
                     value.cause is not None
                     and (
                         value.cause not in DECISION_CAUSES
@@ -1399,6 +1463,18 @@ def _decision_id(request_digest: str, occurred_at: int) -> str:
     return "human_decision_" + _sha256(
         _canonical({"request_digest": request_digest, "occurred_at": occurred_at})
     )
+
+
+def _require_owner_medium(
+    case: ReviewCase, proposal: Mapping[str, object], outcome: str
+) -> None:
+    """Refuse owner entry on a field this medium does not open to it."""
+    if (
+        outcome == "owner_entered"
+        and owner_value_admitted(proposal)
+        and not owner_entry_admitted(proposal, case.media_kind)
+    ):
+        raise HumanDecisionError("unsupported")
 
 
 def _require_pinnable_value(case: ReviewCase, outcome: str, destination: str) -> None:

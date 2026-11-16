@@ -931,7 +931,13 @@ export interface EvidenceView {
 }
 export interface HistoryValueView {
   kind: string
-  value: string | boolean | readonly string[] | readonly { name: string; sequence: string | null }[]
+  // `null` only for an owner's clear, whose kind is `empty` (#1523).
+  value:
+    | string
+    | boolean
+    | readonly string[]
+    | readonly { name: string; sequence: string | null }[]
+    | null
 }
 export type HistoryItemView = (
   | {
@@ -1283,7 +1289,8 @@ export interface DecisionCommand {
   destination: string
   outcome: DecisionOutcome
   proposalId: string
-  selectedValue?: Schema<'_ProposedValue'> | null
+  // An owner's clear is the closed empty value (#1523).
+  selectedValue?: Schema<'_ProposedValue'> | Schema<'_EmptyValue'> | null
   targetFingerprint: string
   offerDigest: string
   idempotencyKey: string

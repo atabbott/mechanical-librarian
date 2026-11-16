@@ -142,6 +142,7 @@ _DECISION: Row = {
             "cover_consideration_required",
             "unsupported",
             "owner_value_invalid",
+            "owner_value_required",
             "owner_value_unchanged",
         )
     },

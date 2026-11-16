@@ -146,6 +146,7 @@ from mechanical_librarian.domain.field_effect import (
 )
 from mechanical_librarian.domain.human_decision import (
     HUMAN_DECISION_EVENT_SCHEMA,
+    OWNER_NAMES_DESTINATIONS,
     OWNER_SUBSET_DESTINATION,
     OWNER_TEXT_DESTINATIONS,
     VALUE_OUTCOMES,
@@ -1324,7 +1325,11 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 plan = FieldEffectOperation.from_json(document).plan
                 if (
                     destination
-                    not in (*OWNER_TEXT_DESTINATIONS, OWNER_SUBSET_DESTINATION)
+                    not in (
+                        *OWNER_TEXT_DESTINATIONS,
+                        OWNER_SUBSET_DESTINATION,
+                        *OWNER_NAMES_DESTINATIONS,
+                    )
                     or plan.destination != destination
                     or plan.pre_value is None
                 ):

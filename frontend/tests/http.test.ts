@@ -1168,6 +1168,10 @@ describe('ReviewApiClient', () => {
         max_items: 32,
         options: [{ value: 'Drama', current: false, proposed: false, previous: true }],
       },
+      names: null,
+      clear: false,
+      current: null,
+      previous_empty: false,
       withdraw: null,
     }
     expect(

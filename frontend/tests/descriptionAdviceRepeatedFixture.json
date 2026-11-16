@@ -164,7 +164,11 @@
       "notices": ["unique_typed_candidate"],
       "offer_digest": "8aaab080e8097488f54c12001a5d829c132a6d7f4d0ac73353e85c74632e3838",
       "owner_control": {
+        "clear": true,
+        "current": null,
         "entry": null,
+        "names": null,
+        "previous_empty": false,
         "subset": {
           "max_items": 32,
           "options": [
@@ -369,10 +373,14 @@
       "notices": ["positive_preservation_evidence"],
       "offer_digest": "9a4945a0fee309ddc9ce0458fbf36896a74ee30827f82ad9500e66c62f87a504",
       "owner_control": {
+        "clear": false,
+        "current": "Real Tigers",
         "entry": {
           "max_characters": 512,
           "suggestions": []
         },
+        "names": null,
+        "previous_empty": false,
         "subset": null,
         "withdraw": null
       },
@@ -523,7 +531,19 @@
       "needs_attention": false,
       "notices": ["positive_preservation_evidence"],
       "offer_digest": "e8aa41042043375155cacd054b254062b49ef17c77321789b174b1d748c1801f",
-      "owner_control": null,
+      "owner_control": {
+        "clear": false,
+        "current": ["Mick Herron"],
+        "entry": null,
+        "names": {
+          "max_characters": 512,
+          "max_items": 32,
+          "previous": null
+        },
+        "previous_empty": false,
+        "subset": null,
+        "withdraw": null
+      },
       "pin": null,
       "pin_control": {
         "pin": "available",
@@ -1042,7 +1062,7 @@
   "recording_admission_basis": null,
   "recording_identity_basis": null,
   "review_case_id": "review_case_79a6c94436fb746a1522418e52a7fe1e89934e4987837ac6a9b015de7de34f5f",
-  "schema_version": "review-case-detail-v9",
+  "schema_version": "review-case-detail-v10",
   "target": {
     "authors": ["Mick Herron"],
     "connection": "primary",

@@ -905,7 +905,15 @@ _HUMAN_DECISIONS_SQL = (
     "idempotency_digest TEXT NOT NULL UNIQUE CHECK(length(idempotency_digest)=64 AND idempotency_digest NOT GLOB '*[^0-9a-f]*'), "
     "request_digest TEXT NOT NULL CHECK(length(request_digest)=64 AND request_digest NOT GLOB '*[^0-9a-f]*'), "
     "occurred_at INTEGER NOT NULL CHECK(occurred_at>=0), "
-    "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 65536))"
+    "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 65536), "
+    # The selected value is null or one closed kind; the owner's empty value
+    # carries no value and only an owner-entered decision selects it (ADR-0104).
+    "CHECK(selected_value_document='null' OR (json_valid(selected_value_document) "
+    "AND json_type(selected_value_document)='object' "
+    "AND json_extract(selected_value_document,'$.kind') IN ('text','list','series','boolean','cover','empty'))), "
+    "CHECK(json_valid(selected_value_document)=0 OR json_type(selected_value_document)<>'object' "
+    "OR json_extract(selected_value_document,'$.kind') IS NOT 'empty' "
+    "OR (outcome='owner_entered' AND json_type(selected_value_document,'$.value')='null')))"
 )
 # Browse, counts and detail ask for a case's decisions per destination, and the
 # latest by ordinal (the rowid, so the index carries it); without this every

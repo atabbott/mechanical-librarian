@@ -51,6 +51,7 @@ from mechanical_librarian.domain.human_decision import (
 )
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
+    TargetDestination,
     TargetFacts,
     TargetField,
     TargetFieldState,
@@ -576,6 +577,53 @@ def test_choosing_another_value_ends_the_pin(
     assert (_hold(genres, "genres"), _pin(genres, "genres")) == (
         answer.decision_id,
         None,
+    )
+
+
+# #1523, S14: a clear is an ordinary answer. It ends a pin on its field like
+# any other, and a chosen clear can itself be pinned as the empty state, in
+# force once the cleared field is read back.
+def test_a_clear_ends_the_pin_and_can_be_pinned_empty(tmp_path: Path) -> None:
+    store = OwnerStore(tmp_path, genre_report(current=("Drama",)))
+    try:
+        store.decide("pin", destination="genres")
+        assert _pin(store, "genres") is not None
+        clear = store.decide("owner_entered", _EMPTY, destination="genres")
+        assert (_hold(store, "genres"), _pin(store, "genres")) == (
+            clear.decision_id,
+            None,
+        )
+        store.decide("pin", destination="genres")
+        assert _pin(store, "genres") == {
+            "fingerprint": chosen_value_fingerprint("genres", _EMPTY),
+            "in_force": False,
+        }
+        store.write(clear)
+        store.publish(_without_genres(genre_report(current=("Drama",))))
+        assert _pin(store, "genres")["in_force"] is True
+        assert _asked(store, "genres") is False
+    finally:
+        store.close()
+
+
+_EMPTY = {"kind": "empty", "value": None}
+
+
+def _without_genres(report: MetadataReport) -> MetadataReport:
+    """The work read back after its genres were cleared: the field is empty."""
+    fields = tuple(
+        TargetField(field.destination, TargetFieldState.EMPTY, None)
+        if field.destination is TargetDestination.GENRES
+        else field
+        for field in report.target.fields
+    )
+    target = report.target
+    return MetadataReport.create(
+        target=TargetFacts(target.connection, target.library, target.item, fields),
+        file=report.file,
+        local_claims=report.local_claims,
+        local_reasons=report.local_reasons,
+        providers=report.providers,
     )
 
 

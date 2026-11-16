@@ -56,9 +56,14 @@ from mechanical_librarian.domain.description_advice import (
     AuthoredDescriptionDecision,
     DescriptionAdviceBinding,
 )
-from mechanical_librarian.domain.field_effect import decision_value_kind
+from mechanical_librarian.domain.field_effect import (
+    CLEARABLE_DESTINATIONS,
+    decision_value_kind,
+)
 from mechanical_librarian.domain.field_outcomes import language_is_unknown
 from mechanical_librarian.domain.human_decision import (
+    OWNER_NAMES_DESTINATIONS,
+    OWNER_NAMES_MAXIMUM,
     OWNER_SUBSET_DESTINATION,
     OWNER_SUBSET_MAXIMUM,
     OWNER_TEXT_DESTINATIONS,
@@ -73,8 +78,8 @@ from mechanical_librarian.domain.human_decision import (
     genre_subset_available,
     list_union,
     offer_digest,
+    owner_entry_admitted,
     owner_text,
-    owner_value_admitted,
     owner_value_suggestions,
     pinned_field_fingerprint,
     preserved_description,
@@ -133,9 +138,9 @@ from mechanical_librarian.domain.shadow_outcome import (
 from mechanical_librarian.domain.validation import owner_password
 from mechanical_librarian.domain.value_flags import value_flags
 
-ReviewCaseDetailSchemaVersion = Literal["review-case-detail-v9"]
+ReviewCaseDetailSchemaVersion = Literal["review-case-detail-v10"]
 REVIEW_CASE_DETAIL_SCHEMA: Final[ReviewCaseDetailSchemaVersion] = (
-    "review-case-detail-v9"
+    "review-case-detail-v10"
 )
 
 ReviewCaseEvidenceSchemaVersion = Literal["review-case-evidence-v5"]
@@ -146,9 +151,9 @@ REVIEW_CASE_EVIDENCE_SCHEMA: Final[ReviewCaseEvidenceSchemaVersion] = (
 HUMAN_DECISION_ACK_SCHEMA: Final = "human-decision-ack-v1"
 ReviewAttentionSchemaVersion = Literal["review-attention-v1"]
 REVIEW_ATTENTION_SCHEMA: Final[ReviewAttentionSchemaVersion] = "review-attention-v1"
-ReviewCaseHistorySchemaVersion = Literal["review-case-history-v4"]
+ReviewCaseHistorySchemaVersion = Literal["review-case-history-v5"]
 REVIEW_CASE_HISTORY_SCHEMA: Final[ReviewCaseHistorySchemaVersion] = (
-    "review-case-history-v4"
+    "review-case-history-v5"
 )
 
 ReviewLibrarySchemaVersion = Literal["review-library-v8"]
@@ -1836,6 +1841,7 @@ class InspectCurrentReviewCase:
             decision,
             automatic_decision is not None,
             snapshot,
+            context.case.media_kind,
             None
             if pinned_field is None or pin_state != "changed"
             else pinned_field["value"],
@@ -1853,8 +1859,8 @@ class InspectCurrentReviewCase:
             )
             and destination in snapshot.held_destinations
         )
-        owner_entry = owner_control is not None and (
-            owner_control["entry"] is not None or owner_control["subset"] is not None
+        owner_entry = owner_control is not None and any(
+            owner_control[part] is not None for part in ("entry", "subset", "names")
         )
         classify = partial(
             _classify_field,
@@ -3373,6 +3379,7 @@ def _owner_control(
     decision: HumanDecision | None,
     automatic: bool,
     snapshot: CurrentReviewCaseSnapshot,
+    media_kind: str,
     pinned: object,
 ) -> dict[str, object] | None:
     """Project F59's owner controls for one field, or ``None`` when it has none.
@@ -3380,7 +3387,8 @@ def _owner_control(
     Each part is offered only where the store would accept that command now;
     the store still decides, and refuses a stale panel inline (ADR-0085).
     ``pinned`` is the value a changed pin keeps, suggested like the previous
-    one (ADR-0085, Amendment 2).
+    one (ADR-0085, Amendment 2). Names entry reaches authors, and narrators on
+    an audiobook; a clearable field also takes an empty value (ADR-0104).
     """
     destination = cast(str, proposal["destination"])
     current = target_fields[destination]["value"]
@@ -3388,13 +3396,10 @@ def _owner_control(
     open_ = (
         destination not in snapshot.suspended_destinations
         and destination not in snapshot.override_blocked_destinations
+        and owner_entry_admitted(proposal, media_kind)
     )
     entry = None
-    if (
-        open_
-        and destination in OWNER_TEXT_DESTINATIONS
-        and owner_value_admitted(proposal)
-    ):
+    if open_ and destination in OWNER_TEXT_DESTINATIONS:
         # The union of current and eligible proposed authors, which is what
         # `split_author` may recognise beside a title (ADR-0085).
         authors = next(
@@ -3434,6 +3439,18 @@ def _owner_control(
             suggestions.append({"rule": "pinned", "value": pinned})
         entry = {"max_characters": OWNER_TEXT_MAXIMUM, "suggestions": suggestions}
     subset = None
+    names = None
+    if open_ and destination in OWNER_NAMES_DESTINATIONS:
+        names = {
+            "max_items": OWNER_NAMES_MAXIMUM,
+            "max_characters": OWNER_TEXT_MAXIMUM,
+            "previous": previous
+            if type(previous) is list
+            and previous != current
+            and 1 <= len(previous) <= OWNER_NAMES_MAXIMUM
+            and all(owner_text(item) for item in previous)
+            else None,
+        }
     if (
         open_
         and destination == OWNER_SUBSET_DESTINATION
@@ -3467,9 +3484,18 @@ def _owner_control(
             if automatic
             else dict(snapshot.decision_effect_states).get(destination, "available")
         )
-    if (entry, subset, withdraw) == (None, None, None):
+    entered = (entry, subset, names) != (None, None, None)
+    if not entered and withdraw is None:
         return None
-    return {"entry": entry, "subset": subset, "withdraw": withdraw}
+    return {
+        "entry": entry,
+        "subset": subset,
+        "names": names,
+        "clear": entered and destination in CLEARABLE_DESTINATIONS,
+        "current": current if entered else None,
+        "previous_empty": False,
+        "withdraw": withdraw,
+    }
 
 
 def _corroboration_source_labels(

@@ -3714,7 +3714,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "review-case-detail-v9",
+            "const": "review-case-detail-v10",
             "title": "Schema Version",
             "type": "string"
           },
@@ -5741,12 +5741,16 @@
           "selected_value": {
             "anyOf": [
               {
+                "$ref": "#/components/schemas/_EmptyValue"
+              },
+              {
                 "$ref": "#/components/schemas/_ProposedValue"
               },
               {
                 "type": "null"
               }
-            ]
+            ],
+            "title": "Selected Value"
           },
           "target_fingerprint": {
             "title": "Target Fingerprint",
@@ -5834,12 +5838,16 @@
           "selected_value": {
             "anyOf": [
               {
+                "$ref": "#/components/schemas/_EmptyValue"
+              },
+              {
                 "$ref": "#/components/schemas/_ProposedValue"
               },
               {
                 "type": "null"
               }
-            ]
+            ],
+            "title": "Selected Value"
           },
           "target_fingerprint": {
             "title": "Target Fingerprint",
@@ -5918,12 +5926,16 @@
           "selected_value": {
             "anyOf": [
               {
+                "$ref": "#/components/schemas/_EmptyValue"
+              },
+              {
                 "$ref": "#/components/schemas/_ProposedValue"
               },
               {
                 "type": "null"
               }
-            ]
+            ],
+            "title": "Selected Value"
           },
           "target_fingerprint": {
             "pattern": "^[0-9a-f]{64}$",
@@ -6251,6 +6263,27 @@
           "binding"
         ],
         "title": "_DescriptionSelectionRequest",
+        "type": "object"
+      },
+      "_EmptyValue": {
+        "additionalProperties": false,
+        "description": "An owner's clear: it empties the field and carries no value (ADR-0104).",
+        "properties": {
+          "kind": {
+            "const": "empty",
+            "title": "Kind",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "null"
+          }
+        },
+        "required": [
+          "kind",
+          "value"
+        ],
+        "title": "_EmptyValue",
         "type": "object"
       },
       "_ErrorCode": {
@@ -6988,12 +7021,16 @@
           "selected_value": {
             "anyOf": [
               {
+                "$ref": "#/components/schemas/_EmptyValue"
+              },
+              {
                 "$ref": "#/components/schemas/_ProposedValue"
               },
               {
                 "type": "null"
               }
-            ]
+            ],
+            "title": "Selected Value"
           }
         },
         "required": [
@@ -7297,7 +7334,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "review-case-history-v4",
+            "const": "review-case-history-v5",
             "title": "Schema Version",
             "type": "string"
           }
@@ -8409,8 +8446,29 @@
       },
       "_OwnerControl": {
         "additionalProperties": false,
-        "description": "F59's owner controls for one field; each part is offered or null.",
+        "description": "F59's owner controls for one field; each part is offered or null.\n\n`current` is the value owner entry compares with, raw: the case's value,\nor on the case that wrote the field, the written value (ADR-0104). `clear`\nsays an empty value is accepted here, and `previous_empty` that the field\nwas empty before its latest verified write.",
         "properties": {
+          "clear": {
+            "title": "Clear",
+            "type": "boolean"
+          },
+          "current": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current"
+          },
           "entry": {
             "anyOf": [
               {
@@ -8420,6 +8478,20 @@
                 "type": "null"
               }
             ]
+          },
+          "names": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_OwnerNames"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "previous_empty": {
+            "title": "Previous Empty",
+            "type": "boolean"
           },
           "subset": {
             "anyOf": [
@@ -8452,6 +8524,10 @@
         "required": [
           "entry",
           "subset",
+          "names",
+          "clear",
+          "current",
+          "previous_empty",
           "withdraw"
         ],
         "title": "_OwnerControl",
@@ -8479,6 +8555,46 @@
           "suggestions"
         ],
         "title": "_OwnerEntry",
+        "type": "object"
+      },
+      "_OwnerNames": {
+        "additionalProperties": false,
+        "description": "Names entry, one per line in the owner's order (ADR-0104).\n\nIt opens with the field's current names; `previous` is what the field\nheld before its latest verified write, when that was a list of names.",
+        "properties": {
+          "max_characters": {
+            "const": 512,
+            "title": "Max Characters",
+            "type": "integer"
+          },
+          "max_items": {
+            "const": 32,
+            "title": "Max Items",
+            "type": "integer"
+          },
+          "previous": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous"
+          }
+        },
+        "required": [
+          "max_items",
+          "max_characters",
+          "previous"
+        ],
+        "title": "_OwnerNames",
         "type": "object"
       },
       "_OwnerSubset": {
