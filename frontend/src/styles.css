@@ -1848,7 +1848,7 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 .review-keys-toggle { flex:none; min-height:44px; padding:4px 15px; border:1px solid var(--line-strong); border-radius:999px; color:var(--accent-strong); background:var(--surface-strong); font-weight:650; white-space:nowrap; }
 .review-keys-toggle:hover { border-color:var(--accent); }
 .review-keys-dialog kbd, .review-key-badge { display:inline-grid; place-items:center; box-sizing:border-box; min-width:1.4rem; height:1.4rem; padding:0 .35rem; color:var(--ink); background:var(--surface); border:1px solid var(--field-line); border-bottom-width:2px; border-radius:.3rem; font:650 .75rem/1 Inter, ui-sans-serif, system-ui, sans-serif; font-variant-numeric:tabular-nums; letter-spacing:0; text-transform:none; }
-.review-key-badge, .review-key-space { display:none; }
+.review-key-badge, .review-key-space, .review-key-break { display:none; }
 .library-page .library-cover-card { position:relative; }
 /* No key acts while owner entry is open, so the badges go; the corner they keep clear stays, and no card changes height. */
 .library-page:has(form.owner-entry) .review-key-badge { visibility:hidden; }
@@ -1859,9 +1859,11 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 @media not all and (hover:none) and (pointer:coarse) {
   :root[data-review-keys='on'] .library-page :is(.value-choice, .library-cover-card):not(:disabled) > .review-key-badge { display:inline-grid; position:absolute; z-index:1; top:.65rem; right:.65rem; }
   :root[data-review-keys='on'] .library-page .library-cover-card:not(:disabled) > .review-key-badge { top:1rem; right:1rem; box-shadow:0 1px 3px rgb(0 0 0 / .25); }
-  /* The badge keeps a corner clear of the label line, so Your choice never runs under it, and of the value only as far down and in as the badge reaches past the card's 16px and 20px padding: later lines run full width. */
+  /* The badge keeps a corner clear of the label line, so Your choice never runs under it, and of the value only as far down and in as the badge reaches past the card's 16px and 20px padding, and no further down than the first line: later lines run full width. */
   :root[data-review-keys='on'] .library-page .metadata-choice .choice-select:has(> .review-key-badge):not(:disabled) > small { padding-inline-end:2rem; }
-  :root[data-review-keys='on'] .library-page .metadata-choice .choice-select:has(> .review-key-badge):not(:disabled) > strong > .review-key-space { display:block; float:inline-end; width:calc(2.45rem - 20px); height:calc(1.8rem - 16px); }
+  :root[data-review-keys='on'] .library-page .metadata-choice .choice-select:has(> .review-key-badge):not(:disabled) > strong > .review-key-space { display:block; float:inline-end; width:calc(2.45rem - 20px); height:min(calc(1.8rem - 16px), 1lh); }
+  /* The break after the spacer lets a first word too wide to fit beside it start below it whole, rather than split there. */
+  :root[data-review-keys='on'] .library-page .metadata-choice .choice-select:has(> .review-key-badge):not(:disabled) > strong > .review-key-break { display:inline; }
 }
 .review-keys-dialog { box-sizing:border-box; width:min(30rem,calc(100vw - 2rem)); max-height:calc(100dvh - 2rem); overflow:auto; padding:1.25rem 1.5rem; color:var(--ink); background:var(--surface); border:1px solid var(--line-strong); border-radius:.75rem; box-shadow:var(--shadow); }
 .review-keys-dialog::backdrop { background:rgb(23 32 30 / .45); }
