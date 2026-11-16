@@ -1081,8 +1081,8 @@ def run_metadata_report_loaded(
                 review_claim_next,
                 None,
                 # An audiobook that admitted no recording is searched again
-                # later, and that search keeps an open case unless it admits
-                # one (#1451).
+                # weekly, and that search keeps an open case unless it admits
+                # one (#1451); every other work waits for its slot (ADR-0102).
                 recording_unmatched(report),
             )
         ),

@@ -2936,6 +2936,14 @@ def test_real_projection_consumes_disabled_description_intent_once(tmp_path):
         requested_at = repository._connection.execute(
             "SELECT max(requested_at) FROM review_preparation_scans"
         ).fetchone()[0]
+        # The fixture prepared this book at time 10 and the scan below runs at
+        # the wall clock, long after its scheduled search fell due (ADR-0102).
+        # That search is upstream work this test is not about, so the book
+        # stands as one finished before scheduled searches: it has no mark.
+        with repository._connection:
+            repository._connection.execute(
+                "UPDATE review_preparation_work SET research_not_before=NULL"
+            )
         pipeline._clock = lambda: requested_at
         for _ in range(64):
             if not pipeline.run_next(1):
