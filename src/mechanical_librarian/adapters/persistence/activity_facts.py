@@ -37,6 +37,7 @@ _TABLES = (
     "metadata_policy_transitions",
     "metadata_policy_resolutions",
     "current_cover_considerations",
+    "review_case_episodes",
 )
 Key = tuple[str, bytes]
 Candidate = tuple[str, str]
@@ -340,13 +341,31 @@ def _bindings(
         candidate("isbn_refusal", row["outcome_set_id"] + ":isbn")
     elif table == "human_decisions":
         aliases.add(_key("human_identity", row["decision_id"]))
+        # Each decision passes a move of its writes on to its case's field.
+        dependency("decision_effects", row["decision_id"])
+        aliases.add(
+            _key("case_field_writes", row["review_case_id"], row["destination"])
+        )
     elif table == "human_decision_events":
         dependency("human_identity", row["decision_id"])
         # An owner decision's row reads its own write: what an accept replaced
         # (#1286) and whether a keep's write-back has landed (#1523).
         dependency("decision_effects", row["decision_id"])
+        # A keep not yet planned reads the write it follows: the case's other
+        # writes of the field, a title's subtitle companion among them, and
+        # the case's episode floors (#1523).
+        dependency("case_field_writes", row["review_case_id"], row["destination"])
+        if row["destination"] == "subtitle":
+            dependency("case_field_writes", row["review_case_id"], "title")
+        dependency("case_episode", row["review_case_id"])
         candidate("human_decision", row["event_id"])
+    elif table == "review_case_episodes":
+        aliases.add(_key("case_episode", row["review_case_id"]))
     elif table == "automatic_decisions":
+        dependency("decision_effects", row["decision_id"])
+        aliases.add(
+            _key("case_field_writes", row["review_case_id"], row["destination"])
+        )
         document = json.loads(row["document"])
         dependency("metadata_reports", document["report_id"])
         dependency("proposal_sets", document["proposal_set_id"])
@@ -410,6 +429,8 @@ def _bindings(
         aliases.add(_key("candidate_attempt", row["attempt_id"]))
     elif table == "description_decisions":
         dependency("description_advice_candidates", row["candidate_id"])
+        dependency("decision_effects", row["decision_id"])
+        aliases.add(_key("case_field_writes", row["review_case_id"], "description"))
         candidate("description_decision", row["decision_id"])
     elif table == "metadata_policy_transitions":
         dependency("metadata_policy_drafts", row["from_policy_id"])

@@ -8,7 +8,7 @@ nothing anywhere.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any, cast
 
@@ -538,46 +538,86 @@ def test_a_keep_reads_went_back_only_once_its_write_back_verifies(
         assert "Kept" not in str(row) and "Current value" not in str(row)
 
 
-def test_the_served_activity_follows_a_keep_write_back(store: OwnerStore) -> None:
-    """The Activity a borrowed fact store serves re-reads an owner decision's
-    row when its own write moves, as the canonical read does (ADR-0082,
-    #1286, #1523)."""
+def _served(store: OwnerStore, borrower: Any) -> list[dict[str, Any]]:
+    target = store.case.target
+    return cast(
+        "list[dict[str, Any]]",
+        ContinuousGuardedApplication(
+            borrower,
+            {},
+            {},
+            PersistedFieldEffectAuthority(borrower),
+            ((str(target["connection"]), str(target["library"])),),
+            lambda: 2_000,
+            lambda *_: None,
+            activity_only=True,
+        ).activity()["events"],
+    )
+
+
+def _genres_owner(rows: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    return [
+        (str(event["state"]), str(event["change"]))
+        for event in rows
+        if event["field_label"] == "Genres" and event["category"] == "owner"
+    ]
+
+
+@pytest.fixture
+def served(store: OwnerStore) -> Iterator[Callable[[], list[dict[str, Any]]]]:
+    """Activity as a borrowed fact store serves it (ADR-0082), checked against
+    the canonical read at every call."""
+    borrower = open_repository(
+        store.root / "owner.sqlite",
+        create=False,
+        authority=store.repository.authority,
+    )
+    borrower.configure_activity_page_reader(ActivityFactStore())
+
+    def read() -> list[dict[str, Any]]:
+        rows = _served(store, borrower)
+        assert rows == _activity(store)
+        return rows
+
+    try:
+        yield read
+    finally:
+        borrower.close()
+
+
+def test_the_served_activity_follows_a_keep_write_back(
+    store: OwnerStore, served: Callable[[], list[dict[str, Any]]]
+) -> None:
+    """The served Activity re-reads an owner decision's row when its own write
+    moves, as the canonical read does (ADR-0082, #1286, #1523)."""
     store.write(
         store.decide(
             "accept", {"kind": "list", "value": ["Fantasy"]}, destination="genres"
         )
     )
     keep = store.decide("keep_current", destination="genres")
-    borrower = open_repository(
-        store.root / "owner.sqlite",
-        create=False,
-        authority=store.repository.authority,
+    assert _genres_keep(served())["state"] == "recorded"
+    store.write(keep)
+    assert _genres_keep(served())["state"] == "went_back"
+
+
+def test_an_unplanned_keep_reads_its_own_episode_after_the_case_returns(
+    store: OwnerStore, served: Callable[[], list[dict[str, Any]]]
+) -> None:
+    """A keep recorded after a write and never planned keeps reading that
+    write once the case returns as a new episode: the library held Fantasy
+    when it was recorded (#1358, #1523)."""
+    first = store.case.review_case_id
+    store.write(
+        store.decide(
+            "accept", {"kind": "list", "value": ["Fantasy"]}, destination="genres"
+        )
     )
-    try:
-        borrower.configure_activity_page_reader(ActivityFactStore())
-
-        def served() -> list[dict[str, Any]]:
-            target = store.case.target
-            return cast(
-                "list[dict[str, Any]]",
-                ContinuousGuardedApplication(
-                    borrower,
-                    {},
-                    {},
-                    PersistedFieldEffectAuthority(borrower),
-                    ((str(target["connection"]), str(target["library"])),),
-                    lambda: 2_000,
-                    lambda *_: None,
-                    activity_only=True,
-                ).activity()["events"],
-            )
-
-        assert _genres_keep(served())["state"] == "recorded"
-        store.write(keep)
-        assert _genres_keep(served())["state"] == "went_back"
-        assert served() == _activity(store)
-    finally:
-        borrower.close()
+    store.decide("keep_current", destination="genres")
+    assert _genres_keep(served())["state"] == "recorded"
+    _successor(store, genres=("Fantasy",))
+    assert store.publish(genre_report()).review_case_id == first
+    assert _genres_keep(served())["state"] == "recorded"
 
 
 def test_a_plain_keep_still_reads_kept_in_activity(store: OwnerStore) -> None:
@@ -1631,3 +1671,40 @@ def test_a_keep_on_a_returned_episode_reads_from_its_own_episode(
     # To are the same value, never C's first-episode write as From.
     assert entry["previous_value"] == entry["selected_value"], entry
     assert entry["previous_value"] != chosen
+
+
+def test_the_served_activity_follows_a_write_that_verifies_after_a_keep(
+    held: tuple[OwnerStore, str], tmp_path: Path
+) -> None:
+    """A keep recorded before any write of its field, then the field returned
+    to automatic and written: the served Activity reads the keep's row as the
+    canonical read does once that write verifies (ADR-0082, #1523)."""
+    store, _ = held
+    borrower = open_repository(
+        store.root / "owner.sqlite",
+        create=False,
+        authority=store.repository.authority,
+    )
+    try:
+        borrower.configure_activity_page_reader(ActivityFactStore())
+        assert ("keep_current", "Kept Drama") in _genres_owner(_activity(store))
+        assert _served(store, borrower) == _activity(store)
+        store.publish(rewritten(_HELD, publisher="Changed Elsewhere"))
+        completed = [0]
+        application, scheduler, _ = _resume_service(store, tmp_path, completed)
+        application.return_to_automatic(store.case.review_case_id, "genres")
+        completed[0] = 10**9
+        scheduler.schedule()
+        automatic = next(
+            AutomaticDecision.from_json(raw)
+            for raw in store.repository.get_review_case_decisions(
+                store.case.review_case_id
+            )
+            if json.loads(raw)["schema_version"] == "automatic-decision-v1"
+            and json.loads(raw)["destination"] == "genres"
+        )
+        assert _served(store, borrower) == _activity(store)
+        store.write(automatic)
+        assert _served(store, borrower) == _activity(store)
+    finally:
+        borrower.close()

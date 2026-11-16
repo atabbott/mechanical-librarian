@@ -64,6 +64,7 @@ MUTABLE = (
     "metadata_policy_transitions",
     "metadata_policy_resolutions",
     "current_cover_considerations",
+    "review_case_episodes",
 )
 QUERIES = (
     (None, "all", 90, 1, 25),
@@ -1375,3 +1376,62 @@ def test_only_unconditional_refusal_of_both_routes_classifies_a_table(
         assert _append_only(connection, shapes) == ({"t"} if admitted else set())
     finally:
         connection.close()
+
+
+def test_an_owner_decision_row_depends_on_its_case_field_writes_and_episode() -> None:
+    """A keep's row reads the other writes of its case's field, a title's
+    subtitle companion among them, and the case's episode floors (#1523): a
+    move of any reaches that row, whatever decision's write moved."""
+    key = activity_facts._key
+    connection = sqlite3.connect(":memory:")
+    event = {
+        "event_id": "event-1",
+        "decision_id": "keep-1",
+        "review_case_id": "case-1",
+        "destination": "subtitle",
+    }
+    dependencies, _, candidates = activity_facts._bindings(
+        "human_decision_events", event, connection
+    )
+    assert {
+        key("decision_effects", "keep-1"),
+        key("case_field_writes", "case-1", "subtitle"),
+        key("case_field_writes", "case-1", "title"),
+        key("case_episode", "case-1"),
+    } <= dependencies
+    assert candidates == {("human_decision", "event-1")}
+    for table, row in (
+        ("human_decisions", {"decision_id": "accept-1"}),
+        ("automatic_decisions", {"decision_id": "automatic-1"}),
+        ("description_decisions", {"decision_id": "described-1"}),
+    ):
+        destination = "description" if table == "description_decisions" else "title"
+        dependencies, aliases, _ = activity_facts._bindings(
+            table,
+            {
+                **row,
+                "review_case_id": "case-1",
+                "destination": destination,
+                "candidate_id": "candidate-1",
+                "document": json.dumps(_AUTOMATIC_DOCUMENT),
+            },
+            connection,
+        )
+        assert key("decision_effects", row["decision_id"]) in dependencies, table
+        assert key("case_field_writes", "case-1", destination) in aliases, table
+    _, aliases, _ = activity_facts._bindings(
+        "field_effects", {"decision_id": "accept-1", "plan_id": "plan-1"}, connection
+    )
+    assert key("decision_effects", "accept-1") in aliases
+    _, aliases, _ = activity_facts._bindings(
+        "review_case_episodes", {"review_case_id": "case-1"}, connection
+    )
+    assert aliases == {key("case_episode", "case-1")}
+
+
+_AUTOMATIC_DOCUMENT = {
+    "report_id": "report-1",
+    "proposal_set_id": "proposal-set-1",
+    "review_case_id": "case-1",
+    "resolved_policy_id": "policy-1",
+}

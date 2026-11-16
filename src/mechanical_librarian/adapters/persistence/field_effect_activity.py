@@ -1014,6 +1014,19 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             else cached.case(review_case_id)
         )
 
+    def _recorded_case(self, review_case_id: str) -> ReviewCase:
+        """Read one validated case by its id, current or not."""
+        row = self._connection.execute(
+            "SELECT document FROM review_cases WHERE review_case_id=?",
+            (review_case_id,),
+        ).fetchone()
+        if row is None:
+            raise FieldEffectError("authority_binding")
+        try:
+            return ReviewCase.from_json(row[0])
+        except ValueError as error:
+            raise FieldEffectError("authority_binding") from error
+
     def _read_current_case(self, review_case_id: str) -> ReviewCase:
         envelope = json.loads(self.get_review_case(review_case_id))
         if (
@@ -1172,7 +1185,11 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         return case_pre_value
 
     def _episode_write(
-        self, review_case_id: str, destination: str, before: str | None
+        self,
+        review_case_id: str,
+        destination: str,
+        before: str | None,
+        recorded: int | None = None,
     ) -> sqlite3.Row | tuple[str, ...] | None:
         """The verified effect of the case's latest decision on a field that
         wrote it in the case's episode, or of the latest before ``before``.
@@ -1180,6 +1197,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         One read for both of its uses: the write an owner decision follows,
         whose desired value is its plan's pre-value, and the value a case that
         wrote a field treats as current for owner entry (#1523, S5).
+        ``recorded``, the ordinal of a decision already recorded, reads its
+        own episode as History does: once a later return makes it history,
+        no floor applies, so the case's return never changes what it read.
         """
         row: sqlite3.Row | tuple[str, ...] | None = self._connection.execute(
             "SELECT effect.document FROM field_effects effect JOIN ("
@@ -1195,8 +1215,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             # A write planned before the case was admitted again is not
             # what the library holds now: the work has left that content
             # and returned to the case's own (#1358).
-            "AND +effect.rowid>COALESCE((SELECT effect_floor FROM "
-            "review_case_episodes WHERE review_case_id=?),0) "
+            "AND (?<=COALESCE((SELECT decision_floor FROM review_case_episodes "
+            "WHERE review_case_id=?),0) OR +effect.rowid>COALESCE((SELECT "
+            "effect_floor FROM review_case_episodes WHERE review_case_id=?),0)) "
             "ORDER BY recorded.ordinal DESC,effect.rowid LIMIT 1",
             (
                 review_case_id,
@@ -1204,6 +1225,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 before,
                 review_case_id,
                 destination,
+                # NULL compares false, so only a recorded decision skips it.
+                recorded,
+                review_case_id,
                 review_case_id,
             ),
         ).fetchone()
@@ -1246,21 +1270,31 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             raise FieldEffectError("persistence") from error
 
     def _human_predecessor(
-        self, decision: HumanDecision
+        self, decision: HumanDecision, recorded: int | None = None
     ) -> sqlite3.Row | tuple[str, ...] | None:
-        """Find the verified effect an owner decision follows."""
+        """Find the verified effect an owner decision follows; ``recorded``
+        as `_episode_write` takes it."""
         predecessor = self._episode_write(
-            decision.review_case_id, decision.destination, decision.decision_id
+            decision.review_case_id,
+            decision.destination,
+            decision.decision_id,
+            recorded,
         )
         if decision.destination == "description":
             authored_predecessor = self._connection.execute(
                 "SELECT effect.document FROM field_effects effect "
                 "JOIN description_decisions authored ON authored.decision_id=effect.decision_id "
                 "WHERE authored.review_case_id=? AND effect.state='verified' "
-                "AND +effect.rowid>COALESCE((SELECT effect_floor FROM "
-                "review_case_episodes WHERE review_case_id=?),0) "
+                "AND (?<=COALESCE((SELECT decision_floor FROM review_case_episodes "
+                "WHERE review_case_id=?),0) OR +effect.rowid>COALESCE((SELECT "
+                "effect_floor FROM review_case_episodes WHERE review_case_id=?),0)) "
                 "ORDER BY effect.updated_at DESC,effect.rowid DESC LIMIT 1",
-                (decision.review_case_id, decision.review_case_id),
+                (
+                    decision.review_case_id,
+                    recorded,
+                    decision.review_case_id,
+                    decision.review_case_id,
+                ),
             ).fetchone()
             if authored_predecessor is not None and (
                 predecessor is None
@@ -1277,12 +1311,21 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         bind it: from the write it follows to the case's own value (#1523).
 
         A keep that follows no write of the case is a plain keep: ``None``.
+        It reads its own episode and its own case, so neither a later return
+        nor the work leaving the case changes it; Activity's fact store
+        witnesses the writes and floors it reads (ADR-0082).
         """
-        predecessor = self._human_predecessor(decision)
+        ordinal = self._connection.execute(
+            "SELECT ordinal FROM human_decisions WHERE decision_id=?",
+            (decision.decision_id,),
+        ).fetchone()
+        if ordinal is None:
+            return None
+        predecessor = self._human_predecessor(decision, ordinal[0])
         if predecessor is None:
             return None
         try:
-            case = self._current_case(decision.review_case_id)
+            case = self._recorded_case(decision.review_case_id)
             before = self._case_target_pre_value(case, decision.destination)
             written = _written_plan(
                 predecessor[0], decision.review_case_id, decision.destination
