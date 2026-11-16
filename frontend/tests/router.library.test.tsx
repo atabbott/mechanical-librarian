@@ -224,7 +224,7 @@ it.each([
       getLibrary: vi.fn(async (search: LibrarySearch) => ({
         ...library,
         lens: search.lens,
-        counts: { attention: 0, all: 0, clear: 0, notMatched: 0, failed: 0, flagged: 0 },
+        counts: { attention: 0, all: 0, clear: 0, notMatched: 0, failed: 0, flagged: 0, new: 0 },
         works: [],
       })),
     })
@@ -244,7 +244,7 @@ it('names Settings as the way to fill Works when no library is connected (#1765)
     getLibrary: vi.fn(async (search: LibrarySearch) => ({
       ...library,
       lens: search.lens,
-      counts: { attention: 0, all: 0, clear: 0, notMatched: 0, failed: 0, flagged: 0 },
+      counts: { attention: 0, all: 0, clear: 0, notMatched: 0, failed: 0, flagged: 0, new: 0 },
       works: [],
     })),
   })
@@ -2692,8 +2692,9 @@ describe('Library route', () => {
       ...createHttp(),
       getLibrary: vi.fn(async (search: LibrarySearch) => ({
         lens: search.lens,
+        listing: library.listing,
         page: 1,
-        counts: { attention: 0, all: 1, clear: 0, notMatched: 0, failed: 1, flagged: 0 },
+        counts: { attention: 0, all: 1, clear: 0, notMatched: 0, failed: 1, flagged: 0, new: 0 },
         works: [failed],
       })),
     }
@@ -2861,8 +2862,9 @@ describe('Library route', () => {
         getReportDetail,
         getLibrary: vi.fn(async () => ({
           lens: 'all' as const,
+          listing: library.listing,
           page: 1,
-          counts: { attention: 0, all: 1, clear: 1, notMatched: 0, failed: 0, flagged: 0 },
+          counts: { attention: 0, all: 1, clear: 1, notMatched: 0, failed: 0, flagged: 0, new: 0 },
           works: [...library.works, recorded],
         })),
       }
@@ -3147,8 +3149,9 @@ describe('Library route', () => {
       ...createHttp(),
       getLibrary: vi.fn(async () => ({
         lens: 'all' as const,
+        listing: library.listing,
         page: 1,
-        counts: { attention: 0, all: 1, clear: 1, notMatched: 0, failed: 0, flagged: 0 },
+        counts: { attention: 0, all: 1, clear: 1, notMatched: 0, failed: 0, flagged: 0, new: 0 },
         works: [masked],
       })),
     }
@@ -3202,8 +3205,9 @@ describe('Library route', () => {
     ]
     const getLibrary = vi.fn(async (search: LibrarySearch) => ({
       lens: search.lens,
+      listing: library.listing,
       page: 1,
-      counts: { attention: 0, all: 5, clear: 0, notMatched: 5, failed: 0, flagged: 0 },
+      counts: { attention: 0, all: 5, clear: 0, notMatched: 5, failed: 0, flagged: 0, new: 0 },
       works,
     }))
     renderRoute('/library?lens=all', { ...createHttp(), getLibrary })
@@ -3261,6 +3265,7 @@ describe('Library route', () => {
   it('adds Not matched and Could not finish to the Works count only when there is one to state and no search (#1407, #1413)', async () => {
     const page = (search: LibrarySearch, notMatched: number, failed = 0) => ({
       lens: search.lens,
+      listing: library.listing,
       page: 1,
       counts: {
         attention: 0,
@@ -3269,6 +3274,7 @@ describe('Library route', () => {
         notMatched,
         failed,
         flagged: 0,
+        new: 0,
       },
       works: [],
     })
@@ -3360,8 +3366,9 @@ describe('Library route', () => {
       ...createHttp(),
       getLibrary: vi.fn(async () => ({
         lens: 'all' as const,
+        listing: library.listing,
         page: 1,
-        counts: { attention: 0, all: 1, clear: 1, notMatched: 0, failed: 0, flagged: 0 },
+        counts: { attention: 0, all: 1, clear: 1, notMatched: 0, failed: 0, flagged: 0, new: 0 },
         works: [retained],
       })),
     }
@@ -3401,8 +3408,9 @@ describe('Library route', () => {
       ...createHttp(),
       getLibrary: vi.fn(async () => ({
         lens: 'all' as const,
+        listing: library.listing,
         page: 1,
-        counts: { attention: 1, all: 1, clear: 0, notMatched: 0, failed: 0, flagged: 0 },
+        counts: { attention: 1, all: 1, clear: 0, notMatched: 0, failed: 0, flagged: 0, new: 0 },
         works: [current],
       })),
     }
@@ -3446,8 +3454,9 @@ describe('Library route', () => {
     }
     const getLibrary = vi.fn(async (search: { q?: string }) => ({
       lens: 'all' as const,
+      listing: library.listing,
       page: 1,
-      counts: { attention: 0, all: 1, clear: 1, notMatched: 0, failed: 0, flagged: 0 },
+      counts: { attention: 0, all: 1, clear: 1, notMatched: 0, failed: 0, flagged: 0, new: 0 },
       works: search.q ? [] : [listed],
     }))
     renderRoute('/library?lens=all', { ...createHttp(), getLibrary })
@@ -3494,8 +3503,9 @@ describe('Library route', () => {
     const second = caseLess('second-observation', 'Second observation')
     const getLibrary = vi.fn(async (search: { q?: string }) => ({
       lens: 'all' as const,
+      listing: library.listing,
       page: 1,
-      counts: { attention: 0, all: 2, clear: 2, notMatched: 0, failed: 0, flagged: 0 },
+      counts: { attention: 0, all: 2, clear: 2, notMatched: 0, failed: 0, flagged: 0, new: 0 },
       works: search.q ? [] : [first, second],
     }))
     const { router } = renderRoute('/library?lens=all', { ...createHttp(), getLibrary })
@@ -8106,11 +8116,11 @@ describe('Library route', () => {
     }
     const initialLibrary = {
       ...library,
-      counts: { all: 1, attention: 1, clear: 0, notMatched: 0, failed: 0, flagged: 0 },
+      counts: { all: 1, attention: 1, clear: 0, notMatched: 0, failed: 0, flagged: 0, new: 0 },
     }
     const settledLibrary = {
       ...initialLibrary,
-      counts: { all: 1, attention: 0, clear: 1, notMatched: 0, failed: 0, flagged: 0 },
+      counts: { all: 1, attention: 0, clear: 1, notMatched: 0, failed: 0, flagged: 0, new: 0 },
       works: [{ ...work, attention: 'no_attention_needed' as const, attentionCount: 0 }],
     }
     let currentDetail: CaseDetailView = { ...detail, fields: [series] }
@@ -8666,7 +8676,7 @@ describe('Library route', () => {
       ...createHttp(),
       getLibrary: vi.fn(async () => ({
         ...library,
-        counts: { all: 1, attention: 0, clear: 1, notMatched: 0, failed: 0, flagged: 0 },
+        counts: { all: 1, attention: 0, clear: 1, notMatched: 0, failed: 0, flagged: 0, new: 0 },
         works: library.works.map((work) => ({
           ...work,
           workAttentionCount: 0,
@@ -10951,7 +10961,15 @@ describe('Library route', () => {
             : {
                 ...library,
                 lens: 'needs_attention' as const,
-                counts: { attention: 1, all: 1, clear: 0, notMatched: 0, failed: 0, flagged: 0 },
+                counts: {
+                  attention: 1,
+                  all: 1,
+                  clear: 0,
+                  notMatched: 0,
+                  failed: 0,
+                  flagged: 0,
+                  new: 0,
+                },
                 works: [],
               },
       ),
@@ -11155,7 +11173,15 @@ describe('Library route', () => {
             : {
                 ...library,
                 lens: 'needs_attention' as const,
-                counts: { attention: 0, all: 1, clear: 1, notMatched: 0, failed: 0, flagged: 0 },
+                counts: {
+                  attention: 0,
+                  all: 1,
+                  clear: 1,
+                  notMatched: 0,
+                  failed: 0,
+                  flagged: 0,
+                  new: 0,
+                },
                 works: [],
               },
       ),
@@ -13137,7 +13163,15 @@ describe('Library route', () => {
           settle?.({
             ...library,
             works: [],
-            counts: { attention: 0, all: 0, clear: 0, notMatched: 0, failed: 0, flagged: 0 },
+            counts: {
+              attention: 0,
+              all: 0,
+              clear: 0,
+              notMatched: 0,
+              failed: 0,
+              flagged: 0,
+              new: 0,
+            },
           })
         else reject?.(new Error('Collection unavailable'))
       })
@@ -13378,8 +13412,9 @@ describe('Library route', () => {
   it('shows an off-page preview deep link from its case read without detail-only identity', async () => {
     const emptyLibrary: LibraryView = {
       lens: 'all',
+      listing: library.listing,
       page: 1,
-      counts: { attention: 0, all: 0, clear: 0, notMatched: 0, failed: 0, flagged: 0 },
+      counts: { attention: 0, all: 0, clear: 0, notMatched: 0, failed: 0, flagged: 0, new: 0 },
       works: [],
     }
     const http: ReviewHttp = {
@@ -13972,7 +14007,7 @@ describe('Provider evidence rail', () => {
     const http = Object.assign(createHttp(), {
       getLibrary: vi.fn(async () => ({
         ...library,
-        counts: { attention: 0, all: 1, clear: 0, notMatched: 1, failed: 0, flagged: 0 },
+        counts: { attention: 0, all: 1, clear: 0, notMatched: 1, failed: 0, flagged: 0, new: 0 },
         works: [work],
       })),
     })
@@ -15753,7 +15788,15 @@ describe('library provider throttling notice (#1282)', () => {
 describe('Library counts, search scope and grouped Attention (#1284)', () => {
   const counted = (attention: number, all: number): LibraryView => ({
     ...library,
-    counts: { attention, all, clear: all - attention, notMatched: 0, failed: 0, flagged: 0 },
+    counts: {
+      attention,
+      all,
+      clear: all - attention,
+      notMatched: 0,
+      failed: 0,
+      flagged: 0,
+      new: 0,
+    },
   })
   const badge = () => document.querySelector('.attention-toggle strong')
   const worksStatus = () => document.querySelector('.library-works-heading [role="status"]')
@@ -15868,8 +15911,8 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
         ...library,
         lens: search.lens,
         counts: search.q
-          ? { attention: 1, all: 4, clear: 2, notMatched: 1, failed: 0, flagged: 0 }
-          : { attention: 3, all: 10, clear: 5, notMatched: 2, failed: 0, flagged: 0 },
+          ? { attention: 1, all: 4, clear: 2, notMatched: 1, failed: 0, flagged: 0, new: 0 }
+          : { attention: 3, all: 10, clear: 5, notMatched: 2, failed: 0, flagged: 0, new: 0 },
       }))
       renderRoute(`/library?lens=${lens}&q=needle`, http)
       await waitFor(() =>
@@ -17218,7 +17261,15 @@ describe('Library progress in the finished run box', () => {
       const http = createHttp()
       http.getPreparation = vi.fn(async () => finished(state))
       http.getLibraryProgress = vi.fn(async () => ({
-        totals: { all: 2026, attention: 174, clear: 1840, notMatched: 9, failed: 3, flagged: 0 },
+        totals: {
+          all: 2026,
+          attention: 174,
+          clear: 1840,
+          notMatched: 9,
+          failed: 3,
+          flagged: 0,
+          new: 0,
+        },
         libraries: [],
         fields: [],
       }))
@@ -17289,7 +17340,15 @@ describe('Library progress in the finished run box', () => {
     const http = createHttp()
     http.getLibrary = vi.fn(async () => ({
       ...library,
-      counts: { all: 2026, attention: 174, clear: 1840, notMatched: 9, failed: 3, flagged: 0 },
+      counts: {
+        all: 2026,
+        attention: 174,
+        clear: 1840,
+        notMatched: 9,
+        failed: 3,
+        flagged: 0,
+        new: 0,
+      },
     }))
     renderRoute('/library?lens=all', http)
     expect(
@@ -17440,7 +17499,7 @@ describe('Library progress in the finished run box', () => {
       .fn<ReviewHttp['getLibraryProgress']>()
       .mockRejectedValueOnce(new ApiError(503, 'unavailable'))
       .mockResolvedValue({
-        totals: { all: 3, attention: 1, clear: 2, notMatched: 0, failed: 0, flagged: 0 },
+        totals: { all: 3, attention: 1, clear: 2, notMatched: 0, failed: 0, flagged: 0, new: 0 },
         libraries: [],
         fields: [],
       })
@@ -17490,7 +17549,7 @@ describe('Looks wrong (#1334)', () => {
       works,
     })
 
-  it('puts Looks wrong second in the lens row and reads it from the URL', async () => {
+  it('puts Looks wrong after All in the lens row and reads it from the URL', async () => {
     const getLibrary = vi.fn(page([flaggedWork], 37))
     renderRoute('/library?lens=flagged', { ...createHttp(), getLibrary })
     const lenses = within(await screen.findByRole('navigation', { name: 'Library lenses' }))
@@ -17610,5 +17669,189 @@ describe('Looks wrong (#1334)', () => {
       'aria-current',
       'true',
     )
+  })
+})
+
+describe('New since the last visit (#1351)', () => {
+  const firstWork = library.works[0]
+  if (!firstWork) throw new Error('library fixture has a work')
+  const listing = { packages: 7, reports: 9, works: 2 }
+  const page =
+    (works: readonly LibraryWorkView[], fresh: number, found = fresh) =>
+    async (search: LibrarySearch): Promise<LibraryView> => ({
+      ...library,
+      lens: search.lens,
+      listing,
+      counts: { ...library.counts, all: 2026, flagged: 4, new: search.q ? found : fresh },
+      works,
+    })
+  const lensRow = async () =>
+    within(await screen.findByRole('navigation', { name: 'Library lenses' }))
+  const worksCount = async () => {
+    const header = (await screen.findByRole('heading', { name: 'Works' })).parentElement
+    if (!header) throw new Error('Works heading has a header')
+    return within(header).getByRole('status')
+  }
+  const rest = ['Needs attention', 'No attention needed', 'Not matched', 'Could not finish']
+
+  it('puts New after All, ahead of Looks wrong, with its count, while works are new', async () => {
+    renderRoute('/library?lens=all', { ...createHttp(), getLibrary: vi.fn(page([firstWork], 2)) })
+    const lenses = await lensRow()
+    const fresh = await lenses.findByRole('link', { name: 'New, 2 works' })
+    expect(lenses.getAllByRole('link').map((link) => link.textContent)).toEqual([
+      'All',
+      'New2',
+      'Looks wrong',
+      ...rest,
+    ])
+    expect(fresh.querySelector('.lens-count')).toHaveTextContent(/^2$/u)
+    expect(fresh).not.toHaveAttribute('aria-current')
+    // Nothing else on Library says so: the lens is the whole of it.
+    expect(await worksCount()).toHaveTextContent(/^2,026 works · 4 look wrong$/u)
+  })
+
+  it('counts one new work in the singular and groups a large count', async () => {
+    renderRoute('/library?lens=all', { ...createHttp(), getLibrary: vi.fn(page([firstWork], 1)) })
+    expect(await (await lensRow()).findByRole('link', { name: 'New, 1 work' })).toBeVisible()
+    cleanup()
+    renderRoute('/library?lens=new', {
+      ...createHttp(),
+      getLibrary: vi.fn(page([firstWork], 1204)),
+    })
+    const fresh = await (await lensRow()).findByRole('link', { name: 'New, 1,204 works' })
+    expect(fresh).toHaveTextContent(/^New1,204$/u)
+    await waitFor(async () =>
+      expect(await worksCount()).toHaveTextContent(/^1,204 new works since your last visit$/u),
+    )
+  })
+
+  it('leaves New out of the lens row while nothing is new', async () => {
+    renderRoute('/library?lens=all', { ...createHttp(), getLibrary: vi.fn(page([firstWork], 0)) })
+    const lenses = await lensRow()
+    expect(await worksCount()).toHaveTextContent(/^2,026 works · 4 look wrong$/u)
+    expect(lenses.getAllByRole('link').map((link) => link.textContent)).toEqual([
+      'All',
+      'Looks wrong',
+      ...rest,
+    ])
+  })
+
+  it('lists the new works under their count when New is chosen', async () => {
+    const user = userEvent.setup()
+    const getLibrary = vi.fn(page([firstWork], 2))
+    const { router } = renderRoute('/library?lens=all', { ...createHttp(), getLibrary })
+    await user.click(await (await lensRow()).findByRole('link', { name: 'New, 2 works' }))
+    await waitFor(() => expect(router.state.location.search).toEqual({ lens: 'new' }))
+    await waitFor(async () =>
+      expect(await worksCount()).toHaveTextContent(/^2 new works since your last visit$/u),
+    )
+    expect(getLibrary).toHaveBeenCalledWith(
+      expect.objectContaining({ lens: 'new' }),
+      expect.anything(),
+      expect.anything(),
+    )
+    expect((await lensRow()).getByRole('link', { name: 'New, 2 works' })).toHaveAttribute(
+      'aria-current',
+      'true',
+    )
+    expect(screen.getByRole('button', { name: /^A Book\./u })).toBeVisible()
+  })
+
+  it('says one new work in the singular', async () => {
+    renderRoute('/library?lens=new', { ...createHttp(), getLibrary: vi.fn(page([firstWork], 1)) })
+    await waitFor(async () =>
+      expect(await worksCount()).toHaveTextContent(/^1 new work since your last visit$/u),
+    )
+  })
+
+  it('names the lens in the search status words, and its empty search', async () => {
+    renderRoute('/library?lens=new&q=book', {
+      ...createHttp(),
+      getLibrary: vi.fn(page([firstWork], 2, 1)),
+    })
+    const status = await worksCount()
+    await waitFor(() =>
+      expect(status).toHaveTextContent(/^Found 1 of 2 works new since your last visit$/u),
+    )
+    expect(status.querySelector('.sr-only')).toHaveTextContent('new since your last visit')
+    cleanup()
+    renderRoute('/library?lens=new&q=absent', {
+      ...createHttp(),
+      getLibrary: vi.fn(page([], 2, 0)),
+    })
+    expect(await screen.findByText('No works match this search.')).toBeVisible()
+  })
+
+  it('keeps a New address open with nothing new: the lens, no count, No works here.', async () => {
+    const { router } = renderRoute('/library?lens=new', {
+      ...createHttp(),
+      getLibrary: vi.fn(page([], 0)),
+    })
+    expect(await screen.findByText('No works here.')).toBeVisible()
+    const lenses = await lensRow()
+    const fresh = lenses.getByRole('link', { name: 'New' })
+    expect(fresh).toHaveAttribute('aria-current', 'true')
+    expect(fresh.querySelector('.lens-count')).toBeNull()
+    expect(lenses.getAllByRole('link').map((link) => link.textContent)).toEqual([
+      'All',
+      'New',
+      'Looks wrong',
+      ...rest,
+    ])
+    expect(await worksCount()).toHaveTextContent(/^2,026 works · 4 look wrong$/u)
+    expect(router.state.location.search).toEqual({ lens: 'new' })
+  })
+
+  it('watches a New lens that arrives after the row was first laid out', async () => {
+    const observed = new Set<Element>()
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe(node: Element) {
+          observed.add(node)
+        }
+        unobserve = vi.fn()
+        disconnect() {
+          observed.clear()
+        }
+      },
+    )
+    onTestFinished(() => void vi.unstubAllGlobals())
+    let fresh = 0
+    const getLibrary = vi.fn((search: LibrarySearch) => page([firstWork], fresh)(search))
+    const { queryClient } = renderRoute('/library?lens=all', { ...createHttp(), getLibrary })
+    const lenses = await lensRow()
+    await waitFor(() => expect(observed).toContain(lenses.getByRole('link', { name: 'All' })))
+    fresh = 2
+    await act(() => queryClient.invalidateQueries({ queryKey: ['library'] }))
+    const arrived = await lenses.findByRole('link', { name: 'New, 2 works' })
+    await waitFor(() => expect(observed).toContain(arrived))
+  })
+
+  it('tells the server Library is in use, and how far New listed only from New', async () => {
+    const http = { ...createHttp(), getLibrary: vi.fn(page([firstWork], 2)) }
+    const user = userEvent.setup()
+    renderRoute('/library?lens=all', http)
+    const fresh = await (await lensRow()).findByRole('link', { name: 'New, 2 works' })
+    await waitFor(() => expect(http.recordLibraryVisit).toHaveBeenCalledTimes(1))
+    expect(http.recordLibraryVisit).toHaveBeenLastCalledWith(null)
+    await user.click(fresh)
+    await waitFor(() => expect(http.recordLibraryVisit).toHaveBeenCalledTimes(2))
+    expect(http.recordLibraryVisit).toHaveBeenLastCalledWith(listing)
+    // Leaving New and coming back to the same listing says nothing more.
+    await user.click((await lensRow()).getByRole('link', { name: 'All' }))
+    await waitFor(async () =>
+      expect(await worksCount()).toHaveTextContent(/^2,026 works · 4 look wrong$/u),
+    )
+    expect(http.recordLibraryVisit).toHaveBeenCalledTimes(2)
+  })
+
+  it('says nothing to the server from a screen that is not Library', async () => {
+    const http = createHttp()
+    renderRoute('/activity', http)
+    await screen.findByRole('navigation', { name: 'Primary workspace' })
+    await waitFor(() => expect(http.getActivity).toHaveBeenCalled())
+    await userEvent.setup().keyboard('{Tab}')
+    expect(http.recordLibraryVisit).not.toHaveBeenCalled()
   })
 })

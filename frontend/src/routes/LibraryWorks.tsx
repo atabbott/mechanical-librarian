@@ -26,6 +26,7 @@ import { useReviewContext } from '../router'
 
 const lensLabels = {
   all: 'All',
+  new: 'New',
   flagged: 'Looks wrong',
   needs_attention: 'Needs attention',
   no_attention_needed: 'No attention needed',
@@ -41,6 +42,7 @@ const LensLink = createLink((props: ComponentPropsWithRef<'a'>) => (
 // lens link names it visually and the status names it to screen readers (#1425).
 const lensMatching = {
   all: ['all', undefined],
+  new: ['new', 'new since your last visit'],
   flagged: ['flagged', 'looking wrong'],
   needs_attention: ['attention', 'needing attention'],
   no_attention_needed: ['clear', 'needing no attention'],
@@ -100,17 +102,23 @@ const providerSummary = (outcomes: readonly ProviderOutcomeView[]) => {
 // The lens links, in one row that scrolls sideways.
 const LibraryLenses = ({
   search,
+  newCount,
   lensIntent,
 }: {
   search: LibrarySearch
+  /** Works new since the owner's last visit, across the whole library. */
+  newCount: number
   lensIntent: (lens: LibrarySearch['lens']) => void
 }) => {
   const lensRow = useRef<HTMLElement>(null)
+  // New is a lens only while something is new, or while it is the one open.
+  const newShown = newCount > 0 || search.lens === 'new'
   // The lenses scroll sideways in one row. An edge with more lenses beyond it
   // fades, so a row that happens to end between two lenses still shows it
   // continues. The current lens is brought into the row's view, clear of the
   // fade, without moving the page: on load, on a lens change, and when the row
-  // or its lenses change size, as with enlarged text.
+  // or its lenses change size, as with enlarged text. New arrives and leaves
+  // with the works it counts, so the row is read again when it does.
   useLayoutEffect(() => {
     const row = lensRow.current
     if (!row) return
@@ -158,12 +166,13 @@ const LibraryLenses = ({
       row.removeEventListener('focusin', revealFocused)
       resized?.disconnect()
     }
-  }, [search.lens])
+  }, [search.lens, newShown])
   return (
     <nav className="lenses" aria-label="Library lenses" ref={lensRow}>
       {(
         [
           'all',
+          ...(newShown ? (['new'] as const) : []),
           'flagged',
           'needs_attention',
           'no_attention_needed',
@@ -186,8 +195,12 @@ const LibraryLenses = ({
           onPointerEnter={() => lensIntent(lens)}
           onFocus={() => lensIntent(lens)}
           activeProps={{ 'aria-current': 'page' }}
+          aria-label={lens === 'new' && newCount > 0 ? `New, ${workCount(newCount)}` : undefined}
         >
           {lensLabels[lens]}
+          {lens === 'new' && newCount > 0 ? (
+            <span className="lens-count">{newCount.toLocaleString('en-US')}</span>
+          ) : null}
         </LensLink>
       ))}
     </nav>
@@ -224,6 +237,10 @@ const WorksCount = ({
               : `Found ${data.counts[lensCount].toLocaleString('en-US')} of ${workCount(lensTotal)}`}
             {lensWords === undefined ? null : <span className="sr-only">{` ${lensWords}`}</span>}
           </>
+        ) : search.lens === 'new' && data.counts.new > 0 ? (
+          `${data.counts.new.toLocaleString('en-US')} new ${
+            data.counts.new === 1 ? 'work' : 'works'
+          } since your last visit`
         ) : (
           workCount(data.counts.all) +
           // The works outside both decision lenses, named beside the
@@ -589,7 +606,7 @@ export const LibraryWorks = ({
           summaryUnavailable={summaryUnavailable}
         />
       </div>
-      <LibraryLenses search={search} lensIntent={lensIntent} />
+      <LibraryLenses search={search} newCount={summaryCounts?.new ?? 0} lensIntent={lensIntent} />
       <form className="search library-search" role="search" onSubmit={submitSearch}>
         <label className="sr-only" htmlFor="library-query">
           Search title, author, identifier, library, or format

@@ -161,8 +161,8 @@ export const attentionStates = [
 ] as const
 lits<Schema<'_LibraryWork'>['attention_state']>()(attentionStates)
 export type AttentionState = (typeof attentionStates)[number]
-// Looks wrong cuts across the four lenses above (#1334).
-export type LibraryLens = 'all' | AttentionState | 'flagged'
+// Looks wrong and New cut across the four lenses above (#1334, #1351).
+export type LibraryLens = 'all' | AttentionState | 'flagged' | 'new'
 // The closed rule list a Library row's findings name, in its order (#1334).
 export const valueFlagRules = [
   'title_part_number',
@@ -666,9 +666,14 @@ export interface LibraryCounts {
   notMatched: number
   failed: number
   flagged: number
+  /** Works first listed since the owner's last visit (#1351). */
+  new: number
 }
+/** How far Library's listing had got when the server answered (#1351). */
+export type LibraryListing = Schema<'_LibraryListing'>
 export interface LibraryView {
   lens: LibraryLens
+  listing: LibraryListing
   query?: string
   nextCursor?: string
   previousCursor?: string
@@ -1323,6 +1328,11 @@ export interface ReviewHttp {
     workClass?: ReadWorkClass,
   ): Promise<LibraryView>
   getLibraryProgress(signal?: AbortSignal, workClass?: ReadWorkClass): Promise<LibraryProgressView>
+  /**
+   * Records one use of Library (#1351). `listing` is what a rendered New lens
+   * showed; every other use sends null, which keeps the visit going.
+   */
+  recordLibraryVisit(listing: LibraryListing | null, signal?: AbortSignal): Promise<void>
   getReportDetail(
     detailUrl: string,
     signal?: AbortSignal,
@@ -2238,6 +2248,11 @@ export class ReviewApiClient implements ReviewHttp {
     await this.mutate('/api/v1/session/logout-others', undefined, signal)
   }
 
+  // Recording a use twice is the same use, so a CSRF renewal sends it again.
+  async recordLibraryVisit(listing: LibraryListing | null, signal?: AbortSignal) {
+    await this.mutate('/api/v1/library/visit', { listing }, signal, undefined, 'POST', true)
+  }
+
   private async read<P extends RoutablePath<'GET'>>(
     path: P,
     signal?: AbortSignal,
@@ -2890,6 +2905,7 @@ const mapLibraryCounts = (value: LibraryCountsDto): LibraryCounts => ({
   notMatched: value.not_matched,
   failed: value.preparation_failed,
   flagged: value.flagged,
+  new: value.new,
 })
 
 const mapLibraryProgress = (value: LibraryProgressDto): LibraryProgressView => ({
@@ -2908,6 +2924,7 @@ const mapLibraryProgress = (value: LibraryProgressDto): LibraryProgressView => (
 
 export const mapLibrary = (value: LibraryDto): LibraryView => ({
   lens: value.lens,
+  listing: value.listing,
   ...(value.query ? { query: value.query } : {}),
   ...(value.next_cursor ? { nextCursor: value.next_cursor } : {}),
   ...(value.previous_cursor ? { previousCursor: value.previous_cursor } : {}),

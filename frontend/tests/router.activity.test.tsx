@@ -5317,19 +5317,43 @@ describe('Library progress on Activity', () => {
   it('follows the status box and links its totals to their lenses', async () => {
     const http = createHttp()
     http.getLibraryProgress = vi.fn(async () => ({
-      totals: { all: 2026, attention: 174, clear: 1840, notMatched: 9, failed: 3, flagged: 0 },
+      totals: {
+        all: 2026,
+        attention: 174,
+        clear: 1840,
+        notMatched: 9,
+        failed: 3,
+        flagged: 0,
+        new: 0,
+      },
       libraries: [
         {
           connection: 'primary',
           library: 'fiction',
           libraryDisplayName: 'Fiction',
-          counts: { all: 26, attention: 6, clear: 20, notMatched: 0, failed: 0, flagged: 0 },
+          counts: {
+            all: 26,
+            attention: 6,
+            clear: 20,
+            notMatched: 0,
+            failed: 0,
+            flagged: 0,
+            new: 0,
+          },
         },
         {
           connection: 'primary',
           library: 'audiobooks',
           libraryDisplayName: 'audiobooks',
-          counts: { all: 2000, attention: 168, clear: 1820, notMatched: 9, failed: 3, flagged: 0 },
+          counts: {
+            all: 2000,
+            attention: 168,
+            clear: 1820,
+            notMatched: 9,
+            failed: 3,
+            flagged: 0,
+            new: 0,
+          },
         },
       ],
       fields: [{ destination: 'cover' as const, needYou: 120 }],
@@ -5377,7 +5401,7 @@ describe('Library progress on Activity', () => {
           }),
       )
       .mockResolvedValue({
-        totals: { all: 1, attention: 0, clear: 1, notMatched: 0, failed: 0, flagged: 0 },
+        totals: { all: 1, attention: 0, clear: 1, notMatched: 0, failed: 0, flagged: 0, new: 0 },
         libraries: [],
         fields: [],
       })
@@ -5396,7 +5420,7 @@ describe('Library progress on Activity', () => {
   it('is absent while Library has no works', async () => {
     const http = createHttp()
     http.getLibraryProgress = vi.fn(async () => ({
-      totals: { all: 0, attention: 0, clear: 0, notMatched: 0, failed: 0, flagged: 0 },
+      totals: { all: 0, attention: 0, clear: 0, notMatched: 0, failed: 0, flagged: 0, new: 0 },
       libraries: [],
       fields: [],
     }))

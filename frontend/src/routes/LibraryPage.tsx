@@ -68,6 +68,7 @@ import {
 } from '../libraryPreparation'
 import { WorkSources, WorkSummary } from './WorkSummary'
 import { AttentionRail } from './AttentionRail'
+import { useLibraryVisit } from '../libraryVisit'
 import { LibraryWorks } from './LibraryWorks'
 import { useAutomaticHandling } from '../automaticHandling'
 import { BookMark } from '../components/BookMark'
@@ -166,6 +167,7 @@ export default function LibraryPage({
     [libraryNavigate, router],
   )
   const { http, updates, queryClient } = useReviewContext()
+  useLibraryVisit(http, data)
   // Global figures read the library summary, which carries no q (#1284).
   const summary = useQuery(librarySummaryQuery(http))
   const summaryAttention = summary.data?.counts.attention

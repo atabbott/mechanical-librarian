@@ -76,8 +76,9 @@ export const recordedAcknowledgement = (
 
 export const library: LibraryView = {
   lens: 'all',
+  listing: { packages: 0, reports: 0, works: 0 },
   page: 1,
-  counts: { attention: 1, all: 1, clear: 0, notMatched: 0, failed: 0, flagged: 0 },
+  counts: { attention: 1, all: 1, clear: 0, notMatched: 0, failed: 0, flagged: 0, new: 0 },
   works: [
     {
       id: 'case-1',
@@ -499,6 +500,7 @@ export const createHttp = (): ReviewHttp => ({
   logout: vi.fn(async () => undefined),
   changePassword: vi.fn(async () => undefined),
   logoutOthers: vi.fn(async () => undefined),
+  recordLibraryVisit: vi.fn(async () => undefined),
 })
 
 /**
