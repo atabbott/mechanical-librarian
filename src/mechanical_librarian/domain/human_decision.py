@@ -647,14 +647,18 @@ _ROMAN_ONE_TO_TWENTY = "|".join(
         reverse=True,
     )
 )
-_PART_NUMBER = rf"(?:[0-9]{{1,3}}|{_ROMAN_ONE_TO_TWENTY})"
-_PART_TOKEN = re.compile(
-    r"(?:\s*[-–—:,]\s*|\s+)"
-    r"(?P<open>[(\[])?(?:disc|disk|cd|part|pt\.?)\s*"
-    + _PART_NUMBER
+PART_NUMBER = rf"(?:[0-9]{{1,3}}|{_ROMAN_ONE_TO_TWENTY})"
+# A disc or part token: its word, a number, and optionally "of" or "/" and a
+# second number. The value flags (#1334) read the same grammar.
+PART_TOKEN = (
+    r"(?P<word>disc|disk|cd|part|pt\.?)\s*"
+    + PART_NUMBER
     + r"(?:\s*(?:of|/)\s*"
-    + _PART_NUMBER
-    + r")?(?P<close>[)\]])?\Z",
+    + PART_NUMBER
+    + r")?"
+)
+_PART_TOKEN = re.compile(
+    r"(?:\s*[-–—:,]\s*|\s+)(?P<open>[(\[])?" + PART_TOKEN + r"(?P<close>[)\]])?\Z",
     re.IGNORECASE,
 )
 _PART_SEPARATORS = " \t-–—:,"
@@ -680,12 +684,30 @@ def _capitalized(segment: str) -> str:
     return lowered
 
 
+def single_case(value: str) -> str | None:
+    """Whether every cased letter of a value is upper case, or every one lower.
+
+    Returns "Lu" or "Ll" when at least two letters are cased and all share
+    that category, otherwise None. Title-case suggestions and the value flags
+    (#1334) read this one test.
+    """
+    cased = [
+        unicodedata.category(character) for character in value if _cased(character)
+    ]
+    if len(cased) >= 2:
+        for category in ("Lu", "Ll"):
+            if all(value == category for value in cased):
+                return category
+    return None
+
+
+def roman_numeral(word: str) -> bool:
+    """Whether a word is a non-empty Roman numeral, as title case keeps it."""
+    return bool(word) and _ROMAN.fullmatch(word) is not None
+
+
 def _title_case(value: str) -> str | None:
-    cased = [character for character in value if _cased(character)]
-    if len(cased) < 2 or not (
-        all(unicodedata.category(character) == "Lu" for character in cased)
-        or all(unicodedata.category(character) == "Ll" for character in cased)
-    ):
+    if single_case(value) is None:
         return None
     words = value.split(" ")
     if any(len(word.lower()) != len(word) for word in words):
@@ -700,7 +722,7 @@ def _title_case(value: str) -> str | None:
             end -= 1
         core = word[start:end]
         previous = words[index - 1] if index else ""
-        if core and _ROMAN.fullmatch(core):
+        if roman_numeral(core):
             core = core.upper()
         elif (
             core.lower() in _SMALL_WORDS
@@ -718,7 +740,13 @@ def _title_case(value: str) -> str | None:
     return " ".join(result)
 
 
-def _strip_part(value: str) -> str | None:
+def split_trailing_part(value: str) -> tuple[str, str] | None:
+    """Split a trailing disc or part token from a title that has more.
+
+    Returns the title before the token and the token's word, folded; None
+    unless the token's brackets match, the rest balances its brackets and the
+    rest holds a letter. Owner suggestions and the value flags (#1334) read it.
+    """
     match = _PART_TOKEN.search(value)
     if match is None or {"(": ")", "[": "]", None: None}[
         match.group("open")
@@ -736,10 +764,15 @@ def _strip_part(value: str) -> str | None:
                 return None
     if not _letter(remaining) or any(depth.values()):
         return None
-    return remaining
+    return remaining, match.group("word").casefold()
 
 
-def _split_author(value: str, authors: tuple[str, ...]) -> str | None:
+def _strip_part(value: str) -> str | None:
+    split = split_trailing_part(value)
+    return None if split is None else split[0]
+
+
+def split_author(value: str, authors: tuple[str, ...]) -> str | None:
     if sum(value.count(dash) for dash in _AUTHOR_DASHES) != 1:
         return None
     dash = next(dash for dash in _AUTHOR_DASHES if dash in value)
@@ -770,13 +803,13 @@ def owner_value_suggestions(
     single: dict[OwnerSuggestionRule, str | None] = {
         "title_case": _title_case(base),
         "strip_part": _strip_part(base),
-        "split_author": _split_author(base, authors),
+        "split_author": split_author(base, authors),
     }
     applied = 0
     combined = base
     for step in (
         _strip_part,
-        lambda text: _split_author(text, authors),
+        lambda text: split_author(text, authors),
         _title_case,
     ):
         stepped = step(combined)

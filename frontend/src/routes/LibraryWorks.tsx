@@ -16,6 +16,7 @@ import { MediaHealth } from '../components/MediaHealth'
 import { StaleBuildRead } from '../components/StaleBuildRead'
 import { retryInPlace } from '../focusAfterRetry'
 import { StatusPill } from '../components/StatusPill'
+import { ValueFlags } from '../components/ValueFlags'
 import { mediaKindLabels, sourceStatusLabels } from '../labels'
 import type { PreparationPresentation } from '../libraryPreparation'
 import { authorLine, RESTART_SENTENCE, reportEvidenceUrl, workCount } from '../libraryWork'
@@ -25,6 +26,7 @@ import { useReviewContext } from '../router'
 
 const lensLabels = {
   all: 'All',
+  flagged: 'Looks wrong',
   needs_attention: 'Needs attention',
   no_attention_needed: 'No attention needed',
   not_matched: 'Not matched',
@@ -39,6 +41,7 @@ const LensLink = createLink((props: ComponentPropsWithRef<'a'>) => (
 // lens link names it visually and the status names it to screen readers (#1425).
 const lensMatching = {
   all: ['all', undefined],
+  flagged: ['flagged', 'looking wrong'],
   needs_attention: ['attention', 'needing attention'],
   no_attention_needed: ['clear', 'needing no attention'],
   not_matched: ['notMatched', 'not matched'],
@@ -161,6 +164,7 @@ const LibraryLenses = ({
       {(
         [
           'all',
+          'flagged',
           'needs_attention',
           'no_attention_needed',
           'not_matched',
@@ -229,15 +233,19 @@ const WorksCount = ({
           (summaryNotMatched === undefined || summaryFailed === undefined
             ? summaryUnavailable
               ? ''
-              : ' · …'
+              : '\u00a0· …'
             : (
                 [
                   [summaryNotMatched, 'not matched'],
                   [summaryFailed, 'could not finish'],
+                  [
+                    summaryCounts?.flagged ?? 0,
+                    summaryCounts?.flagged === 1 ? 'looks wrong' : 'look wrong',
+                  ],
                 ] as const
               )
                 .map(([count, words]) =>
-                  count === 0 ? '' : ` · ${count.toLocaleString('en-US')} ${words}`,
+                  count === 0 ? '' : `\u00a0· ${count.toLocaleString('en-US')} ${words}`,
                 )
                 .join(''))
         )
@@ -314,6 +322,7 @@ const LibraryWorkRow = ({
     (!previousWork || providerGroup(previousWork) !== group)
   const summary = providerSummary(work.preparationOutcomes)
   const summaryId = summary ? `provider-summary-${work.id}` : undefined
+  const flagsId = work.valueFlags.length ? `value-flags-${work.id}` : undefined
   const preparation = work.preparation
   const preparationId = preparation ? `preparation-${work.id}` : undefined
   const row = (
@@ -328,8 +337,10 @@ const LibraryWorkRow = ({
         {summary ? (
           <span id={summaryId} className="library-provider-summary">
             {summary}
+            <span className="sr-only">.</span>
           </span>
         ) : null}
+        <ValueFlags id={`value-flags-${work.id}`} flags={work.valueFlags} />
         <span className="library-work-status">
           <StatusPill
             tone={!recorded && (needsAttention || work.preparation) ? 'notice' : 'accent'}
@@ -377,7 +388,9 @@ const LibraryWorkRow = ({
             aria-current={selectedWorkRow ? 'true' : undefined}
             aria-disabled={retained || undefined}
             aria-label={`${work.title}. ${authorLine(work)}. ${status}`}
-            aria-describedby={[preparationId, summaryId].filter(Boolean).join(' ') || undefined}
+            aria-describedby={
+              [preparationId, summaryId, flagsId].filter(Boolean).join(' ') || undefined
+            }
             onClick={() => void select(work)}
             onPointerEnter={() => workIntent(work)}
             onFocus={() => workIntent(work)}

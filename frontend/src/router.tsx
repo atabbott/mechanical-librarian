@@ -97,6 +97,7 @@ export interface RouterContext {
 const bounded = (value: unknown) =>
   typeof value === 'string' && value.length > 0 && value.length <= 128 ? value : undefined
 const libraryLens = (value: unknown): LibraryLens =>
+  value === 'flagged' ||
   value === 'needs_attention' ||
   value === 'no_attention_needed' ||
   value === 'not_matched' ||

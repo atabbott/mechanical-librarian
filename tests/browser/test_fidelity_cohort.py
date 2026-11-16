@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -13,9 +14,16 @@ from starlette.testclient import TestClient
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
+from mechanical_librarian.domain.metadata_report import (
+    TargetDestination,
+    TargetFieldState,
+    default_target_fields,
+)
 from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.value_flags import value_flags
 from mechanical_librarian.interfaces.web.app import (
     _LibraryProgressResponse,
+    _LibraryResponse,
     _PreparationResponse,
 )
 from tests.browser import fidelity_cohort
@@ -355,3 +363,31 @@ def test_library_progress_states_are_ones_the_server_could_answer() -> None:
             assert total == sum(row["counts"][key] for row in libraries)
     for run, failed in (("completed_clean", 0), ("completed_with_failures", 2)):
         _PreparationResponse.model_validate(finished_preparation(run, failed=failed))
+
+
+def test_each_works_findings_are_what_the_looks_wrong_rules_find() -> None:
+    """The cohort's flagged rows are ones the server could answer (#1334)."""
+    for work in LIBRARY_WORKS:
+        authors = tuple(cast("list[str]", work["authors"]))
+        fields = tuple(
+            replace(field, state=TargetFieldState.VALUE, value=authors)
+            if authors and field.destination is TargetDestination.AUTHORS
+            else field
+            for field in default_target_fields(cast(str, work["title"]))
+        )
+        assert work["value_flags"] == [
+            {"destination": destination, "rule": rule}
+            for destination, rule in value_flags(fields, ())
+        ], work["title"]
+    flagged = rich_payload("/api/v1/library?lens=flagged")
+    _LibraryResponse.model_validate(flagged)
+    assert isinstance(flagged, dict)
+    items = cast("list[dict[str, object]]", flagged["items"])
+    assert flagged["counts"]["flagged"] == 6 == len(items)
+    assert {len(cast(list, item["value_flags"])) for item in items} == {1, 3}
+    assert {item["attention_state"] for item in items} == {
+        "needs_attention",
+        "no_attention_needed",
+        "not_matched",
+    }
+    assert rich_payload("/api/v1/library?lens=flagged&q=absent-term")["items"] == []
