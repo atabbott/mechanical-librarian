@@ -406,6 +406,7 @@ export const libraryWork = (overrides: Overrides = {}) => ({
   review_case_id: null,
   summary: null,
   title: 'A Book',
+  value_flags: [],
   work_id: 'library_work_1',
   ...overrides,
 })
@@ -414,6 +415,7 @@ export const libraryWork = (overrides: Overrides = {}) => ({
 export const library = (overrides: Overrides = {}) => ({
   counts: {
     all: 0,
+    flagged: 0,
     needs_attention: 0,
     no_attention_needed: 0,
     not_matched: 0,
@@ -425,7 +427,7 @@ export const library = (overrides: Overrides = {}) => ({
   page: 1,
   previous_cursor: null,
   query: null,
-  schema_version: 'review-library-v6',
+  schema_version: 'review-library-v7',
   ...overrides,
 })
 

@@ -4116,6 +4116,8 @@ def test_library_search_scopes_the_list_and_leaves_global_counts() -> None:
         )
         for lens, visible, announced in (
             ("Not matched", "Found 0 of 1 work", "Found 0 of 1 work not matched"),
+            # Nothing in this store looks wrong (#1334).
+            ("Looks wrong", "Found 0 of 0 works", "Found 0 of 0 works looking wrong"),
             # The retained work's latest preparation failed, so it is
             # counted where it could not finish, not as clear (#1413).
             (
@@ -11932,9 +11934,10 @@ def test_preparation_stop_preserves_browse_and_requires_service_restart(
                 )
                 trigger.click()
                 popover = page.get_by_role("region", name="Background activity")
-                # A finished scan states only its checked count; its split is
-                # its buckets.
-                expect(popover).to_contain_text("Last saved progress7 of 9 checked")
+                # A finished scan states only its works checked (#1494).
+                expect(popover).to_contain_text(
+                    "Last saved progress7 of 9 works checked"
+                )
                 for label in ("Scan now", "Retry", "Pause"):
                     expect(
                         popover.get_by_role("button", name=label, exact=True)
@@ -14476,38 +14479,50 @@ def test_library_states_provider_throttling_and_idle_preparation_controls(
                 page.goto(origin + "/login")
                 page.get_by_label("Password").fill("synthetic-owner")
                 page.get_by_role("button", name="Sign in").click()
+                expect(
+                    page.get_by_role("heading", name="Works", exact=True)
+                ).to_be_visible()
+                # A wait the runner will retry on its own raises no notice
+                # (#1494); the masthead says so and the popover lists it.
                 notice = page.get_by_role(
                     "region", name="Source lookups waiting to retry"
                 )
-                entry = notice.get_by_role("listitem")
+                expect(notice).to_have_count(0)
+                waiting = "Source lookups are waiting to retry."
+
+                # One trigger whose name follows the state, located by place.
+                trigger = page.locator(".preparation-activity > button")
+                expect(trigger).to_have_accessible_name(f"Preparation idle. {waiting}")
+                trigger.click()
+                popover = page.get_by_role("region", name="Background activity")
+                lookups = popover.get_by_role("region", name="Source lookups")
+                entry = lookups.get_by_role("listitem")
                 expect(entry).to_have_count(1)
+                expect(entry).to_contain_text("Google Books · books")
                 expect(entry).to_contain_text(
-                    "Google Books · books: It is limiting requests. "
-                    "3 lookups waiting. Next automatic retry "
+                    "It is limiting requests. 3 lookups waiting. Next automatic retry "
                 )
                 # File-managed settings: the instruction, never a command.
-                expect(notice).to_contain_text(
+                expect(lookups).to_contain_text(
                     "raise provider_recovery_generation by one in /data/config.json"
                 )
-                expect(notice.get_by_role("button")).to_have_count(0)
+                expect(lookups.get_by_role("button")).to_have_count(0)
                 # The instruction keeps its 0.7rem separation from the list
                 # above it (#1282 R3 F3).
                 separation = page.evaluate(_THROTTLE_FILE_SEPARATION)
                 assert separation["gap"] >= 0.7 * separation["rem"] - 0.5, separation
-
-                # One trigger whose name follows the state, located by place.
-                trigger = page.locator(".preparation-activity > button")
-                expect(trigger).to_have_text("Preparation idle")
-                trigger.click()
-                popover = page.get_by_role("region", name="Background activity")
                 popover.get_by_role("button", name="Pause", exact=True).click()
-                expect(trigger).to_have_text("Preparation paused")
+                expect(trigger).to_have_accessible_name(
+                    f"Preparation paused. {waiting}"
+                )
                 resume = popover.get_by_role("button", name="Resume", exact=True)
                 expect(resume).to_be_focused()
                 resume.click()
-                expect(trigger).to_have_text("Preparation idle")
+                expect(trigger).to_have_accessible_name(f"Preparation idle. {waiting}")
                 popover.get_by_role("button", name="Scan now", exact=True).first.click()
-                expect(trigger).to_have_text("Preparing libraries")
+                expect(trigger).to_have_accessible_name(
+                    f"Preparing libraries. {waiting}"
+                )
                 # Idle had no progress at all; the press started a real scan.
                 progress, paused = preparation.status()
                 assert not paused
@@ -14534,7 +14549,9 @@ def test_library_states_provider_throttling_and_idle_preparation_controls(
                 arrivals = []
                 for attempt in range(5):
                     page.goto(origin + "/library?lens=all")
-                    expect(entry).to_have_count(1)
+                    expect(trigger).to_have_accessible_name(
+                        re.compile(re.escape(waiting))
+                    )
                     page.get_by_role("navigation").get_by_role(
                         "link", name="Settings", exact=True
                     ).click()
@@ -14639,17 +14656,6 @@ def test_masthead_and_run_line_agree_on_the_real_server(
                 if index == 0 or count
             )
 
-        def buckets(ready: int, recorded: int, failed: int) -> dict[str, str]:
-            return {
-                words: str(count)
-                for words, count in (
-                    ("Ready to browse", ready),
-                    ("Recorded, nothing to decide", recorded),
-                    ("Could not finish", failed),
-                )
-                if count
-            }
-
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             try:
@@ -14661,7 +14667,7 @@ def test_masthead_and_run_line_agree_on_the_real_server(
                     page.get_by_role("heading", name="Works", exact=True)
                 ).to_be_visible()
 
-                def observe() -> tuple[str, str, dict[str, str], str, str]:
+                def observe() -> tuple[str, str, str, str]:
                     summary = page.locator(".preparation-summary small")
                     expect(summary).to_contain_text("This run: ")
                     page.locator(".preparation-activity > button").click()
@@ -14678,18 +14684,13 @@ def test_masthead_and_run_line_agree_on_the_real_server(
                     }
                     expect(rows["books-1"]).to_contain_text("not in this run")
                     expect(rows["books-0"]).not_to_contain_text("not in this run")
-                    stages = rows["books-0"].locator(".preparation-stages > div")
+                    # The popover row counts works checked; the split by outcome
+                    # is the run line's alone (#1494).
                     facts = (
                         cast(str, summary.text_content()),
                         cast(
                             str, rows["books-0"].locator("span").nth(1).text_content()
                         ),
-                        {
-                            cast(str, stage.locator("dt").text_content()): cast(
-                                str, stage.locator("dd").text_content()
-                            )
-                            for stage in stages.all()
-                        },
                         cast(
                             str, rows["books-1"].locator("span").nth(0).text_content()
                         ),
@@ -14703,12 +14704,12 @@ def test_masthead_and_run_line_agree_on_the_real_server(
                     return (*facts, cast(str, outcomes.text_content()))
 
                 page.goto(origin + "/library?lens=all")
-                run_line, books_row, books_stages, other_state, prepared = observe()
+                run_line, books_row, other_state, prepared = observe()
                 counts = (books["ready"], books["recorded"], books["blocked"])
                 assert run_line == f"This run: {split(*counts)}"
-                # A finished row's split is its buckets, in the same words.
-                assert books_row == f"{books['checked']} of {books['total']} checked"
-                assert books_stages == buckets(*counts)
+                assert books_row == (
+                    f"{books['checked']} of {books['total']} works checked"
+                )
                 assert other_state.endswith(" · not in this run")
                 # Enlarged on a narrow screen, the counts wrap between words and
                 # never split one (#1013, #1366).
@@ -14744,12 +14745,9 @@ def test_masthead_and_run_line_agree_on_the_real_server(
                     books["ready"] + books["recorded"] - 1
                 )
                 page.goto(origin + "/library?lens=all")
-                run_line, books_row, books_stages, other_state, prepared_after = (
-                    observe()
-                )
+                run_line, books_row, other_state, prepared_after = observe()
                 counts = (now["ready"], now["recorded"], now["failed"])
                 assert run_line == f"This run: {split(*counts)}"
-                assert books_stages == buckets(*counts)
                 assert other_state.endswith(" · not in this run")
                 assert prepared_after == prepared
 
@@ -14847,9 +14845,9 @@ _WIDE_BOLD_FONT = """async font => {
   return document.fonts.check('700 16px Inter');
 }"""
 _THROTTLE_FILE_SEPARATION = """() => {
-  const notice = document.querySelector('.provider-throttle-notice');
-  const list = notice.querySelector('ul');
-  const file = notice.querySelector('.provider-throttle-file');
+  const lookups = document.querySelector('.source-lookups');
+  const list = lookups.querySelector('ul');
+  const file = lookups.querySelector('.source-lookups-file');
   return {
     gap: file.getBoundingClientRect().top - list.getBoundingClientRect().bottom,
     rem: parseFloat(getComputedStyle(document.documentElement).fontSize),
@@ -15151,6 +15149,93 @@ def test_works_no_provider_matched_have_their_own_lens_and_reasons(
                         works.get_by_role("button", name=name, exact=True)
                     ).to_be_visible()
                 expect(works).not_to_contain_text("Prepared synthetic work 0000")
+            finally:
+                browser.close()
+
+
+def test_works_that_look_wrong_have_their_own_lens_second_after_all(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1334: over the real composed app and its stored findings, Looks wrong
+    sits second in the lens row, is counted beside the Works count, lists only
+    the works with a finding, names each finding on its row, and Back from a
+    work keeps the lens."""
+    from mechanical_librarian.interfaces.web import app as web_app
+    from tests.support.owner_responsiveness import running_owner_fixture
+    from tests.unit.test_flagged_lens import _publish, _work
+
+    monkeypatch.setattr(
+        web_app,
+        "ReactAssetLoader",
+        lambda: ReactAssetLoader(Path(os.environ["ML_REACT_ASSET_DIR"])),
+    )
+    with running_owner_fixture(tmp_path, 1) as (fixture, origin):
+        for report in (
+            _work(0, "THE EXAMPLE STORY", narrators=("Narrated by Example Reader",)),
+            _work(
+                3,
+                "Example Story",
+                authors=("Example Author",),
+                narrators=("Narrated by Example Reader",),
+            ),
+            _work(7, "Ordinary Example"),
+        ):
+            _publish(fixture.repository, report)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            try:
+                page = browser.new_page(viewport={"width": 1440, "height": 1000})
+                page.goto(origin + "/login")
+                page.get_by_label("Password").fill("synthetic-owner")
+                page.get_by_role("button", name="Sign in").click()
+                page.get_by_role("heading", name="Works", exact=True).wait_for()
+                page.goto(origin + "/library?lens=all")
+                lenses = page.get_by_role("navigation", name="Library lenses")
+                expect(lenses.get_by_role("link")).to_have_text(
+                    [
+                        "All",
+                        "Looks wrong",
+                        "Needs attention",
+                        "No attention needed",
+                        "Not matched",
+                        "Could not finish",
+                    ]
+                )
+                expect(
+                    page.get_by_role("status").filter(has_text="look wrong")
+                ).to_have_text(re.compile(r"^4 works\s·\s.*\s·\s2 look wrong$"))
+                lens = lenses.get_by_role("link", name="Looks wrong", exact=True)
+                with page.expect_response(_lens_read("flagged")):
+                    lens.click()
+                expect(page).to_have_url(re.compile(r"lens=flagged"))
+                expect(lens).to_have_attribute("aria-current", "true")
+                works = page.get_by_label("Works", exact=True)
+                listed = works.get_by_role("button").filter(has=page.locator("strong"))
+                expect(listed).to_have_count(2)
+                capitals = works.get_by_role(
+                    "button", name=re.compile(r"^THE EXAMPLE STORY\.")
+                )
+                # Chromium reads both findings, each ending with the full
+                # stop only assistive technology reads, after the row's
+                # source summary and its own stop. The stop's own box puts a
+                # space before it in the computed text; it still ends each
+                # finding as a sentence.
+                expect(capitals).to_have_accessible_description(
+                    "No match . Title is in capitals . "
+                    "A narrator's name starts with a credit label ."
+                )
+                expect(
+                    works.get_by_role("button", name=re.compile(r"^Example Story\."))
+                ).to_have_accessible_description(
+                    "No match . A narrator's name starts with a credit label ."
+                )
+                expect(works).not_to_contain_text("Ordinary Example")
+                capitals.click()
+                expect(page).to_have_url(re.compile(r"lens=flagged&.*work="))
+                page.go_back()
+                expect(page).to_have_url(re.compile(r"lens=flagged$"))
+                expect(lens).to_have_attribute("aria-current", "true")
+                expect(listed).to_have_count(2)
             finally:
                 browser.close()
 

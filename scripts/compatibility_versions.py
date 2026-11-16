@@ -56,6 +56,7 @@ CURRENT_VERSIONS: tuple[tuple[str, str], ...] = (
     ("mechanical_librarian.domain.shadow_decision", "DECISION_POLICY_VERSION"),
     ("mechanical_librarian.domain.shadow_review_actions", "ACTION_POLICY_VERSION"),
     ("mechanical_librarian.domain.shadow_outcome", "SHADOW_OUTCOME_SCHEMA"),
+    ("mechanical_librarian.domain.value_flags", "VALUE_FLAG_RULES_VERSION"),
     ("mechanical_librarian.domain.human_decision", "HUMAN_DECISION_SCHEMA"),
     ("mechanical_librarian.domain.human_decision", "HUMAN_DECISION_EVENT_SCHEMA"),
     ("mechanical_librarian.application.review_web", "HUMAN_DECISION_ACK_SCHEMA"),

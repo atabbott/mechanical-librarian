@@ -14,6 +14,7 @@
         "connection": "primary",
         "counts": {
           "all": 1,
+          "flagged": 0,
           "needs_attention": 0,
           "no_attention_needed": 0,
           "not_matched": 1,
@@ -26,6 +27,7 @@
         "connection": "primary",
         "counts": {
           "all": 1,
+          "flagged": 0,
           "needs_attention": 1,
           "no_attention_needed": 0,
           "not_matched": 0,
@@ -37,6 +39,7 @@
     ],
     "totals": {
       "all": 2,
+      "flagged": 0,
       "needs_attention": 1,
       "no_attention_needed": 0,
       "not_matched": 1,

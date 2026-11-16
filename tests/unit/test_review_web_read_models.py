@@ -2532,6 +2532,7 @@ def test_attention_first_library_lenses_queue_and_cursor_binding(
         "no_attention_needed": 1,
         "not_matched": 0,
         "preparation_failed": 0,
+        "flagged": 0,
     }
     assert len(body["items"]) == 1
     assert body["items"][0]["attention_state"] == "needs_attention"
@@ -2583,6 +2584,7 @@ def test_complete_library_includes_current_report_without_review_lineage(
         "no_attention_needed": 0,
         "not_matched": 1,
         "preparation_failed": 0,
+        "flagged": 0,
     }
     item = response.json()["items"][0]
     assert item["review_case_id"] is None
@@ -4928,6 +4930,7 @@ def _throttle_row(
     reason: str | None,
     deferred: int,
     next_eligible_at: int | None = None,
+    waiting_since: int | None = None,
 ) -> dict[str, object]:
     return {
         "connection": connection,
@@ -4937,6 +4940,7 @@ def _throttle_row(
         "next_eligible_at": next_eligible_at,
         "reason": reason,
         "deferred": deferred,
+        "waiting_since": waiting_since,
     }
 
 
@@ -5100,9 +5104,132 @@ def test_provider_throttling_view_totals_each_library_and_source(
             "deferred",
             "next_retry_at",
             "remedy",
+            "notice_at",
+            "untried",
         }
         for entry in cast("list[dict[str, object]]", view["entries"])
     )
+
+
+@pytest.mark.parametrize(
+    ("waiting_since", "notice_at"),
+    (
+        pytest.param((500, 200), 86_600, id="earliest-member-wait"),
+        pytest.param((None, 300), 86_700, id="member-in-a-quota-wait-is-skipped"),
+        pytest.param((None, None), None, id="every-member-in-a-quota-wait"),
+        pytest.param(
+            (8_640_000_000_000, None),
+            8_640_000_000_000,
+            id="capped-at-the-largest-timestamp",
+        ),
+    ),
+)
+def test_provider_throttling_notice_is_a_day_after_the_longest_wait(
+    waiting_since: tuple[int | None, int | None], notice_at: int | None
+) -> None:
+    from mechanical_librarian.application.review_application import (
+        provider_throttling_view,
+    )
+
+    rows = tuple(
+        _throttle_row(
+            name,
+            "google_books",
+            "books",
+            "waiting",
+            "quota_exhausted" if since is None else "burst_throttled",
+            1,
+            90,
+            since,
+        )
+        for name, since in zip(("google-a", "google-b"), waiting_since, strict=True)
+    )
+    view = provider_throttling_view(rows, {}, 1, "available")
+    assert [notice_at] == [
+        entry["notice_at"] for entry in cast("list[dict[str, object]]", view["entries"])
+    ]
+
+
+@pytest.mark.parametrize(
+    ("members", "state", "reasons", "untried"),
+    (
+        pytest.param(
+            (("waiting", "transient"), ("waiting", None)),
+            "waiting",
+            ["transient"],
+            True,
+            id="one-connection-failed-and-one-not-tried-yet",
+        ),
+        pytest.param(
+            (("waiting", "transient"), ("exhausted", None)),
+            "waiting",
+            ["transient"],
+            False,
+            id="a-connection-with-no-retry-left-is-not-waited-for",
+        ),
+        pytest.param(
+            (("waiting", "transient"), ("waiting", "rate_limited")),
+            "waiting",
+            ["rate_limited", "transient"],
+            False,
+            id="every-connection-tried",
+        ),
+        pytest.param(
+            (("waiting", "transient"), ("dormant", None)),
+            "waiting",
+            ["transient"],
+            False,
+            id="a-dormant-connection-is-not-waited-for",
+        ),
+        pytest.param(
+            (("waiting", None),), "waiting", [], True, id="one-connection-untried"
+        ),
+        pytest.param(
+            (("checking", None),), "checking", [], True, id="one-connection-checking"
+        ),
+        pytest.param(
+            (("fanout", None),), "checking", [], True, id="one-connection-in-fanout"
+        ),
+        pytest.param(
+            (("dormant", None),), "dormant", [], False, id="one-connection-dormant"
+        ),
+        pytest.param(
+            (("exhausted", None),),
+            "exhausted",
+            [],
+            False,
+            id="one-connection-exhausted",
+        ),
+    ),
+)
+def test_provider_throttling_entry_says_while_a_connection_is_untried(
+    members: tuple[tuple[str, str | None], ...],
+    state: str,
+    reasons: list[str],
+    untried: bool,
+) -> None:
+    from mechanical_librarian.application.review_application import (
+        provider_throttling_view,
+    )
+
+    rows = tuple(
+        _throttle_row(
+            f"google-{index}",
+            "google_books",
+            "books",
+            member,
+            reason,
+            1,
+            90 if member == "waiting" else None,
+        )
+        for index, (member, reason) in enumerate(members)
+    )
+    view = provider_throttling_view(rows, {}, 2, "available")
+    # The state, reasons and count the owner reads are as they were (#1494).
+    assert [(state, reasons, len(members), untried)] == [
+        (entry["state"], entry["reasons"], entry["deferred"], entry["untried"])
+        for entry in cast("list[dict[str, object]]", view["entries"])
+    ]
 
 
 def test_preparation_read_carries_value_free_provider_throttling(
@@ -5127,6 +5254,7 @@ def test_preparation_read_carries_value_free_provider_throttling(
             "burst_throttled",
             214,
             90,
+            100,
         ),
     )
     web.client = TestClient(
@@ -5136,7 +5264,11 @@ def test_preparation_read_carries_value_free_provider_throttling(
             clock=lambda: web.now,
             review_preparation=FakePreparation(),
             provider_throttling=lambda: provider_throttling_view(
-                rows, {"private-google-instance": False}, 3, "available"
+                rows,
+                {"private-google-instance": False},
+                3,
+                "available",
+                (("books", "google_books"),),
             ),
         ),
         base_url="https://review.test",
@@ -5157,8 +5289,11 @@ def test_preparation_read_carries_value_free_provider_throttling(
                 "deferred": 214,
                 "next_retry_at": 90,
                 "remedy": "add_api_key",
+                "notice_at": 86_500,
+                "untried": False,
             }
         ],
+        "answered": [{"library": "books", "adapter": "google_books"}],
     }
     assert "private-google-instance" not in response.text
 
@@ -5515,6 +5650,7 @@ def test_library_progress_answers_library_counts_and_attention_fields(
             "no_attention_needed": 0,
             "not_matched": 1,
             "preparation_failed": 0,
+            "flagged": 0,
         },
         # No settings name either library: each reads as its stable name, and
         # the unconfigured names come alphabetically.
@@ -5527,6 +5663,7 @@ def test_library_progress_answers_library_counts_and_attention_fields(
                     "no_attention_needed": 0,
                     "not_matched": 1,
                     "preparation_failed": 0,
+                    "flagged": 0,
                 },
                 "library": "audiobooks",
                 "library_display_name": "audiobooks",
@@ -5539,6 +5676,7 @@ def test_library_progress_answers_library_counts_and_attention_fields(
                     "no_attention_needed": 0,
                     "not_matched": 0,
                     "preparation_failed": 0,
+                    "flagged": 0,
                 },
                 "library": "ebooks",
                 "library_display_name": "ebooks",
@@ -5581,6 +5719,7 @@ def test_library_progress_model_is_closed_and_bounded() -> None:
         "no_attention_needed": 0,
         "not_matched": 0,
         "preparation_failed": 0,
+        "flagged": 0,
     }
     valid: dict[str, Any] = {
         "totals": counts,

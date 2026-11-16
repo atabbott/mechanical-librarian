@@ -156,10 +156,10 @@ run's state changes. Recent completions record each book's first finish, one
 row each: the title, linked into Library, then "Prepared" or "Couldn't
 finish". A rate in works a minute appears only while running.
 
-The masthead's background-work control shows each library's scan state and
-counts, and marks a library outside the current run. At idle it reads
-`Preparation idle` and still offers Scan now and Pause. Pause stops new scans.
-Source lookups already waiting keep their schedule. The popover fits the window
+The masthead's background-work icon fills while libraries are prepared and
+marks what needs you. Its popover shows each library's scan state and works
+checked, marks a library outside the current run, and offers Scan now and
+Pause. Pause stops new scans. Source lookups already waiting keep their schedule. The popover fits the window
 below the masthead, and scrolls inside itself when it must. `Escape` closes it
 and returns focus to its trigger. The popover disables a pending command
 instead of removing it, so focus stays put and a second press sends nothing.
@@ -173,18 +173,17 @@ These controls retry different things:
 - Retrying a cover or description consideration asks the reviewer about that
   one item again.
 
-Lookups that a source is limiting retry on their own schedule. A failure before
-a report has no automatic retry
+A failure before a report has no automatic retry
 ([provider recovery](../operations/provider-recovery.md)).
 
-Library and Settings share one notice of source lookups waiting to retry. Each
-entry names a source, a library, the reason, how many lookups wait and when
-they retry. Mechanical Librarian does not retry a refused key on its own: fix
-the key, then use Retry now (or the file instruction). An entry with no
-automatic retry left says so. An entry that needs an API key added or checked
-links to Settings › Metadata sources. Mechanical Librarian announces the
-outcome of Retry now beside it. A file-managed deployment shows the file
-instruction instead. With nothing waiting, the notice takes no space.
+The masthead's background-work control shows when source lookups are waiting
+to retry. Its popover lists each source and library with the reason, the number
+waiting and the next automatic retry, offers Retry now, and says what Retry now
+did. Library and Settings show a notice only when lookups will not be retried
+unless the owner acts, or when a source's lookups have waited 24 hours. A
+refused key is never retried on its own: fix it, then use Retry now. An entry
+that needs an API key added or checked links to Settings › Metadata sources. A
+file-managed deployment shows the file instruction instead of Retry now.
 
 A work whose preparation could not finish stays in Library as a row that does
 not open, marked Could not finish. It keeps its title while the catalogue
@@ -212,18 +211,18 @@ reads `Found m
 of n works` and the lens. A search narrows the list and Attention, never the
 totals.
 
-The lenses are All (the default), Needs attention, No attention needed, Not
-matched and Could not finish, in one row that scrolls sideways when the panel
-is narrow. Lens, search, page, selected work and field live in the URL, so
-links and Back and Forward work. The pager offers only the moves that exist.
-An empty list says so in one line, and with no library connected it links to
-Settings to add one.
+The lenses are All (default), [Looks wrong](looks-wrong.md), Needs attention,
+No attention needed, Not matched and Could not finish, in one row that scrolls
+sideways when the panel is narrow. Lens, search, page, selected work and field
+live in the URL, so links, Back and Forward work. The pager offers only the
+moves that exist. An empty list says so in one line; with no library connected
+it links to Settings.
 
 Works that need a decision come first, under "Every lookup finished" and then
 "Some lookups gave no usable answer". The first heading does not promise a
 match, and the second does not promise a retry. Works that could not finish
 follow under Could not finish, then Not matched, then the rest. The other
-lenses are alphabetical.
+lenses, except Looks wrong, are alphabetical.
 
 A work with no case, nothing to decide and no source evidence accepted for it
 is Not matched, counted beside Works as `7 works · 4 not matched`. Its status

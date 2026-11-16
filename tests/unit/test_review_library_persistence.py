@@ -2203,6 +2203,7 @@ def test_sqlite_library_excludes_epub_conflicting_narrators_from_attention() -> 
             "no_attention_needed": 1,
             "not_matched": 0,
             "preparation_failed": 0,
+            "flagged": 0,
         }
         assert [item["title"] for item in first["items"]] == ["Mistborn Secret History"]
         assert first["next_cursor"] is not None
@@ -2866,6 +2867,7 @@ def test_retained_component_ask_agrees_across_detail_library_and_attention(
                 "no_attention_needed": 0,
                 "not_matched": 0,
                 "preparation_failed": 0,
+                "flagged": 0,
             }
         )
         assert {"title", component} <= {
@@ -3573,6 +3575,7 @@ def test_terminal_catalogue_identity_uses_current_full_key_before_page_and_count
             "no_attention_needed": 0,
             "not_matched": 0,
             "preparation_failed": 3,
+            "flagged": 0,
         }
         items = cast(list[dict[str, object]], first["items"])
         assert [item["title"] for item in items] == ["Shared 100%_ title"] * 2
@@ -3907,7 +3910,7 @@ def test_combined_browse_validates_empty_marker_and_totals(
 
     def corrupt_row(cursor, row):
         nonlocal reached
-        if len(cursor.description) != (13 if surface == "library" else 11):
+        if len(cursor.description) != (14 if surface == "library" else 11):
             return row
         reached = True
         values = list(row)
@@ -3934,6 +3937,36 @@ def test_combined_browse_validates_empty_marker_and_totals(
                 repository.read_current_library_page(None, 10, 0, None)
             else:
                 repository.read_current_attention_page(None, 10, 0)
+        assert reached
+    finally:
+        repository.close()
+
+
+@pytest.mark.parametrize("corruption", ("over_total", "boolean", "negative", "text"))
+def test_library_page_refuses_an_invalid_looks_wrong_total(tmp_path, corruption):
+    """The Looks wrong total is a count no larger than All (#1334)."""
+    from mechanical_librarian.application.metadata_report import MetadataReportError
+
+    repository = open_repository(tmp_path / "review.sqlite")
+    reached = False
+
+    def corrupt_row(cursor, row):
+        nonlocal reached
+        if len(cursor.description) != 14:
+            return row
+        reached = True
+        values = list(row)
+        values[-1] = {
+            "over_total": values[-5] + 1,
+            "boolean": False,
+            "negative": -1,
+        }.get(corruption, "0")
+        return tuple(values)
+
+    repository._connection.row_factory = corrupt_row
+    try:
+        with pytest.raises(MetadataReportError, match="review library is unavailable"):
+            repository.read_current_library_page(None, 10, 0, None)
         assert reached
     finally:
         repository.close()
@@ -4018,6 +4051,7 @@ def test_library_counts_are_one_summary_across_lens_cursor_and_limit() -> None:
             "no_attention_needed": 0,
             "not_matched": 1,
             "preparation_failed": 1,
+            "flagged": 0,
         }
         observed = []
         for lens in (
@@ -4058,6 +4092,7 @@ def test_library_counts_are_one_summary_across_lens_cursor_and_limit() -> None:
                     "no_attention_needed": 0,
                     "not_matched": 0,
                     "preparation_failed": 0,
+                    "flagged": 0,
                 },
             ),
             (
@@ -4068,6 +4103,7 @@ def test_library_counts_are_one_summary_across_lens_cursor_and_limit() -> None:
                     "no_attention_needed": 0,
                     "not_matched": 0,
                     "preparation_failed": 1,
+                    "flagged": 0,
                 },
             ),
             (
@@ -4078,6 +4114,7 @@ def test_library_counts_are_one_summary_across_lens_cursor_and_limit() -> None:
                     "no_attention_needed": 0,
                     "not_matched": 1,
                     "preparation_failed": 0,
+                    "flagged": 0,
                 },
             ),
             (
@@ -4088,6 +4125,7 @@ def test_library_counts_are_one_summary_across_lens_cursor_and_limit() -> None:
                     "no_attention_needed": 0,
                     "not_matched": 0,
                     "preparation_failed": 0,
+                    "flagged": 0,
                 },
             ),
         ):
@@ -4190,6 +4228,7 @@ def test_a_failed_preparation_leaves_an_open_decision_in_needs_attention(
                 "no_attention_needed": 0,
                 "not_matched": 0,
                 "preparation_failed": 1,
+                "flagged": 0,
             }
             listed[lens] = [
                 (cast(str, item["item"]), cast(str, item["attention_state"]))

@@ -27,6 +27,7 @@ const counts = (value: Partial<LibraryCounts>): LibraryCounts => ({
   clear: 0,
   notMatched: 0,
   failed: 0,
+  flagged: 0,
   ...value,
 })
 
