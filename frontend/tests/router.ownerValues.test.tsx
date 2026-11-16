@@ -11,6 +11,7 @@ import type {
   ReviewHttp,
   TargetDestination,
 } from '../src/api/http'
+import { decisionQuestion } from '../src/fieldDecision'
 import { coalesceMilliseconds } from '../src/liveInvalidation'
 import {
   createHttp,
@@ -1077,6 +1078,8 @@ describe('a pin on each value', () => {
   const pins = (
     initial: Field,
     refuse: (command: DecisionCommand) => unknown = () => undefined,
+    // Whether the store's answer carries the case as it now reads.
+    readBack: () => boolean = () => true,
   ) => {
     const state = { field: initial }
     const http = owner(
@@ -1104,7 +1107,9 @@ describe('a pin on each value', () => {
               target_fingerprint: command.targetFingerprint,
             },
           ),
-          confirmation: { status: 'confirmed', case: { ...detail, fields: [state.field] } },
+          confirmation: readBack()
+            ? { status: 'confirmed', case: { ...detail, fields: [state.field] } }
+            : { status: 'unavailable' },
         }
       },
     )
@@ -1580,5 +1585,272 @@ describe('a pin on each value', () => {
     await open(http)
     expect(screen.queryByRole('region', { name: 'Pin on Title' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Pin this value' })).toBeNull()
+  })
+
+  it('P20 names the pin that was not sent once a recorded choice’s work is reloaded', async () => {
+    const user = userEvent.setup()
+    let reloads = false
+    const { http } = pins(offered, undefined, () => reloads)
+    await show(http)
+    await user.click(within(card(PROPOSED)).getByRole('button', { name: 'Pin this value' }))
+    const reload = await screen.findByRole('button', { name: 'Reload current case' })
+    expect(outcomes(http)).toEqual(['accept'])
+    reloads = true
+    await user.click(reload)
+    const foot = () => screen.getByRole('region', { name: 'Pin on Title' })
+    await waitFor(() =>
+      expect(within(foot()).getByRole('alert')).toHaveTextContent(
+        'Your choice is recorded, but the pin was not. Press the pin again.',
+      ),
+    )
+    // The pin was never sent, and the reload sends nothing.
+    expect(outcomes(http)).toEqual(['accept'])
+    expect(card(PROPOSED)).toHaveTextContent('Your choice')
+    expect(card(PROPOSED)).not.toHaveTextContent('Pinned')
+    await user.click(within(card(PROPOSED)).getByRole('button', { name: 'Pin this value' }))
+    await waitFor(() => expect(within(foot()).getByRole('status')).toHaveTextContent('Pinned.'))
+    expect(outcomes(http)).toEqual(['accept', 'pin'])
+    expect(within(foot()).getByRole('alert')).toBeEmptyDOMElement()
+  })
+})
+
+// A field with nothing to decide is pinned from its row of the No change
+// panel and stays there (#1346).
+describe('a pin in the No change panel', () => {
+  const PINNED =
+    'You pinned this value. Mechanical Librarian will not ask about it or change it unless it changes in Audiobookshelf.'
+  const title: Field = { ...base, pinControl: { pin: 'available', unpin: false } }
+  const subtitle: Field = {
+    ...title,
+    destination: 'subtitle',
+    proposalId: 'proposal-subtitle',
+    targetFingerprint: 'fingerprint-subtitle',
+  }
+  const publisher: Field = {
+    ...base,
+    classification: 'unsupported',
+    classificationCause: 'nothing_to_decide',
+    classificationReason: 'Nothing to decide for this field.',
+    destination: 'publisher',
+    currentValue: 'Example House',
+    currentRaw: 'Example House',
+    decisionActions: [],
+    editable: false,
+    inventoryRole: 'contextual',
+    needsAttention: false,
+    navigationRole: 'inspect',
+    proposalId: 'proposal-publisher',
+    proposedValues: [],
+    targetFingerprint: 'fingerprint-publisher',
+    ownerControl: null,
+    pin: null,
+    pinControl: { pin: 'available', unpin: false },
+  }
+  const after = (field: Field, command: DecisionCommand): Field =>
+    field.destination !== command.destination
+      ? field
+      : command.outcome === 'pin'
+        ? {
+            ...field,
+            classification: 'human_recorded',
+            classificationCause: 'pinned',
+            classificationReason: PINNED,
+            pin: {
+              state: 'in_force',
+              value: { destination: 'publisher', state: 'value', value: 'Example House' },
+            },
+            pinControl: { pin: 'available', unpin: true },
+          }
+        : command.outcome === 'unpin'
+          ? publisher
+          : {
+              ...field,
+              needsAttention: false,
+              classification: 'human_recorded',
+              classificationCause: 'human_decided',
+              humanDecision: decision(command.outcome, command.selectedValue ?? null),
+            }
+  const work = (
+    refuse: (command: DecisionCommand, caseId: string) => unknown = () => undefined,
+  ) => {
+    const state = { fields: [title, subtitle, publisher] }
+    const http = owner(
+      () => state.fields,
+      async (caseId, command) => {
+        const refusal = await refuse(command, caseId)
+        if (refusal !== undefined) throw refusal as Error
+        state.fields = state.fields.map((field) => after(field, command))
+        return {
+          ...recordedAcknowledgement(
+            { ...detail, id: caseId },
+            {
+              invalidation_sequences: [],
+              schema_version: 'review-decision-v1',
+              actor: 'owner',
+              application: 'apply',
+              application_reason: null,
+              decision_id: `decision-${command.idempotencyKey}`,
+              destination: command.destination,
+              occurred_at: 2,
+              outcome: command.outcome,
+              proposal_id: command.proposalId,
+              review_case_id: caseId,
+              selected_value: command.selectedValue ?? null,
+              target_fingerprint: command.targetFingerprint,
+            },
+          ),
+          confirmation: {
+            status: 'confirmed',
+            case: { ...detail, id: caseId, fields: [...state.fields] },
+          },
+        }
+      },
+    )
+    return { http, state }
+  }
+  const show = async (http: ReturnType<typeof owner>) => {
+    const { router } = renderRoute('/library?lens=all&preview=case-1&field=title', http)
+    await screen.findByRole('navigation', { name: 'Review fields' })
+    return router
+  }
+  const panel = () => {
+    const details = document.querySelector<HTMLDetailsElement>('.automatic-resolution-details')
+    if (!details) throw new Error('the panel is missing')
+    return details
+  }
+  const summary = () => {
+    const found = panel().querySelector('summary')
+    if (!found) throw new Error('the panel has no summary')
+    return found
+  }
+  const row = () => {
+    const found = within(panel()).getByText('Publisher').closest('.automatic-resolution-row')
+    if (!(found instanceof HTMLElement)) throw new Error('no row for Publisher')
+    return found
+  }
+  const heading = () => {
+    const found = document.querySelector<HTMLElement>('.decision-canvas > header h3')
+    if (!found) throw new Error('no field heading')
+    return found
+  }
+  const TITLE_QUESTION = decisionQuestion('title')
+
+  it('N1 pins and unpins a field from its row with one command each, and moves nothing', async () => {
+    const user = userEvent.setup()
+    const { http } = work()
+    const router = await show(http)
+    expect(panel()).not.toHaveAttribute('open')
+    expect(summary()).toHaveTextContent(/^No change: PublisherShow why$/u)
+    await user.click(summary())
+    await user.click(within(row()).getByRole('button', { name: 'Pin this value' }))
+    await waitFor(() => expect(within(row()).getByRole('status')).toHaveTextContent('Pinned.'))
+    expect(sent(http)).toMatchObject([
+      {
+        destination: 'publisher',
+        outcome: 'pin',
+        selectedValue: null,
+        proposalId: 'proposal-publisher',
+        targetFingerprint: 'fingerprint-publisher',
+        offerDigest: publisher.offerDigest,
+      },
+    ])
+    expect(http.recordDecision.mock.calls[0]?.[0]).toBe('case-1')
+    // The field stays in the panel, which stays open with focus on its pin.
+    expect(panel()).toHaveAttribute('open')
+    expect(within(row()).getByRole('button', { name: 'Unpin' })).toHaveFocus()
+    expect(row()).toHaveTextContent('You pinned this value.')
+    expect(within(row()).getByText('Pinned')).toHaveClass('status-pill')
+    expect(summary()).toHaveTextContent(/^No change: Publisher · 1 pinnedShow why$/u)
+    expect(
+      within(screen.getByRole('navigation', { name: 'Review fields' })).queryByText('Publisher'),
+    ).toBeNull()
+    // Nothing advances or completes: the owner is still on Title.
+    expect(router.state.location.search.field).toBe('title')
+    expect(heading()).toHaveTextContent(TITLE_QUESTION)
+    expect(screen.queryByText('Review complete')).toBeNull()
+    await user.click(within(row()).getByRole('button', { name: 'Unpin' }))
+    await waitFor(() => expect(within(row()).getByRole('status')).toHaveTextContent('Unpinned.'))
+    expect(sent(http).map((command) => [command.destination, command.outcome])).toEqual([
+      ['publisher', 'pin'],
+      ['publisher', 'unpin'],
+    ])
+    expect(within(row()).getByRole('button', { name: 'Pin this value' })).toHaveFocus()
+    expect(row()).toHaveTextContent('No source offered a different value.')
+    expect(row()).not.toHaveTextContent('Pinned')
+    expect(summary()).toHaveTextContent(/^No change: PublisherShow why$/u)
+    expect(router.state.location.search.field).toBe('title')
+  })
+
+  it('N2 says a failed pin in its row, stays on the field and sends the next press', async () => {
+    const user = userEvent.setup()
+    let refused = true
+    const { http } = work((command) =>
+      command.outcome === 'pin' && refused ? new ApiError(500, 'other') : undefined,
+    )
+    const router = await show(http)
+    await user.click(summary())
+    await user.click(within(row()).getByRole('button', { name: 'Pin this value' }))
+    await waitFor(() =>
+      expect(within(row()).getByRole('alert')).toHaveTextContent(
+        'The pin was not recorded. Press the pin again.',
+      ),
+    )
+    expect(router.state.location.search.field).toBe('title')
+    expect(heading()).toHaveTextContent(TITLE_QUESTION)
+    expect(panel()).toHaveAttribute('open')
+    expect(row()).not.toHaveTextContent('Pinned')
+    expect(screen.queryByRole('button', { name: 'Try the same decision again' })).toBeNull()
+    const pin = within(row()).getByRole('button', { name: 'Pin this value' })
+    expect(pin).toHaveFocus()
+    expect(pin).not.toHaveAttribute('aria-disabled')
+    refused = false
+    await user.click(pin)
+    await waitFor(() => expect(within(row()).getByRole('status')).toHaveTextContent('Pinned.'))
+    expect(sent(http).map((command) => command.outcome)).toEqual(['pin', 'pin'])
+    expect(within(row()).getByRole('alert')).toBeEmptyDOMElement()
+    expect(router.state.location.search.field).toBe('title')
+  })
+
+  it('N3 says a pin pressed on a replaced case in its row on the successor, on the same field', async () => {
+    const user = userEvent.setup()
+    let stale = false
+    const made = work((command, caseId) => {
+      if (caseId !== 'case-1' || command.outcome !== 'pin') return undefined
+      stale = true
+      return new ApiError(409, 'stale')
+    })
+    const http = {
+      ...made.http,
+      getCaseSuccessor: vi.fn(async () => 'case-2'),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async (id) => {
+        if (stale && id === 'case-1') throw new ApiError(409, 'stale')
+        return { ...detail, id, fields: [...made.state.fields] }
+      }),
+    }
+    const { router } = renderRoute('/library?lens=all&preview=case-1&field=title', http)
+    await screen.findByRole('navigation', { name: 'Review fields' })
+    await user.click(summary())
+    await user.click(within(row()).getByRole('button', { name: 'Pin this value' }))
+    await waitFor(() => expect(router.state.location.search.preview).toBe('case-2'))
+    // The owner keeps the field they were on; the panel says what was not recorded.
+    expect(router.state.location.search.field).toBe('title')
+    expect(router.state.location.search.lens).toBe('all')
+    await waitFor(() =>
+      expect(within(row()).getByRole('status')).toHaveTextContent(
+        'Not recorded: the work changed. Review it again.',
+      ),
+    )
+    expect(panel()).toHaveAttribute('open')
+    await waitFor(() => expect(within(row()).getByRole('status')).toHaveFocus())
+    expect(heading()).not.toHaveFocus()
+    expect(row()).not.toHaveTextContent('Pinned')
+    // A later choice on Title is recorded on the successor and moves on as usual.
+    await user.click(screen.getByRole('radio', { name: 'Choose proposed value: New title' }))
+    await waitFor(() => expect(router.state.location.search.field).toBe('subtitle'))
+    expect(http.recordDecision.mock.calls.map(([id, command]) => [id, command.outcome])).toEqual([
+      ['case-1', 'pin'],
+      ['case-2', 'accept'],
+    ])
+    expect(within(row()).getByRole('status')).toBeEmptyDOMElement()
   })
 })

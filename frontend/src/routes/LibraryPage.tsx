@@ -46,18 +46,18 @@ import {
   normalizeDetailSearch,
 } from '../router'
 import { WriteReadyNotice } from '../components/WriteReadyNotice'
-import { StatusPill } from '../components/StatusPill'
 import { actionable, requestKey, useReviewDecisionController } from '../reviewDecisionController'
 import { emptyUnproposed, primaryField, railOffers } from '../reviewChoiceCounts'
 import { advancePresentationSettled } from '../reviewAdvancePresentation'
 
-import { authoredOwnerRecorded, decisionValue } from '../fieldDecision'
+import { authoredOwnerRecorded } from '../fieldDecision'
 import type { ReviewField } from '../fieldDecision'
 import { LibraryViewSwitch } from '../components/LibraryViewSwitch'
 import { CaseCheckingLine } from '../components/CaseCheckingLine'
 import { ReviewCompletion } from './ReviewCompletion'
 import { useStaleCoverReview } from './StaleCoverReview'
 import { useCoverPrepareFailure } from '../coverChoices'
+import { ContextualFields } from './ContextualFields'
 import { FieldDecisionCanvas } from './FieldDecisionCanvas'
 import { fieldDecisionMode, optionalChoice, ownerOutcome } from '../fieldDecisionMode'
 import { PreparationDetail } from './PreparationDetail'
@@ -72,7 +72,6 @@ import { LibraryWorks } from './LibraryWorks'
 import { useAutomaticHandling } from '../automaticHandling'
 import { BookMark } from '../components/BookMark'
 import { RESTART_SENTENCE, workCount } from '../libraryWork'
-import { contextKind, fieldReason } from '../fieldReasons'
 const searchNavigationDelay = 150
 const noWorks: readonly LibraryWorkView[] = []
 // A pointer crossing several rows warms only the one it rests on.
@@ -120,8 +119,6 @@ const fieldStatus = (field: ReviewField) =>
           : optionalChoice(field)
             ? (['optional', 'Optional'] as const)
             : (['unchanged', 'No change'] as const)
-const heldPhrase = (count: number, kind: 'waiting' | 'unavailable') =>
-  `${String(count)} ${count === 1 ? 'field' : 'fields'} ${kind === 'waiting' ? 'waiting' : 'unavailable'}`
 
 export default function LibraryPage({
   data,
@@ -799,11 +796,6 @@ export default function LibraryPage({
   }, [ownerWriteInFlight, queryClient, shownCaseId, updates])
   const contextualFields =
     detail.data?.fields.filter((field) => field.inventoryRole === 'contextual') ?? []
-  const contextualSummary = {
-    unchanged: contextualFields.filter((field) => contextKind(field) === 'unchanged'),
-    waiting: contextualFields.filter((field) => contextKind(field) === 'waiting').length,
-    unavailable: contextualFields.filter((field) => contextKind(field) === 'unavailable').length,
-  }
   const activeQueueIndex = selected
     ? attentionItems.findIndex(
         (item) => item.id === search.preview && item.destination === selected.destination,
@@ -906,12 +898,19 @@ export default function LibraryPage({
             destination: command.destination,
             text: 'Not recorded: the work changed. Review it again.',
           })
-          headingFocus.current = successor
+          // A pin pressed in the No change panel has no tab: the owner stays
+          // on their field and the panel says it on the successor.
+          const tabbed = visibleFields.some((field) => field.destination === command.destination)
+          if (tabbed) headingFocus.current = successor
           await navigate({
             replace: true,
             search: (current) =>
               current.preview === predecessor
-                ? { ...current, preview: successor, field: command.destination }
+                ? {
+                    ...current,
+                    preview: successor,
+                    ...(tabbed ? { field: command.destination } : {}),
+                  }
                 : current,
           })
           setMovingFrom(null)
@@ -1840,53 +1839,12 @@ export default function LibraryPage({
                 </section>
               ) : null}
               {contextualFields.length ? (
-                <details className="automatic-resolution-details">
-                  <summary>
-                    <span>
-                      {contextualSummary.unchanged.length ? (
-                        <span>
-                          No change:{' '}
-                          {contextualSummary.unchanged
-                            .map((field) => destinationLabel(field.destination))
-                            .join(', ')}
-                        </span>
-                      ) : null}
-                      {contextualSummary.waiting ? (
-                        <span>{heldPhrase(contextualSummary.waiting, 'waiting')}</span>
-                      ) : null}
-                      {contextualSummary.unavailable ? (
-                        <span>{heldPhrase(contextualSummary.unavailable, 'unavailable')}</span>
-                      ) : null}
-                    </span>
-                    <small>Show why</small>
-                  </summary>
-                  <div className="automatic-resolution-list">
-                    {contextualFields.map((field) => {
-                      const kind = contextKind(field)
-                      return (
-                        <div
-                          className={`automatic-resolution-row is-${kind}`}
-                          key={field.destination}
-                        >
-                          <strong>
-                            {destinationLabel(field.destination)}
-                            {kind === 'unchanged' ? null : (
-                              <StatusPill tone="notice">
-                                {kind === 'waiting' ? 'Waiting' : 'Unavailable'}
-                              </StatusPill>
-                            )}
-                          </strong>
-                          <small>{decisionValue(field)}</small>
-                          <small>
-                            {kind === 'unchanged'
-                              ? 'No source offered a different value.'
-                              : fieldReason(field)}
-                          </small>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </details>
+                <ContextualFields
+                  fields={contextualFields}
+                  controller={controller}
+                  choose={choose}
+                  notice={ownerNotice?.caseId === selectedReviewCaseId ? ownerNotice : null}
+                />
               ) : null}
               <WorkSources
                 comparison={selectedMode.choiceMode}

@@ -983,6 +983,11 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .choice-pin:focus-visible { outline-offset:-4px; }
 .choice-pin.is-on .head { fill:currentColor; }
 /* A busy pin dims its own colour, never the element, so its focus outline stays whole. */
+.context-row-head { display:flex; flex-wrap:wrap; align-items:center; gap:0 10px; }
+.context-row-head > .choice-pin { margin-block:-8px; }
+.automatic-resolution-row p { margin:3px 0 0; font-size:smaller; overflow-wrap:anywhere; }
+.automatic-resolution-row p:empty { margin:0; }
+.automatic-resolution-row [role='alert'] { color:var(--danger); font-weight:650; }
 .choice-pin[aria-disabled='true'] { cursor:progress; color:color-mix(in srgb,var(--soft) 70%,var(--surface)); }
 .choice-pin.is-on[aria-disabled='true'] { color:color-mix(in srgb,var(--accent-strong) 70%,var(--surface)); }
 /* As on a card, the pin sits opposite Evidence, so it never narrows the value. */

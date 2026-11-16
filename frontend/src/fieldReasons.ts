@@ -72,7 +72,7 @@ const contextKinds = {
   review_needed: 'unavailable',
   owner_choosable: 'unavailable',
   nothing_to_decide: 'unchanged',
-  pinned: 'unavailable',
+  pinned: 'unchanged',
   pin_changed: 'unavailable',
 } as const satisfies Record<FieldCause, 'unchanged' | 'waiting' | 'unavailable'>
 // A held field never reads unchanged.
