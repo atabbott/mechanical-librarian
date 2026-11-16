@@ -129,7 +129,9 @@ const LibraryLenses = ({
       else delete row.dataset.more
     }
     // The first and last lenses scroll the row to its end, so no fade covers
-    // them; any other lens is brought clear of both fades.
+    // them; any other lens is brought clear of both fades. A lens with less
+    // than its own padding under a fade stays where it is: its label is clear,
+    // and scrolling would fade the lens at the other end.
     const reveal = (lens: Element | null) => {
       if (lens instanceof HTMLElement) {
         let left = row.scrollLeft
@@ -137,8 +139,11 @@ const LibraryLenses = ({
         else if (lens === row.lastElementChild) left = row.scrollWidth - row.clientWidth
         else {
           const fade = parseFloat(getComputedStyle(row).scrollPaddingInlineStart) || 0
+          const padding = getComputedStyle(lens)
           const rowBox = row.getBoundingClientRect()
           const box = lens.getBoundingClientRect()
+          const underStart = rowBox.left + fade - box.left
+          const underEnd = box.right - (rowBox.right - fade)
           // A lens too wide to clear both fades is centred, or starts at the
           // row's edge when even the row is narrower, so its label's start shows.
           if (box.width > rowBox.width - 2 * fade)
@@ -146,8 +151,10 @@ const LibraryLenses = ({
               box.width > rowBox.width
                 ? box.left - rowBox.left
                 : box.left - rowBox.left - (rowBox.width - box.width) / 2
-          else if (box.left < rowBox.left + fade) left -= rowBox.left + fade - box.left
-          else if (box.right > rowBox.right - fade) left += box.right - (rowBox.right - fade)
+          else if (underStart >= (parseFloat(padding.paddingInlineStart) || 0) && underStart > 0)
+            left -= underStart
+          else if (underEnd >= (parseFloat(padding.paddingInlineEnd) || 0) && underEnd > 0)
+            left += underEnd
         }
         if (Math.abs(left - row.scrollLeft) > 0.5) row.scrollLeft = left
       }
@@ -644,6 +651,8 @@ export const LibraryWorks = ({
             <p>
               {search.q ? (
                 'No works match this search.'
+              ) : data.lens === 'new' ? (
+                'Nothing new since your last visit.'
               ) : data.lens !== 'all' ? (
                 'No works here.'
               ) : noLibraryConnected ? (

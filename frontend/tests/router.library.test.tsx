@@ -17777,12 +17777,13 @@ describe('New since the last visit (#1351)', () => {
     expect(await screen.findByText('No works match this search.')).toBeVisible()
   })
 
-  it('keeps a New address open with nothing new: the lens, no count, No works here.', async () => {
+  it('keeps a New address open with nothing new: the lens, no count, its own empty line', async () => {
     const { router } = renderRoute('/library?lens=new', {
       ...createHttp(),
       getLibrary: vi.fn(page([], 0)),
     })
-    expect(await screen.findByText('No works here.')).toBeVisible()
+    expect(await screen.findByText('Nothing new since your last visit.')).toBeVisible()
+    expect(screen.queryByText('No works here.')).toBeNull()
     const lenses = await lensRow()
     const fresh = lenses.getByRole('link', { name: 'New' })
     expect(fresh).toHaveAttribute('aria-current', 'true')
@@ -17795,6 +17796,64 @@ describe('New since the last visit (#1351)', () => {
     ])
     expect(await worksCount()).toHaveTextContent(/^2,026 works · 4 look wrong$/u)
     expect(router.state.location.search).toEqual({ lens: 'new' })
+  })
+
+  it('says nothing is new when an open New list empties after the gap', async () => {
+    let fresh = 2
+    const getLibrary = vi.fn((search: LibrarySearch) =>
+      page(fresh ? [firstWork] : [], fresh)(search),
+    )
+    const { queryClient } = renderRoute('/library?lens=new', { ...createHttp(), getLibrary })
+    expect(await screen.findByRole('button', { name: /^A Book\./u })).toBeVisible()
+    fresh = 0
+    await act(() => queryClient.invalidateQueries({ queryKey: ['library'] }))
+    expect(await screen.findByText('Nothing new since your last visit.')).toBeVisible()
+    expect(screen.queryByText('No works here.')).toBeNull()
+    // Every other lens keeps the shared empty line.
+    cleanup()
+    renderRoute('/library?lens=flagged', { ...createHttp(), getLibrary: vi.fn(page([], 0)) })
+    expect(await screen.findByText('No works here.')).toBeVisible()
+  })
+
+  it.each([
+    ['leaves the row still when only a lens padding is under the fade', 1.8, 0],
+    ['scrolls the row as usual when more than the padding is under it', 10, 10],
+  ])('%s', async (_name, under, scrolled) => {
+    renderRoute('/library?lens=all', { ...createHttp(), getLibrary: vi.fn(page([firstWork], 2)) })
+    const lenses = await lensRow()
+    const looksWrong = await lenses.findByRole('link', { name: 'Looks wrong' })
+    const row = screen.getByRole('navigation', { name: 'Library lenses' })
+    let left = 0
+    Object.defineProperty(row, 'scrollLeft', {
+      configurable: true,
+      get: () => left,
+      set: (value: number) => (left = value),
+    })
+    Object.defineProperty(row, 'clientWidth', { configurable: true, value: 254 })
+    Object.defineProperty(row, 'scrollWidth', { configurable: true, value: 520 })
+    // A 254 px row with 32 px fades; Looks wrong ends `under` px inside the end fade.
+    vi.spyOn(row, 'getBoundingClientRect').mockReturnValue({
+      left: 0,
+      right: 254,
+      width: 254,
+    } as DOMRect)
+    vi.spyOn(looksWrong, 'getBoundingClientRect').mockReturnValue({
+      left: 130,
+      right: 222 + under,
+      width: 92 + under,
+    } as DOMRect)
+    const computed = window.getComputedStyle.bind(window)
+    vi.spyOn(window, 'getComputedStyle').mockImplementation((node, pseudo) => {
+      const style = computed(node, pseudo)
+      if (node === row) return Object.assign(style, { scrollPaddingInlineStart: '32px' })
+      if (node === looksWrong)
+        return Object.assign(style, { paddingInlineStart: '8.8px', paddingInlineEnd: '8.8px' })
+      return style
+    })
+    onTestFinished(() => void vi.restoreAllMocks())
+    act(() => looksWrong.focus())
+    expect(left).toBe(scrolled)
+    expect(row.dataset.more).toBe(scrolled ? 'both' : 'end')
   })
 
   it('watches a New lens that arrives after the row was first laid out', async () => {
