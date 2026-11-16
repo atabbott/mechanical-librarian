@@ -92,7 +92,12 @@ from mechanical_librarian.domain.metadata_report import (
     field_evidence_providers,
     recording_variant_conflict,
 )
-from mechanical_librarian.domain.owner_settings import PROVIDER_LABELS
+from mechanical_librarian.domain.owner_settings import (
+    PROVIDER_LABELS,
+    audio_edition_label,
+    provider_label,
+    provider_source_labels,
+)
 from mechanical_librarian.domain.proposal_set import (
     audiobook_review_scope,
     canonical_target_fields,
@@ -1205,7 +1210,7 @@ def _automatic_field_decision(
     automatic_decision = context.automatic.get(destination)
     automatic_selection_sources: list[str] = []
     if automatic_decision is not None:
-        automatic_selection_sources = _provider_source_labels(
+        automatic_selection_sources = provider_source_labels(
             report,
             list(automatic_sources.get(automatic_source_outcome_ids[destination], ())),
         )
@@ -3155,7 +3160,7 @@ def _report_detail_provider_claims(
         if type(provider) is not dict or provider.get("provider") not in evidence:
             continue
         authority = provider.get("authority")
-        label = _provider_label(authority if type(authority) is str else None)
+        label = provider_label(authority if type(authority) is str else None)
         candidates = provider.get("candidates")
         if type(candidates) is not list:
             continue
@@ -3410,29 +3415,7 @@ def _corroboration_source_labels(
     """Project only closed provider authorities for #416 creator corroboration."""
     if reasons != ["explicit_author_corroborates_untyped_creator"]:
         return []
-    return _provider_source_labels(report, references)
-
-
-def _provider_source_labels(
-    report: MetadataReport,
-    references: list[str],
-) -> list[str]:
-    """Project provider labels for exact evidence references."""
-    by_reference = {
-        claim.reference: _provider_label(provider.authority)
-        for provider in report.providers
-        for candidate in (*provider.candidates, *provider.recording_lookup_candidates)
-        for claim in candidate.claims
-    } | {
-        claim.reference: _audio_edition_label(provider.authority)
-        for provider in report.providers
-        for edition in provider.audio_editions
-        for claim in edition.claims
-    }
-    labels = {
-        by_reference[reference] for reference in references if reference in by_reference
-    }
-    return sorted(labels)
+    return provider_source_labels(report, references)
 
 
 def _choice_contexts(
@@ -3572,7 +3555,7 @@ def _current_value_present(value: object) -> bool:
 def _choice_rationale(rows: list[dict[str, object]]) -> str:
     """Name the sources an alternative came from, or nothing when none is known (#1519)."""
     named = set(PROVIDER_LABELS.values()) | {
-        _audio_edition_label(authority) for authority in PROVIDER_LABELS
+        audio_edition_label(authority) for authority in PROVIDER_LABELS
     }
     return ", ".join(
         sorted(
@@ -3604,11 +3587,6 @@ def _choice_evidence(
         else "external_corroboration",
         "source": _choice_source_label(evidence),
     }
-
-
-def _audio_edition_label(authority: str | None) -> str:
-    """Name a provider's audio edition as such, never as its book (#1642)."""
-    return _provider_label(authority) + " audio edition"
 
 
 def _audio_edition_note(edition: dict[str, object]) -> str:
@@ -3643,7 +3621,7 @@ def _audio_edition_note(edition: dict[str, object]) -> str:
 def _choice_source_label(evidence: dict[str, str | None]) -> str:
     provider = evidence["provider"]
     if provider in PROVIDER_LABELS and evidence["source"] == "audio_edition":
-        return _audio_edition_label(provider)
+        return audio_edition_label(provider)
     if provider in PROVIDER_LABELS:
         return PROVIDER_LABELS[cast("str", provider)]
     if _choice_is_local(evidence):
@@ -3878,7 +3856,7 @@ def _review_unselectable_evidence(
                         "destinations": [destination],
                         "language": value if language else None,
                         "role": "external_observation",
-                        "source": _provider_label(provider.authority),
+                        "source": provider_label(provider.authority),
                         "observation": (
                             f"{label}: {value}. Not offered as a choice. {reason}"
                             + (
@@ -4350,7 +4328,7 @@ def _provider_outcomes(lanes: tuple[ProviderLaneFacts, ...]) -> list[dict[str, o
         {
             "provider_requests": lane.logical_requests,
             "lane_kind": lane.kind,
-            "provider": _provider_label(lane.authority),
+            "provider": provider_label(lane.authority),
             "reason": _ADAPTER_FAULT_REASON
             if lane.adapter_fault
             else _REFUSED_PROVIDER_REASON
@@ -4377,12 +4355,6 @@ def _provider_outcomes(lanes: tuple[ProviderLaneFacts, ...]) -> list[dict[str, o
         }
         for lane in lanes
     ]
-
-
-def _provider_label(authority: str | None) -> str:
-    if authority is None or authority not in PROVIDER_LABELS:
-        return "Provider (name unavailable)"
-    return PROVIDER_LABELS[authority]
 
 
 def _provider_comparison_notices(report: MetadataReport) -> list[str]:

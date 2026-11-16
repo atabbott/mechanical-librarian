@@ -345,9 +345,31 @@ authority and never feeds a write path. Its rules:
 The trigger classification it relies on is read from the live schema with
 `pragma_table_list`, which needs SQLite 3.37 or later.
 
-Activity also keeps its last prepared counts and permission-readiness example
-on that connection and serves them only while the revision and file identity
-are unchanged. A refusal is never kept; it is read again every time.
+Activity also keeps its last prepared counts and the permission check's plan
+examples (a read of at most 100 rows) on that connection and serves them only
+while the revision and file identity are unchanged. A refusal is never kept;
+it is read again every time.
+
+The write plan file has a third query-only reader of its own, beside the
+history and permission readers, so a download never waits for, or holds up,
+either of them. The store keeps a rollback journal, so an open read
+transaction refuses every other connection's commit; a download can last
+minutes and its browser can stall. The export reader therefore reads in
+bounded deferred transactions and holds none while bytes are sent. One short
+transaction reads the total and the ordered list of changes, at most 20,000.
+Each chunk of rows is then read in a transaction of its own, of at most 100
+rows and about a quarter of a second of work, which checks that each listed
+change is still prepared and ends before the chunk is sent. A commit waits at most
+for the read in progress, the list or one chunk. A busy begin is retried for up to 30 seconds, far
+longer than a request's read, and holds no lock meanwhile, so a writer that
+keeps committing delays the next chunk and does not fail the file. The file is therefore not one snapshot: a change that stopped being
+prepared after the list was read is left out and counted, and one prepared
+later is absent. A fault, a browser that goes away or a closing application
+ends the file at the next chunk. A download nobody is reading is stopped
+after a minute, and the page then says the file was not downloaded; a second
+download waits for the first to end. Besides the shared report cache every
+Activity reader uses (#1231), parsed documents are reused only inside one
+such transaction, in bounded caches cleared when it ends (#1336).
 
 ### Library and Attention
 

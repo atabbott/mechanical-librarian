@@ -1137,6 +1137,16 @@ class HumanDecision:
             applications=scope.applications,
         )
 
+    def bound_offer(self, scope: DecisionScope) -> tuple[dict[str, object], ...]:
+        """The offer of ``scope`` this retained fact stands in.
+
+        Its live proposals, or the stored level offer whose digest it bound.
+        """
+        return cast(
+            "tuple[dict[str, object], ...]",
+            self._bound_offer((scope.proposals, *scope.offers), False),
+        )
+
     def validate_new_for(
         self,
         case: ReviewCase,

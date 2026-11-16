@@ -1,15 +1,16 @@
 // The write-permission check in Activity's consent review: what the latest
-// check found, the control that starts the next one, and an example of what a
-// write would change. Moved out of the Activity route under the route-size
-// rule (#1742); the page keeps the check's query, the draft and the consent
+// check found, the control that starts the next one, and the write plan's lead
+// and files (#1336). Moved out of the Activity route under the route-size rule
+// (#1742); the page keeps the check's query, the draft and the consent
 // command.
 import type { UseQueryResult } from '@tanstack/react-query'
 import type { RefObject } from 'react'
 
-import { BuildMismatchError, displayValue } from '../api/http'
+import { BuildMismatchError } from '../api/http'
 import type { ActivityPermissionReadinessView } from '../api/http'
 import { StaleBuildRead } from '../components/StaleBuildRead'
-import { destinationLabel } from '../labels'
+
+import { ActivityWritePlan } from './ActivityWritePlan'
 
 // A permission draft is the readiness check and the ticked libraries, kept
 // against the consent basis it was checked on (#1279).
@@ -30,7 +31,6 @@ export const ActivityPermissionCheck = ({
   basisStale,
   checkButton,
   check,
-  libraryName,
 }: {
   /** Whether the last draft was discarded because its consent basis changed. */
   discarded: boolean
@@ -45,7 +45,6 @@ export const ActivityPermissionCheck = ({
   /** The check button, or Reload once the tab is on an earlier build. */
   checkButton: RefObject<HTMLButtonElement | null>
   check: () => void
-  libraryName: (library: string) => string
 }) => {
   // Another check cannot succeed on an earlier build: only a reload can.
   const staleLead = basisStale
@@ -85,13 +84,7 @@ export const ActivityPermissionCheck = ({
           {!requested ? 'Check write permissions' : 'Check again'}
         </button>
       )}
-      {permission?.example ? (
-        <p>
-          For example, {destinationLabel(permission.example.destination)} in{' '}
-          {libraryName(permission.example.library)} changes from{' '}
-          {displayValue(permission.example.before)} to {displayValue(permission.example.after)}.
-        </p>
-      ) : null}
+      {permission ? <ActivityWritePlan plan={permission.plan} /> : null}
     </>
   )
 }

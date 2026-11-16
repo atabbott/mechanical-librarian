@@ -17,7 +17,9 @@ from mechanical_librarian.interfaces.web.app import (
     _LibraryProgressResponse,
     _PreparationResponse,
 )
+from tests.browser import fidelity_cohort
 from tests.browser.fidelity_cohort import (
+    COHORT_WRITE_PLANS,
     LIBRARY_PROGRESS_STATES,
     LIBRARY_WORKS,
     THROTTLE_LONG_LIBRARY,
@@ -63,6 +65,37 @@ def test_held_case_carries_a_manual_hold() -> None:
     # so the journey can request one (#1755).
     assert not any(field["manual_return_requested"] for field in held["fields"])
     assert not any(field["manual_return_failed"] for field in held["fields"])
+
+
+@pytest.mark.parametrize(
+    "state", tuple(COHORT_WRITE_PLANS), ids=tuple(COHORT_WRITE_PLANS)
+)
+def test_permission_readiness_agrees_with_each_write_plan(
+    state: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every planned field is listed, and its count is its groups' count (#1336)."""
+    plan = COHORT_WRITE_PLANS[state]
+    monkeypatch.setattr(fidelity_cohort, "_COHORT_WRITE_PLAN", plan)
+    readiness = rich_payload("/api/v1/activity/permission-readiness")
+    assert isinstance(readiness, dict)
+    assert readiness["plan"] is plan
+    groups = cast("list[dict[str, object]]", plan["groups"])
+    planned: dict[tuple[str, str], int] = {}
+    for group in groups:
+        key = (cast("str", group["library"]), cast("str", group["destination"]))
+        planned[key] = planned.get(key, 0) + cast("int", group["count"])
+    fields = {
+        (library["library"], field["destination"]): field["prepared"]
+        for library in readiness["capabilities"]
+        for field in library["destinations"]
+    }
+    assert set(planned) <= set(fields)
+    assert {key: count for key, count in fields.items() if count} == planned
+    assert sum(planned.values()) == plan["total"] == readiness["prepared"]["total"]
+    for library in readiness["configured_libraries"]:
+        assert library["prepared"]["total"] == sum(
+            count for (name, _), count in planned.items() if name == library["library"]
+        )
 
 
 def test_activity_carries_a_future_origin_and_every_cover_state() -> None:

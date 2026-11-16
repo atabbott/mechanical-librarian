@@ -88,7 +88,10 @@ CEILING = {
     # through the report and retry constructors: imports and keyword arguments.
     # 3354 since #1385's sign-out refusal (2026-11-15): the offline store
     # refuses signing out other browsers too.
-    "composition.py": 3354,
+    # 3367 since #1336 opened the write plan's export reader beside the
+    # permission reader: one more query-only projection, its window and close,
+    # and one keyword argument at each review application.
+    "composition.py": 3367,
     # 142 since #1372 PR 1c's run_taste_build_reviewer, the taste build's
     # counterpart of run_description_reviewer.
     "contained_reviewer.py": 142,
@@ -150,12 +153,14 @@ RESIDUAL: dict[str, int | None] = {
     # A-U4); a feature split of composition is A-U6, deferred to stage 7.
     # 247 since #1372 passed the taste build service to the review application.
     # 253 since #1385 read the owner verifier from the activation's holder.
-    _C + "compose_store_runtime_generation": 253,
+    # 256 since #1336 passed the write plan's export reader to it.
+    _C + "compose_store_runtime_generation": 256,
     _C + "_compose_setup_runtime_generation": 145,
     # Server entry. Its file-authority branch still duplicates
     # compose_store_runtime_generation: the residual A-U4 kept.
     # 360 since #1372 passed the taste build service to the review application.
-    _C + "run_review_server": 360,
+    # 363 since #1336 passed the write plan's export reader to it.
+    _C + "run_review_server": 363,
     # Constructs the Codex device-auth manager, which tests replace on
     # composition, and the reviewer access around it.
     # 168 since #1372 passed the taste profile daily limit; 182 since PR 1c

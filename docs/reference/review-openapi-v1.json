@@ -2388,56 +2388,6 @@
         "title": "_ActivityEvidence",
         "type": "object"
       },
-      "_ActivityExample": {
-        "additionalProperties": false,
-        "properties": {
-          "after": {
-            "title": "After"
-          },
-          "before": {
-            "title": "Before"
-          },
-          "destination": {
-            "enum": [
-              "title",
-              "subtitle",
-              "authors",
-              "narrators",
-              "series",
-              "genres",
-              "publishedYear",
-              "publishedDate",
-              "publisher",
-              "description",
-              "isbn",
-              "asin",
-              "language",
-              "explicit",
-              "tags",
-              "cover"
-            ],
-            "title": "Destination",
-            "type": "string"
-          },
-          "library": {
-            "title": "Library",
-            "type": "string"
-          },
-          "work_id": {
-            "title": "Work Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "after",
-          "before",
-          "destination",
-          "library",
-          "work_id"
-        ],
-        "title": "_ActivityExample",
-        "type": "object"
-      },
       "_ActivityLapsedConsent": {
         "additionalProperties": false,
         "description": "A library whose write permission no longer applies, and why (#1370).",
@@ -2599,15 +2549,8 @@
             "title": "Configured Libraries",
             "type": "array"
           },
-          "example": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/_ActivityExample"
-              },
-              {
-                "type": "null"
-              }
-            ]
+          "plan": {
+            "$ref": "#/components/schemas/_WritePlan"
           },
           "prepared": {
             "$ref": "#/components/schemas/_ActivityPrepared"
@@ -2618,7 +2561,7 @@
           "capabilities",
           "configured_libraries",
           "prepared",
-          "example"
+          "plan"
         ],
         "title": "_ActivityPermissionReadiness",
         "type": "object"
@@ -12736,6 +12679,142 @@
         ],
         "title": "_UnavailableDecisionConfirmation",
         "type": "object"
+      },
+      "_WritePlan": {
+        "additionalProperties": false,
+        "properties": {
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/_WritePlanGroup"
+            },
+            "maxItems": 1024,
+            "title": "Groups",
+            "type": "array"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "groups"
+        ],
+        "title": "_WritePlan",
+        "type": "object"
+      },
+      "_WritePlanGroup": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "minimum": 0.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "destination": {
+            "enum": [
+              "title",
+              "subtitle",
+              "authors",
+              "narrators",
+              "series",
+              "genres",
+              "publishedYear",
+              "publishedDate",
+              "publisher",
+              "description",
+              "isbn",
+              "asin",
+              "language",
+              "explicit",
+              "tags",
+              "cover"
+            ],
+            "title": "Destination",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "human",
+              "automatic"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "library": {
+            "maxLength": 512,
+            "title": "Library",
+            "type": "string"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/_WritePlanRow"
+            },
+            "maxItems": 25,
+            "title": "Rows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "library",
+          "destination",
+          "kind",
+          "count",
+          "rows"
+        ],
+        "title": "_WritePlanGroup",
+        "type": "object"
+      },
+      "_WritePlanRow": {
+        "additionalProperties": false,
+        "description": "One prepared change in words: no work, item or decision identity (#1336).",
+        "properties": {
+          "authors": {
+            "maxLength": 512,
+            "title": "Authors",
+            "type": "string"
+          },
+          "current": {
+            "maxLength": 512,
+            "title": "Current",
+            "type": "string"
+          },
+          "new": {
+            "maxLength": 512,
+            "title": "New",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 512,
+            "title": "Reason",
+            "type": "string"
+          },
+          "sources": {
+            "items": {
+              "maxLength": 128,
+              "type": "string"
+            },
+            "maxItems": 19,
+            "title": "Sources",
+            "type": "array"
+          },
+          "work": {
+            "maxLength": 512,
+            "title": "Work",
+            "type": "string"
+          }
+        },
+        "required": [
+          "work",
+          "authors",
+          "current",
+          "new",
+          "reason",
+          "sources"
+        ],
+        "title": "_WritePlanRow",
+        "type": "object"
       }
     },
     "securitySchemes": {
@@ -13081,6 +13160,78 @@
           }
         ],
         "summary": "Activity Permission Readiness"
+      }
+    },
+    "/api/v1/activity/write-plan": {
+      "get": {
+        "description": "Send every prepared change as it is made; computed, never stored.\n\nA fault before the first byte answers with its status. After it, the\nconnection ends without completing the body, so a short file is never\nreceived as a complete one.",
+        "operationId": "activity_write_plan_api_v1_activity_write_plan_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "format",
+            "required": true,
+            "schema": {
+              "enum": [
+                "csv",
+                "json"
+              ],
+              "title": "Format",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Activity Write Plan"
       }
     },
     "/api/v1/activity/{connection}/{library}/revoke": {
