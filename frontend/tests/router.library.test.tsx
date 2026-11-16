@@ -43,6 +43,7 @@ import {
   detail,
   idlePreparation,
   library,
+  permissionReadiness,
   readCaseDetail,
   recordedAcknowledgement,
   renderRoute,
@@ -13587,13 +13588,7 @@ describe('Library route', () => {
       // The heading counts works in Library, not the scan's 9 ready cases (#1284).
       getLibrary: vi.fn(async () => ({ ...library, counts: { ...library.counts, all: 12 } })),
     }
-    vi.mocked(http.getActivityPermissionReadiness).mockResolvedValue({
-      backup_ready: true,
-      configured_libraries: view.configured_libraries,
-      capabilities: view.capabilities,
-      prepared: view.prepared,
-      example: view.example,
-    })
+    vi.mocked(http.getActivityPermissionReadiness).mockResolvedValue(permissionReadiness(view))
     renderRoute('/library?lens=all', http)
 
     // One compact notice inside the existing Library flow: what is in Library,

@@ -466,3 +466,17 @@ chosen automatically until #1418.
   under ADR-0013. Live decisions are unchanged at every level, so the
   metadata report, proposal policy, shadow decision policy and decision-set
   versions do not move.
+
+## Amendment: the write plan names a level choice's source (2026-11-15, #1336)
+
+- Status: accepted (accepted by the owner on 2026-11-15)
+
+The write plan (#1336) lists each prepared change with the sources that gave
+its new value. A value the owner chose from a stored level offer is in no live
+proposal, and the record it cites may be a retained refused answer, so its row
+named no source. The plan row joins the activation amendment's "Readers": for
+a recorded owner choice it finds the alternative in the offer that choice
+bound, and from a retained refused answer it reads the provider's name only.
+It reads no other part of the record and offers nothing. What is written, and
+whether it may be written, do not depend on it. The review page already names
+the same source for the same choice.

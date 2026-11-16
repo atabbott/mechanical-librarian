@@ -1854,6 +1854,21 @@ def _server(
             lambda *_: None,
             activity_only=True,
         )
+    field_application = (
+        consent_application
+        if consent_libraries
+        else _BrowserActivityApplication()
+        if not isbn_fixture
+        and isbn_title_fixture is None
+        and synopsis_fixture is None
+        and not work_review_fixture
+        and not work_route_cover
+        and language_fixture is None
+        and genre_fixture is None
+        and series_fixture is None
+        and not activity_checks_fixture
+        else None
+    )
     app = create_transport_test_app(
         repository,
         review_configuration,
@@ -1868,21 +1883,10 @@ def _server(
                 else ()
             )
         ),
-        field_application=(
-            consent_application
-            if consent_libraries
-            else _BrowserActivityApplication()
-            if not isbn_fixture
-            and isbn_title_fixture is None
-            and synopsis_fixture is None
-            and not work_review_fixture
-            and not work_route_cover
-            and language_fixture is None
-            and genre_fixture is None
-            and series_fixture is None
-            and not activity_checks_fixture
-            else None
-        ),
+        field_application=field_application,
+        export_projection=field_application
+        if isinstance(field_application, _BrowserActivityApplication)
+        else None,
         activity_projection=language_activity,
         react_asset_loader=ReactAssetLoader(Path(os.environ["ML_REACT_ASSET_DIR"])),
         cover_considerations=cover_considerations,

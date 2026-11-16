@@ -16,10 +16,7 @@ from mechanical_librarian.application.cover_consideration import (
     _UNNAMED_COVER_EVIDENCE_STATEMENT,
 )
 from mechanical_librarian.application.owner_settings import file_settings_projection
-from mechanical_librarian.application.review_web import (
-    _choice_source_label,
-    _provider_label,
-)
+from mechanical_librarian.application.review_web import _choice_source_label
 from mechanical_librarian.domain.field_outcomes import (
     _ISO_639_ALIASES,
     MAX_LIBRARY_LANGUAGES,
@@ -35,6 +32,7 @@ from mechanical_librarian.domain.owner_settings import (
     ProviderAdapter,
     SettingsView,
     provider_capabilities,
+    provider_label,
 )
 from mechanical_librarian.domain.validation import OWNER_PASSWORD_MINIMUM_CHARACTERS
 from mechanical_librarian.infrastructure.settings_authority import (
@@ -453,12 +451,12 @@ def test_every_surface_states_one_canonical_provider_label() -> None:
         adapter: adapter for adapter in PROVIDER_LABELS
     }
     for adapter, label in PROVIDER_LABELS.items():
-        assert _provider_label(adapter) == label
+        assert provider_label(adapter) == label
         assert (
             _choice_source_label({"provider": adapter, "source": "provider"}) == label
         )
-    assert _provider_label(None) == "Provider (name unavailable)"
-    assert _provider_label("unknown_adapter") == "Provider (name unavailable)"
+    assert provider_label(None) == "Provider (name unavailable)"
+    assert provider_label("unknown_adapter") == "Provider (name unavailable)"
     assert _choice_source_label({"provider": None, "source": "local"}) == (
         "Local library record"
     )
