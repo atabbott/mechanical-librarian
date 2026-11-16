@@ -571,7 +571,12 @@ describe('shipped first-run setup script', () => {
     vi.stubGlobal('fetch', fetch)
     runSetup()
 
-    const password = await screen.findByLabelText('Owner password')
+    // The step's heading takes focus on the next frame. Let it settle, as an
+    // owner who types first always does, so that frame cannot land after the
+    // refusal and move focus off the password.
+    const claimHeading = await screen.findByRole('heading', { name: 'Create your password' })
+    await waitFor(() => expect(claimHeading).toHaveFocus())
+    const password = screen.getByLabelText('Owner password')
     const confirmation = screen.getByLabelText('Confirm owner password')
     const claimToken = screen.getByLabelText('Setup claim token')
     const form = password.closest('form')
