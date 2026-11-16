@@ -368,6 +368,10 @@ _SOURCE_CLAIM_BASES: Mapping[FieldSource, frozenset[str]] = MappingProxyType(
 CLAIM_BASES = frozenset(
     basis for bases in _SOURCE_CLAIM_BASES.values() for basis in bases
 )
+# An owner link's identifier (#1477, ADR-0104) is a claim too, but only as a
+# lane input: like a companion EPUB's claims it never enters a report's local
+# claims, so it has no owner-facing source and is never a field value.
+OWNER_LINK_CLAIM_BASIS = "owner_link"
 # The bases whose ASIN was stated *about* a recording rather than read off it:
 # the one the target asserts, and the one an earlier preparation of the same
 # track set admitted and this one carries forward (#1316). Neither is one of the
@@ -1580,7 +1584,13 @@ class LocalClaim:
             ClaimKind.ASIN,
         }:
             raise ReportValueError("target metadata claim kind is invalid")
-        # A carried admission names one edition and nothing else (#1316).
+        # A carried admission and an owner link each name one edition and
+        # nothing else (#1316, #1477).
+        if self.basis == OWNER_LINK_CLAIM_BASIS and (
+            self.kind not in {ClaimKind.ISBN, ClaimKind.ASIN}
+            or self.scope is not ClaimScope.EDITION
+        ):
+            raise ReportValueError("owner link claim kind is invalid")
         if self.basis == "prior_admission" and (
             self.kind is not ClaimKind.ASIN or self.scope is not ClaimScope.EDITION
         ):
@@ -1640,7 +1650,7 @@ class LocalClaim:
             "not_applicable",
         }:
             raise ReportValueError("claim applicability is invalid")
-        if self.basis not in CLAIM_BASES:
+        if self.basis not in CLAIM_BASES and self.basis != OWNER_LINK_CLAIM_BASIS:
             raise ReportValueError("claim basis is invalid")
         if self.checksum not in {
             "valid_isbn_10",

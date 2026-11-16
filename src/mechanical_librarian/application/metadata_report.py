@@ -174,6 +174,7 @@ from mechanical_librarian.domain.metadata_report import (
     work_discovery_lane_payloads,
     work_ladder_diagnostics,
 )
+from mechanical_librarian.domain.owner_link import OwnerLink
 from mechanical_librarian.domain.validation import (
     nonempty_text,
     optional,
@@ -2386,6 +2387,9 @@ class ReportRepository(Protocol):
     def retained_cover_original(
         self, connection: str, library: str, work_id: str
     ) -> tuple[str, str, str] | None: ...
+    def current_owner_link(
+        self, connection: str, library: str, item: str
+    ) -> OwnerLink | None: ...
     def close(self) -> None: ...
 
 
