@@ -33,13 +33,16 @@ from mechanical_librarian.domain.metadata_policy import (
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     TargetDestination,
+    TargetFieldState,
 )
 from mechanical_librarian.domain.proposal_set import (
     ProposalSet,
     audiobook_review_scope,
     evaluate_report,
 )
+from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.rich_metadata_preview import (
+    RICH_PREVIEW_DESTINATIONS,
     RichFieldPreview,
     RichMetadataPreview,
     compile_rich_metadata_preview,
@@ -50,7 +53,9 @@ from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_RICH_FIELDS,
     public_summary,
 )
+from mechanical_librarian.domain.shadow_decision import decide_shadow_packet
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
+from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
 
 if TYPE_CHECKING:
     from mechanical_librarian.application.configuration import ApplicationConfiguration
@@ -228,11 +233,28 @@ def current_resolved_policy(
 
 
 @dataclass(frozen=True, slots=True)
+class PolicyPreviewCover:
+    """What a sampled work's current cover comparison decided, without images.
+
+    ``outcome`` is the measured stage's, or None when the comparison is stale,
+    belongs to another report or predates the stage. ``fillable`` says a
+    confirmed cover is recommended for a cover known to be empty.
+    """
+
+    fetching: bool
+    outcome: str | None
+    reason: str | None
+    fillable: bool
+
+
+@dataclass(frozen=True, slots=True)
 class PolicyPreviewLibraryCapture:
     library: str
     resolution: ResolvedMetadataPolicy | None
     current_unapplied_count: int
     pairs: tuple[tuple[MetadataReport, ProposalSet], ...]
+    # One per pair; none at all reads as no work having a comparison.
+    covers: tuple[PolicyPreviewCover | None, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -249,6 +271,8 @@ class PolicyFieldComparison:
     active_destination: str
     draft_destination: str
     changed: bool
+    # The library field the row is about: one policy field can govern two.
+    destination: str
 
     def to_data(self) -> dict[str, object]:
         return {
@@ -257,6 +281,7 @@ class PolicyFieldComparison:
             "active_destination": self.active_destination,
             "draft_destination": self.draft_destination,
             "changed": self.changed,
+            "destination": self.destination,
         }
 
 
@@ -390,6 +415,357 @@ class PolicyImpactRepository(PolicyPreviewRepository, Protocol):
     def list_shadow_outcomes(self, limit: int) -> tuple[tuple[str, int], ...]: ...
 
 
+def _rich_field_changed(
+    before: RichFieldPreview,
+    after: RichFieldPreview,
+    active_destination: str,
+    draft_destination: str,
+    report: MetadataReport,
+    compiled: tuple[ProposalSet, ProposalSet],
+) -> bool:
+    """Whether the draft, and not the library's own state, changes this field."""
+    return (
+        (before.outcome, before.desired_value, before.qualified_value)
+        != (after.outcome, after.desired_value, after.qualified_value)
+        or (
+            audiobook_review_scope(report) == "work"
+            and before.field in {"description_fill", "genres", "series"}
+            and any(
+                bool(decision_actions({"result": previous.to_data()}))
+                != bool(decision_actions({"result": following.to_data()}))
+                for previous, following in zip(
+                    compiled[0].results, compiled[1].results, strict=True
+                )
+                if previous.destination is RICH_PREVIEW_DESTINATIONS[before.field]
+            )
+        )
+        or (
+            active_destination != draft_destination
+            and (
+                before.source_candidate_id is not None
+                or after.source_candidate_id is not None
+                or (
+                    {active_destination, draft_destination} == {"ask", "automatic"}
+                    and before.field in {"genres", "tags"}
+                    and audiobook_review_scope(report) != "work"
+                    and any(
+                        projected.outcome == "no_op"
+                        and projected.reason == "target_preserved"
+                        and projected.option == "fill_empty"
+                        and projected.target_state == "value"
+                        and select_automatic_taxonomy_candidate(
+                            report, result, projected.field, projected.option
+                        )[0]
+                        is not None
+                        for route, projected, proposal in (
+                            (active_destination, before, compiled[0]),
+                            (draft_destination, after, compiled[1]),
+                        )
+                        if route == "automatic"
+                        for result in proposal.results
+                        if result.destination.value == projected.field
+                    )
+                )
+            )
+        )
+    )
+
+
+# The fields the outcome compiler decides, each under the policy field that
+# governs it. Narrators exist only on an audiobook.
+_OUTCOME_DESTINATIONS: Final = (
+    ("title", "title_layout"),
+    ("authors", "contributor_names"),
+    ("narrators", "contributor_names"),
+    ("publishedDate", "date_precision"),
+    ("publisher", "publisher_preference"),
+    ("language", "language_rendering"),
+)
+
+
+def _outcome_fields(
+    policy: ResolvedMetadataPolicy,
+    generation: int,
+    report: MetadataReport,
+    proposal: ProposalSet,
+    fields: tuple[tuple[str, str], ...],
+) -> tuple[tuple[str, RichFieldPreview], ...]:
+    """One work's title, contributor, date, publisher and language results.
+
+    The real in-memory pipeline runs to the outcome set and stops there, as
+    the level derivation does. Nothing is stored, and what admission binds or
+    refuses afterwards is not previewed (ADR-0048). A result is what the
+    policy does, never the identity it does it under: a write is `projected`,
+    a value left to the owner is `suggested`, and anything else is `no_op`.
+    """
+    case = ReviewCase.create(proposal, report)
+    decisions = decide_shadow_packet(
+        ShadowReviewPacket.create(case, proposal, report, include_policy_ignored=True)
+    )
+    outcomes = {
+        outcome.destination: outcome
+        for outcome in ShadowOutcomeSet.create(
+            case,
+            decisions,
+            policy,
+            generation,
+            report,
+            proposal,
+            media_kind=case.media_kind,
+        ).outcomes
+    }
+    values = {
+        alternative.alternative_id: alternative.value.to_data()["value"]
+        for result in proposal.results
+        for alternative in result.alternatives
+    }
+    targets = {field.destination.value: field for field in report.target.fields}
+    settings, options = dict(policy.destinations), dict(policy.options)
+    previews = []
+    for destination, field in fields:
+        outcome, target = outcomes.get(destination), targets[destination]
+        desired = (
+            values.get(outcome.candidate_id)
+            if outcome is not None
+            and outcome.candidate_id is not None
+            and outcome.disposition in {"candidate", "manual"}
+            else None
+        )
+        asked = (
+            desired is not None
+            and outcome is not None
+            and outcome.disposition == "manual"
+        )
+        previews.append(
+            (
+                destination,
+                RichFieldPreview(
+                    field,
+                    options[field],
+                    target.state.value,
+                    target.to_data()["value"]
+                    if target.state is TargetFieldState.VALUE
+                    else None,
+                    "no_op"
+                    if desired is None
+                    else "suggested"
+                    if asked
+                    else "projected",
+                    desired,
+                    "policy_ignored"
+                    if settings[field] == "ignore"
+                    else "automatic_unqualified"
+                    if asked and settings[field] == "automatic"
+                    else None,
+                ),
+            )
+        )
+    return tuple(previews)
+
+
+# What each measured stage that neither fills nor is ignored reads as.
+_COVER_STAGES: Final[dict[str, tuple[str, str | None, str | None]]] = {
+    "keep": ("no_op", "Current cover kept", "current_cover_kept"),
+    "hold": ("no_op", "Current cover kept", None),
+    "empty": ("no_op", None, "no_confirmed_candidates"),
+    "replace": ("suggested", "A replacement is suggested", None),
+    "suggest": ("suggested", "A replacement is suggested", None),
+}
+
+
+def _cover_field(
+    policy: ResolvedMetadataPolicy,
+    report: MetadataReport,
+    cover: PolicyPreviewCover | None,
+) -> RichFieldPreview:
+    """A cover's result in words, from the comparison already made.
+
+    Only the setting varies with a draft, so the stored stage answers both
+    policies with no request and no image. A fill is written only for an
+    ebook with a known-empty cover; a replacement is a suggestion, because
+    none is automatic in this release. Holds, earlier owner choices, posture
+    and safety are live state the preview does not read. No reference,
+    artifact id or digest is carried: the values are words.
+    """
+    setting = dict(policy.destinations)["cover_order"]
+    target = next(
+        field
+        for field in report.target.fields
+        if field.destination is TargetDestination.COVER
+    )
+    if cover is None:
+        result: tuple[str, str | None, str | None] = (
+            "not_previewed",
+            None,
+            "cover_not_compared",
+        )
+    elif cover.fetching:
+        result = ("not_previewed", None, "provider_fetching")
+    elif cover.outcome is None:
+        result = ("not_previewed", None, "cover_compared_next_scan")
+    elif setting not in {"automatic", "ask"}:
+        result = ("no_op", None, "policy_ignored")
+    elif cover.outcome == "fill":
+        result = (
+            ("projected", "Filled with a confirmed cover")
+            if setting == "automatic" and cover.fillable and report.audio is None
+            else ("suggested", "A confirmed cover is suggested")
+        ) + ("deterministic_confirmed_order",)
+    else:
+        outcome, words, reason = _COVER_STAGES[cover.outcome]
+        result = (outcome, words, cover.reason or reason)
+    return RichFieldPreview(
+        "cover_order",
+        dict(policy.options)["cover_order"],
+        target.state.value,
+        "Current cover" if target.state is TargetFieldState.VALUE else None,
+        *result,
+    )
+
+
+def _outcome_comparisons(
+    policies: tuple[ResolvedMetadataPolicy, ResolvedMetadataPolicy],
+    generation: int,
+    report: MetadataReport,
+    compiled: tuple[ProposalSet, ProposalSet],
+    cover: PolicyPreviewCover | None,
+    categories: tuple[str, ...],
+) -> tuple[PolicyFieldComparison, ...]:
+    """The fields the draft's changed rules govern beyond the rich eight.
+
+    Only a field whose setting or option the draft changes for this library is
+    compiled, so an unchanged library costs no outcome compile at all.
+    """
+    fields = tuple(
+        (destination, field)
+        for destination, field in _OUTCOME_DESTINATIONS
+        if field in categories
+        and (destination != "narrators" or report.audio is not None)
+    )
+    sides = [
+        (
+            *(
+                _outcome_fields(policy, generation, report, proposal, fields)
+                if fields
+                else ()
+            ),
+            *(
+                (("cover", _cover_field(policy, report, cover)),)
+                if "cover_order" in categories
+                else ()
+            ),
+        )
+        for policy, proposal in zip(policies, compiled, strict=True)
+    ]
+    settings = [dict(policy.destinations) for policy in policies]
+    return tuple(
+        PolicyFieldComparison(
+            before,
+            after,
+            settings[0][before.field],
+            settings[1][after.field],
+            (before.outcome, before.desired_value)
+            != (after.outcome, after.desired_value),
+            destination,
+        )
+        for (destination, before), (_, after) in zip(*sides, strict=True)
+    )
+
+
+def _library_impact(
+    captured: PolicyPreviewLibraryCapture,
+    active: ResolvedMetadataPolicy,
+    resolved: ResolvedMetadataPolicy,
+    generation: int,
+) -> LibraryPolicyImpact:
+    count, pairs = captured.current_unapplied_count, captured.pairs
+    resolved_options = dict(resolved.options)
+    resolved_destinations = dict(resolved.destinations)
+    active_options = dict(active.options)
+    active_destinations = dict(active.destinations)
+    categories = tuple(
+        field
+        for field in OPTION_CATALOGUE
+        if resolved_options[field] != active_options[field]
+        or resolved_destinations[field] != active_destinations[field]
+    )
+    if type(count) is not int or count < len(pairs):
+        raise MetadataPolicyApplicationError("policy preview is unavailable")
+    # The stored pair proves exact-current lineage. Re-evaluate its
+    # immutable report through the existing pure proposal compiler so
+    # a changed draft receives a new exact policy binding without
+    # mutating or retargeting the persisted proposal.
+    if any(
+        proposal.report_id != report.report_id
+        or proposal.target_fingerprint != report.target.fingerprint
+        for report, proposal in pairs
+    ):
+        raise MetadataPolicyApplicationError("policy preview is unavailable")
+    # Keep both pure proposal results for meaningful candidate routing:
+    # a preserved incumbent has no selected source ID, but can still
+    # have a supported candidate whose review destination changed.
+    compiled_pairs = tuple(
+        (
+            evaluate_report(report, active.resolved_id, active_destinations),
+            evaluate_report(report, resolved.resolved_id, resolved_destinations),
+        )
+        for report, _ in pairs
+    )
+    active_cases = tuple(
+        compile_rich_metadata_preview(active, report, compiled[0])
+        for (report, _), compiled in zip(pairs, compiled_pairs, strict=True)
+    )
+    cases = tuple(
+        compile_rich_metadata_preview(resolved, report, compiled[1])
+        for (report, _), compiled in zip(pairs, compiled_pairs, strict=True)
+    )
+    covers = captured.covers or (None,) * len(pairs)
+    comparisons = tuple(
+        PolicyCaseComparison(
+            proposal.media_kind,
+            (
+                *(
+                    PolicyFieldComparison(
+                        before,
+                        after,
+                        active_destinations[before.field],
+                        resolved_destinations[after.field],
+                        _rich_field_changed(
+                            before,
+                            after,
+                            active_destinations[before.field],
+                            resolved_destinations[after.field],
+                            report,
+                            compiled,
+                        ),
+                        RICH_PREVIEW_DESTINATIONS[before.field].value,
+                    )
+                    for before, after in zip(old.fields, new.fields, strict=True)
+                ),
+                *_outcome_comparisons(
+                    (active, resolved), generation, report, compiled, cover, categories
+                ),
+            ),
+        )
+        for old, new, (report, proposal), compiled, cover in zip(
+            active_cases, cases, pairs, compiled_pairs, covers, strict=True
+        )
+    )
+    return LibraryPolicyImpact(
+        library=captured.library,
+        affected_categories=categories,
+        current_unapplied_count=count,
+        resolved_policy_id=resolved.resolved_id,
+        cases=cases,
+        cases_total=count,
+        cases_truncated=count > len(pairs),
+        work_labels=tuple(
+            report.target.current_title or "Untitled" for report, _ in pairs
+        ),
+        comparisons=comparisons,
+    )
+
+
 def preview_policy(
     profile: MetadataPolicyProfile,
     libraries: tuple[str, ...],
@@ -427,164 +803,8 @@ def preview_policy(
                 or active.library != library
             ):
                 raise MetadataPolicyApplicationError("policy preview is unavailable")
-            count = captured.current_unapplied_count
-            pairs_total, pairs = count, captured.pairs
-            resolved_options = dict(resolved.options)
-            resolved_destinations = dict(resolved.destinations)
-            active_options = dict(active.options)
-            active_destinations = dict(active.destinations)
-            categories = tuple(
-                field
-                for field in OPTION_CATALOGUE
-                if resolved_options[field] != active_options[field]
-                or resolved_destinations[field] != active_destinations[field]
-            )
-            if type(count) is not int or count < len(pairs):
-                raise MetadataPolicyApplicationError("policy preview is unavailable")
-            # The stored pair proves exact-current lineage. Re-evaluate its
-            # immutable report through the existing pure proposal compiler so
-            # a changed draft receives a new exact policy binding without
-            # mutating or retargeting the persisted proposal.
-            if any(
-                proposal.report_id != report.report_id
-                or proposal.target_fingerprint != report.target.fingerprint
-                for report, proposal in pairs
-            ):
-                raise MetadataPolicyApplicationError("policy preview is unavailable")
-            # Keep both pure proposal results for meaningful candidate routing:
-            # a preserved incumbent has no selected source ID, but can still
-            # have a supported candidate whose review destination changed.
-            compiled_pairs = tuple(
-                tuple(
-                    evaluate_report(
-                        report, policy.resolved_id, dict(policy.destinations)
-                    )
-                    for policy in (active, resolved)
-                )
-                for report, _ in pairs
-            )
-            active_cases = tuple(
-                compile_rich_metadata_preview(active, report, compiled[0])
-                for (report, _), compiled in zip(pairs, compiled_pairs, strict=True)
-            )
-            cases = tuple(
-                compile_rich_metadata_preview(resolved, report, compiled[1])
-                for (report, _), compiled in zip(pairs, compiled_pairs, strict=True)
-            )
-            comparisons = tuple(
-                PolicyCaseComparison(
-                    proposal.media_kind,
-                    tuple(
-                        PolicyFieldComparison(
-                            before,
-                            after,
-                            active_destinations[before.field],
-                            resolved_destinations[after.field],
-                            (
-                                before.outcome,
-                                before.desired_value,
-                                before.qualified_value,
-                            )
-                            != (
-                                after.outcome,
-                                after.desired_value,
-                                after.qualified_value,
-                            )
-                            or (
-                                audiobook_review_scope(report) == "work"
-                                and before.field
-                                in {"description_fill", "genres", "series"}
-                                and any(
-                                    bool(
-                                        decision_actions({"result": previous.to_data()})
-                                    )
-                                    != bool(
-                                        decision_actions(
-                                            {"result": following.to_data()}
-                                        )
-                                    )
-                                    for previous, following in zip(
-                                        compiled_pair[0].results,
-                                        compiled_pair[1].results,
-                                        strict=True,
-                                    )
-                                    if previous.destination
-                                    is {
-                                        "description_fill": TargetDestination.DESCRIPTION,
-                                        "genres": TargetDestination.GENRES,
-                                        "series": TargetDestination.SERIES,
-                                    }[before.field]
-                                )
-                            )
-                            or (
-                                active_destinations[before.field]
-                                != resolved_destinations[after.field]
-                                and (
-                                    before.source_candidate_id is not None
-                                    or after.source_candidate_id is not None
-                                    or (
-                                        {
-                                            active_destinations[before.field],
-                                            resolved_destinations[after.field],
-                                        }
-                                        == {"ask", "automatic"}
-                                        and before.field in {"genres", "tags"}
-                                        and audiobook_review_scope(report) != "work"
-                                        and any(
-                                            projected.outcome == "no_op"
-                                            and projected.reason == "target_preserved"
-                                            and projected.option == "fill_empty"
-                                            and projected.target_state == "value"
-                                            and select_automatic_taxonomy_candidate(
-                                                report,
-                                                result,
-                                                projected.field,
-                                                projected.option,
-                                            )[0]
-                                            is not None
-                                            for route, projected, compiled in (
-                                                (
-                                                    active_destinations[before.field],
-                                                    before,
-                                                    compiled_pair[0],
-                                                ),
-                                                (
-                                                    resolved_destinations[after.field],
-                                                    after,
-                                                    compiled_pair[1],
-                                                ),
-                                            )
-                                            if route == "automatic"
-                                            for result in compiled.results
-                                            if result.destination.value
-                                            == projected.field
-                                        )
-                                    )
-                                )
-                            ),
-                        )
-                        for before, after in zip(old.fields, new.fields, strict=True)
-                    ),
-                )
-                for old, new, (report, proposal), compiled_pair in zip(
-                    active_cases, cases, pairs, compiled_pairs, strict=True
-                )
-            )
-            work_labels = tuple(
-                report.target.current_title or "Untitled" for report, _ in pairs
-            )
             impacts.append(
-                LibraryPolicyImpact(
-                    library=library,
-                    affected_categories=categories,
-                    current_unapplied_count=count,
-                    resolved_policy_id=resolved.resolved_id,
-                    cases=cases,
-                    cases_total=pairs_total,
-                    cases_truncated=pairs_total > len(pairs),
-                    work_labels=work_labels,
-                    comparisons=comparisons,
-                )
+                _library_impact(captured, active, resolved, capture.generation)
             )
     except MetadataPolicyApplicationError:
         raise

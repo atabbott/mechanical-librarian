@@ -2776,6 +2776,7 @@ class _PolicyFieldComparisonResponse(_ClosedModel):
     active_destination: Literal["ask", "automatic", "ignore", "unsupported"]
     draft_destination: Literal["ask", "automatic", "ignore", "unsupported"]
     changed: bool
+    destination: str
 
 
 class _PolicyCaseComparisonResponse(_ClosedModel):
