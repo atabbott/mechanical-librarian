@@ -152,12 +152,15 @@ brackets are GitHub issues.
   lens, until you dismiss the run. Activity has a Library progress card with
   the same counts per library and the works that need you per field. Counts of
   works group their digits (#1335).
-- **Clean rebuild required.** Library has a Looks wrong lens, second after All,
+- **Clean rebuild required.** Library has a Looks wrong lens, after All,
   for works whose current title, authors or narrators have a shape that is
   usually a mistake, such as a title that is only "Disc 1" or in capitals. Each
   row names what was found, and the count follows the Works count as "37 look
   wrong". Nothing is changed. The findings are stored with each report, so the
   database records `value-flag-rules-v1` (#1334).
+- **Clean rebuild required.** While works have arrived since your last visit,
+  Library has a New lens after All, with their count. Every device shares the
+  same last visit (#1351).
 - Library takes single keys for review: J and K move between fields and works,
   1 to 3 choose a value, E enters your own value, U withdraws your decision on
   the open field and ? lists the keys. Keys in the Library toolbar turns them

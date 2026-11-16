@@ -16,6 +16,7 @@
           "all": 1,
           "flagged": 0,
           "needs_attention": 0,
+          "new": 0,
           "no_attention_needed": 0,
           "not_matched": 1,
           "preparation_failed": 0
@@ -29,6 +30,7 @@
           "all": 1,
           "flagged": 0,
           "needs_attention": 1,
+          "new": 0,
           "no_attention_needed": 0,
           "not_matched": 0,
           "preparation_failed": 0
@@ -41,6 +43,7 @@
       "all": 2,
       "flagged": 0,
       "needs_attention": 1,
+      "new": 0,
       "no_attention_needed": 0,
       "not_matched": 1,
       "preparation_failed": 0

@@ -114,7 +114,7 @@ Tables fall into six kinds. The kind decides the table's write rule.
 | Current pointers | Updated in the transaction that publishes or admits their target | `current_metadata_reports`, `current_metadata_report_lineages`, `current_review_case_lineages`, `current_review_packages`, `current_cover_considerations`, `current_cover_selection_authorities`, `current_description_advice`, `current_description_decisions`, `review_case_episodes`, `review_case_level_reconciliation` |
 | Derived facts | Written only by triggers, in the same statement or transaction as their source | `review_case_field_facts`, `shadow_outcome_field_facts`, `metadata_report_browse_facts`, `metadata_report_browse_authors`, `metadata_report_value_flags`, `proposal_set_browse_facts`, `review_attention_facts` |
 | Operational and recovery state | Mutable state machines with their own restart rules | `review_preparation_scans`, `review_preparation_work`, `review_preparation_absences`, `review_preparation_connection_conditions`, `review_preparation_presentation`, `description_preparation_pending`, `description_advice_attempts`, `provider_recovery_outbox`, `metadata_policy_transitions`, `metadata_policy_transition_items`, `metadata_policy_resolutions`, `field_effects`, `field_effect_actions`, `field_effect_cleanups` |
-| Controls, settings and credentials | Singletons or scoped rows changed only by their own command | `metadata_policy_state`, `review_preparation_control`, `automatic_safety_state`, `field_effect_control`, `field_effect_suspensions`, `field_effect_authorities`, `field_effect_consents`, `field_effect_manual_holds`, `browse_fact_identity`, `owner_settings`, `owner_setting_secrets`, `reviewer_access`, `reviewer_access_secrets` |
+| Controls, settings and credentials | Singletons or scoped rows changed only by their own command | `metadata_policy_state`, `review_preparation_control`, `automatic_safety_state`, `field_effect_control`, `field_effect_suspensions`, `field_effect_authorities`, `field_effect_consents`, `field_effect_manual_holds`, `browse_fact_identity`, `library_visit`, `owner_settings`, `owner_setting_secrets`, `reviewer_access`, `reviewer_access_secrets` |
 
 There is also one view, `review_attention_refresh`, used only to drive
 attention-fact maintenance (see [Derived facts](#derived-facts)).
@@ -174,6 +174,12 @@ What the main aggregates mean, where the table names alone do not say:
 - **Provider recovery hand-off.** `provider_recovery_outbox` makes each
   package cutover durable before it is handed to the provider-recovery
   database; it keeps replay and acknowledgement state.
+- **The Library visit.** `library_visit` is a singleton of listing positions,
+  the last `rowid` of `current_review_packages`, `review_preparation_work` and
+  `metadata_reports`, written only by the visit command. A work is new while
+  its row lies past them, so those rows keep their place. A package's
+  `package_position` is never given out twice
+  ([ADR-0103](decisions/0103-keep-the-library-visit-on-the-server.md)).
 - **Settings and credentials.** `owner_settings` is a revisioned singleton
   that also holds incomplete first-run setup state.
   `owner_setting_secrets` and `reviewer_access_secrets` hold credentials;

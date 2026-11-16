@@ -294,6 +294,8 @@ _BRIDGE_POPULATED_TABLES = {
     "metadata_report_cover_references",
     "metadata_report_value_flags",
     "metadata_reports",
+    # The package positions the bridge's inserts gave out (#1351).
+    "sqlite_sequence",
 }
 
 
@@ -856,6 +858,21 @@ def _validate_output(path: Path, bridge_data: _BridgeData) -> tuple[int, int]:
             or current_files != bridge_data.current_files
             or current_lineages != bridge_data.current_lineages
             or review_packages != _review_package_rows(bridge_data.current_lineages)
+            # Each package took the next position, and SQLite recorded the last.
+            or connection.execute(
+                "SELECT count(*)=COALESCE(max(package_position),0),"
+                "(SELECT json_group_array(json_array(name,seq)) FROM sqlite_sequence) "
+                "FROM current_review_packages"
+            ).fetchone()
+            != (
+                1,
+                json.dumps(
+                    [["current_review_packages", len(review_packages)]]
+                    if review_packages
+                    else [],
+                    separators=(",", ":"),
+                ),
+            )
         ):
             raise MetadataReportError("qualification-state output is incompatible")
         baseline = sqlite3.connect(":memory:", isolation_level=None)

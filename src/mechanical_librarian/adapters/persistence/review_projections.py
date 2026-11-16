@@ -131,13 +131,15 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             [str, int], tuple[dict[str, object], ...]
         ],
         read_current_library_page: Callable[
-            [str | None, int, int, LibraryLensFilter | None, LibraryLabels],
+            [str | None, int, int, LibraryLensFilter | None, LibraryLabels, int],
             ReviewLibraryPage,
         ],
         read_current_attention_page: Callable[
             [str | None, int, int, LibraryLabels], ReviewAttentionPage
         ],
-        read_current_library_progress: Callable[[LibraryLabels], ReviewLibraryProgress],
+        read_current_library_progress: Callable[
+            [LibraryLabels, int], ReviewLibraryProgress
+        ],
         current_cover_authority: Callable[[], tuple[str | None, str | None]],
         current_resolved_metadata_policy: Callable[
             [str], ResolvedMetadataPolicy | None
@@ -677,10 +679,11 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         lens: LibraryLensFilter | None,
         library_labels: LibraryLabels = (),
         validated: ValidatedDocumentCache | None = None,
+        now: int = 0,
     ) -> ReviewLibrarySnapshot:
         with self._consistent_review_read():
             page = self.read_current_library_page(
-                search, limit, offset, lens, library_labels
+                search, limit, offset, lens, library_labels, now
             )
             projected_rows: list[
                 tuple[
@@ -799,6 +802,8 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 match_reasons=page.match_reasons,
                 preparation_failed_total=page.preparation_failed_total,
                 flagged_total=page.flagged_total,
+                new_total=page.new_total,
+                listing=page.listing,
                 decision_scopes=tuple(scopes),
             )
         return snapshot
@@ -1115,9 +1120,9 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         return snapshot
 
     def read_review_library_progress(
-        self, library_labels: LibraryLabels = ()
+        self, library_labels: LibraryLabels = (), now: int = 0
     ) -> ReviewLibraryProgress:
         # Its work and field statements are one answer only on one snapshot.
         with self._consistent_review_read():
-            progress = self.read_current_library_progress(library_labels)
+            progress = self.read_current_library_progress(library_labels, now)
         return progress

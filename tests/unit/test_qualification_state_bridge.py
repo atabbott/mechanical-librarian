@@ -483,9 +483,16 @@ def test_prior_v22_output_is_rejected_without_mutating_any_file(
         ]
         for removal_kind in ("trigger", "view", "index", "table"):
             for kind, name, statement in extra:
-                if kind == removal_kind and statement is not None:
+                if (
+                    kind == removal_kind
+                    and statement is not None
+                    and name != "sqlite_sequence"
+                ):
                     connection.execute(f'DROP {kind.upper()} "{name}"')
         connection.execute("PRAGMA writable_schema=ON")
+        # SQLite refuses to drop its sequence table, which the predecessor
+        # never had (#1351).
+        connection.execute("DELETE FROM sqlite_master WHERE name='sqlite_sequence'")
         for kind, name, statement in predecessor:
             if statement is not None:
                 connection.execute(

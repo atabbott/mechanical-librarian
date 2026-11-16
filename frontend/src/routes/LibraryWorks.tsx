@@ -26,6 +26,7 @@ import { useReviewContext } from '../router'
 
 const lensLabels = {
   all: 'All',
+  new: 'New',
   flagged: 'Looks wrong',
   needs_attention: 'Needs attention',
   no_attention_needed: 'No attention needed',
@@ -41,6 +42,7 @@ const LensLink = createLink((props: ComponentPropsWithRef<'a'>) => (
 // lens link names it visually and the status names it to screen readers (#1425).
 const lensMatching = {
   all: ['all', undefined],
+  new: ['new', 'new since your last visit'],
   flagged: ['flagged', 'looking wrong'],
   needs_attention: ['attention', 'needing attention'],
   no_attention_needed: ['clear', 'needing no attention'],
@@ -100,17 +102,23 @@ const providerSummary = (outcomes: readonly ProviderOutcomeView[]) => {
 // The lens links, in one row that scrolls sideways.
 const LibraryLenses = ({
   search,
+  newCount,
   lensIntent,
 }: {
   search: LibrarySearch
+  /** Works new since the owner's last visit, across the whole library. */
+  newCount: number
   lensIntent: (lens: LibrarySearch['lens']) => void
 }) => {
   const lensRow = useRef<HTMLElement>(null)
+  // New is a lens only while something is new, or while it is the one open.
+  const newShown = newCount > 0 || search.lens === 'new'
   // The lenses scroll sideways in one row. An edge with more lenses beyond it
   // fades, so a row that happens to end between two lenses still shows it
   // continues. The current lens is brought into the row's view, clear of the
   // fade, without moving the page: on load, on a lens change, and when the row
-  // or its lenses change size, as with enlarged text.
+  // or its lenses change size, as with enlarged text. New arrives and leaves
+  // with the works it counts, so the row is read again when it does.
   useLayoutEffect(() => {
     const row = lensRow.current
     if (!row) return
@@ -121,7 +129,9 @@ const LibraryLenses = ({
       else delete row.dataset.more
     }
     // The first and last lenses scroll the row to its end, so no fade covers
-    // them; any other lens is brought clear of both fades.
+    // them; any other lens is brought clear of both fades. A lens with less
+    // than its own padding under a fade stays where it is: its label is clear,
+    // and scrolling would fade the lens at the other end.
     const reveal = (lens: Element | null) => {
       if (lens instanceof HTMLElement) {
         let left = row.scrollLeft
@@ -129,8 +139,11 @@ const LibraryLenses = ({
         else if (lens === row.lastElementChild) left = row.scrollWidth - row.clientWidth
         else {
           const fade = parseFloat(getComputedStyle(row).scrollPaddingInlineStart) || 0
+          const padding = getComputedStyle(lens)
           const rowBox = row.getBoundingClientRect()
           const box = lens.getBoundingClientRect()
+          const underStart = rowBox.left + fade - box.left
+          const underEnd = box.right - (rowBox.right - fade)
           // A lens too wide to clear both fades is centred, or starts at the
           // row's edge when even the row is narrower, so its label's start shows.
           if (box.width > rowBox.width - 2 * fade)
@@ -138,8 +151,10 @@ const LibraryLenses = ({
               box.width > rowBox.width
                 ? box.left - rowBox.left
                 : box.left - rowBox.left - (rowBox.width - box.width) / 2
-          else if (box.left < rowBox.left + fade) left -= rowBox.left + fade - box.left
-          else if (box.right > rowBox.right - fade) left += box.right - (rowBox.right - fade)
+          else if (underStart >= (parseFloat(padding.paddingInlineStart) || 0) && underStart > 0)
+            left -= underStart
+          else if (underEnd >= (parseFloat(padding.paddingInlineEnd) || 0) && underEnd > 0)
+            left += underEnd
         }
         if (Math.abs(left - row.scrollLeft) > 0.5) row.scrollLeft = left
       }
@@ -158,12 +173,13 @@ const LibraryLenses = ({
       row.removeEventListener('focusin', revealFocused)
       resized?.disconnect()
     }
-  }, [search.lens])
+  }, [search.lens, newShown])
   return (
     <nav className="lenses" aria-label="Library lenses" ref={lensRow}>
       {(
         [
           'all',
+          ...(newShown ? (['new'] as const) : []),
           'flagged',
           'needs_attention',
           'no_attention_needed',
@@ -186,8 +202,12 @@ const LibraryLenses = ({
           onPointerEnter={() => lensIntent(lens)}
           onFocus={() => lensIntent(lens)}
           activeProps={{ 'aria-current': 'page' }}
+          aria-label={lens === 'new' && newCount > 0 ? `New, ${workCount(newCount)}` : undefined}
         >
           {lensLabels[lens]}
+          {lens === 'new' && newCount > 0 ? (
+            <span className="lens-count">{newCount.toLocaleString('en-US')}</span>
+          ) : null}
         </LensLink>
       ))}
     </nav>
@@ -224,6 +244,10 @@ const WorksCount = ({
               : `Found ${data.counts[lensCount].toLocaleString('en-US')} of ${workCount(lensTotal)}`}
             {lensWords === undefined ? null : <span className="sr-only">{` ${lensWords}`}</span>}
           </>
+        ) : search.lens === 'new' && data.counts.new > 0 ? (
+          `${data.counts.new.toLocaleString('en-US')} new ${
+            data.counts.new === 1 ? 'work' : 'works'
+          } since your last visit`
         ) : (
           workCount(data.counts.all) +
           // The works outside both decision lenses, named beside the
@@ -595,7 +619,7 @@ export const LibraryWorks = ({
           summaryUnavailable={summaryUnavailable}
         />
       </div>
-      <LibraryLenses search={search} lensIntent={lensIntent} />
+      <LibraryLenses search={search} newCount={summaryCounts?.new ?? 0} lensIntent={lensIntent} />
       <form className="search library-search" role="search" onSubmit={submitSearch}>
         <label className="sr-only" htmlFor="library-query">
           Search title, author, identifier, library, or format
@@ -633,6 +657,8 @@ export const LibraryWorks = ({
             <p>
               {search.q ? (
                 'No works match this search.'
+              ) : data.lens === 'new' ? (
+                'Nothing new since your last visit.'
               ) : data.lens !== 'all' ? (
                 'No works here.'
               ) : noLibraryConnected ? (

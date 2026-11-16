@@ -45,6 +45,7 @@ from mechanical_librarian.application.configuration import (
 from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationError,
 )
+from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.operations import (
     OperationalStatus,
     support_preparation_incidents,
@@ -74,6 +75,7 @@ from mechanical_librarian.domain.cover_evidence import (
 )
 from mechanical_librarian.domain.cover_taste import TasteProfile, apply_taste_edit
 from mechanical_librarian.domain.field_effect import FieldEffectError
+from mechanical_librarian.domain.library_visit import ListingPositions
 from mechanical_librarian.domain.owner_settings import (
     OWNER_SETTINGS_SCHEMA,
     OwnerSettingsDocument,
@@ -1963,6 +1965,107 @@ def test_preparation_dismissal_is_authenticated_guarded_and_stale_safe(
     assert current.json()["presentation"] is None
 
 
+def test_library_visit_is_guarded_and_publishes_only_a_moved_boundary(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    """The visit command is an ordinary owner command (#1351, AC6)."""
+    path = "/api/v1/library/visit"
+    listing = {"packages": 7, "reports": 9, "works": 8}
+    anonymous = web.client.post(path, headers=web.origin, json={"listing": None})
+    assert anonymous.status_code == 401
+    login = web.login()
+    assert (
+        web.client.post(path, headers=web.origin, json={"listing": None}).status_code
+        == 422
+    )
+    bad_csrf = web.client.post(
+        path, headers={**web.origin, "x-csrf-token": "wrong"}, json={"listing": None}
+    )
+    assert bad_csrf.status_code == 403
+    headers = {**web.origin, "x-csrf-token": str(login["csrf_token"])}
+    foreign = web.client.post(
+        path, headers={**headers, "Origin": "https://x.test"}, json={"listing": None}
+    )
+    assert (foreign.status_code, foreign.json()["error"]["code"]) == (403, "origin")
+    stale_build = web.client.post(
+        path,
+        headers={**headers, "x-ml-build-identity": "b" * 64},
+        json={"listing": None},
+    )
+    assert (stale_build.status_code, stale_build.json()["error"]["code"]) == (
+        409,
+        "browser_build_mismatch",
+    )
+    for invalid in (
+        {},
+        {"listing": listing, "seen": listing},
+        {"listing": {**listing, "works": -1}},
+        {"listing": {**listing, "works": True}},
+        {"listing": {**listing, "works": "8"}},
+        {"listing": {**listing, "works": 2**53}},
+        {"listing": {"packages": 7, "reports": 9}},
+        {"listing": {**listing, "active_at": 1}},
+    ):
+        refused = web.client.post(path, headers=headers, json=invalid)
+        assert refused.status_code == 422, invalid
+    oversized = web.client.post(
+        path,
+        headers={**headers, "content-type": "application/json"},
+        content=b'{"listing":null' + b" " * 2048 + b"}",
+    )
+    assert oversized.status_code == 413
+    assert web.repository.library_visits == []
+
+    updates = web.client.app.state.review_application.updates
+    before = updates.sequence
+    kept_alive = web.client.post(path, headers=headers, json={"listing": None})
+    assert kept_alive.status_code == 204
+    assert kept_alive.content == b""
+    assert kept_alive.headers["cache-control"] == "no-store, private"
+    shown = web.client.post(path, headers=headers, json={"listing": listing})
+    assert shown.status_code == 204
+    assert web.repository.library_visits == [
+        (None, web.now),
+        (ListingPositions(7, 8, 9), web.now),
+    ]
+    # Neither changed what counts as new, so no other tab is told to read.
+    assert updates.sequence == before
+
+    web.repository.library_visit_moves = True
+    assert (
+        web.client.post(path, headers=headers, json={"listing": None}).status_code
+        == 204
+    )
+    assert updates.sequence == before + 1
+
+    web.repository.library_visit_moves = MetadataReportError("unavailable")
+    failed = web.client.post(path, headers=headers, json={"listing": None})
+    assert failed.status_code == 503
+    assert failed.json()["error"]["code"] == "persistence"
+    assert updates.sequence == before + 1
+
+    # Only a store failure is a 503; a programming error is not hidden as one.
+    web.repository.library_visit_moves = RuntimeError("defect")
+    with pytest.raises(RuntimeError):
+        web.client.post(path, headers=headers, json={"listing": None})
+
+
+def test_library_reads_are_given_the_application_clock(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    """Both Library reads see the clock, so New can end at the gap (#1351, AC4).
+
+    A read left without it would fall back to time zero and keep the last
+    boundary for good, on every device, until a visit was posted.
+    """
+    web.login()
+    web.now += 123
+    assert web.client.get("/api/v1/library").status_code == 200
+    assert web.client.get("/api/v1/library/progress").status_code == 200
+    assert web.repository.library_read_clocks == [web.now]
+    assert web.repository.progress_read_clocks == [web.now]
+
+
 def _locked_read(*_args: object, **_kwargs: object) -> object:
     raise sqlite3.OperationalError("database is locked")
 
@@ -3002,6 +3105,7 @@ def test_openapi_is_deterministic_and_secret_free(
         ("get", "/api/v1/library/cover"),
         ("get", "/api/v1/library/progress"),
         ("get", "/api/v1/library/report"),
+        ("post", "/api/v1/library/visit"),
         ("get", "/api/v1/covers"),
         ("get", "/api/v1/covers/replaced"),
         ("get", "/api/v1/covers/taste"),

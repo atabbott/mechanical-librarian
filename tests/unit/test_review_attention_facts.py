@@ -226,7 +226,7 @@ def _steps(repository: SQLiteMetadataReportRepository) -> Iterator[_Step]:
         "package insert",
         (("current_review_packages", "insert"),),
         lambda: run(
-            "INSERT INTO current_review_packages VALUES(?,?,?,?,?,?,?,?)",
+            "INSERT INTO current_review_packages VALUES(?,?,?,?,?,?,?,?,?)",
             saved["package"],
         ),
     )

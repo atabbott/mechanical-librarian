@@ -1834,6 +1834,7 @@ describe('ReviewApiClient', () => {
             not_matched: 0,
             preparation_failed: 0,
             flagged: 0,
+            new: 0,
           },
           items: [
             libraryWork({
@@ -3286,7 +3287,7 @@ describe('ReviewApiClient', () => {
       csrf,
       fetch: vi.fn(async () =>
         Response.json(
-          { schema_version: 'review-library-v7', error: { code: 'busy' } },
+          { schema_version: 'review-library-v8', error: { code: 'busy' } },
           { status: 503 },
         ),
       ),
@@ -3308,6 +3309,7 @@ describe('ReviewApiClient', () => {
         not_matched: 0,
         preparation_failed: 0,
         flagged: 0,
+        new: 0,
       },
     })
     await expect(readLibrary(page)).rejects.toMatchObject(refused('enum@/items/0/detail_kind'))
@@ -3377,6 +3379,11 @@ describe('ReviewApiClient', () => {
     ).rejects.toMatchObject(refused('const@/schema_version'))
     await expect(
       readLibrary({ ...page, schema_version: 'review-library-v7' }),
+    ).rejects.toMatchObject(refused('const@/schema_version'))
+    // v8 added the New count and lens and how far the listing had got
+    // (#1351); a v7 document lacks them.
+    await expect(
+      readLibrary({ ...page, schema_version: 'review-library-v8' }),
     ).resolves.toBeDefined()
   })
 
@@ -3386,6 +3393,7 @@ describe('ReviewApiClient', () => {
       counts: {
         all: 2,
         flagged: 1,
+        new: 0,
         needs_attention: 0,
         no_attention_needed: 2,
         not_matched: 0,
@@ -3469,6 +3477,7 @@ describe('ReviewApiClient', () => {
           not_matched: 0,
           preparation_failed: 0,
           flagged: 0,
+          new: 0,
         },
       })
     }
@@ -3524,6 +3533,7 @@ describe('ReviewApiClient', () => {
           not_matched: 2,
           preparation_failed: 0,
           flagged: 0,
+          new: 0,
         },
         lens: 'not_matched',
       })
@@ -3536,6 +3546,7 @@ describe('ReviewApiClient', () => {
       notMatched: 2,
       failed: 0,
       flagged: 0,
+      new: 0,
     })
     expect(mapped.works[0]?.summary?.state).toBe('not_matched_unavailable_scheduled')
     await expect(readLibrary(page('not_matched_somehow'))).rejects.toMatchObject(
@@ -6916,19 +6927,19 @@ describe('Library progress (#1335)', () => {
     const view = await new ReviewApiClient({ csrf, fetch: fetchMock }).getLibraryProgress()
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/library/progress')
     expect(view).toEqual({
-      totals: { all: 2, attention: 1, clear: 0, notMatched: 1, failed: 0, flagged: 0 },
+      totals: { all: 2, attention: 1, clear: 0, notMatched: 1, failed: 0, flagged: 0, new: 0 },
       libraries: [
         {
           connection: 'primary',
           library: 'audiobooks',
           libraryDisplayName: 'audiobooks',
-          counts: { all: 1, attention: 0, clear: 0, notMatched: 1, failed: 0, flagged: 0 },
+          counts: { all: 1, attention: 0, clear: 0, notMatched: 1, failed: 0, flagged: 0, new: 0 },
         },
         {
           connection: 'primary',
           library: 'ebooks',
           libraryDisplayName: 'ebooks',
-          counts: { all: 1, attention: 1, clear: 0, notMatched: 0, failed: 0, flagged: 0 },
+          counts: { all: 1, attention: 1, clear: 0, notMatched: 0, failed: 0, flagged: 0, new: 0 },
         },
       ],
       fields: [{ destination: 'title', needYou: 1 }],

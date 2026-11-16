@@ -50,6 +50,10 @@ from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.level_reconciliation import (
     reconcile_case_level_in_transaction,
 )
+from mechanical_librarian.adapters.persistence.library_visit import (
+    LIBRARY_LISTING_END_SQL,
+    LIBRARY_VISIT_BOUNDARY_SQL,
+)
 from mechanical_librarian.adapters.persistence.proposal_sets import (
     _validate_proposal_row,
 )
@@ -92,6 +96,7 @@ from mechanical_librarian.domain.field_effect import (
     canonical_json as canonical_effect_json,
 )
 from mechanical_librarian.domain.human_decision import pinned_field_fingerprint
+from mechanical_librarian.domain.library_visit import ListingPositions
 from mechanical_librarian.domain.metadata_policy import (
     ResolvedMetadataPolicy,
     human_review_destinations,
@@ -138,8 +143,13 @@ _LIBRARY_PARTITION_CONDITIONS = {
     "preparation_failed": _PREPARATION_FAILED_SQL,
 }
 # Looks wrong cuts across the partition: a work whose current report holds a
-# stored value flag, in whatever lens it otherwise sits (#1334).
-_LIBRARY_LENS_CONDITIONS = {**_LIBRARY_PARTITION_CONDITIONS, "flagged": "flagged=1"}
+# stored value flag, in whatever lens it otherwise sits (#1334). So does New:
+# a work first listed since the owner's last visit (#1351).
+_LIBRARY_LENS_CONDITIONS = {
+    **_LIBRARY_PARTITION_CONDITIONS,
+    "flagged": "flagged=1",
+    "new": "is_new=1",
+}
 _MATCH_REASONS = frozenset(
     {None, "refused", "unavailable", "adapter_fault", "no_match"}
 )
@@ -165,6 +175,10 @@ class ReviewLibraryPage:
     preparation_failed_total: int
     # #1334: the works whose current report holds a value flag.
     flagged_total: int
+    # #1351: the works first listed since the owner's last visit, and how far
+    # the listing had got when this page was read.
+    new_total: int
+    listing: ListingPositions
     # Each row's case (with its identity) and report as this read validated
     # them, None for a terminal row, so a projection of the same read uses them
     # rather than parsing the same bytes again (#1202).
@@ -797,7 +811,12 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
         offset: int,
         lens: LibraryLensFilter | None,
         library_labels: LibraryLabels = (),
+        now: int = 0,
     ) -> ReviewLibraryPage:
+        """One Library page; `now` is the clock the visit boundary is read at.
+
+        A caller with no clock reads the boundary of the visit in progress.
+        """
         try:
             query, pattern = _review_search_pattern(search)
             cover_authority = self._current_cover_authority()
@@ -810,6 +829,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 raise MetadataReportError("review library lens is invalid")
             attached = self.catalogue is not None and self.catalogue.active
             parameters = _library_candidate_parameters(
+                now,
                 self.catalogue.fingerprint
                 if attached and self.catalogue is not None
                 else None,
@@ -820,56 +840,21 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             )
             parameters.extend((limit, offset))
             rows = self._connection.execute(
-                _library_candidates_sql(attached)
-                + ",totals AS (SELECT count(*) AS total,COALESCE(sum(attention),0) "
-                "AS attention_total,COALESCE(sum(CASE WHEN attention=0 AND "
-                "match_reason IS NOT NULL THEN 1 ELSE 0 END),0) AS not_matched_total,"
-                "COALESCE(sum(CASE WHEN "
-                + _PREPARATION_FAILED_SQL
-                + " THEN 1 ELSE 0 END),0) AS preparation_failed_total,"
-                "COALESCE(sum(flagged),0) AS flagged_total "
-                "FROM candidates),page AS MATERIALIZED (SELECT "
-                "1 AS present,case_id,report_id,proposal_set_id,"
-                "connection_name,library_name,item_id,outcome,"
-                "CASE WHEN attention=1 THEN 0 ELSE 1 END AS attention_order,"
-                "CASE WHEN attention=1 AND provider_limited=1 THEN 1 ELSE 0 END "
-                "AS provider_order,"
-                # Failed preparations, then unmatched works, follow the
-                # attention group as blocks, so the `all` lens keeps each
-                # together ahead of clear works.
-                "CASE WHEN "
-                + _PREPARATION_FAILED_SQL
-                + " THEN 0 WHEN attention=0 AND match_reason IS NOT NULL THEN 1 "
-                "ELSE 2 END AS match_order,CASE WHEN attention=0 THEN match_reason END "
-                "AS match_reason,title_order,case_order,work_id,attempt,stage,"
-                "failure_root,recovery_attempt,failure_code,display_title,display_authors,display_format FROM candidates WHERE "
-                + condition
-                + " ORDER BY attention_order,provider_order,match_order,title_order,"
-                "library_name,item_id,connection_name,case_order LIMIT ? OFFSET ?) "
-                "SELECT rc.document,CASE WHEN page.present=1 AND page.report_id IS NULL THEN json_object("
-                "'attempt',page.attempt,'connection',page.connection_name,"
-                "'failure_root',page.failure_root,'item',page.item_id,'lane',page.stage,"
-                "'library',page.library_name,'recovery_attempt',page.recovery_attempt,"
-                "'schema_version','review-terminal-work-v1','status',page.failure_code,"
-                "'work_id',page.work_id,'title',page.display_title,'authors',json(page.display_authors),"
-                "'media_kind',page.display_format) ELSE mr.document END,page.proposal_set_id,"
-                "page.connection_name,page.library_name,page.item_id,page.outcome, "
-                "page.match_reason,COALESCE(page.present,0),totals.total,"
-                "totals.attention_total,totals.not_matched_total,"
-                "totals.preparation_failed_total,totals.flagged_total "
-                "FROM totals LEFT JOIN page ON 1 LEFT JOIN review_cases rc ON rc.review_case_id=page.case_id "
-                "LEFT JOIN metadata_reports mr ON mr.report_id=page.report_id "
-                "ORDER BY page.attention_order,page.provider_order,page.match_order,"
-                "page.title_order,page.library_name,page.item_id,page.connection_name,"
-                "page.case_order",
+                _library_page_sql(attached, condition),
                 tuple(parameters),
             ).fetchall()
             if not rows:
                 raise MetadataReportError("review library count is invalid")
-            totals = rows[0][-5:]
-            total, attention_total, not_matched_total, failed_total, flagged_total = (
-                totals
-            )
+            totals = rows[0][-9:]
+            (
+                total,
+                attention_total,
+                not_matched_total,
+                failed_total,
+                flagged_total,
+                new_total,
+                *listing,
+            ) = totals
             if (
                 type(total) is not int
                 or total < 0
@@ -881,6 +866,9 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 or not 0 <= failed_total <= total - attention_total - not_matched_total
                 or type(flagged_total) is not int
                 or not 0 <= flagged_total <= total
+                or type(new_total) is not int
+                or not 0 <= new_total <= total
+                or any(type(position) is not int for position in listing)
             ):
                 raise MetadataReportError("review library count is invalid")
             values: list[tuple[str | None, str]] = []
@@ -890,7 +878,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             ] = []
             for row in rows:
                 if (
-                    len(row) != 14
+                    len(row) != 18
                     or type(row[8]) is not int
                     or row[8] not in (0, 1)
                     or row[9:] != totals
@@ -964,6 +952,8 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 tuple(reasons),
                 failed_total,
                 flagged_total,
+                new_total,
+                ListingPositions(*listing),
                 tuple(envelopes),
             )
         except (
@@ -1041,7 +1031,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
 
     @local_operation
     def read_current_library_progress(
-        self, library_labels: LibraryLabels = ()
+        self, library_labels: LibraryLabels = (), now: int = 0
     ) -> ReviewLibraryProgress:
         """Library's lens counts and Attention's fields, grouped by library.
 
@@ -1065,6 +1055,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 "ORDER BY connection_name,library_name",
                 tuple(
                     _library_candidate_parameters(
+                        now,
                         self.catalogue.fingerprint
                         if attached and self.catalogue is not None
                         else None,
@@ -1097,25 +1088,26 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                     pattern,
                 ),
             ).fetchall()
-            libraries: list[tuple[str, str, int, int, int, int, int]] = []
+            libraries: list[tuple[str, str, int, int, int, int, int, int]] = []
             needs_attention: dict[tuple[str, str], int] = {}
             for row in library_rows:
                 # The four lenses partition All, as Library's page counts them;
-                # Looks wrong cuts across them (#1334).
+                # Looks wrong (#1334) and New (#1351) cut across them.
                 if (
-                    len(row) != 8
+                    len(row) != 9
                     or type(row[0]) is not str
                     or type(row[1]) is not str
                     or any(type(value) is not int or value < 0 for value in row[2:])
                     or row[2] < 1
                     or sum(row[3:7]) != row[2]
                     or row[7] > row[2]
+                    or row[8] > row[2]
                     or (row[0], row[1]) in needs_attention
                 ):
                     raise MetadataReportError("review library progress is invalid")
                 needs_attention[(row[0], row[1])] = row[3]
                 libraries.append(
-                    (row[0], row[1], row[2], row[3], row[5], row[6], row[7])
+                    (row[0], row[1], row[2], row[3], row[5], row[6], row[7], row[8])
                 )
             fields: list[tuple[str, str, str, int]] = []
             for row in field_rows:
@@ -1552,6 +1544,58 @@ def _review_search_pattern(search: str | None) -> tuple[str | None, str]:
     return search, f"%{escaped}%"
 
 
+def _library_page_sql(attached: bool, condition: str) -> str:
+    """The Library page statement: the lens's rows under the totals of all."""
+    return (
+        _library_candidates_sql(attached)
+        + ",totals AS (SELECT count(*) AS total,COALESCE(sum(attention),0) "
+        "AS attention_total,COALESCE(sum(CASE WHEN attention=0 AND "
+        "match_reason IS NOT NULL THEN 1 ELSE 0 END),0) AS not_matched_total,"
+        "COALESCE(sum(CASE WHEN "
+        + _PREPARATION_FAILED_SQL
+        + " THEN 1 ELSE 0 END),0) AS preparation_failed_total,"
+        "COALESCE(sum(flagged),0) AS flagged_total,"
+        "COALESCE(sum(is_new),0) AS new_total,"
+        + LIBRARY_LISTING_END_SQL
+        + " FROM candidates),page AS MATERIALIZED (SELECT "
+        "1 AS present,case_id,report_id,proposal_set_id,"
+        "connection_name,library_name,item_id,outcome,"
+        "CASE WHEN attention=1 THEN 0 ELSE 1 END AS attention_order,"
+        "CASE WHEN attention=1 AND provider_limited=1 THEN 1 ELSE 0 END "
+        "AS provider_order,"
+        # Failed preparations, then unmatched works, follow the
+        # attention group as blocks, so the `all` lens keeps each
+        # together ahead of clear works.
+        "CASE WHEN "
+        + _PREPARATION_FAILED_SQL
+        + " THEN 0 WHEN attention=0 AND match_reason IS NOT NULL THEN 1 "
+        "ELSE 2 END AS match_order,CASE WHEN attention=0 THEN match_reason END "
+        "AS match_reason,title_order,case_order,work_id,attempt,stage,"
+        "failure_root,recovery_attempt,failure_code,display_title,display_authors,display_format FROM candidates WHERE "
+        + condition
+        + " ORDER BY attention_order,provider_order,match_order,title_order,"
+        "library_name,item_id,connection_name,case_order LIMIT ? OFFSET ?) "
+        "SELECT rc.document,CASE WHEN page.present=1 AND page.report_id IS NULL THEN json_object("
+        "'attempt',page.attempt,'connection',page.connection_name,"
+        "'failure_root',page.failure_root,'item',page.item_id,'lane',page.stage,"
+        "'library',page.library_name,'recovery_attempt',page.recovery_attempt,"
+        "'schema_version','review-terminal-work-v1','status',page.failure_code,"
+        "'work_id',page.work_id,'title',page.display_title,'authors',json(page.display_authors),"
+        "'media_kind',page.display_format) ELSE mr.document END,page.proposal_set_id,"
+        "page.connection_name,page.library_name,page.item_id,page.outcome, "
+        "page.match_reason,COALESCE(page.present,0),totals.total,"
+        "totals.attention_total,totals.not_matched_total,"
+        "totals.preparation_failed_total,totals.flagged_total,"
+        "totals.new_total,totals.listing_packages,totals.listing_works,"
+        "totals.listing_reports "
+        "FROM totals LEFT JOIN page ON 1 LEFT JOIN review_cases rc ON rc.review_case_id=page.case_id "
+        "LEFT JOIN metadata_reports mr ON mr.report_id=page.report_id "
+        "ORDER BY page.attention_order,page.provider_order,page.match_order,"
+        "page.title_order,page.library_name,page.item_id,page.connection_name,"
+        "page.case_order"
+    )
+
+
 def _library_candidates_sql(attached: bool) -> str:
     """Library's one candidate relation: current packages and terminal failures.
 
@@ -1561,6 +1605,8 @@ def _library_candidates_sql(attached: bool) -> str:
     """
     return (
         "WITH "
+        + LIBRARY_VISIT_BOUNDARY_SQL
+        + ","
         + _terminal_library_sql(attached)
         + ",candidates AS MATERIALIZED (SELECT rc.review_case_id AS case_id,"
         "mr.report_id,"
@@ -1579,6 +1625,11 @@ def _library_candidates_sql(attached: bool) -> str:
         + " AS preparation_failed,"
         "EXISTS(SELECT 1 FROM metadata_report_value_flags vf "
         "WHERE vf.report_id=mr.report_id) AS flagged,"
+        # New (#1351): listed past the boundary. A package position is never
+        # given out twice, so a newcomer or a returning work lies past it.
+        # No visit row reads NULL here, and that is "not new".
+        "COALESCE((SELECT ml.package_position>visit.packages FROM visit),0) "
+        "AS is_new,"
         "facts.title_key AS title_order,"
         "COALESCE(rc.review_case_id,'') AS case_order,"
         "NULL AS work_id,NULL AS attempt,NULL AS stage,NULL AS failure_root,"
@@ -1589,7 +1640,9 @@ def _library_candidates_sql(attached: bool) -> str:
         + "WHERE COALESCE(c.outcome,'')<>'tombstoned'"
         + _REVIEW_SEARCH_SQL
         + " UNION ALL SELECT NULL,NULL,NULL,connection_name,library_name,"
-        "item_id,NULL,0,0,NULL,1,0,ml_casefold(display_title),'',work_id,"
+        "item_id,NULL,0,0,NULL,1,0,"
+        "COALESCE((SELECT work_position>visit.works FROM visit),0),"
+        "ml_casefold(display_title),'',work_id,"
         "attempt,stage,failure_root,recovery_attempt,failure_code,"
         "display_title,display_authors,display_format FROM terminal"
         + _TERMINAL_LIBRARY_SEARCH_SQL
@@ -1598,6 +1651,7 @@ def _library_candidates_sql(attached: bool) -> str:
 
 
 def _library_candidate_parameters(
+    now: int,
     fingerprint: str | None,
     cover_authority: tuple[str | None, str | None],
     query: str | None,
@@ -1616,6 +1670,7 @@ def _library_candidate_parameters(
         pattern,
     )
     return [
+        now,
         *([] if fingerprint is None else [fingerprint]),
         *cover_authority,
         *search,

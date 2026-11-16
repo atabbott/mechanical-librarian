@@ -12,8 +12,9 @@ changed for you. These works also appear in the other lenses.
 
 ## Where it shows
 
-Looks wrong is the second lens in Library, straight after All, and keeps All's
-order and headings. Its count follows the others beside Works, only when it is
+Looks wrong is a lens in Library, after All and after
+[New](library-progress.md#new-since-your-last-visit) while works are new, and
+keeps All's order and headings. Its count follows the others beside Works, only when it is
 not zero, for example "2,026 works · 3 not matched · 9 could not finish · 37
 look wrong", or "1 looks wrong" for one work. Under a search inside the lens
 the status reads "Found 1 of 1 work"; a screen reader also hears "looking
