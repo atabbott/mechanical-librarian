@@ -15,6 +15,7 @@ import {
   reviewerFailureCopy,
 } from '../labels'
 import { useReviewContext } from '../router'
+import { KeyBadge } from './ReviewKeys'
 import { Button } from '../components/Button'
 import { StatusPill } from '../components/StatusPill'
 import { SettingsPathText } from '../components/SettingsPathText'
@@ -584,6 +585,7 @@ function CoverCard({
           if (actionableCandidate && !selected) choose(outcome, value)
         }}
       >
+        <KeyBadge position={radio?.['aria-posinset']} />
         <span className="library-cover-image">
           {/* A kept original the decoder refused has no preview to ask for (#1362). */}
           {candidate.previewSha256 === null || cover.imageFailed(candidate.reference) ? (
@@ -668,6 +670,7 @@ function UnavailableCurrentCard({
           if (keeps) choose('keep_current')
         }}
       >
+        <KeyBadge position={radio?.['aria-posinset']} />
         <span className="library-cover-image" role="img" aria-label="Current cover unavailable">
           Image unavailable
         </span>

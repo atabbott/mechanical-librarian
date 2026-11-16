@@ -2557,9 +2557,10 @@ describe('Library route', () => {
     // Page h1, works and the work at h2, the question or completion at h3,
     // and never a level skipped on the way down.
     const outline = () => {
-      const levels = [...document.querySelectorAll('main :is(h1, h2, h3, h4, h5, h6)')].map(
-        (heading) => `${heading.tagName.slice(1)} ${heading.textContent.trim()}`,
-      )
+      // The closed key list is not shown, so its heading is not in the outline (#1337).
+      const levels = [...document.querySelectorAll('main :is(h1, h2, h3, h4, h5, h6)')]
+        .filter((heading) => !heading.closest('dialog:not([open])'))
+        .map((heading) => `${heading.tagName.slice(1)} ${heading.textContent.trim()}`)
       const skips = levels.filter(
         (entry, index) => index > 0 && Number(entry[0]) > Number(levels[index - 1]?.[0]) + 1,
       )
@@ -13639,6 +13640,8 @@ describe('Library route', () => {
     expect([...(selectedControls?.children ?? [])].map((child) => child.className)).toEqual([
       'library-title',
       'attention-toggle',
+      'review-keys-toggle',
+      'review-keys-dialog',
       selectedNotices[0]?.className,
     ])
     expect(document.querySelector('.library-workspace')?.firstElementChild).toBe(
@@ -16771,6 +16774,8 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
     expect(before).toEqual([
       'library-title',
       'attention-toggle',
+      'review-keys-toggle',
+      'review-keys-dialog',
       expect.stringContaining('cm-library-handoff'),
     ])
     expect(header).toHaveAttribute('data-route-focus', 'true')
@@ -16878,7 +16883,8 @@ describe('a focused field decision (#1519)', () => {
     const current = await screen.findByRole('radio', { name: 'Choose current value: Old title' })
     const sourced = screen.getByRole('radio', { name: 'Choose proposed value: New title' })
     const unsourced = screen.getByRole('radio', { name: 'Choose proposed value: Newer title' })
-    expect(current).toHaveTextContent(/^Old title$/u)
+    // Each card's text opens with its key number, which is hidden from its name (#1337).
+    expect(current).toHaveTextContent(/^1Old title$/u)
     // "Keep current value" heads the current side; the proposed side keeps its own header.
     const currentList = current.closest('.current-choice-list')
     expect(currentList?.querySelector(':scope > header')).toHaveTextContent(/^Keep current value$/u)
@@ -16893,9 +16899,9 @@ describe('a focused field decision (#1519)', () => {
       sourced.closest('.proposed-choice-list')?.querySelector(':scope > header strong'),
     ).toHaveTextContent(/^Choose a new value$/u)
     expect(sourced).toHaveTextContent(
-      /^RecommendedNew titleHardcover, Open LibraryYour settings choose this value\.$/u,
+      /^2RecommendedNew titleHardcover, Open LibraryYour settings choose this value\.$/u,
     )
-    expect(unsourced).toHaveTextContent(/^Newer title$/u)
+    expect(unsourced).toHaveTextContent(/^3Newer title$/u)
     expect(screen.queryByText(/^Alternative \d/u)).toBeNull()
     expect(screen.queryByText(/This alternative|retained evidence|No recommendation/iu)).toBeNull()
     expect(screen.getByRole('button', { name: 'Evidence for proposed value: New title' })).toBe(
