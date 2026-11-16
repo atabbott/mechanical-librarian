@@ -59,6 +59,7 @@ import {
 import type { LiveUpdateStream } from './liveUpdates'
 import { useLibraryName } from './libraryNames'
 import { handoffNeedsLibraryNames } from './writeConsent'
+import { type ShowLibraryListing, useLibraryVisit } from './libraryVisit'
 import { DirectEntryFallback, RouteFailure, RoutePending } from './components/RouteStates'
 import {
   entryKey,
@@ -951,16 +952,20 @@ const indexRoute = createRoute({
   path: '/',
   component: () => <Navigate to="/library" search={{ lens: 'all' }} replace />,
 })
-// Library shows Works or Covers; each view owns its own reads (#1633).
-const LibraryRouteComponent = () =>
-  libraryRoute.useSearch().view === 'covers' ? (
+// Library shows Works or Covers; each view owns its own reads (#1633). The
+// visit spans both, so time spent on covers keeps it going (#1351).
+const LibraryRouteComponent = () => {
+  const { http } = rootRoute.useRouteContext()
+  const showListing = useLibraryVisit(http)
+  return libraryRoute.useSearch().view === 'covers' ? (
     <Suspense fallback={<RoutePending title="Library" />}>
       <CoversView />
     </Suspense>
   ) : (
-    <LibraryWorksRoute />
+    <LibraryWorksRoute showListing={showListing} />
   )
-const LibraryWorksRoute = () => {
+}
+const LibraryWorksRoute = ({ showListing }: { showListing: ShowLibraryListing }) => {
   const { http } = rootRoute.useRouteContext()
   const search = libraryRoute.useSearch()
   const query = useRetainedQuery(libraryQuery(http, search))
@@ -986,6 +991,7 @@ const LibraryWorksRoute = () => {
       failed={query.isError}
       error={query.error}
       retry={() => query.refetch()}
+      showListing={showListing}
     />
   )
 }

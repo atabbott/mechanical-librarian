@@ -60,7 +60,7 @@ import {
 } from '../libraryPreparation'
 import { WorkSources, WorkSummary } from './WorkSummary'
 import { AttentionRail } from './AttentionRail'
-import { useLibraryVisit } from '../libraryVisit'
+import { type ShowLibraryListing, useLibraryListing } from '../libraryVisit'
 import { LibraryWorks } from './LibraryWorks'
 import { useAutomaticHandling } from '../automaticHandling'
 import { RESTART_SENTENCE, workCount } from '../libraryWork'
@@ -104,6 +104,7 @@ export default function LibraryPage({
   error,
   retry,
   onRailRetaining,
+  showListing,
 }: {
   data: LibraryView | undefined
   /** `data` is the previous key's result, shown busy until the URL's own read settles. */
@@ -116,6 +117,8 @@ export default function LibraryPage({
   retry: () => Promise<unknown>
   /** Reports whether the attention rail is showing a retained queue. */
   onRailRetaining?: (retaining: boolean) => void
+  /** Gives the Library route's visit what a rendered New lens listed (#1351). */
+  showListing: ShowLibraryListing
 }) {
   const works = useMemo(() => data?.works ?? [], [data?.works])
   // The restart sentence is said once a screen: on the Works failure when that
@@ -141,7 +144,7 @@ export default function LibraryPage({
     [libraryNavigate, router],
   )
   const { http, updates, queryClient } = useReviewContext()
-  useLibraryVisit(http, data)
+  useLibraryListing(showListing, data)
   // Global figures read the library summary, which carries no q (#1284).
   const summary = useQuery(librarySummaryQuery(http))
   const summaryAttention = summary.data?.counts.attention

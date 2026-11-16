@@ -1,31 +1,34 @@
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 
-import type { LibraryView, ReviewHttp } from './api/http'
+import type { LibraryListing, LibraryView, ReviewHttp } from './api/http'
 
 /** While Library is in use, a tab says so at most this often (#1351). */
 export const VISIT_HEARTBEAT_MS = 300_000
 
 /**
  * Tells the server that Library is in use, so it can tell one visit from the
- * next and move what counts as new (#1351). The tab posts when Library's works
- * first render, when a rendered New lens lists further than the last one it
- * sent, and on the owner's input once the heartbeat has passed. Only a
- * rendered New lens sends how far it listed: any other use sends null, which
- * keeps the visit going and marks nothing as shown. A hidden page sends
- * nothing, one post is in flight at a time, and a failed post is left for the
- * next heartbeat.
+ * next and move what counts as new (#1351). It runs at the Library route, so
+ * Works and Covers alike keep the visit going: the tab posts when Library
+ * first renders, on the owner's input once the heartbeat has passed, and when
+ * a rendered New lens lists further than the last listing it sent. Only that
+ * lens says how far it listed, through the function this returns; any other
+ * use sends null, which keeps the visit going and marks nothing as shown. A
+ * hidden page sends nothing, one post is in flight at a time, and a failed
+ * post is left for the next heartbeat.
  */
-export const useLibraryVisit = (http: ReviewHttp, data: LibraryView | undefined) => {
-  const rendered = useRef(data)
-  const tab = useRef({ inFlight: false, posted: false, postedAt: 0, sent: '' })
-  const consider = useRef<(input: boolean) => void>(() => undefined)
-  useEffect(() => {
-    rendered.current = data
-    consider.current = (input) => {
-      const view = rendered.current
+export const useLibraryVisit = (http: ReviewHttp) => {
+  const tab = useRef({
+    inFlight: false,
+    listing: null as LibraryListing | null,
+    posted: false,
+    postedAt: 0,
+    sent: '',
+  })
+  const consider = useCallback(
+    function consider(input: boolean) {
       const state = tab.current
-      if (!view || state.inFlight || document.visibilityState === 'hidden') return
-      const listing = view.lens === 'new' ? view.listing : null
+      if (state.inFlight || document.visibilityState === 'hidden') return
+      const { listing } = state
       const key = listing
         ? `${String(listing.packages)}.${String(listing.works)}.${String(listing.reports)}`
         : ''
@@ -45,14 +48,15 @@ export const useLibraryVisit = (http: ReviewHttp, data: LibraryView | undefined)
         .finally(() => {
           state.inFlight = false
           // A New lens that listed further while this was in flight.
-          consider.current(false)
+          consider(false)
         })
-    }
-    consider.current(false)
-  }, [http, data])
+    },
+    [http],
+  )
   useEffect(() => {
-    const input = () => consider.current(true)
-    const shown = () => consider.current(false)
+    consider(false)
+    const input = () => consider(true)
+    const shown = () => consider(false)
     window.addEventListener('pointerdown', input, { capture: true, passive: true })
     window.addEventListener('keydown', input, { capture: true, passive: true })
     document.addEventListener('visibilitychange', shown)
@@ -61,5 +65,27 @@ export const useLibraryVisit = (http: ReviewHttp, data: LibraryView | undefined)
       window.removeEventListener('keydown', input, { capture: true })
       document.removeEventListener('visibilitychange', shown)
     }
-  }, [])
+  }, [consider])
+  return useCallback(
+    (listing: LibraryListing | null) => {
+      tab.current.listing = listing
+      consider(false)
+    },
+    [consider],
+  )
+}
+
+/** What the visit's function from `useLibraryVisit` takes. */
+export type ShowLibraryListing = ReturnType<typeof useLibraryVisit>
+
+/**
+ * Gives the visit the listing of the Works view's rendered result while it is
+ * the New lens, and null for any other lens or once the view is gone.
+ */
+export const useLibraryListing = (show: ShowLibraryListing, data: LibraryView | undefined) => {
+  const listing = data?.lens === 'new' ? data.listing : null
+  useEffect(() => {
+    show(listing)
+  }, [show, listing])
+  useEffect(() => () => show(null), [show])
 }

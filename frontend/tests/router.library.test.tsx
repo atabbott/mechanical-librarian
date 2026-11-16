@@ -18037,6 +18037,20 @@ describe('New since the last visit (#1351)', () => {
     expect(http.recordLibraryVisit).toHaveBeenCalledTimes(2)
   })
 
+  it('keeps the visit going while the owner reviews covers', async () => {
+    const http = createHttp()
+    let now = 1_000_000
+    vi.spyOn(Date, 'now').mockImplementation(() => now)
+    onTestFinished(() => void vi.restoreAllMocks())
+    renderRoute('/library?lens=all&view=covers', http)
+    await waitFor(() => expect(http.recordLibraryVisit).toHaveBeenCalledTimes(1))
+    expect(http.recordLibraryVisit).toHaveBeenLastCalledWith(null)
+    now += 300_000
+    fireEvent.pointerDown(window)
+    await waitFor(() => expect(http.recordLibraryVisit).toHaveBeenCalledTimes(2))
+    expect(http.recordLibraryVisit).toHaveBeenLastCalledWith(null)
+  })
+
   it('says nothing to the server from a screen that is not Library', async () => {
     const http = createHttp()
     renderRoute('/activity', http)

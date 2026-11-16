@@ -1,12 +1,34 @@
-import { act, renderHook } from '@testing-library/react'
+import { act, render } from '@testing-library/react'
+import { createElement } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { LibraryListing, LibraryView, ReviewHttp } from '../src/api/http'
-import { VISIT_HEARTBEAT_MS, useLibraryVisit } from '../src/libraryVisit'
+import {
+  type ShowLibraryListing,
+  VISIT_HEARTBEAT_MS,
+  useLibraryListing,
+  useLibraryVisit,
+} from '../src/libraryVisit'
 import { createHttp, library } from './fixtures'
 
 // The browser's side of the visit (#1351): when a tab says Library is in use,
-// and that only a rendered New lens says how far it listed.
+// and that only a rendered New lens says how far it listed. The visit sits at
+// the Library route and Works beneath it, as in the router.
+const Works = ({ show, data }: { show: ShowLibraryListing; data: LibraryView | undefined }) => {
+  useLibraryListing(show, data)
+  return null
+}
+const Library = ({
+  http,
+  data,
+}: {
+  http: ReviewHttp
+  data: LibraryView | undefined | 'covers'
+}) => {
+  const show = useLibraryVisit(http)
+  return data === 'covers' ? null : createElement(Works, { show, data })
+}
+
 describe('useLibraryVisit', () => {
   const listed = (packages: number): LibraryListing => ({ packages, reports: 9, works: 2 })
   const fresh = (packages: number): LibraryView => ({
@@ -16,12 +38,17 @@ describe('useLibraryVisit', () => {
   })
   const all: LibraryView = { ...library, listing: listed(40) }
   let visible = true
-  const mount = (first: LibraryView | undefined, record = vi.fn(async () => undefined)) => {
+  const mount = (
+    first: LibraryView | undefined | 'covers',
+    record = vi.fn(async () => undefined),
+  ) => {
     const http: ReviewHttp = { ...createHttp(), recordLibraryVisit: record }
-    const hook = renderHook(({ data }) => useLibraryVisit(http, data), {
-      initialProps: { data: first },
-    })
-    return { record, show: (data: LibraryView | undefined) => hook.rerender({ data }), hook }
+    const view = render(createElement(Library, { http, data: first }))
+    return {
+      record,
+      show: (data: LibraryView | undefined | 'covers') =>
+        view.rerender(createElement(Library, { http, data })),
+    }
   }
   const settle = () => act(async () => vi.advanceTimersByTimeAsync(0))
   const press = () => act(() => void window.dispatchEvent(new Event('pointerdown')))
@@ -39,13 +66,13 @@ describe('useLibraryVisit', () => {
     vi.restoreAllMocks()
   })
 
-  it('posts once when the works first render, with no listing outside New', async () => {
+  it('posts once when Library first renders, with no listing outside New', async () => {
     const { record, show } = mount(undefined)
     await settle()
-    expect(record).not.toHaveBeenCalled()
+    expect(record.mock.calls).toEqual([[null]])
     show(all)
     await settle()
-    expect(record.mock.calls).toEqual([[null]])
+    expect(record).toHaveBeenCalledTimes(1)
     // A later read of any other lens says nothing, whatever its listing.
     show({ ...all, lens: 'flagged', listing: listed(41) })
     await settle()
@@ -94,6 +121,20 @@ describe('useLibraryVisit', () => {
     press()
     await settle()
     expect(record.mock.calls.slice(2)).toEqual([[listed(40)], [listed(40)]])
+  })
+
+  it('keeps the visit going from Covers, where no listing is sent', async () => {
+    const { record, show } = mount(fresh(40))
+    await settle()
+    show('covers')
+    await vi.advanceTimersByTimeAsync(VISIT_HEARTBEAT_MS)
+    press()
+    await settle()
+    expect(record.mock.calls).toEqual([[listed(40)], [null]])
+    // Back on New with the same listing: nothing further to say.
+    show(fresh(40))
+    await settle()
+    expect(record).toHaveBeenCalledTimes(2)
   })
 
   it('posts nothing while the page is hidden, and catches up when it shows', async () => {
