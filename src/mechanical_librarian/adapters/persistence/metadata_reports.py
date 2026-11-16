@@ -1495,6 +1495,10 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         except BaseException as error:
             transaction.rollback()
             failure = error
+        if isinstance(failure, sqlite3.Error):
+            # Begin and commit run outside the helper's own wrapper; a lock
+            # wait, a full disk or an I/O error there is a store fault too.
+            raise MetadataReportError("library visit is unavailable") from failure
         raise failure from None
 
     def review_pipeline_progress(

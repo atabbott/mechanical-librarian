@@ -362,6 +362,25 @@ def test_an_invalid_stored_visit_refuses_the_write_and_changes_nothing(
         repository.close()
 
 
+def test_a_store_held_by_another_writer_refuses_the_visit_and_writes_nothing(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "application.sqlite3"
+    repository = open_repository(path)
+    other = sqlite3.connect(path, timeout=0)
+    try:
+        _finished_preparation(repository)
+        repository._connection.execute("PRAGMA busy_timeout=0")
+        other.execute("BEGIN IMMEDIATE")
+        with pytest.raises(MetadataReportError, match="library visit is unavailable"):
+            repository.record_library_visit(None, 100)
+        other.rollback()
+        assert _row(repository) is None
+    finally:
+        other.close()
+        repository.close()
+
+
 @pytest.mark.parametrize(
     "statement",
     (
