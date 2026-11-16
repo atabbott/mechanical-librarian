@@ -359,9 +359,10 @@ bounded deferred transactions and holds none while bytes are sent. One short
 transaction reads the total and the ordered list of changes, at most 20,000.
 Each chunk of rows is then read in a transaction of its own, of at most 100
 rows and about a quarter of a second of work, which checks that each listed
-change is still prepared and ends before the chunk is sent. A busy begin is
-retried, so a commit waits at most for the chunk being read and only delays
-the next one. The file is therefore not one snapshot: a change that stopped being
+change is still prepared and ends before the chunk is sent. A commit waits at most
+for the chunk being read. A busy begin is retried for up to 30 seconds, far
+longer than a request's read, and holds no lock meanwhile, so a writer that
+keeps committing delays the next chunk and does not fail the file. The file is therefore not one snapshot: a change that stopped being
 prepared after the list was read is left out and counted, and one prepared
 later is absent. A fault, a browser that goes away or a closing application
 ends the file at the next chunk. A download nobody is reading is stopped

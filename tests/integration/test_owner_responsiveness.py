@@ -21,6 +21,7 @@ from mechanical_librarian.application.review_web import (
     BrowseFetchingChanged,
     ReviewWebError,
 )
+from mechanical_librarian.domain.field_effect import FieldEffectError
 from mechanical_librarian.domain.human_decision import (
     HumanDecision,
     HumanDecisionError,
@@ -1860,6 +1861,137 @@ def test_write_plan_export_never_holds_up_an_owner_write(
         export = application._export_projection
         assert export is not None
         assert not export._repository._connection.in_transaction
+    finally:
+        fixture.close()
+
+
+def _held_plan_stream(
+    fixture: OwnerResponsivenessFixture, monkeypatch: pytest.MonkeyPatch
+):
+    """Start a file, take its head and leave its producer between chunks."""
+    monkeypatch.setattr(continuous_field_effects, "CLOSING_CHECK_ROWS", 1)
+    monkeypatch.setattr(write_plan, "_QUEUED_CHUNKS", 1)
+    assert _accept_offered_values(fixture) > 0
+    application = fixture.application
+    assert application.activity_permission_readiness()["prepared"]["total"] >= 4
+    stream = application.activity_write_plan_file("json")
+    head = stream.next_chunk()
+    assert head == b'{"changes":[\n'
+    deadline = time.monotonic() + 5
+    while not stream._chunks.full():
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
+    return stream, head
+
+
+def _busy_store(fixture: OwnerResponsivenessFixture) -> sqlite3.Connection:
+    """Hold the store as a writer mid-commit does, until rolled back."""
+    busy = sqlite3.connect(
+        fixture.database, isolation_level=None, check_same_thread=False
+    )
+    busy.execute("PRAGMA busy_timeout=5000")
+    busy.execute("BEGIN EXCLUSIVE")
+    return busy
+
+
+def test_write_plan_export_waits_out_a_store_busy_past_the_ordinary_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A writer that keeps the store busy delays the file, never fails it (#1336)."""
+    fixture = OwnerResponsivenessFixture(tmp_path, 20, mixed=True, prepare=True)
+    try:
+        stream, head = _held_plan_stream(fixture, monkeypatch)
+        chunks = [head]
+        try:
+            # Busy for longer than a request-serving read would wait.
+            busy = _busy_store(fixture)
+            release = threading.Timer(1.5, busy.rollback)
+            release.start()
+            try:
+                # Then a writer committing back to back, with no pause.
+                until = time.monotonic() + 3.5
+                errors: list[BaseException] = []
+
+                def writer() -> None:
+                    time.sleep(1.5)
+                    count = 0
+                    try:
+                        while time.monotonic() < until:
+                            count += 1
+                            fixture.repository.set_field_effect_paused(
+                                count % 2 == 0, 3_000 + count
+                            )
+                    except BaseException as error:  # noqa: BLE001 - asserted below
+                        errors.append(error)
+
+                thread = threading.Thread(target=writer)
+                thread.start()
+                while (chunk := stream.next_chunk()) is not None:
+                    chunks.append(chunk)
+                thread.join(10)
+            finally:
+                release.cancel()
+                busy.close()
+        finally:
+            stream.close()
+        assert not errors
+        document = json.loads(b"".join(chunks))
+        assert document["listed"] == len(document["changes"]) > 0
+        assert (
+            document["listed"] + document["unreadable"] + document["changed"]
+            == document["total"]
+        )
+    finally:
+        fixture.close()
+
+
+def test_write_plan_export_stops_promptly_while_waiting_for_a_busy_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = OwnerResponsivenessFixture(tmp_path, 20, mixed=True, prepare=True)
+    try:
+        stream, _ = _held_plan_stream(fixture, monkeypatch)
+        busy = _busy_store(fixture)
+        try:
+            assert stream.next_chunk() is not None
+            # The producer is now waiting to begin; the reader goes away.
+            time.sleep(1.0)
+            assert stream._thread.is_alive()
+            stopped = time.monotonic()
+            stream.close()
+            stream._thread.join(5)
+            assert not stream._thread.is_alive()
+            assert time.monotonic() - stopped < 2
+        finally:
+            busy.close()
+        export = fixture.application._export_projection
+        assert export is not None
+        assert not export._repository._connection.in_transaction
+        assert fixture.application._active_browses == 0
+    finally:
+        fixture.close()
+
+
+def test_write_plan_export_fails_as_a_fault_when_the_store_stays_busy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mechanical_librarian.adapters.persistence import field_effect_activity
+
+    monkeypatch.setattr(field_effect_activity, "_WRITE_PLAN_BUSY_RETRY_SECONDS", 0.5)
+    fixture = OwnerResponsivenessFixture(tmp_path, 20, mixed=True, prepare=True)
+    try:
+        stream, _ = _held_plan_stream(fixture, monkeypatch)
+        busy = _busy_store(fixture)
+        try:
+            started = time.monotonic()
+            with pytest.raises(FieldEffectError, match="^persistence$"):
+                while stream.next_chunk() is not None:
+                    pass
+            assert time.monotonic() - started < 3
+        finally:
+            busy.close()
+            stream.close()
+        assert fixture.application._active_browses == 0
     finally:
         fixture.close()
 

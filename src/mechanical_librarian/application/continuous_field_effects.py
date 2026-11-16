@@ -162,7 +162,7 @@ class ContinuousFieldEffectRepository(Protocol):
         | AuthoredDescriptionDecision,
     ) -> dict[str, object]: ...
     def field_effect_write_plan_snapshot(
-        self, call: Callable[[], dict[str, object]]
+        self, call: Callable[[], dict[str, object]], cancelled: Callable[[], bool]
     ) -> dict[str, object]: ...
     def record_current_field_effect_no_change(
         self, decision: AutomaticDecision, occurred_at: int
@@ -1470,7 +1470,8 @@ class ContinuousGuardedApplication:
                 "entries": self._repository.pending_field_effect_plan_entries(
                     None, FILE_ROWS, tuple(name for _, name in self._libraries)
                 ),
-            }
+            },
+            cancelled,
         )
         made_at = self._clock()
         entries = cast(
@@ -1507,14 +1508,16 @@ class ContinuousGuardedApplication:
             if cancelled():
                 raise GuardedApplicationError("unavailable")
             rows.clear()
-            snapshot(read_chunk)
+            snapshot(read_chunk, cancelled)
             chunk = []
             for row in rows:
                 line = encoder.row(row)
                 if line is None:
                     break
                 chunk.append(line)
-            emit(b"".join(chunk))
+            # A chunk whose rows were all left out sends nothing.
+            if chunk:
+                emit(b"".join(chunk))
             if len(chunk) < len(rows):
                 break
         emit(

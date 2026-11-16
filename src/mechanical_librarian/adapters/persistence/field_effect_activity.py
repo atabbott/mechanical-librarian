@@ -195,6 +195,10 @@ from mechanical_librarian.domain.shadow_outcome import (
 FIELD_EFFECT_CONSENT_ENVELOPE_SCHEMA: Final = "field-effect-consent-envelope-v1"
 _ACTIVITY_PAGE_BUSY_TIMEOUT_MILLISECONDS = 150
 _ACTIVITY_PAGE_BUSY_RETRY_SECONDS = 0.75
+# A write plan file waits this long at each begin for a busy store before it
+# fails: it holds no lock anyone needs meanwhile, and a fault would cost the
+# owner the whole download (#1336).
+_WRITE_PLAN_BUSY_RETRY_SECONDS = 30.0
 # A read whose own refresh leaves candidates pending finishes them in bounded
 # transactions and retries; the last attempt serves the canonical page (#1225).
 _ACTIVITY_CATCH_UP_ATTEMPTS = 3
@@ -622,7 +626,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         # A configured reader's pending counts and readiness example, each with
         # the revision and file identity it was read at (#1223).
         self._pending_reads: dict[str, tuple[_ActivityStamp, object]] | None = None
-        # A configured reader keeps the reports it validated (#1231).
+        # A configured reader keeps the reports it validated (#1231). Keyed by
+        # the exact document text, it maps bytes read in the current snapshot
+        # to their parse, so it never serves a value a later commit replaced.
         self._reused_report: Callable[[str], MetadataReport] | None = None
         self._reused_case: Callable[[str], ReviewCase] | None = None
         self._reused_outcome: Callable[[str], ShadowOutcomeSet] | None = None
@@ -3428,15 +3434,27 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             and getattr(cause, "sqlite_errorcode", None) == sqlite3.SQLITE_BUSY
         )
 
-    def _retry_activity_busy(self, call: Callable[[], _ActivityRead]) -> _ActivityRead:
-        deadline = time.monotonic() + self._activity_page_busy_retry_seconds
+    def _retry_activity_busy(
+        self,
+        call: Callable[[], _ActivityRead],
+        seconds: float | None = None,
+        cancelled: Callable[[], bool] | None = None,
+    ) -> _ActivityRead:
+        """Retry a busy ``call`` for this reader's window, or for ``seconds``.
+
+        ``cancelled`` is asked between attempts and ends the wait at once.
+        """
+        if seconds is None:
+            seconds = self._activity_page_busy_retry_seconds
+        deadline = time.monotonic() + seconds
         while True:
             try:
                 return call()
             except FieldEffectError as error:
                 if (
-                    self._activity_page_busy_retry_seconds == 0
+                    seconds == 0
                     or not self._retryable_activity_page_busy(error)
+                    or (cancelled is not None and cancelled())
                     or time.monotonic()
                     + _ACTIVITY_PAGE_BUSY_TIMEOUT_MILLISECONDS / 1_000
                     > deadline
@@ -3465,19 +3483,22 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 return self._activity_snapshot(project)
 
     def field_effect_write_plan_snapshot(
-        self, call: Callable[[], dict[str, object]]
+        self, call: Callable[[], dict[str, object]], cancelled: Callable[[], bool]
     ) -> dict[str, object]:
         """Run one bounded write-plan file read in its own exact snapshot.
 
         A file is read as a list snapshot and then one snapshot per chunk of
         rows, each ended before its rows are sent: the store keeps a rollback
         journal, so a read left open would refuse every other connection's
-        commit. A busy begin is retried, so a writer that is committing delays
-        the next chunk. Its inputs are canonical rows, as the consent read's
+        commit. A busy begin is retried for far longer than a request's, so a
+        writer that keeps committing delays the next chunk instead of failing
+        the file; ``cancelled`` ends that wait. Its inputs are canonical rows, as the consent read's
         are (#1236), so it catches up no facts.
         """
         with self._activity_page_cache_lock, self._plan_documents():
-            return self._activity_snapshot(call)
+            return self._activity_snapshot(
+                call, _WRITE_PLAN_BUSY_RETRY_SECONDS, cancelled
+            )
 
     def field_effect_activity_snapshot(
         self, call: Callable[[], dict[str, object]]
@@ -3498,7 +3519,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             return self._activity_snapshot(call)
 
     def _activity_snapshot(
-        self, call: Callable[[], dict[str, object]]
+        self,
+        call: Callable[[], dict[str, object]],
+        busy_seconds: float | None = None,
+        cancelled: Callable[[], bool] | None = None,
     ) -> dict[str, object]:
         transaction = self._transaction("field_effect_activity_snapshot", deferred=True)
 
@@ -3513,7 +3537,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 transaction.rollback()
                 raise
 
-        self._retry_activity_busy(begin)
+        self._retry_activity_busy(begin, busy_seconds, cancelled)
         try:
             return call()
         finally:

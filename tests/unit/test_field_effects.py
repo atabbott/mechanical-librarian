@@ -1383,11 +1383,11 @@ def test_a_value_committed_between_two_plan_snapshots_is_read_fresh(
         read.append(activity._plan_reuse.case.cache_info().hits)
         return {}
 
-    repository.field_effect_write_plan_snapshot(snapshot)
+    repository.field_effect_write_plan_snapshot(snapshot, lambda: False)
     assert not repository._connection.in_transaction
     assert activity._plan_reuse is None
     _report_again(effects)
-    repository.field_effect_write_plan_snapshot(snapshot)
+    repository.field_effect_write_plan_snapshot(snapshot, lambda: False)
 
     prepared = frozenset({decision.decision_id})
     assert read == [
@@ -1436,8 +1436,8 @@ def test_a_plan_file_holds_no_transaction_while_it_sends(
     finally:
         stream.close()
 
-    # The head, the one chunk of rows and the summary.
-    assert open_at_emit == [False, False, False]
+    # The head, the chunk of rows unless its one row moved, and the summary.
+    assert open_at_emit == [False] * (2 if moved else 3)
     assert not repository._connection.in_transaction
     document = json.loads(b"".join(chunks))
     assert len(document["changes"]) == document["listed"]

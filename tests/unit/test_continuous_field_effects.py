@@ -704,7 +704,7 @@ class _FileRepository(_ActivityPagedRepository):
         super().__init__(decisions)
         self.snapshots: list[str] = []
 
-    def field_effect_write_plan_snapshot(self, call):
+    def field_effect_write_plan_snapshot(self, call, _cancelled):
         self.snapshots.append("enter")
         try:
             return call()
@@ -802,6 +802,42 @@ def test_write_plan_file_sends_nothing_inside_a_snapshot(
     service._write_plan_file("json", emit, lambda: False, {})
     assert [rows for rows, _ in sent] == [1, 1, 1, 1, 1, 1, 0]
     assert repository.snapshots == ["enter", "exit"] * 6
+
+
+def test_write_plan_file_sends_no_chunk_whose_rows_were_all_left_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(continuous_field_effects, "CLOSING_CHECK_ROWS", 2)
+    decisions = _decisions(4)
+    moved = {value.decision_id for value in decisions[:2]}
+
+    class Repository(_FileRepository):
+        def prepared_field_effect_decisions(self, decision_ids):
+            return super().prepared_field_effect_decisions(decision_ids) - moved
+
+    class SkippingAuthority(_Authority):
+        def resolve(self, decision):
+            raise FieldEffectError("authority_binding")
+
+    repository = Repository(decisions)
+    sent: list[bytes] = []
+    checks: list[int] = []
+
+    def cancelled() -> bool:
+        checks.append(len(sent))
+        return False
+
+    _file_service(repository, SkippingAuthority())._write_plan_file(
+        "json", sent.append, cancelled, {}
+    )
+
+    # An all-changed chunk and an all-unreadable one: the head and the
+    # summary only, and the stop check still ran before each chunk.
+    assert len(sent) == 2 and b"" not in sent
+    summary = json.loads(b"".join(sent))
+    assert (summary["changed"], summary["unreadable"], summary["changes"]) == (2, 2, [])
+    assert checks == [1, 1]
+    assert repository.snapshots == ["enter", "exit"] * 3
 
 
 @pytest.mark.parametrize("format", ("csv", "json"), ids=("csv", "json"))

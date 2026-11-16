@@ -956,9 +956,11 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         return self._field_effect_activity.field_effect_consent_snapshot(call)
 
     def field_effect_write_plan_snapshot(
-        self, call: Callable[[], dict[str, object]]
+        self, call: Callable[[], dict[str, object]], cancelled: Callable[[], bool]
     ) -> dict[str, object]:
-        return self._field_effect_activity.field_effect_write_plan_snapshot(call)
+        return self._field_effect_activity.field_effect_write_plan_snapshot(
+            call, cancelled
+        )
 
     def pending_field_effect_decision_counts(self) -> tuple[dict[str, object], ...]:
         return self._field_effect_activity.pending_field_effect_decision_counts()
