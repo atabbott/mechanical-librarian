@@ -20,6 +20,7 @@ import type {
   PolicyStateView,
   PreparationView,
   ReviewHttp,
+  WritePlanView,
   PreviewPostureView,
   PreviewSampleView,
   TasteProfileView,
@@ -77,7 +78,7 @@ export const recordedAcknowledgement = (
 export const library: LibraryView = {
   lens: 'all',
   page: 1,
-  counts: { attention: 1, all: 1, clear: 0, notMatched: 0, failed: 0 },
+  counts: { attention: 1, all: 1, clear: 0, notMatched: 0, failed: 0, flagged: 0 },
   works: [
     {
       id: 'case-1',
@@ -95,6 +96,7 @@ export const library: LibraryView = {
       detailKind: 'case' as const,
       preparation: null,
       preparationOutcomes: [],
+      valueFlags: [],
     },
   ],
 }
@@ -298,12 +300,29 @@ export const inertAudiobookQualification: PolicyStateView['audiobook_qualificati
   },
 ]
 
+// The write plan a readiness check finds: one owner-chosen group per field
+// with prepared changes, its count only, so its total is those counts (#1336).
+export const writePlan = (data: ActivityView): WritePlanView => {
+  const groups = data.capabilities.flatMap((library) =>
+    library.destinations
+      .filter((destination) => destination.prepared > 0)
+      .map((destination) => ({
+        library: library.library,
+        destination: destination.destination,
+        kind: 'human' as const,
+        count: destination.prepared,
+        rows: [],
+      })),
+  )
+  return { total: groups.reduce((sum, group) => sum + group.count, 0), groups }
+}
+
 export const permissionReadiness = (data: ActivityView, backupReady: boolean | null = true) => ({
   backup_ready: backupReady,
   configured_libraries: data.configured_libraries,
   capabilities: data.capabilities,
   prepared: data.prepared,
-  example: data.example,
+  plan: writePlan(data),
 })
 
 // An idle preparation view with every field the decoder requires. A case
@@ -482,16 +501,11 @@ export const createHttp = (): ReviewHttp => ({
     return (this.policyCommand as ScriptedPolicyCommand)('activate', request)
   },
   getActivity: vi.fn(async () => activity()),
-  getActivityPermissionReadiness: vi.fn(async () => {
-    const data = activity()
-    return {
-      backup_ready: true,
-      configured_libraries: data.configured_libraries,
-      capabilities: data.capabilities,
-      prepared: data.prepared,
-      example: data.example,
-    }
-  }),
+  getActivityPermissionReadiness: vi.fn(async () => permissionReadiness(activity())),
+  downloadActivityWritePlan: vi.fn<ReviewHttp['downloadActivityWritePlan']>(async () => ({
+    blob: new Blob(['"Library"\r\n'], { type: 'text/csv;charset=utf-8' }),
+    filename: 'mechanical-librarian-write-plan.csv',
+  })),
   getActivityConsent: vi.fn(async () => consentOf(activity())),
   getActivityTransitions: vi.fn(async () => ({ events: [], has_more: false })),
   activityCommand: vi.fn(async () => undefined),

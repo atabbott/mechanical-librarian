@@ -33,8 +33,11 @@ How the pipeline prepares each work, stage by stage:
 - [Scope and non-goals](product/scope.md)
 - [Roadmap](product/roadmap.md)
 - [Review experience](product/review-experience.md), its
-  [taste profile](product/cover-taste-profile.md) and
-  [Library progress](product/library-progress.md)
+  [first review](product/first-review.md) guide, its
+  [taste profile](product/cover-taste-profile.md),
+  [Library progress](product/library-progress.md),
+  [Looks wrong](product/looks-wrong.md) and the
+  [write plan](product/write-plan.md)
 - [Automation policy](product/automation-policy.md) and
   [qualification records](product/rich-metadata-qualification.md)
 - [Admission-rule ledger](product/admission-rule-ledger.md): every early

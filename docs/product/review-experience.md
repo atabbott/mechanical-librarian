@@ -66,12 +66,11 @@ covers the claim token and container.
   refusal sits beside its field and clears when the field changes. It gives a
   safe cause and one remedy, never a code, and stays in view at 200% text.
 - Completed steps collapse to a row with Change. The step list stays beside
-  the step while it fits the window, and scrolls inside itself when it does
-  not. Reopening a step removes only the answers and secrets that depend on
+  the step while it fits the window, and otherwise scrolls inside itself.
+  Reopening a step removes only the answers and secrets that depend on
   it. Resuming setup returns to the first incomplete step. A change in another
   tab restores the latest recorded step.
-- The password step shows a one-line plain-HTTP notice only when the page is
-  not served over HTTPS.
+- The password step shows a one-line plain-HTTP notice only without HTTPS.
 - A failed connection names its cause, the address and one remedy. The causes
   include a name that does not resolve, a refused connection, an unverified
   certificate, no answer in time and a rejected key. Setup refuses an address
@@ -90,7 +89,7 @@ covers the claim token and container.
   sources that suit the chosen libraries start ticked, and each can be
   unticked before Continue. Hardcover and Google Books need an API key while
   they are on. Without either, setup says most ebooks will wait for your
-  review, and still lets you continue.
+  review, and lets you continue.
 - The reviewer step checks an existing Codex sign-in by itself and offers one
   Sign in with ChatGPT button. OpenRouter starts on the recommended model with
   its cost per 1,000 works; other models wait behind Choose another model, and
@@ -102,16 +101,17 @@ covers the claim token and container.
 
 Before Start a summary lists each answer in step order, and each row reopens
 its step. It says once: `Nothing in your library changes. Writes stay off until
-you turn them on in Activity.` Start then switches the same address to the
+you turn them on in Activity.` Start switches the same address to the
 workspace, starts preparation and opens Library, signed in, on the new run
 when it is known within a few seconds. Library's write handoff appears once a
-prepared change waits for write permission.
+prepared change waits for write permission. The
+[first review](first-review.md) guide opens when a field first needs you.
 
 ## Workspace shell
 
 The destinations are Library (with Attention and work detail), Policy, Activity
-and Settings. Every page opens in the saved theme, or the system theme until
-one is saved, on its first frame.
+and Settings. Every page opens in the saved theme, or the system theme with
+none saved, on its first frame.
 
 Sign-in has Show password. It says whether the password was wrong or the device
 must wait five minutes after too many attempts. The app has no password reset
@@ -121,13 +121,13 @@ address while signed in goes straight to Library. Attention has no page of its
 own: an old `/attention` address opens Library with Attention open.
 
 The masthead holds still while the live-update and preparation status change.
-It stays at the top only while it takes at most a sixth of the window. When
-it is taller, it scrolls away, so it never covers content or focus. The
+It stays at the top only while it takes at most a sixth of the window. Taller,
+it scrolls away, so it never covers content or focus. The
 masthead marks the current destination, and Library stays marked while a
 review or Attention is open.
 
 Navigation appears without waiting for data. Loading reads as one small line
-beside a dot. The dot pulses unless reduced motion is set in your system or in
+beside a dot. The dot pulses unless reduced motion is set in your system or
 Settings › Appearance. A count that is loading or failed never shows as zero,
 and a failed read keeps a retry. A page that cannot load says why and what to
 do. Its status and code are under Technical detail.
@@ -143,7 +143,7 @@ unknown review path shows a recovery state, not an error.
 
 ## Preparation and source status
 
-The preparation panel states one run in five counts. Their labels are "ready
+The preparation panel states one run in five counts: "ready
 to browse", "recorded, nothing to decide", "not matched", "could not finish"
 and "in progress". Ready to browse and in progress always show. The others hide
 at zero; an unknown count reads `…`. Counts describe the run's books as
@@ -154,11 +154,11 @@ run's state changes. Recent completions record each book's first finish, one
 row each: the title, linked into Library, then "Prepared" or "Couldn't
 finish". A rate in works a minute appears only while running.
 
-The masthead's background-work control shows each library's scan state and
-counts, and marks a library outside the current run. At idle it reads
-`Preparation idle` and still offers Scan now and Pause. Pause stops new scans.
-Source lookups already waiting keep their schedule. The popover fits the window
-below the masthead, and scrolls inside itself when it must. `Escape` closes it
+The masthead's background-work icon fills while libraries are prepared and
+marks what needs you. Its popover shows each library's scan state and works
+checked, marks a library outside the current run, and offers Scan now and
+Pause. Pause stops new scans. Source lookups already waiting keep their schedule. The popover fits the window
+below the masthead, and scrolls inside itself if needed. `Escape` closes it
 and returns focus to its trigger. The popover disables a pending command
 instead of removing it, so focus stays put and a second press sends nothing.
 When no answer confirms a command's result, the popover shows the refreshed
@@ -171,22 +171,21 @@ These controls retry different things:
 - Retrying a cover or description consideration asks the reviewer about that
   one item again.
 
-Lookups that a source is limiting retry on their own schedule. A failure before
-a report has no automatic retry
+A failure before a report has no automatic retry
 ([provider recovery](../operations/provider-recovery.md)).
 
-Library and Settings share one notice of source lookups waiting to retry. Each
-entry names a source, a library, the reason, how many lookups wait and when
-they retry. Mechanical Librarian does not retry a refused key on its own: fix
-the key, then use Retry now (or the file instruction). An entry with no
-automatic retry left says so. An entry that needs an API key added or checked
-links to Settings › Metadata sources. Mechanical Librarian announces the
-outcome of Retry now beside it. A file-managed deployment shows the file
-instruction instead. With nothing waiting, the notice takes no space.
+The masthead's background-work control shows when source lookups are waiting
+to retry. Its popover lists each source and library with the reason, the number
+waiting and the next automatic retry, offers Retry now, and says what it
+did. Library and Settings show a notice only when lookups will not be retried
+unless the owner acts, or a source's lookups have waited 24 hours. A
+refused key is never retried on its own: fix it, then use Retry now. An entry
+that needs an API key added or checked links to Settings › Metadata sources. A
+file-managed deployment shows the file instruction instead of Retry now.
 
 A work whose preparation could not finish stays in Library as a row that does
 not open, marked Could not finish. It keeps its title while the catalogue
-still matches. Each failure code has one reason and one next step. The next
+matches. Each failure code has one reason and one next step. The next
 step is a change you make followed by a scan, an automatic retry, or a new
 scan of the library. A new scan queues a failed book again from the step that
 failed. That retry rereads what earlier steps saved. So when saved data could
@@ -210,18 +209,18 @@ reads `Found m
 of n works` and the lens. A search narrows the list and Attention, never the
 totals.
 
-The lenses are All (the default), Needs attention, No attention needed, Not
-matched and Could not finish, in one row that scrolls sideways when the panel
-is narrow. Lens, search, page, selected work and field live in the URL, so
-links and Back and Forward work. The pager offers only the moves that exist.
-An empty list says so in one line, and with no library connected it links to
-Settings to add one.
+The lenses are All (default), [Looks wrong](looks-wrong.md), Needs attention,
+No attention needed, Not matched and Could not finish, in one row that scrolls
+sideways when the panel is narrow. Lens, search, page, selected work and field
+live in the URL, so links, Back and Forward work. The pager offers only the
+moves that exist. An empty list says so in one line; with no library connected
+it links to Settings.
 
 Works that need a decision come first, under "Every lookup finished" and then
 "Some lookups gave no usable answer". The first heading does not promise a
 match, and the second does not promise a retry. Works that could not finish
 follow under Could not finish, then Not matched, then the rest. The other
-lenses are alphabetical.
+lenses, except Looks wrong, are alphabetical.
 
 A work with no case, nothing to decide and no source evidence accepted for it
 is Not matched, counted beside Works as `7 works · 4 not matched`. Its status
@@ -546,15 +545,15 @@ permission are in a section you open.
 Review write permissions opens one panel, from Activity or from Library's
 write handoff, and opening it grants nothing. Mechanical Librarian then checks
 that its own database is consistent and shows the prepared work, the fields
-each library can write and one before-and-after example. You can confirm only
-once that check passes and you include at least one library.
+each library can write and the [write plan](write-plan.md). You can confirm
+only once that check passes and you include at least one library.
 
 The libraries you include stay included through page updates and repeat
 checks. A change to the libraries, their fields' write support or permission,
 or the active policy clears your choice and says why. Cancel or leaving the
 page clears it too. Confirming grants only the libraries you included. If the
 libraries, their fields, the policy or the database check changed since, it
-grants nothing and says so. Library and Activity both state a lapsed
+grants nothing and says so. Library and Activity state a lapsed
 permission, and neither says no action is needed while no library has permission
 ([ADR-0039](../architecture/decisions/0039-continuous-guarded-application.md)).
 
@@ -577,13 +576,13 @@ Settings has seven sections: Audiobookshelf, Libraries, Metadata sources,
 Reviewer, Background work, Access and diagnostics, and Appearance. The section
 is the `?group=` URL value. A message naming Settings → Reviewer or Settings →
 Audiobookshelf links there. A section index sits beside the page above 760
-pixels; at 760 or narrower a selector replaces it.
+pixels; otherwise a selector replaces it.
 
 The page edits one draft of all settings; each section counts its changes,
 indirect ones too. While anything is unsaved, a bottom tray shared with Policy
 lists before and after values and offers Discard all and Save settings. A tray
 taller than a third of the window scrolls with the page. Save settings checks
-every value and goes to the first one that needs fixing. "Settings saved and
+every value and goes to the first that needs fixing. "Settings saved and
 in use." appears once, above the page's end and the tray, so nothing moves. If
 settings changed elsewhere, saving loads them under your draft. An edit to a
 value changed in both places takes the newer value, and the tray counts these.
@@ -608,9 +607,12 @@ In Access and diagnostics, Sign out other browsers and, in store mode, Owner
 password (given the current one) apply at once and sign out every other
 browser ([deployment](../operations/deployment.md#owner-sessions)).
 
+In Appearance, Theme (Follow system, Light or Dark) applies at once and stays
+in this browser, in a file-managed deployment too.
+
 ## Words and values
 
-The voice is the one `DESIGN.md` states under Voice. Mechanical Librarian
+`DESIGN.md` states the voice under Voice. Mechanical Librarian
 never turns a code into words: it refuses an unknown code instead of
 sentence-casing it. Acronyms stay capitalised, languages read by name with
 their tag ("English (en)"), and sizes use MB. Times within the past hour are

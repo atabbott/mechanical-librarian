@@ -6,19 +6,29 @@ import hashlib
 import json
 import sqlite3
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from unittest.mock import patch
 
 import httpx
 import pytest
 
+from mechanical_librarian.application import continuous_field_effects, write_plan
+from mechanical_librarian.application.field_effects import GuardedApplicationError
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_web import (
     BrowseFetchingChanged,
     ReviewWebError,
 )
+from mechanical_librarian.domain.field_effect import FieldEffectError
+from mechanical_librarian.domain.human_decision import (
+    HumanDecision,
+    HumanDecisionError,
+)
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from mechanical_librarian.domain.owner_settings import OWNER_SETTINGS_SCHEMA
+from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.infrastructure.settings_authority import (
     REVIEW_BOOTSTRAP_SCHEMA,
 )
@@ -1639,11 +1649,15 @@ def test_supported_fixture_activity_projects_real_owner_history(tmp_path: Path) 
         assert readiness["backup_ready"] is True
         assert set(readiness) == {
             "backup_ready",
-            "example",
+            "plan",
             "prepared",
             "configured_libraries",
             "capabilities",
         }
+        # The plan's counts are the prepared counts of the same snapshot.
+        plan = readiness["plan"]
+        assert plan["total"] == readiness["prepared"]["total"]
+        assert sum(group["count"] for group in plan["groups"]) == plan["total"]
         # The composed application's notice read states Activity's offer (#1236).
         keys = (
             "backup_ready",
@@ -1654,6 +1668,332 @@ def test_supported_fixture_activity_projects_real_owner_history(tmp_path: Path) 
         )
         consent = fixture.application.activity_consent()
         assert consent == {key: activity[key] for key in keys}
+    finally:
+        fixture.close()
+
+
+def _drain_plan(stream) -> bytes:
+    chunks = []
+    try:
+        while (chunk := stream.next_chunk()) is not None:
+            chunks.append(chunk)
+    finally:
+        stream.close()
+    return b"".join(chunks)
+
+
+def _accept_offered_values(fixture: OwnerResponsivenessFixture) -> int:
+    """Accept the first offered value of each case, as the owner would."""
+    accepted = 0
+    for index, listed in enumerate(fixture.cases):
+        case = ReviewCase.create_from_data(
+            json.loads(fixture.repository.get_review_case(listed.review_case_id))[
+                "case"
+            ]
+        )
+        proposal = next(
+            (
+                value
+                for value in case.proposals
+                if value["result"]["outcome"] == "unresolved_choice"
+            ),
+            None,
+        )
+        if proposal is None:
+            continue
+        try:
+            fixture.repository.record_human_decision(
+                HumanDecision.create(
+                    case,
+                    proposal_id=str(proposal["proposal_id"]),
+                    target_fingerprint=case.target_fingerprint,
+                    destination=str(proposal["destination"]),
+                    actor="owner",
+                    outcome="accept",
+                    selected_value=proposal["result"]["alternatives"][0]["value"],
+                    idempotency_key=f"write-plan-export-{index:04d}",
+                    occurred_at=1_000 + index,
+                )
+            )
+        except HumanDecisionError:
+            # A case whose offer moved on since the fixture listed it.
+            continue
+        accepted += 1
+    return accepted
+
+
+def test_write_plan_export_reads_its_own_query_only_snapshot(tmp_path: Path) -> None:
+    """The file is read on a third query-only reader of its own (#1336)."""
+    fixture = OwnerResponsivenessFixture(tmp_path, 20, mixed=True, prepare=True)
+    try:
+        assert _accept_offered_values(fixture) > 0
+        application = fixture.application
+        export = application._export_projection
+        assert export is not None
+        connection = export._repository._connection
+        assert application._permission_projection is not None
+        assert application._activity_projection is not None
+        assert connection not in (
+            application._permission_projection._repository._connection,
+            application._activity_projection._repository._connection,
+            fixture.repository._connection,
+        )
+        assert connection.execute("PRAGMA query_only").fetchone() == (1,)
+
+        document = json.loads(_drain_plan(application.activity_write_plan_file("json")))
+        prepared = application.activity_permission_readiness()["prepared"]["total"]
+        assert document["total"] == prepared > 0
+        assert document["listed"] + document["unreadable"] == prepared
+        assert document["truncated"] is False
+        assert not connection.in_transaction
+
+        # Hold an export open inside a snapshot: the owner's consent and
+        # ledger reads still answer, and a closing application ends the file.
+        repository = export._repository
+        read = repository.field_effect_plan_documents
+        entered, release = threading.Event(), threading.Event()
+
+        def held(decision_ids):
+            entered.set()
+            assert release.wait(10)
+            return read(decision_ids)
+
+        with patch.object(repository, "field_effect_plan_documents", held):
+            stream = application.activity_write_plan_file("csv")
+            try:
+                head = stream.next_chunk()
+                assert head is not None and head.startswith(b"\xef\xbb\xbf")
+                assert entered.wait(5)
+                assert connection.in_transaction
+                started = time.monotonic()
+                assert application.activity_consent()["capabilities"]
+                assert application.activity()["ledger"]["total"] > 0
+                assert time.monotonic() - started < 5
+                with application._browse_lifetime:
+                    application._browse_closed = True
+                release.set()
+                stopped = time.monotonic()
+                with pytest.raises(GuardedApplicationError, match="^unavailable$"):
+                    while stream.next_chunk() is not None:
+                        pass
+                assert time.monotonic() - stopped < 2
+            finally:
+                release.set()
+                stream.close()
+        # The snapshot ended and its accepted read was released.
+        assert not connection.in_transaction
+        assert application._active_browses == 0
+    finally:
+        fixture.close()
+
+
+def test_write_plan_export_never_holds_up_an_owner_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A file being made, read or not, leaves every other commit free (#1336).
+
+    The store keeps a rollback journal, so a read transaction left open while
+    a download waits for its reader would refuse an owner's write.
+    """
+    monkeypatch.setattr(continuous_field_effects, "CLOSING_CHECK_ROWS", 1)
+    monkeypatch.setattr(write_plan, "_QUEUED_CHUNKS", 1)
+    fixture = OwnerResponsivenessFixture(tmp_path, 20, mixed=True, prepare=True)
+    try:
+        assert _accept_offered_values(fixture) > 0
+        application = fixture.application
+        prepared = application.activity_permission_readiness()["prepared"]["total"]
+        # Enough rows that the producer waits on a reader who takes nothing.
+        assert prepared >= 4
+        waits: list[float] = []
+
+        def write(paused: bool) -> None:
+            started = time.monotonic()
+            fixture.repository.set_field_effect_paused(paused, 2_000 + len(waits))
+            waits.append(time.monotonic() - started)
+
+        stream = application.activity_write_plan_file("json")
+        chunks = []
+        try:
+            head = stream.next_chunk()
+            assert head is not None
+            chunks.append(head)
+            deadline = time.monotonic() + 5
+            while not stream._chunks.full():
+                assert time.monotonic() < deadline
+                time.sleep(0.01)
+            # Nobody is reading: the owner's write still commits at once.
+            write(True)
+            write(False)
+            assert max(waits) < 2
+
+            # A slow reader: writes keep committing while the file is made.
+            done = threading.Event()
+            errors: list[BaseException] = []
+
+            def writer() -> None:
+                try:
+                    # Paced as any writer is; one that commits back to back
+                    # can keep a chunk's begin busy past its bounded retry.
+                    while not done.wait(0.02):
+                        write(len(waits) % 2 == 0)
+                except BaseException as error:  # noqa: BLE001 - asserted below
+                    errors.append(error)
+
+            thread = threading.Thread(target=writer)
+            thread.start()
+            try:
+                while (chunk := stream.next_chunk()) is not None:
+                    chunks.append(chunk)
+                    time.sleep(0.02)
+            finally:
+                done.set()
+                thread.join(10)
+        finally:
+            stream.close()
+        assert not errors
+        assert len(waits) > 2 and max(waits) < 2
+        document = json.loads(b"".join(chunks))
+        assert document["total"] == prepared
+        assert (
+            document["listed"] + document["unreadable"] + document["changed"]
+            == prepared
+        )
+        assert document["listed"] == len(document["changes"]) > 0
+        assert document["truncated"] is False
+        export = application._export_projection
+        assert export is not None
+        assert not export._repository._connection.in_transaction
+    finally:
+        fixture.close()
+
+
+def _held_plan_stream(
+    fixture: OwnerResponsivenessFixture, monkeypatch: pytest.MonkeyPatch
+):
+    """Start a file, take its head and leave its producer between chunks."""
+    monkeypatch.setattr(continuous_field_effects, "CLOSING_CHECK_ROWS", 1)
+    monkeypatch.setattr(write_plan, "_QUEUED_CHUNKS", 1)
+    assert _accept_offered_values(fixture) > 0
+    application = fixture.application
+    assert application.activity_permission_readiness()["prepared"]["total"] >= 4
+    stream = application.activity_write_plan_file("json")
+    head = stream.next_chunk()
+    assert head == b'{"changes":[\n'
+    deadline = time.monotonic() + 5
+    while not stream._chunks.full():
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
+    return stream, head
+
+
+def _busy_store(fixture: OwnerResponsivenessFixture) -> sqlite3.Connection:
+    """Hold the store as a writer mid-commit does, until rolled back."""
+    busy = sqlite3.connect(
+        fixture.database, isolation_level=None, check_same_thread=False
+    )
+    busy.execute("PRAGMA busy_timeout=5000")
+    busy.execute("BEGIN EXCLUSIVE")
+    return busy
+
+
+def test_write_plan_export_waits_out_a_store_busy_past_the_ordinary_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A writer that keeps the store busy delays the file, never fails it (#1336)."""
+    fixture = OwnerResponsivenessFixture(tmp_path, 20, mixed=True, prepare=True)
+    try:
+        stream, head = _held_plan_stream(fixture, monkeypatch)
+        chunks = [head]
+        try:
+            # Busy for longer than a request-serving read would wait.
+            busy = _busy_store(fixture)
+            release = threading.Timer(1.5, busy.rollback)
+            release.start()
+            try:
+                # Then a writer committing back to back, with no pause.
+                until = time.monotonic() + 3.5
+                errors: list[BaseException] = []
+
+                def writer() -> None:
+                    time.sleep(1.5)
+                    count = 0
+                    try:
+                        while time.monotonic() < until:
+                            count += 1
+                            fixture.repository.set_field_effect_paused(
+                                count % 2 == 0, 3_000 + count
+                            )
+                    except BaseException as error:  # noqa: BLE001 - asserted below
+                        errors.append(error)
+
+                thread = threading.Thread(target=writer)
+                thread.start()
+                while (chunk := stream.next_chunk()) is not None:
+                    chunks.append(chunk)
+                thread.join(10)
+            finally:
+                release.cancel()
+                busy.close()
+        finally:
+            stream.close()
+        assert not errors
+        document = json.loads(b"".join(chunks))
+        assert document["listed"] == len(document["changes"]) > 0
+        assert (
+            document["listed"] + document["unreadable"] + document["changed"]
+            == document["total"]
+        )
+    finally:
+        fixture.close()
+
+
+def test_write_plan_export_stops_promptly_while_waiting_for_a_busy_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = OwnerResponsivenessFixture(tmp_path, 20, mixed=True, prepare=True)
+    try:
+        stream, _ = _held_plan_stream(fixture, monkeypatch)
+        busy = _busy_store(fixture)
+        try:
+            assert stream.next_chunk() is not None
+            # The producer is now waiting to begin; the reader goes away.
+            time.sleep(1.0)
+            assert stream._thread.is_alive()
+            stopped = time.monotonic()
+            stream.close()
+            stream._thread.join(5)
+            assert not stream._thread.is_alive()
+            assert time.monotonic() - stopped < 2
+        finally:
+            busy.close()
+        export = fixture.application._export_projection
+        assert export is not None
+        assert not export._repository._connection.in_transaction
+        assert fixture.application._active_browses == 0
+    finally:
+        fixture.close()
+
+
+def test_write_plan_export_fails_as_a_fault_when_the_store_stays_busy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mechanical_librarian.adapters.persistence import field_effect_activity
+
+    monkeypatch.setattr(field_effect_activity, "_WRITE_PLAN_BUSY_RETRY_SECONDS", 0.5)
+    fixture = OwnerResponsivenessFixture(tmp_path, 20, mixed=True, prepare=True)
+    try:
+        stream, _ = _held_plan_stream(fixture, monkeypatch)
+        busy = _busy_store(fixture)
+        try:
+            started = time.monotonic()
+            with pytest.raises(FieldEffectError, match="^persistence$"):
+                while stream.next_chunk() is not None:
+                    pass
+            assert time.monotonic() - started < 3
+        finally:
+            busy.close()
+            stream.close()
+        assert fixture.application._active_browses == 0
     finally:
         fixture.close()
 
@@ -2345,6 +2685,7 @@ def test_concurrent_initial_library_and_attention_use_real_http(tmp_path: Path) 
                 "no_attention_needed": expected[0] - expected[1],
                 "not_matched": 0,
                 "preparation_failed": 0,
+                "flagged": 0,
             }
             assert len(library_response.json()["items"]) == 5
             assert attention_response.json()["total"] == fields

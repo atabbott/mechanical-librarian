@@ -82,6 +82,8 @@ def _work(
     summary: dict[str, object] | None = None,
     cover: dict[str, object] | None = None,
     pinned: int = 0,
+    not_matched: bool = False,
+    value_flags: list[dict[str, str]] | None = None,
 ) -> dict[str, object]:
     return {
         "cover": cover,
@@ -100,6 +102,8 @@ def _work(
             if attention
             else "preparation_failed"
             if preparation is not None
+            else "not_matched"
+            if not_matched
             else "no_attention_needed"
         ),
         "detail_url": f"/review/{case}" if case else None,
@@ -110,6 +114,9 @@ def _work(
         "preparation": preparation,
         "preparation_outcomes": preparation_outcomes or [],
         "summary": summary,
+        # What the server's Looks wrong rules find in this title and these
+        # authors, in rule order (#1334).
+        "value_flags": value_flags or [],
     }
 
 
@@ -325,12 +332,14 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
     # without drawing on a contributor's library or a live provider response.
     _work(
         13,
-        "Frankenstein; or, The Modern Prometheus",
+        # Looks wrong and needs attention (#1334).
+        "frankenstein; or, the modern prometheus",
         ["Mary Shelley"],
         "Local collection",
         "epub",
         case="case-13",
         attention=1,
+        value_flags=[{"destination": "title", "rule": "title_all_lower_case"}],
         dispositions=["unresolved_choice", "duplicate"],
     ),
     _work(
@@ -343,55 +352,90 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
         attention=0,
         dispositions=["automatic"],
     ),
+    # The Looks wrong rows (#1334): each title and author list below is one
+    # the server's rules flag exactly so.
     _work(
         15,
-        "Moby-Dick; or, The Whale",
+        "MOBY-DICK; OR, THE WHALE",
         ["Herman Melville"],
         "Google Books catalogue",
         "epub",
         case="case-15",
         attention=0,
         dispositions=["corroborated"],
+        value_flags=[{"destination": "title", "rule": "title_all_capitals"}],
     ),
     _work(
         16,
-        "Dracula",
+        "ГРАФ ДРАКУЛА",
         ["Bram Stoker"],
         "Open Library catalogue",
         "m4b",
         case="case-16",
         attention=0,
         dispositions=["missing"],
+        value_flags=[{"destination": "title", "rule": "title_all_capitals"}],
     ),
     _work(
         17,
-        "The Time Machine",
-        ["H. G. Wells"],
+        "THE TIME MACHINE - DISC 1",
+        ["Written by H. G. Wells"],
         "Local collection",
         "epub",
         case="case-17",
         attention=0,
         dispositions=["conflict"],
+        value_flags=[
+            {"destination": "title", "rule": "title_disc_number"},
+            {"destination": "title", "rule": "title_all_capitals"},
+            {"destination": "authors", "rule": "credit_label"},
+        ],
     ),
     _work(
         18,
-        "The Adventures of Sherlock Holmes",
+        "THE ADVENTURES OF SHERLOCK HOLMES, WITH THE MEMOIRS AND THE RETURN OF "
+        "SHERLOCK HOLMES, COMPLETE IN ONE VOLUME",
         ["Arthur Conan Doyle"],
         "Project Gutenberg",
         "m4b",
         case="case-18",
         attention=0,
         dispositions=["duplicate"],
+        value_flags=[{"destination": "title", "rule": "title_all_capitals"}],
     ),
     _work(
         19,
-        "The Republic",
+        "Plato",
         ["Plato"],
         "Google Books catalogue",
         "epub",
-        case="case-19",
+        case=None,
         attention=0,
-        dispositions=["unknown"],
+        dispositions=[],
+        not_matched=True,
+        preparation_outcomes=[
+            {
+                "companion_isbn": False,
+                "cover_only": False,
+                "provider_requests": 1,
+                "lane_kind": "work",
+                "provider": "hardcover-main",
+                "reason": "Found no matching work.",
+                "status": "no_match",
+            }
+        ],
+        summary={
+            "fields": [
+                {"destination": "title", "state": "value", "value": "Plato"},
+                {"destination": "authors", "state": "value", "value": ["Plato"]},
+            ],
+            "reason": (
+                "Nothing to decide for this work. These are its values as "
+                "Mechanical Librarian last read them."
+            ),
+            "state": "not_matched_no_match",
+        },
+        value_flags=[{"destination": "title", "rule": "title_is_author"}],
     ),
     _work(
         20,
@@ -1300,6 +1344,8 @@ def _library(query: dict[str, list[str]]) -> dict[str, object]:
         works = [item for item in works if _clear(item)]
     elif lens in ("not_matched", "preparation_failed"):
         works = [item for item in works if item["attention_state"] == lens]
+    elif lens == "flagged":
+        works = [item for item in works if item["value_flags"]]
     cursor = query.get("cursor", [""])[0]
     page = {"page-2": 2, "page-3": 3, "page-4": 4}.get(cursor, 1)
     start = (page - 1) * 6
@@ -1323,6 +1369,7 @@ def _library(query: dict[str, list[str]]) -> dict[str, object]:
             "preparation_failed": sum(
                 item["attention_state"] == "preparation_failed" for item in matched
             ),
+            "flagged": sum(bool(item["value_flags"]) for item in matched),
         },
         "items": deepcopy(works[start:end]),
     }
@@ -1385,6 +1432,7 @@ def _library_progress() -> dict[str, object]:
             "preparation_failed": sum(
                 item["attention_state"] == "preparation_failed" for item in works
             ),
+            "flagged": sum(bool(item["value_flags"]) for item in works),
         }
 
     fields: dict[str, int] = {}
@@ -1426,6 +1474,8 @@ def _progress_counts(
         "no_attention_needed": all_works - needs - not_matched - failed,
         "not_matched": not_matched,
         "preparation_failed": failed,
+        # The progress card reads no Looks wrong count (#1334).
+        "flagged": 0,
     }
 
 
@@ -1627,6 +1677,295 @@ def _cohort_category(destination: str, origin: str, failure: str | None) -> str:
     }[_cohort_event_type(destination, origin, failure)]
 
 
+def _plan_row(
+    work: str,
+    authors: str,
+    current: str,
+    new: str,
+    reason: str,
+    sources: tuple[str, ...] = (),
+) -> dict[str, object]:
+    return {
+        "work": work,
+        "authors": authors,
+        "current": current,
+        "new": new,
+        "reason": reason,
+        "sources": list(sources),
+    }
+
+
+# Every change listed (9 of at most 25), so the plan's rows and counts agree
+# with ``prepared``: a cover, an empty current value, a long description, an
+# owner-entered, put-back and automatic row, and a row with no sources (#1336).
+_COHORT_WRITE_PLAN_SMALL: dict[str, object] = {
+    "total": 9,
+    "groups": [
+        {
+            "library": "Household ebooks",
+            "destination": "authors",
+            "kind": "human",
+            "count": 2,
+            "rows": [
+                _plan_row(
+                    "Paper Moons",
+                    "Jane Larkspur",
+                    "Jane Larkspur",
+                    "Jane Larkspur, Tom Reed",
+                    "You chose this value",
+                    ("Hardcover", "Open Library"),
+                ),
+                _plan_row(
+                    "The Long and Winding Account of a Very Particular Lighthouse "
+                    "Keeper's Final Year on the Northern Coast",
+                    "Annabel Featherstonehaugh-Wright, Bartholomew Quill and "
+                    "Constance Delacroix-Montgomery",
+                    "Not set",
+                    "Annabel Featherstonehaugh-Wright",
+                    "You entered this value",
+                ),
+            ],
+        },
+        {
+            "library": "Household ebooks",
+            "destination": "title",
+            "kind": "human",
+            "count": 2,
+            "rows": [
+                _plan_row(
+                    "Paper Moons: Larkspur",
+                    "Jane Larkspur",
+                    "Paper Moons: Larkspur",
+                    "Paper Moons",
+                    "You chose to restore the earlier value",
+                ),
+                _plan_row(
+                    "Harbour Lights",
+                    "Mina Ortiz",
+                    "Harbour Lights (Book 2)",
+                    "Harbour Lights",
+                    "You chose this value",
+                    ("Hardcover",),
+                ),
+            ],
+        },
+        {
+            "library": "Household ebooks",
+            "destination": "description",
+            "kind": "automatic",
+            "count": 2,
+            "rows": [
+                _plan_row(
+                    "Harbour Lights",
+                    "Mina Ortiz",
+                    "Not set",
+                    "A lighthouse keeper's daughter returns to the harbour town "
+                    "she left as a child and finds the lamp dark, the keeper "
+                    "gone and a ledger of ships that never arrived. Over one "
+                    "long winter she pieces together what happened, and why "
+                    "the town would rather forget.",
+                    "Description: Fill empty with safe plain text",
+                    ("Hardcover",),
+                ),
+                _plan_row(
+                    "Quiet Orbit",
+                    "Sam Okafor",
+                    "Not set",
+                    "A short novel about a radio operator on a lonely station.",
+                    "Description advice",
+                ),
+            ],
+        },
+        {
+            "library": "Spoken stories",
+            "destination": "cover",
+            "kind": "automatic",
+            "count": 1,
+            "rows": [
+                _plan_row(
+                    "The Night Ferry",
+                    "Ada Brennan",
+                    "Current cover",
+                    "Selected cover",
+                    "Cover: Fill from confirmed covers",
+                    ("Audible",),
+                ),
+            ],
+        },
+        {
+            "library": "Research shelf",
+            "destination": "title",
+            "kind": "human",
+            "count": 2,
+            "rows": [
+                _plan_row(
+                    "Field Notes on Moss",
+                    "R. Almeida",
+                    "field notes on moss",
+                    "Field Notes on Moss",
+                    "You chose this value",
+                    ("Open Library",),
+                ),
+                _plan_row(
+                    "Tidal Atlas",
+                    "K. Svensson",
+                    "Tidal atlas",
+                    "Tidal Atlas",
+                    "You chose this value",
+                    ("Local library record",),
+                ),
+            ],
+        },
+    ],
+}
+
+
+def _large_write_plan(total: int) -> dict[str, object]:
+    """A plan too large to list: two groups show examples, one only a count."""
+    return {
+        "total": total,
+        "groups": [
+            {
+                "library": "Household ebooks",
+                "destination": "authors",
+                "kind": "human",
+                "count": total - 600 - 114 - 26,
+                "rows": [
+                    _plan_row(
+                        "Paper Moons",
+                        "Jane Larkspur",
+                        "Jane Larkspur",
+                        "Jane Larkspur, Tom Reed",
+                        "You chose this value",
+                        ("Hardcover", "Open Library"),
+                    ),
+                    _plan_row(
+                        "Harbour Lights",
+                        "Mina Ortiz",
+                        "Mina Ortiz",
+                        "Mina Ortiz, Ines Calder",
+                        "You chose this value",
+                        ("Hardcover",),
+                    ),
+                ],
+            },
+            {
+                "library": "Household ebooks",
+                "destination": "description",
+                "kind": "automatic",
+                "count": 600,
+                "rows": [
+                    _plan_row(
+                        "Quiet Orbit",
+                        "Sam Okafor",
+                        "Not set",
+                        "A short novel about a radio operator on a lonely station.",
+                        "Description: Fill empty with safe plain text",
+                        ("Hardcover",),
+                    ),
+                    _plan_row(
+                        "Field Notes on Moss",
+                        "R. Almeida",
+                        "Not set",
+                        "A naturalist's year among the mosses of a northern valley.",
+                        "Description: Fill empty with safe plain text",
+                        ("Open Library",),
+                    ),
+                ],
+            },
+            {
+                "library": "Spoken stories",
+                "destination": "cover",
+                "kind": "automatic",
+                "count": 114,
+                "rows": [
+                    _plan_row(
+                        "The Night Ferry",
+                        "Ada Brennan",
+                        "Current cover",
+                        "Selected cover",
+                        "Cover: Fill from confirmed covers",
+                        ("Audible",),
+                    ),
+                ],
+            },
+            {
+                "library": "Research shelf",
+                "destination": "title",
+                "kind": "human",
+                "count": 26,
+                "rows": [],
+            },
+        ],
+    }
+
+
+# The plan states the permission review is seen in: every change listed, a
+# plan of examples and counts, and one past the file's 20,000-change limit.
+# The readiness counts below are read from whichever plan is current, so a
+# field's "prepared" always agrees with the groups listed under it.
+COHORT_WRITE_PLANS: dict[str, dict[str, object]] = {
+    "small": _COHORT_WRITE_PLAN_SMALL,
+    "large": _large_write_plan(1_240),
+    "over_limit": _large_write_plan(24_310),
+}
+_COHORT_WRITE_PLAN = COHORT_WRITE_PLANS["small"]
+
+
+def _plan_groups() -> list[dict[str, object]]:
+    return cast("list[dict[str, object]]", _COHORT_WRITE_PLAN["groups"])
+
+
+def _planned(library: str, destination: str) -> int:
+    return sum(
+        cast("int", group["count"])
+        for group in _plan_groups()
+        if group["library"] == library and group["destination"] == destination
+    )
+
+
+def _planned_by_kind(library: str | None = None) -> dict[str, int]:
+    counts = {"automatic": 0, "human": 0}
+    for group in _plan_groups():
+        if library is None or group["library"] == library:
+            counts[cast("str", group["kind"])] += cast("int", group["count"])
+    return {**counts, "total": counts["automatic"] + counts["human"]}
+
+
+# Each library: (connection, library, state, fields), each field being
+# (destination, state, consented). Every field a plan group names is listed, so
+# each group renders under its field (#1336).
+_COHORT_FIELDS: tuple[tuple[str, str, str, tuple[tuple[str, str, bool], ...]], ...] = (
+    (
+        "primary",
+        "Household ebooks",
+        "partially_allowed",
+        (
+            ("authors", "allowed", True),
+            ("description", "allowed", True),
+            ("subtitle", "field_unavailable", False),
+            ("title", "allowed", True),
+        ),
+    ),
+    (
+        "primary",
+        "Spoken stories",
+        "allowed",
+        (
+            ("authors", "allowed", False),
+            ("cover", "allowed", False),
+            ("title", "allowed", False),
+        ),
+    ),
+    (
+        "archive",
+        "Research shelf",
+        "not_ready",
+        (("title", "unexpected_effect_behavior", False),),
+    ),
+)
+
+
 def _activity(query: dict[str, list[str]]) -> dict[str, object]:
     events = [
         (
@@ -1774,20 +2113,11 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
         "paused": False,
         "configured_libraries": [
             {
-                "connection": "primary",
-                "library": "Household ebooks",
-                "prepared": {"automatic": 2, "human": 3, "total": 5},
-            },
-            {
-                "connection": "primary",
-                "library": "Spoken stories",
-                "prepared": {"automatic": 1, "human": 1, "total": 2},
-            },
-            {
-                "connection": "archive",
-                "library": "Research shelf",
-                "prepared": {"automatic": 0, "human": 2, "total": 2},
-            },
+                "connection": connection,
+                "library": library,
+                "prepared": _planned_by_kind(library),
+            }
+            for connection, library, _state, _fields in _COHORT_FIELDS
         ],
         "consented_libraries": [
             {"connection": "primary", "library": "Household ebooks", "prepared": None}
@@ -1797,62 +2127,20 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
         ],
         "capabilities": [
             {
-                "connection": "primary",
-                "library": "Household ebooks",
-                "state": "partially_allowed",
+                "connection": connection,
+                "library": library,
+                "state": state,
                 "destinations": [
                     {
-                        "destination": "authors",
-                        "state": "allowed",
-                        "consented": True,
-                        "prepared": 2,
-                    },
-                    {
-                        "destination": "subtitle",
-                        "state": "field_unavailable",
-                        "consented": False,
-                        "prepared": 0,
-                    },
-                    {
-                        "destination": "title",
-                        "state": "allowed",
-                        "consented": True,
-                        "prepared": 4,
-                    },
+                        "destination": destination,
+                        "state": field_state,
+                        "consented": consented,
+                        "prepared": _planned(library, destination),
+                    }
+                    for destination, field_state, consented in fields
                 ],
-            },
-            {
-                "connection": "primary",
-                "library": "Spoken stories",
-                "state": "allowed",
-                "destinations": [
-                    {
-                        "destination": "authors",
-                        "state": "allowed",
-                        "consented": False,
-                        "prepared": 1,
-                    },
-                    {
-                        "destination": "title",
-                        "state": "allowed",
-                        "consented": False,
-                        "prepared": 3,
-                    },
-                ],
-            },
-            {
-                "connection": "archive",
-                "library": "Research shelf",
-                "state": "not_ready",
-                "destinations": [
-                    {
-                        "destination": "title",
-                        "state": "unexpected_effect_behavior",
-                        "consented": False,
-                        "prepared": 2,
-                    },
-                ],
-            },
+            }
+            for connection, library, state, fields in _COHORT_FIELDS
         ],
         "events": [
             {
@@ -1929,7 +2217,7 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
             "range_days": int(query.get("range_days", ["30"])[0]),
             "total": len(events),
         },
-        "prepared": {"automatic": 3, "human": 6, "total": 9},
+        "prepared": _planned_by_kind(),
         # Waiting, split into the four different next steps an owner has plus
         # what is moving now, so this cohort renders #639's summary rather than
         # the single number it replaced.
@@ -2013,8 +2301,10 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
     }
 
 
-# Three sources in two libraries (#1282): a Google Books burst that resets on
-# the next day, a dormant Hardcover key refusal and an exhausted Open Library.
+# Three sources in two libraries that need the owner (#1282, #1494): a keyless
+# Google Books burst that resets on the next day, a dormant Hardcover key
+# refusal and an exhausted Open Library; and one routine Inventaire wait that
+# the masthead popover lists and the page notice leaves out.
 THROTTLE_LONG_LIBRARY = "Synthetic audiobooks with a long library name"
 
 
@@ -2028,6 +2318,8 @@ def _throttling_entries() -> list[dict[str, object]]:
             "deferred": 214,
             "next_retry_at": int(time.time()) + 26 * 3600,
             "remedy": "add_api_key",
+            "notice_at": int(time.time()) + 20 * 3600,
+            "untried": False,
         },
         {
             "library": "Synthetic ebooks",
@@ -2037,6 +2329,8 @@ def _throttling_entries() -> list[dict[str, object]]:
             "deferred": 1,
             "next_retry_at": None,
             "remedy": "check_api_key",
+            "notice_at": None,
+            "untried": False,
         },
         {
             "library": THROTTLE_LONG_LIBRARY,
@@ -2046,6 +2340,20 @@ def _throttling_entries() -> list[dict[str, object]]:
             "deferred": 10_000,
             "next_retry_at": None,
             "remedy": None,
+            # Waited past a day: needs the owner on time as well as by state.
+            "notice_at": int(time.time()) - 3600,
+            "untried": False,
+        },
+        {
+            "library": "Synthetic ebooks",
+            "adapter": "inventaire",
+            "state": "waiting",
+            "reasons": ["rate_limited"],
+            "deferred": 12,
+            "next_retry_at": int(time.time()) + 3600,
+            "remedy": None,
+            "notice_at": int(time.time()) + 23 * 3600,
+            "untried": False,
         },
     ]
 
@@ -2174,6 +2482,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                 "generation": 1,
                 "retry": "available",
                 "entries": _throttling_entries(),
+                "answered": [],
             },
         }
     if path == "/api/v1/library":
@@ -2524,14 +2833,16 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
     if path == "/api/v1/activity/permission-readiness":
         value = _activity(query)
         return {
-            key: value[key]
-            for key in (
-                "backup_ready",
-                "configured_libraries",
-                "capabilities",
-                "prepared",
-                "example",
-            )
+            **{
+                key: value[key]
+                for key in (
+                    "backup_ready",
+                    "configured_libraries",
+                    "capabilities",
+                    "prepared",
+                )
+            },
+            "plan": _COHORT_WRITE_PLAN,
         }
     if path == "/api/v1/activity/consent-state":
         value = _activity(query)

@@ -78,6 +78,7 @@ from mechanical_librarian.application.review_web import (
     ValidatedDocumentCache,
 )
 from mechanical_librarian.application.reviewer_access import ReviewerAccessOperations
+from mechanical_librarian.application.write_plan import PlanFormat, ProducedStream
 from mechanical_librarian.domain.audiobook_corroboration import (
     admitted_audiobook_identity,
 )
@@ -103,6 +104,7 @@ from mechanical_librarian.domain.preparation_presentation import (
     PreparationTrigger,
 )
 from mechanical_librarian.domain.proposal_set import work_route_cover_offered
+from mechanical_librarian.domain.provider_recovery import MAX_TIMESTAMP
 from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 
 if TYPE_CHECKING:
@@ -341,6 +343,9 @@ _KEY_REASONS = frozenset({"authentication", "authorization"})
 # Reported state, in the precedence one library and source takes: a check in
 # flight first, then a scheduled retry, then a wait on the owner, then nothing.
 _THROTTLE_STATES = ("checking", "waiting", "dormant", "exhausted")
+# A source whose lookups have waited this long without recovering is raised as
+# a notice to the owner even though automatic retries still run.
+_PROLONGED_WAIT = 86_400
 
 
 def provider_throttling_view(
@@ -348,11 +353,21 @@ def provider_throttling_view(
     providers: Mapping[str, bool],
     generation: int,
     retry: Literal["available", "managed_by_file", "unavailable"],
+    answered: Iterable[tuple[str, str]] = (),
 ) -> dict[str, object]:
     """Total deferred provider lookups per library and source, value-free.
 
     ``providers`` maps each configured provider instance to whether it holds an
     API key; it is read only to choose a remedy, and no instance name leaves.
+    ``notice_at`` is when the entry's longest current wait reaches a day; the
+    browser compares it with its own clock, so no clock is read here.
+    ``untried`` is true while a member due an automatic retry, or in one, has
+    no outcome in this generation: its connection has not been tried since
+    Retry now, so another member's reason is not yet the entry's outcome
+    (#1494). A dormant or exhausted member is not waited for.
+    ``answered`` names each library and source a provider answered in this
+    generation, so Retry now's outcome claims answers only where there were
+    some: a source also stops waiting when its lookups went stale (#1494).
     """
     groups: dict[tuple[str, str], list[Mapping[str, object]]] = {}
     for row in rows:
@@ -372,6 +387,11 @@ def provider_throttling_view(
             cast("int", item["next_eligible_at"])
             for item in members
             if item["state"] == "waiting"
+        ]
+        started = [
+            cast("int", item["waiting_since"])
+            for item in members
+            if item["waiting_since"] is not None
         ]
         remedy = (
             "add_api_key"
@@ -395,9 +415,24 @@ def provider_throttling_view(
                 "deferred": sum(cast("int", item["deferred"]) for item in members),
                 "next_retry_at": min(due) if due else None,
                 "remedy": remedy,
+                "notice_at": min(min(started) + _PROLONGED_WAIT, MAX_TIMESTAMP)
+                if started
+                else None,
+                "untried": any(
+                    item["reason"] is None
+                    and item["state"] in {"waiting", "checking", "fanout"}
+                    for item in members
+                ),
             }
         )
-    return {"generation": generation, "retry": retry, "entries": entries}
+    return {
+        "generation": generation,
+        "retry": retry,
+        "entries": entries,
+        "answered": [
+            {"library": library, "adapter": adapter} for library, adapter in answered
+        ],
+    }
 
 
 class PolicyOperations:
@@ -560,6 +595,7 @@ class ReviewApplication:
         admission: OperationAdmission | None = None,
         operation_lock: RLock | None = None,
         cover_considerations: CoverConsiderationService | None = None,
+        export_projection: ContinuousGuardedApplication | None = None,
         cover_store: CoverBrowseStore | None = None,
         settings: OwnerSettingsOperations | None = None,
         reviewer_access: ReviewerAccessOperations | None = None,
@@ -606,6 +642,7 @@ class ReviewApplication:
         self._field_application = field_application
         self._activity_projection = activity_projection
         self._permission_projection = permission_projection
+        self._export_projection = export_projection
         self._close_activity_projection = close_activity_projection
         self._operations = operations
         self._cover_considerations = cover_considerations
@@ -662,6 +699,9 @@ class ReviewApplication:
                 nullcontext()
                 if self._permission_projection is None
                 else self._permission_projection.classify_request(work_class),
+                nullcontext()
+                if self._export_projection is None
+                else self._export_projection.classify_request(work_class),
             ):
                 yield
 
@@ -1483,6 +1523,43 @@ class ReviewApplication:
         with self._accepted_read():
             return self._permission_reader().activity_permission_readiness()
 
+    def activity_write_plan_file(self, format: PlanFormat) -> ProducedStream:
+        """Start the write plan file on its own reader (#1336).
+
+        A file can take minutes, so neither the permission reader nor the
+        Activity history reader waits for it. It counts as an accepted read
+        until its producer has ended its read, so shutdown waits for its
+        reader; the producer ends by itself once the application is closing
+        or nobody has read for a minute, whatever the response does.
+        """
+        with self._browse_lifetime:
+            if self._browse_closed:
+                raise ReviewApplicationError("unavailable")
+            self._active_browses += 1
+
+        def release() -> None:
+            with self._browse_lifetime:
+                self._active_browses -= 1
+                self._browse_lifetime.notify_all()
+
+        try:
+            labels = {
+                library: label for (_, library), label in self._library_labels().items()
+            }
+            # Never the permission reader, which can be the writer: a file
+            # keeps its reader for minutes.
+            reader = self._export_projection
+            if reader is None:
+                raise ReviewApplicationError("unavailable")
+            stream = reader.activity_write_plan_file(
+                format, lambda: self._browse_closed, labels
+            )
+        except BaseException:
+            release()
+            raise
+        stream.when_closed(release)
+        return stream
+
     def activity_consent(self) -> dict[str, object]:
         # The permission reader borrows no Activity facts, so neither the
         # history catch-up nor a history request can delay this read (#1236).
@@ -1949,6 +2026,7 @@ def compose_review_application(
     | None = None,
     activity_projection: ContinuousGuardedApplication | None = None,
     permission_projection: ContinuousGuardedApplication | None = None,
+    export_projection: ContinuousGuardedApplication | None = None,
     close_activity_projection: Callable[[], None] | None = None,
     browse_observation: BrowseObservationOwner | None = None,
     admission: OperationAdmission | None = None,
@@ -2053,6 +2131,7 @@ def compose_review_application(
         updates=updates,
         activity_projection=activity_projection,
         permission_projection=permission_projection,
+        export_projection=export_projection,
         close_activity_projection=close_activity_projection,
         browse_observation=browse_observation,
         admission=admission,

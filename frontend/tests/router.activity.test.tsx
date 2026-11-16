@@ -3796,6 +3796,133 @@ it('holds the ticks behind a connection condition and frees them on recovery', a
   expect(screen.getByRole('button', { name: 'Confirm write permissions' })).toBeEnabled()
 })
 
+it('keeps the ticks when a re-check finds a different write plan (#1336)', async () => {
+  const { http, user } = await renderDraft()
+  const review = screen.getByRole('region', { name: 'Write permissions' })
+  expect(
+    within(review).getByText(
+      '1 change is prepared so far. Permission also covers changes prepared after you allow writes.',
+    ),
+  ).toBeVisible()
+  vi.mocked(http.getActivityPermissionReadiness).mockResolvedValue({
+    ...permissionReadiness(permissionHistory),
+    plan: {
+      total: 3,
+      groups: [{ library: 'fiction', destination: 'title', kind: 'automatic', count: 3, rows: [] }],
+    },
+  })
+
+  await user.click(screen.getByRole('button', { name: 'Check again' }))
+
+  expect(
+    await within(review).findByText(
+      '3 changes are prepared so far. Permission also covers changes prepared after you allow writes.',
+    ),
+  ).toBeVisible()
+  expect(screen.getByRole('checkbox')).toBeChecked()
+  expect(screen.getByRole('button', { name: 'Confirm write permissions' })).toBeEnabled()
+})
+
+it('saves the write plan file from the permission review without granting anything (#1336)', async () => {
+  const { http, user } = await renderDraft()
+  const saved: string[] = []
+  const created = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:plan')
+  const revoked = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined)
+  const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
+    this: HTMLAnchorElement,
+  ) {
+    saved.push(this.download)
+  })
+  try {
+    await user.click(screen.getByRole('button', { name: 'Download CSV' }))
+
+    await waitFor(() => expect(saved).toEqual(['mechanical-librarian-write-plan.csv']))
+    expect(http.downloadActivityWritePlan).toHaveBeenCalledWith(
+      'csv',
+      expect.any(AbortSignal),
+      expect.any(Function),
+    )
+    // The saved file's URL outlives the click; it is let go a minute later.
+    expect(revoked).not.toHaveBeenCalled()
+    expect(http.activityCommand).not.toHaveBeenCalled()
+    expect(screen.getByRole('checkbox')).toBeChecked()
+  } finally {
+    created.mockRestore()
+    revoked.mockRestore()
+    click.mockRestore()
+  }
+})
+
+it('lists each field’s prepared changes under it in the permission review (#1336)', async () => {
+  const user = userEvent.setup()
+  const http = createHttp()
+  vi.mocked(http.getActivity).mockResolvedValue(permissionHistory)
+  vi.mocked(http.getActivityConsent).mockResolvedValue(consentOf(permissionHistory))
+  vi.mocked(http.getActivityPermissionReadiness).mockResolvedValue({
+    ...permissionReadiness(permissionHistory),
+    plan: {
+      total: 1,
+      groups: [
+        {
+          library: 'fiction',
+          destination: 'title',
+          kind: 'automatic',
+          count: 1,
+          rows: [
+            {
+              work: 'Real Tigers',
+              authors: 'Mick Herron',
+              current: 'Not set',
+              new: 'Real Tigers',
+              reason: 'Title and subtitle: Separate title and subtitle',
+              sources: ['Hardcover'],
+            },
+          ],
+        },
+      ],
+    },
+  })
+  renderRoute('/activity', http, createLiveStream())
+  await user.click(await screen.findByRole('button', { name: 'Review write permissions' }))
+
+  const fields = await screen.findByRole('list', { name: /fields$/ })
+  const title = within(fields).getByText('Title').closest('li') as HTMLElement
+  const group = within(title).getByRole('group')
+  // A small plan starts open and lists every change where its field is decided.
+  expect(group).toHaveAttribute('open')
+  expect(within(title).getByText('Chosen automatically')).toBeVisible()
+  expect(within(title).getByText('1 change')).toBeVisible()
+  expect(within(title).getByText('Real Tigers', { selector: 'strong' })).toBeVisible()
+  expect(within(title).getByText('Not set')).toBeVisible()
+  expect(
+    within(title).getByText('Title and subtitle: Separate title and subtitle · Hardcover'),
+  ).toBeVisible()
+  // The ticks are untouched by reading the plan.
+  expect(screen.getByRole('checkbox')).not.toBeChecked()
+})
+
+it('groups the digits of prepared counts in the permission review (#1336)', async () => {
+  const user = userEvent.setup()
+  const http = createHttp()
+  const ready = permissionReadiness(permissionHistory)
+  vi.mocked(http.getActivity).mockResolvedValue(permissionHistory)
+  vi.mocked(http.getActivityConsent).mockResolvedValue(consentOf(permissionHistory))
+  vi.mocked(http.getActivityPermissionReadiness).mockResolvedValue({
+    ...ready,
+    capabilities: ready.capabilities.map((item) => ({
+      ...item,
+      destinations: item.destinations.map((entry) => ({ ...entry, prepared: 1100 })),
+    })),
+  })
+  renderRoute('/activity', http, createLiveStream())
+  await user.click(await screen.findByRole('button', { name: 'Review write permissions' }))
+
+  // The field lines agree with the plan's grouped counts beside them.
+  const fields = await screen.findAllByRole('list', { name: /fields$/ })
+  expect(fields[0]).toHaveTextContent('1,100 prepared')
+  expect(fields[0]).not.toHaveTextContent('1100 prepared')
+})
+
 const basisChanged = 'Your library settings changed. Check write permissions again.'
 const grantedHistory: ActivityView = {
   ...permissionHistory,
@@ -3829,7 +3956,9 @@ it.each(['consent', 'policy'] as const)(
     // A new check starts a new draft; the discarded ticks are not carried over.
     await user.click(check)
     expect(await screen.findByRole('checkbox')).not.toBeChecked()
-    expect(within(review).getByRole('status')).not.toHaveTextContent(basisChanged)
+    // The check's line and the write plan's download line (#1336).
+    for (const line of within(review).getAllByRole('status'))
+      expect(line).not.toHaveTextContent(basisChanged)
   },
 )
 
@@ -5128,6 +5257,8 @@ describe('owner language in Activity (#1286)', () => {
       reasons: ['burst_throttled'],
       deferred: 3,
       next_retry_at: null,
+      notice_at: null,
+      untried: false,
       ...overrides,
     }
     const http: ReviewHttp = {
@@ -5141,7 +5272,12 @@ describe('owner language in Activity (#1286)', () => {
         actionable: false,
         paused: false,
         libraries: [],
-        provider_throttling: { generation: 1, retry: 'available', entries: [throttle] },
+        provider_throttling: {
+          generation: 1,
+          retry: 'available',
+          entries: [throttle],
+          answered: [],
+        },
       })),
     }
     renderRoute('/activity', http)
@@ -5336,19 +5472,19 @@ describe('Library progress on Activity', () => {
   it('follows the status box and links its totals to their lenses', async () => {
     const http = createHttp()
     http.getLibraryProgress = vi.fn(async () => ({
-      totals: { all: 2026, attention: 174, clear: 1840, notMatched: 9, failed: 3 },
+      totals: { all: 2026, attention: 174, clear: 1840, notMatched: 9, failed: 3, flagged: 0 },
       libraries: [
         {
           connection: 'primary',
           library: 'fiction',
           libraryDisplayName: 'Fiction',
-          counts: { all: 26, attention: 6, clear: 20, notMatched: 0, failed: 0 },
+          counts: { all: 26, attention: 6, clear: 20, notMatched: 0, failed: 0, flagged: 0 },
         },
         {
           connection: 'primary',
           library: 'audiobooks',
           libraryDisplayName: 'audiobooks',
-          counts: { all: 2000, attention: 168, clear: 1820, notMatched: 9, failed: 3 },
+          counts: { all: 2000, attention: 168, clear: 1820, notMatched: 9, failed: 3, flagged: 0 },
         },
       ],
       fields: [{ destination: 'cover' as const, needYou: 120 }],
@@ -5396,7 +5532,7 @@ describe('Library progress on Activity', () => {
           }),
       )
       .mockResolvedValue({
-        totals: { all: 1, attention: 0, clear: 1, notMatched: 0, failed: 0 },
+        totals: { all: 1, attention: 0, clear: 1, notMatched: 0, failed: 0, flagged: 0 },
         libraries: [],
         fields: [],
       })
@@ -5415,7 +5551,7 @@ describe('Library progress on Activity', () => {
   it('is absent while Library has no works', async () => {
     const http = createHttp()
     http.getLibraryProgress = vi.fn(async () => ({
-      totals: { all: 0, attention: 0, clear: 0, notMatched: 0, failed: 0 },
+      totals: { all: 0, attention: 0, clear: 0, notMatched: 0, failed: 0, flagged: 0 },
       libraries: [],
       fields: [],
     }))

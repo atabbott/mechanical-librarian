@@ -212,7 +212,7 @@ def test_the_first_read_after_a_large_change_performs_no_catch_up(
     _bound(monkeypatch, 2)
     _poll(monkeypatch)
     facts = ActivityFactStore()
-    history, _, close = open_field_effect_activity_readers(
+    history, _, _, close = open_field_effect_activity_readers(
         _configuration(), ledger.path, ledger.root.authority, None, facts
     )
     reader = cast("SQLiteMetadataReportRepository", history._repository)
@@ -576,7 +576,7 @@ def test_restart_parses_each_document_once_and_projects_as_a_cold_reader(
     try:
         validated = set(parsed)
         assert bool(validated) is (history == "covers")
-        readers, _, close = open_field_effect_activity_readers(
+        readers, _, _, close = open_field_effect_activity_readers(
             configuration, path, owner.authority, None, facts, documents
         )
         try:
@@ -700,7 +700,7 @@ def test_a_cutover_hands_the_store_to_the_next_generation_exactly(
     _bound(monkeypatch, 2)
     _poll(monkeypatch)
     configuration = _configuration()
-    first, _, close_first = open_field_effect_activity_readers(
+    first, _, _, close_first = open_field_effect_activity_readers(
         configuration, ledger.path, ledger.root.authority, None, ledger.store
     )
     activity = first._repository._field_effect_activity
@@ -715,7 +715,7 @@ def test_a_cutover_hands_the_store_to_the_next_generation_exactly(
     for index in range(12):
         _record_decision(ledger.root, index)
     assert stepped.wait(15)
-    second, _, close_second = open_field_effect_activity_readers(
+    second, _, _, close_second = open_field_effect_activity_readers(
         configuration, ledger.path, ledger.root.authority, None, ledger.store
     )
     try:
@@ -804,7 +804,7 @@ def test_the_projector_starts_only_after_composition_binds_authority(
 
     monkeypatch.setattr(composition, "_bind_description_authority", bound)
     monkeypatch.setattr(threading.Thread, "start", started)
-    history, _, close = open_field_effect_activity_readers(
+    history, _, _, close = open_field_effect_activity_readers(
         _configuration(), ledger.path, ledger.root.authority, None, ActivityFactStore()
     )
     try:
@@ -824,7 +824,7 @@ def test_shutdown_stops_the_projector_before_its_admission_closes(
     """Close waits for the one step in progress, then nothing runs again."""
     _bound(monkeypatch, 2)
     _poll(monkeypatch)
-    history, _, close = open_field_effect_activity_readers(
+    history, _, _, close = open_field_effect_activity_readers(
         _configuration(), ledger.path, ledger.root.authority, None, ActivityFactStore()
     )
     repository = cast("SQLiteMetadataReportRepository", history._repository)
@@ -897,7 +897,7 @@ def test_readiness_never_waits_for_a_request_holding_the_history_reader(
     of whatever history request held the cache lock.
     """
     _poll(monkeypatch)
-    history, permissions, close = open_field_effect_activity_readers(
+    history, permissions, _, close = open_field_effect_activity_readers(
         _configuration(), ledger.path, ledger.root.authority, None, ActivityFactStore()
     )
     reader = cast("SQLiteMetadataReportRepository", history._repository)
@@ -941,7 +941,7 @@ def test_the_consent_read_never_waits_for_the_history_reader(
     """
     _poll(monkeypatch)
     recovery = ({"state": "dormant", "affected_count": 2, "next_eligible_at": None},)
-    history, permissions, close = open_field_effect_activity_readers(
+    history, permissions, _, close = open_field_effect_activity_readers(
         _configuration(),
         ledger.path,
         ledger.root.authority,
@@ -1009,7 +1009,7 @@ def test_readiness_and_stop_never_wait_for_a_request_holding_admission(
     out the request, and so did the projector's stop.
     """
     _poll(monkeypatch)
-    history, permissions, close = open_field_effect_activity_readers(
+    history, permissions, _, close = open_field_effect_activity_readers(
         _configuration(), ledger.path, ledger.root.authority, None, ActivityFactStore()
     )
     reader = cast("SQLiteMetadataReportRepository", history._repository)
@@ -1068,7 +1068,7 @@ def test_readiness_never_waits_behind_a_revision_probe(
     step only.
     """
     _poll(monkeypatch)
-    history, permissions, close = open_field_effect_activity_readers(
+    history, permissions, _, close = open_field_effect_activity_readers(
         _configuration(), ledger.path, ledger.root.authority, None, ActivityFactStore()
     )
     reader = cast("SQLiteMetadataReportRepository", history._repository)
@@ -1140,7 +1140,7 @@ def test_a_locked_revision_probe_is_skipped_and_the_projector_continues(
 def test_both_readers_of_a_generation_share_one_window_and_one_store(
     ledger: _Ledger,  # noqa: F811
 ) -> None:
-    history, permissions, close = open_field_effect_activity_readers(
+    history, permissions, _, close = open_field_effect_activity_readers(
         _configuration(), ledger.path, ledger.root.authority, None, ActivityFactStore()
     )
     try:
@@ -1150,7 +1150,7 @@ def test_both_readers_of_a_generation_share_one_window_and_one_store(
         assert first._reused_report.__self__ is second._reused_report.__self__
     finally:
         close()
-    _, other, close_other = open_field_effect_activity_readers(
+    _, other, _, close_other = open_field_effect_activity_readers(
         _configuration(), ledger.path, ledger.root.authority, None, ActivityFactStore()
     )
     try:
@@ -1165,7 +1165,7 @@ def test_the_projector_steps_as_background_work(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _poll(monkeypatch)
-    history, _, close = open_field_effect_activity_readers(
+    history, _, _, close = open_field_effect_activity_readers(
         _configuration(), ledger.path, ledger.root.authority, None, ActivityFactStore()
     )
     repository = cast("SQLiteMetadataReportRepository", history._repository)
@@ -1296,7 +1296,7 @@ def test_close_waits_out_the_step_in_progress_past_its_join_bound(
     """
     _poll(monkeypatch)
     monkeypatch.setattr(composition, "_ACTIVITY_PROJECTOR_JOIN_SECONDS", 0.1)
-    history, _, close = open_field_effect_activity_readers(
+    history, _, _, close = open_field_effect_activity_readers(
         _configuration(), ledger.path, ledger.root.authority, None, ActivityFactStore()
     )
     repository = cast("SQLiteMetadataReportRepository", history._repository)
@@ -1354,7 +1354,7 @@ def test_close_returns_promptly_when_no_step_is_in_progress(
     ledger: _Ledger,  # noqa: F811
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    history, _, close = open_field_effect_activity_readers(
+    history, _, _, close = open_field_effect_activity_readers(
         _configuration(), ledger.path, ledger.root.authority, None, ActivityFactStore()
     )
     assert _settled(cast("SQLiteMetadataReportRepository", history._repository))

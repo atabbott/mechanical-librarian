@@ -88,6 +88,8 @@ export const useAttentionRail = (
         for (const sibling of parent.children)
           if (
             sibling !== node &&
+            // An open dialog is over the drawer, and already holds the page.
+            sibling.tagName !== 'DIALOG' &&
             !sibling.hasAttribute('inert') &&
             !(toggle.current && sibling.contains(toggle.current))
           ) {

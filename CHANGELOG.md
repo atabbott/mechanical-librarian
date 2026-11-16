@@ -121,6 +121,9 @@ brackets are GitHub issues.
   needs an API key while it is on, in setup and Settings: an install that has
   Google Books on with no key must add a key or turn Google Books off before
   Settings can be saved (#1516, #1765).
+- After setup, a guide on an example field opens in Library when your first
+  field needs a decision, then opens that field. It records nothing and does
+  not come back (#1338).
 - Library's preparation panel moves less. Its status line plays its wipe only
   when the run's state changes, and its stage bars glide to each new count
   unless reduced motion is set. Each recent completion is one row: the title
@@ -131,11 +134,29 @@ brackets are GitHub issues.
 - Setup and Settings round the cover cost the same way and count in works
   (#1863).
 - The preparation detail fits a 320 px window at 200% text (#1864).
+- Checking write permissions now shows the write plan under each library's
+  fields: each prepared change's current and new value, who chose it and why.
+  Download CSV and Download JSON save the whole plan, up to 20,000 changes, as
+  it is made; nothing is stored or granted (#1336).
+- The masthead shows background work as an icon that fills while libraries are
+  prepared and marks what needs you, and the theme switch and Sign out are
+  icons. Its popover lists source lookups waiting to retry, with Retry now and
+  what it did. Library and Settings show a notice only when a source needs you:
+  nothing will retry it until you act, or it has waited 24 hours (#1494).
 - A finished run's box in Library says where the whole library stands, such as
   "1,840 of 2,026 works settled · 174 need you", each count linked to its
   lens, until you dismiss the run. Activity has a Library progress card with
   the same counts per library and the works that need you per field. Counts of
   works group their digits (#1335).
+- **Clean rebuild required.** Library has a Looks wrong lens, second after All,
+  for works whose current title, authors or narrators have a shape that is
+  usually a mistake, such as a title that is only "Disc 1" or in capitals. Each
+  row names what was found, and the count follows the Works count as "37 look
+  wrong". Nothing is changed. The findings are stored with each report, so the
+  database records `value-flag-rules-v1` (#1334).
+- Settings → Appearance has a Theme choice: Follow system, Light or Dark. It
+  applies at once and is saved in this browser. Follow system returns to the
+  system theme after a choice here or with the theme switch (#1341).
 
 ## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
 

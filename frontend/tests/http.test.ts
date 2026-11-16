@@ -1833,6 +1833,7 @@ describe('ReviewApiClient', () => {
             no_attention_needed: 1,
             not_matched: 0,
             preparation_failed: 0,
+            flagged: 0,
           },
           items: [
             libraryWork({
@@ -1915,6 +1916,7 @@ describe('ReviewApiClient', () => {
       detailKind: 'case',
       preparation: null,
       preparationOutcomes: [],
+      valueFlags: [],
     })
     expect(view.works[1]).toEqual({
       id: 'library_work_2',
@@ -1951,6 +1953,7 @@ describe('ReviewApiClient', () => {
           { destination: 'subtitle', state: 'missing', value: 'Not set in Audiobookshelf' },
         ],
       },
+      valueFlags: [],
     })
     expect(JSON.stringify(view)).not.toContain('internal-item-2')
     expect(fetchMock).toHaveBeenCalledWith(
@@ -2919,8 +2922,15 @@ describe('ReviewApiClient', () => {
       deferred: 214,
       next_retry_at: 1_800_000_000,
       remedy: 'add_api_key',
+      notice_at: 1_800_086_400,
+      untried: false,
     }
-    const throttling = { generation: 3, retry: 'available', entries: [entry] }
+    const throttling = {
+      generation: 3,
+      retry: 'available',
+      entries: [entry],
+      answered: [{ library: 'Synthetic audio', adapter: 'hardcover' }],
+    }
     // An absent block was once read as none (T5); the schema requires it.
     const absent = { ...base }
     delete absent.provider_throttling
@@ -2933,6 +2943,20 @@ describe('ReviewApiClient', () => {
     expect(
       (await readPreparation({ ...base, provider_throttling: throttling })).provider_throttling,
     ).toEqual(throttling)
+    const unannounced = { ...throttling, entries: [{ ...entry, notice_at: null }] }
+    expect(
+      (await readPreparation({ ...base, provider_throttling: unannounced })).provider_throttling,
+    ).toEqual(unannounced)
+    const missing: Record<string, unknown> = { ...entry }
+    delete missing.notice_at
+    await expect(
+      readPreparation({ ...base, provider_throttling: { ...throttling, entries: [missing] } }),
+    ).rejects.toMatchObject(refused('required@/provider_throttling/entries/0/notice_at'))
+    const unsaid: Record<string, unknown> = { ...entry }
+    delete unsaid.untried
+    await expect(
+      readPreparation({ ...base, provider_throttling: { ...throttling, entries: [unsaid] } }),
+    ).rejects.toMatchObject(refused('required@/provider_throttling/entries/0/untried'))
     const maximal = { ...throttling, entries: Array.from({ length: 256 }, () => entry) }
     expect(
       (await readPreparation({ ...base, provider_throttling: maximal })).provider_throttling
@@ -2962,6 +2986,11 @@ describe('ReviewApiClient', () => {
         { ...throttling, entries: [{ ...entry, remedy: 'buy_more' }] },
         `enum@${at}/entries/0/remedy`,
       ],
+      [{ ...throttling, entries: [{ ...entry, notice_at: -1 }] }, `min@${at}/entries/0/notice_at`],
+      [
+        { ...throttling, entries: [{ ...entry, notice_at: 8_640_000_000_001 }] },
+        `max@${at}/entries/0/notice_at`,
+      ],
       [
         { ...throttling, entries: [{ ...entry, library: '' }] },
         `min_length@${at}/entries/0/library`,
@@ -2977,6 +3006,11 @@ describe('ReviewApiClient', () => {
       [{ ...throttling, retry: 'later' }, `enum@${at}/retry`],
       [{ ...throttling, generation: 0 }, `min@${at}/generation`],
       [{ ...throttling, extra: true }, `unknown_key@${at}/extra`],
+      [{ generation: 3, retry: 'available', entries: [entry] }, `required@${at}/answered`],
+      [
+        { ...throttling, answered: [{ library: 'Synthetic audio', adapter: 'unknown_source' }] },
+        `enum@${at}/answered/0/adapter`,
+      ],
     ] as const)
       await expect(
         readPreparation({ ...base, provider_throttling: invalid }),
@@ -3252,7 +3286,7 @@ describe('ReviewApiClient', () => {
       csrf,
       fetch: vi.fn(async () =>
         Response.json(
-          { schema_version: 'review-library-v6', error: { code: 'busy' } },
+          { schema_version: 'review-library-v7', error: { code: 'busy' } },
           { status: 503 },
         ),
       ),
@@ -3273,6 +3307,7 @@ describe('ReviewApiClient', () => {
         no_attention_needed: 1,
         not_matched: 0,
         preparation_failed: 0,
+        flagged: 0,
       },
     })
     await expect(readLibrary(page)).rejects.toMatchObject(refused('enum@/items/0/detail_kind'))
@@ -3335,9 +3370,72 @@ describe('ReviewApiClient', () => {
     await expect(
       readLibrary({ ...page, schema_version: 'review-library-v5' }),
     ).rejects.toMatchObject(refused('const@/schema_version'))
+    // v7 added the Looks wrong count, lens and each work's findings (#1334);
+    // a v6 document lacks them.
     await expect(
       readLibrary({ ...page, schema_version: 'review-library-v6' }),
+    ).rejects.toMatchObject(refused('const@/schema_version'))
+    await expect(
+      readLibrary({ ...page, schema_version: 'review-library-v7' }),
     ).resolves.toBeDefined()
+  })
+
+  it('reads the Looks wrong lens, its count and each finding in rule order (#1334)', async () => {
+    const flagged = library({
+      lens: 'flagged',
+      counts: {
+        all: 2,
+        flagged: 1,
+        needs_attention: 0,
+        no_attention_needed: 2,
+        not_matched: 0,
+        preparation_failed: 0,
+      },
+      items: [
+        libraryWork({
+          title: 'THE EXAMPLE STORY',
+          value_flags: [
+            { destination: 'title', rule: 'title_all_capitals' },
+            { destination: 'narrators', rule: 'credit_label' },
+          ],
+        }),
+      ],
+    })
+    const mapped = await readLibrary(flagged)
+    expect(mapped.lens).toBe('flagged')
+    expect(mapped.counts.flagged).toBe(1)
+    expect(mapped.works[0]?.valueFlags).toEqual([
+      { destination: 'title', rule: 'title_all_capitals' },
+      { destination: 'narrators', rule: 'credit_label' },
+    ])
+    const finding = (flag: Record<string, unknown>) => ({
+      ...flagged,
+      items: [libraryWork({ value_flags: [flag] })],
+    })
+    await expect(
+      readLibrary(finding({ destination: 'title', rule: 'title_in_capitals' })),
+    ).rejects.toMatchObject(refused('enum@/items/0/value_flags/0/rule'))
+    await expect(
+      readLibrary(finding({ destination: 'subtitle', rule: 'title_all_capitals' })),
+    ).rejects.toMatchObject(refused('enum@/items/0/value_flags/0/destination'))
+    // The schema cannot pair a credit label with a contributor list, so the
+    // mapper refuses either crossing.
+    await expect(
+      readLibrary(finding({ destination: 'title', rule: 'credit_label' })),
+    ).rejects.toMatchObject({ status: 502, code: 'invalid_value_flag' })
+    await expect(
+      readLibrary(finding({ destination: 'authors', rule: 'title_all_capitals' })),
+    ).rejects.toMatchObject({ status: 502, code: 'invalid_value_flag' })
+    const counts: Record<string, number> = { ...flagged.counts }
+    delete counts.flagged
+    await expect(readLibrary({ ...flagged, counts })).rejects.toMatchObject(
+      refused('required@/counts/flagged'),
+    )
+    const items = [libraryWork()]
+    delete (items[0] as Record<string, unknown>).value_flags
+    await expect(readLibrary({ ...flagged, items })).rejects.toMatchObject(
+      refused('required@/items/0/value_flags'),
+    )
   })
 
   it('reads each work’s pinned field count (#1346)', async () => {
@@ -3370,6 +3468,7 @@ describe('ReviewApiClient', () => {
           no_attention_needed: 1,
           not_matched: 0,
           preparation_failed: 0,
+          flagged: 0,
         },
       })
     }
@@ -3424,12 +3523,20 @@ describe('ReviewApiClient', () => {
           no_attention_needed: 1,
           not_matched: 2,
           preparation_failed: 0,
+          flagged: 0,
         },
         lens: 'not_matched',
       })
     const mapped = await readLibrary(page('not_matched_unavailable_scheduled'))
     expect(mapped.lens).toBe('not_matched')
-    expect(mapped.counts).toEqual({ attention: 0, all: 3, clear: 1, notMatched: 2, failed: 0 })
+    expect(mapped.counts).toEqual({
+      attention: 0,
+      all: 3,
+      clear: 1,
+      notMatched: 2,
+      failed: 0,
+      flagged: 0,
+    })
     expect(mapped.works[0]?.summary?.state).toBe('not_matched_unavailable_scheduled')
     await expect(readLibrary(page('not_matched_somehow'))).rejects.toMatchObject(
       refused('enum@/items/0/summary/state'),
@@ -4315,6 +4422,97 @@ describe('Activity check group (#1281)', () => {
   })
 })
 
+describe('write plan file (#1336)', () => {
+  const encoder = new TextEncoder()
+  const streamed = (chunks: string[], fault?: Error) =>
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(encoder.encode(chunk))
+        if (fault) controller.error(fault)
+        else controller.close()
+      },
+    })
+
+  it('fetches the file once, counts rows as they arrive and keeps its bytes', async () => {
+    const chunks = ['{"changes":[\n', '{"work":"A"}\n,{"work":"B"}\n', '],"listed":2}']
+    const fetchMock = vi.fn<typeof fetch>(
+      async () =>
+        new Response(streamed(chunks), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    )
+    const rows: number[] = []
+
+    const file = await new ReviewApiClient({ csrf, fetch: fetchMock }).downloadActivityWritePlan(
+      'json',
+      undefined,
+      (count) => rows.push(count),
+    )
+
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const [path, init] = fetchMock.mock.calls[0] ?? []
+    expect(path).toBe('/api/v1/activity/write-plan?format=json')
+    expect(init).toMatchObject({ credentials: 'same-origin', cache: 'no-store' })
+    expect(init?.method ?? 'GET').toBe('GET')
+    expect(rows).toEqual([0, 2, 2])
+    expect(file.filename).toBe('mechanical-librarian-write-plan.json')
+    expect(file.blob.type).toBe('application/json')
+    expect(await file.blob.text()).toBe(chunks.join(''))
+  })
+
+  it('reads the whole body when it cannot be streamed', async () => {
+    const response = new Response('"Library"\r\n', { status: 200 })
+    Object.defineProperty(response, 'body', { value: null })
+    const file = await new ReviewApiClient({
+      csrf,
+      fetch: vi.fn<typeof fetch>(async () => response),
+    }).downloadActivityWritePlan('csv')
+
+    expect(file.filename).toBe('mechanical-librarian-write-plan.csv')
+    expect(await file.blob.text()).toBe('"Library"\r\n')
+  })
+
+  it('never returns a file whose connection ended before its end', async () => {
+    const client = new ReviewApiClient({
+      csrf,
+      fetch: vi.fn<typeof fetch>(
+        async () => new Response(streamed(['"Library"\r\n'], new TypeError('network'))),
+      ),
+    })
+
+    await expect(client.downloadActivityWritePlan('csv')).rejects.toBeInstanceOf(
+      NetworkUnavailableError,
+    )
+  })
+
+  it.each([
+    [
+      'session expiry',
+      () => Response.json({ error: { code: 'session' } }, { status: 401 }),
+      SessionExpiredError,
+    ],
+    [
+      'an earlier build',
+      () => new Response('x', { status: 200, headers: { 'x-ml-build-identity': 'e'.repeat(64) } }),
+      BuildMismatchError,
+    ],
+    [
+      'an unavailable plan',
+      () => Response.json({ error: { code: 'unavailable' } }, { status: 503 }),
+      ApiError,
+    ],
+  ])('refuses %s as every read does', async (_name, answer, refusal) => {
+    const client = new ReviewApiClient({
+      csrf,
+      buildIdentity: 'c'.repeat(64),
+      fetch: vi.fn<typeof fetch>(async () => answer()),
+    })
+
+    await expect(client.downloadActivityWritePlan('csv')).rejects.toBeInstanceOf(refusal)
+  })
+})
+
 describe('deferred Activity permission contract', () => {
   it('refuses a genuine earlier producer and requires both nullable fields', async () => {
     await expect(readActivity(activityV2Predecessor)).rejects.toBeInstanceOf(ResponseDecodeError)
@@ -4352,20 +4550,53 @@ describe('deferred Activity permission contract', () => {
         backup_ready,
         capabilities: [],
         configured_libraries: [],
-        prepared: { automatic: 0, human: 0, total: 0 },
-        example: {
-          after: 'After',
-          before: 'Before',
-          destination: 'title',
-          library: 'Fiction',
-          work_id: 'work-1',
+        prepared: { automatic: 0, human: 1, total: 1 },
+        plan: {
+          total: 1,
+          groups: [
+            {
+              library: 'Fiction',
+              destination: 'title',
+              kind: 'human',
+              count: 1,
+              rows: [
+                {
+                  work: 'Real Tigers',
+                  authors: 'Mick Herron',
+                  current: 'Not set',
+                  new: 'Real Tigers',
+                  reason: 'You chose this value',
+                  sources: ['Hardcover'],
+                },
+              ],
+            },
+          ],
         },
       }
-      expect(await readPermissionReadiness(response)).toEqual({
-        ...response,
-        example: { ...response.example, work_label: 'Work details unavailable' },
-      })
-      expect((await readPermissionReadiness({ ...response, example: null })).example).toBeNull()
+      expect(await readPermissionReadiness(response)).toEqual(response)
+      // The plan is required, its kinds are closed and a row states no identity.
+      await expect(readPermissionReadiness({ ...response, plan: undefined })).rejects.toMatchObject(
+        refused('required@/plan'),
+      )
+      await expect(readPermissionReadiness({ ...response, example: null })).rejects.toMatchObject(
+        refused('unknown_key@/example'),
+      )
+      const [group] = response.plan.groups as [(typeof response.plan.groups)[number]]
+      await expect(
+        readPermissionReadiness({
+          ...response,
+          plan: { ...response.plan, groups: [{ ...group, kind: 'policy' }] },
+        }),
+      ).rejects.toMatchObject({ name: 'ResponseDecodeError' })
+      await expect(
+        readPermissionReadiness({
+          ...response,
+          plan: {
+            ...response.plan,
+            groups: [{ ...group, rows: [{ ...group.rows[0], work_id: 'work-1' }] }],
+          },
+        }),
+      ).rejects.toMatchObject({ name: 'ResponseDecodeError' })
       await expect(readPermissionReadiness({ ...response, events: [] })).rejects.toMatchObject(
         refused('unknown_key@/events'),
       )
@@ -6684,19 +6915,19 @@ describe('Library progress (#1335)', () => {
     const view = await new ReviewApiClient({ csrf, fetch: fetchMock }).getLibraryProgress()
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/library/progress')
     expect(view).toEqual({
-      totals: { all: 2, attention: 1, clear: 0, notMatched: 1, failed: 0 },
+      totals: { all: 2, attention: 1, clear: 0, notMatched: 1, failed: 0, flagged: 0 },
       libraries: [
         {
           connection: 'primary',
           library: 'audiobooks',
           libraryDisplayName: 'audiobooks',
-          counts: { all: 1, attention: 0, clear: 0, notMatched: 1, failed: 0 },
+          counts: { all: 1, attention: 0, clear: 0, notMatched: 1, failed: 0, flagged: 0 },
         },
         {
           connection: 'primary',
           library: 'ebooks',
           libraryDisplayName: 'ebooks',
-          counts: { all: 1, attention: 1, clear: 0, notMatched: 0, failed: 0 },
+          counts: { all: 1, attention: 1, clear: 0, notMatched: 0, failed: 0, flagged: 0 },
         },
       ],
       fields: [{ destination: 'title', needYou: 1 }],

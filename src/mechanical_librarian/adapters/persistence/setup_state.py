@@ -648,7 +648,7 @@ class SetupStateStore(ConnectionScoped):
         ).fetchall() != [_SETUP_FIELD_EFFECT_CONTROL_ROW]:
             return False
         if "browse_fact_identity" in tables and self._connection.execute(
-            "SELECT singleton,unicode_version FROM browse_fact_identity"
+            "SELECT singleton,unicode_version,value_flag_rules FROM browse_fact_identity"
         ).fetchall() != [_SETUP_BROWSE_FACT_IDENTITY_ROW]:
             return False
         if "review_preparation_control" in tables and self._connection.execute(

@@ -10,6 +10,7 @@ module drives a real server and a real browser to find out (#641).
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import tempfile
@@ -1138,3 +1139,113 @@ def _costs_the_masthead_no_width(page: Page) -> None:
         f"the degraded notice widens the masthead: {with_notice} with it, "
         f"{_masthead_overflow(page)} without"
     )
+
+
+def test_the_write_plan_downloads_as_a_saved_file_without_granting_anything() -> None:
+    """Both files save from the real page under its strict CSP (#1336).
+
+    The page fetches the file and saves it through a blob URL and an
+    `<a download>`; the page's Content-Security-Policy must allow that, and
+    reading or saving the plan sends no consent.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        os.chmod(hash_path, 0o600)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True,
+                accept_downloads=True,
+                viewport={"width": 1440, "height": 900},
+            )
+            page = context.new_page()
+            grants: list[str] = []
+            refusals: list[str] = []
+            page.on(
+                "request",
+                lambda request: (
+                    grants.append(request.url)
+                    if request.method == "POST"
+                    and request.url.split("?", 1)[0].endswith(
+                        "/api/v1/activity/consent"
+                    )
+                    else None
+                ),
+            )
+            page.on(
+                "console",
+                lambda message: (
+                    refusals.append(message.text)
+                    if "Content Security Policy" in message.text
+                    else None
+                ),
+            )
+            with (
+                closing(ReservedPort()) as reserved_port,
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=reserved_port,
+                ) as (origin, _case_id),
+                _closing_context(context),
+            ):
+                _login(page, origin)
+                page.goto(f"{origin}/activity")
+                page.get_by_role("heading", name="Activity", exact=True).wait_for()
+                page.get_by_role("button", name="Review write permissions").click()
+                page.get_by_text("Backup checked.", exact=True).wait_for()
+                review = page.locator("#activity-consent")
+                expect(
+                    review.get_by_text(re.compile(r"prepared so far"))
+                ).to_be_visible()
+                policy = page.evaluate(
+                    "async () => (await fetch(location.href)).headers"
+                    ".get('content-security-policy')"
+                )
+                assert policy and "default-src" in policy
+
+                saved: dict[str, bytes] = {}
+                for name, filename in (
+                    ("Download CSV", "mechanical-librarian-write-plan.csv"),
+                    ("Download JSON", "mechanical-librarian-write-plan.json"),
+                ):
+                    with page.expect_download() as started:
+                        review.get_by_role("button", name=name).click()
+                    download = started.value
+                    assert download.failure() is None
+                    assert download.suggested_filename == filename
+                    path = download.path()
+                    saved[filename] = Path(path).read_bytes()
+                    # The file's own status line, empty (and so hidden) once saved.
+                    expect(
+                        review.locator(".activity-write-plan-status [role='status']")
+                    ).to_have_text("")
+
+                csv_lines = saved["mechanical-librarian-write-plan.csv"].split(b"\r\n")
+                assert csv_lines[0] == (
+                    b'\xef\xbb\xbf"Library","Work","Authors","Field","Chosen by",'
+                    b'"Current value","New value","Reason","Sources"'
+                )
+                # A cell a spreadsheet would read as a formula reads as text.
+                assert b'"\'=Before"' in csv_lines[1]
+                document = json.loads(saved["mechanical-librarian-write-plan.json"])
+                assert set(document) == {
+                    "changed",
+                    "changes",
+                    "listed",
+                    "made_at",
+                    "total",
+                    "truncated",
+                    "unreadable",
+                }
+                assert document["changes"][0]["current_value"] == "=Before"
+                assert refusals == []
+                # Reading and saving the plan grants nothing.
+                assert grants == []
+                expect(review.get_by_role("checkbox").first).not_to_be_checked()

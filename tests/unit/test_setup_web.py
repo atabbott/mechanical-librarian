@@ -13,6 +13,7 @@ from argon2 import PasswordHasher
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
+import mechanical_librarian
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.reviewers.codex_device_auth import (
     CodexDeviceAuthState,
@@ -1490,8 +1491,11 @@ def test_seven_step_journey_closes_setup_routes_after_exact_kickoff_copy() -> No
         reviewer.json()["revision"],
     ] == [3, 4, 5, 6, 7]
     assert kickoff.status_code == 202
-    # Start reuses the owner's session: no second cookie or credential.
-    assert "set-cookie" not in kickoff.headers
+    # Start reuses the owner's session: no credential, and no cookie but the
+    # one that tells this browser's Library the first review guide is owed.
+    assert kickoff.headers.get_list("set-cookie") == [
+        "ml_first_review=owed; Max-Age=2592000; Path=/; SameSite=strict; Secure"
+    ]
     reviewer_access.select_none.assert_not_called()
     assert state.document.reviewer_setup == "skipped"
     assert state.document.libraries[0].display_name == "Books"
@@ -1504,6 +1508,139 @@ def test_seven_step_journey_closes_setup_routes_after_exact_kickoff_copy() -> No
     assert closed.status_code == 404
     assert closed.headers["strict-transport-security"] == "max-age=31536000"
     assert client.get("/health/ready").status_code == 200
+
+
+def _ready_to_start(
+    mode: str,
+) -> tuple[TestClient, _State, dict[str, str], int]:
+    """Drive setup to the point where only Start is left."""
+    reviewer_access = Mock(spec=ReviewerAccessOperations)
+    reviewer_access.read.return_value = SimpleNamespace(revision=7, mapping=None)
+    client, state, _connection = _client(reviewer_access, mode=mode)
+    origin = "http://setup.invalid" if mode == "http" else "https://setup.invalid"
+    nonce = client.get("/api/setup/claim")
+    login = client.post(
+        "/api/setup/session",
+        json={
+            "password": "correct horse battery staple",
+            "confirmation": "correct horse battery staple",
+            "expected_revision": nonce.json()["revision"],
+            "claim_token": _CLAIM_TOKEN,
+        },
+        headers={
+            "cookie": nonce.headers["set-cookie"].split(";", 1)[0],
+            "origin": origin,
+            "x-setup-nonce": nonce.json()["nonce"],
+        },
+    )
+    headers = {
+        "cookie": _session_cookie(login),
+        "origin": origin,
+        "x-csrf-token": login.json()["csrf_token"],
+    }
+    revision = 2
+    for path, body in (
+        (
+            "/api/setup/connect",
+            {"name": "primary", "endpoint": "https://abs.invalid", "key": "secret"},
+        ),
+        (
+            "/api/setup/libraries",
+            {
+                "libraries": [
+                    {"name": "books", "library_id": "books", "media_kind": "book"}
+                ]
+            },
+        ),
+        ("/api/setup/mounts", {"service_paths": {"books": "/library"}}),
+        ("/api/setup/providers", {"providers": []}),
+        ("/api/setup/reviewer", {"outcome": "skipped"}),
+    ):
+        step = client.post(
+            path, json={"expected_revision": revision, **body}, headers=headers
+        )
+        assert step.status_code == 200, path
+        revision = step.json()["revision"]
+    return client, state, headers, revision
+
+
+@pytest.mark.parametrize("mode", ["http", "direct", "proxy"])
+def test_start_marks_the_first_review_as_owed_with_one_plain_cookie(mode: str) -> None:
+    client, _state, headers, revision = _ready_to_start(mode)
+
+    kickoff = client.post(
+        "/api/setup/kick-off", json={"expected_revision": revision}, headers=headers
+    )
+
+    assert kickoff.status_code == 202
+    # Exactly this cookie and nothing else: not a credential, readable by the
+    # page that clears it, sent to this site only, gone after 30 days.
+    assert kickoff.headers.get_list("set-cookie") == [
+        "ml_first_review=owed; Max-Age=2592000; Path=/; SameSite=strict"
+        + ("" if mode == "http" else "; Secure")
+    ]
+    assert "HttpOnly" not in kickoff.headers["set-cookie"]
+    assert "authorization" not in kickoff.headers
+    assert set(kickoff.json()) == {"status", "message"}
+
+
+@pytest.mark.parametrize(
+    ("fault", "status"),
+    [("signed_out", 401), ("csrf", 403), ("origin", 403), ("stale", 409)],
+)
+def test_a_refused_start_owes_no_first_review(fault: str, status: int) -> None:
+    client, state, headers, revision = _ready_to_start("direct")
+    sent = dict(headers)
+    if fault == "signed_out":
+        del sent["cookie"]
+        client.cookies.clear()
+    elif fault == "csrf":
+        sent["x-csrf-token"] = "wrong"
+    elif fault == "origin":
+        sent["origin"] = "https://elsewhere.invalid"
+
+    refused = client.post(
+        "/api/setup/kick-off",
+        json={"expected_revision": revision - (fault == "stale")},
+        headers=sent,
+    )
+
+    assert refused.status_code == status
+    assert "set-cookie" not in refused.headers
+    assert state.promoted is False
+
+
+def test_a_failed_start_owes_no_first_review(monkeypatch: pytest.MonkeyPatch) -> None:
+    client, state, headers, revision = _ready_to_start("direct")
+
+    def fail(*_arguments: object) -> None:
+        raise RuntimeError("private failure detail")
+
+    monkeypatch.setattr(state, "promote", fail)
+
+    failed = client.post(
+        "/api/setup/kick-off", json={"expected_revision": revision}, headers=headers
+    )
+
+    assert failed.status_code == 503
+    assert failed.json() == {"detail": {"error": "activation_failed"}}
+    assert "set-cookie" not in failed.headers
+
+
+def test_only_setup_start_owes_a_first_review() -> None:
+    """No other response sets the cookie, so an installation that never ran
+    setup here (settings managed by a file, or an upgrade) shows no guide."""
+    package = Path(mechanical_librarian.__file__).parent
+    setters = {
+        path.relative_to(package).as_posix(): path.read_text(encoding="utf-8").count(
+            "ml_first_review"
+        )
+        for path in package.rglob("*.py")
+        if "ml_first_review" in path.read_text(encoding="utf-8")
+    }
+
+    assert setters == {"interfaces/web/setup.py": 1}
+    assert "ml_first_review" not in SETUP_JS
 
 
 def test_setup_library_step_uses_audiobookshelf_book_kind_without_owner_choice() -> (

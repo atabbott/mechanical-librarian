@@ -42,6 +42,7 @@ from mechanical_librarian.domain import (
     human_decision,
     review_case,
     shadow_outcome,
+    value_flags,
 )
 from mechanical_librarian.domain.audio_inspection import AudioEvidenceSurface
 from mechanical_librarian.domain.cover_evidence import CoverSourceKind
@@ -133,7 +134,7 @@ KEYWORDS: tuple[tuple[str, str, str, str, object], ...] = (
         ("S06", "_ActivityPrepared", f"/properties/{name}", "minimum", 0)
         for name in ("automatic", "human", "total")
     ),
-    ("S07", "_ActivityExample", "/properties/destination", "enum", TARGETS),
+    ("S07", "_WritePlanGroup", "/properties/destination", "enum", TARGETS),
     ("S08", "_ActivityWaiting", "/properties/destination", "enum", TARGETS),
     (
         "S09",
@@ -176,6 +177,7 @@ KEYWORDS: tuple[tuple[str, str, str, str, object], ...] = (
         ("S16", "_ReviewCounts", f"/properties/{name}", "minimum", 0)
         for name in (
             "all",
+            "flagged",
             "needs_attention",
             "no_attention_needed",
             "not_matched",
@@ -513,6 +515,22 @@ KEYWORDS: tuple[tuple[str, str, str, str, object], ...] = (
         ("in_force", "waiting", "changed"),
     ),
     ("S95", "_LibraryWork", "/properties/pinned_count", "minimum", 0),
+    # Looks wrong: a closed rule list over three fields, at most nine (#1334).
+    (
+        "S96",
+        "_LibraryValueFlag",
+        "/properties/rule",
+        "enum",
+        set(value_flags.VALUE_FLAG_RULES),
+    ),
+    (
+        "S97",
+        "_LibraryValueFlag",
+        "/properties/destination",
+        "enum",
+        {"title", "authors", "narrators"},
+    ),
+    ("S98", "_LibraryWork", "/properties/value_flags", "maxItems", 9),
 )
 
 
@@ -611,7 +629,7 @@ REFUSALS: tuple[tuple[type[BaseModel], str, object, str], ...] = (
     (app._ActivityCapability, "state", "partial", "literal_error"),
     (app._ActivitySuspension, "reason", "recovery", "literal_error"),
     (app._ActivityPrepared, "total", -1, "greater_than_equal"),
-    (app._ActivityExample, "destination", "publication_date", "literal_error"),
+    (app._WritePlanGroup, "destination", "publication_date", "literal_error"),
     (app._ActivityWaiting, "destination", "x", "literal_error"),
     (app._ActivityEvent, "event_type", "all", "literal_error"),
     (app._ActivityResponse, "counts", {"verified": -1}, "greater_than_equal"),
@@ -628,6 +646,8 @@ REFUSALS: tuple[tuple[type[BaseModel], str, object, str], ...] = (
         "value_error",
     ),
     (app._LibraryResponse, "lens", "unmatched", "literal_error"),
+    (app._LibraryValueFlag, "rule", "title_in_capitals", "literal_error"),
+    (app._LibraryValueFlag, "destination", "subtitle", "literal_error"),
     (app._ReviewCounts, "all", -1, "greater_than_equal"),
     (app._LibraryProgressField, "destination", "shelf", "literal_error"),
     (app._LibraryProgressField, "need_you", 0, "greater_than_equal"),

@@ -304,10 +304,17 @@ const throttleEntry = {
   deferred: 214,
   next_retry_at: 1_800_000_000,
   remedy: 'add_api_key',
+  notice_at: 1_800_086_400,
+  untried: false,
 }
 const throttled = builder('Preparation', 'preparation.throttling', PREPARATION, () =>
   preparation({
-    provider_throttling: { generation: 3, retry: 'available', entries: [throttleEntry] },
+    provider_throttling: {
+      generation: 3,
+      retry: 'available',
+      entries: [throttleEntry],
+      answered: [{ library: 'Synthetic ebooks', adapter: 'google_books' }],
+    },
   }),
 )
 const lapsed = builder('Activity', 'activity.lapsed', ACTIVITY, () =>
@@ -329,11 +336,36 @@ const consentState = builder(
   get('/api/v1/activity/consent-state'),
   projection('backup_ready', 'capabilities', 'configured_libraries', 'lapsed_consents', 'waiting'),
 )
+// The readiness check carries the write plan in place of Activity's example (#1336).
 const permissionReadiness = builder(
   'Activity',
   'activity.permission-readiness',
   get('/api/v1/activity/permission-readiness'),
-  projection('backup_ready', 'capabilities', 'configured_libraries', 'example', 'prepared'),
+  () => ({
+    ...projection('backup_ready', 'capabilities', 'configured_libraries', 'prepared')(),
+    plan: {
+      total: 3,
+      groups: [
+        {
+          library: 'Fiction',
+          destination: 'title',
+          kind: 'human',
+          count: 2,
+          rows: [
+            {
+              work: 'Real Tigers',
+              authors: 'Mick Herron',
+              current: 'Not set',
+              new: 'Real Tigers',
+              reason: 'You chose this value',
+              sources: ['Hardcover'],
+            },
+          ],
+        },
+        { library: 'Fiction', destination: 'cover', kind: 'automatic', count: 1, rows: [] },
+      ],
+    },
+  }),
 )
 // A recording basis requires the recording scope (`mapAudiobookReviewScope`).
 const recordingBasis = builder('Library', 'reportDetail.recording-basis', REPORT, () =>

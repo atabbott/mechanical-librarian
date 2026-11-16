@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlsplit
 
+import pytest
 from playwright.sync_api import Page, Route, expect, sync_playwright
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
@@ -19,6 +20,7 @@ from mechanical_librarian.interfaces.web.react_assets import (
     ReactAssetBundle,
     load_react_asset_bundle,
 )
+from tests.browser import fidelity_cohort
 from tests.browser.fidelity_cohort import (
     BUILD_IDENTITY as _BUILD_IDENTITY,
 )
@@ -89,8 +91,13 @@ _CONTENT_OVERFLOW = """
   if (root === null) return null;
   let worst = 0;
   for (const node of [root, ...root.querySelectorAll('*')]) {
-    worst = Math.max(worst, node.scrollWidth - node.clientWidth);
     const style = getComputedStyle(node);
+    // Text kept for screen readers alone is clipped to nothing on purpose:
+    // what it holds scrolls inside its one pixel and none of it is seen. Its
+    // own box is still held inside its parent below.
+    const unseen = style.position === 'absolute' &&
+      style.clip === 'rect(0px, 0px, 0px, 0px)';
+    if (!unseen) worst = Math.max(worst, node.scrollWidth - node.clientWidth);
     const box = node.getBoundingClientRect();
     const right = box.right - parseFloat(style.borderRightWidth || 0) -
       parseFloat(style.paddingRight || 0);
@@ -1296,7 +1303,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 ).wait_for()
                 page.locator(".activity-consent-library").filter(
                     has_text="Household ebooks"
-                ).get_by_text("5 prepared · Writes enabled").wait_for()
+                ).get_by_text("6 prepared · Writes enabled").wait_for()
                 spoken = (
                     page.locator(".activity-consent-library")
                     .filter(has_text="Spoken stories")
@@ -2183,10 +2190,14 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         expect(page.get_by_text("Open Library", exact=True)).to_be_visible()
         expect(page.get_by_text("Hardcover", exact=True)).to_be_visible()
         assert page.locator(".direct-choice-grid").count() == 0
+        # No decision controls; the masthead's status icon may name lookups
+        # waiting to retry (#1494).
         assert (
-            page.get_by_role(
+            page.get_by_role("main")
+            .get_by_role(
                 "button", name=re.compile("choose|retry|return|resume", re.IGNORECASE)
-            ).count()
+            )
+            .count()
             == 0
         )
         assert page.get_by_role("radio").count() == 0
@@ -2274,10 +2285,14 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         ):
             assert identifier not in history_text
         assert page.locator(".direct-choice-grid").count() == 0
+        # No decision controls; the masthead's status icon may name lookups
+        # waiting to retry (#1494).
         assert (
-            page.get_by_role(
+            page.get_by_role("main")
+            .get_by_role(
                 "button", name=re.compile("choose|retry|return|resume", re.IGNORECASE)
-            ).count()
+            )
+            .count()
             == 0
         )
         assert page.get_by_role("radio").count() == 0
@@ -2325,7 +2340,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             "/library?lens=needs_attention&preview=missing-case&field=authors"
         )
         assert (
-            page.get_by_role("button", name=re.compile("retry", re.IGNORECASE)).count()
+            page.get_by_role("main")
+            .get_by_role("button", name=re.compile("retry", re.IGNORECASE))
+            .count()
             == 0
         )
         assert page.evaluate("() => document.documentElement.scrollWidth") <= 320
@@ -2498,7 +2515,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 "grants": [
                     {
                         "library": "Spoken stories",
-                        "destinations": ["authors", "title"],
+                        "destinations": ["authors", "cover", "title"],
                     }
                 ]
             }
@@ -3177,6 +3194,7 @@ _RETRY_OUTCOME = """() => {
     role: shown.getAttribute('role'),
     mark: getComputedStyle(shown, '::before').content,
     color: style.color,
+    ink: getComputedStyle(document.body).color,
     line: parseFloat(style.lineHeight),
     distance: box.top - button.parentElement.getBoundingClientRect().bottom,
     aboveList: box.top < notice.querySelector('ul').getBoundingClientRect().top,
@@ -3323,7 +3341,10 @@ def test_library_and_settings_show_provider_throttling_with_one_retry_now() -> N
         assert accepted["role"] == "status", accepted
         assert not accepted["aboveList"], accepted
         assert 0 <= accepted["distance"] <= accepted["line"], accepted
-        assert accepted["mark"] not in ("none", "normal"), accepted
+        # Pending is ink with no glyph: only the line that says every waiting
+        # lookup got an answer takes the accent and the tick (#1494).
+        assert accepted["mark"] in ("none", "normal"), accepted
+        assert accepted["color"] == accepted["ink"], accepted
 
         # The second press is stale: the alert says so and nothing moves focus.
         page.keyboard.press("Enter")
@@ -3336,7 +3357,7 @@ def test_library_and_settings_show_provider_throttling_with_one_retry_now() -> N
         assert not refused["aboveList"], refused
         assert 0 <= refused["distance"] <= refused["line"], refused
         # Marked apart by its glyph as well as its colour, never colour alone.
-        assert refused["mark"] not in ("none", "normal", accepted["mark"]), refused
+        assert refused["mark"] not in ("none", "normal"), refused
         assert refused["color"] != accepted["color"], (accepted, refused)
         swept = page.evaluate(_TIME_TOGETHER, True)
         assert swept["times"] > 0 and swept["found"] == [], swept
@@ -3650,7 +3671,7 @@ def test_library_attention_groups_works_and_counts_never_read_zero_while_loading
         expect(page.locator(".attention-toggle strong")).to_have_text("5 works")
         expect(page).to_have_url(re.compile(r"preview=case-1"))
         expect(page.locator(".library-works-heading [role='status']")).to_have_text(
-            "20 works · 1 could not finish"
+            "20 works · 1 not matched · 1 could not finish · 6 look wrong"
         )
 
         # B2: the rail groups six field rows under four works.
@@ -3784,6 +3805,48 @@ _ROWS_AGAINST_SPINE_COLUMN = """(column) => [...document.querySelectorAll('.libr
             spine,
         }
     })"""
+
+
+# The first visible character of each line box a text node's characters lay
+# out on, read through one Range per character.
+_LINE_STARTS = """element => {
+  const starts = new Map()
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    for (let index = 0; index < node.data.length; index += 1) {
+      if (/\\s/u.test(node.data[index])) continue
+      const range = document.createRange()
+      range.setStart(node, index)
+      range.setEnd(node, index + 1)
+      const [box] = range.getClientRects()
+      if (!box) continue
+      const top = Math.round(box.top)
+      const seen = starts.get(top)
+      if (!seen || box.left < seen.left) starts.set(top, {left: box.left, text: node.data[index]})
+    }
+  }
+  return [...starts.entries()].sort((a, b) => a[0] - b[0]).map(([, start]) => start.text)
+}"""
+
+
+def test_the_works_count_never_starts_a_wrapped_line_with_a_dot() -> None:
+    """#1334: at 1280 px the cohort's Works count wraps, and every part is held
+    to its dot, so each line the count lays out on starts with a word or a
+    number, never with "·"."""
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1280, "height": 900}, locale="en-US")
+        _serve_cohort(page)
+        page.goto("https://react-platform.invalid/library?lens=all")
+        status = page.locator(".library-works-heading [role='status']")
+        expect(status).to_have_text(
+            "20 works · 1 not matched · 1 could not finish · 6 look wrong"
+        )
+        starts = status.evaluate(_LINE_STARTS)
+        assert len(starts) > 1, starts
+        assert "·" not in starts, starts
 
 
 def test_works_rows_show_a_retained_cover_without_growing() -> None:
@@ -4762,7 +4825,11 @@ def test_masthead_holds_still_while_status_changes() -> None:
                 for label in list(_PREPARATION_STATES)[1:]:
                     state["preparation"] = label
                     page.evaluate("() => globalThis.__publish('preparation')")
-                    expect(trigger).to_have_text(label)
+                    # The icon speaks the label, then any source sentences
+                    # the cohort's lookups add (#1494).
+                    expect(trigger).to_have_accessible_name(
+                        re.compile(f"^{re.escape(label)}(\\. |$)")
+                    )
                     page.evaluate(_TWO_FRAMES)
                     states[label] = page.evaluate(_MASTHEAD_GEOMETRY)
                     clipped += [
@@ -4935,6 +5002,238 @@ def test_compact_and_enlarged_masthead_never_covers_content() -> None:
                     )
                 page.keyboard.press("Escape")
                 expect(trigger).to_be_focused()
+
+
+# The open tooltip of the icon `selector`: its box, whether it takes the
+# pointer, and the destinations it lies over.
+_OPEN_TOOLTIP = """selector => {
+  const tip = document.querySelector(`.masthead ${selector} .masthead-tooltip`);
+  const box = tip.getBoundingClientRect();
+  const over = [...document.querySelectorAll('.masthead nav a')].filter((link) => {
+    const own = link.getBoundingClientRect();
+    return Math.min(box.right, own.right) - Math.max(box.left, own.left) > 0 &&
+      Math.min(box.bottom, own.bottom) - Math.max(box.top, own.top) > 0;
+  }).map((link) => link.textContent.trim());
+  return {
+    shown: getComputedStyle(tip).visibility === 'visible',
+    events: getComputedStyle(tip).pointerEvents,
+    left: box.left, right: box.right, top: box.top, bottom: box.bottom, over,
+  };
+}"""
+_MASTHEAD_ICONS = (".status-trigger", ".theme-toggle", ".sign-out")
+
+
+def test_masthead_tooltips_never_take_a_destinations_click() -> None:
+    """Where the destinations sit below the masthead icons (two rows, and the
+    three rows of a 19rem shell), each icon's tooltip stays on the screen,
+    lies over no destination and never takes the pointer, and a destination
+    takes its click while a tooltip is open. In the one-row masthead the
+    tooltip falls below the masthead and can be hovered, across the gap above
+    it, without closing (#1494, Amendment 4)."""
+    styles = {"100%": "", "200%": "html { font-size: 200% !important; }"}
+    text = "100%"
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 390, "height": 844}, locale="en-US")
+        page.add_init_script(_LIVE_UPDATE_STREAM)
+        _serve_cohort(page, stylesheet=lambda: styles[text])
+        for text, width in (
+            ("100%", 320),
+            ("200%", 320),
+            ("100%", 390),
+            ("100%", 761),
+            ("100%", 900),
+            ("100%", 1024),
+        ):
+            where = f"{text} text at {width}px"
+            page.set_viewport_size({"width": width, "height": 844})
+            page.goto("https://react-platform.invalid/settings?group=connection")
+            page.get_by_role("heading", name="Settings", exact=True).wait_for()
+            for icon in _MASTHEAD_ICONS:
+                page.locator(f".masthead {icon}").hover()
+                tip = page.evaluate(_OPEN_TOOLTIP, icon)
+                assert tip["shown"] and tip["events"] == "none", (
+                    f"{where} {icon}: {tip}"
+                )
+                assert tip["over"] == [], f"{where} {icon}: {tip}"
+                assert tip["left"] >= 0 and tip["right"] <= width, (
+                    f"{where} {icon}: {tip}"
+                )
+            # With the theme switch's tooltip open, a destination takes its click.
+            page.locator(".masthead .theme-toggle").hover()
+            link = page.get_by_role("navigation").get_by_role(
+                "link", name="Activity", exact=True
+            )
+            box = link.bounding_box()
+            assert box is not None
+            page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+            expect(link).to_have_attribute("aria-current", "page")
+        text = "100%"
+        page.set_viewport_size({"width": 1440, "height": 900})
+        page.goto("https://react-platform.invalid/settings?group=connection")
+        page.get_by_role("heading", name="Settings", exact=True).wait_for()
+        for icon in _MASTHEAD_ICONS:
+            page.locator(f".masthead {icon}").hover()
+            tip = page.evaluate(_OPEN_TOOLTIP, icon)
+            assert tip["shown"] and tip["events"] == "auto", f"1440px {icon}: {tip}"
+            assert tip["over"] == [] and tip["right"] <= 1440, f"1440px {icon}: {tip}"
+        page.locator(".masthead .theme-toggle").hover()
+        toggle = page.locator(".masthead .theme-toggle").bounding_box()
+        tip = page.evaluate(_OPEN_TOOLTIP, ".theme-toggle")
+        assert toggle is not None
+        x = toggle["x"] + toggle["width"] / 2
+        assert tip["left"] < x < tip["right"], (toggle, tip)
+        page.mouse.move(x, toggle["y"] + toggle["height"] / 2)
+        page.mouse.move(x, (tip["top"] + tip["bottom"]) / 2, steps=12)
+        assert page.evaluate(_OPEN_TOOLTIP, ".theme-toggle")["shown"], tip
+
+
+# The popover's own controls and its end, against the finish tray: the end of
+# the scrolled popover, and each control scrolled into view, lie above the
+# tray and take a press there.
+_POPOVER_ABOVE_TRAY = """() => {
+  const popover = document.querySelector('.preparation-popover');
+  const tray = document.querySelector('.cm-finish-tray').getBoundingClientRect();
+  const controls = [...popover.querySelectorAll('button')].map((node) => {
+    node.scrollIntoView({block: 'nearest'});
+    const box = node.getBoundingClientRect();
+    const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+    return [node.textContent.trim(), Math.round(box.bottom), !!hit && node.contains(hit)];
+  });
+  return {
+    trayTop: Math.round(tray.top),
+    end: Math.round(popover.getBoundingClientRect().bottom),
+    controls,
+  };
+}"""
+
+
+def test_preparation_popover_ends_above_the_finish_tray() -> None:
+    """With Source lookups listed, the popover on Settings and on Policy ends
+    above the floating finish tray, so Pause and Close stay in view and take a
+    press (#1494, Amendment 4)."""
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 390, "height": 844}, locale="en-US")
+        page.add_init_script(_LIVE_UPDATE_STREAM)
+        _serve_cohort(page)
+        for route, (width, height) in (
+            ("/settings?group=providers", (390, 844)),
+            ("/settings?group=providers", (375, 667)),
+            # On a phone Policy's tray is taller than a third of the window,
+            # so it settles into the page; it floats on these.
+            ("/policy?section=identity", (1024, 768)),
+            ("/policy?section=identity", (884, 600)),
+        ):
+            where = f"{route} at {width}x{height}"
+            page.set_viewport_size({"width": width, "height": height})
+            page.goto(f"https://react-platform.invalid{route}")
+            tray = page.locator(".cm-finish-tray")
+            expect(tray).to_be_visible()
+            assert tray.evaluate("node => getComputedStyle(node).position") == (
+                "sticky"
+            ), where
+            page.locator(".masthead .preparation-activity > button").click()
+            popover = page.get_by_role("region", name="Background activity")
+            expect(
+                popover.get_by_role("region", name="Source lookups", exact=True)
+            ).to_be_visible()
+            page.evaluate(_TWO_FRAMES)
+            found = page.evaluate(_POPOVER_ABOVE_TRAY)
+            assert found["end"] <= found["trayTop"], f"{where}: {found}"
+            names = [name for name, _, _ in found["controls"]]
+            assert {"Pause", "Close"} <= set(names), f"{where}: {found}"
+            for name, bottom, pressable in found["controls"]:
+                assert bottom <= found["trayTop"] and pressable, (
+                    f"{where}: {name} {found}"
+                )
+            page.keyboard.press("Escape")
+
+
+# The popover's text sizes, the Source lookups heading against its entries,
+# and Retry now's look beside a library's Scan now.
+_POPOVER_TYPE = """() => {
+  const popover = document.querySelector('.preparation-popover');
+  const size = (node) => parseFloat(getComputedStyle(node).fontSize);
+  const look = (node) => {
+    const style = getComputedStyle(node);
+    return [style.fontSize, style.fontWeight, style.paddingTop, style.paddingLeft,
+      style.color, style.backgroundColor, style.borderTopWidth, style.justifySelf,
+      Math.round(node.getBoundingClientRect().height)];
+  };
+  const lookups = popover.querySelector('.source-lookups');
+  const button = (scope, name) => [...scope.querySelectorAll('button')]
+    .find((node) => node.textContent.trim() === name);
+  return {
+    body: size(document.body),
+    popover: size(popover),
+    sizes: [...popover.querySelectorAll('h3, strong, span, p, small, li, a, button')]
+      .map((node) => [node.tagName.toLowerCase(), node.textContent.trim().slice(0, 30), size(node)]),
+    heading: size(lookups.querySelector('h3')),
+    entries: Math.max(...[...lookups.querySelectorAll('li, li *')].map(size)),
+    retry: look(button(lookups, 'Retry now')),
+    scan: look(button(popover, 'Scan now')),
+  };
+}"""
+
+
+def test_preparation_popover_keeps_its_type_and_hides_the_status_tooltip() -> None:
+    """While the popover is open, the status icon's tooltip stays hidden, by
+    pointer and by keyboard, at 390 and 1280 px. On a phone the popover keeps
+    the sizes it has on a wide screen: the masthead's small type is for its own
+    line and buttons only. The Source lookups heading is never smaller than
+    its entries, and Retry now looks like Scan now (#1494, Amendment 7)."""
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1280, "height": 900}, locale="en-US")
+        page.add_init_script(_LIVE_UPDATE_STREAM)
+        _serve_cohort(page)
+        found = {}
+        for width, height in ((1280, 900), (390, 844)):
+            page.set_viewport_size({"width": width, "height": height})
+            page.goto("https://react-platform.invalid/settings?group=providers")
+            page.get_by_role("heading", name="Settings", exact=True).wait_for()
+            trigger = page.locator(".masthead .status-trigger")
+            popover = page.get_by_role("region", name="Background activity")
+            # By pointer: the tooltip shows on hover, and hides once pressed.
+            trigger.hover()
+            assert page.evaluate(_OPEN_TOOLTIP, ".status-trigger")["shown"], width
+            trigger.click()
+            expect(popover).to_be_visible()
+            expect(trigger).to_be_focused()
+            page.evaluate(_TWO_FRAMES)
+            tip = page.evaluate(_OPEN_TOOLTIP, ".status-trigger")
+            assert not tip["shown"], f"{width}px pointer: {tip}"
+            found[width] = page.evaluate(_POPOVER_TYPE)
+            page.keyboard.press("Escape")
+            expect(popover).to_be_hidden()
+            # By keyboard: focus shows the tooltip, and Enter hides it.
+            page.mouse.move(0, height - 1)
+            trigger.blur()
+            trigger.focus()
+            page.keyboard.press("Shift+Tab")
+            page.keyboard.press("Tab")
+            expect(trigger).to_be_focused()
+            assert page.evaluate(_OPEN_TOOLTIP, ".status-trigger")["shown"], width
+            page.keyboard.press("Enter")
+            expect(popover).to_be_visible()
+            expect(trigger).to_be_focused()
+            page.evaluate(_TWO_FRAMES)
+            tip = page.evaluate(_OPEN_TOOLTIP, ".status-trigger")
+            assert not tip["shown"], f"{width}px keyboard: {tip}"
+            page.keyboard.press("Escape")
+        wide, phone = found[1280], found[390]
+        assert phone["popover"] == phone["body"] == wide["popover"], (phone, wide)
+        assert phone["sizes"] == wide["sizes"], (phone["sizes"], wide["sizes"])
+        for where, type_ in (("1280px", wide), ("390px", phone)):
+            assert type_["heading"] >= type_["entries"], f"{where}: {type_}"
+            assert type_["retry"] == type_["scan"], f"{where}: {type_}"
 
 
 # The words an owner reads as interface: headings, controls, labels and the
@@ -5418,6 +5717,60 @@ def test_finish_actions_and_settings_fields_stay_inside_their_containers() -> No
         assert failures == [], "\n".join(failures)
 
 
+# The rows a segmented control's buttons sit on, and each label that is clipped
+# or has a word broken over two lines.
+_SEGMENT_LAYOUT = """(id) => {
+  const buttons = [...document.querySelectorAll(`#${id} button`)];
+  const broken = buttons.flatMap((button) => {
+    const label = button.textContent;
+    if (button.scrollWidth > button.clientWidth) return [`${label} is clipped`];
+    const text = button.firstChild;
+    return [...label.matchAll(/\\S+/g)].flatMap((word) => {
+      const range = document.createRange();
+      range.setStart(text, word.index);
+      range.setEnd(text, word.index + word[0].length);
+      return range.getClientRects().length > 1 ? [`${label} breaks ${word[0]}`] : [];
+    });
+  });
+  const rows = new Set(buttons.map((button) => Math.round(button.getBoundingClientRect().top)));
+  return { segments: buttons.length, rows: rows.size, broken };
+}"""
+
+
+def test_theme_segments_share_a_row_until_the_text_is_too_large() -> None:
+    """Theme's three segments share one row on a phone with every word whole,
+    and stack one per row at 320px with 200% text, where a row would clip a
+    label. Motion's two segments keep the layout they had (#1341)."""
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 390, "height": 844}, locale="en-US")
+        page.add_init_script(_LIVE_UPDATE_STREAM)
+        _serve_cohort(page)
+        for width, text, theme_rows, motion_rows in (
+            (390, "", 1, 1),
+            (320, "", 1, 1),
+            (320, "200%", 3, 2),
+        ):
+            page.set_viewport_size({"width": width, "height": 844})
+            page.goto("https://react-platform.invalid/settings?group=appearance")
+            expect(page.get_by_role("group", name="Theme")).to_be_visible()
+            set_root_text(page, text)
+            where = f"at {width}px with {text or 'default'} text"
+            assert page.evaluate(_SEGMENT_LAYOUT, "settings-theme") == {
+                "segments": 3,
+                "rows": theme_rows,
+                "broken": [],
+            }, f"Theme {where}"
+            assert page.evaluate(_SEGMENT_LAYOUT, "settings-reduced_motion") == {
+                "segments": 2,
+                "rows": motion_rows,
+                "broken": [],
+            }, f"Motion {where}"
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
 # Finish tray steps and actions that run past the editor holding them.
 _PAST_THE_EDITOR = """() => {
   const editor = document.querySelector('.cm-policy-editor').getBoundingClientRect();
@@ -5496,6 +5849,75 @@ def test_write_permission_panel_fits_a_phone_at_200_percent_text() -> None:
                 )
                 if sideways > 0:
                     failures.append(f"{where}: the page scrolls {sideways}px sideways")
+        assert failures == [], "\n".join(failures)
+
+
+# Each write plan field card's content past the card's inner right edge.
+_PAST_THE_FIELD_CARD = """() => [...document.querySelectorAll('.write-plan-field')].flatMap(field => {
+  const card = field.closest('li');
+  const style = getComputedStyle(card);
+  const right = card.getBoundingClientRect().right - parseFloat(style.borderRightWidth) -
+    parseFloat(style.paddingRight);
+  const found = card.scrollWidth > card.clientWidth
+    ? [`${card.firstElementChild.textContent.trim()} scrolls ${card.scrollWidth - card.clientWidth}px`] : [];
+  for (const node of card.querySelectorAll('*')) {
+    const box = node.getBoundingClientRect();
+    if (box.width && box.right > right + 0.5)
+      found.push(`"${node.textContent.trim().slice(0, 30)}" runs ${Math.round(box.right - right)}px past its card`);
+  }
+  return found;
+})"""
+
+
+def _open_write_permissions(page: Page) -> None:
+    page.goto("https://react-platform.invalid/activity")
+    page.get_by_role("button", name="Review write permissions").first.click()
+    page.get_by_role("heading", name="Write permissions", exact=True).wait_for()
+    page.locator(".write-plan-field").first.wait_for()
+    page.evaluate(_TWO_FRAMES)
+
+
+def test_write_plan_values_line_up_down_the_list() -> None:
+    """At 1280px every listed change's New value starts at one left edge, so
+    rows of different lengths read as two columns (#1336)."""
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1280, "height": 900}, locale="en-US")
+        page.add_init_script(_LIVE_UPDATE_STREAM)
+        _serve_cohort(page)
+        _open_write_permissions(page)
+        rows = page.locator(".write-plan-rows > li")
+        lengths = rows.evaluate_all("rows => rows.map(row => row.textContent.length)")
+        lefts = rows.evaluate_all(
+            "rows => rows.map(row => row.querySelector('.write-plan-values > div:last-child')"
+            ".getBoundingClientRect().left)"
+        )
+        assert len(set(lengths)) > 1, lengths
+        assert max(lefts) - min(lefts) < 0.5, lefts
+
+
+def test_write_plan_groups_stay_in_their_cards_at_320px_and_200_percent_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """In a plan past the file limit, each group's count and Show cue move to
+    their own line and wrap inside the field card at 320px with 200% text (#1336)."""
+    monkeypatch.setattr(
+        fidelity_cohort,
+        "_COHORT_WRITE_PLAN",
+        fidelity_cohort.COHORT_WRITE_PLANS["over_limit"],
+    )
+    with ExitStack() as stack:
+        page = _enlarged_cohort(stack, 320, 844)
+        _open_write_permissions(page)
+        expect(page.get_by_text("23,570 changes")).to_be_visible()
+        failures = page.evaluate(_PAST_THE_FIELD_CARD)
+        sideways = page.evaluate(
+            "() => document.documentElement.scrollWidth - innerWidth"
+        )
+        if sideways > 0:
+            failures.append(f"the page scrolls {sideways}px sideways")
         assert failures == [], "\n".join(failures)
 
 

@@ -271,10 +271,16 @@ The application is a bounded editorial workspace rather than an edge-to-edge
 dashboard. Main content is capped at `98rem` and padded with
 `clamp(1rem, 3vw, 2.6rem)`. A 62px masthead holds identity, four permanent
 destinations—Library, Policy, Activity, and Settings—a status slot, and the
-theme and sign-out controls. The status slot sits between the destinations and
-the actions and holds the live-update status (shown only while it reconnects)
-and preparation status, so whatever it says moves nothing else: squeezed, its
-labels wrap within the row rather than clip. The masthead is sticky only
+theme and sign-out icons. The status slot sits between the destinations and
+the actions. It holds the live-update status (shown only while it reconnects)
+and the background-work status icon, so whatever it says moves nothing else:
+squeezed, the reconnect line wraps within the row rather than clip. The status
+icon is a ring that turns and fills while libraries are prepared, with one
+centre mark for the first thing that is true: stopped (a red disc), a source
+needs you (a red disc with "!"), needs attention (an amber disc with "!"),
+paused, lookups waiting (a small amber dot), or idle (a tick). Its spoken name
+and tooltip say the same in words. Each masthead icon is a 44px target with a
+tooltip on hover and keyboard focus. The masthead is sticky only
 while it takes at most a sixth of the viewport; taller—a
 phone, a short window, enlarged text—it scrolls away with the page, so it
 never covers what the owner reads or focuses, and sticky regions then sit at
@@ -298,9 +304,11 @@ Library drawer. At 1024px, workspace columns tighten, selected Library work
 replaces the index with an explicit back control, cover comparisons fold into
 one scrollable row, and a field's two choice sides stack as two boxes. At 760px, grids become
 single-column, sticky side regions become inline or compact pickers, the
-masthead becomes three rows—identity and actions, a status row held open
-whether or not anything is in it, and the four destinations in equal
-columns—page padding becomes `1rem 1rem 4rem`, a 16px margin on both sides
+masthead becomes two rows—identity, status and actions, then the four
+destinations in equal columns, the status keeping its place between the mark
+and the icons so a reconnect line arriving moves nothing; below a 19rem shell
+the status takes a row of its own, held open whether or not anything is in
+it—page padding becomes `1rem 1rem 4rem`, a 16px margin on both sides
 that 390px keeps (enlarged text keeps its `.75rem` there), and Library's
 workspace drops its card frame so the work sits on the page. Focused
 refinements at 390px preserve controls and ledger reading order. Nothing
@@ -443,7 +451,8 @@ open, since both belong to it. At compact widths, the product name and
 secondary shell labels recede while Library, Policy, Activity, and Settings
 remain visible as four equal targets, never scrolled out of view. Attention is
 opened from Library as a contextual queue, not represented as permanent
-navigation.
+navigation. The theme switch shows a moon in the light theme and a sun in the
+dark one, and Sign out shows a door; neither shows a word.
 
 A page still loading says so as a small sans-serif line beside a dot that
 pulses when motion is welcome, not as a display headline the page's own then
@@ -601,5 +610,7 @@ linked into a checkout as `.codex/product-copy.md`.
   cover-led streaming catalogue.
 - **Don't** fabricate cover art where the interface only has initials or target
   identity.
-- **Don't** add attention-seeking motion; the incumbent system uses motion only
-  as a reducible state transition.
+- **Don't** add attention-seeking motion. Motion is a reducible state
+  transition, or an in-progress indicator that stops when the work stops,
+  such as the masthead ring while libraries are prepared. Either is still
+  when the system or Settings asks for reduced motion.

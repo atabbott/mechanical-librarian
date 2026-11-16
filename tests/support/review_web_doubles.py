@@ -14,7 +14,7 @@ import os
 import shutil
 import tempfile
 from collections.abc import Callable, Iterator
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Generic, TypeVar, cast
@@ -55,6 +55,11 @@ from mechanical_librarian.application.review_web import (
     ValidatedDocumentCache,
     _single_source_choice,
 )
+from mechanical_librarian.application.write_plan import (
+    PlanFileEncoder,
+    PlanRow,
+    ProducedStream,
+)
 from mechanical_librarian.domain.automatic_decision import AutomaticSafetyState
 from mechanical_librarian.domain.description_advice import DescriptionAdviceBinding
 from mechanical_librarian.domain.failure_diagnostics import FailureCategory
@@ -91,6 +96,7 @@ from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.review_field_classification import (
     ReviewFieldCause,
 )
+from mechanical_librarian.domain.value_flags import report_source_titles, value_flags
 from mechanical_librarian.interfaces.web import StoreOwnerPassword
 from tests.support.activity_seed import seed_activity  # noqa: E402
 from tests.support.review_cases import _report
@@ -119,6 +125,17 @@ _LIMITING_STATUSES = frozenset(
 _AttentionRow = tuple[
     str, str, str, int, str | None, ReviewFieldCause | None, bool, bool
 ]
+
+
+def _flagged(report: MetadataReport) -> bool:
+    """Whether a report meets a value flag, by the rules the adapter stores."""
+    return bool(
+        value_flags(
+            report.target.fields,
+            report_source_titles(json.loads(report.to_json())["providers"]),
+        )
+    )
+
 
 # The exact library row `ReviewLibrarySnapshot` declares, annotated for the
 # same reason (#711). The double emitted five of these seven columns behind a
@@ -753,7 +770,14 @@ class FakeReviewRepository:
         library_labels: LibraryLabels = (),
     ) -> list[tuple[ReviewCase | None, MetadataReport]]:
         # A case is in attention or it is not; a caseless report is matched,
-        # or it is the Not matched lens's (#1407).
+        # or it is the Not matched lens's (#1407). Looks wrong reads every
+        # work through the rules the adapter stored (#1334).
+        if lens == "flagged":
+            return [
+                row
+                for row in self._current_review_cases(search, None, library_labels)
+                if _flagged(row[1])
+            ]
         rows: list[tuple[ReviewCase | None, MetadataReport]] = [
             (case, report)
             for case, report in self._searched(search, library_labels)
@@ -935,6 +959,9 @@ class FakeReviewRepository:
             ),
             # The double holds no terminal row of its own.
             preparation_failed_total=0,
+            flagged_total=sum(
+                _flagged(report) for _case, report in everything[:100_000]
+            ),
         )
 
     def list_current_attention_documents(
@@ -1001,10 +1028,11 @@ class FakeReviewRepository:
         fields: dict[tuple[str, str, str], int] = {}
         for case, report in self._current_review_cases(None, None, library_labels):
             key = (report.target.connection, report.target.library)
-            counts = works.setdefault(key, [0, 0, 0, 0])
+            counts = works.setdefault(key, [0, 0, 0, 0, 0])
             counts[0] += 1
             counts[1] += case is not None and self._attention(case)
             counts[2] += case is None and self._match_reason(report) is not None
+            counts[4] += _flagged(report)
             if case is None:
                 continue
             for proposal in case.proposals:
@@ -1013,12 +1041,13 @@ class FakeReviewRepository:
                     fields[field] = fields.get(field, 0) + 1
         return ReviewLibraryProgress(
             tuple(
-                (connection, library, total, attention, not_matched, failed)
+                (connection, library, total, attention, not_matched, failed, flagged)
                 for (connection, library), (
                     total,
                     attention,
                     not_matched,
                     failed,
+                    flagged,
                 ) in sorted(works.items())
             ),
             tuple((*field, count) for field, count in sorted(fields.items())),
@@ -1214,6 +1243,11 @@ class FakeActivityApplication(ContinuousGuardedApplication):
         self.enabled_libraries: set[str] = set()
         self.paused = False
 
+    def classify_request(self, work_class):
+        # Composed as the export reader too, which has no admission here.
+        del work_class
+        return nullcontext()
+
     def destinations_consented(
         self, connection: str, library: str, destinations: tuple[str, ...]
     ) -> bool:
@@ -1325,14 +1359,65 @@ class FakeActivityApplication(ContinuousGuardedApplication):
                 for key in ("configured_libraries", "capabilities", "prepared")
             },
             "backup_ready": True,
-            "example": {
-                "after": "After",
-                "before": "Before",
-                "destination": "title",
-                "library": "fiction",
-                "work_id": "book-1",
+            "plan": {
+                "total": 2,
+                "groups": [
+                    {
+                        "library": "fiction",
+                        "destination": "title",
+                        "kind": "human",
+                        "count": 1,
+                        "rows": [
+                            {
+                                "work": "Book One",
+                                "authors": "An Author",
+                                "current": "Before",
+                                "new": "After",
+                                "reason": "You chose this value",
+                                "sources": ["Hardcover"],
+                            }
+                        ],
+                    },
+                    {
+                        "library": "fiction",
+                        "destination": "title",
+                        "kind": "automatic",
+                        "count": 1,
+                        "rows": [],
+                    },
+                ],
             },
         }
+
+    # A test replaces this to drive the write plan route's stream (#1336).
+    plan_file: Callable[..., None] | None = None
+
+    def activity_write_plan_file(self, format, closing, library_labels):
+        def produce(emit, cancelled) -> None:
+            if self.plan_file is not None:
+                self.plan_file(format, emit, cancelled)
+                return
+            encoder = PlanFileEncoder(format, library_labels)
+            emit(encoder.head)
+            emit(
+                encoder.row(
+                    PlanRow(
+                        library="fiction",
+                        work="Book One",
+                        authors="An Author",
+                        destination="title",
+                        kind="human",
+                        current="=Before",
+                        new="After",
+                        reason="You chose this value",
+                        sources=("Hardcover",),
+                    )
+                )
+                or b""
+            )
+            emit(encoder.tail(total=1, unreadable=0, changed=0, made_at=1))
+
+        return ProducedStream(produce, closing)
 
     def activity_consent(self):
         history = self.activity()

@@ -2388,56 +2388,6 @@
         "title": "_ActivityEvidence",
         "type": "object"
       },
-      "_ActivityExample": {
-        "additionalProperties": false,
-        "properties": {
-          "after": {
-            "title": "After"
-          },
-          "before": {
-            "title": "Before"
-          },
-          "destination": {
-            "enum": [
-              "title",
-              "subtitle",
-              "authors",
-              "narrators",
-              "series",
-              "genres",
-              "publishedYear",
-              "publishedDate",
-              "publisher",
-              "description",
-              "isbn",
-              "asin",
-              "language",
-              "explicit",
-              "tags",
-              "cover"
-            ],
-            "title": "Destination",
-            "type": "string"
-          },
-          "library": {
-            "title": "Library",
-            "type": "string"
-          },
-          "work_id": {
-            "title": "Work Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "after",
-          "before",
-          "destination",
-          "library",
-          "work_id"
-        ],
-        "title": "_ActivityExample",
-        "type": "object"
-      },
       "_ActivityLapsedConsent": {
         "additionalProperties": false,
         "description": "A library whose write permission no longer applies, and why (#1370).",
@@ -2599,15 +2549,8 @@
             "title": "Configured Libraries",
             "type": "array"
           },
-          "example": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/_ActivityExample"
-              },
-              {
-                "type": "null"
-              }
-            ]
+          "plan": {
+            "$ref": "#/components/schemas/_WritePlan"
           },
           "prepared": {
             "$ref": "#/components/schemas/_ActivityPrepared"
@@ -2618,7 +2561,7 @@
           "capabilities",
           "configured_libraries",
           "prepared",
-          "example"
+          "plan"
         ],
         "title": "_ActivityPermissionReadiness",
         "type": "object"
@@ -7721,6 +7664,7 @@
           "lens": {
             "enum": [
               "all",
+              "flagged",
               "needs_attention",
               "no_attention_needed",
               "not_matched",
@@ -7768,7 +7712,7 @@
             "title": "Query"
           },
           "schema_version": {
-            "const": "review-library-v6",
+            "const": "review-library-v7",
             "title": "Schema Version",
             "type": "string"
           }
@@ -7784,6 +7728,41 @@
           "schema_version"
         ],
         "title": "_LibraryResponse",
+        "type": "object"
+      },
+      "_LibraryValueFlag": {
+        "additionalProperties": false,
+        "description": "One Looks wrong finding: the rule and the field it names, never a value.",
+        "properties": {
+          "destination": {
+            "enum": [
+              "title",
+              "authors",
+              "narrators"
+            ],
+            "title": "Destination",
+            "type": "string"
+          },
+          "rule": {
+            "enum": [
+              "title_part_number",
+              "title_disc_number",
+              "title_is_author",
+              "title_has_author",
+              "title_all_capitals",
+              "title_all_lower_case",
+              "title_announcement",
+              "credit_label"
+            ],
+            "title": "Rule",
+            "type": "string"
+          }
+        },
+        "required": [
+          "destination",
+          "rule"
+        ],
+        "title": "_LibraryValueFlag",
         "type": "object"
       },
       "_LibraryWork": {
@@ -7933,6 +7912,14 @@
             "title": "Title",
             "type": "string"
           },
+          "value_flags": {
+            "items": {
+              "$ref": "#/components/schemas/_LibraryValueFlag"
+            },
+            "maxItems": 9,
+            "title": "Value Flags",
+            "type": "array"
+          },
           "work_id": {
             "title": "Work Id",
             "type": "string"
@@ -7952,7 +7939,8 @@
           "review_case_id",
           "title",
           "work_id",
-          "preparation_outcomes"
+          "preparation_outcomes",
+          "value_flags"
         ],
         "title": "_LibraryWork",
         "type": "object"
@@ -9815,6 +9803,19 @@
             ],
             "title": "Next Retry At"
           },
+          "notice_at": {
+            "anyOf": [
+              {
+                "maximum": 8640000000000.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notice At"
+          },
           "reasons": {
             "items": {
               "enum": [
@@ -9856,6 +9857,10 @@
             ],
             "title": "State",
             "type": "string"
+          },
+          "untried": {
+            "title": "Untried",
+            "type": "boolean"
           }
         },
         "required": [
@@ -9865,14 +9870,55 @@
           "reasons",
           "deferred",
           "next_retry_at",
-          "remedy"
+          "remedy",
+          "notice_at",
+          "untried"
         ],
         "title": "_PreparationThrottleEntry",
+        "type": "object"
+      },
+      "_PreparationThrottleSource": {
+        "additionalProperties": false,
+        "properties": {
+          "adapter": {
+            "enum": [
+              "open_library",
+              "inventaire",
+              "hardcover",
+              "google_books",
+              "audible_catalog",
+              "audnexus",
+              "audiosilo",
+              "itunes_search"
+            ],
+            "title": "Adapter",
+            "type": "string"
+          },
+          "library": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Library",
+            "type": "string"
+          }
+        },
+        "required": [
+          "library",
+          "adapter"
+        ],
+        "title": "_PreparationThrottleSource",
         "type": "object"
       },
       "_PreparationThrottling": {
         "additionalProperties": false,
         "properties": {
+          "answered": {
+            "items": {
+              "$ref": "#/components/schemas/_PreparationThrottleSource"
+            },
+            "maxItems": 256,
+            "title": "Answered",
+            "type": "array"
+          },
           "entries": {
             "items": {
               "$ref": "#/components/schemas/_PreparationThrottleEntry"
@@ -9899,7 +9945,8 @@
         "required": [
           "generation",
           "retry",
-          "entries"
+          "entries",
+          "answered"
         ],
         "title": "_PreparationThrottling",
         "type": "object"
@@ -11050,6 +11097,11 @@
             "title": "All",
             "type": "integer"
           },
+          "flagged": {
+            "minimum": 0.0,
+            "title": "Flagged",
+            "type": "integer"
+          },
           "needs_attention": {
             "minimum": 0.0,
             "title": "Needs Attention",
@@ -11073,6 +11125,7 @@
         },
         "required": [
           "all",
+          "flagged",
           "needs_attention",
           "no_attention_needed",
           "not_matched",
@@ -12736,6 +12789,142 @@
         ],
         "title": "_UnavailableDecisionConfirmation",
         "type": "object"
+      },
+      "_WritePlan": {
+        "additionalProperties": false,
+        "properties": {
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/_WritePlanGroup"
+            },
+            "maxItems": 1024,
+            "title": "Groups",
+            "type": "array"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "groups"
+        ],
+        "title": "_WritePlan",
+        "type": "object"
+      },
+      "_WritePlanGroup": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "minimum": 0.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "destination": {
+            "enum": [
+              "title",
+              "subtitle",
+              "authors",
+              "narrators",
+              "series",
+              "genres",
+              "publishedYear",
+              "publishedDate",
+              "publisher",
+              "description",
+              "isbn",
+              "asin",
+              "language",
+              "explicit",
+              "tags",
+              "cover"
+            ],
+            "title": "Destination",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "human",
+              "automatic"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "library": {
+            "maxLength": 512,
+            "title": "Library",
+            "type": "string"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/_WritePlanRow"
+            },
+            "maxItems": 25,
+            "title": "Rows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "library",
+          "destination",
+          "kind",
+          "count",
+          "rows"
+        ],
+        "title": "_WritePlanGroup",
+        "type": "object"
+      },
+      "_WritePlanRow": {
+        "additionalProperties": false,
+        "description": "One prepared change in words: no work, item or decision identity (#1336).",
+        "properties": {
+          "authors": {
+            "maxLength": 512,
+            "title": "Authors",
+            "type": "string"
+          },
+          "current": {
+            "maxLength": 512,
+            "title": "Current",
+            "type": "string"
+          },
+          "new": {
+            "maxLength": 512,
+            "title": "New",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 512,
+            "title": "Reason",
+            "type": "string"
+          },
+          "sources": {
+            "items": {
+              "maxLength": 128,
+              "type": "string"
+            },
+            "maxItems": 19,
+            "title": "Sources",
+            "type": "array"
+          },
+          "work": {
+            "maxLength": 512,
+            "title": "Work",
+            "type": "string"
+          }
+        },
+        "required": [
+          "work",
+          "authors",
+          "current",
+          "new",
+          "reason",
+          "sources"
+        ],
+        "title": "_WritePlanRow",
+        "type": "object"
       }
     },
     "securitySchemes": {
@@ -13081,6 +13270,78 @@
           }
         ],
         "summary": "Activity Permission Readiness"
+      }
+    },
+    "/api/v1/activity/write-plan": {
+      "get": {
+        "description": "Send every prepared change as it is made; computed, never stored.\n\nA fault before the first byte answers with its status. After it, the\nconnection ends without completing the body, so a short file is never\nreceived as a complete one.",
+        "operationId": "activity_write_plan_api_v1_activity_write_plan_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "format",
+            "required": true,
+            "schema": {
+              "enum": [
+                "csv",
+                "json"
+              ],
+              "title": "Format",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Activity Write Plan"
       }
     },
     "/api/v1/activity/{connection}/{library}/revoke": {
