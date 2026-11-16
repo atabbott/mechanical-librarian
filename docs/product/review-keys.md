@@ -24,4 +24,5 @@ with Ctrl, Alt or Command held. A key whose control is not offered does
 nothing.
 
 Keys in the Library toolbar lists them and turns them off or on in this
-browser. While they are off, no key acts, ? included.
+browser. While they are off, no key acts, ? included. A phone or tablet shows
+neither the numbers nor Keys, and the keys still work with a keyboard attached.

@@ -11889,17 +11889,25 @@ def test_genre_creator_equivalence_owner_journey(destination):
 
 
 @contextmanager
-def _owner_page(**fixture) -> Iterator[tuple[Page, str, str]]:
-    """A signed-in page over a genre work the owner reviews by hand (#1285)."""
+def _owner_page(
+    *, touch: tuple[int, int] | None = None, **fixture
+) -> Iterator[tuple[Page, str, str]]:
+    """A signed-in page over a genre work the owner reviews by hand (#1285).
+
+    `touch` gives a phone or tablet of that size: touch input and no hover."""
     with tempfile.TemporaryDirectory() as directory, sync_playwright() as playwright:
         root = Path(directory)
         root.chmod(0o700)
         hash_path = root / "owner.hash"
         hash_path.write_text(PasswordHasher().hash(_PASSWORD))
         hash_path.chmod(0o600)
+        width, height = touch or (1440, 900)
         browser = playwright.chromium.launch(headless=True)
         context = browser.new_context(
-            viewport={"width": 1440, "height": 900}, reduced_motion="reduce"
+            viewport={"width": width, "height": height},
+            has_touch=touch is not None,
+            is_mobile=touch is not None,
+            reduced_motion="reduce",
         )
         page = context.new_page()
         with (
@@ -12413,6 +12421,84 @@ def test_keyboard_only_triage_journey(width):
             unmoved(key)
         expect(keys).to_be_hidden()
         assert len(decisions) == (7 if width == 390 else 3)
+
+
+@pytest.mark.parametrize("size", ((390, 844), (820, 1180)))
+def test_review_keys_show_nothing_on_a_phone_or_tablet(size):
+    """#1337: where the main input is touch, no card shows a number, Library
+    has no Keys button and no card keeps room for a number. The keys still act
+    for a keyboard attached to the device."""
+    with _owner_page(
+        touch=size,
+        genre_fixture=("Drama", "Fantasy", "Mystery"),
+        genre_current=("Drama",),
+    ) as (page, origin, case_id):
+        assert page.evaluate(
+            "matchMedia('(hover: none) and (pointer: coarse)').matches"
+        )
+        page.goto(f"{origin}/library?lens=all&preview={case_id}&field=genres")
+        cards = page.locator('.decision-canvas [role="radio"]')
+        names = (
+            "Choose current value: Drama",
+            "Choose proposed value: Drama · Fantasy · Mystery",
+        )
+
+        def named() -> None:
+            expect(cards).to_have_count(len(names))
+            for name in names:
+                expect(page.get_by_role("radio", name=name, exact=True)).to_be_visible()
+
+        def heights() -> list[list[float]]:
+            """Each card's height at the default text size and at twice it,
+            where a card that kept room for a number is a line taller."""
+            measured = []
+            for text in ("", "200%"):
+                set_root_text(page, text)
+                measured.append(
+                    cards.evaluate_all(
+                        "cards => cards.map(card => card.getBoundingClientRect().height)"
+                    )
+                )
+            set_root_text(page, "")
+            return measured
+
+        named()
+        expect(page.locator("html")).to_have_attribute("data-review-keys", "on")
+        badges = page.locator(".decision-canvas .review-key-badge")
+        expect(badges).to_have_count(2)
+        expect(badges.locator("visible=true")).to_have_count(0)
+        toggle = page.locator(".review-keys-toggle")
+        expect(toggle).to_have_count(1)
+        # Not shown and not focusable.
+        assert toggle.evaluate("button => getComputedStyle(button).display") == "none"
+        # The keys act: J and K move between the fields.
+        tab = _field_tab(page, "Genres")
+        tab.focus()
+        page.keyboard.press("j")
+        expect(_field_tab(page, "Description")).to_be_focused()
+        page.keyboard.press("k")
+        expect(tab).to_be_focused()
+        # ? lists the keys, and closing the list puts focus back where it was.
+        page.keyboard.press("?")
+        keys = page.get_by_role("dialog", name="Keys")
+        expect(keys.get_by_role("heading", name="Keys")).to_be_focused()
+        page.keyboard.press("Escape")
+        expect(keys).to_be_hidden()
+        expect(tab).to_be_focused()
+        with_keys = heights()
+        expect(tab).to_be_focused()
+
+        # Switched off, every card is as tall as it was and is named the same.
+        page.keyboard.press("?")
+        page.keyboard.press("Tab")
+        page.keyboard.press("Space")
+        page.keyboard.press("Escape")
+        expect(page.locator("html")).to_have_attribute("data-review-keys", "off")
+        expect(tab).to_be_focused()
+        assert heights() == with_keys
+        named()
+        expect(badges.locator("visible=true")).to_have_count(0)
+        expect(toggle).to_be_hidden()
 
 
 @pytest.mark.parametrize("width", (1440, 390))
