@@ -63,10 +63,21 @@ const firstRow = async () =>
     'button',
     { name: /Title needs a decision/u },
   )
+// The Attention list focuses its heading two frames after it opens. A real
+// dialog makes the page under it inert; jsdom's does not, so those frames are
+// let past before a test presses anything.
+const railSettled = () =>
+  act(
+    () =>
+      new Promise<void>((done) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => done()))
+      }),
+  )
 const openGuide = async (http = withQueue()) => {
   owe()
   const rendered = renderRoute(queueOpen, http)
   const dialog = await screen.findByRole('dialog', { name: 'How a decision works' })
+  await railSettled()
   return { ...rendered, dialog, user: userEvent.setup() }
 }
 const button = (dialog: HTMLElement, name: string) => within(dialog).getByRole('button', { name })
@@ -331,6 +342,7 @@ describe('first review guide', () => {
     const http = withQueue()
     renderRoute(queueOpen, http, updates)
     const dialog = await screen.findByRole('dialog', { name: 'How a decision works' })
+    await railSettled()
     const user = userEvent.setup()
     await user.click(button(dialog, 'Next'))
     await user.click(button(dialog, 'Next'))
