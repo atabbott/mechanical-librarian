@@ -48,6 +48,7 @@
           "current": null,
           "withdraw": null
         },
+        "written_by_case": false,
         "proposed_values": [
           {
             "kind": "list",
@@ -167,6 +168,7 @@
         "navigation_role": "attention",
         "notices": ["competing_evidence"],
         "owner_control": null,
+        "written_by_case": false,
         "proposed_values": [
           {
             "kind": "text",
@@ -282,6 +284,7 @@
           "current": "Synthetic Journey",
           "names": null
         },
+        "written_by_case": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -386,6 +389,7 @@
         "navigation_role": "attention",
         "notices": ["no_supported_evidence"],
         "owner_control": null,
+        "written_by_case": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -456,6 +460,7 @@
           "current": ["Example Author"],
           "withdraw": null
         },
+        "written_by_case": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -560,6 +565,7 @@
         "navigation_role": "attention",
         "notices": ["no_supported_evidence"],
         "owner_control": null,
+        "written_by_case": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -619,6 +625,7 @@
         "navigation_role": "inspect",
         "notices": ["no_supported_evidence"],
         "owner_control": null,
+        "written_by_case": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -678,6 +685,7 @@
         "navigation_role": "inspect",
         "notices": ["no_supported_evidence"],
         "owner_control": null,
+        "written_by_case": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -737,6 +745,7 @@
         "navigation_role": "inspect",
         "notices": ["no_supported_evidence"],
         "owner_control": null,
+        "written_by_case": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -796,6 +805,7 @@
         "navigation_role": "inspect",
         "notices": ["no_supported_evidence"],
         "owner_control": null,
+        "written_by_case": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -855,6 +865,7 @@
         "navigation_role": "attention",
         "notices": ["identifier_applicability_unresolved"],
         "owner_control": null,
+        "written_by_case": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -914,6 +925,7 @@
         "navigation_role": "inspect",
         "notices": ["no_supported_evidence"],
         "owner_control": null,
+        "written_by_case": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -973,6 +985,7 @@
         "navigation_role": "inspect",
         "notices": ["no_supported_evidence"],
         "owner_control": null,
+        "written_by_case": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -1032,6 +1045,7 @@
         "navigation_role": "inspect",
         "notices": ["no_supported_evidence"],
         "owner_control": null,
+        "written_by_case": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -1091,6 +1105,7 @@
         "navigation_role": "inspect",
         "notices": ["no_supported_evidence"],
         "owner_control": null,
+        "written_by_case": false,
         "proposed_values": [],
         "choice_contexts": [
           {

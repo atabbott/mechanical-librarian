@@ -500,6 +500,11 @@ def genre_subset_available(
     )
 
 
+def _name_key(name: str) -> str:
+    """The form two names compare in: composed and case-folded."""
+    return unicodedata.normalize("NFC", unicodedata.normalize("NFC", name).casefold())
+
+
 def _validate_owner_command(
     proposal: Mapping[str, object],
     outcome: str,
@@ -540,7 +545,8 @@ def _validate_owner_command(
             type(value) is list
             and 1 <= len(value) <= OWNER_NAMES_MAXIMUM
             and all(owner_text(item) for item in value)
-            and len(set(value)) == len(value)
+            # Names that differ only by case or composition are one (#1523).
+            and len({_name_key(item) for item in value}) == len(value)
         )
     else:
         valid = owner_text(value)

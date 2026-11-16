@@ -3,7 +3,7 @@
 // field. The server says whether a pin is accepted now; nothing here guesses.
 import { targetValueText } from './api/http'
 import type { DecisionCommand } from './api/http'
-import { valueText } from './fieldDecision'
+import { keepOffered, valueText } from './fieldDecision'
 import type { ReviewField } from './fieldDecision'
 import { humanChoiceSelected } from './reviewAutomaticSelection'
 
@@ -56,7 +56,7 @@ export const cardPin = (
     return { on: false, press: { kind: 'value_then_pin', outcome: 'accept' } }
   return {
     on: false,
-    press: field.decisionActions.includes('keep_current')
+    press: keepOffered(field)
       ? { kind: 'value_then_pin', outcome: 'keep_current' }
       : { kind: 'pin' },
   }

@@ -11664,6 +11664,10 @@
             },
             "title": "Uncertainty",
             "type": "array"
+          },
+          "written_by_case": {
+            "title": "Written By Case",
+            "type": "boolean"
           }
         },
         "required": [
@@ -11689,6 +11693,7 @@
           "navigation_role",
           "notices",
           "owner_control",
+          "written_by_case",
           "pin",
           "pin_control",
           "proposed_values",

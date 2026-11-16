@@ -6,7 +6,12 @@ import type { KeyboardEvent, RefObject, SyntheticEvent } from 'react'
 import { displayValue, isClear } from '../api/http'
 import type { DecisionCommand } from '../api/http'
 import type { ReviewField } from '../fieldDecision'
-import { clearedSentence, destinationLabel, destinationPhrase } from '../labels'
+import {
+  clearedSentence,
+  destinationLabel,
+  destinationPhrase,
+  namesEnteredSentence,
+} from '../labels'
 import { writtenRefusal } from '../reviewDecisionController'
 import { StatusPill } from '../components/StatusPill'
 import type { PinControl } from '../fieldPin'
@@ -21,6 +26,9 @@ export type OwnerOutcome = 'owner_entered' | 'withdraw'
 const ownerText = (value: string) => value.normalize('NFC').replace(/\s+/gu, ' ').trim()
 // One name per line; a blank line is not a name.
 const namesOf = (text: string) => text.split('\n').map(ownerText).filter(Boolean)
+// Names that differ only by case or composition are one name, as the store
+// compares them (#1523).
+const nameKey = (name: string) => name.normalize('NFC').toUpperCase().toLowerCase().normalize('NFC')
 const sameList = (left: readonly string[], right: unknown) =>
   Array.isArray(right) &&
   left.length === right.length &&
@@ -132,13 +140,21 @@ export function OwnerControls({
   const noun = destinationPhrase(field.destination)
   const currentEmpty =
     current === null || current === '' || (Array.isArray(current) && current.length === 0)
-  // An emptied form clears a clearable field that holds a value; one already
-  // empty refuses as the store would (ADR-0104).
-  const clearing = (empty: boolean) => control.clear && empty && !currentEmpty
-  const emptied = (otherwise: string) =>
-    control.clear ? 'This field is already empty.' : otherwise
   const recordedValue = decision?.selected_value
   const recordedClear = changing && isClear(recordedValue)
+  // The owner's standing value, which a new one must differ from as well as
+  // from the field's current value (#1523).
+  const standing = changing && !recordedClear ? (recordedValue?.value ?? null) : null
+  // An emptied form clears a clearable field that holds a value, unless the
+  // owner's standing value is already a clear (ADR-0104).
+  const clearing = (empty: boolean) => control.clear && empty && !currentEmpty && !recordedClear
+  // An emptied form that clears nothing says why, or what to enter (#1523).
+  const emptied = (remedy: string) =>
+    recordedClear
+      ? 'This field is already empty.'
+      : changing && control.clear && currentEmpty && control.withdraw === 'available'
+        ? 'This field is already empty. Use Withdraw to remove your value.'
+        : remedy
   const blocked = disabled || busy
   const send = (outcome: OwnerOutcome, value: DecisionCommand['selectedValue']) => {
     // The ref is the guard a second press meets before React re-renders.
@@ -163,45 +179,44 @@ export function OwnerControls({
     event.preventDefault()
     close(trigger)
   }
+  // What each form opens holding. A clearable field opens with its value, so
+  // emptying it is the owner's act; names entry opens with the field's names.
+  const recordedText = recordedValue?.value
+  const entryOpening =
+    changing && typeof recordedText === 'string'
+      ? recordedText
+      : !recordedClear && control.clear && typeof current === 'string'
+        ? current
+        : ''
+  const subsetOpening: readonly string[] =
+    changing && Array.isArray(recordedText)
+      ? (recordedText as string[])
+      : recordedClear
+        ? []
+        : (subset?.options.filter((option) => option.current).map((option) => option.value) ?? [])
+  const namesOpening: readonly string[] =
+    changing && Array.isArray(recordedText)
+      ? (recordedText as string[])
+      : !recordedClear && Array.isArray(current)
+        ? current
+        : []
+  // A form that opens holding a value changes it (#1523).
+  const triggerLabel = (opening: boolean, otherwise: string) =>
+    changing || opening ? 'Change' : otherwise
   const openEntry = () => {
-    const recordedText = recordedValue?.value
-    // A clearable field opens with its value, so emptying it is the owner's act.
-    setDraft(
-      changing && typeof recordedText === 'string'
-        ? recordedText
-        : !recordedClear && control.clear && typeof current === 'string'
-          ? current
-          : '',
-    )
+    setDraft(entryOpening)
     setProblem('')
     setDismissed(status)
     setMode('entry')
   }
   const openSubset = () => {
-    const recordedList = recordedValue?.value
-    setChosen(
-      changing && Array.isArray(recordedList)
-        ? (recordedList as string[])
-        : recordedClear
-          ? []
-          : (subset?.options.filter((option) => option.current).map((option) => option.value) ??
-            []),
-    )
+    setChosen(subsetOpening)
     setProblem('')
     setDismissed(status)
     setMode('subset')
   }
-  // Names entry opens with the names the field holds now.
   const openNames = () => {
-    const recordedList = recordedValue?.value
-    setNamesDraft(
-      (changing && Array.isArray(recordedList)
-        ? (recordedList as string[])
-        : !recordedClear && Array.isArray(current)
-          ? current
-          : []
-      ).join('\n'),
-    )
+    setNamesDraft(namesOpening.join('\n'))
     setProblem('')
     setDismissed(status)
     setMode('names')
@@ -219,7 +234,8 @@ export function OwnerControls({
         )
     } else if (Array.from(value).length > entry.maxCharacters)
       setProblem(`Use up to ${String(entry.maxCharacters)} characters.`)
-    else if (value === current) setProblem('That is already the current value.')
+    else if (value === current || value === standing)
+      setProblem('That is already the current value.')
     else send('owner_entered', { kind: 'text', value })
   }
   const recordNames = (event: SyntheticEvent<HTMLFormElement>) => {
@@ -229,13 +245,21 @@ export function OwnerControls({
     setNamesDraft(value.join('\n'))
     if (!value.length) {
       if (clearing(true)) send('owner_entered', EMPTY_VALUE)
-      else setProblem(emptied('Enter at least one author.'))
+      else
+        setProblem(
+          emptied(
+            field.destination === 'authors'
+              ? 'Enter at least one author.'
+              : 'Enter at least one name.',
+          ),
+        )
     } else if (value.length > names.maxItems)
       setProblem(`Use up to ${String(names.maxItems)} names.`)
-    else if (new Set(value).size !== value.length) setProblem('Enter each name once.')
+    else if (new Set(value.map(nameKey)).size !== value.length) setProblem('Enter each name once.')
     else if (value.some((name) => Array.from(name).length > names.maxCharacters))
       setProblem(`Use up to ${String(names.maxCharacters)} characters for each name.`)
-    else if (sameList(value, current)) setProblem('Those are already the current names.')
+    else if (sameList(value, current) || sameList(value, standing))
+      setProblem('Those are already the current names.')
     else send('owner_entered', { kind: 'list', value })
   }
   const recordSubset = (event: SyntheticEvent<HTMLFormElement>) => {
@@ -250,7 +274,8 @@ export function OwnerControls({
       else setProblem(emptied('Choose at least one genre.'))
     } else if (value.length > subset.maxItems)
       setProblem(`Choose up to ${String(subset.maxItems)} genres.`)
-    else if (sameList(value, current)) setProblem('Those are already the current genres.')
+    else if (sameList(value, current) || sameList(value, standing))
+      setProblem('Those are already the current genres.')
     else send('owner_entered', { kind: 'list', value })
   }
   const recordedCount = Array.isArray(recordedValue?.value) ? recordedValue.value.length : null
@@ -263,7 +288,7 @@ export function OwnerControls({
           ? `You entered ${quotedValue(recordedValue)}.`
           : field.destination === 'genres'
             ? `You chose ${String(recordedCount)} ${recordedCount === 1 ? 'genre' : 'genres'}.`
-            : `You entered ${String(recordedCount)} ${recordedCount === 1 ? 'name' : 'names'}.`
+            : namesEnteredSentence(recordedCount)
   // The record button of a form, which clears the field once it is emptied.
   const submitLabel = (empty: boolean, record: string) =>
     clearing(empty) ? (busy ? 'Clearing…' : `Clear ${noun}`) : busy ? 'Recording…' : record
@@ -315,7 +340,7 @@ export function OwnerControls({
             if (!blocked) openEntry()
           }}
         >
-          {changing ? 'Change' : 'Enter a value'}
+          {triggerLabel(entryOpening !== '', 'Enter a value')}
         </button>
       ) : null}
       {names && mode !== 'names' && !writing ? (
@@ -329,7 +354,7 @@ export function OwnerControls({
             if (!blocked) openNames()
           }}
         >
-          {changing ? 'Change' : 'Enter names'}
+          {triggerLabel(namesOpening.length > 0, 'Enter names')}
         </button>
       ) : null}
       {subset && mode !== 'subset' && !writing ? (
@@ -343,7 +368,7 @@ export function OwnerControls({
             if (!blocked) openSubset()
           }}
         >
-          {changing ? 'Change' : 'Choose genres'}
+          {triggerLabel(subsetOpening.length > 0, 'Choose genres')}
         </button>
       ) : null}
       {entry && mode === 'entry' ? (

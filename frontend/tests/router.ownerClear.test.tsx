@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -11,6 +11,7 @@ import type {
   TargetDestination,
 } from '../src/api/http'
 import { destinationLabel } from '../src/labels'
+import { SettledFieldContext } from '../src/routes/FieldDecisionOutcome'
 import { createHttp, detail, library, recordedAcknowledgement, renderRoute } from './fixtures'
 
 // Clearing a field and entering names in the browser (#1523, ADR-0104): an
@@ -157,7 +158,7 @@ describe('clearing a field', () => {
         return await recordDecision(...args)
       })
       const panel = await open(http, destination)
-      await user.click(within(panel).getByRole('button', { name: 'Enter a value' }))
+      await user.click(within(panel).getByRole('button', { name: 'Change' }))
       const input = within(panel).getByRole('textbox', { name: `Your value for ${label}` })
       // It opens with the field's value, so emptying it is the owner's act.
       expect(input).toHaveValue(value)
@@ -204,7 +205,7 @@ describe('clearing a field', () => {
     )
     const http = owner(before)
     const panel = await open(http, 'genres')
-    await user.click(within(panel).getByRole('button', { name: 'Choose genres' }))
+    await user.click(within(panel).getByRole('button', { name: 'Change' }))
     await user.click(within(panel).getByRole('checkbox', { name: /Drama/u }))
     await user.click(within(panel).getByRole('button', { name: 'Clear genres' }))
     expect(sent(http)).toEqual([
@@ -218,7 +219,7 @@ describe('clearing a field', () => {
     const before = field('narrators', ['Ada Reader'], namesControl(['Ada Reader'], true))
     const http = owner(before)
     const panel = await open(http, 'narrators')
-    await user.click(within(panel).getByRole('button', { name: 'Enter names' }))
+    await user.click(within(panel).getByRole('button', { name: 'Change' }))
     const names = within(panel).getByRole('textbox', { name: 'Your value for Narrators' })
     expect(names).toHaveValue('Ada Reader')
     await user.clear(names)
@@ -247,7 +248,7 @@ describe('clearing a field', () => {
     const user = userEvent.setup()
     const authors = owner(field('authors', ['Ada Example'], namesControl(['Ada Example'], false)))
     const panel = await open(authors, 'authors')
-    await user.click(within(panel).getByRole('button', { name: 'Enter names' }))
+    await user.click(within(panel).getByRole('button', { name: 'Change' }))
     await user.clear(within(panel).getByRole('textbox', { name: 'Your value for Authors' }))
     expect(within(panel).queryByRole('button', { name: /^Clear/u })).toBeNull()
     await user.click(within(panel).getByRole('button', { name: 'Record these names' }))
@@ -255,14 +256,15 @@ describe('clearing a field', () => {
     expect(authors.recordDecision).not.toHaveBeenCalled()
   })
 
-  it('says an empty clearable field is already empty and sends nothing', async () => {
+  it('asks for a value on an empty clearable field and sends nothing', async () => {
     const user = userEvent.setup()
     const http = owner(field('subtitle', null, textControl(null, true)))
     const panel = await open(http, 'subtitle')
     await user.click(within(panel).getByRole('button', { name: 'Enter a value' }))
     expect(within(panel).queryByRole('button', { name: /^Clear/u })).toBeNull()
     await user.click(within(panel).getByRole('button', { name: 'Record this value' }))
-    expect(within(panel).getByRole('alert')).toHaveTextContent('This field is already empty.')
+    // Nothing is set and nothing was typed: the remedy, not a refusal (#1523).
+    expect(within(panel).getByRole('alert')).toHaveTextContent(/^Enter a value first\.$/u)
     expect(http.recordDecision).not.toHaveBeenCalled()
   })
 
@@ -304,7 +306,11 @@ describe('clearing a field', () => {
       },
     )
     const panel = await open(http, destination)
-    await user.click(within(panel).getByRole('button', { name: 'Enter a value' }))
+    await user.click(
+      within(panel).getByRole('button', {
+        name: destination === 'title' ? 'Enter a value' : 'Change',
+      }),
+    )
     const input = within(panel).getByRole('textbox')
     await user.clear(input)
     if (destination === 'title') {
@@ -321,7 +327,7 @@ describe('character and name counts', () => {
     const user = userEvent.setup()
     const http = owner(field('publisher', 'Example House', textControl('Example House', true)))
     const panel = await open(http, 'publisher')
-    await user.click(within(panel).getByRole('button', { name: 'Enter a value' }))
+    await user.click(within(panel).getByRole('button', { name: 'Change' }))
     const input = within(panel).getByRole('textbox', { name: 'Your value for Publisher' })
     const count = panel.querySelector('.owner-count')
     expect(count).toHaveTextContent('')
@@ -347,7 +353,7 @@ describe('character and name counts', () => {
     const user = userEvent.setup()
     const http = owner(field('authors', ['Ada Example'], namesControl(['Ada Example'], false)))
     const panel = await open(http, 'authors')
-    await user.click(within(panel).getByRole('button', { name: 'Enter names' }))
+    await user.click(within(panel).getByRole('button', { name: 'Change' }))
     const names = within(panel).getByRole('textbox', { name: 'Your value for Authors' })
     const count = panel.querySelector('.owner-count')
     await user.clear(names)
@@ -369,7 +375,7 @@ describe('names entry', () => {
       field('authors', ['Ada Example'], namesControl(['Ada Example'], false, ['Old Writer'])),
     )
     const panel = await open(http, 'authors')
-    await user.click(within(panel).getByRole('button', { name: 'Enter names' }))
+    await user.click(within(panel).getByRole('button', { name: 'Change' }))
     const names = within(panel).getByRole('textbox', { name: 'Your value for Authors' })
     expect(names).toHaveFocus()
     expect(names).toHaveValue('Ada Example')
@@ -392,7 +398,7 @@ describe('names entry', () => {
     const user = userEvent.setup()
     const http = owner(field('narrators', ['Ada Reader'], namesControl(['Ada Reader'], true)))
     const panel = await open(http, 'narrators')
-    await user.click(within(panel).getByRole('button', { name: 'Enter names' }))
+    await user.click(within(panel).getByRole('button', { name: 'Change' }))
     const names = within(panel).getByRole('textbox', { name: 'Your value for Narrators' })
     await user.clear(names)
     await user.type(names, 'Bo Reader')
@@ -408,7 +414,7 @@ describe('names entry', () => {
     const user = userEvent.setup()
     const http = owner(field('authors', ['Ada Example'], namesControl(['Ada Example'], false)))
     const panel = await open(http, 'authors')
-    await user.click(within(panel).getByRole('button', { name: 'Enter names' }))
+    await user.click(within(panel).getByRole('button', { name: 'Change' }))
     const names = within(panel).getByRole('textbox', { name: 'Your value for Authors' })
     await user.clear(names)
     await user.click(names)
@@ -436,7 +442,7 @@ describe('names entry', () => {
       },
     )
     const panel = await open(http, 'authors')
-    await user.click(within(panel).getByRole('button', { name: 'Enter names' }))
+    await user.click(within(panel).getByRole('button', { name: 'Change' }))
     await user.type(
       within(panel).getByRole('textbox', { name: 'Your value for Authors' }),
       '{Enter}Bo Writer',
@@ -540,5 +546,237 @@ describe('keeping an empty value on the case that wrote it', () => {
         'The ISBN can’t be emptied. Choose a new value.',
       ),
     )
+  })
+})
+
+describe('a field this case wrote (#1523)', () => {
+  const offered = (destination: TargetDestination, rest: Partial<Field>): Field => ({
+    ...base,
+    destination,
+    classification: 'actionable',
+    decisionActions: ['keep_current', 'accept'],
+    proposalId: `proposal-${destination}`,
+    targetFingerprint: `fingerprint-${destination}`,
+    ownerControl: null,
+    ...rest,
+  })
+  it.each([
+    [
+      'subtitle',
+      {
+        currentValue: 'A Quiet Subtitle',
+        currentRaw: 'A Quiet Subtitle',
+        proposedValues: [{ kind: 'text', value: 'A Louder Subtitle' }],
+        ownerControl: textControl('A Quiet Subtitle', true),
+      },
+    ],
+    [
+      'isbn',
+      {
+        currentValue: '9780306406157',
+        currentRaw: '9780306406157',
+        proposedValues: [{ kind: 'text', value: '9781861972712' }],
+      },
+    ],
+  ] as const)('offers no Keep current value on %s once written', async (destination, rest) => {
+    const written = offered(destination, { ...rest, writtenByCase: true })
+    renderRoute(`/library?lens=all&preview=case-1&field=${destination}`, owner(written))
+    expect(await screen.findByRole('radio', { name: /^Choose proposed value/u })).toBeVisible()
+    expect(screen.queryByRole('radio', { name: /^Choose current value/u })).toBeNull()
+    expect(screen.queryByText('Keep current value')).toBeNull()
+  })
+
+  it('still offers Keep current value on a field the case has not written', async () => {
+    const unwritten = offered('isbn', {
+      currentValue: '9780306406157',
+      currentRaw: '9780306406157',
+      proposedValues: [{ kind: 'text', value: '9781861972712' }],
+      writtenByCase: false,
+    })
+    renderRoute('/library?lens=all&preview=case-1&field=isbn', owner(unwritten))
+    expect(await screen.findByRole('radio', { name: /^Choose current value/u })).toBeVisible()
+    expect(screen.getByText('Keep current value')).toBeVisible()
+  })
+})
+
+describe('an emptied form that clears nothing (#1523)', () => {
+  it('asks for a name on empty narrators', async () => {
+    const user = userEvent.setup()
+    const http = owner(field('narrators', [], namesControl([], true)))
+    const panel = await open(http, 'narrators')
+    await user.click(within(panel).getByRole('button', { name: 'Enter names' }))
+    await user.click(within(panel).getByRole('button', { name: 'Record these names' }))
+    expect(within(panel).getByRole('alert')).toHaveTextContent(/^Enter at least one name\.$/u)
+    expect(http.recordDecision).not.toHaveBeenCalled()
+  })
+
+  it('asks for a genre on empty genres', async () => {
+    const user = userEvent.setup()
+    const http = owner(
+      field(
+        'genres',
+        [],
+        control({
+          clear: true,
+          current: [],
+          subset: {
+            maxItems: 32,
+            options: [{ value: 'Drama', current: false, proposed: true, previous: false }],
+          },
+        }),
+      ),
+    )
+    const panel = await open(http, 'genres')
+    await user.click(within(panel).getByRole('button', { name: 'Choose genres' }))
+    await user.click(within(panel).getByRole('button', { name: 'Record these genres' }))
+    expect(within(panel).getByRole('alert')).toHaveTextContent(/^Choose at least one genre\.$/u)
+    expect(http.recordDecision).not.toHaveBeenCalled()
+  })
+
+  it('points a pending value on an empty field at Withdraw', async () => {
+    const user = userEvent.setup()
+    const pending = decided(field('subtitle', null, textControl(null, true)), {
+      kind: 'text',
+      value: 'Foo bar',
+    })
+    const http = owner(pending)
+    const panel = await open(http, 'subtitle')
+    expect(within(panel).getByText('You entered “Foo bar”.')).toBeVisible()
+    await user.click(within(panel).getByRole('button', { name: 'Change' }))
+    await user.clear(within(panel).getByRole('textbox', { name: 'Your value for Subtitle' }))
+    expect(within(panel).queryByRole('button', { name: /^Clear/u })).toBeNull()
+    await user.click(within(panel).getByRole('button', { name: 'Record this value' }))
+    expect(within(panel).getByRole('alert')).toHaveTextContent(
+      'This field is already empty. Use Withdraw to remove your value.',
+    )
+    expect(http.recordDecision).not.toHaveBeenCalled()
+  })
+
+  it('offers no second clear after a pending clear and records nothing', async () => {
+    const user = userEvent.setup()
+    const pending = decided(
+      field('subtitle', 'A Quiet Subtitle', textControl('A Quiet Subtitle', true)),
+      EMPTY,
+    )
+    const http = owner(pending)
+    const panel = await open(http, 'subtitle')
+    expect(within(panel).getByText('You cleared the subtitle.')).toBeVisible()
+    await user.click(within(panel).getByRole('button', { name: 'Change' }))
+    const input = within(panel).getByRole('textbox', { name: 'Your value for Subtitle' })
+    expect(input).toHaveValue('')
+    expect(within(panel).queryByRole('button', { name: 'Clear subtitle' })).toBeNull()
+    await user.click(within(panel).getByRole('button', { name: 'Record this value' }))
+    expect(within(panel).getByRole('alert')).toHaveTextContent(/^This field is already empty\.$/u)
+    expect(http.recordDecision).not.toHaveBeenCalled()
+  })
+
+  it('refuses the standing value again rather than recording a duplicate', async () => {
+    const user = userEvent.setup()
+    const pending = decided(field('subtitle', null, textControl(null, true)), {
+      kind: 'text',
+      value: 'Foo bar',
+    })
+    const http = owner(pending)
+    const panel = await open(http, 'subtitle')
+    await user.click(within(panel).getByRole('button', { name: 'Change' }))
+    expect(within(panel).getByRole('textbox', { name: 'Your value for Subtitle' })).toHaveValue(
+      'Foo bar',
+    )
+    await user.click(within(panel).getByRole('button', { name: 'Record this value' }))
+    expect(within(panel).getByRole('alert')).toHaveTextContent('That is already the current value.')
+    expect(http.recordDecision).not.toHaveBeenCalled()
+  })
+})
+
+describe('names that differ only by case or composition (#1523)', () => {
+  it.each([
+    ['Ada Example\nada EXAMPLE'],
+    ['Zoé Example\nZoé Example'],
+    ['Anna Straße\nANNA STRASSE'],
+  ])('refuses %j as a repeated name', async (text) => {
+    const user = userEvent.setup()
+    const http = owner(field('narrators', ['Ada Reader'], namesControl(['Ada Reader'], true)))
+    const panel = await open(http, 'narrators')
+    await user.click(within(panel).getByRole('button', { name: 'Change' }))
+    const names = within(panel).getByRole('textbox', { name: 'Your value for Narrators' })
+    await user.clear(names)
+    await user.click(names)
+    await user.paste(text)
+    await user.click(within(panel).getByRole('button', { name: 'Record these names' }))
+    expect(within(panel).getByRole('alert')).toHaveTextContent('Enter each name once.')
+    expect(http.recordDecision).not.toHaveBeenCalled()
+  })
+})
+
+describe('the trigger says Change when the form opens holding a value (#1523)', () => {
+  it.each([
+    ['subtitle', textControl('A Quiet Subtitle', true), 'A Quiet Subtitle', 'Change'],
+    ['subtitle', textControl(null, true), null, 'Enter a value'],
+    ['title', textControl('A Book', false), 'A Book', 'Enter a value'],
+    ['narrators', namesControl(['Ada Reader'], true), ['Ada Reader'], 'Change'],
+    ['narrators', namesControl([], true), [], 'Enter names'],
+  ] as const)('%s opening with %j reads %s', async (destination, ownerControl, current, label) => {
+    const http = owner(field(destination, current, ownerControl))
+    const panel = await open(http, destination)
+    expect(within(panel).getByRole('button', { name: label })).toBeVisible()
+  })
+})
+
+describe('History of entered names (#1523)', () => {
+  it('counts the names entered', async () => {
+    const getHistory = vi.fn<ReviewHttp['getHistory']>(async () => ({
+      items: [
+        {
+          category: 'owner' as const,
+          occurredAt: 1786000000,
+          applicationReason: null,
+          destination: 'narrators' as const,
+          outcome: 'owner_entered' as const,
+          previousValue: { kind: 'list', value: ['Ada Reader'] },
+          selectedValue: { kind: 'list', value: ['Ada Reader', 'Bo Reader'] },
+        },
+        {
+          category: 'owner' as const,
+          occurredAt: 1785000000,
+          applicationReason: null,
+          destination: 'subtitle' as const,
+          outcome: 'owner_entered' as const,
+          previousValue: null,
+          selectedValue: { kind: 'text', value: 'A Quiet Subtitle' },
+        },
+      ],
+    }))
+    renderRoute('/review/case-1?field=title&subview=history', { ...createHttp(), getHistory })
+    const names = (await screen.findByRole('heading', { name: 'Narrators' })).closest('article')
+    expect(names).toHaveTextContent('You entered 2 names.')
+    const text = screen.getByRole('heading', { name: 'Subtitle' }).closest('article')
+    expect(text).toHaveTextContent('You entered a value.')
+  })
+})
+
+describe('a recorded clear on a field with a new choice (#1523)', () => {
+  it.each([
+    [EMPTY, /You cleared it\.$/u],
+    [
+      { kind: 'text', value: 'A Quiet Subtitle' },
+      /The recorded value remains A Quiet Subtitle\.$/u,
+    ],
+  ])('says %j naturally', (selected, sentence) => {
+    const recorded = decided(
+      field('subtitle', 'A Quiet Subtitle', textControl(null, true)),
+      selected,
+    )
+    render(
+      <SettledFieldContext
+        field={recorded}
+        actionable
+        ownerEntry={false}
+        expanded={false}
+        toggle={() => undefined}
+      />,
+    )
+    const line = document.querySelector('.decision-recorded')
+    expect(line).toHaveTextContent(sentence)
+    expect(line).not.toHaveTextContent('remains Cleared')
   })
 })

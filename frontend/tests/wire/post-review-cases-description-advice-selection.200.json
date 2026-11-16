@@ -79,6 +79,7 @@
             "notices": ["unique_typed_candidate"],
             "offer_digest": "19da5c34a2093188025407498bc96afa651eaaa1397c18250aa289e7c1194126",
             "owner_control": null,
+            "written_by_case": false,
             "pin": null,
             "pin_control": {
               "pin": "available",
@@ -185,6 +186,7 @@
               },
               "withdraw": null
             },
+            "written_by_case": false,
             "pin": null,
             "pin_control": {
               "pin": "available",
@@ -280,6 +282,7 @@
             "notices": ["manifestation_verification_required"],
             "offer_digest": "56c90eb0d5372bfe6faa1efac371e353b2da36abf77929b178cf02734a9c275b",
             "owner_control": null,
+            "written_by_case": false,
             "pin": null,
             "pin_control": {
               "pin": "available",
@@ -388,6 +391,7 @@
               "subset": null,
               "withdraw": null
             },
+            "written_by_case": false,
             "pin": null,
             "pin_control": {
               "pin": "available",
@@ -449,6 +453,7 @@
             "notices": ["no_supported_evidence"],
             "offer_digest": "19da5c34a2093188025407498bc96afa651eaaa1397c18250aa289e7c1194126",
             "owner_control": null,
+            "written_by_case": false,
             "pin": null,
             "pin_control": {
               "pin": "available",
@@ -549,6 +554,7 @@
               "subset": null,
               "withdraw": null
             },
+            "written_by_case": false,
             "pin": null,
             "pin_control": {
               "pin": "available",
@@ -610,6 +616,7 @@
             "notices": ["no_supported_evidence"],
             "offer_digest": "89f5f91c0263c198a42f16f01a1c7d157b08d50355684723f1cbc01d69c835a2",
             "owner_control": null,
+            "written_by_case": false,
             "pin": null,
             "pin_control": {
               "pin": "available",
@@ -669,6 +676,7 @@
             "notices": ["no_supported_evidence"],
             "offer_digest": "ac48841c82812db23461be37c3429b71665d2b36b26166d25777f30990c98e7c",
             "owner_control": null,
+            "written_by_case": false,
             "pin": null,
             "pin_control": {
               "pin": "available",
@@ -842,6 +850,7 @@
             "notices": ["populated_subjective_field", "populated_value_meets_floor"],
             "offer_digest": "097ffde9818e320c8e759df89e847dd9d9439e95fb13e9b7ffb49758e372dbd7",
             "owner_control": null,
+            "written_by_case": false,
             "pin": null,
             "pin_control": {
               "pin": "change_waiting",
@@ -908,6 +917,7 @@
             "notices": ["no_supported_evidence"],
             "offer_digest": "0db2e7b94a6a2b2844694422a5824cb056058df9a6d88ca9cfef03cd5641e5ad",
             "owner_control": null,
+            "written_by_case": false,
             "pin": null,
             "pin_control": {
               "pin": "available",
@@ -967,6 +977,7 @@
             "notices": ["no_supported_evidence"],
             "offer_digest": "972f962b683200167590437d8d89d8d9f82d541f76f0ebf48a50978b1e9bf3c6",
             "owner_control": null,
+            "written_by_case": false,
             "pin": null,
             "pin_control": {
               "pin": "available",
@@ -1043,6 +1054,7 @@
             "notices": ["unique_typed_candidate"],
             "offer_digest": "bfcb6cb487fdf6bf81e378ac8e61202e46423480158387d3fe1d20912b42f745",
             "owner_control": null,
+            "written_by_case": false,
             "pin": null,
             "pin_control": {
               "pin": "available",
@@ -1109,6 +1121,7 @@
             "notices": ["no_supported_evidence"],
             "offer_digest": "0dad399dac7265413b052af66fce15aa37fc398d07b79c9f4a95936b6adcb1d2",
             "owner_control": null,
+            "written_by_case": false,
             "pin": null,
             "pin_control": null,
             "preservation_only": false,

@@ -19,6 +19,7 @@ import { railOffers } from '../reviewChoiceCounts'
 import { RecordedTime } from '../components/RecordedTime'
 import {
   clearedSentence,
+  namesEnteredSentence,
   coverHistoryLabels,
   coverNoteLabel,
   coverReviewerLabel,
@@ -131,7 +132,7 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
             : item.outcome === 'owner_entered'
               ? isClear(item.selectedValue)
                 ? clearedSentence(item.destination)
-                : 'You entered a value.'
+                : enteredSentence(item.destination, item.selectedValue)
               : item.outcome === 'withdraw'
                 ? 'You withdrew your choice.'
                 : item.outcome === 'pin' || item.outcome === 'unpin'
@@ -239,6 +240,14 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
       ) : null}
     </article>
   )
+}
+
+// Names say how many were entered, as where they were recorded (#1523).
+function enteredSentence(destination: TargetDestination, value: HistoryValueView | null) {
+  const count = Array.isArray(value?.value) ? value.value.length : null
+  return count !== null && (destination === 'authors' || destination === 'narrators')
+    ? namesEnteredSentence(count)
+    : 'You entered a value.'
 }
 
 function isRetention(

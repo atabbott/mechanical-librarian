@@ -410,7 +410,7 @@ def test_a_clear_after_a_fill_goes_back_to_the_empty_field(tmp_path: Path) -> No
             (event["state"], event["change"], event["evidence"])
             for event in events
             if event["field_label"] == "Subtitle"
-            and event["change"] == "Removed subtitle"
+            and event["change"] == "Cleared subtitle"
         ]
         assert [state for state, *_ in cleared] == ["verified", "owner_entered"]
         assert all(
@@ -1424,10 +1424,17 @@ def test_a_keep_on_a_returned_episode_plans_nothing_and_stops_nothing(
     chosen, read_back, outcome, back = _KEPT_THEN_RETURNED[destination]
     first = store.case.review_case_id
     store.write(store.decide("accept", chosen, destination=destination))
+    # The case that wrote a field says so, and only for that field (#1523).
+    assert _field(store, destination)["written_by_case"] is True
+    assert _field(store, "isbn")["written_by_case"] is False
     _successor(store, **read_back)
     assert store.case.review_case_id != first
+    assert _field(store, destination)["written_by_case"] is False
     store.write(store.decide(outcome, back, destination=destination))
+    assert _field(store, destination)["written_by_case"] is True
     assert store.publish(genre_report()).review_case_id == first
+    # The returned episode wrote nothing yet: its earlier write no longer counts.
+    assert _field(store, destination)["written_by_case"] is False
     keep = store.decide("keep_current", destination=destination)
     pending = _pending(store)
     assert keep.decision_id not in pending

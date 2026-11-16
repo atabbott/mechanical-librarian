@@ -1064,6 +1064,8 @@ class _ReviewField(_ClosedModel):
     navigation_role: Literal["attention", "inspect"]
     notices: list[str]
     owner_control: _OwnerControl | None
+    # The case wrote this field itself (#1523).
+    written_by_case: bool
     pin: _FieldPin | None
     pin_control: _PinControl | None
     proposed_values: list[_ProposedValue]

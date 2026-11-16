@@ -2030,6 +2030,9 @@ class InspectCurrentReviewCase:
                 reasons,
             ),
             "owner_control": owner_control,
+            # This case's own write set the field in its episode, so what it
+            # read before is no longer the library's value (#1523).
+            "written_by_case": destination in dict(snapshot.written_values),
             "pin": pin,
             "pin_control": pin_control,
             # The offer a choice binds: its value, proposal and rule (#1355).

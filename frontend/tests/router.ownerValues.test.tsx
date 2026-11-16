@@ -261,7 +261,7 @@ describe('owner-entered values', () => {
     const http = owner(() => [genres])
     renderRoute('/library?lens=all&preview=case-1&field=genres', http)
     const panel = await screen.findByRole('region', { name: 'Your value for Genres' })
-    await user.click(within(panel).getByRole('button', { name: 'Choose genres' }))
+    await user.click(within(panel).getByRole('button', { name: 'Change' }))
     const group = within(panel).getByRole('group', { name: 'Choose genres' })
     const boxes = within(group).getAllByRole('checkbox')
     expect(boxes.map((box) => box.closest('label')?.textContent)).toEqual([
@@ -526,7 +526,7 @@ describe('choosing the previous value again', () => {
     const http = owner(() => [genres])
     renderRoute('/library?lens=all&preview=case-1&field=genres', http)
     const panel = await screen.findByRole('region', { name: 'Your value for Genres' })
-    await user.click(within(panel).getByRole('button', { name: 'Choose genres' }))
+    await user.click(within(panel).getByRole('button', { name: 'Change' }))
     const group = within(panel).getByRole('group', { name: 'Choose genres' })
     expect(
       within(group)
@@ -910,10 +910,10 @@ describe('owner review fixes', () => {
       owner(() => [genres]),
     )
     const panel = await screen.findByRole('region', { name: 'Your value for Genres' })
-    await user.click(within(panel).getByRole('button', { name: 'Choose genres' }))
+    await user.click(within(panel).getByRole('button', { name: 'Change' }))
     expect(within(panel).getByRole('checkbox', { name: /Drama/u })).toHaveFocus()
     await user.keyboard('{Escape}')
-    expect(within(panel).getByRole('button', { name: 'Choose genres' })).toHaveFocus()
+    expect(within(panel).getByRole('button', { name: 'Change' })).toHaveFocus()
   })
 
   it('S2 ties a refusal to the input it is about', async () => {
@@ -954,7 +954,7 @@ describe('owner review fixes', () => {
     const http = owner(() => fields)
     renderRoute('/library?lens=all&preview=case-1&field=genres', http)
     const panel = await screen.findByRole('region', { name: 'Your value for Genres' })
-    await user.click(within(panel).getByRole('button', { name: 'Choose genres' }))
+    await user.click(within(panel).getByRole('button', { name: 'Change' }))
     await user.click(within(panel).getByRole('checkbox', { name: /Fantasy/u }))
     fields = [
       {

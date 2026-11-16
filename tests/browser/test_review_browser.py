@@ -12888,7 +12888,7 @@ def test_owner_chooses_a_genre_subset_then_withdraws_it():
     ) as (page, origin, case_id):
         page.goto(f"{origin}/library?lens=all&preview={case_id}&field=genres")
         panel = page.get_by_role("region", name="Your value for Genres")
-        panel.get_by_role("button", name="Choose genres", exact=True).click()
+        panel.get_by_role("button", name="Change", exact=True).click()
         group = panel.get_by_role("group", name="Choose genres")
         expect(group.get_by_role("checkbox")).to_have_count(3)
         # Opening the subset puts focus on its first genre, never on body (D1).
@@ -12938,7 +12938,7 @@ def test_owner_clears_the_genres_in_one_press():
     ):
         page.goto(f"{origin}/library?lens=all&preview={case_id}&field=genres")
         panel = page.get_by_role("region", name="Your value for Genres")
-        panel.get_by_role("button", name="Choose genres", exact=True).click()
+        panel.get_by_role("button", name="Change", exact=True).click()
         group = panel.get_by_role("group", name="Choose genres")
         group.get_by_role("checkbox", name=re.compile("^Drama")).uncheck()
         clear = panel.get_by_role("button", name="Clear genres", exact=True)
@@ -12989,7 +12989,7 @@ def test_owner_enters_names_one_per_line():
     ):
         page.goto(f"{origin}/library?lens=all&preview={case_id}&field=authors")
         panel = page.get_by_role("region", name="Your value for Authors")
-        panel.get_by_role("button", name="Enter names", exact=True).click()
+        panel.get_by_role("button", name="Change", exact=True).click()
         box = panel.get_by_role("textbox", name="Your value for Authors")
         expect(box).to_be_focused()
         expect(box).to_have_value("Ada Example")
@@ -13161,7 +13161,7 @@ def test_keyboard_only_triage_journey(width):
         # then; the numbers return when it closes.
         expect(badges).to_have_count(2)
         expect(badges.first).to_be_visible()
-        choose = page.get_by_role("button", name="Choose genres", exact=True)
+        choose = page.get_by_role("button", name="Change", exact=True)
         press_on("e", choose)
         expect(page.locator("form.owner-entry")).to_be_visible()
         expect(badges).to_have_count(2)
@@ -13834,7 +13834,7 @@ def _work_stays_in_view(page: Page) -> None:
 
 
 def _record_genres(
-    panel, *names: str, said: str, opener: str = "Choose genres"
+    panel, *names: str, said: str, opener: str = "Change"
 ) -> None:
     panel.get_by_role("button", name=opener, exact=True).click()
     group = panel.get_by_role("group", name="Choose genres")
@@ -13950,7 +13950,7 @@ def test_a_search_that_excludes_the_selected_work_leaves_it_in_view():
             page.get_by_role("searchbox").fill("Nothing here")
         _work_stays_in_view(page)
         expect(
-            page.get_by_role("button", name="Choose genres", exact=True)
+            page.get_by_role("button", name="Change", exact=True)
         ).to_be_visible()
 
 

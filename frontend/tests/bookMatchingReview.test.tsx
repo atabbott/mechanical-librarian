@@ -267,7 +267,7 @@ describe('owner controls while the work waits for its check', () => {
   it.each([
     ['checking', { checking: true, checkGivenUp: false }],
     ['given up', { checking: true, checkGivenUp: true }],
-  ])('ignore a press on Choose genres while %s', async (_, state) => {
+  ])('ignore a press on the genres trigger while %s', async (_, state) => {
     const user = userEvent.setup()
     const http: ReviewHttp = {
       ...createHttp(),
@@ -280,7 +280,7 @@ describe('owner controls while the work waits for its check', () => {
     }
     renderRoute('/library?lens=all&preview=case-1&field=genres', http)
     const panel = await screen.findByRole('region', { name: 'Your value for Genres' })
-    const trigger = within(panel).getByRole('button', { name: 'Choose genres' })
+    const trigger = within(panel).getByRole('button', { name: 'Change' })
     expect(trigger).toHaveAttribute('aria-disabled', 'true')
     await user.click(trigger)
     expect(within(panel).queryByRole('group', { name: 'Choose genres' })).toBeNull()

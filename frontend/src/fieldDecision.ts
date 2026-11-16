@@ -159,6 +159,13 @@ export const choiceSelected = (
     commandSelected(progress?.command ?? null, field.destination, outcome, selectedValue)) ||
   ((progress === null || progress.phase === 'failed') &&
     recordedSelected(field, outcome, selectedValue))
+// Whether the field offers its Keep current value section. On the case that
+// wrote the field, what the case read before its write is no longer the
+// library's value, so keeping it is not offered; the owner goes back with the
+// previous value or by emptying the box (#1523). Offering it relabelled there
+// instead would change only this and the section's heading.
+export const keepOffered = (field: ReviewField) =>
+  field.decisionActions.includes('keep_current') && field.writtenByCase !== true
 export const isLongDescription = (destination: string, value: string) =>
   destination === 'description' && value.length > 280
 export const decisionQuestion = (destination: TargetDestination) =>

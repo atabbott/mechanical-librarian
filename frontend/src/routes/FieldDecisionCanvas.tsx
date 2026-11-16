@@ -14,6 +14,7 @@ import {
   decisionQuestion,
   effectSummary,
   isLongDescription,
+  keepOffered,
   valueText,
 } from '../fieldDecision'
 import type { ReviewField } from '../fieldDecision'
@@ -171,7 +172,7 @@ export function FieldDecisionCanvas({
   // The direct choices in reading order, so the radio group's one Tab stop and
   // each position come from a single list (#1290).
   type DirectChoice = Omit<Parameters<typeof MetadataChoice>[0], 'radio'>
-  const currentChoice: DirectChoice | null = selected.decisionActions.includes('keep_current')
+  const currentChoice: DirectChoice | null = keepOffered(selected)
     ? {
         automatic: automaticallySelected(selected, cardProgress),
         context: choiceContext(selected, null),

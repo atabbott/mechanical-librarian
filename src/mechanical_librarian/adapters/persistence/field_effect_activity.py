@@ -261,6 +261,14 @@ _OWNER_ACTION_COUNT_SQL = (
     + ")"
 )
 
+# The fields a case's own write can set: a cover is chosen through its
+# consideration, never kept or entered.
+_WRITTEN_DESTINATIONS = tuple(
+    sorted(
+        destination for destination in SUPPORTED_DESTINATIONS if destination != "cover"
+    )
+)
+
 _CORRECTIVE_KEEP_CURRENT_SQL = (
     "human.outcome='keep_current' AND EXISTS (SELECT 1 FROM review_cases review, "
     "json_each(review.document,'$.target.fields') target WHERE review.review_case_id=human.review_case_id "
@@ -1210,17 +1218,19 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
     def _written_field_values(
         self, review_case_id: str
     ) -> tuple[tuple[str, object], ...]:
-        """What the case's own latest verified write put in each owner-entry
-        field; ``None`` is a write that emptied it (#1523, S5).
+        """What the case's own latest verified write in its episode put in
+        each field but the cover; ``None`` is a write that emptied it (#1523,
+        S5).
 
         Owner entry on the case that wrote a field compares with this value
         rather than the target its report read before the write, so the
         written value is the one refused as unchanged and the value it
-        replaced can be chosen at once.
+        replaced can be chosen at once. The case detail also says which
+        fields the case wrote, so it offers no keep of what it replaced.
         """
         try:
             values: list[tuple[str, object]] = []
-            for destination in OWNER_ENTRY_DESTINATIONS:
+            for destination in _WRITTEN_DESTINATIONS:
                 row = self._episode_write(review_case_id, destination, None)
                 if row is not None:
                     values.append(

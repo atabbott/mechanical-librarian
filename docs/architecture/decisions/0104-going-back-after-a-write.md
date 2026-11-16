@@ -53,8 +53,9 @@ changes nothing. An emptied scalar reads back as `null` and an emptied list as
    scan in which a source still offers a value keeps the field held, pinned
    and out of Attention.
 3. **Names.** Authors on both media and narrators on audiobooks take 1 to 32
-   names, each within the owner-text rules, with no exact repeat, in the
-   owner's order. Entry opens with the current names. It reaches only primary,
+   names, each within the owner-text rules, with no repeat, in the owner's
+   order; names equal after NFC and case folding are a repeat. Entry opens
+   with the current names. It reaches only primary,
    non-ineligible rows under F59's primary-row rule; a field no source returns
    stays contextual and has no owner control. An empty narrators list is a
    clear.
@@ -68,7 +69,11 @@ changes nothing. An emptied scalar reads back as `null` and an emptied list as
    input is that choice, and the server sends no empty suggestion. On that
    case Keep current writes back the value the case read: a clearable field
    it read empty goes back to empty as a clear does, and any other field
-   refuses the keep as `owner_value_required`.
+   refuses the keep as `owner_value_required`. The browser does not offer
+   that keep: the case detail's `written_by_case` marks each field the case
+   wrote in its current episode, and such a field shows no Keep current
+   value card, since Clear or a new value is the owner's way back. The
+   server path and its refusal stay for API callers.
 5. **The kept case.** When the pipeline admits a ProposalSet with nothing
    actionable while the work's latest verified write, of any origin and
    destination, covers included, is under 2,592,000 seconds old by the

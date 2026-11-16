@@ -638,7 +638,7 @@ describe('review keys', () => {
       '/library?lens=all&preview=case-1&field=genres',
       store(() => [genres]),
     )
-    await screen.findByRole('button', { name: 'Choose genres' })
+    await screen.findByRole('button', { name: 'Change' })
     await press('e')
     expect(await screen.findByRole('checkbox', { name: /Drama/u })).toHaveFocus()
   })

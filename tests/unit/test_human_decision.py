@@ -1074,6 +1074,9 @@ def test_only_an_owner_entered_decision_carries_the_empty_kind(
         ([f"Name {index}" for index in range(32)], None),
         ([f"Name {index}" for index in range(33)], "owner_value_invalid"),
         (["Ada Example", "Ada Example"], "owner_value_invalid"),
+        # Names that differ only by case are one name (#1523).
+        (["Ada Example", "ada EXAMPLE"], "owner_value_invalid"),
+        (["Anna Straße", "Anna Strasse"], "owner_value_invalid"),
         (["x" * 513], "owner_value_invalid"),
         (["Ada\u0007Example"], "owner_value_invalid"),
         (["/srv/library/book.epub"], "owner_value_invalid"),
@@ -1089,6 +1092,8 @@ def test_only_an_owner_entered_decision_carries_the_empty_kind(
         "thirty-two",
         "thirty-three",
         "duplicate",
+        "duplicate-by-case",
+        "duplicate-by-folding",
         "over-long",
         "control-character",
         "path",

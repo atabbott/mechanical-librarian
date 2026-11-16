@@ -113,6 +113,7 @@ export const reviewField = (overrides: Overrides = {}) => ({
   notices: [],
   offer_digest: 'd'.repeat(64),
   owner_control: null,
+  written_by_case: false,
   pin: null,
   pin_control: null,
   preservation_only: false,

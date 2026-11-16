@@ -59,6 +59,9 @@ export const destinationPhrase = (destination: TargetDestination) =>
 // An owner's clear, said the same way where it was recorded and in History.
 export const clearedSentence = (destination: TargetDestination) =>
   `You cleared the ${destinationPhrase(destination)}.`
+// Names entered, said by their count where they were recorded and in History.
+export const namesEnteredSentence = (count: number) =>
+  `You entered ${String(count)} ${count === 1 ? 'name' : 'names'}.`
 
 // The comparison conditions a review names beside a field. This map is the
 // whole set: a notice outside it is not a comparison condition and is never

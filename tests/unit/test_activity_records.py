@@ -239,7 +239,7 @@ def test_a_change_reads_as_a_sentence_and_as_a_column() -> None:
     assert keep_change("authors", ["Ursula K. Le Guin"]).sentence == (
         "Kept Authors as Ursula K. Le Guin"
     )
-    assert set_change("subtitle", "A subtitle", None).sentence == "Removed Subtitle"
+    assert set_change("subtitle", "A subtitle", None).sentence == "Cleared Subtitle"
     # An unchanged value is a keep, never a set from a value to itself.
     assert set_change("title", "Same", "Same").compact == "Kept Same"
 
@@ -955,10 +955,10 @@ def _automatic(
             "A subtitle",
             None,
             True,
-            "Removed subtitle",
-            "Removed Subtitle",
+            "Cleared subtitle",
+            "Cleared Subtitle",
         ),
-        ("asin", "candidate", "B000000001", None, True, "Removed ASIN", "Removed ASIN"),
+        ("asin", "candidate", "B000000001", None, True, "Cleared ASIN", "Cleared ASIN"),
         (
             "title",
             "candidate",
@@ -1046,10 +1046,10 @@ def test_an_automatic_choice_names_its_field_and_value(  # noqa: PLR0913
 
 def test_an_owner_row_keeps_its_arrow_while_absent_values_name_the_field() -> None:
     assert set_change("isbn", "1", "2").compact == "1 → 2"
-    assert set_change("isbn", "1", None).compact == "Removed ISBN"
+    assert set_change("isbn", "1", None).compact == "Cleared ISBN"
     assert keep_change("asin", None).compact == "Left ASIN unset"
-    assert set_change("subtitle", "A", None).compact == "Removed subtitle"
-    assert set_change("publishedYear", "1", None).compact == "Removed publication year"
+    assert set_change("subtitle", "A", None).compact == "Cleared subtitle"
+    assert set_change("publishedYear", "1", None).compact == "Cleared publication year"
 
 
 # Two descriptions that read alike for longer than a compact change shows.
