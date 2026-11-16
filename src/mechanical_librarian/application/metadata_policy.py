@@ -681,9 +681,8 @@ def _library_impact(
         for report, proposal in pairs
     ):
         raise MetadataPolicyApplicationError("policy preview is unavailable")
-    # Keep both pure proposal results for meaningful candidate routing:
-    # a preserved incumbent has no selected source ID, but can still
-    # have a supported candidate whose review destination changed.
+    # Compile each work once under each policy: the rich preview and the
+    # outcome rows both read the same pair of pure proposal results.
     compiled_pairs = tuple(
         (
             evaluate_report(report, active.resolved_id, active_destinations),

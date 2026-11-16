@@ -572,7 +572,7 @@ def test_capture_rejects_malformed_or_incompatible_inputs(tmp_path, corruption) 
 @pytest.mark.parametrize(
     "active_route,draft_route", (("ask", "automatic"), ("automatic", "ask"))
 )
-def test_preserved_genre_routing_requires_qualified_work_evidence(
+def test_kept_genres_are_not_listed_between_ask_me_and_automatic_whatever_the_evidence(
     tmp_path, contradictory, active_route, draft_route
 ):
     from dataclasses import replace
@@ -1078,6 +1078,7 @@ def _record_cover_comparison(
     fetching: bool = False,
     schema_version: str | None = None,
     policy_report_document: str | None = None,
+    candidates: list[object] | None = None,
 ) -> str:
     """Record a synthetic current comparison whose policy report has a stage."""
     from mechanical_librarian.adapters.persistence.cover_considerations import (
@@ -1111,7 +1112,9 @@ def _record_cover_comparison(
     repository.record_cover_consideration(
         json.dumps(
             {
-                "candidates": [
+                "candidates": candidates
+                if candidates is not None
+                else [
                     {
                         "artifact_id": f"cover_artifact_{index:064x}",
                         "deterministic_citations": ["cover-citation"],
@@ -1274,7 +1277,14 @@ def test_an_unreadable_cover_document_is_not_previewed_for_its_work_alone(
 
     database = tmp_path / "state.sqlite3"
     repository = open_repository(database)
-    for index in range(2):
+    # A policy report that is not JSON, a readable one, and candidates that
+    # are not objects.
+    unreadable: tuple[dict[str, Any], ...] = (
+        {"policy_report_document": "not json"},
+        {},
+        {"candidates": ["not an object"]},
+    )
+    for index, document in enumerate(unreadable):
         report = _case_report(index)
         repository.publish(report, lambda: True)
         proposal = evaluate_report(report)
@@ -1283,12 +1293,7 @@ def test_an_unreadable_cover_document_is_not_previewed_for_its_work_alone(
             "review_case_id"
         ]
         _record_cover_comparison(
-            repository,
-            report,
-            review_case_id,
-            index,
-            outcome="fill",
-            policy_report_document=None if index else "not json",
+            repository, report, review_case_id, index, outcome="fill", **document
         )
     repository.close()
     reader = open_shadow_preview_repository(database)
@@ -1296,6 +1301,7 @@ def test_an_unreadable_cover_document_is_not_previewed_for_its_work_alone(
     assert (
         PolicyPreviewCover(False, None, None, False),
         PolicyPreviewCover(False, "fill", None, True),
+        PolicyPreviewCover(False, None, None, False),
     ) == reader.capture_policy_preview(("ebooks",), 20).libraries[0].covers
     active = MetadataPolicyProfile.builtin()
     draft = MetadataPolicyProfile.create(
@@ -1308,6 +1314,7 @@ def test_an_unreadable_cover_document_is_not_previewed_for_its_work_alone(
     assert [
         ("not_previewed", "cover_compared_next_scan"),
         ("suggested", None),
+        ("not_previewed", "cover_compared_next_scan"),
     ] == [
         (field.draft.outcome, field.draft.reason)
         for case in preview.libraries[0].comparisons
