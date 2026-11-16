@@ -726,6 +726,30 @@ def test_case_reads_reach_lineage_and_package_by_index() -> None:
             repository.close()
 
 
+def test_library_progress_reads_attention_facts_by_key() -> None:
+    """Both progress statements reach a work's attention facts by key (#1335)."""
+    with tempfile.TemporaryDirectory() as directory:
+        connection = _representative_database(
+            Path(directory) / "application.sqlite3", works=24
+        )
+        repository = SQLiteMetadataReportRepository(connection)
+        try:
+            statements = _traced_selects(
+                connection, lambda: repository.read_review_library_progress(())
+            )
+            assert len(statements) == 2
+            for statement in statements:
+                plan = _plan(connection, statement, ())
+                assert any(
+                    "SEARCH f USING PRIMARY KEY (connection_name=? AND "
+                    "library_name=? AND item_id=? AND report_id=?)" in step
+                    for step in plan
+                ), statement[:40]
+                assert not any(re.match(r"SCAN (f|pointed)\b", step) for step in plan)
+        finally:
+            repository.close()
+
+
 def test_first_match_and_hold_reads_keep_their_lineage_walk() -> None:
     """The case indexes leave rowid-order lineage walks where order is visible.
 

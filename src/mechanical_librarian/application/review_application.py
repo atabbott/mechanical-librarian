@@ -1207,6 +1207,18 @@ class ReviewApplication:
 
         return self._browse_serialized(read, check_active)
 
+    def library_progress(
+        self, *, check_active: Callable[[], None] | None = None
+    ) -> dict[str, object]:
+        def read() -> dict[str, object]:
+            snapshot: LibraryLabels = tuple(
+                (connection, library, label)
+                for (connection, library), label in self._library_labels().items()
+            )
+            return self._browse.progress(snapshot)
+
+        return self._browse_serialized(read, check_active)
+
     def attention(
         self,
         *,

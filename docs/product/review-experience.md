@@ -148,13 +148,13 @@ unknown review path shows a recovery state, not an error.
 The preparation panel states one run in five counts. Their labels are "ready
 to browse", "recorded, nothing to decide", "not matched", "could not finish"
 and "in progress". Ready to browse and in progress always show. The others hide
-at zero, and an unknown count reads `…`. Counts describe the run's books as
-they stand now. Each stage bar counts books that first reached it in this run.
+at zero; an unknown count reads `…`. Counts describe the run's books as
+they stand. Each stage bar counts books that first reached it in this run.
 A book that could not finish stops at its last stage. Bars glide to each new
 count unless reduced motion is set. The status line's wipe plays only when the
 run's state changes. Recent completions record each book's first finish, one
 row each: the title, linked into Library, then "Prepared" or "Couldn't
-finish". A rate in works a minute appears only while the run is running.
+finish". A rate in works a minute appears only while running.
 
 The masthead's background-work icon fills while libraries are prepared and
 marks what needs you. Its popover shows each library's scan state and works
@@ -201,6 +201,7 @@ or raw source response. Once the catalogue no longer matches, the row reads
 
 Library is the complete work list and the only place you make decisions. It
 opens with its write handoff in place, so the notice never moves the works.
+Finished runs show [Library progress](library-progress.md).
 
 ### Counts and lenses
 

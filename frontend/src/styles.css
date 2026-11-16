@@ -1828,3 +1828,32 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 .source-lookups-outcome[data-outcome='recovered']:not(:empty)::before { display:inline-block; margin-right:.4rem; content:'\2713'; content:'\2713' / ''; }
 .source-lookups-outcome:empty { position:absolute; width:1px; height:1px; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); }
 .source-lookups-outcome[role='alert'] { color:var(--danger); }
+/* Library progress (#1335): Activity's card, after the status box and above
+   the Ledger (on a phone, where the Ledger comes first, after both), and the
+   line in a finished run's box at the top of Works. */
+.cm-activity-route > .activity-library-progress { order:4; min-width:0; margin:0 0 1rem; padding:1rem 1.15rem; border:1px solid var(--line); border-radius:.75rem; background:var(--surface); }
+.activity-library-progress h2 { margin:0 0 .5rem; font:700 1.45rem/1.2 Georgia,'Times New Roman',serif; letter-spacing:-.015em; }
+.activity-library-progress h3 { margin:1rem 0 .35rem; color:var(--soft); font-size:.8rem; font-weight:700; }
+.activity-library-progress p { margin:0; line-height:1.45; }
+.activity-library-progress ul { display:grid; gap:.45rem; margin:0; padding:0; list-style:none; overflow-wrap:anywhere; line-height:1.45; }
+.activity-library-progress > p[role='status'] { color:var(--soft); }
+.activity-library-progress [role='alert'] button { margin-top:.5rem; }
+.activity-library-progress-libraries strong { display:block; }
+.activity-library-progress-libraries .library-progress-line { color:var(--soft); font-size:.9rem; }
+.activity-library-progress-groups { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,22rem),1fr)); column-gap:2.5rem; }
+.activity-library-progress .activity-library-progress-fields { grid-template-columns:repeat(auto-fill,minmax(min(100%,13rem),1fr)); column-gap:2.5rem; }
+.activity-library-progress-fields li { display:flex; justify-content:space-between; gap:1rem; font-weight:700; }
+.activity-library-progress-fields li > .count-pair { color:var(--soft); font-weight:400; white-space:nowrap; }
+.library-progress-line a .count-pair { display:inline; }
+.preparation-summary-box { margin:0 0 1rem; }
+.preparation-summary-box > .preparation-summary { margin:0; }
+/* With its line, the run's box is one frame: the row, a rule, then the line
+   and Open in Activity on its own line. */
+.preparation-summary-box:has(> .preparation-summary-progress) { border:1px solid var(--line-strong); border-radius:.65rem; background:var(--surface); }
+.preparation-summary-box:has(> .preparation-summary-progress) > .preparation-summary { border:0; border-bottom:1px solid var(--line-strong); border-radius:calc(.65rem - 1px) calc(.65rem - 1px) 0 0; }
+.preparation-summary-progress { margin:0; padding:.65rem .72rem .75rem; font-size:.875rem; line-height:1.5; overflow-wrap:anywhere; }
+.preparation-summary-progress > a, .preparation-summary-progress > button { display:block; width:fit-content; margin-top:.4rem; }
+@media (max-width:760px) {
+  .activity-library-progress h2 { font-size:1.25rem; }
+  .cm-activity-route > .activity-library-progress { padding:.9rem; }
+}

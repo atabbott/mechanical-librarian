@@ -407,6 +407,8 @@ def test_browse_generation_closes_with_owner_and_refuses_later_reads(
     assert closed == ["root"]
     with pytest.raises(ReviewApplicationError, match="unavailable"):
         fixture.application.library(lens="all", search=None, limit=5, cursor=None)
+    with pytest.raises(ReviewApplicationError, match="unavailable"):
+        fixture.application.library_progress()
 
 
 def test_mixed_complete_fixture_runs_real_preparation_and_preserves_owner_final(

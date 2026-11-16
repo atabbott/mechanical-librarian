@@ -127,6 +127,11 @@ brackets are GitHub issues.
   icons. Its popover lists source lookups waiting to retry, with Retry now and
   what it did. Library and Settings show a notice only when a source needs you:
   nothing will retry it until you act, or it has waited 24 hours (#1494).
+- A finished run's box in Library says where the whole library stands, such as
+  "1,840 of 2,026 works settled · 174 need you", each count linked to its
+  lens, until you dismiss the run. Activity has a Library progress card with
+  the same counts per library and the works that need you per field. Counts of
+  works group their digits (#1335).
 
 ## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
 

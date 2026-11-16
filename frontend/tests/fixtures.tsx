@@ -15,6 +15,7 @@ import type {
   CaseDetailView,
   CoverTab,
   DecisionAcknowledgementView,
+  LibraryProgressView,
   LibraryView,
   PolicyStateView,
   PreparationView,
@@ -95,6 +96,20 @@ export const library: LibraryView = {
       preparationOutcomes: [],
     },
   ],
+}
+
+// Library progress over the same one work as `library` (#1335).
+export const libraryProgress: LibraryProgressView = {
+  totals: library.counts,
+  libraries: [
+    {
+      connection: 'primary',
+      library: 'books',
+      libraryDisplayName: 'Books',
+      counts: library.counts,
+    },
+  ],
+  fields: [{ destination: 'title', needYou: 1 }],
 }
 
 export const detail: CaseDetailView = {
@@ -373,6 +388,7 @@ export const createHttp = (): ReviewHttp => ({
     throw new Error('not configured')
   }),
   getLibrary: vi.fn(async () => library),
+  getLibraryProgress: vi.fn(async () => libraryProgress),
   getAttention: vi.fn(async () => ({ total: 0, items: [] })),
   getCovers: vi.fn(async (view: CoverTab) => ({
     counts: { decide: 0, kept: 0, switched: 0, all: 0 },

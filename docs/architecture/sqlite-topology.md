@@ -356,6 +356,11 @@ deferred transaction, so a page's rows and totals come from one filtered
 relation. Visible rows are projected after that transaction ends, still
 inside admission.
 
+Library progress, the counts behind Activity's Library progress card, reads
+two grouped statements in one such transaction: works per library over the
+Library page's own candidate relation, and fields needing the owner per
+library over Attention's own count. Nothing it answers is stored.
+
 Browse documents and cover currentness are reused only for the exact bytes
 they were validated from; the limits are in
 [Read caches](security.md#read-caches).

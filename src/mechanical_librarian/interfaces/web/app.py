@@ -1837,6 +1837,31 @@ class _LibraryResponse(_ClosedModel):
     schema_version: ReviewLibrarySchemaVersion
 
 
+class _LibraryProgressLibrary(_ClosedModel):
+    connection: str = Field(max_length=512)
+    counts: _ReviewCounts
+    library: str = Field(max_length=512)
+    library_display_name: str = Field(max_length=512)
+
+
+class _LibraryProgressField(_ClosedModel):
+    destination: _TargetDestination
+    # The works whose field Attention lists; a field with none is left out.
+    need_you: int = Field(ge=1)
+
+
+class _LibraryProgressResponse(_ClosedModel):
+    """Library's counts in total and per library, and Attention's fields (#1335).
+
+    Computed from current state on each request; `totals` equals the `counts`
+    `GET /api/v1/library` answers on the same state.
+    """
+
+    fields: list[_LibraryProgressField] = Field(max_length=16)
+    libraries: list[_LibraryProgressLibrary] = Field(max_length=256)
+    totals: _ReviewCounts
+
+
 class _AttentionItem(_ClosedModel):
     authors: list[str]
     classification_reason: str
@@ -5151,6 +5176,27 @@ def _register_browse_and_preparation_routes(
         )
 
     @app.get(
+        "/api/v1/library/progress",
+        response_model=_LibraryProgressResponse,
+        responses={status: {"model": _ErrorResponse} for status in (401, 503)},
+    )
+    async def library_progress(
+        request: Request,
+        ml_session: str | None = Security(session_cookie),
+    ) -> _LibraryProgressResponse | Response:
+        """Read-only: Library's works settled and needing the owner (#1335)."""
+
+        def read(check_active: Callable[[], None]) -> _LibraryProgressResponse:
+            _require_session(sessions, ml_session)
+            return _LibraryProgressResponse.model_validate(
+                _query_call(
+                    lambda: application.library_progress(check_active=check_active)
+                )
+            )
+
+        return await _browse_response(request, read)
+
+    @app.get(
         "/api/v1/attention",
         response_model=_AttentionResponse,
         responses={
@@ -5942,7 +5988,9 @@ def _case_call(call: Callable[[], _Result]) -> _Result:
 def _query_call(call: Callable[[], _Result]) -> _Result:
     try:
         return call()
-    except ReviewWebError as error:
+    # A closing application refuses admission with the application's error, so
+    # it answers 503 as a storage fault does rather than escaping as a 500.
+    except (ReviewWebError, ReviewApplicationError) as error:
         status = 400 if error.code == "request" else 503
         raise HTTPException(status, detail={"code": error.code}) from None
 
