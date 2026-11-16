@@ -15,7 +15,9 @@ const systemMedia = () => {
 const paintedTheme = () => savedTheme() ?? (systemMedia()?.matches ? 'dark' : 'light')
 const themeChoice = (): ThemeChoice => savedTheme() ?? 'system'
 
-const listeners = new Set<() => void>()
+// A choice made in one control reaches the others as a window event, so the
+// browser holds the subscriptions and this module keeps no state of its own.
+const CHOSEN = 'ml:theme-chosen'
 const apply = () => {
   const theme = paintedTheme()
   document.documentElement.dataset.theme = theme
@@ -27,12 +29,12 @@ const subscribe = (listener: () => void) => {
     apply()
     listener()
   }
-  listeners.add(listener)
   apply()
   media?.addEventListener('change', follow)
+  window.addEventListener(CHOSEN, follow)
   return () => {
-    listeners.delete(listener)
     media?.removeEventListener('change', follow)
+    window.removeEventListener(CHOSEN, follow)
   }
 }
 
@@ -44,9 +46,7 @@ export const chooseTheme = (choice: ThemeChoice) => {
       ? `ml_theme=; Path=/; Max-Age=0; SameSite=Strict${secure}`
       : `ml_theme=${choice}; Path=/; Max-Age=31536000; SameSite=Strict${secure}`
   apply()
-  listeners.forEach((listener) => {
-    listener()
-  })
+  window.dispatchEvent(new Event(CHOSEN))
 }
 
 /** The theme on the page now. */
