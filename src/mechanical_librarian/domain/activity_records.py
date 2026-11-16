@@ -29,6 +29,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
     TargetSeries,
 )
+from mechanical_librarian.domain.owner_settings import provider_label
 from mechanical_librarian.domain.proposal_set import canonical_target_fields
 from mechanical_librarian.domain.readable_activity import (
     ABSENT,
@@ -40,6 +41,7 @@ from mechanical_librarian.domain.readable_activity import (
     failure_reason,
     field_phrase,
     keep_change,
+    plain_text,
     policy_option_label,
     policy_setting_label,
     set_change,
@@ -86,6 +88,9 @@ class ActivityResult(StrEnum):
     REPLACED = "Replaced"
     STOPPED = "Stopped"
     RECORDED = "Recorded"
+    LINKED = "Linked"
+    LINK_CHANGED = "Link changed"
+    LINK_WITHDRAWN = "Link withdrawn"
 
 
 # The write lifecycle states that are still moving or already closed without
@@ -136,6 +141,16 @@ _RESULT_LABELS = {
     "stale": ActivityResult.CLOSED,
     "superseded": ActivityResult.REPLACED,
     "abandoned": ActivityResult.STOPPED,
+    "linked": ActivityResult.LINKED,
+    "link_changed": ActivityResult.LINK_CHANGED,
+    "link_withdrawn": ActivityResult.LINK_WITHDRAWN,
+}
+
+# How a book link names what it linked (#1477): the fact, and the clause.
+_LINKED_AS = {
+    "work": ("This book", "as this book"),
+    "edition": ("This edition", "as this edition"),
+    "recording": ("This recording", "as this recording"),
 }
 
 
@@ -536,6 +551,41 @@ def _cover_facts(state: str) -> tuple[ReadableChange, list[dict[str, str]]]:
     ]
 
 
+def _owner_link_facts(
+    record: dict[str, object], state: str, work: str
+) -> tuple[ReadableChange, list[dict[str, str]]]:
+    """A book link made, changed or withdrawn, in the owner's words (S31)."""
+    title = plain_text(str(record.get("title", ""))) or ABSENT
+    source = provider_label(cast("str | None", record.get("provider")))
+    if state == "link_withdrawn":
+        return ReadableChange(
+            f"Withdrew the link to {title}",
+            f"Withdrew the link from {work} to {title} on {source}.",
+        ), [
+            {"label": "Source", "value": source},
+            {
+                "label": "What happens next",
+                "value": "This work is prepared again without the link. "
+                "Nothing is written until you choose a value in Library.",
+            },
+        ]
+    linked_as, clause = _LINKED_AS.get(
+        cast(str, record.get("scope")), ("Not recorded", "as recorded")
+    )
+    return ReadableChange(
+        f"Linked to {title} on {source}",
+        f"Linked {work} to {title} on {source}, {clause}.",
+    ), [
+        {"label": "Source", "value": source},
+        {"label": "Linked as", "value": linked_as},
+        {
+            "label": "What happens next",
+            "value": "This work is prepared again with the link. "
+            "Nothing is written until you choose a value in Library.",
+        },
+    ]
+
+
 def readable_activity_event(
     event: dict[str, object], report: MetadataReport | None
 ) -> None:
@@ -638,6 +688,10 @@ def readable_activity_event(
             },
         ]
         event["policy_changes"] = changes
+    elif source_kind == "owner_link":
+        change, facts = _owner_link_facts(
+            record, state, str(event.get("work_label", "Recorded work"))
+        )
     elif source_kind == "degraded":
         degraded_reason = cast(str, record.get("degraded_reason", ""))
         unavailable = {

@@ -167,6 +167,7 @@ from mechanical_librarian.domain.metadata_report import (
     ReportValueError,
     TargetDestination,
 )
+from mechanical_librarian.domain.owner_link import OWNER_LINK_PROVIDERS
 from mechanical_librarian.domain.owner_settings import (
     provider_label,
     provider_source_labels,
@@ -543,6 +544,7 @@ _ACTIVITY_SOURCE_KINDS = frozenset(
         "isbn_refusal",
         "cover_safeguard",
         "policy_transition",
+        "owner_link",
     }
 )
 
@@ -1038,6 +1040,33 @@ def _policy_transition_arm(scope: _ActivityArmScope, scalar: dict[str, str]) -> 
               FROM metadata_policy_transitions transition{scope("policy_transition", "transition.transition_id", "WHERE")}"""
 
 
+def _owner_link_arm(scope: _ActivityArmScope, scalar: dict[str, str]) -> str:
+    """Every book link the owner made, changed or withdrew (#1477, S31).
+
+    The work is named by its latest report, the one a new report for the
+    item replaces (`item_report` in the fact witness); with none, the row
+    names no report and reads as a recorded work. A withdrawal names the
+    link it withdrew. #1478 adds its file-import exclusion here.
+    """
+    return f"""
+            SELECT link.link_row_id,
+                   CASE WHEN report.report_id IS NULL THEN NULL ELSE link.connection_name END,
+                   'book_link', link.library_name, link.occurred_at, 'human', report.report_id,
+                   CASE link.action WHEN 'link' THEN 'linked' WHEN 'replace' THEN 'link_changed' ELSE 'link_withdrawn' END,
+                   link.item_id,
+                   json_object('action',link.action,'scope',COALESCE(link.scope,prior.scope),'provider',COALESCE(link.provider,prior.provider),'title',COALESCE(link.display_title,prior.display_title)),
+                   'review', NULL, NULL, 'owner_link', NULL, NULL, NULL, link.link_row_id, NULL, NULL, 1, 0, 0
+              FROM owner_links link
+         LEFT JOIN owner_links prior ON link.action='withdraw'
+               AND prior.connection_name=link.connection_name AND prior.library_name=link.library_name
+               AND prior.item_id=link.item_id AND prior.sequence=link.sequence-1
+         LEFT JOIN metadata_reports report ON report.rowid=(
+                   SELECT MAX(latest.rowid) FROM metadata_reports latest
+                    WHERE latest.connection_name=link.connection_name
+                      AND latest.library_name=link.library_name
+                      AND latest.item_id=link.item_id){scope("owner_link", "link.link_row_id", "WHERE")}"""
+
+
 def _isbn_refusal_arm(scoped: bool, title: str) -> str:
     """Every ISBN the policy refused, one row per outcome set."""
     # Concatenation reads a BLOB identifier as text, so a BLOB row stays
@@ -1075,6 +1104,7 @@ _ACTIVITY_ARMS: tuple[Callable[[_ActivityArmScope, dict[str, str]], str], ...] =
     _field_effect_no_change_arm,
     _cover_safeguard_arm,
     _policy_transition_arm,
+    _owner_link_arm,
 )
 
 
@@ -3038,6 +3068,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             "isbn_refusal": self._project_isbn_refusal,
             "cover_safeguard": self._project_cover_safeguard,
             "policy_transition": self._project_policy_transition,
+            "owner_link": self._project_owner_link,
         }
         projected_events: list[dict[str, object]] = []
         for values in rows:
@@ -3811,6 +3842,33 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         durable["policy_changes"] = _policy_changes(
             dependencies.policy_profiles, row.policy_from, row.policy_to
         )
+        return _finished_activity_event(row, durable)
+
+    def _project_owner_link(
+        self, row: _ActivityRow, dependencies: _ActivityDependencies
+    ) -> dict[str, object]:
+        """One book link row: what was linked, from which source, as what."""
+        raw = row.raw
+        state = {
+            "link": "linked",
+            "replace": "link_changed",
+            "withdraw": "link_withdrawn",
+        }.get(str(raw.get("action")))
+        title = raw.get("title")
+        if (
+            set(raw) != {"action", "provider", "scope", "title"}
+            or state is None
+            or state != row.state
+            or row.source_document is not None
+            or row.event_id != row.source_identity
+            or raw.get("scope") not in {"work", "edition", "recording"}
+            or raw.get("provider") not in OWNER_LINK_PROVIDERS
+            or type(title) is not str
+            or not 1 <= len(title) <= 512
+        ):
+            raise FieldEffectError("persistence")
+        durable = _shared_activity_record(row, dependencies.authored_records)
+        durable.update(provider=raw["provider"], scope=raw["scope"], title=title)
         return _finished_activity_event(row, durable)
 
     @local_operation

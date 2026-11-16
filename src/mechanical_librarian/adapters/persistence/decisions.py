@@ -39,6 +39,11 @@ from mechanical_librarian.adapters.persistence.level_reconciliation import (
     stored_level_offer_documents,
     target_level,
 )
+from mechanical_librarian.adapters.persistence.owner_links import (
+    OwnerLinkItem,
+    owner_link_bound,
+    owner_link_rows,
+)
 from mechanical_librarian.adapters.persistence.review_preparation import (
     request_matching_check,
 )
@@ -88,6 +93,7 @@ from mechanical_librarian.domain.human_decision import (
     chosen_value_fingerprint,
     pinned_field_fingerprint,
 )
+from mechanical_librarian.domain.owner_link import OwnerLinkAction
 from mechanical_librarian.domain.review_case import (
     ReviewCase,
     ReviewCaseValueError,
@@ -246,6 +252,14 @@ def _automatic_decision_documents(
         return tuple(documents)
     except (sqlite3.Error, AutomaticDecisionError, TypeError) as error:
         raise MetadataReportError("automatic decision is unavailable") from error
+
+
+# History's word for each link row (owner-link-history-event-v1).
+_OWNER_LINK_HISTORY_KINDS = {
+    OwnerLinkAction.LINK: "linked",
+    OwnerLinkAction.REPLACE: "link_changed",
+    OwnerLinkAction.WITHDRAW: "link_withdrawn",
+}
 
 
 class _UnreconciledCase(Exception):
@@ -659,6 +673,10 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 raise HumanDecisionError("stale")
             case = ReviewCase.create_from_data(case_envelope["case"])
             target = case.target
+            # The book link changed since this case's report was prepared
+            # (#1477 Q6, L9): every owner write binding the report waits for it.
+            if not owner_link_bound(self._connection, case.review_case_id):
+                raise HumanDecisionError("link_changed")
             if case_level_unreconciled(self._connection, case.review_case_id):
                 raise _UnreconciledCase
             offer = self._require_current_offer(case)
@@ -1056,7 +1074,11 @@ class SQLiteDecisionRepository(ConnectionScoped):
         transaction = self._transaction("require_reconciled_case")
         try:
             transaction.begin()
-            unreconciled = case_level_unreconciled(self._connection, review_case_id)
+            # A changed book link answers before the matching check (L9).
+            bound = owner_link_bound(self._connection, review_case_id)
+            unreconciled = bound and case_level_unreconciled(
+                self._connection, review_case_id
+            )
             if unreconciled:
                 request_matching_check(
                     self._connection,
@@ -1071,6 +1093,8 @@ class SQLiteDecisionRepository(ConnectionScoped):
         except sqlite3.Error as error:
             transaction.rollback()
             raise MetadataReportError("human decision persistence failed") from error
+        if not bound:
+            raise HumanDecisionError("link_changed")
         if unreconciled:
             raise HumanDecisionError("offer_changed", "unreconciled_case")
 
@@ -1664,6 +1688,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                     )
                 )
             events.extend(self._description_advice_history(review_case_id, limit))
+            events.extend(self._owner_link_history(review_case_id, limit))
             ordered_events = [value for _, _, _, value in sorted(events, reverse=True)]
             return tuple((ordered_events + transitions)[:limit])
         except (
@@ -1674,6 +1699,53 @@ class SQLiteDecisionRepository(ConnectionScoped):
             ShadowOutcomeError,
         ) as error:
             raise MetadataReportError("review history is unavailable") from error
+
+    def _owner_link_history(
+        self, review_case_id: str, limit: int
+    ) -> list[tuple[int, int, str, dict[str, object]]]:
+        """History's book link events for the case's work (#1477, S31).
+
+        Every link row of the work, newest first; a withdrawal names the
+        link it withdrew. A row outside its grammar fails the read closed.
+        """
+        item = self._connection.execute(
+            "SELECT report.connection_name,report.library_name,report.item_id "
+            "FROM review_cases review JOIN metadata_reports report "
+            "ON report.report_id=review.report_id WHERE review.review_case_id=?",
+            (review_case_id,),
+        ).fetchone()
+        if item is None:
+            return []
+        rows = owner_link_rows(self._connection, OwnerLinkItem(*item))
+        events: list[tuple[int, int, str, dict[str, object]]] = []
+        for row in rows[-limit:]:
+            target = (
+                row.target
+                if row.target is not None
+                else rows[row.sequence - 2].target
+                if row.sequence > 1
+                else None
+            )
+            if target is None:
+                raise MetadataReportError("review history is invalid")
+            events.append(
+                (
+                    row.occurred_at,
+                    row.sequence,
+                    "link:" + row.link_row_id,
+                    {
+                        "kind": _OWNER_LINK_HISTORY_KINDS[row.action],
+                        "link_row_id": row.link_row_id,
+                        "occurred_at": row.occurred_at,
+                        "provider": target.provider,
+                        "review_case_id": review_case_id,
+                        "schema_version": "owner-link-history-event-v1",
+                        "scope": target.scope.value,
+                        "title": target.display_title,
+                    },
+                )
+            )
+        return events
 
     def _human_decision_history_event(
         self, review_case_id: str, row: Any

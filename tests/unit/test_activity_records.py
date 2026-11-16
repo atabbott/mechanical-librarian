@@ -137,6 +137,9 @@ def _facts(event: dict[str, object]) -> dict[str, str]:
         ("stale", "Closed"),
         ("superseded", "Replaced"),
         ("abandoned", "Stopped"),
+        ("linked", "Linked"),
+        ("link_changed", "Link changed"),
+        ("link_withdrawn", "Link withdrawn"),
         ("unrecognized durable state", "Recorded"),
     ),
 )
@@ -1409,3 +1412,95 @@ def test_every_fact_fits_the_evidence_bound_for_a_maximum_length_value() -> None
     assert oversized == []
     verified = _facts(projected[3])
     assert verified["Confirmed in Audiobookshelf"] == "Matches the new value"
+
+
+# --- the owner's book link (#1477, S31) ---------------------------------------
+
+
+def _link_record(state: str, **record: object) -> dict[str, object]:
+    return _project(
+        _event(
+            destination="book_link",
+            state=state,
+            work_label="The Silent Orchard",
+            record={
+                "source_kind": "owner_link",
+                "provider": "open_library",
+                "scope": "edition",
+                "title": "The Silent Orchard: Second Edition",
+                **record,
+            },
+        ),
+        None,
+    )
+
+
+@pytest.mark.parametrize(
+    ("state", "scope", "linked_as"),
+    [
+        ("linked", "work", "This book"),
+        ("link_changed", "edition", "This edition"),
+        ("linked", "recording", "This recording"),
+    ],
+    ids=["linked-work", "changed-edition", "linked-recording"],
+)
+def test_a_book_link_names_its_record_source_and_what_follows(
+    state: str, scope: str, linked_as: str
+) -> None:
+    event = _link_record(state, scope=scope)
+    assert event["field_label"] == "Book link"
+    assert event["change"] == (
+        "Linked to The Silent Orchard: Second Edition on Open Library"
+    )
+    assert event["change_detail"] == (
+        "Linked The Silent Orchard to The Silent Orchard: Second Edition on "
+        f"Open Library, {linked_as.replace('This', 'as this')}."
+    )
+    assert _facts(event) == {
+        "Source": "Open Library",
+        "Linked as": linked_as,
+        "What happens next": "This work is prepared again with the link. "
+        "Nothing is written until you choose a value in Library.",
+    }
+    assert (
+        activity_result_label(state).value
+        == {
+            "linked": "Linked",
+            "link_changed": "Link changed",
+        }[state]
+    )
+
+
+def test_a_withdrawn_link_names_the_link_it_ended() -> None:
+    event = _link_record("link_withdrawn")
+    assert event["change"] == (
+        "Withdrew the link to The Silent Orchard: Second Edition"
+    )
+    assert event["change_detail"] == (
+        "Withdrew the link from The Silent Orchard to The Silent Orchard: "
+        "Second Edition on Open Library."
+    )
+    assert _facts(event) == {
+        "Source": "Open Library",
+        "What happens next": "This work is prepared again without the link. "
+        "Nothing is written until you choose a value in Library.",
+    }
+
+
+def test_a_link_row_without_a_work_label_reads_as_the_recorded_work() -> None:
+    event = _project(
+        _event(
+            destination="book_link",
+            state="linked",
+            record={
+                "source_kind": "owner_link",
+                "provider": "hardcover",
+                "scope": "work",
+                "title": "A Title",
+            },
+        ),
+        None,
+    )
+    assert event["change_detail"] == (
+        "Linked Recorded work to A Title on Hardcover, as this book."
+    )

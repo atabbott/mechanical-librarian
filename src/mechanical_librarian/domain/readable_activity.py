@@ -72,6 +72,8 @@ ISBN_REFUSAL_REASONS = {
 _DESTINATION_LABELS = {
     "asin": "ASIN",
     "authors": "Authors",
+    # A work's book link (#1477), the Activity pseudo-destination.
+    "book_link": "Book link",
     "cover": "Cover",
     "description": "Description",
     "explicit": "Explicit content",

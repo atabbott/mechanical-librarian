@@ -1306,7 +1306,9 @@ def test_every_incrementally_witnessed_table_carries_both_refusal_triggers(
                 "SELECT sql FROM sqlite_schema WHERE type='table' AND name=?", (table,)
             ).fetchone()[0]
             # A declared ON CONFLICT REPLACE would make a plain INSERT delete.
-            assert "REPLACE" not in ddl.upper()
+            # String literals are values, not clauses: `owner_links` names its
+            # 'replace' action in a CHECK.
+            assert "REPLACE" not in re.sub(r"'[^']*'", "''", ddl).upper()
             assert "WITHOUT ROWID" not in ddl.upper()
     finally:
         repository.close()
