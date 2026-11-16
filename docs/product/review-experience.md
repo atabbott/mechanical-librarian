@@ -35,9 +35,8 @@ you never holds back a field that is ready on the same item. Rejected
 alternatives and those that change nothing stay on record, and Mechanical
 Librarian never writes them.
 
-An ebook and its audiobook are separate works with separate cases. Deciding
-one never changes the other. Mechanical Librarian never treats two works as
-the same work because their titles are similar.
+An ebook and its audiobook are separate works with separate cases. Deciding one
+never changes the other.
 
 Mechanical Librarian keeps these apart: the evidence, the recommendation, what
 your policy does with the field, your decision, write permission, and the
@@ -50,11 +49,10 @@ unchanged evidence and library values. Before the write, Mechanical Librarian
 checks that its own database is consistent, and afterwards it reads the value
 back ([ADR-0037](../architecture/decisions/0037-origin-neutral-guarded-field-effects.md)).
 
-For each field you can keep the current value or choose an eligible proposed
-value. You can enter a value where none fits, or withdraw a decision that has
-not been written. You can choose again a value that a write replaced, or leave
-the field undecided. Blocked is a state, not a decision. Source outages and
-retries show as preparation status, never as a metadata choice.
+For each field you can keep the current value, choose an eligible proposed
+value or leave it undecided ([Deciding a field](#deciding-a-field)). Blocked is
+a state, not a decision. Source outages and retries show as preparation status,
+never as a metadata choice.
 
 ## First run
 
@@ -277,8 +275,9 @@ Each tab names the field's status:
 
 - Needs you means the field is in Attention, including a field where Automatic
   made no choice.
-- Decided means your decision is recorded, or an earlier decision of yours
-  still holds the field.
+- Decided means your decision is recorded or an earlier one still holds the
+  field.
+- Pinned means Audiobookshelf shows the value you pinned.
 - Automatic means Automatic decided the field. You can still change it, and it
   is not in Attention.
 - Optional means you can choose, but the field is not counted and the canvas
@@ -287,36 +286,35 @@ Each tab names the field's status:
 - No change means the field is there for reference. Keeping the current value
   is a choice only beside another eligible value or description advice. Each
   such field shows its value and a reason, never a selectable `Not set`. In
-  Preview, a field Automatic chose before Preview mode reads No change. It
-  shows that choice beside the current value and says turning on Automatic
-  decides it again.
+  Preview, a field Automatic chose earlier reads No change, shows that choice
+  and says turning on Automatic decides it again.
 
-Fields that are empty and have no proposal sit behind one `Show N more fields`
-tab. Fields with nothing to decide sit in one closed panel headed `No change:`
-and their names. The heading counts any field waiting or unavailable
-separately, and each row gives its value and why nothing changed.
+Empty fields with no proposal sit behind one `Show N more fields` tab, and
+fields with nothing to decide in one closed panel headed `No change:` and their
+names. The heading counts any field waiting or unavailable separately, and each
+row gives its value and why nothing changed.
 
 The canvas shows the question, one line under it with the field's own reason,
-and its choices under Keep current value and Choose a new value: one panel,
-or two boxes on a phone. The current value's card shows only its value. A
-proposed card shows its value and, when known, its sources. Each card's Evidence control sits directly under its
-value. `Recommended` and its reason appear only on the value your settings
-choose, and the canvas says nothing when they choose none. Other source values
-appear only when the field has some or they could not be read. The Writing to
-the library box appears only when a change for the field is recorded. A notice
-never restates the reason already shown, and a decision carries no reminder
-that writes are protected. A disclosure never chooses a value.
+and its choices under Keep current value and Choose a new value: one panel, or
+two boxes on a phone. A proposed card adds its sources when known. Each card's
+foot holds its Evidence control and its pin. `Recommended` and its reason
+appear only on the value your settings choose, and the canvas says nothing when
+they choose none. Other source values appear only when the field has some or
+they could not be read. The Writing to the library box appears only when a
+change for the field is recorded. A notice never restates the reason already
+shown, and a decision carries no reminder that writes are protected. A
+disclosure never chooses a value.
 
 At a wider [Book matching](../reference/configuration.md#book-matching) value,
 a field needing you may offer "same title and author" values; History says
 when it asked again.
 
 When a field set to Automatic gets no automatic choice, the canvas says why
-until the cause goes. An unknown reason reads as unknown. A hold from an
-earlier case says an earlier decision keeps Automatic off for the field. Until
-requested fresh checks finish, the field says they were requested, also after
-a reload. If no answer confirms the request, Library reloads the case and says
-whether it shows the request.
+until the cause goes. An unknown reason reads as unknown. A hold says an
+earlier decision keeps Automatic off for the field. Until requested fresh
+checks finish, the field says they were requested, also after a reload. If no
+answer confirms the request, Library reloads the case and says whether it shows
+the request.
 
 ### Choosing
 
@@ -325,10 +323,10 @@ one Tab stop and no submit step. Arrow keys move without recording. Space,
 Enter or a tap records the choice once and moves to the next field. The choice
 you recorded says "Your choice".
 
-The canvas moves on only after the server accepts the decision and a fresh
-read of the case confirms it. Counts catch up afterwards. Recording a choice
-does not write it. When every field is recorded, the work lists each field
-and its outcome and offers Review next work.
+The canvas moves on only once a fresh read of the case confirms the decision.
+Counts catch up afterwards. Recording a choice does not write it. When every
+field is recorded, the work lists each field and its outcome and offers Review
+next work.
 
 If a choice could not be confirmed, the page keeps it, and Try the same
 decision again sends it once more, never recording it twice. Mechanical
@@ -346,17 +344,25 @@ Recording, or choosing Withdraw on an unwritten decision, keeps focus on the
 field
 ([ADR-0085](../architecture/decisions/0085-owner-entered-values-withdrawal-and-reselection.md)).
 
-When you return to a recorded field, its choices come back with the recorded
-one marked, and a new choice adds a decision. You cannot replace a decision
-while its write is in progress, or once a cover write is verified. You can
-replace a verified field write that can be reversed.
+A recorded field keeps its choices, and a new choice adds a decision. You
+cannot replace a decision while its write is in progress, or once a cover write
+is verified. You can replace a verified field write that can be reversed.
 
 Library has no Undo and no bulk decisions. To go back, choose the earlier
 value. After a write, Enter a value suggests the value it replaced, as "Use
 previous value", and Choose genres marks those genres Previous. Authors return
 to an earlier value only when a source proposes it. A work whose content
-returns to an earlier state reads as new. Its earlier decisions are history,
-and the field shows only what you decide now.
+returns to an earlier state reads as new, and its earlier decisions are
+history.
+
+### Pinning a value
+
+Pressing a value's pin chooses that value and pins it, and the page stays on
+the field; if only the choice was recorded, the page says so. Pressing it
+again unpins. The pinned card says Pinned. When Audiobookshelf shows another
+value, the field needs you again and shows what you pinned, with Unpin. Covers
+and fields under `No change:` have no pin. A Library row counts its work's
+pinned fields ([pinned fields](automation-policy.md#pinned-fields)).
 
 ### Audiobooks
 

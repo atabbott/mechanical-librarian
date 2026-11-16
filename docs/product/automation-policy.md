@@ -56,6 +56,26 @@ handling, which the field offers once Automatic has a decision for it
 ([ADR-0085](../architecture/decisions/0085-owner-entered-values-withdrawal-and-reselection.md),
 Amendment 1). Withdrawing a decision removes the hold it set.
 
+### Pinned fields
+
+You can pin one field of one work at a value: the one the library has, an
+empty one, or one you have just chosen. A pin is an owner decision that writes
+nothing itself; a value you chose is still written as usual. While the library
+shows the pinned value, the field stays out of Attention whatever its setting
+or reason, Automatic decides nothing for it (a title and subtitle split counts
+as one), description advice adds nothing, Book matching does not ask it again
+and the field's hold blocks every write. If a later read shows another
+value, the field returns to Attention with the pinned value beside it, and
+Automatic still decides nothing; pinning the new value or Unpin settles it.
+Unpin removes the pin but keeps the hold, so Automatic stays off until Resume
+automatic handling. Choosing another value ends the pin. A field offers no pin
+while a change that is not your own standing answer waits to be written, after
+Resume automatic handling until you choose again, on a description while your
+choice of the adviser's text stands, where the library's value could not be
+read, and on covers
+([ADR-0085](../architecture/decisions/0085-owner-entered-values-withdrawal-and-reselection.md),
+Amendment 2).
+
 ### Built-in policy
 
 Each field's default option is marked (default) in
@@ -556,6 +576,7 @@ Attention holds only what you can improve:
 - a high-impact change that destroys nothing but is outside what Automatic may
   do
 - a destructive action that needs your permission
+- a pinned field whose value changed in Audiobookshelf
 
 Operational failures appear in health and job views, not Attention. Automatic
 rejections and title cleanup are closed but searchable. How fields are
