@@ -1420,8 +1420,10 @@ class SQLiteProviderRecoveryStore:
         in a quota wait never counts. An event that repeats the health before it
         (a report publication naming its outcome) changes nothing: it neither
         starts the wait nor, naming an earlier quota outcome, counts as a quota
-        deferral. It is ``None`` while that quota wait lasts. This is one read under the store
-        lock and never begins a transaction.
+        deferral. It is ``None`` while that quota wait lasts. A run of events
+        repeating one health is crossed by one range scan, with no lookup per
+        event. This is one read under the store lock and never begins a
+        transaction.
         """
         try:
             with self._lock:
@@ -1435,29 +1437,42 @@ class SQLiteProviderRecoveryStore:
                     "(SELECT count(*) FROM provider_recovery_jobs j WHERE j.connection=h.connection "
                     "AND j.adapter=h.adapter AND j.scope=h.scope AND j.generation=h.generation "
                     "AND j.state IN ('queued','running')),("
-                    "SELECT e.occurred_at FROM provider_recovery_events e "
-                    "INDEXED BY provider_recovery_events_scope_latest "
-                    "WHERE e.connection=h.connection AND e.adapter=h.adapter AND e.scope=h.scope "
-                    "AND e.generation=h.generation AND e.job_attempt IS NULL AND e.sequence>coalesce(("
+                    # Each step takes the latest recovery or quota event below
+                    # the bound (f) and the first event of the unchanged run
+                    # that ends at it (r); a run begun by neither is stepped over.
+                    "WITH RECURSIVE walk(bound,floor,state,attempt,due,found) AS ("
+                    "SELECT 9223372036854775807,0,NULL,NULL,NULL,0 UNION ALL "
+                    "SELECT r.sequence,f.sequence,f.state,f.attempt,f.next_eligible_at,"
+                    "f.state='recovered' OR r.outcome IS 'quota_exhausted' "
+                    "FROM walk JOIN provider_recovery_events f ON f.sequence=("
                     "SELECT f.sequence FROM provider_recovery_events f "
                     "INDEXED BY provider_recovery_events_scope_latest "
                     "WHERE f.connection=h.connection AND f.adapter=h.adapter AND f.scope=h.scope "
                     "AND f.generation=h.generation AND f.job_attempt IS NULL "
+                    "AND f.sequence<walk.bound "
                     "AND (f.state='recovered' OR f.outcome='quota_exhausted') "
-                    "AND (f.state='recovered' OR (f.state,f.attempt,f.next_eligible_at) IS NOT ("
-                    "SELECT q.state,q.attempt,q.next_eligible_at FROM provider_recovery_events q "
+                    "ORDER BY f.sequence DESC LIMIT 1) "
+                    "JOIN provider_recovery_events r ON r.sequence=("
+                    "SELECT s.sequence FROM provider_recovery_events s "
                     "INDEXED BY provider_recovery_events_scope_latest "
-                    "WHERE q.connection=f.connection AND q.adapter=f.adapter AND q.scope=f.scope "
-                    "AND q.generation=f.generation AND q.job_attempt IS NULL "
-                    "AND q.sequence<f.sequence ORDER BY q.sequence DESC LIMIT 1)) "
-                    "ORDER BY f.sequence DESC LIMIT 1),0) "
-                    "AND (e.state,e.attempt,e.next_eligible_at) IS NOT (SELECT p.state,p.attempt,"
-                    "p.next_eligible_at FROM provider_recovery_events p "
+                    "WHERE s.connection=h.connection AND s.adapter=h.adapter AND s.scope=h.scope "
+                    "AND s.generation=h.generation AND s.job_attempt IS NULL AND s.sequence>coalesce(("
+                    "SELECT p.sequence FROM provider_recovery_events p "
                     "INDEXED BY provider_recovery_events_scope_latest "
-                    "WHERE p.connection=e.connection AND p.adapter=e.adapter AND p.scope=e.scope "
-                    "AND p.generation=e.generation AND p.job_attempt IS NULL "
-                    "AND p.sequence<e.sequence ORDER BY p.sequence DESC LIMIT 1) "
+                    "WHERE p.connection=h.connection AND p.adapter=h.adapter AND p.scope=h.scope "
+                    "AND p.generation=h.generation AND p.job_attempt IS NULL "
+                    "AND p.sequence<f.sequence AND (p.next_eligible_at IS NOT f.next_eligible_at "
+                    "OR p.state!=f.state OR p.attempt!=f.attempt) "
+                    "ORDER BY p.sequence DESC LIMIT 1),0) ORDER BY s.sequence ASC LIMIT 1) "
+                    "WHERE NOT walk.found) "
+                    "SELECT (SELECT e.occurred_at FROM provider_recovery_events e "
+                    "INDEXED BY provider_recovery_events_scope_latest "
+                    "WHERE e.connection=h.connection AND e.adapter=h.adapter AND e.scope=h.scope "
+                    "AND e.generation=h.generation AND e.job_attempt IS NULL "
+                    "AND e.sequence>coalesce(w.floor,0) AND (w.floor IS NULL "
+                    "OR (e.state,e.attempt,e.next_eligible_at) IS NOT (w.state,w.attempt,w.due)) "
                     "ORDER BY e.sequence ASC LIMIT 1) "
+                    "FROM (SELECT 1) LEFT JOIN walk w ON w.found) "
                     "FROM provider_recovery_health h "
                     "WHERE h.state!='recovered' ORDER BY h.scope,h.adapter,h.connection LIMIT 4096"
                 ).fetchall()

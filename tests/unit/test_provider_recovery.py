@@ -5887,6 +5887,16 @@ def _episode_events(shape: str, count: int) -> list[tuple[str, int | None, str |
             )
         elif shape == "no_outcome":
             events.append(("waiting", 9_999, None))
+        elif shape == "quota_wait":
+            events.append(("waiting", 9_999, "quota_exhausted"))
+        elif shape == "quota_published_late":
+            events.append(
+                ("waiting", 5_000, "quota_exhausted")
+                if n == 0
+                else ("checking", None, None)
+                if n == 1
+                else ("waiting", 9_999, None if n == 2 else "quota_exhausted")
+            )
         else:
             events.append(
                 ("recovered", None, None)
@@ -5988,6 +5998,39 @@ def test_throttling_read_walks_each_episode_through_its_index_at_bounded_cost(
         assert any(line.startswith("SEARCH e ") and index in line for line in plan)
         assert any(line.startswith("SEARCH f ") and index in line for line in plan)
         assert any(line.startswith("SEARCH p ") and index in line for line in plan)
+        assert _vm_steps(store._connection, statement) <= 2.1 * base_worst, shape
+        store.close()
+
+
+def test_throttling_read_stays_bounded_through_reports_published_in_a_quota_wait(
+    tmp_path: Path,
+) -> None:
+    """Each report that meets the quota writes two events repeating the health."""
+    real = SQLiteProviderRecoveryStore.open(tmp_path / "real.sqlite")
+    _fail(real, "quota_exhausted", 100, retry_after=_DAY)
+    for index in range(1, 4):
+        _fail(real, "quota_exhausted", 100 + index, retry_after=_DAY - index)
+        assert 1 == real.enqueue_jobs(
+            (_job(f"m{index}"),),
+            enqueued_at=100 + index,
+            outcomes={_job(f"m{index}"): "quota_exhausted"},
+        )
+    assert [("waiting", 0, 100 + _DAY, "quota_exhausted")] * 7 == (
+        real._connection.execute(
+            "SELECT state,attempt,next_eligible_at,outcome "
+            "FROM provider_recovery_events ORDER BY sequence"
+        ).fetchall()
+    )
+    assert [None] == _waiting_since(real)
+    real.close()
+    worst = _throttled_store(tmp_path / "worst.sqlite", "outcome_first_only")
+    base_worst = _vm_steps(worst._connection, _BASE_THROTTLING_READ)
+    worst.close()
+    # The same run at the gate's size, and one published into a later wait.
+    for shape, since in (("quota_wait", None), ("quota_published_late", 1)):
+        store = _throttled_store(tmp_path / f"{shape}.sqlite", shape)
+        assert [since] * 32 == _waiting_since(store)
+        statement = _throttling_statement(store)
         assert _vm_steps(store._connection, statement) <= 2.1 * base_worst, shape
         store.close()
 

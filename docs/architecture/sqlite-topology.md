@@ -477,7 +477,8 @@ claim's rollback snapshot is kept only in process; durable history is the
 source of truth after restart. Maintainer commands that only read it open it
 read-only. The throttling read behind the masthead walks each waiting scope's
 current episode of events, for its reason and for when its wait began, so it
-grows with how long a source has been waiting. How recovery runs is in
+grows with how long a source has been waiting and with how many reports met a
+daily quota during the wait. How recovery runs is in
 [Provider recovery](../operations/provider-recovery.md).
 
 ## Provider-response database
