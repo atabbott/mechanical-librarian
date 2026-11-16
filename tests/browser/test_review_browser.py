@@ -12945,6 +12945,12 @@ def test_owner_clears_the_genres_in_one_press():
         expect(clear).to_be_visible()
         expect(panel).not_to_contain_text("Clearing removes")
         _owner_layout_holds(page)
+        # The same layout holds in dark.
+        page.get_by_role("button", name="Dark mode").click()
+        expect(page.locator("html")).to_have_attribute("data-theme", "dark")
+        expect(page.locator("body")).to_have_css("background-color", "rgb(15, 21, 18)")
+        _owner_layout_holds(page)
+        page.get_by_role("button", name="Light mode").click()
         page.set_viewport_size({"width": 1440, "height": 900})
         with page.expect_request(
             lambda request: request.url.endswith("/decisions")
@@ -12971,6 +12977,54 @@ def test_owner_clears_the_genres_in_one_press():
         expect(entry).to_be_visible()
         expect(entry).to_contain_text("Cleared")
         expect(entry).not_to_contain_text("Unavailable")
+
+
+def test_owner_enters_names_one_per_line():
+    """#1523: authors take names one per line. Two names are recorded and said
+    in a count beside the pin; 33 show the count and are refused unsent."""
+    with _owner_page(genre_fixture=("Fantasy",), genre_current=("Drama",)) as (
+        page,
+        origin,
+        case_id,
+    ):
+        page.goto(f"{origin}/library?lens=all&preview={case_id}&field=authors")
+        panel = page.get_by_role("region", name="Your value for Authors")
+        panel.get_by_role("button", name="Enter names", exact=True).click()
+        box = panel.get_by_role("textbox", name="Your value for Authors")
+        expect(box).to_be_focused()
+        expect(box).to_have_value("Ada Example")
+        expect(panel.get_by_text("One name per line", exact=True)).to_be_visible()
+        sent: list[dict] = []
+        page.on(
+            "request",
+            lambda request: (
+                sent.append(json.loads(request.post_data or "{}"))
+                if request.method == "POST" and request.url.endswith("/decisions")
+                else None
+            ),
+        )
+        # 33 names: the count appears and Record refuses without sending.
+        box.fill("\n".join(f"Writer {index}" for index in range(33)))
+        expect(panel.get_by_text("33 of 32 names", exact=True)).to_be_visible()
+        panel.get_by_role("button", name="Record these names", exact=True).click()
+        expect(panel.get_by_role("alert")).to_have_text("Use up to 32 names.")
+        page.wait_for_timeout(300)
+        assert sent == []
+        box.fill("Ada Example\nBo Writer")
+        expect(panel.get_by_text("of 32 names")).to_have_count(0)
+        _owner_layout_holds(page)
+        page.set_viewport_size({"width": 1440, "height": 900})
+        panel.get_by_role("button", name="Record these names", exact=True).click()
+        recorded = panel.get_by_text("You entered 2 names.", exact=True)
+        expect(recorded).to_be_focused()
+        assert [(body["outcome"], body["selected_value"]) for body in sent] == [
+            ("owner_entered", {"kind": "list", "value": ["Ada Example", "Bo Writer"]})
+        ]
+        expect(
+            panel.locator(".owner-recorded-pin").get_by_role(
+                "button", name="Pin this value"
+            )
+        ).to_be_visible()
 
 
 def _field_tab(page: Page, name: str):
