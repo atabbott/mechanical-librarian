@@ -4439,6 +4439,57 @@ def _pins_keep_their_words_and_size(page: Page, where: str, width: int) -> None:
             for w, h, left, right in pins
         ), f"{state}: {pins}"
         assert page.evaluate("document.documentElement.scrollWidth") <= width, state
+    # The No change panel, opened on the last field shown: a row with an
+    # outline pin and a pinned row, each pin a whole target beside whole words
+    # and plain against the panel in either theme.
+    panel = page.locator(".automatic-resolution-details")
+    panel.locator("summary").click()
+    expect(panel.locator("summary")).to_contain_text("· 1 pinned")
+    expect(
+        panel.get_by_role("button", name="Pin this value", exact=True)
+    ).to_be_visible()
+    expect(panel.get_by_role("button", name="Unpin", exact=True)).to_be_visible()
+    page.evaluate(_TWO_FRAMES)
+    state = f"{where}, No change panel"
+    broken = page.evaluate(_POLICY_MID_WORD, ".automatic-resolution-details")
+    assert not broken, f"{state}: {broken}"
+    pins = page.evaluate(_PANEL_PINS)
+    assert len(pins) == 2, f"{state}: {pins}"
+    assert all(
+        round(w) >= 44 and round(h) >= 44 and left >= 0 and right <= width
+        for w, h, left, right, _ in pins
+    ), f"{state}: {pins}"
+    assert all(ratio >= 3 for *_, ratio in pins), f"{state}: {pins}"
+    assert page.evaluate("document.documentElement.scrollWidth") <= width, state
+
+
+# Each pin of the open No change panel: its box, and the contrast of its glyph
+# with the panel behind it.
+_PANEL_PINS = """() => {
+  const rgb = value => {
+    const probe = document.createElement('canvas').getContext('2d');
+    probe.fillStyle = value;
+    probe.fillRect(0, 0, 1, 1);
+    return [...probe.getImageData(0, 0, 1, 1).data].slice(0, 3);
+  };
+  const luminance = value => {
+    const [r, g, b] = rgb(value).map(part => {
+      const channel = part / 255;
+      return channel <= 0.03928
+        ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const panel = document.querySelector('.automatic-resolution-details');
+  const behind = luminance(getComputedStyle(panel).backgroundColor);
+  return [...panel.querySelectorAll('.choice-pin')].map(node => {
+    const box = node.getBoundingClientRect();
+    const glyph = luminance(getComputedStyle(node).color);
+    const [light, dark] = glyph > behind ? [glyph, behind] : [behind, glyph];
+    return [box.width, box.height, box.left, box.right,
+            (light + 0.05) / (dark + 0.05)];
+  });
+}"""
 
 
 def test_owner_controls_keep_every_word_whole_in_both_themes() -> None:

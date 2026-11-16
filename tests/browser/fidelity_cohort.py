@@ -688,7 +688,8 @@ def _case(case_id: str) -> dict[str, object]:
     if case_id == "case-pins":
         # One field for each state of an owner pin (#1346):
         # in force on a value with nothing to choose, waiting on the value the
-        # owner chose, and changed in the library with alternatives left.
+        # owner chose, and changed in the library with alternatives left; then
+        # the No change panel's two rows.
         offered = {"pin": "available", "unpin": True}
         long_title = "The Incomprehensibilities of Counterrevolutionary Cartographers"
         chosen = ["Mara Venn", "Ivo North", "Pax Rill"]
@@ -753,6 +754,40 @@ def _case(case_id: str) -> dict[str, object]:
                             "destination": "genres",
                             "state": "value",
                             "value": ["Alternate history"],
+                        },
+                    },
+                    pin_control=offered,
+                ),
+                # Two fields with nothing to decide, in the No change panel:
+                # one that can be pinned and one pinned there.
+                _field(
+                    "publisher",
+                    "Northlight Editions",
+                    [],
+                    needs_attention=False,
+                    classification="unsupported",
+                    classification_cause="nothing_to_decide",
+                    classification_reason="Nothing to decide for this field.",
+                    pin_control={"pin": "available", "unpin": False},
+                ),
+                _field(
+                    "language",
+                    "English",
+                    [],
+                    needs_attention=False,
+                    classification="human_recorded",
+                    classification_cause="pinned",
+                    classification_reason=(
+                        "You pinned this value. Mechanical Librarian will not ask "
+                        "about it or change it unless it changes in Audiobookshelf."
+                    ),
+                    inventory_role="contextual",
+                    pin={
+                        "state": "in_force",
+                        "value": {
+                            "destination": "language",
+                            "state": "value",
+                            "value": "English",
                         },
                     },
                     pin_control=offered,

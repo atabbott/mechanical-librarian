@@ -511,7 +511,7 @@ def _server(
     owner_write: bool = False,
     owner_recur: bool = False,
     owner_library_change: bool = False,
-    owner_readback: list[Callable[[str, bool], str]] | None = None,
+    owner_readback: list[Callable[..., str]] | None = None,
     language_fixture: tuple[str, ...] | None = None,
     language_current: str | None = None,
     language_audio: bool = False,
@@ -1916,12 +1916,12 @@ def _server(
         # The library edits the title while the page is open: read the work
         # back as its successor and announce Library, as a scan does, naming
         # the successor case or not.
-        def read_back(title: str, named: bool) -> str:
+        def read_back(title: str, named: bool, **others: str) -> str:
             current = ReviewCase.create_from_data(
                 json.loads(repository.get_review_case(case_id))["case"]
             )
             successor_id, _ = _read_back_title(
-                repository, report, current, genre_destination, title, 910
+                repository, report, current, genre_destination, title, 910, **others
             )
             app.state.review_application.updates.publish(
                 "library", successor_id if named else None
@@ -2200,10 +2200,17 @@ def _seed_owner_write(
 
 
 def _read_back_title(
-    repository, report, case: ReviewCase, destination: str, title: str, at: int
+    repository,
+    report,
+    case: ReviewCase,
+    destination: str,
+    title: str,
+    at: int,
+    **others: str,
 ):
-    """Publish the work as the library now reads it, with this title, under
-    the policy `publish_genre_case` activated, and admit its successor case."""
+    """Publish the work as the library now reads it, with this title and any
+    other field values named, under the policy `publish_genre_case` activated,
+    and admit its successor case."""
     from mechanical_librarian.domain.metadata_policy import (
         DEFAULT_OPTIONS,
         OPTION_CATALOGUE,
@@ -2213,7 +2220,7 @@ def _read_back_title(
     )
     from tests.support.owner_values import rewritten
 
-    successor = rewritten(report, title=title)
+    successor = rewritten(report, title=title, **others)
     repository.publish(successor, lambda: True, report.report_id)
     destinations = {
         name: "unsupported" if name == "explicit" else "ask"
@@ -12329,10 +12336,11 @@ def _pins_hold_their_size(page: Page) -> None:
 def test_owner_pins_values_and_sees_a_pin_the_library_changed():
     """#1346: one press of a card's pin records the value and then the pin and
     stays on the field; a pin on a current value is in force at once; the
-    Library row counts both and History names them; and when the library then
-    shows another value, the field says which value was pinned and offers
-    Unpin."""
-    readback: list[Callable[[str, bool], str]] = []
+    Library row counts both and History names them; a field with nothing to
+    decide is pinned from its row of the No change panel and stays there; and
+    when the library then shows another value, the field says which value was
+    pinned and offers Unpin, and the panel's field has a tab of its own."""
+    readback: list[Callable[..., str]] = []
     posts: list[str] = []
     with _owner_page(
         genre_fixture=("Fantasy",), genre_current=("Drama",), owner_readback=readback
@@ -12392,10 +12400,44 @@ def test_owner_pins_values_and_sees_a_pin_the_library_changed():
         page.goto(f"{origin}/review/{case_id}?field=title&subview=history")
         expect(page.get_by_text("You pinned this field.", exact=True)).to_have_count(2)
 
-        # The library shows another title: the pin on Title did not hold it.
-        successor = readback[0](OWNER_EDIT, True)
+        # A field with nothing to decide: the pin in its row of the panel.
+        del posts[:]
+        page.goto(f"{origin}/library?lens=all&preview={case_id}&field=genres")
+        panel = page.locator(".automatic-resolution-details")
+        summary = panel.locator("summary")
+        assert not panel.evaluate("node => node.open")
+        expect(summary).not_to_contain_text("pinned")
+        summary.click()
+        row = panel.locator(".automatic-resolution-row", has_text="Publisher")
+        row.get_by_role("button", name="Pin this value", exact=True).click()
+        expect(row.get_by_role("status")).to_have_text("Pinned.")
+        assert posts == ["pin"]
+        assert "field=genres" in page.url
+        assert panel.evaluate("node => node.open")
+        expect(row.get_by_role("button", name="Unpin", exact=True)).to_be_focused()
+        expect(row.get_by_text("Pinned", exact=True)).to_be_visible()
+        expect(row).to_contain_text("You pinned this field empty.")
+        expect(summary).to_contain_text("· 1 pinned")
+        expect(
+            page.locator(".field-filmstrip button", has_text="Publisher")
+        ).to_have_count(0)
+        _pins_hold_their_size(page)
+        expect(
+            page.get_by_role(
+                "button", name=re.compile(r"^Real Tigers\..*3 fields pinned$")
+            )
+        ).to_be_visible()
+
+        # The library shows another title and a publisher: neither pin held.
+        successor = readback[0](OWNER_EDIT, True, publisher="Changed Elsewhere")
         assert successor != case_id
         page.goto(f"{origin}/library?lens=all&preview={successor}&field=title")
+        expect(
+            page.locator(".field-filmstrip button", has_text="Publisher")
+        ).to_contain_text("Needs you")
+        expect(
+            page.locator(".automatic-resolution-row", has_text="Publisher")
+        ).to_have_count(0)
         foot = _pin_foot(page, "Title")
         expect(foot).to_contain_text("You pinned “Real Tigers”.")
         expect(

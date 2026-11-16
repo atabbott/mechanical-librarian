@@ -69,10 +69,23 @@ def test_pins_case_carries_every_pin_state_and_a_row_counts_pins() -> None:
     pins = rich_payload("/api/v1/review-cases/case-pins")
     assert isinstance(pins, dict)
     fields = {field["destination"]: field for field in pins["fields"]}
-    assert {name: field["pin"]["state"] for name, field in fields.items()} == {
+    assert {
+        name: field["pin"] and field["pin"]["state"] for name, field in fields.items()
+    } == {
         "title": "in_force",
         "authors": "waiting",
         "genres": "changed",
+        "publisher": None,
+        "language": "in_force",
+    }
+    # The No change panel holds a field that can be pinned and one pinned there.
+    assert {
+        name: field["pin_control"]
+        for name, field in fields.items()
+        if field["inventory_role"] == "contextual"
+    } == {
+        "publisher": {"pin": "available", "unpin": False},
+        "language": {"pin": "available", "unpin": True},
     }
     # The pin in force sits beside a value with nothing to choose, the waiting
     # pin on the value the owner chose, and only the changed pin asks.
@@ -87,6 +100,7 @@ def test_pins_case_carries_every_pin_state_and_a_row_counts_pins() -> None:
     assert all(
         field["pin_control"] == {"pin": "available", "unpin": True}
         for field in fields.values()
+        if field["pin"]
     )
     assert [work["pinned_count"] for work in LIBRARY_WORKS].count(3) == 1
     assert sum(1 for work in LIBRARY_WORKS if work["pinned_count"]) == 1
