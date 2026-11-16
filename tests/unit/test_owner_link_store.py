@@ -331,3 +331,90 @@ def test_schema_admission_refuses_a_database_without_the_link_table(
     connection.close()
     with pytest.raises(MetadataReportError):
         open_repository(path)
+
+
+def test_a_reused_request_is_refused_as_a_row_not_as_a_changed_link(
+    database: sqlite3.Connection,
+) -> None:
+    # Only the sequence trigger means another link landed first; a reused
+    # request id is a refused row and never `link_changed`.
+    _in_transaction(
+        database,
+        lambda: _record(database, OwnerLinkAction.LINK, None, WORK, "request-00000001"),
+    )
+    other = OwnerLinkItem("abs", "Books", "item-2")
+    with pytest.raises(OwnerLinkStoreError) as refused:
+        _in_transaction(
+            database,
+            lambda: _record(
+                database,
+                OwnerLinkAction.LINK,
+                None,
+                WORK,
+                "request-00000001",
+                item=other,
+            ),
+        )
+    assert type(refused.value) is OwnerLinkStoreError
+
+
+def test_a_link_landing_first_is_refused_by_the_trigger_as_link_changed(
+    database: sqlite3.Connection,
+) -> None:
+    from unittest import mock
+
+    from mechanical_librarian.adapters.persistence import owner_links
+
+    _in_transaction(
+        database,
+        lambda: _record(database, OwnerLinkAction.LINK, None, WORK, "request-00000001"),
+    )
+    # A reader that saw no link, as a racing writer would have.
+    with (
+        mock.patch.object(owner_links, "_latest", return_value=None),
+        pytest.raises(OwnerLinkChanged),
+    ):
+        _in_transaction(
+            database,
+            lambda: _record(
+                database, OwnerLinkAction.LINK, None, EDITION, "request-00000002"
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    ("item", "medium", "target"),
+    [
+        pytest.param(OwnerLinkItem("", "Books", "item-1"), "ebook", WORK, id="empty"),
+        pytest.param(
+            OwnerLinkItem("abs", "Books", "i" * 513), "ebook", WORK, id="long-item"
+        ),
+        pytest.param(
+            ITEM,
+            "audiobook",
+            WORK.__class__(OwnerLinkScope.WORK, "inventaire", "wd:Q1", "A Title"),
+            id="source-not-for-medium",
+        ),
+    ],
+)
+def test_a_row_the_table_would_refuse_is_refused_before_insert(
+    database: sqlite3.Connection,
+    item: OwnerLinkItem,
+    medium: str,
+    target: OwnerLinkTarget,
+) -> None:
+    with pytest.raises(OwnerLinkStoreError) as refused:
+        _in_transaction(
+            database,
+            lambda: _record(
+                database,
+                OwnerLinkAction.LINK,
+                None,
+                target,
+                "request-00000003",
+                item=item,
+                medium=medium,
+            ),
+        )
+    assert type(refused.value) is OwnerLinkStoreError
+    assert database.execute("SELECT count(*) FROM owner_links").fetchone() == (0,)

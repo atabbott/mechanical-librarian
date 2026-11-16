@@ -25,6 +25,7 @@ from mechanical_librarian.adapters.persistence.review_preparation import (
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.metadata_report import canonical_json
 from mechanical_librarian.domain.owner_link import (
+    LINK_SOURCES_BY_MEDIUM,
     OWNER_LINK_MEDIA,
     OWNER_LINK_SOURCES,
     OwnerLink,
@@ -36,6 +37,9 @@ from mechanical_librarian.domain.owner_link import (
 )
 
 _REQUEST_ID = re.compile(r"[\x21-\x7e]{16,128}")
+# The message the insert trigger aborts with when the row does not follow the
+# item's current link (schema `owner_links_validate_insert`).
+_SEQUENCE_REFUSAL = "owner link does not follow the current link"
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _COLUMNS = (
     "link_row_id,connection_name,library_name,item_id,sequence,action,source,"
@@ -77,6 +81,18 @@ class OwnerLinkRow:
     link_digest: str | None
 
 
+def _item_valid(item: OwnerLinkItem) -> bool:
+    """Whether the item key fits the table's bounds, checked before insert."""
+    return type(item) is OwnerLinkItem and all(
+        type(value) is str and 1 <= len(value.encode()) <= limit
+        for value, limit in (
+            (item.connection_name, 128),
+            (item.library_name, 128),
+            (item.item_id, 512),
+        )
+    )
+
+
 def record_owner_link(
     connection: sqlite3.Connection,
     *,
@@ -113,6 +129,10 @@ def record_owner_link(
         or _REQUEST_ID.fullmatch(request_id) is None
         or type(request_sha256) is not str
         or _SHA256.fullmatch(request_sha256) is None
+        or not _item_valid(item)
+        or (
+            target is not None and target.provider not in LINK_SOURCES_BY_MEDIUM[medium]
+        )
     ):
         raise OwnerLinkStoreError("owner link row is invalid")
     if (expected_current is None) != (action is OwnerLinkAction.LINK):
@@ -180,7 +200,11 @@ def record_owner_link(
             ),
         )
     except sqlite3.IntegrityError as error:
-        raise OwnerLinkChanged("owner link changed") from error
+        # Only the sequence trigger says another link landed first; anything
+        # else (a reused request id) is a refused row, never `link_changed`.
+        if str(error) == _SEQUENCE_REFUSAL:
+            raise OwnerLinkChanged("owner link changed") from error
+        raise OwnerLinkStoreError("owner link row is invalid") from error
     mark_preparation_work_fresh(
         connection, item.connection_name, item.library_name, item.item_id
     )
