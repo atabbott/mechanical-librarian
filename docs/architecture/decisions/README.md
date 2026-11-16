@@ -113,3 +113,4 @@ status line that says who accepted it and when.
 | [0100](0100-confine-parser-helpers.md) | proposed | Confine parser helpers, and keep parsing where Landlock is missing |
 | [0101](0101-reuse-stored-provider-answers.md) | proposed; amended by 0102 (proposed) | Reuse stored provider answers, with live fallback |
 | [0102](0102-search-every-finished-book-again.md) | proposed | Search every finished book again every 90 days |
+| [0103](0103-keep-the-library-visit-on-the-server.md) | proposed | Keep the owner's Library visit on the server and read New from it |

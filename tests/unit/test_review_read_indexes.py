@@ -7,8 +7,9 @@ import sqlite3
 import tempfile
 import time
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
-from typing import TypeVar
+from typing import TypeVar, cast
 
 import pytest
 
@@ -752,6 +753,82 @@ def test_library_progress_reads_attention_facts_by_key() -> None:
             repository.close()
 
 
+def test_the_new_lens_reads_each_work_by_key_within_the_scale_budget() -> None:
+    """#1351: what makes a work new is its own package position, with no probe.
+
+    With 30 of 200 works new, Library, its New lens and the progress read
+    stay inside the read budget, and progress inside half again of a Library
+    page, as before the visit boundary joined the relation. The slow tier
+    holds the same reads to the budget at 2,000 works.
+    """
+    works, new = 200, 30
+    with tempfile.TemporaryDirectory() as directory:
+        connection = _representative_database(
+            Path(directory) / "application.sqlite3", works=works
+        )
+        repository = SQLiteMetadataReportRepository(connection)
+        try:
+            seen = works - new
+            connection.execute(
+                "INSERT INTO library_visit VALUES(1,?,?,?,?,?,?,1000)",
+                (seen, works, seen, works, works, works),
+            )
+            connection.commit()
+            browse = BrowseReviewLibrary(repository)
+            steps: dict[str, int] = {}
+            for name, lens in (("Library", "all"), ("New", "new")):
+                page, steps[name], _elapsed = _call_with_step_limit(
+                    connection,
+                    _READ_VM_STEP_BUDGET,
+                    partial(
+                        browse.library,
+                        lens=lens,
+                        search=None,
+                        limit=50,
+                        cursor=None,
+                        now=1_000,
+                    ),
+                )
+                assert cast("dict[str, int]", page["counts"])["new"] == new, name
+                assert len(cast("list[object]", page["items"])) == (
+                    50 if lens == "all" else new
+                ), name
+            progress, steps["progress"], _elapsed = _call_with_step_limit(
+                connection, _READ_VM_STEP_BUDGET, lambda: browse.progress((), 1_000)
+            )
+            assert progress["totals"]["new"] == new
+            assert max(steps.values()) <= _READ_VM_STEP_BUDGET, steps
+            assert steps["progress"] <= steps["Library"] * 3 // 2, steps
+            # Past the gap the same row reads `shown`, which is the end here.
+            assert (
+                browse.library(
+                    lens="new", search=None, limit=50, cursor=None, now=2_800
+                )["counts"]["new"]
+                == 0
+            )
+            statements = _traced_selects(
+                connection,
+                lambda: (
+                    browse.library(
+                        lens="new", search=None, limit=50, cursor=None, now=1_000
+                    ),
+                    browse.progress((), 1_000),
+                ),
+            )
+            candidates = [
+                statement
+                for statement in statements
+                if "CANDIDATES AS MATERIALIZED (SELECT" in statement.upper()
+            ]
+            assert len(candidates) == 2
+            for statement in candidates:
+                assert "earlier" not in statement
+                plan = _plan(connection, statement, ())
+                assert not any("metadata_reports_2" in step for step in plan), plan
+        finally:
+            repository.close()
+
+
 def test_first_match_and_hold_reads_keep_their_lineage_walk() -> None:
     """The case indexes leave rowid-order lineage walks where order is visible.
 
@@ -1155,6 +1232,7 @@ def test_post_start_work_becomes_visible_only_at_complete_pipeline_boundaries(
         "not_matched": 1,
         "preparation_failed": 0,
         "flagged": 0,
+        "new": 0,
     }
     assert report_page["items"][0]["review_case_id"] is None
 
@@ -1169,6 +1247,7 @@ def test_post_start_work_becomes_visible_only_at_complete_pipeline_boundaries(
         "not_matched": 0,
         "preparation_failed": 0,
         "flagged": 0,
+        "new": 0,
     }
     item = case_page["items"][0]
     assert item["review_case_id"] is not None

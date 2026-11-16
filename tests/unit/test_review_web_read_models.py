@@ -2533,6 +2533,7 @@ def test_attention_first_library_lenses_queue_and_cursor_binding(
         "not_matched": 0,
         "preparation_failed": 0,
         "flagged": 0,
+        "new": 0,
     }
     assert len(body["items"]) == 1
     assert body["items"][0]["attention_state"] == "needs_attention"
@@ -2585,6 +2586,7 @@ def test_complete_library_includes_current_report_without_review_lineage(
         "not_matched": 1,
         "preparation_failed": 0,
         "flagged": 0,
+        "new": 0,
     }
     item = response.json()["items"][0]
     assert item["review_case_id"] is None
@@ -5651,6 +5653,7 @@ def test_library_progress_answers_library_counts_and_attention_fields(
             "not_matched": 1,
             "preparation_failed": 0,
             "flagged": 0,
+            "new": 0,
         },
         # No settings name either library: each reads as its stable name, and
         # the unconfigured names come alphabetically.
@@ -5664,6 +5667,7 @@ def test_library_progress_answers_library_counts_and_attention_fields(
                     "not_matched": 1,
                     "preparation_failed": 0,
                     "flagged": 0,
+                    "new": 0,
                 },
                 "library": "audiobooks",
                 "library_display_name": "audiobooks",
@@ -5677,6 +5681,7 @@ def test_library_progress_answers_library_counts_and_attention_fields(
                     "not_matched": 0,
                     "preparation_failed": 0,
                     "flagged": 0,
+                    "new": 0,
                 },
                 "library": "ebooks",
                 "library_display_name": "ebooks",
@@ -5720,6 +5725,7 @@ def test_library_progress_model_is_closed_and_bounded() -> None:
         "not_matched": 0,
         "preparation_failed": 0,
         "flagged": 0,
+        "new": 0,
     }
     valid: dict[str, Any] = {
         "totals": counts,

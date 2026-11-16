@@ -428,6 +428,10 @@ INVENTORY: dict[tuple[str, str], Row] = {
         (422, "profile_full"): "pre-commit",
         (503, "unavailable"): "post-commit",
     },
+    # --- library -------------------------------------------------------------
+    # `record_library_visit`: one transaction, then at most one live update
+    # after it committed; any failure of either is the same 503 (#1351).
+    ("POST", "/api/v1/library/visit"): {(503, "persistence"): "post-commit"},
     # --- review preparation -----------------------------------------------------
     ("POST", "/api/v1/review-preparation/dismiss"): _PREPARATION,
     ("POST", "/api/v1/review-preparation/first-boot/acknowledge"): {

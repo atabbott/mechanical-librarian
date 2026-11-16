@@ -139,6 +139,7 @@ from mechanical_librarian.domain.field_effect import (
     valid_activity_transition_id,
 )
 from mechanical_librarian.domain.human_decision import HumanDecisionEventSchemaVersion
+from mechanical_librarian.domain.library_visit import ListingPositions
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyError
 from mechanical_librarian.domain.owner_settings import (
     OWNER_SETTINGS_SCHEMA,
@@ -1403,6 +1404,8 @@ class _ReviewCounts(_ClosedModel):
     all: _Count
     # Looks wrong, counted across the four lenses that partition All (#1334).
     flagged: _Count
+    # First listed since the owner's last visit, counted the same way (#1351).
+    new: _Count
     needs_attention: _Count
     no_attention_needed: _Count
     not_matched: _Count
@@ -1941,17 +1944,40 @@ class _ReportDetailResponse(_ClosedModel):
         return self
 
 
+# A row position: SQLite's rowid, bounded as the browser holds an integer.
+_ListingPosition: TypeAlias = Annotated[
+    StrictInt, Field(ge=0, le=9_007_199_254_740_991)
+]
+
+
+class _LibraryListing(_ClosedModel):
+    """How far Library's listing had got when a page was read (#1351)."""
+
+    packages: _ListingPosition
+    reports: _ListingPosition
+    works: _ListingPosition
+
+
+class _LibraryVisitRequest(_ClosedModel):
+    # The `listing` of a New lens the browser showed, or null for any other
+    # use of Library (ADR-0103).
+    listing: _LibraryListing | None
+
+
 class _LibraryResponse(_ClosedModel):
     counts: _ReviewCounts
     items: list[_LibraryWork]
     lens: Literal[
         "all",
+        "new",
         "flagged",
         "needs_attention",
         "no_attention_needed",
         "not_matched",
         "preparation_failed",
     ]
+    # What the browser hands back once it has shown the New lens (#1351).
+    listing: _LibraryListing
     next_cursor: str | None
     page: _Count
     previous_cursor: str | None
@@ -3189,6 +3215,7 @@ _BODY_PATH_LIMITS = {
     # Up to 64 libraries, each naming the destinations it allows.
     "/api/v1/activity/consent": 65_536,
     "/api/v1/review-preparation/dismiss": DEFAULT_BODY_LIMIT_BYTES,
+    "/api/v1/library/visit": DEFAULT_BODY_LIMIT_BYTES,
     "/api/v1/provider-recovery/retry": DEFAULT_BODY_LIMIT_BYTES,
     "/api/v1/reviewer-access/openrouter/refresh": DEFAULT_BODY_LIMIT_BYTES,
     # The write contract permits a 2,048-character key plus its
@@ -5413,6 +5440,32 @@ def _register_browse_and_preparation_routes(
             )
 
         return await _browse_response(request, read)
+
+    @app.post(
+        "/api/v1/library/visit",
+        status_code=204,
+        responses={
+            status: {"model": _ErrorResponse}
+            for status in (401, 403, 409, 413, 422, 503)
+        },
+    )
+    def library_visit(
+        command: _LibraryVisitRequest,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> Response:
+        """Record that the owner is using Library, and what New showed (#1351)."""
+        _require_session(sessions, ml_session, x_csrf_token)
+        listing = command.listing
+        try:
+            application.record_library_visit(
+                None
+                if listing is None
+                else ListingPositions(listing.packages, listing.works, listing.reports)
+            )
+        except ReviewApplicationError:
+            raise HTTPException(503, detail={"code": "persistence"}) from None
+        return Response(status_code=204)
 
     @app.get(
         "/api/v1/attention",

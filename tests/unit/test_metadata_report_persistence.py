@@ -53,6 +53,7 @@ from tests.support.metadata_report_schemas import (
     PRIOR_ATTENTION_FACT_OBJECTS,
     PRIOR_ATTENTION_FACT_SOURCE_SQL,
     PRIOR_AUTOMATIC_DECISIONS_SQL,
+    PRIOR_CURRENT_REVIEW_PACKAGES_SQL,
     PRIOR_HUMAN_DECISIONS_SQL,
     PRIOR_REPORT_BROWSE_FACTS_INSERT_SQL,
     PRIOR_REPORT_BROWSE_FACTS_SQL,
@@ -662,6 +663,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("human_decisions",),
             ("level_decision_notes",),
             ("level_proposal_sets",),
+            ("library_visit",),
             ("metadata_policy_drafts",),
             ("metadata_policy_resolutions",),
             ("metadata_policy_state",),
@@ -921,6 +923,10 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
             schema, "_ATTENTION_FACT_SOURCE_SQL", PRIOR_ATTENTION_FACT_SOURCE_SQL
         )
         old.setattr(schema, "_REVIEW_WORK_SQL", PRIOR_REVIEW_WORK_SQL)
+        old.setattr(
+            schema, "_CURRENT_REVIEW_PACKAGES_SQL", PRIOR_CURRENT_REVIEW_PACKAGES_SQL
+        )
+        old.setattr(schema, "_PACKAGE_POSITION_OBJECTS", ())
         with closing(open_repository(path)) as repository:
             # The producer predates #1199's report browse facts, #1202's
             # history indexes, #1204's indexes, #1211's case indexes, #1232's
@@ -939,6 +945,7 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
                 "DROP TABLE cover_taste_profile_versions;"
                 "DROP TABLE cover_taste_builds;"
                 "DROP TABLE reviewer_task_requests;"
+                "DROP TABLE library_visit;"
                 "DROP TRIGGER metadata_reports_project_browse_facts;"
                 "DROP TABLE metadata_report_browse_authors;"
                 "DROP TABLE metadata_report_value_flags;"
@@ -1113,9 +1120,11 @@ def test_candidate_cleanup_ignores_unrelated_malformed_history() -> None:
         repository.close()
 
 
+# `sqlite_sequence` is not here: the package positions' AUTOINCREMENT puts it in
+# the exact schema (#1351).
 @pytest.mark.parametrize(
     "kind",
-    ("analyze", "sequence", "arbitrary"),
+    ("analyze", "arbitrary"),
 )
 def test_existing_schema_rejects_persistent_sqlite_master_system_objects_without_mutation(
     kind: str,
@@ -1128,11 +1137,6 @@ def test_existing_schema_rejects_persistent_sqlite_master_system_objects_without
         connection = sqlite3.connect(path)
         if kind == "analyze":
             connection.execute("ANALYZE")
-        elif kind == "sequence":
-            connection.execute(
-                "CREATE TABLE fixture_sequence(id INTEGER PRIMARY KEY AUTOINCREMENT)"
-            )
-            connection.execute("DROP TABLE fixture_sequence")
         else:
             connection.execute("CREATE TABLE fixture_extra(value TEXT)")
             connection.execute("PRAGMA writable_schema=ON")
@@ -2661,6 +2665,12 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
         old.setattr(persistence_schema, "_REVIEW_WORK_SQL", PRIOR_REVIEW_WORK_SQL)
         old.setattr(
             persistence_schema,
+            "_CURRENT_REVIEW_PACKAGES_SQL",
+            PRIOR_CURRENT_REVIEW_PACKAGES_SQL,
+        )
+        old.setattr(persistence_schema, "_PACKAGE_POSITION_OBJECTS", ())
+        old.setattr(
+            persistence_schema,
             "_ATTENTION_FACT_OBJECTS",
             PRIOR_ATTENTION_FACT_OBJECTS,
         )
@@ -2741,6 +2751,7 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
                     "DROP TABLE cover_taste_profile_versions;"
                     "DROP TABLE cover_taste_builds;"
                     "DROP TABLE reviewer_task_requests;"
+                    "DROP TABLE library_visit;"
                     "DROP TRIGGER metadata_reports_project_browse_facts;"
                     "DROP TABLE metadata_report_browse_authors;"
                     "DROP TABLE metadata_report_value_flags;"
@@ -2768,8 +2779,10 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
             else:
                 # The v20 producer predates #1358's case episodes, #1310's
                 # resolution index led by the resolved id, #1363's retained
-                # cover tables, #1355's level storage and #1334's value flags.
+                # cover tables, #1355's level storage, #1334's value flags and
+                # #1351's Library visit.
                 repository._connection.executescript(
+                    "DROP TABLE library_visit;"
                     "DROP TABLE metadata_report_value_flags;"
                     "ALTER TABLE browse_fact_identity DROP COLUMN value_flag_rules;"
                     "DROP TABLE retained_cover_listings;"

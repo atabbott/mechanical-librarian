@@ -545,7 +545,9 @@ def _terminal_library_sql(catalogue_attached: bool) -> str:
         else " "
     )
     return (
-        "terminal AS (SELECT w.*, "
+        # `w.*` does not carry the rowid, which is the order the works were
+        # first discovered in: what makes one that could not be read new (#1351).
+        "terminal AS (SELECT w.*,w.rowid AS work_position, "
         + display
         + "FROM review_preparation_work w"
         + join

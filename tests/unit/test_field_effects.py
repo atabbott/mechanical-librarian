@@ -4967,11 +4967,18 @@ def test_web_field_effect_and_review_reads_share_one_repository_lock(
             return repository.get_field_effect(plan_id)
 
         def read_review_library(
-            self, search, limit, offset, attention, library_labels=(), validated=None
+            self,
+            search,
+            limit,
+            offset,
+            attention,
+            library_labels=(),
+            validated=None,
+            now=0,
         ):
             library_entered.set()
             return repository.read_review_library(
-                search, limit, offset, attention, library_labels, validated
+                search, limit, offset, attention, library_labels, validated, now
             )
 
     blocking = BlockingRepository()

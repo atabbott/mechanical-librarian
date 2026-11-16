@@ -204,6 +204,8 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .lenses[data-more='both'] { mask-image:linear-gradient(to right,transparent,#000 2rem,#000 calc(100% - 2rem),transparent); }
 .lenses a { display:inline-flex; flex:none; overflow-wrap:normal; white-space:nowrap; min-width:44px; min-height:44px; align-items:center; justify-content:center; padding:.45rem .55rem; border:1px solid var(--line); border-radius:999px; color:var(--soft); font-size:.75rem; font-weight:650; line-height:1.2; text-align:center; text-decoration:none; }
 .lenses a[aria-current='true'] { border-color:var(--accent); color:var(--accent-strong); background:var(--accent-soft); }
+/* New's count, in its own badge beside the label (#1351). */
+.lens-count { margin-inline-start:.35rem; padding:.1rem .4rem; border-radius:999px; color:var(--surface); background:var(--accent-strong); font-variant-numeric:tabular-nums; }
 .search { margin-block:1rem; }
 .search label { display:block; margin-bottom:.3rem; font-size:.76rem; font-weight:700; }
 .search div { display:flex; width:min(100%,40rem); }
@@ -306,6 +308,7 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .selected-work-surface > aside h2, .library-selection h2 { font-family:Georgia,serif; }
 .compact-back { display:none; }
 .empty-copy { padding:1rem; color:var(--soft); }
+.empty-copy p { text-wrap:pretty; }
 
 .page-heading, .policy-layout, .activity-layout { display:grid; grid-template-columns:minmax(0,2fr) minmax(16rem,1fr); gap:1.5rem; }
 .detail-layout { display:grid; grid-template-columns:minmax(12rem,15rem) minmax(0,1fr); align-items:start; gap:1.5rem; }

@@ -7547,6 +7547,37 @@
         "title": "_LibraryCover",
         "type": "object"
       },
+      "_LibraryListing": {
+        "additionalProperties": false,
+        "description": "How far Library's listing had got when a page was read (#1351).",
+        "properties": {
+          "packages": {
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Packages",
+            "type": "integer"
+          },
+          "reports": {
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Reports",
+            "type": "integer"
+          },
+          "works": {
+            "maximum": 9007199254740991.0,
+            "minimum": 0.0,
+            "title": "Works",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "packages",
+          "reports",
+          "works"
+        ],
+        "title": "_LibraryListing",
+        "type": "object"
+      },
       "_LibraryProgressField": {
         "additionalProperties": false,
         "properties": {
@@ -7664,6 +7695,7 @@
           "lens": {
             "enum": [
               "all",
+              "new",
               "flagged",
               "needs_attention",
               "no_attention_needed",
@@ -7672,6 +7704,9 @@
             ],
             "title": "Lens",
             "type": "string"
+          },
+          "listing": {
+            "$ref": "#/components/schemas/_LibraryListing"
           },
           "next_cursor": {
             "anyOf": [
@@ -7712,7 +7747,7 @@
             "title": "Query"
           },
           "schema_version": {
-            "const": "review-library-v7",
+            "const": "review-library-v8",
             "title": "Schema Version",
             "type": "string"
           }
@@ -7721,6 +7756,7 @@
           "counts",
           "items",
           "lens",
+          "listing",
           "next_cursor",
           "page",
           "previous_cursor",
@@ -7763,6 +7799,26 @@
           "rule"
         ],
         "title": "_LibraryValueFlag",
+        "type": "object"
+      },
+      "_LibraryVisitRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "listing": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_LibraryListing"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "listing"
+        ],
+        "title": "_LibraryVisitRequest",
         "type": "object"
       },
       "_LibraryWork": {
@@ -11112,6 +11168,11 @@
             "title": "Needs Attention",
             "type": "integer"
           },
+          "new": {
+            "minimum": 0.0,
+            "title": "New",
+            "type": "integer"
+          },
           "no_attention_needed": {
             "minimum": 0.0,
             "title": "No Attention Needed",
@@ -11131,6 +11192,7 @@
         "required": [
           "all",
           "flagged",
+          "new",
           "needs_attention",
           "no_attention_needed",
           "not_matched",
@@ -15049,6 +15111,114 @@
           }
         ],
         "summary": "Library Report"
+      }
+    },
+    "/api/v1/library/visit": {
+      "post": {
+        "description": "Record that the owner is using Library, and what New showed (#1351).",
+        "operationId": "library_visit_api_v1_library_visit_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_LibraryVisitRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Library Visit"
       }
     },
     "/api/v1/metadata-policy/activate": {

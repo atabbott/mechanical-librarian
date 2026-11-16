@@ -2686,6 +2686,7 @@ def test_concurrent_initial_library_and_attention_use_real_http(tmp_path: Path) 
                 "not_matched": 0,
                 "preparation_failed": 0,
                 "flagged": 0,
+                "new": 0,
             }
             assert len(library_response.json()["items"]) == 5
             assert attention_response.json()["total"] == fields

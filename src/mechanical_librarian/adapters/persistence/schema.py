@@ -708,8 +708,11 @@ _REVIEW_POINTERS_SQL = (
     "CHECK ((outcome IN ('admitted','superseded') AND review_case_id IS NOT NULL) OR (outcome IN ('no_case','retired','tombstoned') AND review_case_id IS NULL)), "
     "PRIMARY KEY (connection_name,library_name,item_id))"
 )
+# #1351: a work's place in Library's order of arrival, never given out twice,
+# so a work that leaves and returns lies past every earlier visit's mark.
 _CURRENT_REVIEW_PACKAGES_SQL = (
     "CREATE TABLE current_review_packages ("
+    "package_position INTEGER PRIMARY KEY AUTOINCREMENT, "
     "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, "
     "proposal_set_id TEXT REFERENCES proposal_sets(proposal_set_id), "
     "report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
@@ -719,7 +722,12 @@ _CURRENT_REVIEW_PACKAGES_SQL = (
     "CHECK ((outcome IN ('report_only','evidence_only') AND proposal_set_id IS NULL AND review_case_id IS NULL AND checkpoint IS NULL) "
     "OR (outcome IN ('admitted','superseded') AND proposal_set_id IS NOT NULL AND review_case_id IS NOT NULL AND checkpoint IS NOT NULL) "
     "OR (outcome IN ('no_case','retired') AND proposal_set_id IS NOT NULL AND review_case_id IS NULL AND checkpoint IS NOT NULL)), "
-    "PRIMARY KEY(connection_name,library_name,item_id))"
+    "UNIQUE(connection_name,library_name,item_id))"
+)
+# SQLite's own record of the highest package position given out, which the
+# package table's AUTOINCREMENT creates.
+_PACKAGE_POSITION_OBJECTS: tuple[tuple[str, str, str | None], ...] = (
+    ("table", "sqlite_sequence", "CREATE TABLE sqlite_sequence(name,seq)"),
 )
 # Library, Attention and detail reach a case's current lineage and package by
 # its case id. Without these each visible row walked every lineage and package;
@@ -1014,6 +1022,21 @@ _AUTOMATIC_SAFETY_SQL = (
 _FIELD_EFFECT_CONTROL_SQL = (
     "CREATE TABLE field_effect_control (singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton=1), "
     "paused INTEGER NOT NULL CHECK(paused IN (0,1)), updated_at INTEGER NOT NULL CHECK(updated_at>=0))"
+)
+# #1351, ADR-0103: the owner's one Library visit. `seen_*` is the boundary a
+# work must lie past to be new, `shown_*` the furthest listing a device opened
+# in the New lens, and `active_at` the server's clock at the last recorded use.
+# One row, overwritten in place, created by the first use once a preparation
+# has finished: no row means nothing is new.
+_LIBRARY_VISIT_SQL = (
+    "CREATE TABLE library_visit (singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton=1), "
+    "seen_packages INTEGER NOT NULL CHECK(seen_packages>=0), "
+    "seen_works INTEGER NOT NULL CHECK(seen_works>=0), "
+    "seen_reports INTEGER NOT NULL CHECK(seen_reports>=0), "
+    "shown_packages INTEGER NOT NULL CHECK(shown_packages>=seen_packages), "
+    "shown_works INTEGER NOT NULL CHECK(shown_works>=seen_works), "
+    "shown_reports INTEGER NOT NULL CHECK(shown_reports>=seen_reports), "
+    "active_at INTEGER NOT NULL CHECK(active_at>=0))"
 )
 _FIELD_EFFECT_SUSPENSIONS_SQL = (
     "CREATE TABLE field_effect_suspensions ("
@@ -1917,6 +1940,7 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_REVIEW_CASE_LEVEL_OFFER_NO_DELETE_SQL)
     connection.execute(_NO_DELETE_SQL)
     _create_attention_facts(connection)
+    connection.execute(_LIBRARY_VISIT_SQL)
     connection.commit()
 
 
@@ -1992,6 +2016,7 @@ def _current_pointer_objects() -> tuple[tuple[str, str, str | None], ...]:
         ("table", "current_metadata_report_lineages", _CURRENT_LINEAGE_SQL),
         ("table", "current_review_case_lineages", _REVIEW_POINTERS_SQL),
         ("table", "current_review_packages", _CURRENT_REVIEW_PACKAGES_SQL),
+        *_PACKAGE_POSITION_OBJECTS,
         ("table", "provider_recovery_outbox", _PROVIDER_RECOVERY_OUTBOX_SQL),
         ("index", "sqlite_autoindex_current_metadata_reports_1", None),
         ("index", "sqlite_autoindex_current_metadata_report_lineages_1", None),
@@ -2151,6 +2176,7 @@ def _decision_and_field_effect_objects() -> tuple[tuple[str, str, str | None], .
         ("table", "automatic_decisions", _AUTOMATIC_DECISIONS_SQL),
         ("table", "automatic_safety_state", _AUTOMATIC_SAFETY_SQL),
         ("table", "field_effect_control", _FIELD_EFFECT_CONTROL_SQL),
+        ("table", "library_visit", _LIBRARY_VISIT_SQL),
         ("table", "field_effect_suspensions", _FIELD_EFFECT_SUSPENSIONS_SQL),
         ("table", "field_effect_actions", _FIELD_EFFECT_ACTIONS_SQL),
         ("table", "field_effect_authorities", _FIELD_EFFECT_AUTHORITIES_SQL),
