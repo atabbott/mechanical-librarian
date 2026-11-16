@@ -500,7 +500,7 @@ describe('a clear in History and the recorded outcome', () => {
     }))
     renderRoute('/review/case-1?field=title&subview=history', { ...createHttp(), getHistory })
     const kept = (await screen.findByRole('heading', { name: 'Subtitle' })).closest('article')
-    expect(kept).toHaveTextContent('You kept the current value.')
+    expect(kept).toHaveTextContent('You went back to the value before your change.')
     expect(kept).toHaveTextContent('From A Novel of the Outer Banks')
     expect(kept).toHaveTextContent('To Cleared')
     const filled = screen.getByRole('heading', { name: 'ISBN' }).closest('article')
@@ -549,7 +549,7 @@ describe('keeping an empty value on the case that wrote it', () => {
   })
 })
 
-describe('a field this case wrote (#1523)', () => {
+describe('the keep card on a field this case wrote (#1523)', () => {
   const offered = (destination: TargetDestination, rest: Partial<Field>): Field => ({
     ...base,
     destination,
@@ -558,44 +558,152 @@ describe('a field this case wrote (#1523)', () => {
     proposalId: `proposal-${destination}`,
     targetFingerprint: `fingerprint-${destination}`,
     ownerControl: null,
+    writtenByCase: true,
     ...rest,
   })
+  // An ISBN the case wrote over 9780306406157, now reading its write.
+  const isbnOver = (before: string | null): Field =>
+    offered('isbn', {
+      currentValue: before ?? 'Not set in Audiobookshelf',
+      currentRaw: before,
+      proposedValues: [{ kind: 'text', value: '9781861972712' }],
+    })
+  const keepCardShown = () => screen.queryByText(/^(Keep current value|Before your change)$/u)
+  const show = async (field: Field) => {
+    const http = owner(field)
+    renderRoute(`/library?lens=all&preview=case-1&field=${field.destination}`, http)
+    await screen.findByRole('radio', { name: /^Choose proposed value/u })
+    return http
+  }
+
+  it('still reads Keep current value on a field the case has not written', async () => {
+    await show({ ...isbnOver('9780306406157'), writtenByCase: false })
+    expect(screen.getByText('Keep current value')).toBeVisible()
+    expect(screen.getByRole('radio', { name: /^Choose current value/u })).toBeVisible()
+  })
+
+  it('offers the value before the change on a written ISBN, and writes it back', async () => {
+    const user = userEvent.setup()
+    const http = await show(isbnOver('9780306406157'))
+    const card = screen.getByText('Before your change').closest('.current-choice-list')
+    if (!(card instanceof HTMLElement)) throw new Error('the before-your-change card is required')
+    expect(card).toHaveTextContent('9780306406157')
+    expect(card).not.toHaveTextContent(/current/iu)
+    expect(screen.queryByText('Keep current value')).toBeNull()
+    expect(screen.queryByRole('radio', { name: /current value/u })).toBeNull()
+    await user.click(
+      screen.getByRole('radio', {
+        name: 'Choose the value before your change: 9780306406157',
+      }),
+    )
+    expect(sent(http)[0]).toMatchObject({ outcome: 'keep_current', destination: 'isbn' })
+  })
+
+  it('offers it where owner entry is closed, even on a clearable field', async () => {
+    await show(
+      offered('subtitle', {
+        currentValue: 'Not set in Audiobookshelf',
+        currentRaw: null,
+        proposedValues: [{ kind: 'text', value: 'A Quiet Subtitle' }],
+      }),
+    )
+    const card = screen.getByText('Before your change').closest('.current-choice-list')
+    expect(card).toHaveTextContent('Not set')
+    expect(card).not.toHaveTextContent('Audiobookshelf')
+  })
+
+  it('leaves it out where Clear goes back to the empty value', async () => {
+    const user = userEvent.setup()
+    await show(
+      offered('subtitle', {
+        currentValue: 'Not set in Audiobookshelf',
+        currentRaw: null,
+        proposedValues: [{ kind: 'text', value: 'A Quiet Subtitle' }],
+        ownerControl: textControl('A Quiet Subtitle', true),
+      }),
+    )
+    expect(keepCardShown()).toBeNull()
+    const panel = screen.getByRole('region', { name: 'Your value for Subtitle' })
+    await user.click(within(panel).getByRole('button', { name: 'Change' }))
+    await user.clear(within(panel).getByRole('textbox', { name: 'Your value for Subtitle' }))
+    expect(within(panel).getByRole('button', { name: 'Clear subtitle' })).toBeVisible()
+  })
+
   it.each([
     [
       'subtitle',
-      {
-        currentValue: 'A Quiet Subtitle',
-        currentRaw: 'A Quiet Subtitle',
-        proposedValues: [{ kind: 'text', value: 'A Louder Subtitle' }],
-        ownerControl: textControl('A Quiet Subtitle', true),
-      },
+      'Original subtitle',
+      control({
+        entry: {
+          maxCharacters: 512,
+          suggestions: [{ rule: 'previous', value: 'Original subtitle' }],
+        },
+        clear: true,
+        current: 'A Quiet Subtitle',
+      }),
     ],
+    ['narrators', ['Ada Reader'], namesControl(['Bo Reader'], true, ['Ada Reader'])],
     [
-      'isbn',
-      {
-        currentValue: '9780306406157',
-        currentRaw: '9780306406157',
-        proposedValues: [{ kind: 'text', value: '9781861972712' }],
-      },
+      'genres',
+      ['Drama'],
+      control({
+        clear: true,
+        current: ['Fantasy'],
+        subset: {
+          maxItems: 32,
+          options: [
+            { value: 'Fantasy', current: true, proposed: true, previous: false },
+            { value: 'Drama', current: false, proposed: false, previous: true },
+          ],
+        },
+      }),
     ],
-  ] as const)('offers no Keep current value on %s once written', async (destination, rest) => {
-    const written = offered(destination, { ...rest, writtenByCase: true })
-    renderRoute(`/library?lens=all&preview=case-1&field=${destination}`, owner(written))
-    expect(await screen.findByRole('radio', { name: /^Choose proposed value/u })).toBeVisible()
-    expect(screen.queryByRole('radio', { name: /^Choose current value/u })).toBeNull()
-    expect(screen.queryByText('Keep current value')).toBeNull()
+  ] as const)(
+    'leaves it out where %s entry offers the previous value',
+    async (destination, before, ownerControl) => {
+      await show(
+        offered(destination, {
+          currentValue: Array.isArray(before) ? before.join(' · ') : before,
+          currentRaw: before,
+          proposedValues: [{ kind: Array.isArray(before) ? 'list' : 'text', value: 'Proposed' }],
+          ownerControl,
+        } as Partial<Field>),
+      )
+      expect(keepCardShown()).toBeNull()
+    },
+  )
+
+  it('shows it where the previous value offered is not the value before the change', async () => {
+    await show(
+      offered('subtitle', {
+        currentValue: 'Original subtitle',
+        currentRaw: 'Original subtitle',
+        proposedValues: [{ kind: 'text', value: 'A Quiet Subtitle' }],
+        ownerControl: textControl('A Quiet Subtitle', true),
+      }),
+    )
+    expect(screen.getByText('Before your change')).toBeVisible()
   })
 
-  it('still offers Keep current value on a field the case has not written', async () => {
-    const unwritten = offered('isbn', {
-      currentValue: '9780306406157',
-      currentRaw: '9780306406157',
-      proposedValues: [{ kind: 'text', value: '9781861972712' }],
-      writtenByCase: false,
-    })
-    renderRoute('/library?lens=all&preview=case-1&field=isbn', owner(unwritten))
-    expect(await screen.findByRole('radio', { name: /^Choose current value/u })).toBeVisible()
-    expect(screen.getByText('Keep current value')).toBeVisible()
+  it('offers no card and says why on an ISBN written over nothing', async () => {
+    const written = decided(isbnOver(null), { kind: 'text', value: '9781861972712' })
+    if (!written.humanDecision) throw new Error('a recorded decision is required')
+    renderRoute(
+      '/library?lens=all&preview=case-1&field=isbn',
+      owner({
+        ...written,
+        editable: true,
+        needsAttention: false,
+        ownerControl: null,
+        pinControl: null,
+        humanDecision: { ...written.humanDecision, outcome: 'accept' },
+      }),
+    )
+    const said = await screen.findByText(
+      /There was no ISBN before this change, and the ISBN can’t be emptied\./u,
+    )
+    expect(said).not.toHaveTextContent('You can choose another value.')
+    expect(keepCardShown()).toBeNull()
   })
 })
 
@@ -666,7 +774,9 @@ describe('an emptied form that clears nothing (#1523)', () => {
     expect(input).toHaveValue('')
     expect(within(panel).queryByRole('button', { name: 'Clear subtitle' })).toBeNull()
     await user.click(within(panel).getByRole('button', { name: 'Record this value' }))
-    expect(within(panel).getByRole('alert')).toHaveTextContent(/^This field is already empty\.$/u)
+    expect(within(panel).getByRole('alert')).toHaveTextContent(
+      /^You already cleared the subtitle\.$/u,
+    )
     expect(http.recordDecision).not.toHaveBeenCalled()
   })
 
@@ -683,8 +793,75 @@ describe('an emptied form that clears nothing (#1523)', () => {
       'Foo bar',
     )
     await user.click(within(panel).getByRole('button', { name: 'Record this value' }))
-    expect(within(panel).getByRole('alert')).toHaveTextContent('That is already the current value.')
+    expect(within(panel).getByRole('alert')).toHaveTextContent(
+      /^You already entered this value\.$/u,
+    )
     expect(http.recordDecision).not.toHaveBeenCalled()
+  })
+})
+
+describe('re-entering your own pending value (#1523)', () => {
+  it('says you already entered these names', async () => {
+    const user = userEvent.setup()
+    const pending = decided(
+      field('narrators', ['Ada Reader'], namesControl(['Ada Reader'], true)),
+      {
+        kind: 'list',
+        value: ['Bo Reader'],
+      },
+    )
+    const http = owner(pending)
+    const panel = await open(http, 'narrators')
+    await user.click(within(panel).getByRole('button', { name: 'Change' }))
+    expect(within(panel).getByRole('textbox', { name: 'Your value for Narrators' })).toHaveValue(
+      'Bo Reader',
+    )
+    await user.click(within(panel).getByRole('button', { name: 'Record these names' }))
+    expect(within(panel).getByRole('alert')).toHaveTextContent(
+      /^You already entered these names\.$/u,
+    )
+    expect(http.recordDecision).not.toHaveBeenCalled()
+  })
+
+  it('says you already chose these genres', async () => {
+    const user = userEvent.setup()
+    const pending = decided(
+      field(
+        'genres',
+        ['Drama'],
+        control({
+          clear: true,
+          current: ['Drama'],
+          subset: {
+            maxItems: 32,
+            options: [
+              { value: 'Drama', current: true, proposed: false, previous: false },
+              { value: 'Fantasy', current: false, proposed: true, previous: false },
+            ],
+          },
+        }),
+      ),
+      { kind: 'list', value: ['Fantasy'] },
+    )
+    const http = owner(pending)
+    const panel = await open(http, 'genres')
+    await user.click(within(panel).getByRole('button', { name: 'Change' }))
+    await user.click(within(panel).getByRole('button', { name: 'Record these genres' }))
+    expect(within(panel).getByRole('alert')).toHaveTextContent(
+      /^You already chose these genres\.$/u,
+    )
+    expect(http.recordDecision).not.toHaveBeenCalled()
+  })
+
+  it('still says the current value where the library holds it', async () => {
+    const user = userEvent.setup()
+    const http = owner(field('subtitle', 'A Quiet Subtitle', textControl('A Quiet Subtitle', true)))
+    const panel = await open(http, 'subtitle')
+    await user.click(within(panel).getByRole('button', { name: 'Change' }))
+    await user.click(within(panel).getByRole('button', { name: 'Record this value' }))
+    expect(within(panel).getByRole('alert')).toHaveTextContent(
+      /^That is already the current value\.$/u,
+    )
   })
 })
 
@@ -756,7 +933,7 @@ describe('History of entered names (#1523)', () => {
 
 describe('a recorded clear on a field with a new choice (#1523)', () => {
   it.each([
-    [EMPTY, /You cleared it\.$/u],
+    [EMPTY, /You cleared the subtitle\.$/u],
     [
       { kind: 'text', value: 'A Quiet Subtitle' },
       /The recorded value remains A Quiet Subtitle\.$/u,

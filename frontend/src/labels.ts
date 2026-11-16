@@ -57,8 +57,8 @@ export const destinationPhrase = (destination: TargetDestination) =>
     ? destinationLabels[destination]
     : destinationLabels[destination].toLowerCase()
 // An owner's clear, said the same way where it was recorded and in History.
-export const clearedSentence = (destination: TargetDestination) =>
-  `You cleared the ${destinationPhrase(destination)}.`
+export const clearedSentence = (destination: TargetDestination, already = false) =>
+  `You ${already ? 'already ' : ''}cleared the ${destinationPhrase(destination)}.`
 // Names entered, said by their count where they were recorded and in History.
 export const namesEnteredSentence = (count: number) =>
   `You entered ${String(count)} ${count === 1 ? 'name' : 'names'}.`

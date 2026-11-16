@@ -159,13 +159,58 @@ export const choiceSelected = (
     commandSelected(progress?.command ?? null, field.destination, outcome, selectedValue)) ||
   ((progress === null || progress.phase === 'failed') &&
     recordedSelected(field, outcome, selectedValue))
-// Whether the field offers its Keep current value section. On the case that
-// wrote the field, what the case read before its write is no longer the
-// library's value, so keeping it is not offered; the owner goes back with the
-// previous value or by emptying the box (#1523). Offering it relabelled there
-// instead would change only this and the section's heading.
-export const keepOffered = (field: ReviewField) =>
-  field.decisionActions.includes('keep_current') && field.writtenByCase !== true
+// Fields an owner may leave empty (ADR-0104); the store's own list.
+const CLEARABLE: readonly TargetDestination[] = ['subtitle', 'publisher', 'genres', 'narrators']
+const emptyRaw = (value: unknown) =>
+  value === null ||
+  value === undefined ||
+  value === '' ||
+  (Array.isArray(value) && value.length === 0)
+const sameNames = (left: readonly string[], right: unknown) =>
+  Array.isArray(right) &&
+  left.length === right.length &&
+  left.every((name, index) => name === right[index])
+const sameGenres = (left: readonly string[], right: unknown) =>
+  Array.isArray(right) &&
+  left.length === right.length &&
+  left.every((genre) => right.includes(genre))
+// Whether owner entry already offers the way back to the value the case read
+// before its write: Clear for an empty one, or that value as the previous
+// value, names or genres (#1523).
+const wayBackInEntry = (field: ReviewField) => {
+  const control = field.ownerControl
+  const before = field.currentRaw
+  if (!control) return false
+  if (emptyRaw(before)) return control.clear
+  if (control.entry?.suggestions.some(({ rule, value }) => rule === 'previous' && value === before))
+    return true
+  if (control.names?.previous && sameNames(control.names.previous, before)) return true
+  const previousGenres =
+    control.subset?.options.filter((option) => option.previous).map((option) => option.value) ?? []
+  return previousGenres.length > 0 && sameGenres(previousGenres, before)
+}
+// Whether a field this case wrote had nothing before the write and can't be
+// emptied, so there is no way back to that value (#1523).
+export const noWayBack = (field: ReviewField) =>
+  field.writtenByCase === true &&
+  field.decisionActions.includes('keep_current') &&
+  emptyRaw(field.currentRaw) &&
+  !CLEARABLE.includes(field.destination)
+// The card that keeps the value the case read. Elsewhere it is Keep current
+// value. On the case that wrote the field that value is no longer the
+// library's, so it reads Before your change, and pressing it writes that value
+// back. It is left out where owner entry already offers the same way back, and
+// where there is none: nothing to restore and a field that can't be emptied
+// (#1523, ADR-0104).
+export const keepCard = (field: ReviewField): 'keep' | 'before' | null =>
+  !field.decisionActions.includes('keep_current')
+    ? null
+    : field.writtenByCase !== true
+      ? 'keep'
+      : wayBackInEntry(field) || noWayBack(field)
+        ? null
+        : 'before'
+export const keepOffered = (field: ReviewField) => keepCard(field) !== null
 export const isLongDescription = (destination: string, value: string) =>
   destination === 'description' && value.length > 280
 export const decisionQuestion = (destination: TargetDestination) =>

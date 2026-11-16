@@ -123,12 +123,16 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
     const valueless =
       item.category === 'owner' &&
       (item.outcome === 'withdraw' || item.outcome === 'pin' || item.outcome === 'unpin')
+    // A keep after the case's own write wrote back what the case read before
+    // it, so its From and To differ; a plain keep's match (#1523).
     const action =
       item.category === 'owner'
         ? item.outcome === 'accept'
           ? 'You chose a proposed value.'
           : item.outcome === 'keep_current'
-            ? 'You kept the current value.'
+            ? !isRetention(item)
+              ? 'You went back to the value before your change.'
+              : 'You kept the current value.'
             : item.outcome === 'owner_entered'
               ? isClear(item.selectedValue)
                 ? clearedSentence(item.destination)

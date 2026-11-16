@@ -69,11 +69,16 @@ changes nothing. An emptied scalar reads back as `null` and an emptied list as
    input is that choice, and the server sends no empty suggestion. On that
    case Keep current writes back the value the case read: a clearable field
    it read empty goes back to empty as a clear does, and any other field
-   refuses the keep as `owner_value_required`. The browser does not offer
-   that keep: the case detail's `written_by_case` marks each field the case
-   wrote in its current episode, and such a field shows no Keep current
-   value card, since Clear or a new value is the owner's way back. The
-   server path and its refusal stay for API callers.
+   refuses the keep as `owner_value_required`. The case detail's
+   `written_by_case` marks each field the case wrote in its current
+   episode. There the browser shows that keep as a card headed "Before your
+   change", holding the value the case read, and never calls it current. It
+   leaves the card out where owner entry already offers the same way back
+   (Clear for an empty value, or that value as the previous value, names or
+   genres), and where there is none, a field read empty that cannot be
+   emptied, saying so in one sentence. History reads that keep as "You went
+   back to the value before your change." The server path and its refusal
+   stay for API callers.
 5. **The kept case.** When the pipeline admits a ProposalSet with nothing
    actionable while the work's latest verified write, of any origin and
    destination, covers included, is under 2,592,000 seconds old by the

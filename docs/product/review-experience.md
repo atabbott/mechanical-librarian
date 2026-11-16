@@ -349,10 +349,10 @@ cannot replace a decision while its write is in progress, or once a cover write
 is verified. You can replace a verified field write that can be reversed.
 
 Library has no Undo or bulk decisions. To go back, choose the earlier
-value. While a field reads its written value, Enter a value suggests the value
-it replaced, as "Use previous value", names entry "Use previous names", and
-Choose genres marks them Previous; if it was empty, clearing goes
-back. A written work keeps its case for 30 days with nothing to decide,
+value. While a field reads its written value, Change offers what it
+replaced ("Use previous value", "Use previous names", genres marked Previous);
+if it was empty, clearing goes back. Elsewhere the card Before your change
+writes it back. A written work keeps its case for 30 days with nothing to decide,
 outside Attention unless a pin changed. A work whose content returns
 to an earlier state reads as new, and its earlier decisions are history.
 

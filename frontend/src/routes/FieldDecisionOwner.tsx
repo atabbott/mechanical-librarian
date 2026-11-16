@@ -143,7 +143,7 @@ export function OwnerControls({
   const recordedValue = decision?.selected_value
   const recordedClear = changing && isClear(recordedValue)
   // The owner's standing value, which a new one must differ from as well as
-  // from the field's current value (#1523).
+  // from the field's current value; each refusal says which it matched (#1523).
   const standing = changing && !recordedClear ? (recordedValue?.value ?? null) : null
   // An emptied form clears a clearable field that holds a value, unless the
   // owner's standing value is already a clear (ADR-0104).
@@ -151,7 +151,7 @@ export function OwnerControls({
   // An emptied form that clears nothing says why, or what to enter (#1523).
   const emptied = (remedy: string) =>
     recordedClear
-      ? 'This field is already empty.'
+      ? clearedSentence(field.destination, true)
       : changing && control.clear && currentEmpty && control.withdraw === 'available'
         ? 'This field is already empty. Use Withdraw to remove your value.'
         : remedy
@@ -234,8 +234,8 @@ export function OwnerControls({
         )
     } else if (Array.from(value).length > entry.maxCharacters)
       setProblem(`Use up to ${String(entry.maxCharacters)} characters.`)
-    else if (value === current || value === standing)
-      setProblem('That is already the current value.')
+    else if (value === current) setProblem('That is already the current value.')
+    else if (value === standing) setProblem('You already entered this value.')
     else send('owner_entered', { kind: 'text', value })
   }
   const recordNames = (event: SyntheticEvent<HTMLFormElement>) => {
@@ -258,8 +258,8 @@ export function OwnerControls({
     else if (new Set(value.map(nameKey)).size !== value.length) setProblem('Enter each name once.')
     else if (value.some((name) => Array.from(name).length > names.maxCharacters))
       setProblem(`Use up to ${String(names.maxCharacters)} characters for each name.`)
-    else if (sameList(value, current) || sameList(value, standing))
-      setProblem('Those are already the current names.')
+    else if (sameList(value, current)) setProblem('Those are already the current names.')
+    else if (sameList(value, standing)) setProblem('You already entered these names.')
     else send('owner_entered', { kind: 'list', value })
   }
   const recordSubset = (event: SyntheticEvent<HTMLFormElement>) => {
@@ -274,8 +274,8 @@ export function OwnerControls({
       else setProblem(emptied('Choose at least one genre.'))
     } else if (value.length > subset.maxItems)
       setProblem(`Choose up to ${String(subset.maxItems)} genres.`)
-    else if (sameList(value, current) || sameList(value, standing))
-      setProblem('Those are already the current genres.')
+    else if (sameList(value, current)) setProblem('Those are already the current genres.')
+    else if (sameList(value, standing)) setProblem('You already chose these genres.')
     else send('owner_entered', { kind: 'list', value })
   }
   const recordedCount = Array.isArray(recordedValue?.value) ? recordedValue.value.length : null

@@ -14,7 +14,8 @@ import {
   decisionQuestion,
   effectSummary,
   isLongDescription,
-  keepOffered,
+  keepCard,
+  noWayBack,
   valueText,
 } from '../fieldDecision'
 import type { ReviewField } from '../fieldDecision'
@@ -27,7 +28,7 @@ import {
   questionReason,
   selectedAutomaticLanguageForm,
 } from '../fieldReasons'
-import { destinationLabel } from '../labels'
+import { destinationLabel, destinationPhrase } from '../labels'
 import type { useReviewDecisionController } from '../reviewDecisionController'
 import { AutomaticHandlingPanel } from './AutomaticHandling'
 import { MetadataChoice, RecordedFieldObservations } from './FieldDecisionChoices'
@@ -172,7 +173,16 @@ export function FieldDecisionCanvas({
   // The direct choices in reading order, so the radio group's one Tab stop and
   // each position come from a single list (#1290).
   type DirectChoice = Omit<Parameters<typeof MetadataChoice>[0], 'radio'>
-  const currentChoice: DirectChoice | null = keepOffered(selected)
+  const keepKind = keepCard(selected)
+  // On the case that wrote the field the card holds what the case read before
+  // its write, and never calls it current (#1523).
+  const before = keepKind === 'before'
+  const keptValue =
+    before && (selected.currentRaw === null || selected.currentRaw === undefined)
+      ? 'Not set'
+      : valueText(selected.destination, selected.currentValue)
+  const keptName = before ? 'value before your change' : 'Current value'
+  const currentChoice: DirectChoice | null = keepKind
     ? {
         automatic: automaticallySelected(selected, cardProgress),
         context: choiceContext(selected, null),
@@ -180,9 +190,10 @@ export function FieldDecisionCanvas({
         disabled: controller.checking,
         // The column's header names this card, so the card carries no label
         // of its own and starts level with the first proposed value.
+        beforeChange: before,
         evidenceName: isLongDescription(selected.destination, selected.currentValue)
-          ? 'Evidence for Current value description'
-          : `Evidence for Current value: ${valueText(selected.destination, selected.currentValue)}`,
+          ? `Evidence for ${keptName} description`
+          : `Evidence for ${keptName}: ${keptValue}`,
         expanded: expandedChoices.has(`${selected.destination}:current`),
         label: '',
         longDescription: isLongDescription(selected.destination, selected.currentValue),
@@ -197,7 +208,7 @@ export function FieldDecisionCanvas({
           ) && selectedProgress?.phase === 'recording',
         selected: choiceSelected(selected, cardProgress, 'keep_current'),
         toggle: () => toggleChoiceEvidence(`${selected.destination}:current`),
-        value: valueText(selected.destination, selected.currentValue),
+        value: keptValue,
       }
     : null
   const proposedChoices: (DirectChoice & { id: string })[] =
@@ -322,6 +333,12 @@ export function FieldDecisionCanvas({
     (choice) => ({ checked: choice.selected || choice.pinned === true, disabled: choice.disabled }),
   )
   const choicesShown = (selectedChoiceMode || selectedCoverInspection) && !controller.reloadRequired
+  // Another value to choose: a card not already chosen, or owner entry. The
+  // recorded outcome says it may be changed only when one is (#1523).
+  const anotherOffered =
+    selected.destination === 'cover' ||
+    selected.ownerControl !== null ||
+    directChoices.some((choice) => !choice.selected)
   // A decision Automatic made before the pin is not the field's recorded outcome.
   const outcomeShown = !choicesShown && selectedRecorded && selected === field
   const contextPin = pinControl(valuePin(selected, 'current'))
@@ -376,7 +393,11 @@ export function FieldDecisionCanvas({
                 : selected.humanDecision === null && selected.manualHold
                   ? 'Your earlier decision still holds this field. '
                   : 'The recorded outcome is marked below. '}
-              You can choose another value.
+              {anotherOffered
+                ? 'You can choose another value.'
+                : noWayBack(selected)
+                  ? `There was no ${destinationPhrase(selected.destination)} before this change, and the ${destinationPhrase(selected.destination)} can’t be emptied.`
+                  : ''}
             </p>
           ) : selectedOptional ? (
             <p>{fieldReason(selected)}</p>
@@ -439,7 +460,7 @@ export function FieldDecisionCanvas({
               {currentChoice ? (
                 <div className="current-choice-list">
                   <header>
-                    <strong>Keep current value</strong>
+                    <strong>{before ? 'Before your change' : 'Keep current value'}</strong>
                   </header>
                   {directChoices
                     .filter((choice) => choice.current)

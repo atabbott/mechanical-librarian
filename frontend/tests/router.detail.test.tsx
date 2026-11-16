@@ -669,7 +669,9 @@ describe('Library review ownership', () => {
     expect(publisher).toHaveTextContent('To Cleared')
     const reversal = screen.getByText('Applied candidate').closest('article')
     if (!reversal) throw new Error('keep current reversal history article required')
-    expect(reversal).toHaveTextContent('You kept the current value.')
+    // A keep that wrote back the value before the write says so (#1523).
+    expect(reversal).toHaveTextContent('You went back to the value before your change.')
+    expect(reversal).not.toHaveTextContent('You kept the current value.')
     expect(reversal).toHaveTextContent('From Applied candidate')
     expect(reversal).toHaveTextContent('To Original value')
     expect(reversal).not.toHaveTextContent('Kept')

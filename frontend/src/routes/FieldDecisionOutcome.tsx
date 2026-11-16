@@ -11,7 +11,7 @@ import {
   ownerContext,
   selectedAutomaticLanguageForm,
 } from '../fieldReasons'
-import { destinationLabel } from '../labels'
+import { clearedSentence, destinationLabel } from '../labels'
 import { ChoiceEvidencePanel, DescriptionText } from './FieldDecisionChoices'
 import type { PinControl } from '../fieldPin'
 import { PinButton } from './FieldDecisionPin'
@@ -59,7 +59,7 @@ export function SettledFieldContext({
 // A recorded clear has no value to remain; its sentence says what was done (#1523).
 const recordedValueSentence = (field: ReviewField) =>
   isClear(field.humanDecision?.selected_value)
-    ? 'You cleared it.'
+    ? clearedSentence(field.destination)
     : `The recorded value remains ${decisionValue(field)}.`
 
 export function ContextValue({
