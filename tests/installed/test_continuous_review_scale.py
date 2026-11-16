@@ -337,13 +337,15 @@ def test_current_authority_and_predecessor_refusal_without_history(
             # The producer predates #1199's report browse facts, #1202's
             # history indexes, #1204's indexes, #1211's case indexes, #1232's
             # attention facts, #1363's retained cover tables, #1355's level
-            # storage and #1372's taste tables.
+            # storage, #1372's taste tables and #1937's owner links.
             repository._connection.executescript(
                 "".join(
                     f"DROP {kind.upper()} {name};"
                     for kind, name, _ in reversed(schema._ATTENTION_FACT_OBJECTS)
                 )
-                + "DROP TABLE retained_cover_listings;"
+                + "DROP VIEW current_owner_links;"
+                "DROP TABLE owner_links;"
+                "DROP TABLE retained_cover_listings;"
                 "DROP TABLE retained_cover_removals;"
                 "DROP TABLE retained_cover_bindings;"
                 "DROP TABLE cover_taste_profile_versions;"
