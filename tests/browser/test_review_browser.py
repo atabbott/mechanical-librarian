@@ -7930,15 +7930,15 @@ def test_first_review_guide_follows_setup_once_and_opens_the_first_field() -> No
                             channels[0].publish("library", None)
                             expect(dialog).to_be_visible()
                             words = dialog.locator("[aria-live='polite']")
-                            for step in (1, 2, 3):
-                                expect(words).to_contain_text(f"Step {step} of 3")
+                            for step in (1, 2, 3, 4):
+                                expect(words).to_contain_text(f"Step {step} of 4")
                                 # The step's name and sentence need no scrolling.
                                 assert dialog.evaluate(_GUIDE_WORDS_SEEN), (
                                     width,
                                     height,
                                     step,
                                 )
-                                if step < 3:
+                                if step < 4:
                                     # Wherever he scrolled the example to.
                                     dialog.locator(".first-review-body").evaluate(
                                         "body => body.scrollTo(0, body.scrollHeight)"
@@ -8003,15 +8003,15 @@ def test_first_review_guide_follows_setup_once_and_opens_the_first_field() -> No
                             == "first-review-heading"
                         )
                         live = dialog.locator("[aria-live='polite']")
-                        expect(live).to_contain_text("Step 1 of 3")
+                        expect(live).to_contain_text("Step 1 of 4")
                         assert len(owed_now(context)) == 1
 
                         # A reload before closing starts it again at step 1.
                         dialog.get_by_role("button", name="Next").click()
-                        expect(live).to_contain_text("Step 2 of 3")
+                        expect(live).to_contain_text("Step 2 of 4")
                         page.reload()
                         expect(dialog).to_be_visible()
-                        expect(live).to_contain_text("Step 1 of 3")
+                        expect(live).to_contain_text("Step 1 of 4")
                         expect(heading).to_be_focused()
 
                         if width == 390:
@@ -8050,7 +8050,19 @@ def test_first_review_guide_follows_setup_once_and_opens_the_first_field() -> No
                         )
                         boxes.append(dialog.evaluate(_GUIDE_BOX))
                         dialog.get_by_role("button", name="Next").click()
-                        expect(live).to_contain_text("Step 3 of 3")
+                        expect(live).to_contain_text("Step 3 of 4")
+                        boxes.append(dialog.evaluate(_GUIDE_BOX))
+                        # A press on the example's pin chooses it and pins it.
+                        dialog.get_by_role("button", name="Pin this value").last.click()
+                        expect(dialog.get_by_role("status")).to_have_text(
+                            "This is an example, so nothing was pinned."
+                        )
+                        expect(
+                            dialog.get_by_role("button", name="Unpin")
+                        ).to_have_count(1)
+                        boxes.append(dialog.evaluate(_GUIDE_BOX))
+                        dialog.get_by_role("button", name="Next").click()
+                        expect(live).to_contain_text("Step 4 of 4")
                         boxes.append(dialog.evaluate(_GUIDE_BOX))
                         # Hiding the example's evidence does not move them either.
                         dialog.get_by_role("button", name="Back").click()
@@ -8062,7 +8074,7 @@ def test_first_review_guide_follows_setup_once_and_opens_the_first_field() -> No
                         ).to_have_count(0)
                         boxes.append(dialog.evaluate(_GUIDE_BOX))
                         dialog.get_by_role("button", name="Next").click()
-                        expect(live).to_contain_text("Step 3 of 3")
+                        expect(live).to_contain_text("Step 4 of 4")
                         assert all(box == boxes[0] for box in boxes), boxes
                         opener = dialog.get_by_role(
                             "button", name="Open your first field"
