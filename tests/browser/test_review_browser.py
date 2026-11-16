@@ -13833,9 +13833,7 @@ def _work_stays_in_view(page: Page) -> None:
     _said_nothing_false_while_moving(page)
 
 
-def _record_genres(
-    panel, *names: str, said: str, opener: str = "Change"
-) -> None:
+def _record_genres(panel, *names: str, said: str, opener: str = "Change") -> None:
     panel.get_by_role("button", name=opener, exact=True).click()
     group = panel.get_by_role("group", name="Choose genres")
     for name in names:
@@ -13949,9 +13947,7 @@ def test_a_search_that_excludes_the_selected_work_leaves_it_in_view():
         ):
             page.get_by_role("searchbox").fill("Nothing here")
         _work_stays_in_view(page)
-        expect(
-            page.get_by_role("button", name="Change", exact=True)
-        ).to_be_visible()
+        expect(page.get_by_role("button", name="Change", exact=True)).to_be_visible()
 
 
 def test_a_deep_link_to_a_work_off_the_current_page_shows_it():
