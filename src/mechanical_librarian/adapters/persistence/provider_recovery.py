@@ -1414,8 +1414,16 @@ class SQLiteProviderRecoveryStore:
         Most transitions record no outcome, so the reason a throttle recorded
         holds until the scope recovers or its generation changes (#1367).
         ``deferred`` counts only queued or running jobs of that row's exact scope
-        and generation. This is one read under the store lock and never begins
-        a transaction.
+        and generation. ``waiting_since`` is when the episode's current wait
+        began: the first scope event after the later of its last recovery and
+        its last daily quota deferral that changes the recorded health, so time
+        in a quota wait never counts. An event that repeats the health before it
+        (a report publication naming its outcome) changes nothing: it neither
+        starts the wait nor, naming an earlier quota outcome, counts as a quota
+        deferral. It is ``None`` while that quota wait lasts. A run of events
+        repeating one health is crossed by one range scan, with no lookup per
+        event. This is one read under the store lock and never begins a
+        transaction.
         """
         try:
             with self._lock:
@@ -1428,7 +1436,43 @@ class SQLiteProviderRecoveryStore:
                     "AND (outcome IS NOT NULL OR state='recovered') ORDER BY sequence DESC LIMIT 1),"
                     "(SELECT count(*) FROM provider_recovery_jobs j WHERE j.connection=h.connection "
                     "AND j.adapter=h.adapter AND j.scope=h.scope AND j.generation=h.generation "
-                    "AND j.state IN ('queued','running')) "
+                    "AND j.state IN ('queued','running')),("
+                    # Each step takes the latest recovery or quota event below
+                    # the bound (f) and the first event of the unchanged run
+                    # that ends at it (r); a run begun by neither is stepped over.
+                    "WITH RECURSIVE walk(bound,floor,state,attempt,due,found) AS ("
+                    "SELECT 9223372036854775807,0,NULL,NULL,NULL,0 UNION ALL "
+                    "SELECT r.sequence,f.sequence,f.state,f.attempt,f.next_eligible_at,"
+                    "f.state='recovered' OR r.outcome IS 'quota_exhausted' "
+                    "FROM walk JOIN provider_recovery_events f ON f.sequence=("
+                    "SELECT f.sequence FROM provider_recovery_events f "
+                    "INDEXED BY provider_recovery_events_scope_latest "
+                    "WHERE f.connection=h.connection AND f.adapter=h.adapter AND f.scope=h.scope "
+                    "AND f.generation=h.generation AND f.job_attempt IS NULL "
+                    "AND f.sequence<walk.bound "
+                    "AND (f.state='recovered' OR f.outcome='quota_exhausted') "
+                    "ORDER BY f.sequence DESC LIMIT 1) "
+                    "JOIN provider_recovery_events r ON r.sequence=("
+                    "SELECT s.sequence FROM provider_recovery_events s "
+                    "INDEXED BY provider_recovery_events_scope_latest "
+                    "WHERE s.connection=h.connection AND s.adapter=h.adapter AND s.scope=h.scope "
+                    "AND s.generation=h.generation AND s.job_attempt IS NULL AND s.sequence>coalesce(("
+                    "SELECT p.sequence FROM provider_recovery_events p "
+                    "INDEXED BY provider_recovery_events_scope_latest "
+                    "WHERE p.connection=h.connection AND p.adapter=h.adapter AND p.scope=h.scope "
+                    "AND p.generation=h.generation AND p.job_attempt IS NULL "
+                    "AND p.sequence<f.sequence AND (p.next_eligible_at IS NOT f.next_eligible_at "
+                    "OR p.state!=f.state OR p.attempt!=f.attempt) "
+                    "ORDER BY p.sequence DESC LIMIT 1),0) ORDER BY s.sequence ASC LIMIT 1) "
+                    "WHERE NOT walk.found) "
+                    "SELECT (SELECT e.occurred_at FROM provider_recovery_events e "
+                    "INDEXED BY provider_recovery_events_scope_latest "
+                    "WHERE e.connection=h.connection AND e.adapter=h.adapter AND e.scope=h.scope "
+                    "AND e.generation=h.generation AND e.job_attempt IS NULL "
+                    "AND e.sequence>coalesce(w.floor,0) AND (w.floor IS NULL "
+                    "OR (e.state,e.attempt,e.next_eligible_at) IS NOT (w.state,w.attempt,w.due)) "
+                    "ORDER BY e.sequence ASC LIMIT 1) "
+                    "FROM (SELECT 1) LEFT JOIN walk w ON w.found) "
                     "FROM provider_recovery_health h "
                     "WHERE h.state!='recovered' ORDER BY h.scope,h.adapter,h.connection LIMIT 4096"
                 ).fetchall()
@@ -1436,6 +1480,11 @@ class SQLiteProviderRecoveryStore:
             raise ProviderRecoveryStoreError(
                 "provider recovery persistence is unavailable"
             ) from error
+        if any(
+            row[7] is not None and not bounded_integer(0, MAX_TIMESTAMP)(row[7])
+            for row in rows
+        ):
+            raise ProviderRecoveryStoreError("provider recovery history is invalid")
         return tuple(
             {
                 "connection": row[0],
@@ -1445,9 +1494,35 @@ class SQLiteProviderRecoveryStore:
                 "next_eligible_at": row[4],
                 "reason": row[5],
                 "deferred": row[6],
+                "waiting_since": row[7],
             }
             for row in rows
         )
+
+    def answered_sources(self) -> tuple[tuple[str, str], ...]:
+        """Name each scope and adapter whose lookups all got an answer.
+
+        Over every connection of the source in its current generation, a job
+        completed and none went stale or failed. A scope also closes when its
+        waiting jobs went stale or failed, so recovery alone is no evidence that
+        a provider answered (#1494). Read after ``throttling_snapshot``: an
+        answer is never lost between the two.
+        """
+        try:
+            with self._lock:
+                rows = self._connection.execute(
+                    "SELECT h.scope,h.adapter FROM provider_recovery_health h "
+                    "JOIN provider_recovery_jobs j ON j.connection=h.connection "
+                    "AND j.adapter=h.adapter AND j.scope=h.scope AND j.generation=h.generation "
+                    "GROUP BY h.scope,h.adapter HAVING sum(j.state='complete')>0 "
+                    "AND sum(j.state IN ('stale','failed'))=0 "
+                    "ORDER BY h.scope,h.adapter LIMIT 256"
+                ).fetchall()
+        except sqlite3.Error as error:
+            raise ProviderRecoveryStoreError(
+                "provider recovery persistence is unavailable"
+            ) from error
+        return tuple((row[0], row[1]) for row in rows)
 
     def cover_fetching_identities(self) -> frozenset[tuple[str, str, str, str]]:
         """Capture exact active report identities in one recovery-store read."""

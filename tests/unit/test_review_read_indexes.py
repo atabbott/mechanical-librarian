@@ -24,6 +24,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
 from mechanical_librarian.adapters.persistence.schema import (
     _NO_UPDATE_SQL,
     _create_schema,
+    _review_value_flags,
 )
 from mechanical_librarian.application.cover_consideration import (
     SCHEMA_VERSION as COVER_CONSIDERATION_SCHEMA,
@@ -91,6 +92,7 @@ def _representative_database(path: Path, works: int = _WORKS) -> sqlite3.Connect
         1,
         lambda value: value.casefold() if type(value) is str else value,
     )
+    connection.create_function("ml_value_flags", 2, _review_value_flags)
     connection.create_function(
         "ml_cover_consideration_current", 2, lambda _document, _replay: 0
     )
@@ -1152,6 +1154,7 @@ def test_post_start_work_becomes_visible_only_at_complete_pipeline_boundaries(
         "no_attention_needed": 0,
         "not_matched": 1,
         "preparation_failed": 0,
+        "flagged": 0,
     }
     assert report_page["items"][0]["review_case_id"] is None
 
@@ -1165,6 +1168,7 @@ def test_post_start_work_becomes_visible_only_at_complete_pipeline_boundaries(
         "no_attention_needed": 1,
         "not_matched": 0,
         "preparation_failed": 0,
+        "flagged": 0,
     }
     item = case_page["items"][0]
     assert item["review_case_id"] is not None

@@ -244,6 +244,7 @@ def test_actual_embedded_predecessor_refused_without_mutation(
         )
         + "DROP TRIGGER metadata_reports_project_browse_facts;"
         "DROP TABLE metadata_report_browse_authors;"
+        "DROP TABLE metadata_report_value_flags;"
         "DROP TABLE metadata_report_browse_facts;"
         "DROP TRIGGER proposal_sets_project_browse_facts;"
         "DROP TABLE proposal_set_browse_facts;"

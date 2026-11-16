@@ -70,11 +70,12 @@ The root connection and its dependent writers run with:
 The Activity reader and the shadow preview use their own settings, described
 below.
 
-Two Python SQL functions are registered on every connection: `ml_casefold`,
-which folds text for search and browse keys, and
-`ml_cover_consideration_current`, which decides cover currentness inside SQL.
-The report browse-fact trigger calls `ml_casefold`, so a connection that has
-not registered it cannot insert a report.
+Three Python SQL functions are registered on every connection: `ml_casefold`,
+which folds text for search and browse keys,
+`ml_cover_consideration_current`, which decides cover currentness inside SQL,
+and `ml_value_flags`, which applies the Looks wrong rules to one report. The
+report browse-fact trigger calls `ml_casefold` and `ml_value_flags`, so a
+connection that has not registered them cannot insert a report.
 
 ### Opening and file binding
 
@@ -111,7 +112,7 @@ Tables fall into six kinds. The kind decides the table's write rule.
 | Canonical immutable documents | Insert only; triggers refuse `UPDATE` and `DELETE` | `metadata_reports`, `metadata_report_cover_references`, `proposal_sets`, `level_proposal_sets`, `review_cases`, `review_case_level_offers`, `metadata_policy_drafts`, `description_advice_candidates` |
 | Append-only audit and decisions | Insert only; triggers refuse `UPDATE` and `DELETE` | `review_case_transitions`, `human_decisions`, `human_decision_events`, `automatic_decisions`, `shadow_decision_outcomes`, `level_decision_notes`, `cover_considerations`, `cover_consideration_events`, `cover_selection_authorities`, `description_decisions`, `field_effect_events`, `field_effect_no_changes` |
 | Current pointers | Updated in the transaction that publishes or admits their target | `current_metadata_reports`, `current_metadata_report_lineages`, `current_review_case_lineages`, `current_review_packages`, `current_cover_considerations`, `current_cover_selection_authorities`, `current_description_advice`, `current_description_decisions`, `review_case_episodes`, `review_case_level_reconciliation` |
-| Derived facts | Written only by triggers, in the same statement or transaction as their source | `review_case_field_facts`, `shadow_outcome_field_facts`, `metadata_report_browse_facts`, `metadata_report_browse_authors`, `proposal_set_browse_facts`, `review_attention_facts` |
+| Derived facts | Written only by triggers, in the same statement or transaction as their source | `review_case_field_facts`, `shadow_outcome_field_facts`, `metadata_report_browse_facts`, `metadata_report_browse_authors`, `metadata_report_value_flags`, `proposal_set_browse_facts`, `review_attention_facts` |
 | Operational and recovery state | Mutable state machines with their own restart rules | `review_preparation_scans`, `review_preparation_work`, `review_preparation_absences`, `review_preparation_connection_conditions`, `review_preparation_presentation`, `description_preparation_pending`, `description_advice_attempts`, `provider_recovery_outbox`, `metadata_policy_transitions`, `metadata_policy_transition_items`, `metadata_policy_resolutions`, `field_effects`, `field_effect_actions`, `field_effect_cleanups` |
 | Controls, settings and credentials | Singletons or scoped rows changed only by their own command | `metadata_policy_state`, `review_preparation_control`, `automatic_safety_state`, `field_effect_control`, `field_effect_suspensions`, `field_effect_authorities`, `field_effect_consents`, `field_effect_manual_holds`, `browse_fact_identity`, `owner_settings`, `owner_setting_secrets`, `reviewer_access`, `reviewer_access_secrets` |
 
@@ -200,7 +201,9 @@ canonical documents, not a cache and not an alternate authority.
   project per-destination case and outcome facts after insert.
 - `metadata_reports_project_browse_facts` projects one browse-fact row per
   report (folded title, format, provider-limited flag and provider match
-  state) and one row per distinct folded author.
+  state), one row per distinct folded author, and one
+  `metadata_report_value_flags` row per Looks wrong finding (destination and
+  rule) on the report's title, authors or narrators.
 - `proposal_sets_project_browse_facts` records each proposal's resolved
   policy id.
 - `review_attention_facts` holds one row per current package, report and field
@@ -212,8 +215,9 @@ canonical documents, not a cache and not an alternate authority.
   ([ADR-0084](decisions/0084-persisted-attention-facts.md)).
 
 `browse_fact_identity` records the Unicode version the facts were folded
-under. Open refuses any other version, so a Python upgrade that changes
-Unicode data needs a clean rebuild.
+under and the Looks wrong rule list the flags were derived by. Open refuses
+any other version of either, so a Python upgrade that changes Unicode data,
+or a build with a different rule list, needs a clean rebuild.
 
 Open compares every derived relation with its canonical documents. A partial
 write, manual edit or interrupted projection refuses the database rather than
@@ -475,7 +479,10 @@ forgets at most five minutes of throttle history (see
 Foreign keys are on and writes use `BEGIN IMMEDIATE` under the store's lock. A
 claim's rollback snapshot is kept only in process; durable history is the
 source of truth after restart. Maintainer commands that only read it open it
-read-only. How recovery runs is in
+read-only. The throttling read behind the masthead walks each waiting scope's
+current episode of events, for its reason and for when its wait began, so it
+grows with how long a source has been waiting and with how many reports met a
+daily quota during the wait. How recovery runs is in
 [Provider recovery](../operations/provider-recovery.md).
 
 ## Provider-response database

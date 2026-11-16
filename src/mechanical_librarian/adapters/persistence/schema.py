@@ -96,6 +96,7 @@ from mechanical_librarian.domain.metadata_report import (
     REPORT_SCHEMA,
     MetadataReport,
     ReportValueError,
+    TargetFacts,
 )
 from mechanical_librarian.domain.owner_settings import OwnerSettingsError
 from mechanical_librarian.domain.proposal_set import (
@@ -110,6 +111,12 @@ from mechanical_librarian.domain.shadow_decision import (
     DECISION_POLICY_VERSION,
 )
 from mechanical_librarian.domain.shadow_outcome import SHADOW_OUTCOME_SCHEMA
+from mechanical_librarian.domain.value_flags import (
+    VALUE_FLAG_RULES,
+    VALUE_FLAG_RULES_VERSION,
+    report_source_titles,
+    value_flags,
+)
 
 if sys.platform.startswith("linux"):
     import fcntl
@@ -148,6 +155,18 @@ _REPORT_BROWSE_AUTHORS_SQL = (
     "CREATE TABLE metadata_report_browse_authors ("
     "report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
     "author_key TEXT NOT NULL, PRIMARY KEY(report_id,author_key)) WITHOUT ROWID"
+)
+# #1334: each rule a report's current values meet, one row per destination and
+# rule, derived at insert by `value_flags` so the Looks wrong lens filters and
+# counts in SQL. Only a contributor list carries a credit label.
+_REPORT_VALUE_FLAGS_SQL = (
+    "CREATE TABLE metadata_report_value_flags ("
+    "report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
+    "destination TEXT NOT NULL CHECK(destination IN ('title','authors','narrators')), "
+    "rule TEXT NOT NULL CHECK(rule IN ("
+    + ",".join(f"'{rule}'" for rule in VALUE_FLAG_RULES)
+    + ")), CHECK((rule='credit_label')=(destination<>'title')), "
+    "PRIMARY KEY(report_id,destination,rule)) WITHOUT ROWID"
 )
 
 
@@ -269,6 +288,24 @@ def _report_browse_author_values_sql(source: str, document: str) -> str:
     )
 
 
+def _report_value_flag_values_sql(source: str, document: str) -> str:
+    """A report's flags, from its target and its candidates' title claims.
+
+    The SQL function receives the report's own target and provider list and
+    reads both through `value_flags` and `report_source_titles`, the same
+    domain rules the Library row applies (#1334).
+    """
+    return (
+        "json_extract(flag.value,'$[0]'),json_extract(flag.value,'$[1]') FROM "
+        + source
+        + "json_each(ml_value_flags(json_extract("
+        + document
+        + ",'$.target'),json_extract("
+        + document
+        + ",'$.providers'))) flag"
+    )
+
+
 _REPORT_BROWSE_FACTS_INSERT_SQL = (
     "CREATE TRIGGER metadata_reports_project_browse_facts AFTER INSERT ON metadata_reports "
     "BEGIN INSERT INTO metadata_report_browse_facts("
@@ -278,17 +315,22 @@ _REPORT_BROWSE_FACTS_INSERT_SQL = (
     + "; INSERT INTO metadata_report_browse_authors(report_id,author_key) "
     "SELECT DISTINCT NEW.report_id,"
     + _report_browse_author_values_sql("", "NEW.document")
+    + "; INSERT INTO metadata_report_value_flags(report_id,destination,rule) "
+    "SELECT NEW.report_id,"
+    + _report_value_flag_values_sql("", "NEW.document")
     + "; END"
 )
 
 
 # The fold is `str.casefold`, whose mapping is the interpreter's Unicode
 # database, so the facts are bound to the version they were folded under. Open
-# refuses any other version: a clean rebuild re-derives them (#1199).
+# refuses any other version: a clean rebuild re-derives them (#1199). The value
+# flags are bound the same way to the rule list they were derived by (#1334).
 _BROWSE_FACT_IDENTITY_SQL = (
     "CREATE TABLE browse_fact_identity (singleton INTEGER PRIMARY KEY NOT NULL "
     "CHECK(singleton=1), unicode_version TEXT NOT NULL "
-    "CHECK(length(unicode_version) BETWEEN 1 AND 32))"
+    "CHECK(length(unicode_version) BETWEEN 1 AND 32), value_flag_rules TEXT NOT NULL "
+    "CHECK(length(value_flag_rules) BETWEEN 1 AND 64))"
 )
 
 
@@ -298,15 +340,31 @@ def _review_casefold(value: object) -> str:
     return value.casefold()
 
 
+def _review_value_flags(target: object, providers: object) -> str:
+    """A report's value flags as a JSON list of [destination, rule] pairs."""
+    if type(target) is not str or type(providers) is not str:
+        raise ValueError("review value flag input is invalid")
+    fields = TargetFacts.from_data(json.loads(target)).fields
+    return json.dumps(
+        [
+            list(flag)
+            for flag in value_flags(fields, report_source_titles(json.loads(providers)))
+        ]
+    )
+
+
 def _register_casefold(connection: sqlite3.Connection) -> None:
-    """Give a connection the one deterministic fold its facts were derived by.
+    """Give a connection the deterministic functions its facts were derived by.
 
     Every connection that inserts a report fires the browse-fact trigger, and
-    every connection that validates facts recomputes them, through this
-    function. One that lacks it fails with `no such function` and writes or
-    accepts nothing.
+    every connection that validates facts recomputes them, through the fold
+    and the value flags (#1334). One that lacks them fails with `no such
+    function` and writes or accepts nothing.
     """
     connection.create_function("ml_casefold", 1, _review_casefold, deterministic=True)
+    connection.create_function(
+        "ml_value_flags", 2, _review_value_flags, deterministic=True
+    )
 
 
 _CURRENT_SQL = (
@@ -1386,7 +1444,11 @@ _SETUP_POLICY_TRANSITION_ROW = (
 _SETUP_REVIEW_CONTROL_ROW = (1, 0, 0, 0, None, 0, 0, 0)
 _SETUP_AUTOMATIC_SAFETY_ROW = (1, 0, None, "[]", 0)
 _SETUP_FIELD_EFFECT_CONTROL_ROW = (1, 0, 0)
-_SETUP_BROWSE_FACT_IDENTITY_ROW = (1, unicodedata.unidata_version)
+_SETUP_BROWSE_FACT_IDENTITY_ROW = (
+    1,
+    unicodedata.unidata_version,
+    VALUE_FLAG_RULES_VERSION,
+)
 
 
 _DESCRIPTION_ADVICE_TABLES = {
@@ -1697,6 +1759,7 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_REPORTS_SQL)
     connection.execute(_REPORT_BROWSE_FACTS_SQL)
     connection.execute(_REPORT_BROWSE_AUTHORS_SQL)
+    connection.execute(_REPORT_VALUE_FLAGS_SQL)
     connection.execute(_REPORT_BROWSE_FACTS_INSERT_SQL)
     connection.execute(_CURRENT_SQL)
     connection.execute(_CURRENT_LINEAGE_SQL)
@@ -1708,7 +1771,8 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_PROPOSAL_BROWSE_FACTS_INSERT_SQL)
     connection.execute(_BROWSE_FACT_IDENTITY_SQL)
     connection.execute(
-        "INSERT INTO browse_fact_identity(singleton,unicode_version) VALUES(?,?)",
+        "INSERT INTO browse_fact_identity(singleton,unicode_version,"
+        "value_flag_rules) VALUES(?,?,?)",
         _SETUP_BROWSE_FACT_IDENTITY_ROW,
     )
     connection.execute(_METADATA_POLICY_DRAFTS_SQL)
@@ -1900,485 +1964,528 @@ def _cover_taste_objects() -> tuple[tuple[str, str, str | None], ...]:
     )
 
 
+def _description_advice_objects() -> tuple[tuple[str, str, str | None], ...]:
+    """Description advice tables, their indexes and triggers."""
+    return (
+        *(
+            ("table", name, statement)
+            for name, statement in _DESCRIPTION_ADVICE_TABLES.items()
+        ),
+        *(
+            ("index", f"sqlite_autoindex_{name}_1", None)
+            for name in _DESCRIPTION_ADVICE_TABLES
+        ),
+        ("index", "sqlite_autoindex_description_decisions_2", None),
+        (
+            "index",
+            "description_decisions_case",
+            _DESCRIPTION_DECISIONS_CASE_INDEX_SQL,
+        ),
+        *_named_objects("trigger", _DESCRIPTION_ADVICE_TRIGGERS),
+    )
+
+
+def _current_pointer_objects() -> tuple[tuple[str, str, str | None], ...]:
+    """Current-report and current-review pointer tables and their indexes."""
+    return (
+        ("table", "current_metadata_reports", _CURRENT_SQL),
+        ("table", "current_metadata_report_lineages", _CURRENT_LINEAGE_SQL),
+        ("table", "current_review_case_lineages", _REVIEW_POINTERS_SQL),
+        ("table", "current_review_packages", _CURRENT_REVIEW_PACKAGES_SQL),
+        ("table", "provider_recovery_outbox", _PROVIDER_RECOVERY_OUTBOX_SQL),
+        ("index", "sqlite_autoindex_current_metadata_reports_1", None),
+        ("index", "sqlite_autoindex_current_metadata_report_lineages_1", None),
+        ("index", "sqlite_autoindex_current_review_case_lineages_1", None),
+        ("index", "sqlite_autoindex_current_review_packages_1", None),
+        (
+            "index",
+            "current_review_case_lineages_case",
+            _CURRENT_REVIEW_CASE_LINEAGES_CASE_INDEX_SQL,
+        ),
+        (
+            "index",
+            "current_review_packages_case",
+            _CURRENT_REVIEW_PACKAGES_CASE_INDEX_SQL,
+        ),
+        ("index", "sqlite_autoindex_provider_recovery_outbox_1", None),
+    )
+
+
+def _cover_objects() -> tuple[tuple[str, str, str | None], ...]:
+    """Cover reference, consideration, authority and retained-cover objects."""
+    return (
+        ("table", "cover_considerations", _COVER_CONSIDERATIONS_SQL),
+        (
+            "table",
+            "current_cover_considerations",
+            _CURRENT_COVER_CONSIDERATIONS_SQL,
+        ),
+        ("table", "cover_selection_authorities", _COVER_SELECTION_AUTHORITIES_SQL),
+        (
+            "table",
+            "current_cover_selection_authorities",
+            _CURRENT_COVER_SELECTION_AUTHORITIES_SQL,
+        ),
+        ("table", "cover_consideration_events", _COVER_CONSIDERATION_EVENTS_SQL),
+        ("table", "retained_cover_bindings", _RETAINED_COVER_BINDINGS_SQL),
+        ("table", "retained_cover_removals", _RETAINED_COVER_REMOVALS_SQL),
+        ("table", "retained_cover_listings", _RETAINED_COVER_LISTINGS_SQL),
+        ("index", "sqlite_autoindex_retained_cover_listings_2", None),
+        ("table", "metadata_report_cover_references", _COVER_REFERENCES_SQL),
+        ("index", "sqlite_autoindex_metadata_report_cover_references_1", None),
+        (
+            "index",
+            "metadata_report_cover_references_artifact_id",
+            _COVER_ARTIFACT_INDEX_SQL,
+        ),
+        (
+            "index",
+            "metadata_report_cover_references_preview_digest",
+            _COVER_PREVIEW_INDEX_SQL,
+        ),
+        ("index", "sqlite_autoindex_cover_considerations_1", None),
+        ("index", "sqlite_autoindex_current_cover_considerations_1", None),
+        ("index", "sqlite_autoindex_current_cover_considerations_2", None),
+        ("index", "sqlite_autoindex_cover_selection_authorities_1", None),
+        ("index", "sqlite_autoindex_cover_selection_authorities_2", None),
+        (
+            "index",
+            "sqlite_autoindex_current_cover_selection_authorities_1",
+            None,
+        ),
+        (
+            "index",
+            "sqlite_autoindex_current_cover_selection_authorities_2",
+            None,
+        ),
+        ("index", "sqlite_autoindex_cover_consideration_events_1", None),
+        (
+            "index",
+            "retained_cover_bindings_target",
+            _RETAINED_COVER_BINDINGS_TARGET_INDEX_SQL,
+        ),
+        (
+            "index",
+            "retained_cover_bindings_digest",
+            _RETAINED_COVER_BINDINGS_DIGEST_INDEX_SQL,
+        ),
+        (
+            "trigger",
+            "metadata_report_cover_references_no_delete",
+            _COVER_NO_DELETE_SQL,
+        ),
+        (
+            "trigger",
+            "metadata_report_cover_references_no_update",
+            _COVER_NO_UPDATE_SQL,
+        ),
+        (
+            "trigger",
+            "cover_considerations_no_delete",
+            _COVER_CONSIDERATION_NO_DELETE_SQL,
+        ),
+        (
+            "trigger",
+            "cover_considerations_no_update",
+            _COVER_CONSIDERATION_NO_UPDATE_SQL,
+        ),
+        (
+            "trigger",
+            "cover_selection_authorities_no_delete",
+            _COVER_SELECTION_AUTHORITY_NO_DELETE_SQL,
+        ),
+        (
+            "trigger",
+            "cover_selection_authorities_no_update",
+            _COVER_SELECTION_AUTHORITY_NO_UPDATE_SQL,
+        ),
+        (
+            "trigger",
+            "current_cover_selection_authorities_validate_insert",
+            _CURRENT_COVER_SELECTION_AUTHORITY_INSERT_SQL,
+        ),
+        (
+            "trigger",
+            "current_cover_selection_authorities_validate_update",
+            _CURRENT_COVER_SELECTION_AUTHORITY_UPDATE_SQL,
+        ),
+        (
+            "trigger",
+            "cover_consideration_events_no_delete",
+            _COVER_CONSIDERATION_EVENT_NO_DELETE_SQL,
+        ),
+        (
+            "trigger",
+            "cover_consideration_events_no_update",
+            _COVER_CONSIDERATION_EVENT_NO_UPDATE_SQL,
+        ),
+        (
+            "trigger",
+            "retained_cover_bindings_no_delete",
+            _RETAINED_COVER_BINDING_NO_DELETE_SQL,
+        ),
+        (
+            "trigger",
+            "retained_cover_bindings_no_update",
+            _RETAINED_COVER_BINDING_NO_UPDATE_SQL,
+        ),
+        (
+            "trigger",
+            "retained_cover_listings_no_delete",
+            _RETAINED_COVER_LISTING_NO_DELETE_SQL,
+        ),
+        (
+            "trigger",
+            "retained_cover_listings_no_update",
+            _RETAINED_COVER_LISTING_NO_UPDATE_SQL,
+        ),
+    )
+
+
+def _decision_and_field_effect_objects() -> tuple[tuple[str, str, str | None], ...]:
+    """Human and automatic decision tables and the field-effect tables."""
+    return (
+        ("table", "human_decision_events", _HUMAN_DECISION_EVENTS_SQL),
+        ("table", "human_decisions", _HUMAN_DECISIONS_SQL),
+        ("table", "review_case_episodes", _REVIEW_CASE_EPISODES_SQL),
+        ("table", "automatic_decisions", _AUTOMATIC_DECISIONS_SQL),
+        ("table", "automatic_safety_state", _AUTOMATIC_SAFETY_SQL),
+        ("table", "field_effect_control", _FIELD_EFFECT_CONTROL_SQL),
+        ("table", "field_effect_suspensions", _FIELD_EFFECT_SUSPENSIONS_SQL),
+        ("table", "field_effect_actions", _FIELD_EFFECT_ACTIONS_SQL),
+        ("table", "field_effect_authorities", _FIELD_EFFECT_AUTHORITIES_SQL),
+        ("table", "field_effect_cleanups", _FIELD_EFFECT_CLEANUPS_SQL),
+        ("table", "field_effect_consents", _FIELD_EFFECT_CONSENTS_SQL),
+        ("table", "field_effect_manual_holds", _FIELD_EFFECT_MANUAL_HOLDS_SQL),
+        ("table", "field_effect_events", _FIELD_EFFECT_EVENTS_SQL),
+        ("table", "field_effect_no_changes", _FIELD_EFFECT_NO_CHANGES_SQL),
+        ("table", "field_effects", _FIELD_EFFECTS_SQL),
+        ("index", "sqlite_autoindex_human_decision_events_1", None),
+        ("index", "sqlite_autoindex_human_decision_events_2", None),
+        ("index", "sqlite_autoindex_human_decisions_1", None),
+        ("index", "sqlite_autoindex_human_decisions_2", None),
+        (
+            "index",
+            "human_decisions_case_destination",
+            _HUMAN_DECISIONS_CASE_DESTINATION_INDEX_SQL,
+        ),
+        ("index", "sqlite_autoindex_automatic_decisions_1", None),
+        ("index", "sqlite_autoindex_automatic_decisions_2", None),
+        ("index", "sqlite_autoindex_automatic_decisions_3", None),
+        ("index", "sqlite_autoindex_field_effect_events_1", None),
+        ("index", "sqlite_autoindex_field_effect_events_2", None),
+        # WITHOUT ROWID is deliberate: only the explicit unique event identity
+        # has an autoindex; the primary key does not.
+        ("index", "sqlite_autoindex_field_effect_no_changes_2", None),
+        ("index", "sqlite_autoindex_field_effect_suspensions_1", None),
+        ("index", "sqlite_autoindex_field_effect_actions_1", None),
+        ("index", "sqlite_autoindex_field_effect_actions_2", None),
+        ("index", "sqlite_autoindex_field_effect_authorities_1", None),
+        ("index", "sqlite_autoindex_field_effect_cleanups_1", None),
+        ("index", "sqlite_autoindex_field_effect_consents_1", None),
+        ("index", "sqlite_autoindex_field_effect_manual_holds_1", None),
+        ("index", "sqlite_autoindex_field_effects_1", None),
+        ("index", "field_effects_decision", _FIELD_EFFECTS_DECISION_INDEX_SQL),
+        (
+            "index",
+            "field_effects_companion_decision",
+            _FIELD_EFFECTS_COMPANION_DECISION_INDEX_SQL,
+        ),
+        ("index", "field_effects_ready", _FIELD_EFFECTS_READY_INDEX_SQL),
+        ("index", "field_effects_waiting", _FIELD_EFFECTS_WAITING_INDEX_SQL),
+        ("index", "field_effects_target", _FIELD_EFFECTS_TARGET_INDEX_SQL),
+        (
+            "trigger",
+            "human_decision_events_no_delete",
+            _HUMAN_DECISION_EVENT_NO_DELETE_SQL,
+        ),
+        (
+            "trigger",
+            "human_decision_events_no_update",
+            _HUMAN_DECISION_EVENT_NO_UPDATE_SQL,
+        ),
+        ("trigger", "human_decisions_no_delete", _HUMAN_DECISION_NO_DELETE_SQL),
+        ("trigger", "human_decisions_no_update", _HUMAN_DECISION_NO_UPDATE_SQL),
+        (
+            "trigger",
+            "automatic_decisions_no_delete",
+            _AUTOMATIC_DECISION_NO_DELETE_SQL,
+        ),
+        (
+            "trigger",
+            "automatic_decisions_no_update",
+            _AUTOMATIC_DECISION_NO_UPDATE_SQL,
+        ),
+        (
+            "trigger",
+            "field_effect_events_no_delete",
+            _FIELD_EFFECT_EVENT_NO_DELETE_SQL,
+        ),
+        (
+            "trigger",
+            "field_effect_events_no_update",
+            _FIELD_EFFECT_EVENT_NO_UPDATE_SQL,
+        ),
+        (
+            "trigger",
+            "field_effect_no_changes_no_delete",
+            _FIELD_EFFECT_NO_CHANGE_NO_DELETE_SQL,
+        ),
+        (
+            "trigger",
+            "field_effect_no_changes_no_update",
+            _FIELD_EFFECT_NO_CHANGE_NO_UPDATE_SQL,
+        ),
+    )
+
+
+def _report_and_setting_objects() -> tuple[tuple[str, str, str | None], ...]:
+    """Metadata report, metadata policy, owner setting and reviewer access objects."""
+    return (
+        ("table", "metadata_reports", _REPORTS_SQL),
+        ("table", "metadata_report_browse_facts", _REPORT_BROWSE_FACTS_SQL),
+        ("table", "metadata_report_browse_authors", _REPORT_BROWSE_AUTHORS_SQL),
+        ("table", "metadata_report_value_flags", _REPORT_VALUE_FLAGS_SQL),
+        ("table", "metadata_policy_drafts", _METADATA_POLICY_DRAFTS_SQL),
+        ("table", "metadata_policy_resolutions", _METADATA_POLICY_RESOLUTIONS_SQL),
+        ("table", "metadata_policy_state", _METADATA_POLICY_STATE_SQL),
+        ("table", "metadata_policy_transitions", _METADATA_POLICY_TRANSITIONS_SQL),
+        (
+            "table",
+            "metadata_policy_transition_items",
+            _METADATA_POLICY_TRANSITION_ITEMS_SQL,
+        ),
+        ("table", "owner_setting_secrets", _OWNER_SETTING_SECRETS_SQL),
+        ("table", "owner_settings", _OWNER_SETTINGS_SQL),
+        ("table", "reviewer_access", _REVIEWER_ACCESS_SQL),
+        ("table", "reviewer_access_secrets", _REVIEWER_ACCESS_SECRETS_SQL),
+        ("index", "sqlite_autoindex_metadata_reports_1", None),
+        ("index", "sqlite_autoindex_metadata_reports_2", None),
+        ("index", "sqlite_autoindex_metadata_policy_drafts_1", None),
+        ("index", "sqlite_autoindex_metadata_policy_resolutions_1", None),
+        (
+            "index",
+            "metadata_policy_resolutions_resolved",
+            _METADATA_POLICY_RESOLUTIONS_RESOLVED_INDEX_SQL,
+        ),
+        ("index", "sqlite_autoindex_metadata_policy_transitions_1", None),
+        ("index", "sqlite_autoindex_metadata_policy_transitions_2", None),
+        ("index", "sqlite_autoindex_metadata_policy_transition_items_1", None),
+        ("index", "sqlite_autoindex_owner_setting_secrets_1", None),
+        ("index", "sqlite_autoindex_reviewer_access_secrets_1", None),
+        ("trigger", "metadata_reports_no_delete", _NO_DELETE_SQL),
+        (
+            "trigger",
+            "metadata_reports_project_browse_facts",
+            _REPORT_BROWSE_FACTS_INSERT_SQL,
+        ),
+        ("trigger", "metadata_reports_no_update", _NO_UPDATE_SQL),
+        (
+            "trigger",
+            "metadata_policy_drafts_no_delete",
+            _METADATA_POLICY_DRAFT_NO_DELETE_SQL,
+        ),
+        (
+            "trigger",
+            "metadata_policy_drafts_no_update",
+            _METADATA_POLICY_DRAFT_NO_UPDATE_SQL,
+        ),
+    )
+
+
+def _review_objects() -> tuple[tuple[str, str, str | None], ...]:
+    """Proposal, review case, review preparation, shadow outcome and level objects."""
+    return (
+        ("table", "proposal_sets", _PROPOSAL_SETS_SQL),
+        ("table", "proposal_set_browse_facts", _PROPOSAL_BROWSE_FACTS_SQL),
+        ("table", "browse_fact_identity", _BROWSE_FACT_IDENTITY_SQL),
+        ("table", "review_case_transitions", _REVIEW_TRANSITIONS_SQL),
+        ("table", "review_cases", _REVIEW_CASES_SQL),
+        ("table", "review_case_field_facts", _REVIEW_CASE_FIELD_FACTS_SQL),
+        ("table", "review_preparation_control", _REVIEW_CONTROL_SQL),
+        (
+            "table",
+            "review_preparation_presentation",
+            _REVIEW_PREPARATION_PRESENTATION_SQL,
+        ),
+        (
+            "table",
+            "review_preparation_connection_conditions",
+            _REVIEW_CONNECTION_CONDITIONS_SQL,
+        ),
+        ("table", "review_preparation_scans", _REVIEW_SCANS_SQL),
+        ("table", "review_preparation_absences", _REVIEW_ABSENCES_SQL),
+        ("table", "review_preparation_work", _REVIEW_WORK_SQL),
+        ("table", "shadow_decision_outcomes", _SHADOW_DECISION_OUTCOMES_SQL),
+        (
+            "table",
+            "shadow_outcome_field_facts",
+            _SHADOW_OUTCOME_FIELD_FACTS_SQL,
+        ),
+        ("table", "level_proposal_sets", _LEVEL_PROPOSAL_SETS_SQL),
+        ("index", "sqlite_autoindex_level_proposal_sets_1", None),
+        ("table", "level_decision_notes", _LEVEL_DECISION_NOTES_SQL),
+        ("index", "sqlite_autoindex_level_decision_notes_1", None),
+        ("table", "review_case_level_offers", _REVIEW_CASE_LEVEL_OFFERS_SQL),
+        ("index", "sqlite_autoindex_review_case_level_offers_1", None),
+        (
+            "table",
+            "review_case_level_reconciliation",
+            _REVIEW_CASE_LEVEL_RECONCILIATION_SQL,
+        ),
+        ("index", "sqlite_autoindex_proposal_sets_1", None),
+        ("index", "sqlite_autoindex_review_cases_1", None),
+        ("index", "sqlite_autoindex_review_case_transitions_1", None),
+        ("index", "sqlite_autoindex_review_case_transitions_2", None),
+        ("index", "sqlite_autoindex_review_preparation_absences_1", None),
+        (
+            "index",
+            "sqlite_autoindex_review_preparation_connection_conditions_1",
+            None,
+        ),
+        ("index", "sqlite_autoindex_review_preparation_scans_1", None),
+        ("index", "sqlite_autoindex_review_preparation_presentation_1", None),
+        ("index", "sqlite_autoindex_review_preparation_work_1", None),
+        ("index", "sqlite_autoindex_review_preparation_work_2", None),
+        (
+            "index",
+            "review_preparation_presentation_active",
+            _REVIEW_PREPARATION_PRESENTATION_ACTIVE_INDEX_SQL,
+        ),
+        (
+            "index",
+            "review_preparation_presentation_completion_integrity",
+            _REVIEW_PREPARATION_PRESENTATION_COMPLETION_INTEGRITY_INDEX_SQL,
+        ),
+        (
+            "index",
+            "review_preparation_presentation_recent",
+            _REVIEW_PREPARATION_PRESENTATION_RECENT_INDEX_SQL,
+        ),
+        (
+            "index",
+            "review_preparation_presentation_run",
+            _REVIEW_PREPARATION_PRESENTATION_RUN_INDEX_SQL,
+        ),
+        (
+            "index",
+            "review_preparation_presentation_throughput",
+            _REVIEW_PREPARATION_PRESENTATION_THROUGHPUT_INDEX_SQL,
+        ),
+        (
+            "index",
+            "review_preparation_work_aged_claim",
+            _REVIEW_WORK_AGED_CLAIM_INDEX_SQL,
+        ),
+        (
+            "index",
+            "review_preparation_work_due_promotion",
+            _REVIEW_WORK_DUE_PROMOTION_INDEX_SQL,
+        ),
+        (
+            "index",
+            "review_preparation_work_recent_claim",
+            _REVIEW_WORK_RECENT_CLAIM_INDEX_SQL,
+        ),
+        (
+            "index",
+            "review_preparation_work_lineage_history",
+            _REVIEW_WORK_LINEAGE_HISTORY_INDEX_SQL,
+        ),
+        ("index", "sqlite_autoindex_shadow_decision_outcomes_1", None),
+        (
+            "index",
+            "shadow_decision_outcomes_case_history",
+            _SHADOW_DECISION_OUTCOMES_CASE_HISTORY_INDEX_SQL,
+        ),
+        (
+            "index",
+            "shadow_outcome_field_facts_case",
+            _SHADOW_OUTCOME_FIELD_FACTS_CASE_INDEX_SQL,
+        ),
+        (
+            "trigger",
+            "level_proposal_sets_no_update",
+            _LEVEL_PROPOSAL_SET_NO_UPDATE_SQL,
+        ),
+        (
+            "trigger",
+            "level_proposal_sets_no_delete",
+            _LEVEL_PROPOSAL_SET_NO_DELETE_SQL,
+        ),
+        (
+            "trigger",
+            "level_decision_notes_no_update",
+            _LEVEL_DECISION_NOTE_NO_UPDATE_SQL,
+        ),
+        (
+            "trigger",
+            "level_decision_notes_no_delete",
+            _LEVEL_DECISION_NOTE_NO_DELETE_SQL,
+        ),
+        (
+            "trigger",
+            "review_case_level_offers_no_update",
+            _REVIEW_CASE_LEVEL_OFFER_NO_UPDATE_SQL,
+        ),
+        (
+            "trigger",
+            "review_case_level_offers_no_delete",
+            _REVIEW_CASE_LEVEL_OFFER_NO_DELETE_SQL,
+        ),
+        ("trigger", "proposal_sets_no_delete", _PROPOSAL_NO_DELETE_SQL),
+        (
+            "trigger",
+            "proposal_sets_project_browse_facts",
+            _PROPOSAL_BROWSE_FACTS_INSERT_SQL,
+        ),
+        ("trigger", "proposal_sets_no_update", _PROPOSAL_NO_UPDATE_SQL),
+        (
+            "trigger",
+            "review_case_transitions_no_delete",
+            _REVIEW_TRANSITION_NO_DELETE_SQL,
+        ),
+        (
+            "trigger",
+            "review_case_transitions_no_update",
+            _REVIEW_TRANSITION_NO_UPDATE_SQL,
+        ),
+        ("trigger", "review_cases_no_delete", _REVIEW_NO_DELETE_SQL),
+        ("trigger", "review_cases_no_update", _REVIEW_NO_UPDATE_SQL),
+        (
+            "trigger",
+            "review_cases_project_field_facts",
+            _REVIEW_CASE_FIELD_FACTS_INSERT_SQL,
+        ),
+        (
+            "trigger",
+            "shadow_decision_outcomes_no_delete",
+            _SHADOW_DECISION_OUTCOME_NO_DELETE_SQL,
+        ),
+        (
+            "trigger",
+            "shadow_decision_outcomes_no_update",
+            _SHADOW_DECISION_OUTCOME_NO_UPDATE_SQL,
+        ),
+        (
+            "trigger",
+            "shadow_outcomes_project_field_facts",
+            _SHADOW_OUTCOME_FIELD_FACTS_INSERT_SQL,
+        ),
+    )
+
+
 def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
     """Return the one exact-current SQLite object contract."""
     return sorted(
         (
-            *(
-                ("table", name, statement)
-                for name, statement in _DESCRIPTION_ADVICE_TABLES.items()
-            ),
-            *(
-                ("index", f"sqlite_autoindex_{name}_1", None)
-                for name in _DESCRIPTION_ADVICE_TABLES
-            ),
-            ("index", "sqlite_autoindex_description_decisions_2", None),
-            (
-                "index",
-                "description_decisions_case",
-                _DESCRIPTION_DECISIONS_CASE_INDEX_SQL,
-            ),
-            *_named_objects("trigger", _DESCRIPTION_ADVICE_TRIGGERS),
+            *_description_advice_objects(),
             *_cover_taste_objects(),
-            ("index", "sqlite_autoindex_current_metadata_reports_1", None),
-            ("index", "sqlite_autoindex_current_metadata_report_lineages_1", None),
-            ("index", "sqlite_autoindex_current_review_case_lineages_1", None),
-            ("index", "sqlite_autoindex_current_review_packages_1", None),
-            (
-                "index",
-                "current_review_case_lineages_case",
-                _CURRENT_REVIEW_CASE_LINEAGES_CASE_INDEX_SQL,
-            ),
-            (
-                "index",
-                "current_review_packages_case",
-                _CURRENT_REVIEW_PACKAGES_CASE_INDEX_SQL,
-            ),
-            ("index", "sqlite_autoindex_provider_recovery_outbox_1", None),
-            ("index", "sqlite_autoindex_metadata_report_cover_references_1", None),
-            (
-                "index",
-                "metadata_report_cover_references_artifact_id",
-                _COVER_ARTIFACT_INDEX_SQL,
-            ),
-            (
-                "index",
-                "metadata_report_cover_references_preview_digest",
-                _COVER_PREVIEW_INDEX_SQL,
-            ),
-            ("index", "sqlite_autoindex_human_decision_events_1", None),
-            ("index", "sqlite_autoindex_human_decision_events_2", None),
-            ("index", "sqlite_autoindex_human_decisions_1", None),
-            ("index", "sqlite_autoindex_human_decisions_2", None),
-            (
-                "index",
-                "human_decisions_case_destination",
-                _HUMAN_DECISIONS_CASE_DESTINATION_INDEX_SQL,
-            ),
-            ("index", "sqlite_autoindex_cover_considerations_1", None),
-            ("index", "sqlite_autoindex_current_cover_considerations_1", None),
-            ("index", "sqlite_autoindex_current_cover_considerations_2", None),
-            ("index", "sqlite_autoindex_cover_selection_authorities_1", None),
-            ("index", "sqlite_autoindex_cover_selection_authorities_2", None),
-            (
-                "index",
-                "sqlite_autoindex_current_cover_selection_authorities_1",
-                None,
-            ),
-            (
-                "index",
-                "sqlite_autoindex_current_cover_selection_authorities_2",
-                None,
-            ),
-            ("index", "sqlite_autoindex_cover_consideration_events_1", None),
-            ("index", "sqlite_autoindex_automatic_decisions_1", None),
-            ("index", "sqlite_autoindex_automatic_decisions_2", None),
-            ("index", "sqlite_autoindex_automatic_decisions_3", None),
-            ("index", "sqlite_autoindex_field_effect_events_1", None),
-            ("index", "sqlite_autoindex_field_effect_events_2", None),
-            # WITHOUT ROWID is deliberate: only the explicit unique event identity
-            # has an autoindex; the primary key does not.
-            ("index", "sqlite_autoindex_field_effect_no_changes_2", None),
-            ("index", "sqlite_autoindex_field_effect_suspensions_1", None),
-            ("index", "sqlite_autoindex_field_effect_actions_1", None),
-            ("index", "sqlite_autoindex_field_effect_actions_2", None),
-            ("index", "sqlite_autoindex_field_effect_authorities_1", None),
-            ("index", "sqlite_autoindex_field_effect_cleanups_1", None),
-            ("index", "sqlite_autoindex_field_effect_consents_1", None),
-            ("index", "sqlite_autoindex_field_effect_manual_holds_1", None),
-            ("index", "sqlite_autoindex_field_effects_1", None),
-            ("index", "field_effects_decision", _FIELD_EFFECTS_DECISION_INDEX_SQL),
-            (
-                "index",
-                "field_effects_companion_decision",
-                _FIELD_EFFECTS_COMPANION_DECISION_INDEX_SQL,
-            ),
-            ("index", "field_effects_ready", _FIELD_EFFECTS_READY_INDEX_SQL),
-            ("index", "field_effects_waiting", _FIELD_EFFECTS_WAITING_INDEX_SQL),
-            ("index", "field_effects_target", _FIELD_EFFECTS_TARGET_INDEX_SQL),
-            (
-                "index",
-                "retained_cover_bindings_target",
-                _RETAINED_COVER_BINDINGS_TARGET_INDEX_SQL,
-            ),
-            (
-                "index",
-                "retained_cover_bindings_digest",
-                _RETAINED_COVER_BINDINGS_DIGEST_INDEX_SQL,
-            ),
-            ("index", "sqlite_autoindex_metadata_reports_1", None),
-            ("index", "sqlite_autoindex_metadata_reports_2", None),
-            ("index", "sqlite_autoindex_metadata_policy_drafts_1", None),
-            ("index", "sqlite_autoindex_metadata_policy_resolutions_1", None),
-            (
-                "index",
-                "metadata_policy_resolutions_resolved",
-                _METADATA_POLICY_RESOLUTIONS_RESOLVED_INDEX_SQL,
-            ),
-            ("index", "sqlite_autoindex_metadata_policy_transitions_1", None),
-            ("index", "sqlite_autoindex_metadata_policy_transitions_2", None),
-            ("index", "sqlite_autoindex_metadata_policy_transition_items_1", None),
-            ("index", "sqlite_autoindex_owner_setting_secrets_1", None),
-            ("index", "sqlite_autoindex_reviewer_access_secrets_1", None),
-            ("index", "sqlite_autoindex_proposal_sets_1", None),
-            ("index", "sqlite_autoindex_review_cases_1", None),
-            ("index", "sqlite_autoindex_review_case_transitions_1", None),
-            ("index", "sqlite_autoindex_review_case_transitions_2", None),
-            ("index", "sqlite_autoindex_review_preparation_absences_1", None),
-            (
-                "index",
-                "sqlite_autoindex_review_preparation_connection_conditions_1",
-                None,
-            ),
-            ("index", "sqlite_autoindex_review_preparation_scans_1", None),
-            ("index", "sqlite_autoindex_review_preparation_presentation_1", None),
-            ("index", "sqlite_autoindex_review_preparation_work_1", None),
-            ("index", "sqlite_autoindex_review_preparation_work_2", None),
-            (
-                "index",
-                "review_preparation_presentation_active",
-                _REVIEW_PREPARATION_PRESENTATION_ACTIVE_INDEX_SQL,
-            ),
-            (
-                "index",
-                "review_preparation_presentation_completion_integrity",
-                _REVIEW_PREPARATION_PRESENTATION_COMPLETION_INTEGRITY_INDEX_SQL,
-            ),
-            (
-                "index",
-                "review_preparation_presentation_recent",
-                _REVIEW_PREPARATION_PRESENTATION_RECENT_INDEX_SQL,
-            ),
-            (
-                "index",
-                "review_preparation_presentation_run",
-                _REVIEW_PREPARATION_PRESENTATION_RUN_INDEX_SQL,
-            ),
-            (
-                "index",
-                "review_preparation_presentation_throughput",
-                _REVIEW_PREPARATION_PRESENTATION_THROUGHPUT_INDEX_SQL,
-            ),
-            (
-                "index",
-                "review_preparation_work_aged_claim",
-                _REVIEW_WORK_AGED_CLAIM_INDEX_SQL,
-            ),
-            (
-                "index",
-                "review_preparation_work_due_promotion",
-                _REVIEW_WORK_DUE_PROMOTION_INDEX_SQL,
-            ),
-            (
-                "index",
-                "review_preparation_work_recent_claim",
-                _REVIEW_WORK_RECENT_CLAIM_INDEX_SQL,
-            ),
-            (
-                "index",
-                "review_preparation_work_lineage_history",
-                _REVIEW_WORK_LINEAGE_HISTORY_INDEX_SQL,
-            ),
-            ("index", "sqlite_autoindex_shadow_decision_outcomes_1", None),
-            (
-                "index",
-                "shadow_decision_outcomes_case_history",
-                _SHADOW_DECISION_OUTCOMES_CASE_HISTORY_INDEX_SQL,
-            ),
-            (
-                "index",
-                "shadow_outcome_field_facts_case",
-                _SHADOW_OUTCOME_FIELD_FACTS_CASE_INDEX_SQL,
-            ),
-            ("table", "current_metadata_reports", _CURRENT_SQL),
-            ("table", "current_metadata_report_lineages", _CURRENT_LINEAGE_SQL),
-            ("table", "current_review_case_lineages", _REVIEW_POINTERS_SQL),
-            ("table", "current_review_packages", _CURRENT_REVIEW_PACKAGES_SQL),
-            ("table", "provider_recovery_outbox", _PROVIDER_RECOVERY_OUTBOX_SQL),
-            ("table", "cover_considerations", _COVER_CONSIDERATIONS_SQL),
-            (
-                "table",
-                "current_cover_considerations",
-                _CURRENT_COVER_CONSIDERATIONS_SQL,
-            ),
-            ("table", "cover_selection_authorities", _COVER_SELECTION_AUTHORITIES_SQL),
-            (
-                "table",
-                "current_cover_selection_authorities",
-                _CURRENT_COVER_SELECTION_AUTHORITIES_SQL,
-            ),
-            ("table", "cover_consideration_events", _COVER_CONSIDERATION_EVENTS_SQL),
-            ("table", "human_decision_events", _HUMAN_DECISION_EVENTS_SQL),
-            ("table", "human_decisions", _HUMAN_DECISIONS_SQL),
-            ("table", "review_case_episodes", _REVIEW_CASE_EPISODES_SQL),
-            ("table", "automatic_decisions", _AUTOMATIC_DECISIONS_SQL),
-            ("table", "automatic_safety_state", _AUTOMATIC_SAFETY_SQL),
-            ("table", "field_effect_control", _FIELD_EFFECT_CONTROL_SQL),
-            ("table", "field_effect_suspensions", _FIELD_EFFECT_SUSPENSIONS_SQL),
-            ("table", "field_effect_actions", _FIELD_EFFECT_ACTIONS_SQL),
-            ("table", "field_effect_authorities", _FIELD_EFFECT_AUTHORITIES_SQL),
-            ("table", "field_effect_cleanups", _FIELD_EFFECT_CLEANUPS_SQL),
-            ("table", "field_effect_consents", _FIELD_EFFECT_CONSENTS_SQL),
-            ("table", "field_effect_manual_holds", _FIELD_EFFECT_MANUAL_HOLDS_SQL),
-            ("table", "field_effect_events", _FIELD_EFFECT_EVENTS_SQL),
-            ("table", "field_effect_no_changes", _FIELD_EFFECT_NO_CHANGES_SQL),
-            ("table", "field_effects", _FIELD_EFFECTS_SQL),
-            ("table", "retained_cover_bindings", _RETAINED_COVER_BINDINGS_SQL),
-            ("table", "retained_cover_removals", _RETAINED_COVER_REMOVALS_SQL),
-            ("table", "retained_cover_listings", _RETAINED_COVER_LISTINGS_SQL),
-            ("index", "sqlite_autoindex_retained_cover_listings_2", None),
-            ("table", "metadata_report_cover_references", _COVER_REFERENCES_SQL),
-            ("table", "metadata_reports", _REPORTS_SQL),
-            ("table", "metadata_report_browse_facts", _REPORT_BROWSE_FACTS_SQL),
-            ("table", "metadata_report_browse_authors", _REPORT_BROWSE_AUTHORS_SQL),
-            ("table", "metadata_policy_drafts", _METADATA_POLICY_DRAFTS_SQL),
-            ("table", "metadata_policy_resolutions", _METADATA_POLICY_RESOLUTIONS_SQL),
-            ("table", "metadata_policy_state", _METADATA_POLICY_STATE_SQL),
-            ("table", "metadata_policy_transitions", _METADATA_POLICY_TRANSITIONS_SQL),
-            (
-                "table",
-                "metadata_policy_transition_items",
-                _METADATA_POLICY_TRANSITION_ITEMS_SQL,
-            ),
-            ("table", "owner_setting_secrets", _OWNER_SETTING_SECRETS_SQL),
-            ("table", "owner_settings", _OWNER_SETTINGS_SQL),
-            ("table", "reviewer_access", _REVIEWER_ACCESS_SQL),
-            ("table", "reviewer_access_secrets", _REVIEWER_ACCESS_SECRETS_SQL),
-            ("table", "proposal_sets", _PROPOSAL_SETS_SQL),
-            ("table", "proposal_set_browse_facts", _PROPOSAL_BROWSE_FACTS_SQL),
-            ("table", "browse_fact_identity", _BROWSE_FACT_IDENTITY_SQL),
-            ("table", "review_case_transitions", _REVIEW_TRANSITIONS_SQL),
-            ("table", "review_cases", _REVIEW_CASES_SQL),
-            ("table", "review_case_field_facts", _REVIEW_CASE_FIELD_FACTS_SQL),
-            ("table", "review_preparation_control", _REVIEW_CONTROL_SQL),
-            (
-                "table",
-                "review_preparation_presentation",
-                _REVIEW_PREPARATION_PRESENTATION_SQL,
-            ),
-            (
-                "table",
-                "review_preparation_connection_conditions",
-                _REVIEW_CONNECTION_CONDITIONS_SQL,
-            ),
-            ("table", "review_preparation_scans", _REVIEW_SCANS_SQL),
-            ("table", "review_preparation_absences", _REVIEW_ABSENCES_SQL),
-            ("table", "review_preparation_work", _REVIEW_WORK_SQL),
-            ("table", "shadow_decision_outcomes", _SHADOW_DECISION_OUTCOMES_SQL),
-            (
-                "table",
-                "shadow_outcome_field_facts",
-                _SHADOW_OUTCOME_FIELD_FACTS_SQL,
-            ),
-            ("table", "level_proposal_sets", _LEVEL_PROPOSAL_SETS_SQL),
-            ("index", "sqlite_autoindex_level_proposal_sets_1", None),
-            ("table", "level_decision_notes", _LEVEL_DECISION_NOTES_SQL),
-            ("index", "sqlite_autoindex_level_decision_notes_1", None),
-            ("table", "review_case_level_offers", _REVIEW_CASE_LEVEL_OFFERS_SQL),
-            ("index", "sqlite_autoindex_review_case_level_offers_1", None),
-            (
-                "table",
-                "review_case_level_reconciliation",
-                _REVIEW_CASE_LEVEL_RECONCILIATION_SQL,
-            ),
-            (
-                "trigger",
-                "level_proposal_sets_no_update",
-                _LEVEL_PROPOSAL_SET_NO_UPDATE_SQL,
-            ),
-            (
-                "trigger",
-                "level_proposal_sets_no_delete",
-                _LEVEL_PROPOSAL_SET_NO_DELETE_SQL,
-            ),
-            (
-                "trigger",
-                "level_decision_notes_no_update",
-                _LEVEL_DECISION_NOTE_NO_UPDATE_SQL,
-            ),
-            (
-                "trigger",
-                "level_decision_notes_no_delete",
-                _LEVEL_DECISION_NOTE_NO_DELETE_SQL,
-            ),
-            (
-                "trigger",
-                "review_case_level_offers_no_update",
-                _REVIEW_CASE_LEVEL_OFFER_NO_UPDATE_SQL,
-            ),
-            (
-                "trigger",
-                "review_case_level_offers_no_delete",
-                _REVIEW_CASE_LEVEL_OFFER_NO_DELETE_SQL,
-            ),
-            (
-                "trigger",
-                "metadata_report_cover_references_no_delete",
-                _COVER_NO_DELETE_SQL,
-            ),
-            (
-                "trigger",
-                "metadata_report_cover_references_no_update",
-                _COVER_NO_UPDATE_SQL,
-            ),
-            ("trigger", "metadata_reports_no_delete", _NO_DELETE_SQL),
-            (
-                "trigger",
-                "metadata_reports_project_browse_facts",
-                _REPORT_BROWSE_FACTS_INSERT_SQL,
-            ),
-            ("trigger", "metadata_reports_no_update", _NO_UPDATE_SQL),
-            (
-                "trigger",
-                "metadata_policy_drafts_no_delete",
-                _METADATA_POLICY_DRAFT_NO_DELETE_SQL,
-            ),
-            (
-                "trigger",
-                "metadata_policy_drafts_no_update",
-                _METADATA_POLICY_DRAFT_NO_UPDATE_SQL,
-            ),
-            (
-                "trigger",
-                "human_decision_events_no_delete",
-                _HUMAN_DECISION_EVENT_NO_DELETE_SQL,
-            ),
-            (
-                "trigger",
-                "human_decision_events_no_update",
-                _HUMAN_DECISION_EVENT_NO_UPDATE_SQL,
-            ),
-            ("trigger", "human_decisions_no_delete", _HUMAN_DECISION_NO_DELETE_SQL),
-            ("trigger", "human_decisions_no_update", _HUMAN_DECISION_NO_UPDATE_SQL),
-            (
-                "trigger",
-                "cover_considerations_no_delete",
-                _COVER_CONSIDERATION_NO_DELETE_SQL,
-            ),
-            (
-                "trigger",
-                "cover_considerations_no_update",
-                _COVER_CONSIDERATION_NO_UPDATE_SQL,
-            ),
-            (
-                "trigger",
-                "cover_selection_authorities_no_delete",
-                _COVER_SELECTION_AUTHORITY_NO_DELETE_SQL,
-            ),
-            (
-                "trigger",
-                "cover_selection_authorities_no_update",
-                _COVER_SELECTION_AUTHORITY_NO_UPDATE_SQL,
-            ),
-            (
-                "trigger",
-                "current_cover_selection_authorities_validate_insert",
-                _CURRENT_COVER_SELECTION_AUTHORITY_INSERT_SQL,
-            ),
-            (
-                "trigger",
-                "current_cover_selection_authorities_validate_update",
-                _CURRENT_COVER_SELECTION_AUTHORITY_UPDATE_SQL,
-            ),
-            (
-                "trigger",
-                "cover_consideration_events_no_delete",
-                _COVER_CONSIDERATION_EVENT_NO_DELETE_SQL,
-            ),
-            (
-                "trigger",
-                "cover_consideration_events_no_update",
-                _COVER_CONSIDERATION_EVENT_NO_UPDATE_SQL,
-            ),
-            (
-                "trigger",
-                "automatic_decisions_no_delete",
-                _AUTOMATIC_DECISION_NO_DELETE_SQL,
-            ),
-            (
-                "trigger",
-                "automatic_decisions_no_update",
-                _AUTOMATIC_DECISION_NO_UPDATE_SQL,
-            ),
-            (
-                "trigger",
-                "field_effect_events_no_delete",
-                _FIELD_EFFECT_EVENT_NO_DELETE_SQL,
-            ),
-            (
-                "trigger",
-                "field_effect_events_no_update",
-                _FIELD_EFFECT_EVENT_NO_UPDATE_SQL,
-            ),
-            (
-                "trigger",
-                "field_effect_no_changes_no_delete",
-                _FIELD_EFFECT_NO_CHANGE_NO_DELETE_SQL,
-            ),
-            (
-                "trigger",
-                "field_effect_no_changes_no_update",
-                _FIELD_EFFECT_NO_CHANGE_NO_UPDATE_SQL,
-            ),
-            (
-                "trigger",
-                "retained_cover_bindings_no_delete",
-                _RETAINED_COVER_BINDING_NO_DELETE_SQL,
-            ),
-            (
-                "trigger",
-                "retained_cover_bindings_no_update",
-                _RETAINED_COVER_BINDING_NO_UPDATE_SQL,
-            ),
-            (
-                "trigger",
-                "retained_cover_listings_no_delete",
-                _RETAINED_COVER_LISTING_NO_DELETE_SQL,
-            ),
-            (
-                "trigger",
-                "retained_cover_listings_no_update",
-                _RETAINED_COVER_LISTING_NO_UPDATE_SQL,
-            ),
-            ("trigger", "proposal_sets_no_delete", _PROPOSAL_NO_DELETE_SQL),
-            (
-                "trigger",
-                "proposal_sets_project_browse_facts",
-                _PROPOSAL_BROWSE_FACTS_INSERT_SQL,
-            ),
-            ("trigger", "proposal_sets_no_update", _PROPOSAL_NO_UPDATE_SQL),
-            (
-                "trigger",
-                "review_case_transitions_no_delete",
-                _REVIEW_TRANSITION_NO_DELETE_SQL,
-            ),
-            (
-                "trigger",
-                "review_case_transitions_no_update",
-                _REVIEW_TRANSITION_NO_UPDATE_SQL,
-            ),
-            ("trigger", "review_cases_no_delete", _REVIEW_NO_DELETE_SQL),
-            ("trigger", "review_cases_no_update", _REVIEW_NO_UPDATE_SQL),
-            (
-                "trigger",
-                "review_cases_project_field_facts",
-                _REVIEW_CASE_FIELD_FACTS_INSERT_SQL,
-            ),
-            (
-                "trigger",
-                "shadow_decision_outcomes_no_delete",
-                _SHADOW_DECISION_OUTCOME_NO_DELETE_SQL,
-            ),
-            (
-                "trigger",
-                "shadow_decision_outcomes_no_update",
-                _SHADOW_DECISION_OUTCOME_NO_UPDATE_SQL,
-            ),
-            (
-                "trigger",
-                "shadow_outcomes_project_field_facts",
-                _SHADOW_OUTCOME_FIELD_FACTS_INSERT_SQL,
-            ),
+            *_current_pointer_objects(),
+            *_cover_objects(),
+            *_decision_and_field_effect_objects(),
+            *_report_and_setting_objects(),
+            *_review_objects(),
             *_ATTENTION_FACT_OBJECTS,
         )
     )
@@ -2799,13 +2906,18 @@ def _owner_selection_facts(
 def _validate_review_field_facts(connection: sqlite3.Connection) -> None:
     """Require every reconstructible browse fact to equal its canonical JSON."""
     identity = connection.execute(
-        "SELECT unicode_version FROM browse_fact_identity"
+        "SELECT unicode_version,value_flag_rules FROM browse_fact_identity"
     ).fetchall()
     if len(identity) != 1:
         raise MetadataReportError("database is unavailable or incompatible")
     if identity[0][0] != unicodedata.unidata_version:
         raise MetadataReportError(
             "database browse facts were folded under a different Unicode version; "
+            "a clean rebuild is required"
+        )
+    if identity[0][1] != VALUE_FLAG_RULES_VERSION:
+        raise MetadataReportError(
+            "database value flags were derived under a different rule list; "
             "a clean rebuild is required"
         )
     review_expected = (
@@ -2866,7 +2978,7 @@ def _validate_review_field_facts(connection: sqlite3.Connection) -> None:
 
 
 def _report_browse_fact_pairs(key: str) -> tuple[tuple[str, str], ...]:
-    """A report's fact and author pairs, both sides restricted by `key`."""
+    """A report's fact, author and flag pairs, both sides restricted by `key`."""
     return (
         (
             "SELECT mr.report_id,"
@@ -2883,6 +2995,14 @@ def _report_browse_fact_pairs(key: str) -> tuple[tuple[str, str], ...]:
             + " AND mr.report_id"
             + key,
             "SELECT report_id,author_key FROM metadata_report_browse_authors "
+            "WHERE report_id" + key,
+        ),
+        (
+            "SELECT mr.report_id,"
+            + _report_value_flag_values_sql("metadata_reports mr,", "mr.document")
+            + " WHERE mr.report_id"
+            + key,
+            "SELECT report_id,destination,rule FROM metadata_report_value_flags "
             "WHERE report_id" + key,
         ),
     )
