@@ -2546,6 +2546,35 @@ def merge_provider_cover_descriptors(
     return tuple(descriptors[key] for key in sorted(descriptors))
 
 
+def join_phase_cover_descriptors(
+    linked: tuple[ProviderCoverDescriptor, ...],
+    main: tuple[ProviderCoverDescriptor, ...],
+) -> tuple[ProviderCoverDescriptor, ...]:
+    """Join the owner-link phase's cover descriptors to the main phase's (#1477).
+
+    A record both phases reached is one cover source: its exact and related
+    designations merge as one lane's would (`merge_provider_cover_descriptor`).
+    Each phase asks through its own adapter instance, so the merged source
+    keeps the main phase's pacer. A link-phase fact that conflicts with the
+    main phase's gives way to it, so the observer is never handed one source
+    twice.
+    """
+    if not linked:
+        return main
+    joined = {value.source_id: value for value in main}
+    for descriptor in linked:
+        previous = joined.get(descriptor.source_id)
+        if previous is None:
+            joined[descriptor.source_id] = descriptor
+            continue
+        merged = merge_provider_cover_descriptor(
+            previous, replace(descriptor, wait=previous.wait)
+        )
+        if merged is not None:
+            joined[descriptor.source_id] = merged
+    return tuple(joined[key] for key in sorted(joined))
+
+
 def provider_isbn_applicability(
     value: object,
     local_claims: tuple[LocalClaim, ...],
@@ -4519,7 +4548,7 @@ class GenerateMetadataReport:
             self._main_bindings(phase),
         )
         observations = phase.merged((plan,), observations)
-        descriptors = (*phase.descriptors, *descriptors)
+        descriptors = join_phase_cover_descriptors(phase.descriptors, descriptors)
 
         reasons = tuple(
             sorted(
@@ -4900,7 +4929,7 @@ class GenerateMetadataReport:
         observations = phase.merged(
             (plan, catalogue_plan, *(() if feed is None else (feed,))), observations
         )
-        descriptors = (*phase.descriptors, *descriptors)
+        descriptors = join_phase_cover_descriptors(phase.descriptors, descriptors)
         return tuple(observations), tuple(descriptors)
 
     def _publish_audio_report(

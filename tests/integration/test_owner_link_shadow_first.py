@@ -42,7 +42,9 @@ from mechanical_librarian.application.configuration import (
 from mechanical_librarian.application.metadata_report import (
     GenerateMetadataReport,
     InspectionResult,
+    MetadataReportError,
     ProviderBinding,
+    ProviderCoverDescriptor,
     TargetFile,
     TargetSnapshot,
     _audiobook_link_stands,
@@ -61,6 +63,7 @@ from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     LocalClaim,
     MetadataReport,
+    ProviderQueryKind,
     TargetDestination,
 )
 from mechanical_librarian.domain.owner_link import (
@@ -332,9 +335,11 @@ def _audio_report(
     *,
     search: bool = True,
     editions: tuple[dict[str, object], ...] = (),
+    link: OwnerLinkTarget = AUDIO_LINK,
+    cover_observer: Any = None,
 ) -> MetadataReport:
     path = prep._store(tmp_path)
-    prep._link(path, "audio", "audiobook", AUDIO_LINK)
+    prep._link(path, "audio", "audiobook", link)
     selected = TargetFile("a" * 64, "book.m4b", "m4b")
     snapshot = TargetSnapshot(
         "audiobook", prep.LOCAL_TITLE, (selected,), fields=prep._fields()
@@ -382,6 +387,7 @@ def _audio_report(
             audio_inspector=FakeAudioInspector(
                 audio_result(((ClaimKind.DURATION, "58200.000", "embedded_tag", None),))
             ),
+            cover_observer=cover_observer,
         ).run(prep.ITEM, 0)
     )
 
@@ -482,3 +488,54 @@ def test_any_standing_audiobook_link_supersedes_the_carried_admission(
     )
     assert _audiobook_link_stands(link) is stands
     assert not _audiobook_link_stands(None)
+
+
+class _DescriptorObserver:
+    """Admits provider descriptors as the cover observer does: one per source."""
+
+    def __init__(self) -> None:
+        self.descriptors: tuple[ProviderCoverDescriptor, ...] = ()
+
+    def observe_current(self, *_: object, **__: object) -> tuple[CoverSource, ...]:
+        return ()
+
+    def observe(
+        self,
+        target: object,
+        providers: object,
+        local_sources: object,
+        descriptors: tuple[ProviderCoverDescriptor, ...] = (),
+        *_: object,
+    ) -> tuple[CoverSource, ...]:
+        if len({value.source_id for value in descriptors}) != len(descriptors):
+            raise MetadataReportError("provider cover result is invalid")
+        self.descriptors = descriptors
+        return ()
+
+
+def test_a_recording_link_the_anchored_search_also_finds_prepares(
+    tmp_path: Path,
+) -> None:
+    # Codex P1 on #1938: the linked product reaches the link phase as the
+    # exact edition and the anchored search as a related one, under one cover
+    # source. The phases' descriptors merge as one lane's would, so the
+    # observer admits them once and the report publishes.
+    asin = payload("audible_search")["products"][0]["asin"]
+    observer = _DescriptorObserver()
+    report = _audio_report(
+        tmp_path,
+        link=OwnerLinkTarget(OwnerLinkScope.RECORDING, "audible_catalog", asin, "A"),
+        cover_observer=observer,
+    )
+    assert report.owner_link is not None
+    assert report.owner_link.outcome == "admitted"
+    audible = prep._provider(report, "audible_catalog")
+    assert {lane.kind for lane in audible.lanes} == {
+        ProviderQueryKind.ASIN,
+        ProviderQueryKind.WORK,
+    }
+    (linked,) = (
+        value for value in observer.descriptors if value.provider == "audible_catalog"
+    )
+    assert linked.provenance is not None
+    assert linked.provenance.designation is CoverDesignation.EXACT_EDITION
