@@ -702,6 +702,12 @@ describe('review keys', () => {
     expect(dialog.open).toBe(false)
     expect(keys).toHaveFocus()
     expect(screen.getAllByRole('radio')[1]).toHaveAttribute('aria-checked', 'false')
+    // Safari clicks a button without focusing it: focus still comes back to Keys.
+    tab('Title').focus()
+    fireEvent.click(keys)
+    expect(dialog.open).toBe(true)
+    await user.click(within(dialog).getByRole('button', { name: 'Close' }))
+    expect(keys).toHaveFocus()
     // Keys is not shown on a phone or tablet once the keys are on: its toolbar takes focus.
     await user.click(keys)
     keys.style.display = 'none'

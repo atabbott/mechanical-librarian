@@ -158,9 +158,14 @@ const act = (key: Exclude<ReviewKey, '?'>) => {
   )
 }
 
-const openList = (list: HTMLDialogElement | null, returnFocus: { current: Element | null }) => {
+const openList = (
+  list: HTMLDialogElement | null,
+  returnFocus: { current: Element | null },
+  opener?: Element,
+) => {
   if (!list || list.open) return
-  returnFocus.current = document.activeElement
+  // Safari does not focus a button it is clicked or tapped on, so Keys names itself.
+  returnFocus.current = opener ?? document.activeElement
   list.showModal()
   // The list opens at its top: the browser's own choice, the first control,
   // sits below the rows when the text is large.
@@ -223,7 +228,7 @@ export function ReviewKeys({ ready }: { ready: boolean }) {
       <button
         className="review-keys-toggle"
         type="button"
-        onClick={() => openList(dialog.current, returnFocus)}
+        onClick={(event) => openList(dialog.current, returnFocus, event.currentTarget)}
       >
         Keys
       </button>
