@@ -78,7 +78,11 @@ from mechanical_librarian.domain.owner_link import (
     OwnerLinkScope,
     OwnerLinkTarget,
 )
-from mechanical_librarian.domain.proposal_set import evaluate_report, owner_link_reached
+from mechanical_librarian.domain.proposal_set import (
+    evaluate_report,
+    owner_link_reached,
+    provider_candidate_level_admission,
+)
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.shadow_decision import decide_shadow_packet
 from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
@@ -629,3 +633,71 @@ def test_a_title_less_item_s_link_leads_without_inputs_ask_nothing(
         "hardcover-work-0000004321"
     ]
     assert not prep._provider(report, "audnexus").candidates
+
+
+@pytest.mark.parametrize(
+    ("book", "anchor"),
+    [
+        pytest.param(prep._linked_book, (prep.LINKED_TITLE,), id="anchor"),
+        pytest.param(list, None, id="no-anchor-read"),
+    ],
+)
+@pytest.mark.parametrize(
+    "level",
+    [WorkIdentityLevel.TITLE_AND_CREATOR_EXACT, WorkIdentityLevel.TITLE_AND_CREATOR],
+    ids=["title-and-creator-exact", "title-and-creator"],
+)
+def test_a_wider_level_reads_the_standing_link_not_the_local_values(
+    tmp_path: Path,
+    book: Callable[[], list[dict[str, object]]],
+    anchor: tuple[str] | None,
+    level: WorkIdentityLevel,
+) -> None:
+    # Codex R1-3 on #1938: a record naming only the file's own title and
+    # author is not admitted by a wider Book matching level while the owner's
+    # link stands, whether it anchors the linked book or no anchor was read.
+    path = prep._store(tmp_path)
+    prep._link(path, "ebooks", "ebook", prep.WORK_LINK)
+    isbn = LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed=prep.ISBN,
+        canonical=prep.ISBN,
+        excerpt=prep.ISBN,
+        applicability="ebook",
+        checksum="valid_isbn_13",
+        applicability_basis="ebook",
+    )
+    report = prep._prepare_ebook(
+        path,
+        (
+            ProviderBinding(
+                "hardcover",
+                True,
+                lambda: prep._hardcover(lambda: prep._json(books_envelope(book()))),
+                authority="hardcover",
+            ),
+            ProviderBinding(
+                "google_books",
+                True,
+                lambda: prep._google(
+                    [], lambda _: prep._volume(prep.LOCAL_TITLE, prep.LOCAL_AUTHOR)
+                ),
+                authority="google_books",
+            ),
+        ),
+        (isbn,),
+    )
+    assert report.owner_link is not None
+    assert (report.owner_link.anchor or (None,))[:1] == (anchor or (None,))
+    google = prep._provider(report, "google_books")
+    (local,) = google.candidates
+
+    def admitted() -> bool:
+        record = provider_candidate_level_admission(report, google, local, level)
+        return record is not None and record.admission is not None
+
+    assert not admitted()
+    # Control: without the link the same record meets the level on the
+    # file's own title and author.
+    with mock.patch.object(type(report.owner_link), "stands", False):
+        assert admitted()

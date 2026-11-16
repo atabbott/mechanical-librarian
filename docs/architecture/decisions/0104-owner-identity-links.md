@@ -78,7 +78,10 @@ about the work, and it should steer what preparation reads.
    no lane admits against any title or creators: the local values never
    admit a record while the owner's link stands. That includes an
    identifier lane's alternative routes, the item's discovery titles and its
-   companion EPUB's title and work, whether or not an anchor was read. The report replays each
+   companion EPUB's title and work, whether or not an anchor was read. A
+   wider Book matching level (ADR-0096) compares a record with the anchor
+   too, and admits nothing by title and creator while no anchor was read, so
+   a record the anchored search refused never returns through a wider level. The report replays each
    admission against the same context, the anchor while the link stands. An
    item whose own title surfaces are all empty gets no anchored WORK lane,
    because the lane's inputs are the target's own title claims; a link

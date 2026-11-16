@@ -4526,11 +4526,25 @@ class LevelIdentityInputs:
 def level_identity_inputs(
     report: MetadataReport, candidate: ProviderCandidate
 ) -> LevelIdentityInputs:
-    """The stored target and the record one wider level compares (#1355)."""
+    """The stored target and the record one wider level compares (#1355).
+
+    While the owner's link stands, the target is its anchor, and nothing
+    while no anchor was read: a wider level never admits a record on the
+    item's own title and authors that the anchored search would refuse
+    (#1477, ADR-0104 decision 5).
+    """
     titles = _level_work_claims(candidate, ClaimKind.TITLE)
+    link = report.owner_link
+    target_title, target_authors = (
+        (report.target.current_title, _target_stored_authors(report))
+        if link is None or not link.stands
+        else (None, ())
+        if link.anchor is None
+        else link.anchor
+    )
     return LevelIdentityInputs(
-        report.target.current_title,
-        _target_stored_authors(report),
+        target_title,
+        target_authors,
         titles[0] if len(titles) == 1 else None,
         tuple(dict.fromkeys(_level_work_claims(candidate, ClaimKind.CREATOR))),
     )
