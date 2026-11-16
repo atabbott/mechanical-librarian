@@ -13512,7 +13512,7 @@ def test_recorded_refusal_and_populated_policy_results_use_document_flow(tmp_pat
             expect(result.locator(".write-plan-field > h4")).to_have_text(["Tags"])
             group = result.locator("details.write-plan-group")
             expect(group).to_have_count(1)
-            expect(group.locator("summary")).to_have_text("Filled10 changes")
+            expect(group.locator("summary")).to_have_text("Filled10 works")
             rows = group.locator(".write-plan-row")
             expect(rows).to_have_count(10)
             assert rows.first.locator("dt").all_text_contents() == [

@@ -17,9 +17,6 @@ export interface GroupedRow {
   readonly why?: string | undefined
 }
 
-const changesText = (count: number) =>
-  count === 1 ? '1 change' : `${count.toLocaleString('en-US')} changes`
-
 export const RowGroup = ({
   label,
   count,
@@ -28,8 +25,8 @@ export const RowGroup = ({
   more,
 }: {
   label: string
-  /** How many changes the group holds, which can be more than it shows. */
-  count: number
+  /** How much the group holds, in words; it can be more than it shows. */
+  count: string
   rows: readonly GroupedRow[]
   open: boolean
   /** A closing line for rows the group counts and does not show. */
@@ -38,7 +35,7 @@ export const RowGroup = ({
   const summary = (
     <>
       <span className="write-plan-chooser">{label}</span>
-      <span className="write-plan-count">{changesText(count)}</span>
+      <span className="write-plan-count">{count}</span>
     </>
   )
   // With no row to show there is nothing to open: the group is its line alone.

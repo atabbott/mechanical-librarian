@@ -920,7 +920,13 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                                   <RowGroup
                                     key={group}
                                     label={group}
-                                    count={grouped.length}
+                                    // A row is one work, and "No change" beside "1 change" would
+                                    // contradict itself, so the count is in works.
+                                    count={
+                                      grouped.length === 1
+                                        ? '1 work'
+                                        : `${String(grouped.length)} works`
+                                    }
                                     rows={grouped}
                                     open={changedRows.length <= POLICY_PREVIEW_OPEN_ALL}
                                   />

@@ -8,6 +8,9 @@ import { RowGroup } from './RowGroups'
 /** Up to this many changes, every group starts open and every row is shown. */
 export const WRITE_PLAN_OPEN_ALL = 25
 
+const changesText = (count: number) =>
+  count === 1 ? '1 change' : `${count.toLocaleString('en-US')} changes`
+
 /** The plan's groups for one library and field, or nothing when it has none. */
 export const WritePlanField = ({
   plan,
@@ -35,7 +38,7 @@ export const WritePlanField = ({
           <RowGroup
             key={group.kind}
             label={group.kind === 'human' ? 'Chosen by you' : 'Chosen automatically'}
-            count={group.count}
+            count={changesText(group.count)}
             rows={group.rows.map((row) => ({
               work: row.work,
               aside: row.authors,

@@ -1219,7 +1219,7 @@ describe('Policy route', () => {
     const group = within(library).getByRole('group')
     expect(group).toHaveAttribute('open')
     expect(within(group).getByText('Filled')).toBeVisible()
-    expect(within(group).getByText('1 change')).toBeVisible()
+    expect(within(group).getByText('1 work')).toBeVisible()
     const row = within(group).getByRole('listitem')
     expect(within(row).getByText('Recording book').tagName).toBe('STRONG')
     expect(within(row).getByText('Audiobook')).toBeVisible()
@@ -1456,7 +1456,7 @@ describe('Policy route', () => {
     const titles = screen.getByRole('heading', { level: 4, name: 'Title' }).closest('div')
     if (!titles) throw new Error('title rows not shown')
     expect(within(titles).getByText('Changed')).toBeVisible()
-    expect(within(titles).getByText('2 changes')).toBeVisible()
+    expect(within(titles).getByText('2 works')).toBeVisible()
     expect(within(titles).getAllByText('Audiobook')).toHaveLength(2)
     expect([...titles.querySelectorAll('.write-plan-row')].map((row) => rowValues(row))).toEqual([
       { Current: ['Old one'], 'Active policy': ['No change'], Draft: ['New one'] },
@@ -1955,7 +1955,7 @@ describe('Policy route', () => {
     ])
     for (const group of previewGroups()) {
       expect(group).toHaveAttribute('open')
-      expect(within(group).getByText('1 change')).toBeVisible()
+      expect(within(group).getByText('1 work')).toBeVisible()
       expect(within(group).getAllByRole('listitem')).toHaveLength(1)
     }
     const values = (name: string) => {
@@ -2067,8 +2067,8 @@ describe('Policy route', () => {
 
     const groups = previewGroups()
     expect(groups.map((group) => group.querySelector('summary')?.textContent)).toEqual([
-      'Changed13 changes',
-      'Filled13 changes',
+      'Changed13 works',
+      'Filled13 works',
     ])
     for (const group of groups) expect(group).not.toHaveAttribute('open')
     expect(groupedRows()).toHaveLength(26)
