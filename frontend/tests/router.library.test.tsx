@@ -4021,6 +4021,101 @@ describe('Library route', () => {
     },
   )
 
+  it.each([
+    [0, null],
+    [1, '1 field pinned'],
+    [3, '3 fields pinned'],
+  ] as const)('counts %i pinned field(s) on the work’s row (#1346)', async (pinnedCount, copy) => {
+    const firstWork = library.works[0]
+    if (!firstWork) throw new Error('library fixture requires one work')
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getLibrary: vi.fn(async () => ({ ...library, works: [{ ...firstWork, pinnedCount }] })),
+    }
+    renderRoute('/library?lens=all', http)
+    const row = await screen.findByRole('button', { name: /^A Book\./u })
+    const status = row.querySelector('.library-work-status')
+    if (copy === null) {
+      expect(row).toHaveAccessibleName(
+        'A Book. Author details unavailable. 1 field needs attention',
+      )
+      expect(row).not.toHaveTextContent('pinned')
+      expect(status?.querySelectorAll('.status-pill')).toHaveLength(1)
+      return
+    }
+    // A neutral pill after the status, and the same words in the row's name.
+    const pills = [...(status?.querySelectorAll('.status-pill') ?? [])]
+    expect(pills.map((pill) => pill.textContent)).toEqual(['1 field needs attention', copy])
+    expect(pills[1]).toHaveClass('is-neutral')
+    expect(row).toHaveAccessibleName(
+      `A Book. Author details unavailable. 1 field needs attention. ${copy}`,
+    )
+  })
+
+  it('says Pinned on the tab of a field whose pin is in force (#1346)', async () => {
+    const title = detail.fields[0]
+    if (!title) throw new Error('detail fixture requires a title field')
+    const settled = { ...title, needsAttention: false, navigationRole: 'resolved' as const }
+    const pinOf = (state: 'in_force' | 'waiting' | 'changed') => ({
+      state,
+      value: { destination: 'title' as const, state: 'value' as const, value: 'Old title' },
+    })
+    const control = { pin: 'available' as const, unpin: true }
+    const decided = {
+      actor: 'owner',
+      application: 'apply' as const,
+      application_reason: null,
+      decision_id: 'decision-1',
+      destination: 'authors' as const,
+      occurred_at: 1,
+      outcome: 'accept' as const,
+      proposal_id: title.proposalId,
+      review_case_id: 'case-1',
+      selected_value: { kind: 'text' as const, value: 'New title' },
+      target_fingerprint: title.targetFingerprint,
+    }
+    const fields = [
+      // A pin in force reads Pinned, over the answer or hold beneath it.
+      { ...settled, pin: pinOf('in_force'), pinControl: control, manualHold: true },
+      // A waiting pin stays Decided until the library shows its value.
+      {
+        ...settled,
+        destination: 'authors' as const,
+        humanDecision: decided,
+        pin: pinOf('waiting'),
+        pinControl: control,
+      },
+      // A changed pin asks again, with or without a value to choose.
+      {
+        ...title,
+        destination: 'series' as const,
+        decisionActions: [],
+        pin: pinOf('changed'),
+        pinControl: control,
+      },
+    ]
+    renderRoute('/library?lens=all&preview=case-1', {
+      ...createHttp(),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async () => ({ ...detail, fields })),
+    })
+    const rail = await screen.findByRole('navigation', { name: 'Review fields' })
+    expect(
+      within(rail)
+        .getAllByRole('button')
+        .map((tab) => [tab.querySelector('strong')?.textContent, tab.querySelector('span')]),
+    ).toEqual([
+      [
+        'Title',
+        expect.objectContaining({ textContent: 'Pinned', className: 'field-status is-pinned' }),
+      ],
+      ['Authors', expect.objectContaining({ textContent: 'Decided' })],
+      ['Series', expect.objectContaining({ textContent: 'Needs you' })],
+    ])
+    expect(within(rail).getByRole('button', { name: /Title/u })).toHaveAccessibleName(
+      'Title Pinned',
+    )
+  })
+
   it('shows bounded provider absence once at the selected-work comparison boundary', async () => {
     const http: ReviewHttp = {
       ...createHttp(),

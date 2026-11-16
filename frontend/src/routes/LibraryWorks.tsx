@@ -304,6 +304,11 @@ const LibraryWorkRow = ({
               ? '1 field needs attention'
               : `${String(work.attentionCount)} fields need attention`
             : 'No attention needed')
+  // The fields an owner pin holds on this work, in words (#1346).
+  const pinned =
+    work.pinnedCount > 0
+      ? `${String(work.pinnedCount)} ${work.pinnedCount === 1 ? 'field' : 'fields'} pinned`
+      : null
   const terminalFailure = work.preparation !== null && !work.reviewCaseId && !evidence
   const group = providerGroup(work)
   // Grouping follows the lens these rows were read for, not a retained URL's.
@@ -336,6 +341,7 @@ const LibraryWorkRow = ({
           >
             {status}
           </StatusPill>
+          {pinned ? <StatusPill>{pinned}</StatusPill> : null}
           {preparation ? (
             <span id={preparationId} className="terminal-preparation-copy">
               {preparation.checkGivenUp ? (
@@ -376,7 +382,7 @@ const LibraryWorkRow = ({
             className={`library-work-row${selectedWorkRow ? ' active' : ''}`}
             aria-current={selectedWorkRow ? 'true' : undefined}
             aria-disabled={retained || undefined}
-            aria-label={`${work.title}. ${authorLine(work)}. ${status}`}
+            aria-label={`${work.title}. ${authorLine(work)}. ${status}${pinned ? `. ${pinned}` : ''}`}
             aria-describedby={[preparationId, summaryId].filter(Boolean).join(' ') || undefined}
             onClick={() => void select(work)}
             onPointerEnter={() => workIntent(work)}

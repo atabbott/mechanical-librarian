@@ -1899,3 +1899,33 @@ it('says a chosen cover from the matched book leaves the recording unconfirmed (
   expect(screen.queryByText('No cover is confirmed for this book')).toBeNull()
   expect(screen.queryByText(/No source confirmed the match/u)).toBeNull()
 })
+
+it.each([
+  ['pin', 'You pinned this field.'],
+  ['unpin', 'You unpinned this field.'],
+] as const)(
+  'reads a %s in History as its own sentence, with no value (#1346)',
+  async (outcome, sentence) => {
+    const getHistory = vi.fn<ReviewHttp['getHistory']>(async () => ({
+      items: [
+        {
+          category: 'owner' as const,
+          occurredAt: 1786000000,
+          applicationReason: null,
+          destination: 'title' as const,
+          outcome,
+          previousValue: { kind: 'text', value: 'The Silent Orchard' },
+          selectedValue: null,
+        },
+      ],
+    }))
+    renderRoute('/review/case-1?field=title&subview=history', { ...createHttp(), getHistory })
+    const article = (await screen.findByRole('heading', { name: 'Title' })).closest('article')
+    expect(article).toHaveTextContent(sentence)
+    expect(article).not.toHaveTextContent('You declined the proposed change.')
+    // A pin row carries no value: the choice it pins is the line above it.
+    expect(article).not.toHaveTextContent('From')
+    expect(article).not.toHaveTextContent('To')
+    expect(article).not.toHaveTextContent('The Silent Orchard')
+  },
+)
