@@ -304,10 +304,17 @@ const throttleEntry = {
   deferred: 214,
   next_retry_at: 1_800_000_000,
   remedy: 'add_api_key',
+  notice_at: 1_800_086_400,
+  untried: false,
 }
 const throttled = builder('Preparation', 'preparation.throttling', PREPARATION, () =>
   preparation({
-    provider_throttling: { generation: 3, retry: 'available', entries: [throttleEntry] },
+    provider_throttling: {
+      generation: 3,
+      retry: 'available',
+      entries: [throttleEntry],
+      answered: [{ library: 'Synthetic ebooks', adapter: 'google_books' }],
+    },
   }),
 )
 const lapsed = builder('Activity', 'activity.lapsed', ACTIVITY, () =>
