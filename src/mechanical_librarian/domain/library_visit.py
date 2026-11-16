@@ -14,6 +14,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final
 
+from mechanical_librarian.domain.validation import non_negative_integer
+
 # Library unused for this long ends a visit, on any device.
 VISIT_GAP_SECONDS: Final = 1_800
 
@@ -31,8 +33,8 @@ class ListingPositions:
     reports: int
 
     def __post_init__(self) -> None:
-        if any(
-            type(value) is not int or value < 0
+        if not all(
+            non_negative_integer(value)
             for value in (self.packages, self.works, self.reports)
         ):
             raise LibraryVisitValueError("library listing positions are invalid")
