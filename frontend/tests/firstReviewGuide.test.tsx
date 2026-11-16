@@ -149,6 +149,22 @@ describe('first review guide', () => {
     )
   })
 
+  it('does not open when the guide was closed in another tab before a field arrived', async () => {
+    owe()
+    const http = createHttp()
+    const updates = createLiveStream()
+    renderRoute(queueOpen, http, updates)
+    await waitFor(() => expect(http.getAttention).toHaveBeenCalled())
+    // Closing the guide in another tab removes the cookie both tabs share.
+    document.cookie = 'ml_first_review=; Path=/; Max-Age=0'
+
+    http.getAttention = vi.fn<ReviewHttp['getAttention']>(async () => waiting)
+    act(() => updates.announce({ sequence: 1, subject: null, topic: 'library' }))
+
+    await firstRow()
+    expect(document.querySelector('dialog')).toBeNull()
+  })
+
   it('shows each step with its words, and moves with Next and Back', async () => {
     const { dialog, user } = await openGuide()
     const live = dialog.querySelector('[aria-live="polite"]')

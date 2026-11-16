@@ -294,7 +294,12 @@ export function FirstReviewGuide({
   const [owed, setOwed] = useState(owedNow)
   // Once open it stays open until closed, even if the queue empties meanwhile.
   const [opened, setOpened] = useState(false)
-  if (owed && first && !opened) setOpened(true)
+  // Read again when a field first needs a decision: since this page loaded,
+  // another tab may have closed the guide or its thirty days may have passed.
+  if (owed && first && !opened) {
+    if (owedNow()) setOpened(true)
+    else setOwed(false)
+  }
   if (!owed || !opened) return null
   const close = () => {
     clearOwed()
