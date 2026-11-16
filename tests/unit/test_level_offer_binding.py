@@ -55,6 +55,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderStatus,
     TargetFacts,
 )
+from mechanical_librarian.domain.owner_settings import provider_label
 from mechanical_librarian.domain.review_case import (
     ReviewCase,
     current_offer,
@@ -364,6 +365,23 @@ def test_the_level_offer_holds_a_description_the_live_proposal_does_not(
         assert offer_digest(store.case.proposals, "description") != offer_digest(
             offer_of(store), "description"
         )
+    finally:
+        store.repository.close()
+
+
+def test_a_level_choice_names_its_sources_in_the_write_plan(tmp_path: Path) -> None:
+    """A value only the level offer holds is found in the offer the choice
+    bound, so its row in the write plan names the source that gave it."""
+    store = level_store(tmp_path)
+    try:
+        decision = choose(store, SYNOPSIS)
+        store.repository.record_human_decision(decision)
+        named = store.repository.field_effect_plan_row(decision)
+        assert named["sources"] == [provider_label(retained.PROVIDER)]
+        live = choose(store, LIVE_SYNOPSIS, key="level-choice-0002")
+        assert store.repository.field_effect_plan_row(live)["sources"] == [
+            provider_label("open_library")
+        ]
     finally:
         store.repository.close()
 

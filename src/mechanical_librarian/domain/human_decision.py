@@ -33,21 +33,25 @@ COVER_SELECTION_AUTHORITY_SCHEMA: Final = "cover-selection-authority-v3"
 # An automatic cover choice keeps the first selection version.
 AUTOMATIC_COVER_SELECTION_AUTHORITY_SCHEMA: Final = "cover-selection-authority-v1"
 
-HUMAN_DECISION_SCHEMA: Final = "human-decision-v4"
+HUMAN_DECISION_SCHEMA: Final = "human-decision-v5"
 HumanDecisionEventSchemaVersion = Literal["human-decision-event-v1"]
 HUMAN_DECISION_EVENT_SCHEMA: Final[HumanDecisionEventSchemaVersion] = (
     "human-decision-event-v1"
 )
 
 _IDEMPOTENCY_KEY = re.compile(r"^[A-Za-z0-9._:-]{16,128}$")
-# ``reject`` is readable history only; the last two are F59's owner commands
-# (ADR-0085). Exactly the value-bearing outcomes carry a selected value.
+# ``reject`` is readable history only; owner_entered and withdraw are F59's
+# owner commands (ADR-0085); pin and unpin are standing owner instructions
+# (ADR-0085, Amendment 2). Exactly the value-bearing outcomes carry a selected
+# value.
 _OUTCOMES = {
     "accept",
     "keep_current",
     "reject",
     "owner_entered",
     "withdraw",
+    "pin",
+    "unpin",
 }
 VALUE_OUTCOMES = frozenset({"accept", "owner_entered"})
 # The owner may type a value only for these, and choose a genre subset; every
@@ -313,6 +317,14 @@ def validate_decision_action(
     selected_value: dict[str, object] | None,
 ) -> None:
     """Apply the selection half of the human-decision contract."""
+    # A pin stands on any field but the cover, actionable or not; what depends
+    # on the case's value is checked where the case is held.
+    if outcome in {"pin", "unpin"}:
+        if proposal.get("destination") == "cover":
+            raise HumanDecisionError("unsupported")
+        if selected_value is not None:
+            raise HumanDecisionError("invalid_selection")
+        return
     if outcome in {"owner_entered", "withdraw"}:
         _validate_owner_command(proposal, outcome, selected_value)
         return
@@ -505,6 +517,48 @@ def target_value(case: ReviewCase, destination: str) -> object:
     if type(field) is not dict or field.get("state") != "value":
         return None
     return field.get("value")
+
+
+def pinned_field_fingerprint(case: ReviewCase, destination: str) -> str | None:
+    """The digest a pin keeps for one field; ``None`` when it cannot be read.
+
+    Missing, null and empty read as one empty state, so a field pinned empty
+    stays pinned however the library stores nothing; ``restorable`` and other
+    metadata are left out (ADR-0085, Amendment 2).
+    """
+    fields = case.target.get("fields")
+    field = next(
+        (
+            item
+            for item in (fields if type(fields) is list else ())
+            if type(item) is dict and item.get("destination") == destination
+        ),
+        None,
+    )
+    state = field.get("state") if type(field) is dict else None
+    value = field.get("value") if type(field) is dict else None
+    # A target value is never empty (`TargetField` refuses one), so only these
+    # three states are empty.
+    if state in {"missing", "null", "empty"}:
+        state, value = "empty", None
+    elif state != "value":
+        return None
+    return _sha256(
+        _canonical({"destination": destination, "state": state, "value": value})
+    )
+
+
+def chosen_value_fingerprint(destination: str, selected_value: object) -> str:
+    """The digest a pin keeps for a value the owner chose but has not seen written.
+
+    It equals `pinned_field_fingerprint` of a case that shows the chosen value,
+    because a verified write is read back as exactly the projected value
+    (ADR-0085, Amendment 2).
+    """
+    value = project_decision_value(destination, selected_value)
+    return _sha256(
+        _canonical({"destination": destination, "state": "value", "value": value})
+    )
 
 
 def validate_owner_value(
@@ -931,6 +985,7 @@ class HumanDecision:
         validate_decision_action(proposal, outcome, selected_value)
         if outcome == "owner_entered":
             validate_owner_value(case, proposal, selected_value, previous)
+        _require_pinnable_value(case, outcome, destination)
         value = cls._formed(
             case.review_case_id,
             proposal_id,
@@ -1082,6 +1137,16 @@ class HumanDecision:
             applications=scope.applications,
         )
 
+    def bound_offer(self, scope: DecisionScope) -> tuple[dict[str, object], ...]:
+        """The offer of ``scope`` this retained fact stands in.
+
+        Its live proposals, or the stored level offer whose digest it bound.
+        """
+        return cast(
+            "tuple[dict[str, object], ...]",
+            self._bound_offer((scope.proposals, *scope.offers), False),
+        )
+
     def validate_new_for(
         self,
         case: ReviewCase,
@@ -1102,6 +1167,7 @@ class HumanDecision:
             new_command=True,
             applications=admitted_applications(case.media_kind),
         )
+        _require_pinnable_value(case, self.outcome, self.destination)
         if self.outcome == "owner_entered":
             validate_owner_value(
                 case,
@@ -1300,6 +1366,12 @@ def _decision_id(request_digest: str, occurred_at: int) -> str:
     return "human_decision_" + _sha256(
         _canonical({"request_digest": request_digest, "occurred_at": occurred_at})
     )
+
+
+def _require_pinnable_value(case: ReviewCase, outcome: str, destination: str) -> None:
+    """Refuse a pin where the library's value could not be read."""
+    if outcome == "pin" and pinned_field_fingerprint(case, destination) is None:
+        raise HumanDecisionError("unsupported")
 
 
 def _require_offer(destination: str, bound: str, current: str) -> None:

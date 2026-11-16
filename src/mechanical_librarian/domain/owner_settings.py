@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import Annotated, Final, Literal, get_args
+from typing import TYPE_CHECKING, Annotated, Final, Literal, get_args
 
 from pydantic import (
     BaseModel,
@@ -34,6 +34,9 @@ from mechanical_librarian.domain.validation import (
     OWNER_SESSION_LIFETIME_MINIMUM,
     credential,
 )
+
+if TYPE_CHECKING:
+    from mechanical_librarian.domain.metadata_report import MetadataReport
 
 OwnerSettingsSchemaVersion = Literal["owner-settings-v6"]
 OWNER_SETTINGS_SCHEMA: Final[OwnerSettingsSchemaVersion] = "owner-settings-v6"
@@ -161,9 +164,8 @@ ProviderAdapter = Literal[
 Credential = Literal["none", "contact_email", "api_key"]
 # One display name per adapter. The capability list reads it directly; the
 # browser vocabulary ships the same map to setup and to Settings, and
-# `review_web._provider_label` restates it because that module is byte-bound by
-# the F19a association re-qualification record. A test holds all four to the
-# same word, because none of them can import the others. The instance name
+# `provider_label` below names one for the review and write-plan reads. A test
+# holds every surface to the same word. The instance name
 # stays the owner's own identifier throughout: a label never reaches a field
 # id, a `provider_connections` entry, or a capability `name`.
 PROVIDER_LABELS: Final[Mapping[str, str]] = MappingProxyType(
@@ -178,6 +180,37 @@ PROVIDER_LABELS: Final[Mapping[str, str]] = MappingProxyType(
         "open_library": "Open Library",
     }
 )
+
+
+def provider_label(authority: str | None) -> str:
+    """Name one provider adapter, or say that its name is unavailable."""
+    if authority is None or authority not in PROVIDER_LABELS:
+        return "Provider (name unavailable)"
+    return PROVIDER_LABELS[authority]
+
+
+def audio_edition_label(authority: str | None) -> str:
+    """Name a provider's audio edition as such, never as its book (#1642)."""
+    return provider_label(authority) + " audio edition"
+
+
+def provider_source_labels(report: MetadataReport, references: list[str]) -> list[str]:
+    """Project provider labels for exact evidence references."""
+    by_reference = {
+        claim.reference: provider_label(provider.authority)
+        for provider in report.providers
+        for candidate in (*provider.candidates, *provider.recording_lookup_candidates)
+        for claim in candidate.claims
+    } | {
+        claim.reference: audio_edition_label(provider.authority)
+        for provider in report.providers
+        for edition in provider.audio_editions
+        for claim in edition.claims
+    }
+    labels = {
+        by_reference[reference] for reference in references if reference in by_reference
+    }
+    return sorted(labels)
 
 
 class ProviderCapability(_Closed):

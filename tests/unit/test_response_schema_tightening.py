@@ -133,7 +133,7 @@ KEYWORDS: tuple[tuple[str, str, str, str, object], ...] = (
         ("S06", "_ActivityPrepared", f"/properties/{name}", "minimum", 0)
         for name in ("automatic", "human", "total")
     ),
-    ("S07", "_ActivityExample", "/properties/destination", "enum", TARGETS),
+    ("S07", "_WritePlanGroup", "/properties/destination", "enum", TARGETS),
     ("S08", "_ActivityWaiting", "/properties/destination", "enum", TARGETS),
     (
         "S09",
@@ -504,6 +504,15 @@ KEYWORDS: tuple[tuple[str, str, str, str, object], ...] = (
     ("S91", "_LibraryProgressField", "/properties/need_you", "minimum", 1),
     ("S92", "_LibraryProgressResponse", "/properties/fields", "maxItems", 16),
     ("S93", "_LibraryProgressResponse", "/properties/libraries", "maxItems", 256),
+    # An owner pin's state and a work's pinned fields (#1346).
+    (
+        "S94",
+        "_FieldPin",
+        "/properties/state",
+        "enum",
+        ("in_force", "waiting", "changed"),
+    ),
+    ("S95", "_LibraryWork", "/properties/pinned_count", "minimum", 0),
 )
 
 
@@ -602,7 +611,7 @@ REFUSALS: tuple[tuple[type[BaseModel], str, object, str], ...] = (
     (app._ActivityCapability, "state", "partial", "literal_error"),
     (app._ActivitySuspension, "reason", "recovery", "literal_error"),
     (app._ActivityPrepared, "total", -1, "greater_than_equal"),
-    (app._ActivityExample, "destination", "publication_date", "literal_error"),
+    (app._WritePlanGroup, "destination", "publication_date", "literal_error"),
     (app._ActivityWaiting, "destination", "x", "literal_error"),
     (app._ActivityEvent, "event_type", "all", "literal_error"),
     (app._ActivityResponse, "counts", {"verified": -1}, "greater_than_equal"),

@@ -116,6 +116,7 @@ from mechanical_librarian.application.reviewer_contracts import (
     DeviceAuthStatus,
     OpenRouterPublicFailure,
 )
+from mechanical_librarian.application.write_plan import PLAN_SOURCE_LABELS
 from mechanical_librarian.domain.audio_health import MAX_HEALTH_OBSERVATIONS
 from mechanical_librarian.domain.cover_taste import (
     MAX_TASTE_RULE_CODE_POINTS,
@@ -248,6 +249,89 @@ _FIELD_EFFECT_STATE_CONFLICT = frozenset(
 
 _Result = TypeVar("_Result")
 _SessionDependency: TypeAlias = Callable[[Request, str | None], str]
+
+
+# The scope key a streamed body sets when it ends by an exception (#1336).
+_ABORTED_BODY: Final = "mechanical_librarian.aborted_body"
+
+
+class AbortedResponseBody(Exception):
+    """A streamed body ended by an exception, so its response is not completed.
+
+    The message names only the type of the original error, never a value.
+    """
+
+
+async def _marking_aborted(
+    scope: Scope, content: AsyncIterator[bytes]
+) -> AsyncIterator[bytes]:
+    """Relay a route's body, marking the request before an exception leaves it.
+
+    The middleware below shares this scope; ``_unless_aborted`` reads the mark
+    once the relayed body has ended. A cancellation or a body closed early, as
+    an abandoned download is, is not a fault and leaves no mark.
+    """
+    try:
+        async for chunk in content:
+            yield chunk
+    except Exception as error:
+        scope[_ABORTED_BODY] = type(error).__name__
+        raise
+
+
+async def _unless_aborted(
+    scope: Scope, relayed: AsyncIterator[Any]
+) -> AsyncIterator[Any]:
+    """Re-yield a relayed body, then raise if the route marked it aborted.
+
+    ``BaseHTTPMiddleware`` ends its relayed body normally when the inner app
+    raises, and would then send the final frame. Raising here, before that
+    frame, leaves the response unfinished, so the server closes the connection
+    and a short file is never received as a complete one.
+    """
+    async for chunk in relayed:
+        yield chunk
+    aborted = scope.get(_ABORTED_BODY)
+    if aborted is not None:
+        raise AbortedResponseBody(f"response body aborted by {aborted}")
+
+
+def _withhold_aborted_end(scope: Scope, response: Response) -> None:
+    """Make a relayed response raise, not complete, when its route aborted it.
+
+    For an ``@app.middleware("http")`` function, after ``call_next``: the
+    relayed body then ends through ``_unless_aborted``.
+    """
+    relayed = getattr(response, "body_iterator", None)
+    if relayed is not None:
+        # Starlette's relay type is private, so the attribute is set by name.
+        setattr(response, "body_iterator", _unless_aborted(scope, relayed))  # noqa: B010
+
+
+class _ReleasingStreamingResponse(StreamingResponse):
+    """Stop a streamed body's producer however the response ends (#1336).
+
+    ``stop`` only sets a flag, so it runs even when an enclosing cancel scope
+    skips every await; the producer then ends its read and releases its reader
+    from its own thread.
+    """
+
+    def __init__(
+        self,
+        content: AsyncIterator[bytes],
+        release: Callable[[], None],
+        *,
+        media_type: str,
+        headers: dict[str, str],
+    ) -> None:
+        super().__init__(content, media_type=media_type, headers=headers)
+        self._stop = release
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self._stop()
 
 
 class _LiveUpdateStreamingResponse(StreamingResponse):
@@ -517,6 +601,13 @@ class _ProposedValue(_ClosedModel):
     )
 
 
+# Every owner decision outcome, `reject` as readable history and `pin` and
+# `unpin` as standing instructions (ADR-0085, Amendment 2).
+_HumanDecisionOutcome: TypeAlias = Literal[
+    "accept", "keep_current", "reject", "owner_entered", "withdraw", "pin", "unpin"
+]
+
+
 class _DecisionProjection(_ClosedModel):
     actor: str
     application: Literal["apply", "recorded_only"]
@@ -524,7 +615,7 @@ class _DecisionProjection(_ClosedModel):
     decision_id: str
     destination: str
     occurred_at: int
-    outcome: Literal["accept", "keep_current", "reject", "owner_entered", "withdraw"]
+    outcome: _HumanDecisionOutcome
     proposal_id: str
     review_case_id: str
     selected_value: _ProposedValue | None
@@ -851,13 +942,15 @@ class _DescriptionRetryAcknowledgement(_ClosedModel):
 
 
 class _OwnerSuggestion(_ClosedModel):
-    rule: Literal["title_case", "strip_part", "split_author", "combined", "previous"]
+    rule: Literal[
+        "title_case", "strip_part", "split_author", "combined", "previous", "pinned"
+    ]
     value: StrictStr = Field(min_length=1, max_length=512)
 
 
 class _OwnerEntry(_ClosedModel):
     max_characters: Literal[512]
-    suggestions: list[_OwnerSuggestion] = Field(max_length=5)
+    suggestions: list[_OwnerSuggestion] = Field(max_length=6)
 
 
 class _OwnerSubsetOption(_ClosedModel):
@@ -878,6 +971,18 @@ class _OwnerControl(_ClosedModel):
     entry: _OwnerEntry | None
     subset: _OwnerSubset | None
     withdraw: Literal["available", "automatic_hold", "in_progress", "written"] | None
+
+
+class _FieldPin(_ClosedModel):
+    """An owner pin: in force here, waiting to be read back, or changed."""
+
+    state: Literal["in_force", "waiting", "changed"]
+    value: _TargetField
+
+
+class _PinControl(_ClosedModel):
+    pin: Literal["available", "change_waiting"] | None
+    unpin: StrictBool
 
 
 class _ReviewField(_ClosedModel):
@@ -922,6 +1027,8 @@ class _ReviewField(_ClosedModel):
     navigation_role: Literal["attention", "inspect"]
     notices: list[str]
     owner_control: _OwnerControl | None
+    pin: _FieldPin | None
+    pin_control: _PinControl | None
     proposed_values: list[_ProposedValue]
     choice_contexts: list["_FieldChoiceContext"]
     provenance: list[str]
@@ -1155,7 +1262,7 @@ class _HistoryDecisionItem(_ClosedModel):
     event_id: str
     kind: Literal["human_decision_recorded"]
     occurred_at: _Instant
-    outcome: Literal["accept", "keep_current", "reject", "owner_entered", "withdraw"]
+    outcome: _HumanDecisionOutcome
     previous_value: _ProposedValue | None
     review_case_id: str
     schema_version: HumanDecisionEventSchemaVersion
@@ -1652,6 +1759,7 @@ class _CoversResponse(_ClosedModel):
 class _LibraryWork(_ClosedModel):
     authors: list[str]
     attention_count: _Count
+    pinned_count: _Count
     attention_state: Literal[
         "needs_attention", "no_attention_needed", "not_matched", "preparation_failed"
     ]
@@ -2003,12 +2111,31 @@ class _ActivitySuspension(_ClosedModel):
     updated_at: _Count
 
 
-class _ActivityExample(_ClosedModel):
-    after: object
-    before: object
+class _WritePlanRow(_ClosedModel):
+    """One prepared change in words: no work, item or decision identity (#1336)."""
+
+    work: str = Field(max_length=512)
+    authors: str = Field(max_length=512)
+    current: str = Field(max_length=512)
+    new: str = Field(max_length=512)
+    reason: str = Field(max_length=512)
+    # Distinct names from a closed set, so the bound admits all of them.
+    sources: list[Annotated[str, Field(max_length=128)]] = Field(
+        max_length=len(PLAN_SOURCE_LABELS)
+    )
+
+
+class _WritePlanGroup(_ClosedModel):
+    library: str = Field(max_length=512)
     destination: _TargetDestination
-    library: str
-    work_id: str
+    kind: Literal["human", "automatic"]
+    count: _Count
+    rows: list[_WritePlanRow] = Field(max_length=25)
+
+
+class _WritePlan(_ClosedModel):
+    total: _Count
+    groups: list[_WritePlanGroup] = Field(max_length=1024)
 
 
 class _ActivityLedger(_ClosedModel):
@@ -2085,7 +2212,7 @@ class _ActivityPermissionReadiness(_ClosedModel):
     capabilities: list[_ActivityCapability]
     configured_libraries: list[_ActivityLibrary]
     prepared: _ActivityPrepared
-    example: _ActivityExample | None
+    plan: _WritePlan
 
 
 class _ActivityConsentState(_ClosedModel):
@@ -2299,7 +2426,7 @@ class _CoverConfirmation(_ClosedModel):
 class _DecisionRequest(_ClosedModel):
     cover_confirmation: _CoverConfirmation | None = None
     destination: StrictStr = Field(min_length=1, max_length=64)
-    outcome: Literal["accept", "keep_current", "reject", "owner_entered", "withdraw"]
+    outcome: _HumanDecisionOutcome
     proposal_id: StrictStr = Field(pattern=r"^review_proposal_[0-9a-f]{64}$")
     selected_value: _ProposedValue | None = None
     target_fingerprint: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
@@ -3165,6 +3292,7 @@ def create_review_app(
                 response = await call_next(request)
         finally:
             _OWNER_SESSION_AUTHENTICATED.reset(marker)
+        _withhold_aborted_end(request.scope, response)
         if await _answers_an_owner_session(request, response, authenticated[0]):
             bundle = assets.load()
             if isinstance(bundle, ReactAssetBundle):
@@ -3218,6 +3346,7 @@ def create_review_app(
     _register_settings_routes(app, application, authenticated_session_cookie)
     _register_reviewer_access_routes(app, application, authenticated_session_cookie)
     _register_policy_routes(app, application, authenticated_session_cookie)
+    _register_write_plan_route(app, application, authenticated_session_cookie)
     _register_case_and_effect_routes(
         app, application, session_cookie, authenticated_session_cookie
     )
@@ -3938,6 +4067,74 @@ def _register_session_routes(
         )
         response.status_code = 204
         return response
+
+
+def _register_write_plan_route(
+    app: FastAPI,
+    application: ReviewApplication,
+    authenticated_session_cookie: _SessionDependency,
+) -> None:
+    @app.get(
+        "/api/v1/activity/write-plan",
+        responses={
+            200: {
+                "content": {
+                    "text/csv": {"schema": {"type": "string"}},
+                    "application/json": {},
+                }
+            },
+            **{status: {"model": _ErrorResponse} for status in (401, 422, 503)},
+        },
+    )
+    def activity_write_plan(
+        request: Request,
+        format: Literal["csv", "json"] = Query(),
+        ml_session: str = Depends(authenticated_session_cookie),
+    ) -> Response:
+        """Send every prepared change as it is made; computed, never stored.
+
+        A fault before the first byte answers with its status. After it, the
+        connection ends without completing the body, so a short file is never
+        received as a complete one.
+        """
+        _require_session(application, ml_session)
+        stream = None
+        try:
+            stream = application.activity_write_plan_file(format)
+            first = stream.next_chunk() or b""
+        except (
+            GuardedApplicationError,
+            FieldEffectError,
+            ReviewApplicationError,
+        ) as error:
+            if stream is not None:
+                stream.close()
+            raise HTTPException(
+                503, detail={"code": getattr(error, "code", "unavailable")}
+            ) from None
+        except BaseException:
+            if stream is not None:
+                stream.close()
+            raise
+        produced = stream
+
+        async def body() -> AsyncIterator[bytes]:
+            yield first
+            while (chunk := await run_in_threadpool(produced.next_chunk)) is not None:
+                yield chunk
+
+        return _ReleasingStreamingResponse(
+            _marking_aborted(request.scope, body()),
+            produced.stop,
+            media_type="text/csv; charset=utf-8"
+            if format == "csv"
+            else "application/json",
+            headers={
+                "Content-Disposition": "attachment; "
+                f'filename="mechanical-librarian-write-plan.{format}"',
+                "X-Accel-Buffering": "no",
+            },
+        )
 
 
 def _register_policy_routes(
@@ -6023,6 +6220,10 @@ def _decision_call(call: Callable[[], dict[str, object]]) -> dict[str, object]:
             "nothing_to_withdraw": 409,
             "automatic_hold": 409,
             "decision_written": 409,
+            "pin_change_waiting": 409,
+            "already_pinned": 409,
+            "not_pinned": 409,
+            "pinned": 409,
             # Distinct from `stale`: the case stands, its field's offer moved
             # (#1355).
             "offer_changed": 409,

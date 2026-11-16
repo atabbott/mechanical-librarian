@@ -66,6 +66,8 @@ class ActivityResult(StrEnum):
     REJECTED = "Rejected"
     OWNER_ENTERED = "Entered by you"
     WITHDRAWN = "Withdrawn"
+    PINNED = "Pinned"
+    UNPINNED = "Unpinned"
     COVER_ADVICE_COMPLETED = "Cover advice completed"
     COVER_ADVICE_UNAVAILABLE = "Cover advice unavailable"
     COVER_ADVICE_FAILED = "Cover advice failed"
@@ -117,6 +119,8 @@ _RESULT_LABELS = {
     "reject": ActivityResult.REJECTED,
     "owner_entered": ActivityResult.OWNER_ENTERED,
     "withdraw": ActivityResult.WITHDRAWN,
+    "pin": ActivityResult.PINNED,
+    "unpin": ActivityResult.UNPINNED,
     "completed": ActivityResult.COVER_ADVICE_COMPLETED,
     "unavailable": ActivityResult.COVER_ADVICE_UNAVAILABLE,
     "failed": ActivityResult.COVER_ADVICE_FAILED,
@@ -180,7 +184,13 @@ def project_readable_activity_event(
         or report.target.item != event.get("work_id")
     ):
         raise ActivityProjectionError("activity")
-    event["work_label"] = report.target.current_title or "Untitled"
+    event["work_label"], event["author_label"] = report_work_labels(report)
+    readable_activity_event(event, report)
+
+
+def report_work_labels(report: MetadataReport) -> tuple[str, str]:
+    """Name a work and its authors as its exact report records them."""
+    author_label = "Author details are not recorded"
     authors = next(
         (
             field.value
@@ -191,10 +201,10 @@ def project_readable_activity_event(
     )
     if type(authors) is tuple and all(type(author) is str for author in authors):
         joined = ", ".join(cast("tuple[str, ...]", authors))
-        event["author_label"] = (
+        author_label = (
             joined if len(joined) <= 512 else joined[:511].rstrip() + "…"
-        ) or "Author details are not recorded"
-    readable_activity_event(event, report)
+        ) or author_label
+    return report.target.current_title or "Untitled", author_label
 
 
 def activity_result_label(state: str, failure: object = None) -> ActivityResult:
@@ -402,6 +412,21 @@ def _decision_facts(
             {"label": "Current value", "value": value_text(destination, current)},
             chosen,
             {"label": "Outcome", "value": "The earlier decision no longer applies"},
+        ]
+    if state == "pin":
+        return ReadableChange(
+            "Pinned", f"Pinned the {destination_label(destination)} value"
+        ), [chosen]
+    if state == "unpin":
+        return ReadableChange(
+            "Unpinned", f"Unpinned the {destination_label(destination)} field"
+        ), [
+            {"label": "Current value", "value": value_text(destination, current)},
+            chosen,
+            {
+                "label": "Outcome",
+                "value": "Mechanical Librarian can ask about this field again",
+            },
         ]
     if state == "reject" or type(selected) is not dict:
         return (

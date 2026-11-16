@@ -10,12 +10,24 @@ from mechanical_librarian.domain.human_decision import (
     HumanDecisionError,
     OwnerSuggestion,
     admitted_applications,
+    chosen_value_fingerprint,
     decision_actions,
     identity_contradicts,
     list_union,
     manual_cover_eligible,
     owner_text,
     owner_value_suggestions,
+    pinned_field_fingerprint,
+)
+from mechanical_librarian.domain.metadata_report import (
+    FileFacts,
+    MetadataReport,
+    TargetDestination,
+    TargetFacts,
+    TargetField,
+    TargetFieldState,
+    TargetSeries,
+    default_target_fields,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
@@ -623,6 +635,197 @@ def test_identity_contradiction_is_shared_with_owner_cover_eligibility(
     assert identity_contradicts(identity) is contradicts
     candidate = {"incumbent": False, "identity": identity}
     assert manual_cover_eligible(candidate) is not contradicts
+
+
+# --- pins (ADR-0085, Amendment 2) ---------------------------------------------
+
+
+def _case_with(*fields: TargetField) -> ReviewCase:
+    """A case whose target holds these fields and the default rest."""
+    replaced = {field.destination: field for field in fields}
+    report = MetadataReport.create(
+        target=TargetFacts(
+            "primary",
+            "ebooks",
+            "item-1",
+            tuple(
+                replaced.get(field.destination, field)
+                for field in default_target_fields("Title")
+            ),
+        ),
+        file=FileFacts(0, "a" * 64, "b" * 64),
+        local_claims=(),
+        local_reasons=("no_opening_claims",),
+        providers=(),
+    )
+    return ReviewCase.create(evaluate_report(report), report)
+
+
+def _title(state: TargetFieldState, value: str | None = None) -> TargetField:
+    return TargetField(TargetDestination.TITLE, state, value)
+
+
+@pytest.mark.parametrize("outcome", ("pin", "unpin"), ids=("pin", "unpin"))
+def test_pin_and_unpin_are_valueless_owner_decisions(outcome: str) -> None:
+    case = _case_with()
+    proposal = next(
+        value for value in case.proposals if value["destination"] == "title"
+    )
+    assert decision_actions(proposal) == ()
+    decision = _create(case, proposal, outcome, None)
+    raw = json.loads(decision.to_json())
+    assert (raw["schema_version"], raw["outcome"], raw["selected_value"]) == (
+        HUMAN_DECISION_SCHEMA,
+        outcome,
+        None,
+    )
+    assert HumanDecision.from_json(decision.to_json()) == decision
+    decision.validate_for(case)
+    decision.validate_new_for(case)
+
+
+def test_a_cover_cannot_be_pinned(case: ReviewCase) -> None:
+    with pytest.raises(HumanDecisionError) as refused:
+        _owner(case, "cover", None, outcome="pin")
+    assert refused.value.code == "unsupported"
+
+
+@pytest.mark.parametrize("outcome", ("pin", "unpin"), ids=("pin", "unpin"))
+def test_a_pin_with_a_value_is_refused(case: ReviewCase, outcome: str) -> None:
+    with pytest.raises(HumanDecisionError) as refused:
+        _owner(case, "title", "The Silent Orchard", outcome=outcome)
+    assert refused.value.code == "invalid_selection"
+
+
+def test_an_unreadable_value_cannot_be_pinned() -> None:
+    case = _case_with(_title(TargetFieldState.UNLOADED))
+    with pytest.raises(HumanDecisionError) as refused:
+        _owner(case, "title", None, outcome="pin")
+    assert refused.value.code == "unsupported"
+    # Nothing stands to release, so an unpin is the store's to refuse.
+    _owner(case, "title", None, outcome="unpin")
+
+
+def test_a_v4_decision_document_is_refused(case: ReviewCase) -> None:
+    raw = json.loads(_owner(case, "title", None, outcome="keep_current").to_json())
+    with pytest.raises(HumanDecisionError):
+        HumanDecision.from_json(
+            json.dumps(
+                {**raw, "schema_version": "human-decision-v4"},
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    "field",
+    (
+        _title(TargetFieldState.MISSING),
+        _title(TargetFieldState.NULL),
+        _title(TargetFieldState.EMPTY),
+    ),
+    ids=("missing", "null", "empty_state"),
+)
+def test_pinned_field_fingerprint_treats_missing_null_and_empty_alike(
+    field: TargetField,
+) -> None:
+    empty = pinned_field_fingerprint(
+        _case_with(_title(TargetFieldState.MISSING)), "title"
+    )
+    assert empty is not None
+    assert pinned_field_fingerprint(_case_with(field), "title") == empty
+    assert pinned_field_fingerprint(_case_with(), "title") != empty
+
+
+@pytest.mark.parametrize(
+    "state",
+    (TargetFieldState.UNLOADED, TargetFieldState.MALFORMED, TargetFieldState.OVERSIZED),
+    ids=("unloaded", "malformed", "oversized"),
+)
+def test_pinned_field_fingerprint_is_none_for_unreadable_values(
+    state: TargetFieldState,
+) -> None:
+    assert pinned_field_fingerprint(_case_with(_title(state)), "title") is None
+
+
+def test_pinned_field_fingerprint_ignores_description_restorable() -> None:
+    text = "A synthetic description of a quiet orchard."
+
+    def described(restorable: bool) -> str | None:
+        return pinned_field_fingerprint(
+            _case_with(
+                TargetField(
+                    TargetDestination.DESCRIPTION,
+                    TargetFieldState.VALUE,
+                    text,
+                    restorable,
+                )
+            ),
+            "description",
+        )
+
+    assert described(True) == described(False) is not None
+
+
+def test_pinned_field_fingerprint_distinguishes_values_and_destinations() -> None:
+    title = pinned_field_fingerprint(_case_with(), "title")
+    assert title is not None
+    assert pinned_field_fingerprint(_case_with(), "title") == title
+    assert (
+        pinned_field_fingerprint(
+            _case_with(_title(TargetFieldState.VALUE, "Another title")), "title"
+        )
+        != title
+    )
+    # Two empty fields are not the same pin.
+    assert pinned_field_fingerprint(_case_with(), "subtitle") != (
+        pinned_field_fingerprint(_case_with(), "publisher")
+    )
+
+
+# K-D17: a pin on a chosen value keeps the digest a later case showing that
+# value has, for each kind of value a field holds.
+@pytest.mark.parametrize(
+    "destination,selected,held",
+    (
+        (
+            TargetDestination.TITLE,
+            {"kind": "text", "value": "The Silent Orchard"},
+            "The Silent Orchard",
+        ),
+        (
+            TargetDestination.GENRES,
+            {"kind": "list", "value": ["Fantasy", "Drama"]},
+            ("Fantasy", "Drama"),
+        ),
+        (
+            TargetDestination.SERIES,
+            {
+                "kind": "series",
+                "value": [
+                    {"name": "Example Series", "sequence": "3"},
+                    {"name": "Another Series", "sequence": None},
+                ],
+            },
+            (TargetSeries("Example Series", "3"), TargetSeries("Another Series")),
+        ),
+        (TargetDestination.EXPLICIT, {"kind": "boolean", "value": False}, False),
+        (
+            TargetDestination.DESCRIPTION,
+            {"kind": "text", "value": "A synthetic description of a quiet orchard."},
+            "A synthetic description of a quiet orchard.",
+        ),
+    ),
+    ids=("text", "list", "series", "boolean", "description"),
+)
+def test_chosen_value_fingerprint_matches_the_value_read_back(
+    destination: TargetDestination, selected: dict[str, object], held: object
+) -> None:
+    case = _case_with(TargetField(destination, TargetFieldState.VALUE, held))
+    chosen = chosen_value_fingerprint(destination.value, selected)
+    assert chosen == pinned_field_fingerprint(case, destination.value)
+    assert chosen != pinned_field_fingerprint(_case_with(), destination.value)
 
 
 def _description_proposal(

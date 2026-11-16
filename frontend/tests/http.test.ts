@@ -1089,6 +1089,46 @@ describe('ReviewApiClient', () => {
     ).toBe(shown)
   })
 
+  it('reads a field’s pin and pin control, and refuses an unknown pin state (#1346)', async () => {
+    const pinned = targetField({ state: 'value', value: 'A Pinned Book' })
+    const field = (await readCase(closedDetail())).fields[0]
+    expect([field?.pin, field?.pinControl]).toEqual([null, null])
+    const read = (
+      await readCase(
+        closedDetail({
+          pin: { state: 'changed', value: pinned },
+          pin_control: { pin: 'available', unpin: true },
+        }),
+      )
+    ).fields[0]
+    expect(read?.pin).toEqual({ state: 'changed', value: pinned })
+    expect(read?.pinControl).toEqual({ pin: 'available', unpin: true })
+    const waiting = (
+      await readCase(closedDetail({ pin_control: { pin: 'change_waiting', unpin: false } }))
+    ).fields[0]
+    expect(waiting?.pinControl).toEqual({ pin: 'change_waiting', unpin: false })
+    // A pin on a chosen value waits until the value is read back (K5).
+    const chosen = (
+      await readCase(
+        closedDetail({
+          pin: { state: 'waiting', value: pinned },
+          pin_control: { pin: 'available', unpin: true },
+        }),
+      )
+    ).fields[0]
+    expect(chosen?.pin).toEqual({ state: 'waiting', value: pinned })
+    expect(chosen?.pinControl).toEqual({ pin: 'available', unpin: true })
+    await expect(
+      readCase(closedDetail({ pin_control: { pin: 'other', unpin: false } })),
+    ).rejects.toMatchObject(refused('enum@/fields/0/pin_control/pin'))
+    await expect(
+      readCase(closedDetail({ pin_control: { pin: true, unpin: false } })),
+    ).rejects.toMatchObject(refused('type@/fields/0/pin_control/pin'))
+    await expect(
+      readCase(closedDetail({ pin: { state: 'other', value: pinned } })),
+    ).rejects.toMatchObject(refused('enum@/fields/0/pin/state'))
+  })
+
   it('reads a cover’s current value as the current cover, never its id (#1363)', async () => {
     const cover = (state: string, value: string | null) =>
       readCase(closedDetail({ destination: 'cover', current: targetField({ state, value }) })).then(
@@ -1869,6 +1909,7 @@ describe('ReviewApiClient', () => {
       libraryDisplayName: 'Reading Room',
       mediaKind: 'epub',
       attentionCount: 1,
+      pinnedCount: 0,
       attention: 'needs_attention',
       detailUrl: '/review/case-1',
       detailKind: 'case',
@@ -1884,6 +1925,7 @@ describe('ReviewApiClient', () => {
       libraryDisplayName: 'Books',
       mediaKind: 'epub',
       attentionCount: 0,
+      pinnedCount: 0,
       attention: 'no_attention_needed',
       detailUrl: null,
       detailKind: null,
@@ -3235,7 +3277,7 @@ describe('ReviewApiClient', () => {
       csrf,
       fetch: vi.fn(async () =>
         Response.json(
-          { schema_version: 'review-library-v5', error: { code: 'busy' } },
+          { schema_version: 'review-library-v6', error: { code: 'busy' } },
           { status: 503 },
         ),
       ),
@@ -3314,9 +3356,19 @@ describe('ReviewApiClient', () => {
     await expect(
       readLibrary({ ...page, schema_version: 'review-library-v4' }),
     ).rejects.toMatchObject(refused('const@/schema_version'))
+    // v6 added each work's pinned field count (#1346); a v5 document lacks it.
     await expect(
       readLibrary({ ...page, schema_version: 'review-library-v5' }),
+    ).rejects.toMatchObject(refused('const@/schema_version'))
+    await expect(
+      readLibrary({ ...page, schema_version: 'review-library-v6' }),
     ).resolves.toBeDefined()
+  })
+
+  it('reads each work’s pinned field count (#1346)', async () => {
+    const page = (count: number) => library({ items: [libraryWork({ pinned_count: count })] })
+    expect((await readLibrary(page(2))).works[0]?.pinnedCount).toBe(2)
+    await expect(readLibrary(page(-1))).rejects.toMatchObject(refused('min@/items/0/pinned_count'))
   })
 
   it('maps a library work cover and refuses a malformed one', async () => {
@@ -4288,6 +4340,97 @@ describe('Activity check group (#1281)', () => {
   })
 })
 
+describe('write plan file (#1336)', () => {
+  const encoder = new TextEncoder()
+  const streamed = (chunks: string[], fault?: Error) =>
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(encoder.encode(chunk))
+        if (fault) controller.error(fault)
+        else controller.close()
+      },
+    })
+
+  it('fetches the file once, counts rows as they arrive and keeps its bytes', async () => {
+    const chunks = ['{"changes":[\n', '{"work":"A"}\n,{"work":"B"}\n', '],"listed":2}']
+    const fetchMock = vi.fn<typeof fetch>(
+      async () =>
+        new Response(streamed(chunks), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    )
+    const rows: number[] = []
+
+    const file = await new ReviewApiClient({ csrf, fetch: fetchMock }).downloadActivityWritePlan(
+      'json',
+      undefined,
+      (count) => rows.push(count),
+    )
+
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const [path, init] = fetchMock.mock.calls[0] ?? []
+    expect(path).toBe('/api/v1/activity/write-plan?format=json')
+    expect(init).toMatchObject({ credentials: 'same-origin', cache: 'no-store' })
+    expect(init?.method ?? 'GET').toBe('GET')
+    expect(rows).toEqual([0, 2, 2])
+    expect(file.filename).toBe('mechanical-librarian-write-plan.json')
+    expect(file.blob.type).toBe('application/json')
+    expect(await file.blob.text()).toBe(chunks.join(''))
+  })
+
+  it('reads the whole body when it cannot be streamed', async () => {
+    const response = new Response('"Library"\r\n', { status: 200 })
+    Object.defineProperty(response, 'body', { value: null })
+    const file = await new ReviewApiClient({
+      csrf,
+      fetch: vi.fn<typeof fetch>(async () => response),
+    }).downloadActivityWritePlan('csv')
+
+    expect(file.filename).toBe('mechanical-librarian-write-plan.csv')
+    expect(await file.blob.text()).toBe('"Library"\r\n')
+  })
+
+  it('never returns a file whose connection ended before its end', async () => {
+    const client = new ReviewApiClient({
+      csrf,
+      fetch: vi.fn<typeof fetch>(
+        async () => new Response(streamed(['"Library"\r\n'], new TypeError('network'))),
+      ),
+    })
+
+    await expect(client.downloadActivityWritePlan('csv')).rejects.toBeInstanceOf(
+      NetworkUnavailableError,
+    )
+  })
+
+  it.each([
+    [
+      'session expiry',
+      () => Response.json({ error: { code: 'session' } }, { status: 401 }),
+      SessionExpiredError,
+    ],
+    [
+      'an earlier build',
+      () => new Response('x', { status: 200, headers: { 'x-ml-build-identity': 'e'.repeat(64) } }),
+      BuildMismatchError,
+    ],
+    [
+      'an unavailable plan',
+      () => Response.json({ error: { code: 'unavailable' } }, { status: 503 }),
+      ApiError,
+    ],
+  ])('refuses %s as every read does', async (_name, answer, refusal) => {
+    const client = new ReviewApiClient({
+      csrf,
+      buildIdentity: 'c'.repeat(64),
+      fetch: vi.fn<typeof fetch>(async () => answer()),
+    })
+
+    await expect(client.downloadActivityWritePlan('csv')).rejects.toBeInstanceOf(refusal)
+  })
+})
+
 describe('deferred Activity permission contract', () => {
   it('refuses a genuine earlier producer and requires both nullable fields', async () => {
     await expect(readActivity(activityV2Predecessor)).rejects.toBeInstanceOf(ResponseDecodeError)
@@ -4325,20 +4468,53 @@ describe('deferred Activity permission contract', () => {
         backup_ready,
         capabilities: [],
         configured_libraries: [],
-        prepared: { automatic: 0, human: 0, total: 0 },
-        example: {
-          after: 'After',
-          before: 'Before',
-          destination: 'title',
-          library: 'Fiction',
-          work_id: 'work-1',
+        prepared: { automatic: 0, human: 1, total: 1 },
+        plan: {
+          total: 1,
+          groups: [
+            {
+              library: 'Fiction',
+              destination: 'title',
+              kind: 'human',
+              count: 1,
+              rows: [
+                {
+                  work: 'Real Tigers',
+                  authors: 'Mick Herron',
+                  current: 'Not set',
+                  new: 'Real Tigers',
+                  reason: 'You chose this value',
+                  sources: ['Hardcover'],
+                },
+              ],
+            },
+          ],
         },
       }
-      expect(await readPermissionReadiness(response)).toEqual({
-        ...response,
-        example: { ...response.example, work_label: 'Work details unavailable' },
-      })
-      expect((await readPermissionReadiness({ ...response, example: null })).example).toBeNull()
+      expect(await readPermissionReadiness(response)).toEqual(response)
+      // The plan is required, its kinds are closed and a row states no identity.
+      await expect(readPermissionReadiness({ ...response, plan: undefined })).rejects.toMatchObject(
+        refused('required@/plan'),
+      )
+      await expect(readPermissionReadiness({ ...response, example: null })).rejects.toMatchObject(
+        refused('unknown_key@/example'),
+      )
+      const [group] = response.plan.groups as [(typeof response.plan.groups)[number]]
+      await expect(
+        readPermissionReadiness({
+          ...response,
+          plan: { ...response.plan, groups: [{ ...group, kind: 'policy' }] },
+        }),
+      ).rejects.toMatchObject({ name: 'ResponseDecodeError' })
+      await expect(
+        readPermissionReadiness({
+          ...response,
+          plan: {
+            ...response.plan,
+            groups: [{ ...group, rows: [{ ...group.rows[0], work_id: 'work-1' }] }],
+          },
+        }),
+      ).rejects.toMatchObject({ name: 'ResponseDecodeError' })
       await expect(readPermissionReadiness({ ...response, events: [] })).rejects.toMatchObject(
         refused('unknown_key@/events'),
       )

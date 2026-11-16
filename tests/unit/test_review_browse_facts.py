@@ -209,18 +209,27 @@ def _library_rows(case_document: str | None, report_document: str):
     terminal = _terminal_document("unreadable_media", "track_3")
     decided = _human_decisions(case_document)
     return (
-        (case_document, report_document, (), (), (), (), None, 2),
-        (case_document, report_document, decided, (), (), (), None, 1),
-        (case_document, report_document, (), ("title",), ("cover",), (), None, 0),
-        (case_document, report_document, (), (), (), ("authors",), terminal, 1),
-        (None, report_document, (), (), (), (), None, 0),
-        (None, terminal, (), (), (), (), None, 0),
+        (case_document, report_document, (), (), (), (), None, 2, 0),
+        (case_document, report_document, decided, (), (), (), None, 1, 0),
+        (case_document, report_document, (), ("title",), ("cover",), (), None, 0, 0),
+        (case_document, report_document, (), (), (), ("authors",), terminal, 1, 0),
+        (None, report_document, (), (), (), (), None, 0, 0),
+        (None, terminal, (), (), (), (), None, 0, 0),
     )
 
 
 def _attention_rows(case_document: str, report_document: str):
     return tuple(
-        (case_document, report_document, destination.value, 3, outcome, cause, flag)
+        (
+            case_document,
+            report_document,
+            destination.value,
+            3,
+            outcome,
+            cause,
+            flag,
+            False,
+        )
         for destination in TargetDestination
         for outcome, cause, flag in (
             (None, None, True),

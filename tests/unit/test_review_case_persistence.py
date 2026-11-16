@@ -890,11 +890,14 @@ def test_undecodable_carried_hold_rolls_back_and_releases_the_admission() -> Non
         ]
         # The successor carries the item's holds forward by decoding each
         # one; a hold document that is not JSON escapes the mapped errors.
+        # The attention refresh a hold's trigger queues reads the document's
+        # pin (#1346) only for a destination the case offers, so the corrupt
+        # row is written under one it does not, with every trigger in place.
         connection = repository._connection
         connection.execute(
             "INSERT INTO field_effect_manual_holds(review_case_id,destination,"
             "active,updated_at,document) VALUES(?,?,1,1,?)",
-            (first_case, "title", "{not json"),
+            (first_case, "zz_absent", "{not json"),
         )
         connection.commit()
         successor = _report("Changed", "c", "d")

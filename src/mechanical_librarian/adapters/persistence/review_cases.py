@@ -63,6 +63,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _LATEST_PREPARATION_FAILED_SQL,
     _LIBRARY_ATTENTION_SQL,
     _NOT_MATCHED_REASON_SQL,
+    _PIN_CHANGED_SQL,
     _POLICY_ASK_ATTENTION_SQL,
     _REPORT_BROWSE_FACTS_JOIN_SQL,
     _REVIEW_SEARCH_SQL,
@@ -90,6 +91,7 @@ from mechanical_librarian.application.review_web import (
 from mechanical_librarian.domain.field_effect import (
     canonical_json as canonical_effect_json,
 )
+from mechanical_librarian.domain.human_decision import pinned_field_fingerprint
 from mechanical_librarian.domain.metadata_policy import (
     ResolvedMetadataPolicy,
     human_review_destinations,
@@ -171,7 +173,8 @@ class ReviewAttentionPage:
     """Validated Attention fields and their total from one filtered population."""
 
     rows: tuple[
-        tuple[str, str, str, int, str | None, ReviewFieldCause | None, bool], ...
+        tuple[str, str, str, int, str | None, ReviewFieldCause | None, bool, bool],
+        ...,
     ]
     total: int
 
@@ -287,7 +290,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 self._revoke_matching_changed,
             )
             outcome = "superseded" if prior_case_id is not None else "admitted"
-            self._carry_manual_holds_forward(case.review_case_id, lineage, case_existed)
+            self._carry_manual_holds_forward(case, lineage, case_existed)
             self._record_actionable_admission(
                 proposal_set,
                 report,
@@ -513,7 +516,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
 
     def _carry_manual_holds_forward(
         self,
-        review_case_id: str,
+        case: ReviewCase,
         lineage: tuple[str, str, str],
         case_existed: bool,
     ) -> None:
@@ -522,7 +525,11 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
         # forward while it is active and no return is pending, keeping
         # its decision as the token "Return to automatic" names. A case
         # admitted again takes that latest state into its own row, so a
-        # hold released or returning since never resurrects with it.
+        # hold released or returning since never resurrects with it. A pin
+        # on it is in force on this case only while the case shows the
+        # pinned value (ADR-0085, Amendment 2); comparing is no update by
+        # the owner, so the hold keeps its time.
+        review_case_id = case.review_case_id
         for destination, active, document in self._connection.execute(
             _WORK_LATEST_MANUAL_HOLDS_SQL, lineage
         ).fetchall():
@@ -530,6 +537,12 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             if hold["review_case_id"] == review_case_id:
                 continue
             hold["review_case_id"] = review_case_id
+            if type(hold["pin"]) is dict:
+                hold["pin"] = {
+                    **hold["pin"],
+                    "in_force": pinned_field_fingerprint(case, destination)
+                    == hold["pin"]["fingerprint"],
+                }
             if not active or hold["pending_return"] is not None:
                 if case_existed:
                     self._connection.execute(
@@ -1114,7 +1127,8 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
         offset: int,
         library_labels: LibraryLabels = (),
     ) -> tuple[
-        tuple[str, str, str, int, str | None, ReviewFieldCause | None, bool], ...
+        tuple[str, str, str, int, str | None, ReviewFieldCause | None, bool, bool],
+        ...,
     ]:
         return self.read_current_attention_page(
             search, limit, offset, library_labels
@@ -1181,6 +1195,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 "CASE WHEN "
                 + _POLICY_ASK_ATTENTION_SQL
                 + " THEN 1 ELSE 0 END AS policy_attention,"
+                "CASE WHEN " + _PIN_CHANGED_SQL + " THEN 1 ELSE 0 END AS pin_changed,"
                 "COALESCE(page.present,0),totals.total FROM totals LEFT JOIN page ON 1 "
                 "LEFT JOIN review_cases rc ON rc.review_case_id=page.review_case_id "
                 "LEFT JOIN metadata_reports mr ON mr.report_id=page.report_id "
@@ -1212,17 +1227,17 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             envelope: tuple[dict[str, object], dict[str, object]]
             for row in rows:
                 if (
-                    len(row) != 10
-                    or type(row[8]) is not int
-                    or row[8] not in (0, 1)
-                    or row[9] != total
+                    len(row) != 11
+                    or type(row[9]) is not int
+                    or row[9] not in (0, 1)
+                    or row[10] != total
                 ):
                     raise MetadataReportError("review attention field is invalid")
-                if row[8] == 0:
+                if row[9] == 0:
                     if (
                         len(rows) != 1
                         or any(value is not None for value in row[:6])
-                        or row[6:8] != (None, 0)
+                        or row[6:9] != (None, 0, 0)
                     ):
                         raise MetadataReportError("review attention field is invalid")
                     continue
@@ -1244,6 +1259,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                     or (row[6] is not None and type(row[6]) is not str)
                     or type(row[7]) is not int
                     or row[7] not in (0, 1)
+                    or row[8] not in (0, 1)
                 ):
                     raise MetadataReportError("review attention field is invalid")
                 values.append(
@@ -1255,6 +1271,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                         row[5],
                         cast("ReviewFieldCause | None", row[6]),
                         bool(row[7]),
+                        bool(row[8]),
                     )
                 )
             return ReviewAttentionPage(tuple(values), total)

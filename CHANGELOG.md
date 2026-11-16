@@ -100,6 +100,12 @@ brackets are GitHub issues.
   Activity hides a one-page pager. Phones get a 16 px margin, and the masthead
   scrolls away when taller than a sixth of the window (#1894).
 
+## 0.36.0 — Standing owner instructions (in progress)
+
+- **Clean rebuild required.** Stored owner decisions and field holds changed
+  shape, ready for pinning a field of a work. Nothing looks different yet
+  (#1346).
+
 ## 0.33.0 — First library (in progress)
 
 - **Clean rebuild required** only for an install whose setup was interrupted.
@@ -122,6 +128,10 @@ brackets are GitHub issues.
 - Setup and Settings round the cover cost the same way and count in works
   (#1863).
 - The preparation detail fits a 320 px window at 200% text (#1864).
+- Checking write permissions now shows the write plan under each library's
+  fields: each prepared change's current and new value, who chose it and why.
+  Download CSV and Download JSON save the whole plan, up to 20,000 changes, as
+  it is made; nothing is stored or granted (#1336).
 - The masthead shows background work as an icon that fills while libraries are
   prepared and marks what needs you, and the theme switch and Sign out are
   icons. Its popover lists source lookups waiting to retry, with Retry now and

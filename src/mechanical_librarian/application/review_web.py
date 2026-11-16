@@ -76,6 +76,7 @@ from mechanical_librarian.domain.human_decision import (
     owner_text,
     owner_value_admitted,
     owner_value_suggestions,
+    pinned_field_fingerprint,
     preserved_description,
 )
 from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
@@ -91,7 +92,12 @@ from mechanical_librarian.domain.metadata_report import (
     field_evidence_providers,
     recording_variant_conflict,
 )
-from mechanical_librarian.domain.owner_settings import PROVIDER_LABELS
+from mechanical_librarian.domain.owner_settings import (
+    PROVIDER_LABELS,
+    audio_edition_label,
+    provider_label,
+    provider_source_labels,
+)
 from mechanical_librarian.domain.proposal_set import (
     audiobook_review_scope,
     canonical_target_fields,
@@ -125,9 +131,9 @@ from mechanical_librarian.domain.shadow_outcome import (
 )
 from mechanical_librarian.domain.validation import owner_password
 
-ReviewCaseDetailSchemaVersion = Literal["review-case-detail-v8"]
+ReviewCaseDetailSchemaVersion = Literal["review-case-detail-v9"]
 REVIEW_CASE_DETAIL_SCHEMA: Final[ReviewCaseDetailSchemaVersion] = (
-    "review-case-detail-v8"
+    "review-case-detail-v9"
 )
 
 ReviewCaseEvidenceSchemaVersion = Literal["review-case-evidence-v5"]
@@ -143,8 +149,8 @@ REVIEW_CASE_HISTORY_SCHEMA: Final[ReviewCaseHistorySchemaVersion] = (
     "review-case-history-v4"
 )
 
-ReviewLibrarySchemaVersion = Literal["review-library-v5"]
-REVIEW_LIBRARY_SCHEMA: Final[ReviewLibrarySchemaVersion] = "review-library-v5"
+ReviewLibrarySchemaVersion = Literal["review-library-v6"]
+REVIEW_LIBRARY_SCHEMA: Final[ReviewLibrarySchemaVersion] = "review-library-v6"
 
 ReviewReportDetailSchemaVersion = Literal["review-report-detail-v6"]
 REVIEW_REPORT_DETAIL_SCHEMA: Final[ReviewReportDetailSchemaVersion] = (
@@ -319,6 +325,11 @@ class CurrentReviewCaseSnapshot:
     # Destinations whose automatic handling an owner hold keeps off on this
     # case, including a hold carried forward from an earlier case (ADR-0085).
     held_destinations: tuple[str, ...] = ()
+    # Each pin on this case's holds: its destination, whether it is in force
+    # here, and the pinned case's target field as JSON (ADR-0085, Amendment 2).
+    pins: tuple[tuple[str, bool, str], ...] = ()
+    # Destinations whose change waits to be written, so a pin is refused.
+    change_waiting_destinations: tuple[str, ...] = ()
     # Held destinations whose return to automatic handling the owner has
     # requested; the hold stays until the requested checks finish (#1755).
     return_requested_destinations: tuple[str, ...] = ()
@@ -348,6 +359,7 @@ class ReviewLibrarySnapshot:
             tuple[str, ...],
             str | None,
             int,
+            int,
         ],
         ...,
     ]
@@ -369,7 +381,8 @@ class ReviewLibrarySnapshot:
 @dataclass(frozen=True, slots=True)
 class ReviewAttentionSnapshot:
     rows: tuple[
-        tuple[str, str, str, int, str | None, ReviewFieldCause | None, bool], ...
+        tuple[str, str, str, int, str | None, ReviewFieldCause | None, bool, bool],
+        ...,
     ]
     total: int
 
@@ -1197,7 +1210,7 @@ def _automatic_field_decision(
     automatic_decision = context.automatic.get(destination)
     automatic_selection_sources: list[str] = []
     if automatic_decision is not None:
-        automatic_selection_sources = _provider_source_labels(
+        automatic_selection_sources = provider_source_labels(
             report,
             list(automatic_sources.get(automatic_source_outcome_ids[destination], ())),
         )
@@ -1280,6 +1293,7 @@ def _classify_field(
     cover_preparation_available: bool,
     actions: tuple[HumanDecisionAction, ...],
     owner_entry: bool,
+    pin: Literal["in_force", "changed"] | None,
 ) -> ReviewFieldClassification:
     """Classify one field from its proposal, decisions and cover state."""
     snapshot = context.snapshot
@@ -1438,6 +1452,7 @@ def _classify_field(
         kept_by_fill_policy=policy_settled and destination != "tags",
         kept_by_tags_off=policy_settled and destination == "tags",
         single_source=single_source,
+        pin=pin,
         repeated_description=repeated,
     )
 
@@ -1529,6 +1544,11 @@ class InspectCurrentReviewCase:
                 projected = _automatic_decision_projection(document)
                 if projected is None:
                     decision = HumanDecision.from_json(document)
+                    if decision.outcome in {"pin", "unpin"}:
+                        # Never a field's latest decision: a pin acts through
+                        # its hold, and the answer under it stands (ADR-0085,
+                        # Amendment 2).
+                        continue
                     decisions[decision.destination] = decision
                     if decision.outcome == "withdraw":
                         # A withdrawn field is undecided again (ADR-0085). A
@@ -1699,6 +1719,23 @@ class InspectCurrentReviewCase:
         reasons = result["reasons"]
         assert type(reasons) is list
         decision = decisions.get(destination)
+        # A pin on this case's hold and the value it keeps, as the current
+        # value is shown: in force, waiting for the owner's standing answer
+        # to be read back, or changed (ADR-0085, Amendment 2).
+        pin = next((row[1:] for row in snapshot.pins if row[0] == destination), None)
+        pin_state: Literal["in_force", "waiting", "changed"] | None = (
+            None
+            if pin is None
+            else "in_force"
+            if pin[0]
+            else "changed"
+            if decision is None
+            else "waiting"
+        )
+        pinned_field: dict[str, object] | None = None
+        if pin is not None:
+            pinned_field = json.loads(pin[1])
+            pinned_field.pop("restorable", None)
         automatic_decision, automatic_selection_sources = _automatic_field_decision(
             context, destination, alternatives
         )
@@ -1746,6 +1783,9 @@ class InspectCurrentReviewCase:
             decision,
             automatic_decision is not None,
             snapshot,
+            None
+            if pinned_field is None or pin_state != "changed"
+            else pinned_field["value"],
         )
         # The owner's hold follows the work: a successor case holds the
         # field as the owner's decision on the earlier case left it, once
@@ -1774,11 +1814,15 @@ class InspectCurrentReviewCase:
             cover_preparation_available=cover_preparation_available,
             actions=actions,
             owner_entry=owner_entry,
+            # A waiting pin leaves the field as its answer reads.
+            pin=None if pin_state == "waiting" else pin_state,
         )
         # Classification retains the field's owner context. Action
         # availability is a separate exact-proposal contract; an empty
         # action list is context-only, never an implied choice envelope.
-        has_owner_action = bool(actions) or cover_preparation_available
+        has_owner_action = (
+            bool(actions) or cover_preparation_available or pin_state == "changed"
+        )
         needs_attention = classification.needs_attention and has_owner_action
         inventory_role = _field_inventory_role(
             classification.state,
@@ -1792,9 +1836,32 @@ class InspectCurrentReviewCase:
         if inventory_role == "contextual":
             owner_control = None
         # Held only while the hold row is in force: Return to automatic
-        # releases it on the deciding case too (#1358).
-        manual_hold = destination in snapshot.held_destinations and (
-            carried_hold or (decision is not None and automatic_decision is not None)
+        # releases it on the deciding case too (#1358). A pinned field offers
+        # Unpin instead, so its hold is not one Resume can release.
+        manual_hold = (
+            pin_state is None
+            and destination in snapshot.held_destinations
+            and (
+                carried_hold
+                or (decision is not None and automatic_decision is not None)
+            )
+        )
+        # A readable primary field can have a value pinned, or says a change
+        # to it waits to be written (#1346, J2).
+        pin_offer = (
+            None
+            if destination == "cover"
+            or inventory_role != "primary"
+            or pinned_field_fingerprint(context.case, destination) is None
+            else "change_waiting"
+            if destination in snapshot.change_waiting_destinations
+            else "available"
+        )
+        pin_control: dict[str, object] | None = (
+            None
+            if inventory_role == "contextual"
+            or (pin_offer is None and pin_state is None)
+            else {"pin": pin_offer, "unpin": pin_state is not None}
         )
         return self._field_document(
             context,
@@ -1815,6 +1882,10 @@ class InspectCurrentReviewCase:
             manual_hold=manual_hold,
             has_owner_action=has_owner_action,
             needs_attention=needs_attention,
+            pin=None
+            if pin_state is None
+            else {"state": pin_state, "value": pinned_field},
+            pin_control=pin_control,
         )
 
     def _field_document(
@@ -1838,6 +1909,8 @@ class InspectCurrentReviewCase:
         manual_hold: bool,
         has_owner_action: bool,
         needs_attention: bool,
+        pin: dict[str, object] | None,
+        pin_control: dict[str, object] | None,
     ) -> dict[str, object]:
         """The field's wire document, kept apart from the decisions above it."""
         case = context.case
@@ -1896,6 +1969,8 @@ class InspectCurrentReviewCase:
                 reasons,
             ),
             "owner_control": owner_control,
+            "pin": pin,
+            "pin_control": pin_control,
             # The offer a choice binds: its value, proposal and rule (#1355).
             "offer_digest": offer_digest(proposals, destination),
             "proposal_id": proposal["proposal_id"],
@@ -2599,6 +2674,7 @@ class BrowseReviewLibrary:
                     shadow_abstention_destinations,
                     terminal_document,
                     attention_count,
+                    pinned_count,
                 ) = row
                 items.append(
                     _library_item(
@@ -2610,6 +2686,7 @@ class BrowseReviewLibrary:
                         shadow_abstention_destinations,
                         terminal_document,
                         attention_count,
+                        pinned_count,
                         decision_scope=scope,
                         validated=self._validated,
                         match_state=(
@@ -2745,6 +2822,7 @@ class BrowseReviewLibrary:
                         automatic_outcome,
                         cause,
                         policy_attention,
+                        pin_changed,
                     ) = row
                     if (
                         parsed is None
@@ -2767,6 +2845,7 @@ class BrowseReviewLibrary:
                         automatic_outcome=automatic_outcome,
                         cause=cause,
                         policy_attention=policy_attention,
+                        pin_changed=pin_changed,
                     )
                     if len(items) < bounded_limit:
                         consumed += 1
@@ -3081,7 +3160,7 @@ def _report_detail_provider_claims(
         if type(provider) is not dict or provider.get("provider") not in evidence:
             continue
         authority = provider.get("authority")
-        label = _provider_label(authority if type(authority) is str else None)
+        label = provider_label(authority if type(authority) is str else None)
         candidates = provider.get("candidates")
         if type(candidates) is not list:
             continue
@@ -3229,11 +3308,14 @@ def _owner_control(
     decision: HumanDecision | None,
     automatic: bool,
     snapshot: CurrentReviewCaseSnapshot,
+    pinned: object,
 ) -> dict[str, object] | None:
     """Project F59's owner controls for one field, or ``None`` when it has none.
 
     Each part is offered only where the store would accept that command now;
     the store still decides, and refuses a stale panel inline (ADR-0085).
+    ``pinned`` is the value a changed pin keeps, suggested like the previous
+    one (ADR-0085, Amendment 2).
     """
     destination = cast(str, proposal["destination"])
     current = target_fields[destination]["value"]
@@ -3278,6 +3360,13 @@ def _owner_control(
             and all(previous != item["value"] for item in suggestions)
         ):
             suggestions.append({"rule": "previous", "value": previous})
+        if (
+            type(pinned) is str
+            and owner_text(pinned)
+            and pinned != current
+            and all(pinned != item["value"] for item in suggestions)
+        ):
+            suggestions.append({"rule": "pinned", "value": pinned})
         entry = {"max_characters": OWNER_TEXT_MAXIMUM, "suggestions": suggestions}
     subset = None
     if (
@@ -3299,11 +3388,14 @@ def _owner_control(
                 )
             ],
         }
+    # An answer cannot be withdrawn while its field is pinned (ADR-0085,
+    # Amendment 2).
     withdraw = None
     if (
         decision is not None
         and decision.outcome != "reject"
         and destination not in UNREVERSIBLE_DESTINATIONS
+        and all(row[0] != destination for row in snapshot.pins)
     ):
         withdraw = (
             "automatic_hold"
@@ -3323,29 +3415,7 @@ def _corroboration_source_labels(
     """Project only closed provider authorities for #416 creator corroboration."""
     if reasons != ["explicit_author_corroborates_untyped_creator"]:
         return []
-    return _provider_source_labels(report, references)
-
-
-def _provider_source_labels(
-    report: MetadataReport,
-    references: list[str],
-) -> list[str]:
-    """Project provider labels for exact evidence references."""
-    by_reference = {
-        claim.reference: _provider_label(provider.authority)
-        for provider in report.providers
-        for candidate in (*provider.candidates, *provider.recording_lookup_candidates)
-        for claim in candidate.claims
-    } | {
-        claim.reference: _audio_edition_label(provider.authority)
-        for provider in report.providers
-        for edition in provider.audio_editions
-        for claim in edition.claims
-    }
-    labels = {
-        by_reference[reference] for reference in references if reference in by_reference
-    }
-    return sorted(labels)
+    return provider_source_labels(report, references)
 
 
 def _choice_contexts(
@@ -3485,7 +3555,7 @@ def _current_value_present(value: object) -> bool:
 def _choice_rationale(rows: list[dict[str, object]]) -> str:
     """Name the sources an alternative came from, or nothing when none is known (#1519)."""
     named = set(PROVIDER_LABELS.values()) | {
-        _audio_edition_label(authority) for authority in PROVIDER_LABELS
+        audio_edition_label(authority) for authority in PROVIDER_LABELS
     }
     return ", ".join(
         sorted(
@@ -3517,11 +3587,6 @@ def _choice_evidence(
         else "external_corroboration",
         "source": _choice_source_label(evidence),
     }
-
-
-def _audio_edition_label(authority: str | None) -> str:
-    """Name a provider's audio edition as such, never as its book (#1642)."""
-    return _provider_label(authority) + " audio edition"
 
 
 def _audio_edition_note(edition: dict[str, object]) -> str:
@@ -3556,7 +3621,7 @@ def _audio_edition_note(edition: dict[str, object]) -> str:
 def _choice_source_label(evidence: dict[str, str | None]) -> str:
     provider = evidence["provider"]
     if provider in PROVIDER_LABELS and evidence["source"] == "audio_edition":
-        return _audio_edition_label(provider)
+        return audio_edition_label(provider)
     if provider in PROVIDER_LABELS:
         return PROVIDER_LABELS[cast("str", provider)]
     if _choice_is_local(evidence):
@@ -3791,7 +3856,7 @@ def _review_unselectable_evidence(
                         "destinations": [destination],
                         "language": value if language else None,
                         "role": "external_observation",
-                        "source": _provider_label(provider.authority),
+                        "source": provider_label(provider.authority),
                         "observation": (
                             f"{label}: {value}. Not offered as a choice. {reason}"
                             + (
@@ -4263,7 +4328,7 @@ def _provider_outcomes(lanes: tuple[ProviderLaneFacts, ...]) -> list[dict[str, o
         {
             "provider_requests": lane.logical_requests,
             "lane_kind": lane.kind,
-            "provider": _provider_label(lane.authority),
+            "provider": provider_label(lane.authority),
             "reason": _ADAPTER_FAULT_REASON
             if lane.adapter_fault
             else _REFUSED_PROVIDER_REASON
@@ -4290,12 +4355,6 @@ def _provider_outcomes(lanes: tuple[ProviderLaneFacts, ...]) -> list[dict[str, o
         }
         for lane in lanes
     ]
-
-
-def _provider_label(authority: str | None) -> str:
-    if authority is None or authority not in PROVIDER_LABELS:
-        return "Provider (name unavailable)"
-    return PROVIDER_LABELS[authority]
 
 
 def _provider_comparison_notices(report: MetadataReport) -> list[str]:
@@ -4454,6 +4513,7 @@ def _library_item(
     shadow_abstention_destinations: tuple[str, ...] = (),
     terminal_document: str | None = None,
     attention_count: int | None = None,
+    pinned_count: int = 0,
     *,
     decision_scope: DecisionScope | None = None,
     validated: ValidatedDocumentCache | None = None,
@@ -4511,6 +4571,7 @@ def _library_item(
                 return {
                     "authors": authors,
                     "attention_count": 0,
+                    "pinned_count": 0,
                     # Failed is its own lens, never counted as needing no
                     # attention (#1413).
                     "attention_state": "preparation_failed",
@@ -4619,7 +4680,7 @@ def _library_item(
             decision.validate_in(scope)
             if decision.outcome == "withdraw":
                 decisions.discard(decision.destination)
-            else:
+            elif decision.outcome not in {"pin", "unpin"}:
                 decisions.add(decision.destination)
         else:
             destination = str(automatic["destination"])
@@ -4683,6 +4744,8 @@ def _library_item(
     value = {
         "authors": _report_authors(report.target),
         "attention_count": current_attention_count,
+        # The fields an owner pin holds on this case (ADR-0085, Amendment 2).
+        "pinned_count": pinned_count,
         # The cover the library holds, retained by this report, so the row can
         # show the book it stands for; `library_cover` serves only this preview
         # (#1290). The row names no connection, so the server states the
@@ -4785,6 +4848,7 @@ def _attention_item(
     automatic_outcome: str | None = None,
     cause: ReviewFieldCause | None = None,
     policy_attention: bool = False,
+    pin_changed: bool = False,
 ) -> dict[str, object] | None:
     if _omitted_for_epub(destination, report.file.format):
         return None
@@ -4817,6 +4881,7 @@ def _attention_item(
         cause=cause,
         current_value=None,
         proposed_values=(),
+        pin="changed" if pin_changed else None,
     )
     if not classification.needs_attention:
         # Query membership can race a durable automatic or human decision.  A

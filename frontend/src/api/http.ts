@@ -183,6 +183,8 @@ export const DECISION_OUTCOMES = [
   'reject',
   'owner_entered',
   'withdraw',
+  'pin',
+  'unpin',
 ] as const
 lits<Schema<'_HistoryDecisionItem'>['outcome']>()(DECISION_OUTCOMES)
 export type DecisionOutcome = (typeof DECISION_OUTCOMES)[number]
@@ -620,6 +622,8 @@ export interface LibraryWorkView {
   libraryDisplayName?: string
   mediaKind: MediaKind
   attentionCount: number
+  // The fields an owner pin holds on this work (ADR-0085, Amendment 2).
+  pinnedCount: number
   attention: AttentionState
   // Where this work opens, and what opens there. A work with a review case
   // points at that case; a work with only a published report points at the
@@ -751,6 +755,15 @@ export interface ReviewFieldView {
   corroborationSources: readonly string[]
   descriptionAdvice?: DescriptionAdviceView | null
   ownerControl?: OwnerControlView | null
+  // An owner pin on the field with the value it keeps: in force, waiting for
+  // the chosen value to be read back, or changed. And whether a pin or an
+  // unpin is accepted now (ADR-0085, Amendment 2): a pin is available, or
+  // waits for a change to the field to be written (J2).
+  pin: {
+    state: 'in_force' | 'waiting' | 'changed'
+    value: ResponseSchema<'_TargetField'>
+  } | null
+  pinControl: { pin: 'available' | 'change_waiting' | null; unpin: boolean } | null
   currentCoverSelectionId?: string | null
   currentCoverSelectionArtifactId?: string | null
   coverConsideration?: CoverConsiderationView | null
@@ -1094,7 +1107,7 @@ export type PolicyCommandAnswer<P extends PolicyCommandPath> =
   | NoContent<'POST', `/api/v1/metadata-policy/${P}`>
 export type PolicyActivationView = ResponseSchema<'_PolicyActivationResponse'>
 // The activity family is decoded centrally (#1691): its views are the
-// response-truth types, and only the example adds a label of its own.
+// response-truth types.
 type ActivityDto = ResponseSchema<'_ActivityResponse'>
 // The Activity commands `activityCommand` sends, under `/api/v1/`.
 export type ActivityCommandPath =
@@ -1141,7 +1154,6 @@ export interface ActivitySearch {
 }
 export type ActivityLedgerView = ResponseSchema<'_ActivityLedger'>
 export type ActivityWaitingView = ResponseSchema<'_ActivityWaiting'>
-export type ActivityExampleView = ResponseSchema<'_ActivityExample'> & { work_label: string }
 export type ActivitySuspensionView = ResponseSchema<'_ActivitySuspension'>
 export type ProviderRecoveryActivityView = ResponseSchema<'_ProviderRecoveryActivity'>
 export type ProviderRecoveryDispatchReason =
@@ -1151,10 +1163,17 @@ export type ProviderRecoveryFailureReason = ProviderRecoveryActivityView['failur
 export type ActivityLapsedConsentView = ResponseSchema<'_ActivityLapsedConsent'>
 export type ActivityDisplayView = ActivityDto
 
-export type ActivityPermissionReadinessView = Omit<
-  ResponseSchema<'_ActivityPermissionReadiness'>,
-  'example'
-> & { example: ActivityExampleView | null }
+export type ActivityPermissionReadinessView = ResponseSchema<'_ActivityPermissionReadiness'>
+/** Every prepared change, grouped, with a bounded set of example rows (#1336). */
+export type WritePlanView = ResponseSchema<'_WritePlan'>
+export type WritePlanGroupView = WritePlanView['groups'][number]
+export type WritePlanRowView = WritePlanGroupView['rows'][number]
+export type WritePlanFormat = 'csv' | 'json'
+/** A write plan file as received: its bytes, type and the name to save it under. */
+export interface WritePlanFile {
+  readonly blob: Blob
+  readonly filename: string
+}
 
 /**
  * The inputs Activity's consent section reads, and nothing else. Library's
@@ -1381,6 +1400,15 @@ export interface ReviewHttp {
     workClass?: ReadWorkClass,
   ): Promise<ActivityPermissionReadinessView>
   getActivityConsent(signal?: AbortSignal, workClass?: ReadWorkClass): Promise<ActivityConsentView>
+  /**
+   * Fetch the whole write plan as one file. `onRows` hears how many changes
+   * have arrived so far, counted from the body's line feeds.
+   */
+  downloadActivityWritePlan(
+    format: WritePlanFormat,
+    signal?: AbortSignal,
+    onRows?: (rows: number) => void,
+  ): Promise<WritePlanFile>
   getActivityTransitions(
     eventId: string,
     afterSequence?: number,
@@ -2118,12 +2146,42 @@ export class ReviewApiClient implements ReviewHttp {
     signal?: AbortSignal,
     workClass: ReadWorkClass = 'foreground',
   ): Promise<ActivityPermissionReadinessView> {
-    const value = await this.read('/api/v1/activity/permission-readiness', signal, workClass)
-    const { example } = value
-    return {
-      ...value,
-      example: example === null ? null : { ...example, work_label: 'Work details unavailable' },
+    return await this.read('/api/v1/activity/permission-readiness', signal, workClass)
+  }
+
+  async downloadActivityWritePlan(
+    format: WritePlanFormat,
+    signal?: AbortSignal,
+    onRows?: (rows: number) => void,
+  ): Promise<WritePlanFile> {
+    // Fetched rather than linked, so a stale tab, an expired session and a
+    // refusal surface as they do for every read (#1336).
+    const response = await this.request<Response>(
+      `/api/v1/activity/write-plan?format=${format}`,
+      { headers: { 'X-ML-Work-Class': 'foreground' }, ...(signal ? { signal } : {}) },
+      { unsafe: false, raw: true },
+    )
+    const type = format === 'csv' ? 'text/csv;charset=utf-8' : 'application/json'
+    const filename = `mechanical-librarian-write-plan.${format}`
+    const reader = response.body?.getReader()
+    if (!reader) return { blob: await response.blob(), filename }
+    const chunks: Uint8Array[] = []
+    let lines = 0
+    try {
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        chunks.push(value)
+        for (const byte of value) if (byte === 10) lines += 1
+        // Each change is one line, after the head's one line.
+        onRows?.(Math.max(lines - 1, 0))
+      }
+    } catch (error) {
+      // A connection that ends mid-file is never a complete file.
+      if (error instanceof DOMException && error.name === 'AbortError') throw error
+      throw new NetworkUnavailableError()
     }
+    return { blob: new Blob(chunks as BlobPart[], { type }), filename }
   }
 
   async getActivityConsent(
@@ -2269,11 +2327,14 @@ export class ReviewApiClient implements ReviewHttp {
       resend = false,
       uncertain = false,
       map,
+      raw = false,
     }: {
       unsafe: boolean
       resend?: boolean
       uncertain?: boolean
       map?: (value: V) => R
+      /** Answer the checked response itself: a file, never a decoded body. */
+      raw?: boolean
     },
   ): Promise<R> {
     // A write the network lost may have landed. Only the network calls make
@@ -2332,6 +2393,7 @@ export class ReviewApiClient implements ReviewHttp {
       }
       throw error
     }
+    if (raw) return response as R
     const method = init.method ?? 'GET'
     const operation = matchOperation(method, path)
     const failed = (at: string, reason: string) => {
@@ -2671,8 +2733,8 @@ const mapProviderOutcome = (value: ProviderOutcomeDto): ProviderOutcomeView => (
   reason: value.reason,
   status: value.status,
 })
-// Formats any target or proposed value. It throws nothing: the Activity
-// example's before and after values are decoded to `unknown`.
+// Formats any target or proposed value. It throws nothing: a value decoded
+// to `unknown` reads as unavailable rather than as a shape to decode.
 export const displayValue = (value: unknown): string =>
   value === null
     ? 'Unavailable'
@@ -2889,6 +2951,7 @@ export const mapLibrary = (value: LibraryDto): LibraryView => ({
       libraryDisplayName: item.library_display_name ?? item.library,
       mediaKind: item.media_kind,
       attentionCount: item.attention_count,
+      pinnedCount: item.pinned_count,
       attention: item.attention_state,
       detailUrl: item.detail_url,
       detailKind: item.detail_kind,
@@ -3072,6 +3135,8 @@ const mapReviewField = (field: ReviewFieldDto): ReviewFieldView => ({
   descriptionAdvice:
     field.description_advice === null ? null : mapDescriptionAdvice(field.description_advice),
   ownerControl: field.owner_control === null ? null : mapOwnerControl(field.owner_control),
+  pin: field.pin,
+  pinControl: field.pin_control,
   coverConsideration:
     field.cover_consideration === null ? null : mapCoverConsideration(field.cover_consideration),
   currentCoverSelectionArtifactId: field.current_cover_selection_artifact_id,
