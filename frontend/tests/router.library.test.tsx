@@ -15389,6 +15389,10 @@ describe('library provider throttling notice (#1282)', () => {
     deferred: 214,
     next_retry_at: null,
     remedy: null,
+    // Waiting a day since long ago, so the default entry needs the owner and
+    // shows in the notice; a routine wait says `notice_at: null` (#1494).
+    notice_at: 1,
+    untried: false,
     ...overrides,
   })
   const throttled = (
@@ -15402,7 +15406,7 @@ describe('library provider throttling notice (#1282)', () => {
     actionable: false,
     paused: false,
     libraries: [],
-    provider_throttling: { generation: 4, retry, entries },
+    provider_throttling: { generation: 4, retry, entries, answered: [] },
   })
   const notice = () => screen.findByRole('region', { name: 'Source lookups waiting to retry' })
   const container = () => document.querySelector<HTMLElement>('.provider-throttle-notice')
@@ -15445,11 +15449,16 @@ describe('library provider throttling notice (#1282)', () => {
           entry({ adapter: 'itunes_search', state: 'checking', reasons: ['rate_limited'] }),
           entry({ adapter: 'audnexus', reasons: [], next_retry_at: seconds(noon) - 60 }),
           entry({ adapter: 'inventaire', reasons: ['configuration'], deferred: 2 }),
+          // Routine waits: automatic retries run and nothing needs the owner yet.
+          entry({ adapter: 'audible_catalog', notice_at: null }),
+          entry({ library: 'Second shelf', adapter: 'hardcover', notice_at: seconds(noon) + 1 }),
         ]),
       ),
     }
     renderRoute('/library?lens=all', http)
     const items = await within(await notice()).findAllByRole('listitem')
+    expect(within(await notice()).queryByText(/Audible/u)).toBeNull()
+    expect(within(await notice()).queryByText(/Hardcover · Second shelf/u)).toBeNull()
     const day = new Intl.DateTimeFormat(undefined, {
       weekday: 'short',
       day: 'numeric',
@@ -15584,6 +15593,128 @@ describe('library provider throttling notice (#1282)', () => {
     expect(third).not.toBe(second)
     cleanup()
     expect(cleared).toContain(third)
+  })
+
+  it('keeps routine waits out of the notice and raises a day-long wait on time without a read (#1494)', async () => {
+    const real = { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout }
+    vi.useFakeTimers({
+      toFake: ['Date', 'setTimeout', 'clearTimeout'],
+      now: noon,
+      shouldAdvanceTime: true,
+    })
+    onTestFinished(() => {
+      vi.useRealTimers()
+      Object.assign(globalThis, real)
+    })
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi.fn(async () => ({
+        ...throttled([
+          entry({ notice_at: null }),
+          entry({ adapter: 'inventaire', notice_at: seconds(noon) + 90 }),
+        ]),
+        libraries: [
+          {
+            scan_id: null,
+            connection: 'primary',
+            library: 'Synthetic ebooks',
+            library_id: 'library-1',
+            state: 'completed' as const,
+            checked: 4,
+            total: 4,
+            ready: 4,
+            blocked: 0,
+            recorded: 0,
+            not_matched: 0,
+            rescan_requested: false,
+            stages: [],
+          },
+        ],
+      })),
+    }
+    renderRoute('/library?lens=all', http)
+    // Routine: no notice region, and the masthead icon carries the wait.
+    const icon = await screen.findByRole('button', {
+      name: 'Preparation idle. Source lookups are waiting to retry.',
+    })
+    expect(screen.queryByRole('region', { name: 'Source lookups waiting to retry' })).toBeNull()
+    const reads = vi.mocked(http.getPreparation).mock.calls.length
+    await act(() => vi.advanceTimersByTimeAsync(91_000))
+    const items = await within(await notice()).findAllByRole('listitem')
+    expect(items.map((item) => item.querySelector('strong')?.textContent)).toEqual([
+      'Inventaire · Synthetic ebooks:',
+    ])
+    expect(icon).toHaveAccessibleName(
+      'Preparation idle. A source needs you. Source lookups are waiting to retry.',
+    )
+    expect(vi.mocked(http.getPreparation).mock.calls.length).toBe(reads)
+  })
+
+  it('says what Retry now did in the notice it was pressed in, once the raised generation arrives (#1494)', async () => {
+    const user = userEvent.setup()
+    let current = throttled([entry({ remedy: 'add_api_key' })])
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi.fn(async () => current),
+      retryProviderRecovery: vi.fn(async () => settingsView()),
+    }
+    const { queryClient } = renderRoute('/library?lens=all', http)
+    const region = await notice()
+    const status = within(region).getByRole('status')
+    current = {
+      ...throttled([entry({ remedy: 'add_api_key', state: 'checking' })]),
+      provider_throttling: {
+        generation: 5,
+        retry: 'available',
+        entries: [entry({ remedy: 'add_api_key', state: 'checking' })],
+        answered: [],
+      },
+    }
+    await user.click(within(region).getByRole('button', { name: 'Retry now' }))
+    await waitFor(() => expect(status).toHaveTextContent('Every waiting lookup is retrying now.'))
+    // Pending is not done: no tick (#1494).
+    expect(status).not.toHaveAttribute('data-outcome')
+    current = {
+      ...throttled([]),
+      provider_throttling: {
+        generation: 5,
+        retry: 'available',
+        entries: [],
+        answered: [{ library: entry().library, adapter: entry().adapter }],
+      },
+    }
+    await act(() => queryClient.invalidateQueries({ queryKey: ['review-preparation'] }))
+    await waitFor(() =>
+      expect(status).toHaveTextContent('Retried. Every waiting lookup got an answer.'),
+    )
+    expect(status).toHaveAttribute('data-outcome', 'recovered')
+    // The notice emptied, but its status line is the same mounted region.
+    expect(container()?.querySelector('[role="status"]')).toBe(status)
+  })
+
+  it('marks no outcome that says Retry now did not work (#1494)', async () => {
+    const user = userEvent.setup()
+    let current = throttled([entry({ remedy: 'add_api_key' })])
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi.fn(async () => current),
+      retryProviderRecovery: vi.fn(async () => settingsView()),
+    }
+    renderRoute('/library?lens=all', http)
+    const region = await notice()
+    const status = within(region).getByRole('status')
+    current = {
+      ...throttled([entry({ remedy: 'add_api_key' })]),
+      provider_throttling: {
+        generation: 5,
+        retry: 'available',
+        entries: [entry({ remedy: 'add_api_key' })],
+        answered: [],
+      },
+    }
+    await user.click(within(region).getByRole('button', { name: 'Retry now' }))
+    await waitFor(() => expect(status).toHaveTextContent(/^Retried\. .+ again\.$/))
+    expect(status).not.toHaveAttribute('data-outcome')
   })
 
   it('hands the Retry now settings to the Settings cache from Library (#1282 R3 F2)', async () => {

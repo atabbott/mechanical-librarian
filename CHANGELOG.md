@@ -132,6 +132,11 @@ brackets are GitHub issues.
   fields: each prepared change's current and new value, who chose it and why.
   Download CSV and Download JSON save the whole plan, up to 20,000 changes, as
   it is made; nothing is stored or granted (#1336).
+- The masthead shows background work as an icon that fills while libraries are
+  prepared and marks what needs you, and the theme switch and Sign out are
+  icons. Its popover lists source lookups waiting to retry, with Retry now and
+  what it did. Library and Settings show a notice only when a source needs you:
+  nothing will retry it until you act, or it has waited 24 hours (#1494).
 - A finished run's box in Library says where the whole library stands, such as
   "1,840 of 2,026 works settled · 174 need you", each count linked to its
   lens, until you dismiss the run. Activity has a Library progress card with

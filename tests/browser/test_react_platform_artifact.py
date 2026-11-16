@@ -2190,10 +2190,14 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         expect(page.get_by_text("Open Library", exact=True)).to_be_visible()
         expect(page.get_by_text("Hardcover", exact=True)).to_be_visible()
         assert page.locator(".direct-choice-grid").count() == 0
+        # No decision controls; the masthead's status icon may name lookups
+        # waiting to retry (#1494).
         assert (
-            page.get_by_role(
+            page.get_by_role("main")
+            .get_by_role(
                 "button", name=re.compile("choose|retry|return|resume", re.IGNORECASE)
-            ).count()
+            )
+            .count()
             == 0
         )
         assert page.get_by_role("radio").count() == 0
@@ -2281,10 +2285,14 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         ):
             assert identifier not in history_text
         assert page.locator(".direct-choice-grid").count() == 0
+        # No decision controls; the masthead's status icon may name lookups
+        # waiting to retry (#1494).
         assert (
-            page.get_by_role(
+            page.get_by_role("main")
+            .get_by_role(
                 "button", name=re.compile("choose|retry|return|resume", re.IGNORECASE)
-            ).count()
+            )
+            .count()
             == 0
         )
         assert page.get_by_role("radio").count() == 0
@@ -2332,7 +2340,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             "/library?lens=needs_attention&preview=missing-case&field=authors"
         )
         assert (
-            page.get_by_role("button", name=re.compile("retry", re.IGNORECASE)).count()
+            page.get_by_role("main")
+            .get_by_role("button", name=re.compile("retry", re.IGNORECASE))
+            .count()
             == 0
         )
         assert page.evaluate("() => document.documentElement.scrollWidth") <= 320
@@ -3184,6 +3194,7 @@ _RETRY_OUTCOME = """() => {
     role: shown.getAttribute('role'),
     mark: getComputedStyle(shown, '::before').content,
     color: style.color,
+    ink: getComputedStyle(document.body).color,
     line: parseFloat(style.lineHeight),
     distance: box.top - button.parentElement.getBoundingClientRect().bottom,
     aboveList: box.top < notice.querySelector('ul').getBoundingClientRect().top,
@@ -3330,7 +3341,10 @@ def test_library_and_settings_show_provider_throttling_with_one_retry_now() -> N
         assert accepted["role"] == "status", accepted
         assert not accepted["aboveList"], accepted
         assert 0 <= accepted["distance"] <= accepted["line"], accepted
-        assert accepted["mark"] not in ("none", "normal"), accepted
+        # Pending is ink with no glyph: only the line that says every waiting
+        # lookup got an answer takes the accent and the tick (#1494).
+        assert accepted["mark"] in ("none", "normal"), accepted
+        assert accepted["color"] == accepted["ink"], accepted
 
         # The second press is stale: the alert says so and nothing moves focus.
         page.keyboard.press("Enter")
@@ -3343,7 +3357,7 @@ def test_library_and_settings_show_provider_throttling_with_one_retry_now() -> N
         assert not refused["aboveList"], refused
         assert 0 <= refused["distance"] <= refused["line"], refused
         # Marked apart by its glyph as well as its colour, never colour alone.
-        assert refused["mark"] not in ("none", "normal", accepted["mark"]), refused
+        assert refused["mark"] not in ("none", "normal"), refused
         assert refused["color"] != accepted["color"], (accepted, refused)
         swept = page.evaluate(_TIME_TOGETHER, True)
         assert swept["times"] > 0 and swept["found"] == [], swept
@@ -4708,7 +4722,11 @@ def test_masthead_holds_still_while_status_changes() -> None:
                 for label in list(_PREPARATION_STATES)[1:]:
                     state["preparation"] = label
                     page.evaluate("() => globalThis.__publish('preparation')")
-                    expect(trigger).to_have_text(label)
+                    # The icon speaks the label, then any source sentences
+                    # the cohort's lookups add (#1494).
+                    expect(trigger).to_have_accessible_name(
+                        re.compile(f"^{re.escape(label)}(\\. |$)")
+                    )
                     page.evaluate(_TWO_FRAMES)
                     states[label] = page.evaluate(_MASTHEAD_GEOMETRY)
                     clipped += [
@@ -4881,6 +4899,238 @@ def test_compact_and_enlarged_masthead_never_covers_content() -> None:
                     )
                 page.keyboard.press("Escape")
                 expect(trigger).to_be_focused()
+
+
+# The open tooltip of the icon `selector`: its box, whether it takes the
+# pointer, and the destinations it lies over.
+_OPEN_TOOLTIP = """selector => {
+  const tip = document.querySelector(`.masthead ${selector} .masthead-tooltip`);
+  const box = tip.getBoundingClientRect();
+  const over = [...document.querySelectorAll('.masthead nav a')].filter((link) => {
+    const own = link.getBoundingClientRect();
+    return Math.min(box.right, own.right) - Math.max(box.left, own.left) > 0 &&
+      Math.min(box.bottom, own.bottom) - Math.max(box.top, own.top) > 0;
+  }).map((link) => link.textContent.trim());
+  return {
+    shown: getComputedStyle(tip).visibility === 'visible',
+    events: getComputedStyle(tip).pointerEvents,
+    left: box.left, right: box.right, top: box.top, bottom: box.bottom, over,
+  };
+}"""
+_MASTHEAD_ICONS = (".status-trigger", ".theme-toggle", ".sign-out")
+
+
+def test_masthead_tooltips_never_take_a_destinations_click() -> None:
+    """Where the destinations sit below the masthead icons (two rows, and the
+    three rows of a 19rem shell), each icon's tooltip stays on the screen,
+    lies over no destination and never takes the pointer, and a destination
+    takes its click while a tooltip is open. In the one-row masthead the
+    tooltip falls below the masthead and can be hovered, across the gap above
+    it, without closing (#1494, Amendment 4)."""
+    styles = {"100%": "", "200%": "html { font-size: 200% !important; }"}
+    text = "100%"
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 390, "height": 844}, locale="en-US")
+        page.add_init_script(_LIVE_UPDATE_STREAM)
+        _serve_cohort(page, stylesheet=lambda: styles[text])
+        for text, width in (
+            ("100%", 320),
+            ("200%", 320),
+            ("100%", 390),
+            ("100%", 761),
+            ("100%", 900),
+            ("100%", 1024),
+        ):
+            where = f"{text} text at {width}px"
+            page.set_viewport_size({"width": width, "height": 844})
+            page.goto("https://react-platform.invalid/settings?group=connection")
+            page.get_by_role("heading", name="Settings", exact=True).wait_for()
+            for icon in _MASTHEAD_ICONS:
+                page.locator(f".masthead {icon}").hover()
+                tip = page.evaluate(_OPEN_TOOLTIP, icon)
+                assert tip["shown"] and tip["events"] == "none", (
+                    f"{where} {icon}: {tip}"
+                )
+                assert tip["over"] == [], f"{where} {icon}: {tip}"
+                assert tip["left"] >= 0 and tip["right"] <= width, (
+                    f"{where} {icon}: {tip}"
+                )
+            # With the theme switch's tooltip open, a destination takes its click.
+            page.locator(".masthead .theme-toggle").hover()
+            link = page.get_by_role("navigation").get_by_role(
+                "link", name="Activity", exact=True
+            )
+            box = link.bounding_box()
+            assert box is not None
+            page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+            expect(link).to_have_attribute("aria-current", "page")
+        text = "100%"
+        page.set_viewport_size({"width": 1440, "height": 900})
+        page.goto("https://react-platform.invalid/settings?group=connection")
+        page.get_by_role("heading", name="Settings", exact=True).wait_for()
+        for icon in _MASTHEAD_ICONS:
+            page.locator(f".masthead {icon}").hover()
+            tip = page.evaluate(_OPEN_TOOLTIP, icon)
+            assert tip["shown"] and tip["events"] == "auto", f"1440px {icon}: {tip}"
+            assert tip["over"] == [] and tip["right"] <= 1440, f"1440px {icon}: {tip}"
+        page.locator(".masthead .theme-toggle").hover()
+        toggle = page.locator(".masthead .theme-toggle").bounding_box()
+        tip = page.evaluate(_OPEN_TOOLTIP, ".theme-toggle")
+        assert toggle is not None
+        x = toggle["x"] + toggle["width"] / 2
+        assert tip["left"] < x < tip["right"], (toggle, tip)
+        page.mouse.move(x, toggle["y"] + toggle["height"] / 2)
+        page.mouse.move(x, (tip["top"] + tip["bottom"]) / 2, steps=12)
+        assert page.evaluate(_OPEN_TOOLTIP, ".theme-toggle")["shown"], tip
+
+
+# The popover's own controls and its end, against the finish tray: the end of
+# the scrolled popover, and each control scrolled into view, lie above the
+# tray and take a press there.
+_POPOVER_ABOVE_TRAY = """() => {
+  const popover = document.querySelector('.preparation-popover');
+  const tray = document.querySelector('.cm-finish-tray').getBoundingClientRect();
+  const controls = [...popover.querySelectorAll('button')].map((node) => {
+    node.scrollIntoView({block: 'nearest'});
+    const box = node.getBoundingClientRect();
+    const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+    return [node.textContent.trim(), Math.round(box.bottom), !!hit && node.contains(hit)];
+  });
+  return {
+    trayTop: Math.round(tray.top),
+    end: Math.round(popover.getBoundingClientRect().bottom),
+    controls,
+  };
+}"""
+
+
+def test_preparation_popover_ends_above_the_finish_tray() -> None:
+    """With Source lookups listed, the popover on Settings and on Policy ends
+    above the floating finish tray, so Pause and Close stay in view and take a
+    press (#1494, Amendment 4)."""
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 390, "height": 844}, locale="en-US")
+        page.add_init_script(_LIVE_UPDATE_STREAM)
+        _serve_cohort(page)
+        for route, (width, height) in (
+            ("/settings?group=providers", (390, 844)),
+            ("/settings?group=providers", (375, 667)),
+            # On a phone Policy's tray is taller than a third of the window,
+            # so it settles into the page; it floats on these.
+            ("/policy?section=identity", (1024, 768)),
+            ("/policy?section=identity", (884, 600)),
+        ):
+            where = f"{route} at {width}x{height}"
+            page.set_viewport_size({"width": width, "height": height})
+            page.goto(f"https://react-platform.invalid{route}")
+            tray = page.locator(".cm-finish-tray")
+            expect(tray).to_be_visible()
+            assert tray.evaluate("node => getComputedStyle(node).position") == (
+                "sticky"
+            ), where
+            page.locator(".masthead .preparation-activity > button").click()
+            popover = page.get_by_role("region", name="Background activity")
+            expect(
+                popover.get_by_role("region", name="Source lookups", exact=True)
+            ).to_be_visible()
+            page.evaluate(_TWO_FRAMES)
+            found = page.evaluate(_POPOVER_ABOVE_TRAY)
+            assert found["end"] <= found["trayTop"], f"{where}: {found}"
+            names = [name for name, _, _ in found["controls"]]
+            assert {"Pause", "Close"} <= set(names), f"{where}: {found}"
+            for name, bottom, pressable in found["controls"]:
+                assert bottom <= found["trayTop"] and pressable, (
+                    f"{where}: {name} {found}"
+                )
+            page.keyboard.press("Escape")
+
+
+# The popover's text sizes, the Source lookups heading against its entries,
+# and Retry now's look beside a library's Scan now.
+_POPOVER_TYPE = """() => {
+  const popover = document.querySelector('.preparation-popover');
+  const size = (node) => parseFloat(getComputedStyle(node).fontSize);
+  const look = (node) => {
+    const style = getComputedStyle(node);
+    return [style.fontSize, style.fontWeight, style.paddingTop, style.paddingLeft,
+      style.color, style.backgroundColor, style.borderTopWidth, style.justifySelf,
+      Math.round(node.getBoundingClientRect().height)];
+  };
+  const lookups = popover.querySelector('.source-lookups');
+  const button = (scope, name) => [...scope.querySelectorAll('button')]
+    .find((node) => node.textContent.trim() === name);
+  return {
+    body: size(document.body),
+    popover: size(popover),
+    sizes: [...popover.querySelectorAll('h3, strong, span, p, small, li, a, button')]
+      .map((node) => [node.tagName.toLowerCase(), node.textContent.trim().slice(0, 30), size(node)]),
+    heading: size(lookups.querySelector('h3')),
+    entries: Math.max(...[...lookups.querySelectorAll('li, li *')].map(size)),
+    retry: look(button(lookups, 'Retry now')),
+    scan: look(button(popover, 'Scan now')),
+  };
+}"""
+
+
+def test_preparation_popover_keeps_its_type_and_hides_the_status_tooltip() -> None:
+    """While the popover is open, the status icon's tooltip stays hidden, by
+    pointer and by keyboard, at 390 and 1280 px. On a phone the popover keeps
+    the sizes it has on a wide screen: the masthead's small type is for its own
+    line and buttons only. The Source lookups heading is never smaller than
+    its entries, and Retry now looks like Scan now (#1494, Amendment 7)."""
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 1280, "height": 900}, locale="en-US")
+        page.add_init_script(_LIVE_UPDATE_STREAM)
+        _serve_cohort(page)
+        found = {}
+        for width, height in ((1280, 900), (390, 844)):
+            page.set_viewport_size({"width": width, "height": height})
+            page.goto("https://react-platform.invalid/settings?group=providers")
+            page.get_by_role("heading", name="Settings", exact=True).wait_for()
+            trigger = page.locator(".masthead .status-trigger")
+            popover = page.get_by_role("region", name="Background activity")
+            # By pointer: the tooltip shows on hover, and hides once pressed.
+            trigger.hover()
+            assert page.evaluate(_OPEN_TOOLTIP, ".status-trigger")["shown"], width
+            trigger.click()
+            expect(popover).to_be_visible()
+            expect(trigger).to_be_focused()
+            page.evaluate(_TWO_FRAMES)
+            tip = page.evaluate(_OPEN_TOOLTIP, ".status-trigger")
+            assert not tip["shown"], f"{width}px pointer: {tip}"
+            found[width] = page.evaluate(_POPOVER_TYPE)
+            page.keyboard.press("Escape")
+            expect(popover).to_be_hidden()
+            # By keyboard: focus shows the tooltip, and Enter hides it.
+            page.mouse.move(0, height - 1)
+            trigger.blur()
+            trigger.focus()
+            page.keyboard.press("Shift+Tab")
+            page.keyboard.press("Tab")
+            expect(trigger).to_be_focused()
+            assert page.evaluate(_OPEN_TOOLTIP, ".status-trigger")["shown"], width
+            page.keyboard.press("Enter")
+            expect(popover).to_be_visible()
+            expect(trigger).to_be_focused()
+            page.evaluate(_TWO_FRAMES)
+            tip = page.evaluate(_OPEN_TOOLTIP, ".status-trigger")
+            assert not tip["shown"], f"{width}px keyboard: {tip}"
+            page.keyboard.press("Escape")
+        wide, phone = found[1280], found[390]
+        assert phone["popover"] == phone["body"] == wide["popover"], (phone, wide)
+        assert phone["sizes"] == wide["sizes"], (phone["sizes"], wide["sizes"])
+        for where, type_ in (("1280px", wide), ("390px", phone)):
+            assert type_["heading"] >= type_["entries"], f"{where}: {type_}"
+            assert type_["retry"] == type_["scan"], f"{where}: {type_}"
 
 
 # The words an owner reads as interface: headings, controls, labels and the

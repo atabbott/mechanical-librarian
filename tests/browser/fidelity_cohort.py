@@ -2186,8 +2186,10 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
     }
 
 
-# Three sources in two libraries (#1282): a Google Books burst that resets on
-# the next day, a dormant Hardcover key refusal and an exhausted Open Library.
+# Three sources in two libraries that need the owner (#1282, #1494): a keyless
+# Google Books burst that resets on the next day, a dormant Hardcover key
+# refusal and an exhausted Open Library; and one routine Inventaire wait that
+# the masthead popover lists and the page notice leaves out.
 THROTTLE_LONG_LIBRARY = "Synthetic audiobooks with a long library name"
 
 
@@ -2201,6 +2203,8 @@ def _throttling_entries() -> list[dict[str, object]]:
             "deferred": 214,
             "next_retry_at": int(time.time()) + 26 * 3600,
             "remedy": "add_api_key",
+            "notice_at": int(time.time()) + 20 * 3600,
+            "untried": False,
         },
         {
             "library": "Synthetic ebooks",
@@ -2210,6 +2214,8 @@ def _throttling_entries() -> list[dict[str, object]]:
             "deferred": 1,
             "next_retry_at": None,
             "remedy": "check_api_key",
+            "notice_at": None,
+            "untried": False,
         },
         {
             "library": THROTTLE_LONG_LIBRARY,
@@ -2219,6 +2225,20 @@ def _throttling_entries() -> list[dict[str, object]]:
             "deferred": 10_000,
             "next_retry_at": None,
             "remedy": None,
+            # Waited past a day: needs the owner on time as well as by state.
+            "notice_at": int(time.time()) - 3600,
+            "untried": False,
+        },
+        {
+            "library": "Synthetic ebooks",
+            "adapter": "inventaire",
+            "state": "waiting",
+            "reasons": ["rate_limited"],
+            "deferred": 12,
+            "next_retry_at": int(time.time()) + 3600,
+            "remedy": None,
+            "notice_at": int(time.time()) + 23 * 3600,
+            "untried": False,
         },
     ]
 
@@ -2347,6 +2367,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                 "generation": 1,
                 "retry": "available",
                 "entries": _throttling_entries(),
+                "answered": [],
             },
         }
     if path == "/api/v1/library":

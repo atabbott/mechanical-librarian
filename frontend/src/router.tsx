@@ -25,7 +25,6 @@ import {
 
 import type { ComponentPropsWithRef } from 'react'
 import type { createMemoryHistory } from '@tanstack/react-router'
-import settingsVocabulary from '../../src/mechanical_librarian/interfaces/web/settings_vocabulary.json'
 import {
   ApiError,
   BuildMismatchError,
@@ -43,13 +42,13 @@ import type {
   PolicyStateView,
   PreparationActionPath,
   PreparationView,
-  ProviderThrottleEntry,
   ReviewHttp,
-  SettingsView,
   PreviewPostureView,
 } from './api/http'
 import { recoverableLazy } from './chunkRecovery'
-import { CountPhrases } from './components/CountPhrases'
+import { BackgroundActivity } from './components/BackgroundActivity'
+import { DoorIcon, IconButton } from './components/MastheadIcons'
+import { ThemeControl } from './components/ThemeControl'
 import { LiveStreamNotice } from './components/LiveStreamNotice'
 import { SettingsPathText } from './components/SettingsPathText'
 import {
@@ -58,11 +57,21 @@ import {
   useLiveStreamState,
 } from './liveInvalidation'
 import type { LiveUpdateStream } from './liveUpdates'
-import { formatWhen } from './dates'
-import { preparationOutcomes, scanStateLabels } from './labels'
 import { useLibraryName } from './libraryNames'
 import { handoffNeedsLibraryNames } from './writeConsent'
 import { DirectEntryFallback, RouteFailure, RoutePending } from './components/RouteStates'
+import {
+  entryKey,
+  fileManagedRetry,
+  needsYou,
+  nextNoticeAt,
+  providerLabels,
+  remedyLabel,
+  retryRecovered,
+  throttleLine,
+  timerDelay,
+  useProviderRetry,
+} from './providerThrottling'
 
 const LibraryPage = recoverableLazy(() => import('./routes/LibraryPage'))
 const CoversView = recoverableLazy(() => import('./routes/CoversView'))
@@ -591,42 +600,6 @@ export const PreparationNotice = ({ routeIdentity }: { routeIdentity: string }) 
   )
 }
 
-// One sentence per recovery reason, in the order an entry names the first.
-const throttleReasonCopy: readonly (readonly [ProviderThrottleEntry['reasons'][number], string])[] =
-  [
-    ['quota_exhausted', 'Its request quota is used up.'],
-    ['burst_throttled', 'It is limiting requests.'],
-    ['rate_limited', 'It is limiting requests.'],
-    ['authentication', 'It refused the API key.'],
-    ['authorization', 'It refused access for this API key.'],
-    ['configuration', 'Its settings need checking.'],
-    ['transient', 'It did not answer.'],
-  ]
-const providerLabels: Readonly<Record<string, string>> = settingsVocabulary.provider_labels
-const throttleWhen = (entry: ProviderThrottleEntry, now: Date) =>
-  entry.state === 'checking'
-    ? 'Retrying now.'
-    : entry.state === 'dormant'
-      ? 'No automatic retry. Fix the source, then retry.'
-      : entry.state === 'exhausted'
-        ? 'No automatic retry remains.'
-        : entry.next_retry_at === null || entry.next_retry_at * 1000 <= now.getTime()
-          ? 'Retry due now.'
-          : `Next automatic retry ${formatWhen(entry.next_retry_at, now)}.`
-const fileManagedRetry =
-  'To retry, raise provider_recovery_generation by one in /data/config.json and restart the service.'
-const retryRefusal = (error: unknown) =>
-  error instanceof ApiError && error.code === 'provider_recovery_stale'
-    ? 'Retry now was already pressed elsewhere.'
-    : error instanceof ApiError && error.code === 'settings_managed_by_file'
-      ? fileManagedRetry
-      : error instanceof ApiError && error.code === 'settings_stale'
-        ? 'Settings changed elsewhere. Check the notice, then press Retry now again.'
-        : refusalCopy(
-            error,
-            'No answer came back. Check whether the lookups are retrying before pressing Retry now again.',
-          )
-
 /**
  * Library-level provider throttling: one entry per library and source, and one
  * Retry now that raises the recovery generation for all of them (#1282).
@@ -640,30 +613,16 @@ export const ProviderThrottleNotice = () => {
   const { data, queryClient, http } = usePreparation()
   const container = useRef<HTMLElement>(null)
   const controlFocused = useRef(false)
-  const pending = useRef(false)
-  const [status, setStatus] = useState('')
-  const [refusal, setRefusal] = useState('')
   const throttling = data?.provider_throttling ?? null
-  const entries = throttling?.entries ?? []
+  const [clock, setClock] = useState(0)
+  const now = new Date()
+  // Only the entries that need the owner; routine waits live in the masthead.
+  const entries = (throttling?.entries ?? []).filter((entry) => needsYou(entry, now.getTime()))
   const names = useLibraryName(http, entries.length > 0)
-  const retry = useMutation({
-    mutationFn: (expected: number) => http.retryProviderRecovery(expected),
-    retry: false,
-    onMutate: () => {
-      setStatus('')
-      setRefusal('')
-    },
-    onSuccess: (value) => {
-      // A Retry now moves the settings revision; an open draft rebases over it.
-      queryClient.setQueryData<SettingsView>(['settings'], value)
-      setStatus('Every waiting lookup is retrying now.')
-    },
-    onError: (error) => setRefusal(retryRefusal(error)),
-    onSettled: async () => {
-      pending.current = false
-      await invalidateForegroundQueries(queryClient, { queryKey: ['review-preparation'] })
-    },
-  })
+  const retry = useProviderRetry(http, queryClient, throttling, 'notice')
+  const pressedHere = retry.press?.origin === 'notice'
+  const status = pressedHere ? retry.status : ''
+  const refusal = pressedHere ? (retry.press?.refusal ?? '') : ''
   // A focused control that leaves (the notice emptied, or the command was
   // replaced) hands focus to the route's focus target, else to main, never
   // to the document body.
@@ -680,10 +639,10 @@ export const ProviderThrottleNotice = () => {
       preventScroll: true,
     })
   })
-  const [clock, setClock] = useState(0)
-  const now = new Date()
-  // One timer to the earliest wait still ahead re-renders it as due.
+  // One timer to the earliest change still ahead: a wait that falls due, or a
+  // day-long wait that starts to need the owner.
   const nextDue = Math.min(
+    nextNoticeAt(throttling?.entries ?? [], now.getTime()),
     ...entries.flatMap((entry) =>
       entry.state === 'checking' ||
       entry.state === 'dormant' ||
@@ -696,13 +655,9 @@ export const ProviderThrottleNotice = () => {
   )
   useEffect(() => {
     if (!Number.isFinite(nextDue)) return
-    const timer = setTimeout(
-      () => setClock((tick) => tick + 1),
-      Math.min(nextDue - Date.now(), 2_147_483_647),
-    )
+    const timer = setTimeout(() => setClock((tick) => tick + 1), timerDelay(nextDue, Date.now()))
     return () => clearTimeout(timer)
   }, [nextDue, clock])
-  const busy = retry.isPending
   return (
     <section
       ref={container}
@@ -718,34 +673,25 @@ export const ProviderThrottleNotice = () => {
     >
       {entries.length ? (
         <ul>
-          {entries.map((entry) => {
-            const reason = throttleReasonCopy.find(([code]) => entry.reasons.includes(code))
-            return (
-              <li key={`${entry.library}\u0000${entry.adapter}`}>
-                <span>
-                  <strong>
-                    {providerLabels[entry.adapter]} · {names.name(entry.library)}:
-                  </strong>{' '}
-                  {reason ? `${reason[1]} ` : ''}
-                  {entry.deferred.toLocaleString()} {entry.deferred === 1 ? 'lookup' : 'lookups'}{' '}
-                  waiting. {throttleWhen(entry, now)}
-                </span>
-                {entry.remedy ? (
-                  <>
-                    {' '}
-                    <Link to="/settings" search={{ group: 'providers' }}>
-                      {/* The ring hugs this text, not the padded target. */}
-                      <span>
-                        {entry.remedy === 'add_api_key'
-                          ? 'Add a Google Books API key'
-                          : 'Check the source\u2019s API key'}
-                      </span>
-                    </Link>
-                  </>
-                ) : null}
-              </li>
-            )
-          })}
+          {entries.map((entry) => (
+            <li key={entryKey(entry)}>
+              <span>
+                <strong>
+                  {providerLabels[entry.adapter]} · {names.name(entry.library)}:
+                </strong>{' '}
+                {throttleLine(entry, now)}
+              </span>
+              {entry.remedy ? (
+                <>
+                  {' '}
+                  <Link to="/settings" search={{ group: 'providers' }}>
+                    {/* The ring hugs this text, not the padded target. */}
+                    <span>{remedyLabel(entry.remedy)}</span>
+                  </Link>
+                </>
+              ) : null}
+            </li>
+          ))}
         </ul>
       ) : null}
       {/* Mounted whenever the projection exists, so before any outcome. */}
@@ -755,22 +701,22 @@ export const ProviderThrottleNotice = () => {
             <div className="provider-throttle-command">
               <button
                 type="button"
-                aria-disabled={busy || undefined}
-                aria-busy={busy || undefined}
-                onClick={() => {
-                  if (pending.current) return
-                  pending.current = true
-                  retry.mutate(throttling.generation)
-                }}
+                aria-disabled={retry.busy || undefined}
+                aria-busy={retry.busy || undefined}
+                onClick={retry.start}
               >
-                {busy ? 'Retrying…' : 'Retry now'}
+                {retry.busy ? 'Retrying…' : 'Retry now'}
               </button>
               <small>Retries the waiting lookups in every library.</small>
             </div>
           ) : entries.length > 0 && throttling.retry === 'managed_by_file' ? (
             <p className="provider-throttle-file">{fileManagedRetry}</p>
           ) : null}
-          <p className="provider-throttle-outcome provider-throttle-status" role="status">
+          <p
+            className="provider-throttle-outcome provider-throttle-status"
+            role="status"
+            data-outcome={status === retryRecovered ? 'recovered' : undefined}
+          >
             {status}
           </p>
           <p className="provider-throttle-outcome provider-throttle-refusal" role="alert">
@@ -779,294 +725,6 @@ export const ProviderThrottleNotice = () => {
         </div>
       ) : null}
     </section>
-  )
-}
-
-/**
- * The ten buckets a work moves through, in the order an owner reads them.
- *
- * The stage names the store uses are engineering words; these are what the
- * owner is actually waiting for. Naming every bucket -- including the empty
- * ones -- keeps the pipeline in one stable order as counts move through it,
- * which is what makes a live update read as progress rather than as a redraw
- * (#641).
- */
-const stageLabels: Readonly<Record<string, string>> = {
-  queued: 'Not started',
-  extracting: 'Reading your files',
-  providers: 'Asking sources',
-  proposals: 'Comparing sources',
-  admission: 'Checking automatic choices',
-  projection: 'Preparing the review',
-  ready: 'Ready to browse',
-  recorded: 'Recorded, nothing to decide',
-  not_matched: 'Not matched',
-  failed: 'Could not finish',
-}
-
-export const PreparationActivity = () => {
-  const { data, queryClient, http } = usePreparation()
-  const names = useLibraryName(http, Boolean(data?.libraries.length))
-  const [open, setOpen] = useState(false)
-  const trigger = useRef<HTMLButtonElement>(null)
-  const popover = useRef<HTMLElement>(null)
-  const pending = useRef(false)
-  const action = useMutation({
-    mutationFn: (path: PreparationActionPath) => http.preparationAction(path),
-    retry: false,
-    onSettled: async () => {
-      pending.current = false
-      await invalidateForegroundQueries(queryClient, { queryKey: ['review-preparation'] })
-      await Promise.all([
-        invalidateBackgroundQueries(queryClient, { queryKey: ['library'] }),
-        invalidateBackgroundQueries(queryClient, { queryKey: ['attention'] }),
-      ])
-    },
-  })
-  // Idle is a state the owner can act on: Scan now and Pause stay reachable.
-  const unavailable = !data || data.libraries.length === 0
-  const runScans =
-    data?.presentation && data.presentation.state !== 'dismissed'
-      ? data.presentation.now?.scan_ids
-      : undefined
-  // Each command is aria-disabled rather than disabled, so focus stays on it;
-  // the guard drops a press while one is pending or the command is refused.
-  const command = (path: PreparationActionPath, refused: boolean) => () => {
-    if (refused || pending.current) return
-    pending.current = true
-    action.mutate(path)
-  }
-  useEffect(() => {
-    if (!open || !unavailable) return
-    requestAnimationFrame(() => {
-      document.getElementById('main-content')?.focus({ preventScroll: true })
-      setOpen(false)
-    })
-  }, [open, unavailable])
-  if (unavailable && !open) return null
-  const close = () => {
-    trigger.current?.focus()
-    setOpen(false)
-  }
-  return (
-    <div
-      className="preparation-activity"
-      // Escape closes from the trigger or from anywhere inside the popover,
-      // and ``close`` already returns focus to the trigger. Tabbing off either
-      // end closes it where it stands -- the Dropdown precedent -- so the
-      // popover never stays open behind a focus ring that has left it; the
-      // browser keeps the tab order it was going to follow. Nothing is bound
-      // while the popover is shut, so both keys stay available to the page.
-      onKeyDown={(event) => {
-        if (!open) return
-        if (event.key === 'Escape') {
-          event.preventDefault()
-          event.stopPropagation()
-          close()
-          return
-        }
-        if (event.key !== 'Tab') return
-        const focusable = popover.current?.querySelectorAll<HTMLElement>(
-          'button:not([disabled]),a[href]',
-        )
-        if (!focusable?.length) return
-        const edge = event.shiftKey ? focusable[0] : focusable[focusable.length - 1]
-        if (event.target === edge) setOpen(false)
-      }}
-    >
-      <button
-        ref={trigger}
-        type="button"
-        aria-expanded={open}
-        onClick={() => setOpen((value) => !value)}
-      >
-        {data?.recovery_required
-          ? 'Preparation stopped'
-          : // A run held by a connection check is paused too, and the Library's
-            // preparation row says so in the same words (#1765).
-            data?.paused || data?.presentation?.state === 'blocked'
-            ? 'Preparation paused'
-            : data?.actionable
-              ? 'Preparation needs attention'
-              : data?.active
-                ? 'Preparing libraries'
-                : 'Preparation idle'}
-      </button>
-      {open && data ? (
-        <section ref={popover} className="preparation-popover" aria-label="Background activity">
-          <h2>{data.recovery_required ? 'Preparation stopped' : 'Background activity'}</h2>
-          {data.recovery_required ? (
-            <p role="status">
-              Restart the Mechanical Librarian service to resume preparation. Prepared works can
-              still be reviewed.
-            </p>
-          ) : null}
-          {data.libraries.map((item) => (
-            <article key={`${item.connection}:${item.library}`}>
-              <strong>{names.name(item.library)}</strong>
-              <span>
-                {data.recovery_required ? 'Last saved progress' : scanStateLabels[item.state]}
-                {/*
-                 * The run line sums only the libraries its run enrolled, so a
-                 * library outside it is the one way the two totals differ.
-                 */}
-                {runScans && item.scan_id && !runScans.includes(item.scan_id)
-                  ? ' · not in this run'
-                  : ''}
-              </span>
-              <span>
-                {/*
-                 * A finished scan's buckets below already state its split in
-                 * these words, so only the checked count stands here.
-                 */}
-                {`${String(item.checked)} of ${String(item.total)} checked`}
-                {!item.state.startsWith('completed') && (
-                  <>
-                    {' · '}
-                    <CountPhrases
-                      phrases={preparationOutcomes({
-                        ready: item.ready,
-                        recorded: item.recorded,
-                        not_matched: item.not_matched,
-                        failed: item.blocked,
-                      })}
-                    />
-                  </>
-                )}
-              </span>
-              <dl className="preparation-stages">
-                {/*
-                 * A live scan keeps every bucket, including the empty ones, so
-                 * the pipeline holds one stable order as counts move through
-                 * it (#641). A finished scan is not moving, so the buckets
-                 * nothing reached are a wall of zeros and are left out.
-                 */}
-                {item.stages
-                  .filter((stage) => !item.state.startsWith('completed') || stage.count > 0)
-                  .map((stage) => (
-                    <div key={stage.stage}>
-                      <dt>{stageLabels[stage.stage] ?? stage.stage}</dt>
-                      <dd>{stage.count}</dd>
-                    </div>
-                  ))}
-              </dl>
-              <button
-                type="button"
-                aria-disabled={
-                  data.recovery_required ||
-                  action.isPending ||
-                  data.paused ||
-                  item.state === 'queued' ||
-                  item.state === 'discovering'
-                }
-                aria-busy={action.isPending || undefined}
-                onClick={command(
-                  `${encodeURIComponent(item.connection)}/${encodeURIComponent(item.library)}/scan`,
-                  data.recovery_required ||
-                    data.paused ||
-                    item.state === 'queued' ||
-                    item.state === 'discovering',
-                )}
-              >
-                Scan now
-              </button>
-              {item.state === 'completed_with_failures' ? (
-                <button
-                  type="button"
-                  aria-disabled={data.recovery_required || action.isPending || data.paused}
-                  aria-busy={action.isPending || undefined}
-                  onClick={command(
-                    `${encodeURIComponent(item.connection)}/${encodeURIComponent(item.library)}/retry`,
-                    data.recovery_required || data.paused,
-                  )}
-                >
-                  Retry
-                </button>
-              ) : null}
-            </article>
-          ))}
-          {/*
-           * Scan now and Retry call the same operation, a new library cycle; the
-           * recovery schedule they do not control is documented in
-           * `docs/operations/provider-recovery.md`. Said once, below the list,
-           * because Retry shows only on a library whose run had failures.
-           */}
-          {!data.recovery_required ? (
-            <small className="activity-backup-note">
-              Scan now prepares a library again, including the books that could not finish.
-            </small>
-          ) : null}
-          <button
-            type="button"
-            aria-disabled={data.recovery_required || action.isPending}
-            aria-busy={action.isPending || undefined}
-            onClick={command(data.paused ? 'resume' : 'pause', data.recovery_required)}
-          >
-            {data.paused ? 'Resume' : 'Pause'}
-          </button>
-          {action.isError ? (
-            <p role="alert">
-              {uncertainWriteOutcome(action.error)
-                ? 'No answer came back. Check whether the change took effect before pressing again.'
-                : refusalCopy(action.error, 'Preparation did not change. Try again.')}
-            </p>
-          ) : null}
-          {!data.recovery_required ? (
-            <small className="activity-backup-note">
-              Pause stops new scans. Lookups already waiting still retry on schedule.
-            </small>
-          ) : null}
-          <button type="button" onClick={close}>
-            Close
-          </button>
-        </section>
-      ) : null}
-    </div>
-  )
-}
-
-// One rule with setup, sign-in and public/theme.js, which applies it before first
-// paint: the owner's saved choice, otherwise the system, followed live until a
-// choice is saved (#1013).
-const savedTheme = () => /(?:^|; )ml_theme=(light|dark)(?:;|$)/.exec(document.cookie)?.[1]
-const systemMedia = () => {
-  const query = '(prefers-color-scheme: dark)'
-  const media = typeof window.matchMedia === 'function' ? window.matchMedia(query) : null
-  return media?.media === query ? media : null
-}
-const ThemeControl = () => {
-  const [theme, setTheme] = useState(
-    () => savedTheme() ?? (systemMedia()?.matches ? 'dark' : 'light'),
-  )
-  useEffect(() => {
-    const media = systemMedia()
-    if (savedTheme() || typeof media?.addEventListener !== 'function') return
-    const follow = (event: MediaQueryListEvent) => {
-      if (!savedTheme()) setTheme(event.matches ? 'dark' : 'light')
-    }
-    media.addEventListener('change', follow)
-    return () => media.removeEventListener('change', follow)
-  }, [])
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme
-    document.documentElement.style.colorScheme = theme
-  }, [theme])
-  const toggle = () => {
-    const next = theme === 'dark' ? 'light' : 'dark'
-    document.cookie = `ml_theme=${next}; Path=/; Max-Age=31536000; SameSite=Strict${location.protocol === 'https:' ? '; Secure' : ''}`
-    setTheme(next)
-  }
-  return (
-    <button
-      className="theme-toggle"
-      type="button"
-      aria-pressed={theme === 'dark'}
-      aria-label={theme === 'dark' ? 'Use light mode' : 'Use dark mode'}
-      onClick={toggle}
-    >
-      <span aria-hidden="true">{theme === 'dark' ? '☀' : '◐'}</span>
-      <span>{theme === 'dark' ? 'Light' : 'Dark'}</span>
-    </button>
   )
 }
 
@@ -1099,6 +757,8 @@ const Shell = () => {
   })
   const { http, queryClient, updates } = rootRoute.useRouteContext()
   useLiveInvalidation(updates, queryClient)
+  // The one preparation observer in the shell; the masthead control reads it.
+  const preparation = usePreparation()
   const streamState = useLiveStreamState(updates)
   const appearance = useQuery({
     queryKey: ['appearance'] as const,
@@ -1244,13 +904,13 @@ const Shell = () => {
         {/* Status has a slot of its own, so a notice arriving moves nothing else. */}
         <div className="shell-status">
           <LiveStreamNotice state={streamState} />
-          <PreparationActivity />
+          <BackgroundActivity data={preparation.data} http={http} queryClient={queryClient} />
         </div>
         <div className="shell-actions">
           <ThemeControl />
-          <button className="sign-out" type="button" onClick={() => void signOut()}>
-            Sign out
-          </button>
+          <IconButton className="sign-out" label="Sign out" onClick={() => void signOut()}>
+            <DoorIcon />
+          </IconButton>
         </div>
       </header>
       <p className="navigation-status" role="status" aria-live="polite">
