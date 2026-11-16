@@ -3,7 +3,7 @@
 - Status: proposed
 - Date: 2026-11-15
 - Owners: project maintainers
-- Issues: #747
+- Issues: #1916, #747
 - Amends: ADR-0089 (which works are searched again, and what a search may
   replace) and ADR-0101 decision 5 (a third thing that asks live)
 - Supersedes: none
