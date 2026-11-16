@@ -539,8 +539,8 @@ permission are in a section you open.
 Review write permissions opens one panel, from Activity or from Library's
 write handoff, and opening it grants nothing. Mechanical Librarian then checks
 that its own database is consistent and shows the prepared work, the fields
-each library can write and one before-and-after example. You can confirm only
-once that check passes and you include at least one library.
+each library can write and the [write plan](write-plan.md). You can confirm
+only once that check passes and you include at least one library.
 
 The libraries you include stay included through page updates and repeat
 checks. A change to the libraries, their fields' write support or permission,

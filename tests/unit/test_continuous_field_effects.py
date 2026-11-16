@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
+from mechanical_librarian.application import continuous_field_effects
 from mechanical_librarian.application.continuous_field_effects import (
     CONTINUOUS_FIELD_ACTIVITY_SCHEMA,
     ContinuousGuardedApplication,
@@ -19,6 +20,13 @@ from mechanical_librarian.application.field_effects import (
     GuardedApplicationError,
     GuardedFieldApplication,
     TargetServiceUnavailable,
+)
+from mechanical_librarian.application.write_plan import (
+    CLOSING_CHECK_ROWS,
+    EXAMPLES_PER_GROUP,
+    INLINE_ALL,
+    INLINE_ROWS,
+    PlanFormat,
 )
 from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecision,
@@ -237,8 +245,52 @@ class _PagedRepository:
     def field_effect_connection_replan(self, decision_id):
         return None
 
-    def pending_field_effect_activity_example_document(self):
-        return self.decisions[-1].to_json() if self.decisions else None
+    def pending_field_effect_plan_entries(self, per_group, limit, library_order):
+        def library_of(value) -> str:
+            return "beta" if value.occurred_at == 101 else "alpha"
+
+        def order(value) -> tuple[object, ...]:
+            library = library_of(value)
+            listed = library in library_order
+            return (
+                not listed,
+                listed and library_order.index(library),
+                library,
+                value.decision_id,
+            )
+
+        listed: dict[tuple[str, str], int] = {}
+        entries = []
+        for value in sorted(self.decisions, key=order):
+            library = library_of(value)
+            group = (library, value.destination)
+            listed[group] = listed.get(group, 0) + 1
+            if per_group is None or listed[group] <= per_group:
+                entries.append(
+                    (
+                        "primary",
+                        library,
+                        "human",
+                        value.destination,
+                        value.decision_id,
+                        "item",
+                    )
+                )
+        return tuple(entries[:limit])
+
+    def field_effect_plan_documents(self, decision_ids):
+        documents = {value.decision_id: value.to_json() for value in self.decisions}
+        return {
+            decision_id: documents[decision_id]
+            for decision_id in decision_ids
+            if decision_id in documents
+        }
+
+    def prepared_field_effect_decisions(self, decision_ids):
+        return frozenset(decision_ids) & {value.decision_id for value in self.decisions}
+
+    def field_effect_plan_row(self, _decision):
+        return {"work": "A Work", "authors": "An Author", "sources": ["Hardcover"]}
 
     def pending_field_effect_decision_counts(self):
         counts: dict[tuple[str, str], int] = {}
@@ -405,39 +457,146 @@ class _Authority:
         )
 
 
-def test_permission_readiness_resolves_at_most_one_current_example() -> None:
-    decisions = _decisions(3)
-
-    class CountingAuthority(_Authority):
-        def __init__(self) -> None:
-            self.resolved: list[str] = []
-
-        def resolve(self, decision):
-            self.resolved.append(decision.decision_id)
-            return super().resolve(decision)
-
-    authority = CountingAuthority()
-    service = ContinuousGuardedApplication(
+def _plan_service(decisions, authority=None):
+    return ContinuousGuardedApplication(
         _ActivityPagedRepository(decisions),
         {},
         {},
-        authority,
+        _Authority() if authority is None else authority,
         (("primary", "alpha"), ("primary", "beta")),
         lambda: 1,
         lambda *_: None,
         activity_only=True,
     )
 
-    activity = service.activity_permission_readiness()
 
-    assert authority.resolved == [decisions[-1].decision_id]
-    assert activity["example"] == {
-        "after": "After",
-        "before": "Before",
-        "destination": "title",
+class _CountingAuthority(_Authority):
+    def __init__(self) -> None:
+        self.resolved: list[str] = []
+
+    def resolve(self, decision):
+        self.resolved.append(decision.decision_id)
+        return super().resolve(decision)
+
+
+_PLAN_ROW = {
+    "work": "A Work",
+    "authors": "An Author",
+    "current": "Before",
+    "new": "After",
+    "reason": "You chose this value",
+    "sources": ["Hardcover"],
+}
+
+
+def _two_libraries(count: int):
+    """``count`` decisions, the last in library beta (``occurred_at`` 101)."""
+    decisions = _decisions(101)
+    return [*decisions[: count - 1], decisions[100]]
+
+
+def test_permission_readiness_lists_every_change_up_to_the_inline_bound() -> None:
+    decisions = _two_libraries(INLINE_ALL)
+    authority = _CountingAuthority()
+
+    plan = _plan_service(decisions, authority).activity_permission_readiness()["plan"]
+
+    assert plan["total"] == INLINE_ALL
+    # Libraries keep their configured order, so alpha comes before beta.
+    assert [(group["library"], group["count"]) for group in plan["groups"]] == [
+        ("alpha", INLINE_ALL - 1),
+        ("beta", 1),
+    ]
+    assert sum(len(group["rows"]) for group in plan["groups"]) == INLINE_ALL
+    assert sorted(authority.resolved) == sorted(
+        value.decision_id for value in decisions
+    )
+    assert plan["groups"][0] == {
         "library": "alpha",
-        "work_id": "work",
+        "destination": "title",
+        "kind": "human",
+        "count": INLINE_ALL - 1,
+        "rows": [_PLAN_ROW] * (INLINE_ALL - 1),
     }
+
+
+def test_permission_readiness_shows_examples_past_the_inline_bound() -> None:
+    decisions = _two_libraries(INLINE_ALL + 1)
+    authority = _CountingAuthority()
+
+    plan = _plan_service(decisions, authority).activity_permission_readiness()["plan"]
+
+    assert plan["total"] == INLINE_ALL + 1
+    assert [
+        (group["library"], group["count"], len(group["rows"]))
+        for group in plan["groups"]
+    ] == [("alpha", INLINE_ALL, EXAMPLES_PER_GROUP), ("beta", 1, 1)]
+    assert len(authority.resolved) == EXAMPLES_PER_GROUP + 1
+
+
+def test_permission_readiness_bounds_the_rows_it_resolves() -> None:
+    groups = INLINE_ROWS // EXAMPLES_PER_GROUP + 3
+
+    class Repository(_ActivityPagedRepository):
+        def pending_field_effect_decision_counts(self):
+            return tuple(
+                {
+                    "connection": "primary",
+                    "library": f"library-{index:03d}",
+                    "origin": "human",
+                    "destination": "title",
+                    "count": 10,
+                }
+                for index in range(groups)
+            )
+
+        def pending_field_effect_plan_entries(self, per_group, limit, library_order):
+            assert (per_group, limit) == (
+                EXAMPLES_PER_GROUP,
+                EXAMPLES_PER_GROUP * groups,
+            )
+            return tuple(
+                (
+                    "primary",
+                    f"library-{index:03d}",
+                    "human",
+                    "title",
+                    self.decisions[0].decision_id,
+                    "item",
+                )
+                for index in range(groups)
+                for _ in range(EXAMPLES_PER_GROUP)
+            )
+
+    authority = _CountingAuthority()
+    service = ContinuousGuardedApplication(
+        Repository(_decisions(1)),
+        {},
+        {},
+        authority,
+        (("primary", "alpha"),),
+        lambda: 1,
+        lambda *_: None,
+        activity_only=True,
+    )
+
+    plan = service.activity_permission_readiness()["plan"]
+
+    assert plan["total"] == 10 * groups
+    rows = [len(group["rows"]) for group in plan["groups"]]
+    assert sum(rows) == INLINE_ROWS == len(authority.resolved)
+    # Later groups carry their count only.
+    assert rows[-3:] == [0, 0, 0]
+    assert all(group["count"] == 10 for group in plan["groups"])
+
+
+def test_permission_readiness_with_nothing_prepared_has_an_empty_plan() -> None:
+    authority = _CountingAuthority()
+
+    readiness = _plan_service([], authority).activity_permission_readiness()
+
+    assert readiness["plan"] == {"total": 0, "groups": []}
+    assert authority.resolved == []
 
 
 def test_activity_projection_runs_inside_the_injected_read_snapshot() -> None:
@@ -540,7 +699,257 @@ def test_activity_reader_serializes_overlapping_requests() -> None:
     assert not any(thread.is_alive() for thread in (first, second, transitions))
 
 
-def test_activity_example_binding_race_is_absent_but_storage_fault_propagates() -> None:
+class _FileRepository(_ActivityPagedRepository):
+    def __init__(self, decisions) -> None:
+        super().__init__(decisions)
+        self.snapshots: list[str] = []
+
+    def field_effect_write_plan_snapshot(self, call, _cancelled):
+        self.snapshots.append("enter")
+        try:
+            return call()
+        finally:
+            self.snapshots.append("exit")
+
+
+def _file_service(repository, authority=None, *, clock=lambda: 7):
+    return ContinuousGuardedApplication(
+        repository,
+        {},
+        {},
+        _Authority() if authority is None else authority,
+        (("primary", "alpha"), ("primary", "beta")),
+        clock,
+        lambda *_: (_ for _ in ()).throw(AssertionError("no scan is requested")),
+        activity_only=True,
+    )
+
+
+def _drain(stream) -> bytes:
+    chunks = []
+    try:
+        while (chunk := stream.next_chunk()) is not None:
+            chunks.append(chunk)
+    finally:
+        stream.close()
+    return b"".join(chunks)
+
+
+def test_write_plan_file_lists_every_change_in_snapshots_that_end() -> None:
+    repository = _FileRepository(_two_libraries(3))
+    released: list[str] = []
+
+    stream = _file_service(repository).activity_write_plan_file(
+        "json", lambda: False, {"alpha": "Alpha books", "beta": "Beta books"}
+    )
+    stream.when_closed(lambda: released.append("released"))
+    body = _drain(stream)
+
+    document = json.loads(body)
+    assert document["total"] == document["listed"] == 3
+    assert (document["truncated"], document["unreadable"], document["made_at"]) == (
+        False,
+        0,
+        7,
+    )
+    assert document["changed"] == 0
+    # Configured library order first, so alpha's rows precede beta's.
+    assert [row["library"] for row in document["changes"]] == [
+        "Alpha books",
+        "Alpha books",
+        "Beta books",
+    ]
+    assert document["changes"][0] == {
+        "library": "Alpha books",
+        "work": "A Work",
+        "authors": "An Author",
+        "field": "Title",
+        "chosen_by": "You",
+        "current_value": "Before",
+        "new_value": "After",
+        "reason": "You chose this value",
+        "sources": ["Hardcover"],
+    }
+    assert body.count(b"\n") == 3 + 1
+    # The list is one snapshot and the rows another, each ended.
+    assert repository.snapshots == ["enter", "exit"] * 2
+    assert released == ["released"]
+
+
+def test_write_plan_file_sends_nothing_inside_a_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each snapshot is bounded and has ended before its rows are sent."""
+    monkeypatch.setattr(continuous_field_effects, "CLOSING_CHECK_ROWS", 2)
+    repository = _FileRepository(_decisions(5))
+    sent: list[tuple[int, str]] = []
+    service = _file_service(repository)
+
+    def emit(chunk: bytes) -> None:
+        sent.append((chunk.count(b"\n"), repository.snapshots[-1]))
+
+    service._write_plan_file("json", emit, lambda: False, {})
+
+    # The head, three chunks of at most two rows, the summary: none of them
+    # sent while a snapshot was open.
+    assert sent == [(1, "exit"), (2, "exit"), (2, "exit"), (1, "exit"), (0, "exit")]
+    assert repository.snapshots == ["enter", "exit"] * 4
+
+    # A snapshot that has worked its time takes no further row.
+    monkeypatch.setattr(continuous_field_effects, "CHUNK_SNAPSHOT_SECONDS", 0)
+    repository.snapshots.clear()
+    sent.clear()
+    service._write_plan_file("json", emit, lambda: False, {})
+    assert [rows for rows, _ in sent] == [1, 1, 1, 1, 1, 1, 0]
+    assert repository.snapshots == ["enter", "exit"] * 6
+
+
+def test_write_plan_file_sends_no_chunk_whose_rows_were_all_left_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(continuous_field_effects, "CLOSING_CHECK_ROWS", 2)
+    decisions = _decisions(4)
+    moved = {value.decision_id for value in decisions[:2]}
+
+    class Repository(_FileRepository):
+        def prepared_field_effect_decisions(self, decision_ids):
+            return super().prepared_field_effect_decisions(decision_ids) - moved
+
+    class SkippingAuthority(_Authority):
+        def resolve(self, decision):
+            raise FieldEffectError("authority_binding")
+
+    repository = Repository(decisions)
+    sent: list[bytes] = []
+    checks: list[int] = []
+
+    def cancelled() -> bool:
+        checks.append(len(sent))
+        return False
+
+    _file_service(repository, SkippingAuthority())._write_plan_file(
+        "json", sent.append, cancelled, {}
+    )
+
+    # An all-changed chunk and an all-unreadable one: the head and the
+    # summary only, and the stop check still ran before each chunk.
+    assert len(sent) == 2 and b"" not in sent
+    summary = json.loads(b"".join(sent))
+    assert (summary["changed"], summary["unreadable"], summary["changes"]) == (2, 2, [])
+    assert checks == [1, 1]
+    assert repository.snapshots == ["enter", "exit"] * 3
+
+
+@pytest.mark.parametrize("format", ("csv", "json"), ids=("csv", "json"))
+def test_write_plan_file_leaves_out_a_change_that_moved_and_counts_it(
+    format: PlanFormat,
+) -> None:
+    """Listed, then no longer prepared when its rows are read: left out and
+    counted as changed, never as unreadable."""
+    decisions = _decisions(4)
+
+    class Repository(_FileRepository):
+        def prepared_field_effect_decisions(self, decision_ids):
+            return super().prepared_field_effect_decisions(decision_ids) - {
+                decisions[1].decision_id
+            }
+
+    class SkippingAuthority(_Authority):
+        def resolve(self, decision):
+            if decision.decision_id == decisions[2].decision_id:
+                raise FieldEffectError("authority_binding")
+            return super().resolve(decision)
+
+    body = _drain(
+        _file_service(
+            Repository(decisions), SkippingAuthority()
+        ).activity_write_plan_file(format, lambda: False, {})
+    )
+
+    if format == "json":
+        document = json.loads(body)
+        assert len(document["changes"]) == document["listed"] == 2
+        assert (document["total"], document["unreadable"], document["changed"]) == (
+            4,
+            1,
+            1,
+        )
+        # Every listed entry is accounted for, so nothing was cut short.
+        assert document["truncated"] is False
+    else:
+        lines = body.decode("utf-8-sig").split("\r\n")
+        assert lines[3:] == [
+            '"1 prepared change was not listed because it could not be read."',
+            '"1 prepared change was not listed because it changed while this '
+            'file was being made."',
+            "",
+        ]
+
+
+def test_write_plan_file_counts_an_unreadable_change_and_says_so() -> None:
+    decisions = _two_libraries(2)
+
+    class SkippingAuthority(_Authority):
+        def resolve(self, decision):
+            if decision.decision_id == decisions[0].decision_id:
+                raise FieldEffectError("authority_binding")
+            return super().resolve(decision)
+
+    body = _drain(
+        _file_service(
+            _FileRepository(decisions), SkippingAuthority()
+        ).activity_write_plan_file("csv", lambda: False, {})
+    )
+
+    lines = body.decode("utf-8-sig").split("\r\n")
+    assert lines[0].startswith('"Library","Work"')
+    assert len([line for line in lines if line.startswith('"beta"')]) == 1
+    assert '"1 prepared change was not listed because it could not be read."' in lines
+
+
+def test_write_plan_file_stops_when_the_application_closes() -> None:
+    closing = threading.Event()
+
+    class Repository(_FileRepository):
+        def field_effect_plan_documents(self, decision_ids):
+            closing.set()
+            return super().field_effect_plan_documents(decision_ids)
+
+    repository = Repository(_decisions(CLOSING_CHECK_ROWS + 1))
+    stream = _file_service(repository).activity_write_plan_file(
+        "csv", closing.is_set, {}
+    )
+
+    with pytest.raises(GuardedApplicationError, match="^unavailable$"):
+        _drain(stream)
+    # The list and the first chunk were read; both snapshots ended.
+    assert repository.snapshots == ["enter", "exit"] * 2
+
+
+def test_write_plan_file_storage_fault_reaches_the_consumer_after_the_head() -> None:
+    class Repository(_FileRepository):
+        def field_effect_plan_documents(self, _decision_ids):
+            raise FieldEffectError("persistence")
+
+    stream = _file_service(Repository(_decisions(2))).activity_write_plan_file(
+        "json", lambda: False, {}
+    )
+    try:
+        assert stream.next_chunk() == b'{"changes":[\n'
+        with pytest.raises(FieldEffectError, match="^persistence$"):
+            stream.next_chunk()
+    finally:
+        stream.close()
+
+
+def test_write_plan_file_refuses_an_unknown_format() -> None:
+    with pytest.raises(GuardedApplicationError, match="^activity_query$"):
+        _file_service(_FileRepository([])).activity_write_plan_file(
+            cast("PlanFormat", "xlsx"), lambda: False, {}
+        )
+
+
+def test_plan_binding_race_is_unlisted_but_storage_fault_propagates() -> None:
     repository = _ActivityPagedRepository(_decisions(1))
 
     def service(authority):
@@ -562,12 +971,22 @@ def test_activity_example_binding_race_is_absent_but_storage_fault_propagates() 
         def resolve(self, _decision):
             raise FieldEffectError(self.code)
 
-    assert (
-        service(RaisingAuthority("authority_binding")).activity_permission_readiness()[
-            "example"
-        ]
-        is None
-    )
+    plan = service(
+        RaisingAuthority("authority_binding")
+    ).activity_permission_readiness()["plan"]
+    # The change is still counted; only its example is missing.
+    assert plan == {
+        "total": 1,
+        "groups": [
+            {
+                "library": "alpha",
+                "destination": "title",
+                "kind": "human",
+                "count": 1,
+                "rows": [],
+            }
+        ],
+    }
     with pytest.raises(FieldEffectError, match="^persistence$"):
         service(RaisingAuthority("persistence")).activity_permission_readiness()
 
@@ -2879,13 +3298,16 @@ def test_activity_transient_validated_reports_require_exact_canonical_bindings(
             assert parse.call_count == 0
 
 
-def test_history_defers_backup_and_permission_example() -> None:
+def test_history_defers_backup_and_permission_plan() -> None:
     class Repository(_ActivityPagedRepository):
         def field_effect_backup_ready(self, *, fresh=False):
             raise AssertionError("history must not check backup readiness")
 
-        def pending_field_effect_activity_example_document(self):
-            raise AssertionError("history must not read the permission example")
+        def pending_field_effect_plan_entries(self, *_args):
+            raise AssertionError("history must not read the write plan")
+
+        def field_effect_plan_documents(self, _decision_ids):
+            raise AssertionError("history must not read the write plan")
 
     service = ContinuousGuardedApplication(
         Repository(_decisions(1)),

@@ -7,7 +7,8 @@ Every function that reads the attribute, or the serialized key, is listed with
 its role, so a new reader fails here and is reviewed against S11 before it
 lands. The report module itself, which validates, serializes and bounds them,
 and the provider adapters, which only copy their lanes' records into the lane
-result, are allowed whole.
+result, are allowed whole. The review API and the write plan read them only to
+name the evidence of a choice the owner made from a level offer.
 
 The level storage tables are read and written only by the level
 reconciliation module, and created only by the schema (S10, amendment 2).
@@ -47,6 +48,10 @@ _READERS: dict[str, str] = {
     # The review API cites a refused product's evidence when a level choice
     # names it (S10 "Readers", amendment 2): evidence only, never an offer.
     "application/review_web.py::_evidence_by_reference": "review_api_evidence",
+    # The write plan names the provider whose refused product a level choice
+    # cites (#1336): the provider's name only, never the record or an offer.
+    "adapters/persistence/field_effect_activity.py::"
+    "SQLiteFieldEffectActivityRepository._plan_source_labels": "write_plan_source_name",
     # A retry successor keeps each carried lane's own records (AC6).
     "application/provider_retry_successor.py::"
     "GenerateProviderRetrySuccessor._merged.result": "producer",

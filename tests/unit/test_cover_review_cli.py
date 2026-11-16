@@ -843,3 +843,45 @@ def test_permission_reader_partial_construction_closes_history() -> None:
             )
     assert raised.value is failure
     close.assert_called_once_with()
+
+
+def test_export_reader_partial_construction_closes_both_readers() -> None:
+    """The write-plan reader is the third generation resource (#1336)."""
+    first, second = Mock(), Mock()
+    failure = RuntimeError("export reader unavailable")
+    with patch(
+        "mechanical_librarian.bootstrap.composition.open_field_effect_activity_projection",
+        side_effect=[(Mock(), first), (Mock(), second), failure],
+    ):
+        with pytest.raises(RuntimeError) as raised:
+            open_field_effect_activity_readers(
+                Mock(), Path("/database.sqlite3"), object()
+            )
+    assert raised.value is failure
+    first.assert_called_once_with()
+    second.assert_called_once_with()
+
+
+def test_export_reader_has_its_own_window_and_closes_first() -> None:
+    order: list[str] = []
+    readers = [
+        (Mock(name=name), Mock(side_effect=lambda n=name: order.append(n)))
+        for name in ("history", "permissions", "export")
+    ]
+    with patch(
+        "mechanical_librarian.bootstrap.composition.open_field_effect_activity_projection",
+        side_effect=readers,
+    ) as opened:
+        history, permissions, export, close = open_field_effect_activity_readers(
+            Mock(), Path("/database.sqlite3"), object()
+        )
+    assert (history, permissions, export) == tuple(reader for reader, _ in readers)
+    windows = [
+        call.kwargs.get(
+            "readiness_window", call.args[5] if len(call.args) > 5 else None
+        )
+        for call in opened.call_args_list
+    ]
+    assert windows[0] is windows[1] is not None and windows[2] is None
+    close()
+    assert order == ["export", "permissions", "history"]
