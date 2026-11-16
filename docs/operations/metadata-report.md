@@ -295,8 +295,9 @@ that fails is dropped. The report's `owner_link` records the outcome:
 An admitted link's record supplies the anchor, its work title and creators.
 The other sources get one anchored work lane instead of the local title and
 author lanes, and every title and creator comparison reads the anchor, so a
-record matching only the local values is not admitted. No work lane runs
-while the link is unread. A failed link lane is retried by provider recovery
+record matching only the local values is not admitted. While the link
+stands with no anchor read, no work lane runs and nothing is admitted on the
+local values, and any standing audiobook link replaces the carried ASIN. A failed link lane is retried by provider recovery
 alone and first. Evidence only the link or its anchor admitted reaches review
 but decides nothing automatically.
 

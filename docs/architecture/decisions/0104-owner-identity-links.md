@@ -4,7 +4,7 @@
 - Date: 2026-11-16
 - Owners: project maintainers
 - Issues: #1477, #1937
-- Amends: ADR-0088 (a recording link supersedes the carried ASIN), ADR-0013
+- Amends: ADR-0088 (a standing link supersedes the carried ASIN), ADR-0013
   (one more clean rebuild)
 - Relates to: ADR-0092, ADR-0096, ADR-0101, ADR-0102
 - Supersedes: none
@@ -68,14 +68,25 @@ about the work, and it should steer what preparation reads.
    The other sources get one anchored WORK lane in place of the asserted and
    alternative WORK lanes. Every title and creator comparison reads the anchor
    instead of the local values, so a record that matches only the local values
-   is not admitted. While a link is unread (`unavailable`), no WORK lane is
-   planned. **Every link steers: work, edition and recording links all anchor.
+   is not admitted. While a link stands but no anchor was read (`unavailable`,
+   `missing`, `merged`, `contradicted`, `source_disabled`, or an admitted
+   record that states no complete creator set), no WORK lane is planned and
+   no lane admits against any title or creators: the local values never
+   admit a record while the owner's link stands. The report replays each
+   admission against the same context, the anchor while the link stands. An
+   item whose own title surfaces are all empty gets no anchored WORK lane,
+   because the lane's inputs are the target's own title claims; a link
+   claim carries no work title to stand it on. This is a known limit of
+   increment 1. **Every link steers: work, edition and recording links all anchor.
    This is the owner's choice** (#1477, answering the planning question).
    Otherwise local-only matches would compete with an edition or recording the
    owner confirmed. One predicate, `owner_link_anchors`, holds the choice.
-6. **ADR-0088 amendment.** A recording link supersedes the carried ASIN.
-   Clause 1 carries nothing while one stands, and clause 3's carried lane is
-   not planned. Clause 4's variant, band and narrator gates are reused for the
+6. **ADR-0088 amendment.** Any standing audiobook link supersedes the carried
+   ASIN, a work or edition link as well as a recording link. Under a work
+   link a carried product would be re-admitted on the local values, which
+   never admit while the link stands (maintainer ruling on #1937). Clause 1
+   carries nothing while one stands, and clause 3's carried lane is not
+   planned. Clause 4's variant, band and narrator gates are reused for the
    recording link without exact work admission. An ASIN the item's own
    surfaces assert is still asked.
 7. **Shadow-first, until #1479.** Link and anchor evidence reaches proposals in
@@ -93,6 +104,16 @@ about the work, and it should steer what preparation reads.
      holds such a record.
    - ISBN and ASIN proposals never cite such a record. Identifier fields keep
      their own rules.
+
+   A record counts as kept through the link or its anchor
+   (`owner_link_reached`) when every lane holding it is the link lane, the
+   anchored WORK lane, or an ASIN lane fed only by ASINs those lanes
+   promoted. It also counts when the anchor is all that admits it: its ASIN
+   lane admission replays against the anchor but not against the target's
+   own values, or it represents the work only against the anchor. The audio
+   editions the linked Hardcover book lists are leads like a search's: they
+   feed the per-ASIN sources, and what those return is kept through the
+   link.
 8. **Preparation and recovery.** The report binds the link digest, so a link
    change gives a new report and case on the next preparation. A failed link
    lane enrolls in provider recovery like any lane. The successor rebuilds it
