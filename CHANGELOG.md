@@ -135,6 +135,10 @@ brackets are GitHub issues.
   fields: each prepared change's current and new value, who chose it and why.
   Download CSV and Download JSON save the whole plan, up to 20,000 changes, as
   it is made; nothing is stored or granted (#1336).
+- The policy preview now covers title, authors, narrators, publication date,
+  publisher, language and cover. Each changed work shows its current value
+  beside the active policy's and the draft's, grouped by what the draft does.
+  A cover is described in words (#1524).
 - The masthead shows background work as an icon that fills while libraries are
   prepared and marks what needs you, and the theme switch and Sign out are
   icons. Its popover lists source lookups waiting to retry, with Retry now and

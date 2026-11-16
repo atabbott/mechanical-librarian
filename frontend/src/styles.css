@@ -477,22 +477,16 @@ html[data-masthead='static'] .cm-policy-sidebar { position:relative; top:auto; m
 .cm-policy-result dd { margin:0; color:var(--accent-strong); font-weight:700; }
 .cm-policy-preview { min-width:0; }
 .cm-policy-preview > header { display:flex; align-items:center; justify-content:space-between; gap:1rem; padding:.6rem .75rem; border-bottom:1px solid var(--line); }
-.cm-policy-preview > header > div { display:grid; gap:.08rem; }
+.cm-policy-preview > header h2 { margin:0; font:inherit; font-weight:700; letter-spacing:0; }
 .cm-policy-preview > header b { display:grid; width:28px; height:28px; place-items:center; border-radius:50%; color:var(--surface); background:var(--accent-strong); font-size:.75rem; }
 .cm-policy-preview-list { display:grid; }
 .cm-policy-preview-list > div { display:grid; grid-template-columns:26px minmax(160px,1fr) minmax(150px,.9fr); align-items:center; gap:.55rem; min-height:44px; padding:.35rem .75rem; border-bottom:1px solid var(--line); }
-.cm-policy-preview-list > div.is-change { background:color-mix(in srgb,var(--accent-soft) 42%,transparent); }
 .cm-policy-work-mark { display:grid; width:26px; height:32px; place-items:center; border-radius:.2rem .35rem .35rem .2rem; color:#f5ead2; background:#3b5550; font:700 .75rem/1 Georgia,serif; }
 .cm-policy-preview-list > div > span:nth-child(2) { display:grid; gap:.05rem; min-width:0; }
 .cm-policy-preview-list > div > span:nth-child(2) strong { overflow:hidden; font-size:.75rem; text-overflow:ellipsis; white-space:nowrap; }
 .cm-policy-impact { display:grid; justify-items:end; gap:.08rem; min-width:0; text-align:right; }
 .cm-policy-impact > b { color:var(--accent-strong); font-size:.75rem; }
-.cm-policy-preview-list > .is-unpreviewed .cm-policy-impact > b { color:var(--notice); }
 .cm-policy-impact > small { overflow-wrap:anywhere; color:var(--soft); font-size:.75rem; line-height:1.28; }
-.cm-policy-impact details { max-width:100%; color:var(--soft); font-size:.75rem; }
-.cm-policy-impact summary { cursor:pointer; }
-.cm-policy-impact code { display:block; max-width:100%; overflow-wrap:anywhere; white-space:normal; }
-.cm-policy-preview > footer { padding:.5rem .85rem; color:var(--soft); font-size:.75rem; }
 .cm-policy-activation { display:grid; grid-column:1 / -1; grid-template-columns:auto minmax(0,1fr); align-items:center; gap:.65rem; padding:.6rem .75rem; border-top:1px solid var(--line); background:var(--accent-soft); }
 .cm-policy-activation strong { font:700 .9rem/1.25 Georgia,serif; }
 .cm-policy-activation span { color:var(--soft); font-size:.75rem; }
@@ -1483,7 +1477,6 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 .cm-policy-preview-list > div > span:nth-child(2) small { font-size:.75rem; }
 .cm-policy-impact > b { font-size:.8rem; }
 .cm-policy-impact > small { font-size:.78rem; line-height:1.5; }
-.cm-policy-impact details { font-size:.75rem; }
 .cm-policy-projected-context { font-size:.82rem; line-height:1.5; }
 .cm-policy-activation { scroll-margin-block:5rem; }
 .cm-policy-activation ul { grid-column:1 / -1; font-size:.8rem; line-height:1.5; }
@@ -1864,6 +1857,24 @@ dialog.first-review-guide::backdrop { background:rgb(23 32 30 / .42); }
   .activity-write-plan-actions > button { flex:1 1 auto; }
 }
 
+/* The policy preview's grouped rows (#1524): the write plan's rows under each
+   library and field, with the current value beside each policy's. */
+.policy-preview-library { display:grid; gap:.7rem; min-width:0; padding:.75rem .85rem .9rem; border-bottom:1px solid var(--line); font-size:.85rem; line-height:1.45; }
+.policy-preview-library :is(h3, h4) { margin:0; font-size:.95rem; overflow-wrap:anywhere; }
+.policy-preview-library h4 { font-size:.85rem; }
+.policy-preview-library .write-plan-field { gap:.15rem; }
+.policy-preview-library .write-plan-count { display:flex; flex-wrap:wrap; flex:0 1 auto; column-gap:.6rem; min-width:0; margin-inline-start:auto; color:var(--soft); }
+.policy-preview-library .write-plan-rows { display:grid; grid-template-columns:minmax(0,1fr); gap:.45rem; margin:.2rem 0 0; padding:0; list-style:none; }
+.policy-preview-library .write-plan-rows > li { display:grid; grid-template-columns:minmax(0,1fr); gap:.25rem; padding:.55rem .65rem; background:var(--surface-strong); }
+.policy-preview-library .write-plan-work span { color:var(--soft); }
+/* Three values, so Current, Active policy and Draft line up down a group. */
+.policy-preview-library .write-plan-values { grid-template-columns:repeat(3,minmax(0,1fr)); }
+.policy-preview-library .write-plan-values > div { display:block; padding:0; border:0; font-size:inherit; }
+.policy-preview-library .write-plan-values dd { color:inherit; font-weight:400; }
+.policy-preview-library .write-plan-values small { display:block; font-size:.78rem; line-height:1.4; }
+@media (max-width:760px) {
+  .policy-preview-library .write-plan-values { grid-template-columns:minmax(0,1fr); row-gap:.45rem; }
+}
 /* Masthead icons (#1494): the status icon's ring turns only while preparing and
    only when neither the system nor the Settings preference asks for less motion;
    its fill shows either way. The tooltip repeats the accessible name for sighted

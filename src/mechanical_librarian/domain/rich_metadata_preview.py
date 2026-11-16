@@ -87,7 +87,7 @@ from mechanical_librarian.domain.rich_metadata_qualification import (
 )
 from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 
-_DESTINATIONS: Final = {
+RICH_PREVIEW_DESTINATIONS: Final = {
     "subtitle": TargetDestination.SUBTITLE,
     "series": TargetDestination.SERIES,
     "genres": TargetDestination.GENRES,
@@ -434,7 +434,7 @@ def compile_rich_metadata_preview(
             retained_claims,
             level,
         )
-        for field, destination in _DESTINATIONS.items()
+        for field, destination in RICH_PREVIEW_DESTINATIONS.items()
     )
     return RichMetadataPreview(report.report_id, proposal.proposal_set_id, policy.resolved_id, previews)
 
