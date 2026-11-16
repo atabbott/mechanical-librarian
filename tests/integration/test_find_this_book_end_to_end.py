@@ -225,6 +225,7 @@ class _World:
     preparation: _Preparation
     requests: list[str] = field(default_factory=list)
     clock: list[float] = field(default_factory=lambda: [1_800_000_000.0])
+    app_clock: list[int] = field(default_factory=lambda: [NOW])
 
     def get(self, path: str) -> Any:
         answer = self.client.get(path)
@@ -285,6 +286,8 @@ def world(tmp_path: Path) -> Iterator[_World]:
         monotonic=lambda: clock[0],
     )
     preparation = _Preparation()
+    # The app's clock; a step moves it so each recorded event has its own time.
+    app_clock = [NOW]
     password = tmp_path / "owner.hash"
     password.write_text(PasswordHasher().hash("correct horse"), encoding="utf-8")
     os.chmod(password, 0o600)
@@ -297,7 +300,7 @@ def world(tmp_path: Path) -> Iterator[_World]:
             owner_password_hash_file=str(password),
             session_lifetime_seconds=600,
         ),
-        clock=lambda: NOW,
+        clock=lambda: app_clock[0],
         review_preparation=cast(Any, preparation),
         owner_search=service,
         activity_projection=ContinuousGuardedApplication(
@@ -306,7 +309,7 @@ def world(tmp_path: Path) -> Iterator[_World]:
             {},
             PersistedFieldEffectAuthority(repository),
             ((CONNECTION, LIBRARY),),
-            lambda: NOW,
+            lambda: app_clock[0],
             lambda *_: None,
             activity_only=True,
         ),
@@ -330,6 +333,7 @@ def world(tmp_path: Path) -> Iterator[_World]:
             preparation,
             requests,
             clock,
+            app_clock,
         )
     repository.close()
 
@@ -411,7 +415,8 @@ def test_the_owner_links_the_work_and_the_next_preparation_reads_the_link(
     assert row["link"] == {"state": "linked"}
     assert world.get(view)["link"]["state"] == "linked"
 
-    # The owner withdraws it; the work is prepared again without it.
+    # The owner withdraws it later; the work is prepared again without it.
+    world.app_clock[0] += 10
     withdrawn = world.post(
         "/api/v1/library/link/withdraw",
         {
