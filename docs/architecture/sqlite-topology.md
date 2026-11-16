@@ -177,7 +177,8 @@ What the main aggregates mean, where the table names alone do not say:
 - **The Library visit.** `library_visit` is a singleton of listing positions,
   the last `rowid` of `current_review_packages`, `review_preparation_work` and
   `metadata_reports`, written only by the visit command. A work is new while
-  its row lies past them, so those rows keep their place
+  its row lies past them, so those rows keep their place. A package's
+  `package_position` is never given out twice
   ([ADR-0103](decisions/0103-keep-the-library-visit-on-the-server.md)).
 - **Settings and credentials.** `owner_settings` is a revisioned singleton
   that also holds incomplete first-run setup state.

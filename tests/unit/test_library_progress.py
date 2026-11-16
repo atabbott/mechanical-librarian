@@ -363,13 +363,13 @@ def test_progress_refuses_an_invalid_row(
 # boundary, New column, New total and listing end: the trace of each read
 # below, as its SHA-256.
 _PAGE_STATEMENT_DIGESTS = {
-    (False, None): "dbd8e7d2a8a161df6e27f8b74b6e91691cca054c9f061027cc272f7ea642fd93",
+    (False, None): "84a9ebb376eda35e180f30f28f22ded9ee0c2971d91eddfa093fa817b61809e3",
     (False, "needs_attention"): (
-        "9613cadc44ecb0d064d0581630f57dfeab2b7f15fd2a0e4e78268be87529ccca"
+        "b6a6a4a52c0adc3442194aba1583f83ff9613fca760b2044ec386ae7054ddff6"
     ),
-    (True, None): "fa6f5ecceb5f0d9b59653f8d9155d9ec64ff77cc445be685f75f26d1c2a44f27",
+    (True, None): "4e17e6b3cda48ee1233cb8ace6809ef85bc00c1b3c0f5271390359f720e6ec62",
     (True, "needs_attention"): (
-        "7bdb65482c96ae339f5f5e7beae9e6aa7364401092f2114a0a73bac865b1d6d0"
+        "252cc84dddf21823548d91f92989ddcb7403e949178f18f9b1b1b743590ecdad"
     ),
 }
 
@@ -709,10 +709,10 @@ def test_new_is_a_work_first_listed_after_the_boundary_and_nothing_else(
         repository.close()
 
 
-def test_a_newcomer_on_a_reused_position_and_one_in_flight_are_new(
+def test_a_newcomer_after_the_last_row_left_and_one_in_flight_are_new(
     tmp_path: Path,
 ) -> None:
-    """AC2: the report clause catches a newcomer that takes a deleted row's place."""
+    """AC2: a newcomer after the last row was deleted never takes its place."""
     repository = _three_libraries(tmp_path)
     try:
         browser = BrowseReviewLibrary(repository)
@@ -754,14 +754,49 @@ def test_a_newcomer_on_a_reused_position_and_one_in_flight_are_new(
             "DELETE FROM current_review_packages WHERE rowid=?", (last[1],)
         )
         repository._connection.commit()
-        _admit(repository, _at(_report("Reused place", "8", "9"), "ebooks", "reuser"))
+        _admit(repository, _at(_report("Late newcomer", "8", "9"), "ebooks", "reuser"))
         assert repository._connection.execute(
-            "SELECT rowid FROM current_review_packages WHERE item_id='reuser'"
-        ).fetchone() == (boundary[0],)
-        assert _new_works(browser, 110) == (1, ["Reused place"])
+            "SELECT rowid>? FROM current_review_packages WHERE item_id='reuser'",
+            (boundary[0],),
+        ).fetchone() == (1,)
+        assert _new_works(browser, 110) == (1, ["Late newcomer"])
 
         _admit(repository, _at(_report("In flight", "a", "c"), "drama", "in-flight"))
-        assert _new_works(browser, 120) == (2, ["In flight", "Reused place"])
+        assert _new_works(browser, 120) == (2, ["In flight", "Late newcomer"])
+    finally:
+        repository.close()
+
+
+def test_a_work_that_returns_after_the_last_row_left_is_new(
+    tmp_path: Path,
+) -> None:
+    """A seen work that leaves and returns counts as new, even as the last row.
+
+    Its first report stays in `metadata_reports`, so only a package position
+    that is never given out twice can tell its return from a work that stayed.
+    """
+    repository = _three_libraries(tmp_path)
+    try:
+        browser = BrowseReviewLibrary(repository)
+        _start_visit(repository, 100)
+        seen = repository._connection.execute(
+            "SELECT seen_packages FROM library_visit"
+        ).fetchone()[0]
+        library, item, position = repository._connection.execute(
+            "SELECT library_name,item_id,rowid FROM current_review_packages "
+            "ORDER BY rowid DESC LIMIT 1"
+        ).fetchone()
+        assert position == seen
+        repository._connection.execute(
+            "DELETE FROM current_review_packages WHERE rowid=?", (position,)
+        )
+        repository._connection.commit()
+        _admit(repository, _at(_report("Returned work", "8", "9"), library, item))
+        assert repository._connection.execute(
+            "SELECT rowid>? FROM current_review_packages WHERE item_id=?",
+            (seen, item),
+        ).fetchone() == (1,)
+        assert _new_works(browser, 110) == (1, ["Returned work"])
     finally:
         repository.close()
 

@@ -241,6 +241,7 @@ def test_current_authority_and_predecessor_refusal_without_history(
         PRIOR_ATTENTION_FACT_OBJECTS,
         PRIOR_ATTENTION_FACT_SOURCE_SQL,
         PRIOR_AUTOMATIC_DECISIONS_SQL,
+        PRIOR_CURRENT_REVIEW_PACKAGES_SQL,
         PRIOR_HUMAN_DECISIONS_SQL,
         PRIOR_REVIEW_CASE_FIELD_FACTS_INSERT_SQL,
         PRIOR_REVIEW_PREPARATION_PRESENTATION_SQL,
@@ -312,6 +313,10 @@ def test_current_authority_and_predecessor_refusal_without_history(
             schema, "_ATTENTION_FACT_SOURCE_SQL", PRIOR_ATTENTION_FACT_SOURCE_SQL
         )
         old_schema.setattr(schema, "_REVIEW_WORK_SQL", PRIOR_REVIEW_WORK_SQL)
+        old_schema.setattr(
+            schema, "_CURRENT_REVIEW_PACKAGES_SQL", PRIOR_CURRENT_REVIEW_PACKAGES_SQL
+        )
+        old_schema.setattr(schema, "_PACKAGE_POSITION_OBJECTS", ())
         # The frozen producer's reviewer access CHECK names v3 (#1372 moved it).
         old_schema.setattr(
             schema,

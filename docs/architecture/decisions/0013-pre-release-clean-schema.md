@@ -618,7 +618,8 @@ no adoption is supplied.
 
 Issue #1351 takes the clean-rebuild branch. The application database gains
 the `library_visit` singleton, which holds how far Library's listing had got
-at the owner's last visit
+at the owner's last visit, and `current_review_packages` gains
+`package_position`, a position SQLite never gives out twice
 ([ADR-0103](0103-keep-the-library-visit-on-the-server.md)). No stored
 document version moves. Every earlier application database is rejected before mutation
 and needs a clean rebuild; no adoption is supplied.

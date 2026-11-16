@@ -406,6 +406,21 @@ PRIOR_REVIEW_WORK_SQL = persistence_schema._REVIEW_WORK_SQL.replace(
 assert PRIOR_REVIEW_WORK_SQL != persistence_schema._REVIEW_WORK_SQL
 
 
+# Every producer before #1351 keyed a current package by its work alone, with
+# no arrival position that SQLite never gives out twice.
+PRIOR_CURRENT_REVIEW_PACKAGES_SQL = (
+    persistence_schema._CURRENT_REVIEW_PACKAGES_SQL.replace(
+        "package_position INTEGER PRIMARY KEY AUTOINCREMENT, ", ""
+    ).replace(
+        "UNIQUE(connection_name,library_name,item_id))",
+        "PRIMARY KEY(connection_name,library_name,item_id))",
+    )
+)
+assert (
+    PRIOR_CURRENT_REVIEW_PACKAGES_SQL != persistence_schema._CURRENT_REVIEW_PACKAGES_SQL
+)
+
+
 # Every producer before #1285 admitted only the three original human outcomes.
 PRIOR_HUMAN_DECISIONS_SQL = persistence_schema._HUMAN_DECISIONS_SQL.replace(
     "'reject','owner_entered','withdraw','pin','unpin')", "'reject')"

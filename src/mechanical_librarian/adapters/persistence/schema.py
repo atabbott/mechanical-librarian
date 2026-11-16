@@ -708,8 +708,11 @@ _REVIEW_POINTERS_SQL = (
     "CHECK ((outcome IN ('admitted','superseded') AND review_case_id IS NOT NULL) OR (outcome IN ('no_case','retired','tombstoned') AND review_case_id IS NULL)), "
     "PRIMARY KEY (connection_name,library_name,item_id))"
 )
+# #1351: a work's place in Library's order of arrival, never given out twice,
+# so a work that leaves and returns lies past every earlier visit's mark.
 _CURRENT_REVIEW_PACKAGES_SQL = (
     "CREATE TABLE current_review_packages ("
+    "package_position INTEGER PRIMARY KEY AUTOINCREMENT, "
     "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, "
     "proposal_set_id TEXT REFERENCES proposal_sets(proposal_set_id), "
     "report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
@@ -719,7 +722,12 @@ _CURRENT_REVIEW_PACKAGES_SQL = (
     "CHECK ((outcome IN ('report_only','evidence_only') AND proposal_set_id IS NULL AND review_case_id IS NULL AND checkpoint IS NULL) "
     "OR (outcome IN ('admitted','superseded') AND proposal_set_id IS NOT NULL AND review_case_id IS NOT NULL AND checkpoint IS NOT NULL) "
     "OR (outcome IN ('no_case','retired') AND proposal_set_id IS NOT NULL AND review_case_id IS NULL AND checkpoint IS NOT NULL)), "
-    "PRIMARY KEY(connection_name,library_name,item_id))"
+    "UNIQUE(connection_name,library_name,item_id))"
+)
+# SQLite's own record of the highest package position given out, which the
+# package table's AUTOINCREMENT creates.
+_PACKAGE_POSITION_OBJECTS: tuple[tuple[str, str, str | None], ...] = (
+    ("table", "sqlite_sequence", "CREATE TABLE sqlite_sequence(name,seq)"),
 )
 # Library, Attention and detail reach a case's current lineage and package by
 # its case id. Without these each visible row walked every lineage and package;
@@ -2008,6 +2016,7 @@ def _current_pointer_objects() -> tuple[tuple[str, str, str | None], ...]:
         ("table", "current_metadata_report_lineages", _CURRENT_LINEAGE_SQL),
         ("table", "current_review_case_lineages", _REVIEW_POINTERS_SQL),
         ("table", "current_review_packages", _CURRENT_REVIEW_PACKAGES_SQL),
+        *_PACKAGE_POSITION_OBJECTS,
         ("table", "provider_recovery_outbox", _PROVIDER_RECOVERY_OUTBOX_SQL),
         ("index", "sqlite_autoindex_current_metadata_reports_1", None),
         ("index", "sqlite_autoindex_current_metadata_report_lineages_1", None),

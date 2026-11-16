@@ -754,7 +754,7 @@ def test_library_progress_reads_attention_facts_by_key() -> None:
 
 
 def test_the_new_lens_reads_each_work_by_key_within_the_scale_budget() -> None:
-    """#1351: what makes a work new costs one covering probe per candidate.
+    """#1351: what makes a work new is its own package position, with no probe.
 
     With 30 of 200 works new, Library, its New lens and the progress read
     stay inside the read budget, and progress inside half again of a Library
@@ -822,14 +822,9 @@ def test_the_new_lens_reads_each_work_by_key_within_the_scale_budget() -> None:
             ]
             assert len(candidates) == 2
             for statement in candidates:
+                assert "earlier" not in statement
                 plan = _plan(connection, statement, ())
-                assert any(
-                    "SEARCH earlier USING COVERING INDEX "
-                    "sqlite_autoindex_metadata_reports_2 (connection_name=? AND "
-                    "library_name=? AND item_id=?)" in step
-                    for step in plan
-                ), plan
-                assert not any(re.match(r"SCAN earlier\b", step) for step in plan)
+                assert not any("metadata_reports_2" in step for step in plan), plan
         finally:
             repository.close()
 

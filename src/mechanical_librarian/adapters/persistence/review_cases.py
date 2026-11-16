@@ -1625,14 +1625,11 @@ def _library_candidates_sql(attached: bool) -> str:
         + " AS preparation_failed,"
         "EXISTS(SELECT 1 FROM metadata_report_value_flags vf "
         "WHERE vf.report_id=mr.report_id) AS flagged,"
-        # New (#1351): listed past the boundary, or with no report at or
-        # before it, which catches a newcomer that took a deleted row's
-        # position. No visit row reads NULL here, and that is "not new".
-        "COALESCE((SELECT ml.rowid>visit.packages OR NOT EXISTS("
-        "SELECT 1 FROM metadata_reports earlier "
-        "WHERE earlier.connection_name=ml.connection_name "
-        "AND earlier.library_name=ml.library_name AND earlier.item_id=ml.item_id "
-        "AND earlier.rowid<=visit.reports) FROM visit),0) AS is_new,"
+        # New (#1351): listed past the boundary. A package position is never
+        # given out twice, so a newcomer or a returning work lies past it.
+        # No visit row reads NULL here, and that is "not new".
+        "COALESCE((SELECT ml.package_position>visit.packages FROM visit),0) "
+        "AS is_new,"
         "facts.title_key AS title_order,"
         "COALESCE(rc.review_case_id,'') AS case_order,"
         "NULL AS work_id,NULL AS attempt,NULL AS stage,NULL AS failure_root,"

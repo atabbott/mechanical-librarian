@@ -53,6 +53,7 @@ from tests.support.metadata_report_schemas import (
     PRIOR_ATTENTION_FACT_OBJECTS,
     PRIOR_ATTENTION_FACT_SOURCE_SQL,
     PRIOR_AUTOMATIC_DECISIONS_SQL,
+    PRIOR_CURRENT_REVIEW_PACKAGES_SQL,
     PRIOR_HUMAN_DECISIONS_SQL,
     PRIOR_REPORT_BROWSE_FACTS_INSERT_SQL,
     PRIOR_REPORT_BROWSE_FACTS_SQL,
@@ -922,6 +923,10 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
             schema, "_ATTENTION_FACT_SOURCE_SQL", PRIOR_ATTENTION_FACT_SOURCE_SQL
         )
         old.setattr(schema, "_REVIEW_WORK_SQL", PRIOR_REVIEW_WORK_SQL)
+        old.setattr(
+            schema, "_CURRENT_REVIEW_PACKAGES_SQL", PRIOR_CURRENT_REVIEW_PACKAGES_SQL
+        )
+        old.setattr(schema, "_PACKAGE_POSITION_OBJECTS", ())
         with closing(open_repository(path)) as repository:
             # The producer predates #1199's report browse facts, #1202's
             # history indexes, #1204's indexes, #1211's case indexes, #1232's
@@ -1115,9 +1120,11 @@ def test_candidate_cleanup_ignores_unrelated_malformed_history() -> None:
         repository.close()
 
 
+# `sqlite_sequence` is not here: the package positions' AUTOINCREMENT puts it in
+# the exact schema (#1351).
 @pytest.mark.parametrize(
     "kind",
-    ("analyze", "sequence", "arbitrary"),
+    ("analyze", "arbitrary"),
 )
 def test_existing_schema_rejects_persistent_sqlite_master_system_objects_without_mutation(
     kind: str,
@@ -1130,11 +1137,6 @@ def test_existing_schema_rejects_persistent_sqlite_master_system_objects_without
         connection = sqlite3.connect(path)
         if kind == "analyze":
             connection.execute("ANALYZE")
-        elif kind == "sequence":
-            connection.execute(
-                "CREATE TABLE fixture_sequence(id INTEGER PRIMARY KEY AUTOINCREMENT)"
-            )
-            connection.execute("DROP TABLE fixture_sequence")
         else:
             connection.execute("CREATE TABLE fixture_extra(value TEXT)")
             connection.execute("PRAGMA writable_schema=ON")
@@ -2661,6 +2663,12 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
             PRIOR_ATTENTION_FACT_SOURCE_SQL,
         )
         old.setattr(persistence_schema, "_REVIEW_WORK_SQL", PRIOR_REVIEW_WORK_SQL)
+        old.setattr(
+            persistence_schema,
+            "_CURRENT_REVIEW_PACKAGES_SQL",
+            PRIOR_CURRENT_REVIEW_PACKAGES_SQL,
+        )
+        old.setattr(persistence_schema, "_PACKAGE_POSITION_OBJECTS", ())
         old.setattr(
             persistence_schema,
             "_ATTENTION_FACT_OBJECTS",
