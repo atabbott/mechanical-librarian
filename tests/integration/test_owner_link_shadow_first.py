@@ -571,3 +571,22 @@ def test_a_successor_keeps_the_anchor_its_carried_lanes_were_asked_with(
     # Control: a source that read this anchor keeps it and asks for nothing.
     assert resettled_owner_link(facts, report.providers, None) == facts
     assert not owner_link_anchor_moved(facts, report.providers, None)
+
+
+def test_a_successor_whose_retry_reads_the_first_anchor_asks_for_preparation(
+    tmp_path: Path,
+) -> None:
+    # Codex R1-1 on #1938: an admitted source whose record stated no complete
+    # creator set read no anchor, so its main lanes were asked with none. A
+    # retry that now reads one keeps the source's (none) for those lanes and
+    # asks for a fresh preparation, as a moved anchor does.
+    asin = payload("audible_search")["products"][0]["asin"]
+    report = _audio_report(
+        tmp_path,
+        link=OwnerLinkTarget(OwnerLinkScope.RECORDING, "audible_catalog", asin, "A"),
+    )
+    facts = report.owner_link
+    assert facts is not None and facts.anchor is not None
+    source = replace(facts, anchor=None)
+    assert resettled_owner_link(source, report.providers, None).anchor is None
+    assert owner_link_anchor_moved(source, report.providers, None)
