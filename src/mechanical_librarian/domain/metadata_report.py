@@ -5605,6 +5605,22 @@ class OwnerLinkFacts:
     def digest(self) -> str:
         return self.lookup.digest
 
+    @property
+    def stands(self) -> bool:
+        """Whether the link steers this report: read for this medium, of a
+        scope that anchors. While it stands, only its anchor is compared with,
+        and a record that matches only the local values is not admitted, even
+        when no anchor was read (#1477, ADR-0104)."""
+        if self.outcome == "medium_changed":
+            return False
+        # Imported here: the link module reads this one's identifier grammar.
+        from mechanical_librarian.domain.owner_link import (
+            OwnerLinkScope,
+            owner_link_anchors,
+        )
+
+        return owner_link_anchors(OwnerLinkScope(self.scope))
+
     def to_data(self) -> dict[str, object]:
         return {
             "anchor": None
@@ -5673,26 +5689,22 @@ def owner_link_lanes(
     )
 
 
-def owner_link_records(report: MetadataReport) -> bool:
-    """Whether any record the report holds was kept only through its link."""
-    return report.owner_link is not None and any(
-        owner_link_admission(report, provider.provider, candidate.identity) is not None
-        for provider in report.providers
-        for candidate in provider.candidates
-    )
-
-
 def owner_link_admission(
     report: MetadataReport, provider: str, candidate: str
 ) -> str | None:
-    """How a report kept one record through the owner link, if it did.
+    """How a report kept one record through the owner link's lanes, if it did.
 
     `owner_link` for a record a link lane admitted, `owner_link_anchor` for
-    one the anchored WORK lane admitted, and `None` for any record another
-    lane also kept: such a record stands on that lane's own admission. Derived
-    and never stored, like `candidate_admission_basis`.
+    one only lanes the anchor reached admitted: the anchored WORK lane, and an
+    ASIN lane every input of which is that lane's (an ASIN it promoted or
+    returned, or a Hardcover audio-edition lead, #1477). `None` for any record
+    another lane also kept. Derived and never stored, like
+    `candidate_admission_basis`. `proposal_set.owner_link_reached` adds the
+    records whose own lane admission or work representation holds only
+    against the anchor.
     """
-    if report.owner_link is None:
+    facts = report.owner_link
+    if facts is None or not facts.stands:
         return None
     observation = next(
         (value for value in report.providers if value.provider == provider), None
@@ -5704,29 +5716,41 @@ def owner_link_admission(
         for value, lane in owner_link_lanes(report)
         if value is observation
     }
-    anchored = (
-        {
-            payload.identity
-            for payload in work_discovery_lane_payloads(
-                report.target.fields,
-                report.local_claims,
-                anchored=True,
-                anchor=report.owner_link.anchor,
-            )
-        }
-        if report.owner_link.anchor is not None
-        else set()
+    anchored_payloads = (
+        work_discovery_lane_payloads(
+            report.target.fields,
+            report.local_claims,
+            anchored=True,
+            anchor=facts.anchor,
+        )
+        if facts.anchor is not None
+        else ()
     )
+    anchored = {payload.identity for payload in anchored_payloads}
+    anchor_inputs = {
+        reference
+        for payload in anchored_payloads
+        for reference in payload.input_references
+    }
     holders = [
-        lane.identity
+        lane
         for lane in observation.lanes
         if any(member.edition_identity == candidate for member in lane.candidates)
     ]
     if not holders:
         return None
-    if all(identity in link_lanes for identity in holders):
+    if all(lane.identity in link_lanes for lane in holders):
         return "owner_link"
-    if all(identity in link_lanes or identity in anchored for identity in holders):
+    if all(
+        lane.identity in link_lanes
+        or lane.identity in anchored
+        or (
+            lane.kind is ProviderQueryKind.ASIN
+            and bool(lane.input_references)
+            and set(lane.input_references) <= anchor_inputs
+        )
+        for lane in holders
+    ):
         return "owner_link_anchor"
     return None
 
@@ -5736,10 +5760,12 @@ def report_work_identity_context(
 ) -> tuple[str, tuple[str, ...]] | None:
     """The title and creators a report's records are compared with (#1477).
 
-    The owner link's anchor where the report read one, otherwise the target's
-    own exact title and complete creator set.
+    The owner link's anchor while the link stands, which is `None` when no
+    anchor was read: the local values never admit a record while the owner's
+    link stands (ADR-0104). Otherwise the target's own exact title and
+    complete creator set.
     """
-    if report.owner_link is not None and report.owner_link.anchor is not None:
+    if report.owner_link is not None and report.owner_link.stands:
         return report.owner_link.anchor
     return target_work_identity_context(report.target)
 
@@ -6074,15 +6100,7 @@ class MetadataReport:
 
     def _owner_link_anchors(self) -> bool:
         """Whether the report's WORK lanes were asked with its link's anchor."""
-        if self.owner_link is None or self.owner_link.outcome == "medium_changed":
-            return False
-        # Imported here: the link module reads this one's identifier grammar.
-        from mechanical_librarian.domain.owner_link import (
-            OwnerLinkScope,
-            owner_link_anchors,
-        )
-
-        return owner_link_anchors(OwnerLinkScope(self.owner_link.scope))
+        return self.owner_link is not None and self.owner_link.stands
 
     def _validate_owner_link(self, work_plan: dict[str, WorkLanePayload]) -> None:
         """Replay what the report read through its owner link (#1477).
@@ -6737,6 +6755,7 @@ class MetadataReport:
                         providers=self.providers,
                         companion=self.companion,
                         library_languages=self.library_languages,
+                        work=report_work_identity_context(self),
                         owner_link_asin=(
                             link_claim.canonical
                             if link_claim is not None

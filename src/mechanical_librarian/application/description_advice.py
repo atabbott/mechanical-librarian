@@ -29,10 +29,8 @@ from mechanical_librarian.domain.description_advice import (
     description_digest,
     description_document,
 )
-from mechanical_librarian.domain.metadata_report import (
-    MetadataReport,
-    owner_link_records,
-)
+from mechanical_librarian.domain.metadata_report import MetadataReport
+from mechanical_librarian.domain.proposal_set import owner_link_records
 from mechanical_librarian.domain.review_case import ReviewCase
 
 if TYPE_CHECKING:

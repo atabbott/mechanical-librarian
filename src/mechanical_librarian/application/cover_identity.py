@@ -46,12 +46,12 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderObservation,
     ProviderQueryKind,
     manifestation_publication_compatible,
-    owner_link_admission,
 )
 from mechanical_librarian.domain.proposal_set import (
     LevelAdmissionRecord,
     candidate_title_and_creator_evidence,
     level_contradiction,
+    owner_link_reached,
     provider_candidate_bound_identifiers,
     provider_candidate_level_admission,
     provider_candidate_represents_target_recording,
@@ -469,8 +469,7 @@ def _classify_sources(
     # shadow-first (#1477, S26): it never verifies, so no switch or automatic
     # cover mode can bind it until the link rules qualify.
     if all(
-        owner_link_admission(report, match[1].provider, match[2].identity) is not None
-        for match in matches
+        owner_link_reached(report, match[1], match[2]) is not None for match in matches
     ):
         return "plausible_match", ["owner_link_unqualified"], []
     if all(_listed(match[0]) for match in matches):

@@ -618,6 +618,6 @@ def test_an_identifier_is_never_proposed_from_a_record_only_the_link_kept(
         "owner_link"
     )
     assert proposal_set._observations(report, TargetDestination.ASIN) == ()
-    with mock.patch.object(proposal_set, "owner_link_admission", return_value=None):
+    with mock.patch.object(proposal_set, "owner_link_reached", return_value=None):
         ungated = proposal_set._observations(report, TargetDestination.ASIN)
     assert [observed.value.value for observed in ungated] == [ASIN]

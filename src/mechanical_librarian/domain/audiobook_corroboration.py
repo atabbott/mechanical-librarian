@@ -77,7 +77,6 @@ from mechanical_librarian.domain.metadata_report import (
     provider_candidate_identity_title_claims,
     recording_corroboration,
     recording_variant_conflict,
-    target_work_identity_context,
 )
 from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
@@ -2380,12 +2379,16 @@ def asin_lane_admission_basis_replays(
     providers: tuple[ProviderObservation, ...],
     companion: CompanionEbook | None,
     library_languages: tuple[str, ...],
+    work: tuple[str, tuple[str, ...]] | None,
     owner_link_asin: str | None = None,
 ) -> bool:
     """Whether one ASIN lane's stated route replays from the report (#1723).
 
-    An owner's recording link (#1477) names its product as the item's own
-    ASIN would, so `target` replays on the lane that asked with it.
+    `work` is the title and creators the report compares with
+    (`report_work_identity_context`): the owner link's anchor while a link
+    stands, which the lane was admitted against (#1477). An owner's recording
+    link names its product as the item's own ASIN would, so `target` replays
+    on the lane that asked with it.
 
     Every route is read against the lane's own queried ASIN. `target` stands
     when some target route admits: an independent local ASIN, exact
@@ -2409,7 +2412,6 @@ def asin_lane_admission_basis_replays(
     queried = _queried_asin(lane, asins)
     if queried is None or audio is None:
         return False
-    work = target_work_identity_context(target)
     carried = carried_asin_claim(local_claims)
     carried_lane = carried is not None and carried.canonical == queried
     work_admitted = (

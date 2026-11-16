@@ -66,6 +66,7 @@ from mechanical_librarian.domain.metadata_report import (
     companion_stated_isbn,
     default_target_fields,
     finalize_candidate_comparisons,
+    target_work_identity_context,
 )
 from mechanical_librarian.domain.proposal_set import audiobook_review_scope
 from mechanical_librarian.domain.work_identity import work_query_ladder
@@ -1158,6 +1159,7 @@ def test_a_discovery_title_replays_only_on_the_carried_lane() -> None:
             local_claims=local_claims,
             audio=report.audio,
             providers=report.providers,
+            work=target_work_identity_context(report.target),
             companion=report.companion,
             library_languages=report.library_languages,
         )
@@ -1219,6 +1221,7 @@ def test_a_linked_route_replays_the_echoed_narrator_refusal() -> None:
             local_claims=unvoiced,
             audio=_narrator_echo_audio(),
             providers=report.providers,
+            work=target_work_identity_context(target),
             companion=report.companion,
             library_languages=report.library_languages,
         )

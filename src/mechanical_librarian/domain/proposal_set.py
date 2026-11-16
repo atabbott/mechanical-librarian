@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Callable, Final, Literal, Mapping, Self, 
 from mechanical_librarian.domain.audio_inspection import AudioInspectionField
 from mechanical_librarian.domain.audiobook_corroboration import (
     admitted_audiobook_identity,
+    asin_lane_admission_basis_replays,
     candidate_edition_asin,
     candidate_recording_runtime_veto,
     carried_asin_precedence,
@@ -69,6 +70,7 @@ from mechanical_librarian.domain.metadata_report import (
     IdentifierRelation,
     LocalClaim,
     MetadataReport,
+    OwnerLinkFacts,
     ProviderCandidate,
     ProviderClaim,
     ProviderEvidenceKind,
@@ -112,6 +114,7 @@ from mechanical_librarian.domain.metadata_report import (
     recording_corroboration,
     recording_variant_conflict,
     report_work_identity_context,
+    target_work_identity_context,
     work_discovery_lane_payloads,
 )
 from mechanical_librarian.domain.provider_value_language import (
@@ -2296,8 +2299,7 @@ def _observations(
             # link or its anchor kept (#1477, S25): the link names the work,
             # and identifiers keep their own rules.
             if destination in _IDENTIFIER_DESTINATIONS and (
-                owner_link_admission(report, provider.provider, candidate.identity)
-                is not None
+                owner_link_reached(report, provider, candidate) is not None
             ):
                 continue
             # Sibling ASINs of one recording are one edition (#1316).
@@ -4212,12 +4214,23 @@ def _asserted_lane_corroboration(
     )
 
 
+_REPORT_CONTEXT: Final = object()
+
+
 def provider_candidate_represents_target_work(
     report: MetadataReport,
     provider: ProviderObservation,
     candidate: ProviderCandidate,
+    *,
+    context: object = _REPORT_CONTEXT,
 ) -> bool:
-    """Prove one retained candidate describes the target work through its lane."""
+    """Prove one retained candidate describes the target work through its lane.
+
+    The title and creators compared with are the report's own
+    (`report_work_identity_context`) unless `context` names others, which
+    `owner_link_reached` uses to ask whether the target's own values would
+    also have held (#1477).
+    """
     if not provider_supplies_field_evidence(report, provider):
         return False
     if provider_candidate_represents_target_recording(report, provider, candidate):
@@ -4242,9 +4255,13 @@ def provider_candidate_represents_target_work(
         )
     ):
         return True
-    context = report_work_identity_context(report)
+    work = (
+        report_work_identity_context(report)
+        if context is _REPORT_CONTEXT
+        else cast("tuple[str, tuple[str, ...]] | None", context)
+    )
     if (
-        context is not None
+        work is not None
         and report.audio is not None
         and provider in report.providers
         and provider.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
@@ -4279,15 +4296,13 @@ def provider_candidate_represents_target_work(
                 for lane in provider.lanes
             )
             and provider_candidate_exact_work_identity_admission(
-                candidate, *context, audiobook=True
+                candidate, *work, audiobook=True
             ).admitted
         ):
             return True
-    if context is None or not _target_backed_lookup_contains(
-        report, provider, candidate
-    ):
+    if work is None or not _target_backed_lookup_contains(report, provider, candidate):
         return False
-    expected_title, expected_authors = context
+    expected_title, expected_authors = work
     candidates_by_identity = {value.identity: value for value in provider.candidates}
     for lane in provider.lanes:
         if (
@@ -7869,3 +7884,88 @@ __all__ = [
     "work_route_cover_offered",
     "work_route_cover_sources",
 ]
+
+
+def owner_link_reached(
+    report: MetadataReport, provider: ProviderObservation, candidate: ProviderCandidate
+) -> str | None:
+    """Whether a record reached the report only through the owner's link.
+
+    `owner_link_admission` names the records only the link's lanes kept: the
+    link lane, the anchored WORK lane and the ASIN lanes it fed. A record
+    another lane kept is reached through the link too when that lane's own
+    admission, or the record's work representation, holds against the
+    anchor but not against the target's own title and creators (#1477, S26).
+    Such evidence is shadow-first: it reaches review, never an automatic
+    decision or an identifier proposal.
+    """
+    admission = owner_link_admission(report, provider.provider, candidate.identity)
+    if admission is not None:
+        return admission
+    facts = report.owner_link
+    if facts is None or not facts.stands or facts.anchor is None:
+        return None
+    target = target_work_identity_context(report.target)
+    if target == facts.anchor:
+        return None
+    if _asin_admission_needs_anchor(report, provider, candidate, target):
+        return "owner_link_anchor"
+    if provider_candidate_represents_target_work(
+        report, provider, candidate
+    ) and not provider_candidate_represents_target_work(
+        report, provider, candidate, context=target
+    ):
+        return "owner_link_anchor"
+    return None
+
+
+def _asin_admission_needs_anchor(
+    report: MetadataReport,
+    provider: ProviderObservation,
+    candidate: ProviderCandidate,
+    target: tuple[str, tuple[str, ...]] | None,
+) -> bool:
+    """Whether every lane that kept a recording kept it only on the anchor."""
+    holders = tuple(
+        (lane, member)
+        for lane in provider.lanes
+        for member in lane.candidates
+        if member.edition_identity == candidate.identity
+    )
+    if not holders or any(
+        lane.kind is not ProviderQueryKind.ASIN or member.admission_basis is None
+        for lane, member in holders
+    ):
+        return False
+    link_claim = cast("OwnerLinkFacts", report.owner_link).lookup.claim
+    return not any(
+        asin_lane_admission_basis_replays(
+            cast("str", member.admission_basis),
+            lane,
+            candidate,
+            target=report.target,
+            local_claims=report.local_claims,
+            audio=report.audio,
+            providers=report.providers,
+            companion=report.companion,
+            library_languages=report.library_languages,
+            work=target,
+            owner_link_asin=(
+                link_claim.canonical
+                if link_claim is not None
+                and link_claim.kind is ClaimKind.ASIN
+                and link_claim.reference in lane.input_references
+                else None
+            ),
+        )
+        for lane, member in holders
+    )
+
+
+def owner_link_records(report: MetadataReport) -> bool:
+    """Whether any record the report holds reached it only through its link."""
+    return report.owner_link is not None and any(
+        owner_link_reached(report, provider, candidate) is not None
+        for provider in report.providers
+        for candidate in provider.candidates
+    )

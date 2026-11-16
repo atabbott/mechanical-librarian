@@ -11,7 +11,7 @@ and creators, and each provider's two observations become one.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 from mechanical_librarian.application.metadata_report import (
     OWNER_LINK_MERGED_DIAGNOSTIC,
@@ -93,12 +93,6 @@ class OwnerLinkPhase:
         """
         if self.plan is None or not self.observations:
             return observations
-        main_plan = replace(
-            plans[0],
-            lanes=tuple(
-                {lane.identity: lane for plan in plans for lane in plan.lanes}.values()
-            ),
-        )
         linked = {value.provider: value for value in self.observations}
         main = {value.provider: value for value in observations}
         result: list[ProviderObservation] = []
@@ -110,7 +104,7 @@ class OwnerLinkPhase:
                 result.append(first)
             else:
                 result.append(
-                    merge_phase_observations(((self.plan, first), (main_plan, second)))
+                    merge_phase_observations((((self.plan,), first), (plans, second)))
                 )
         return tuple(result)
 

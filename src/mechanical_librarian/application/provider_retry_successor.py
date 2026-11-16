@@ -1027,9 +1027,10 @@ class _RetryScope:
         """The merged phase beside the other, link lanes first as prepared."""
         if self.other is None or not self.other[1].lanes:
             return merged
-        mine = (self.plan, merged)
+        mine = ((self.plan,), merged)
+        other = ((self.other[0],), self.other[1])
         return merge_phase_observations(
-            (mine, self.other) if self.link is not None else (self.other, mine)
+            (mine, other) if self.link is not None else (other, mine)
         )
 
 

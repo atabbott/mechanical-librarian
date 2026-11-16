@@ -45,11 +45,11 @@ from mechanical_librarian.domain.metadata_report import (
     discovery_lane_identity,
     owner_link_admission,
     owner_link_anchor_values,
-    owner_link_records,
     provider_lane_candidate_reference,
     report_work_identity_context,
     work_discovery_lane_payloads,
 )
+from mechanical_librarian.domain.proposal_set import owner_link_records
 from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 from tests.support.cover_producers import _preview
 from tests.support.metadata_report_schemas import default_target_fields
@@ -362,7 +362,7 @@ def test_a_cover_only_the_link_kept_is_never_verified() -> None:
         [],
     )
     # Control: without the gate the same record reaches the ordinary rules.
-    with mock.patch.object(cover_identity, "owner_link_admission", return_value=None):
+    with mock.patch.object(cover_identity, "owner_link_reached", return_value=None):
         ungated = _classify_sources(report, (_linked_cover(),), level)
     assert "owner_link_unqualified" not in ungated[1]
 
