@@ -26,7 +26,7 @@ export const RowGroup = ({
   more,
 }: {
   label: string
-  /** How much the group holds, in words, or nothing; it can be more than it shows. */
+  /** How much the group holds, in words, or empty; it can be more than it shows. */
   count: string
   rows: readonly GroupedRow[]
   open: boolean
@@ -36,7 +36,8 @@ export const RowGroup = ({
   const summary = (
     <>
       <span className="write-plan-chooser">{label}</span>
-      {count ? <span className="write-plan-count">{count}</span> : null}
+      {/* Rendered even when empty: it carries the Show or Hide cue. */}
+      <span className="write-plan-count">{count}</span>
     </>
   )
   // With no row to show there is nothing to open: the group is its line alone.

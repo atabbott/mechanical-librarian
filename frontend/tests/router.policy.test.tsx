@@ -75,7 +75,7 @@ const comparisons = (fields: PolicyPreviewView['libraries'][number]['cases'][num
 const groupedRows = () =>
   [...document.querySelectorAll('#policy-preview-outcomes .write-plan-row')].map(
     (row) =>
-      `${(row.querySelector('strong') ?? row.closest('.write-plan-field')?.querySelector('h4'))?.textContent ?? ''}: ${row.closest('details')?.querySelector('.write-plan-chooser')?.textContent ?? ''}`,
+      `${(row.querySelector('strong') ?? row.closest('.write-plan-field')?.querySelector('h4') ?? row.closest('.policy-preview-library')?.querySelector('h3'))?.textContent ?? ''}: ${row.closest('details')?.querySelector('.write-plan-chooser')?.textContent ?? ''}`,
   )
 // One listed row's three labelled values, each with any sentence beneath it.
 const rowValues = (row: Element): Record<string, (string | null)[]> =>
@@ -1083,16 +1083,16 @@ describe('Policy route', () => {
     // stated as not previewed rather than as unchanged.
     const outcomes = await screen.findByText('No undecided works to sample.')
     expect(outcomes).toBeVisible()
-    const unpreviewed = document.querySelector('#policy-preview-outcomes .policy-preview-library')
-    expect(unpreviewed?.querySelector('h3')).toHaveTextContent('Hostile <script> library')
+    // With no work listed, the library is one line naming its rules, and the
+    // reason is said once.
     expect(
-      [...(unpreviewed?.querySelectorAll('.write-plan-field') ?? [])].map(
-        (field) => field.textContent,
+      [...document.querySelectorAll('#policy-preview-outcomes > div')].map(
+        (line) => line.textContent,
       ),
     ).toEqual([
-      'Title and subtitleNot previewedThis rule takes effect on the next preparation.',
-      'TagsNot previewedThis rule takes effect on the next preparation.',
+      'HOHostile <script> libraryTitle and subtitle, TagsNot previewed· No work from Hostile <script> library was in this sample.',
     ])
+    expect(document.querySelector('#policy-preview-outcomes .policy-preview-library')).toBeNull()
     expect(screen.queryByText('No changes from the draft in this sample')).toBeNull()
     expect(screen.getByText('Impact preview ready')).toBeVisible()
     // #1765 A1: the panel title has no caption; the sample line says it.
@@ -1634,7 +1634,8 @@ describe('Policy route', () => {
       name: 'an unpreviewed rule only',
       affected: ['language_rendering'],
       cases: [previewCase(1, [previewField('tags', 'Kept')])],
-      rows: ['Language: Not previewed'],
+      rows: ['Fiction: Not previewed'],
+      lineReasons: ['· This rule takes effect on the next preparation.'],
       title: 'Impact preview ready',
       media: 'Ebooks: 1 sampled work',
     },
@@ -1642,7 +1643,9 @@ describe('Policy route', () => {
       name: 'an unpreviewed rule beside an evaluated unchanged one',
       affected: ['language_rendering', 'isbn_form'],
       cases: [previewCase(1, [isbnSame])],
-      rows: ['Language: Not previewed', 'Fiction: No changes from the draft in this sample'],
+      // One row style: both are lines, in the library's order.
+      rows: ['Fiction: No changes from the draft in this sample', 'Fiction: Not previewed'],
+      lineReasons: ['· This rule takes effect on the next preparation.'],
       title: 'Impact preview ready',
       media: 'Ebooks: 1 sampled work',
     },
@@ -1655,6 +1658,7 @@ describe('Policy route', () => {
         ...Array.from({ length: 7 }, (_, index) => `Work ${String(index + 1)}: Changed`),
         'Language: Not previewed',
       ],
+      unreached: [['Fiction', 'Language', 'This rule takes effect on the next preparation.']],
       title: '7 sampled works affected',
       media: 'Ebooks: 7 sampled works · 7 fields affected',
     },
@@ -1663,9 +1667,31 @@ describe('Policy route', () => {
       affected: ['tags'],
       cases: [previewCase(1, [tagChange])],
       unsampled: 'Nonfiction',
-      rows: ['Work 1: Changed', 'Tags: Not previewed'],
+      rows: ['Work 1: Changed', 'Nonfiction: Not previewed'],
+      unreached: [['Nonfiction', null, 'Tags. No work from Nonfiction was in this sample.']],
       title: '1 sampled work affected',
       media: 'Ebooks: 1 sampled work · 1 field affected',
+    },
+    {
+      // Libraries keep the preview's order, not the order rows come in.
+      name: 'a rule not previewed in a library listed before a changed one',
+      affected: ['tags'],
+      cases: [previewCase(1, [tagChange])],
+      unsampled: 'Comics',
+      rows: ['Comics: Not previewed', 'Work 1: Changed'],
+      unreached: [['Comics', null, 'Tags. No work from Comics was in this sample.']],
+      title: '1 sampled work affected',
+      media: 'Ebooks: 1 sampled work · 1 field affected',
+    },
+    {
+      name: 'a rule not previewed beside a library the draft leaves alone',
+      affected: ['isbn_form'],
+      cases: [previewCase(1, [isbnSame])],
+      unsampled: 'Comics',
+      rows: ['Comics: Not previewed', 'Fiction: No changes from the draft in this sample'],
+      lineReasons: ['· No work from Comics was in this sample.'],
+      title: 'Impact preview ready',
+      media: 'Ebooks: 1 sampled work',
     },
     {
       name: 'a library override pinning every edited field',
@@ -1679,7 +1705,8 @@ describe('Policy route', () => {
       name: 'no sampled work',
       affected: ['tags'],
       cases: [],
-      rows: ['Tags: Not previewed'],
+      rows: ['Fiction: Not previewed'],
+      lineReasons: ['· No work from Fiction was in this sample.'],
       title: 'Impact preview ready',
       media: null,
     },
@@ -1689,7 +1716,8 @@ describe('Policy route', () => {
       cases: [],
       truncated: true,
       sample: 'No undecided works to sample · Additional works were not previewed',
-      rows: ['Tags: Not previewed'],
+      rows: ['Fiction: Not previewed'],
+      lineReasons: ['· No work from Fiction was in this sample.'],
       title: 'Impact preview ready',
       media: null,
     },
@@ -1702,6 +1730,7 @@ describe('Policy route', () => {
           policy_id: 'policy-draft',
           schema_version: 'metadata-policy-preview-v1',
           active_generation: 1,
+          // The server lists libraries by name.
           libraries: [
             {
               library: 'Fiction',
@@ -1730,7 +1759,7 @@ describe('Policy route', () => {
                   },
                 ]
               : []),
-          ],
+          ].sort((a, b) => a.library.localeCompare(b.library)),
         }
       return { policy_id: 'policy-draft' }
     })
@@ -1745,27 +1774,37 @@ describe('Policy route', () => {
     await screen.findByText('Impact preview ready. The active policy is unchanged.')
 
     expect(outcomeRows()).toEqual(example.rows)
-    // A rule no sampled work reached stands under its library and field, in
-    // the Not previewed group, with no work and no count.
+    // A rule no sampled work reached is in the Not previewed group: under its
+    // field in a sampled library, and in a library with nothing sampled as one
+    // row with no field that names the settings and says why once.
     const unreached = [...document.querySelectorAll('.write-plan-row')].filter(
       (row) => !row.querySelector('strong'),
     )
     expect(
-      unreached.map(
-        (row) => row.closest('.policy-preview-library')?.querySelector('h3')?.textContent,
-      ),
-    ).toEqual(
-      example.rows
-        .filter((row) => row.endsWith('Not previewed'))
-        .map(() => example.unsampled ?? 'Fiction'),
-    )
+      unreached.map((row) => [
+        row.closest('.policy-preview-library')?.querySelector('h3')?.textContent,
+        row.closest('.write-plan-field')?.querySelector('h4')?.textContent ?? null,
+        row.textContent,
+      ]),
+    ).toEqual(example.unreached ?? [])
+    for (const row of unreached) {
+      const summary = row.closest('details')?.querySelector('summary')
+      expect(summary).toHaveTextContent(/^Not previewed$/u)
+      // With no count, the count's place is still there: it carries Show or Hide.
+      expect(summary?.querySelector(':scope > .write-plan-count')).toHaveTextContent(/^$/u)
+    }
+    // With no work listed, a rule that was not previewed is a line like its
+    // neighbours, giving the reason once.
+    expect(
+      [...document.querySelectorAll('#policy-preview-outcomes > div')]
+        .filter(
+          (line) => line.querySelector('.cm-policy-impact > b')?.textContent === 'Not previewed',
+        )
+        .map((line) => line.querySelector('.cm-policy-impact > small')?.textContent),
+    ).toEqual(example.lineReasons ?? [])
     const unchangedEverywhere = screen.queryByText("No library's fields change under this draft.")
     if (example.affected.length) expect(unchangedEverywhere).toBeNull()
     else expect(unchangedEverywhere).toBeVisible()
-    for (const row of unreached) {
-      expect(row).toHaveTextContent(/^This rule takes effect on the next preparation\.$/u)
-      expect(row.closest('details')?.querySelector('summary')).toHaveTextContent(/^Not previewed$/u)
-    }
     expect(screen.getByText(example.title)).toBeVisible()
     const material = screen.queryByText(/\d+ fields? affected in the sample/u)
     if (example.rows.some((row) => row.endsWith('Changed')))

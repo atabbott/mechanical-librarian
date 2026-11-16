@@ -388,20 +388,30 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
   const changedRows = previewRows.filter((row) => row.changed)
   // Only what the draft changes is listed, and any row that was not previewed.
   const workRows = previewRows.filter((row) => row.changed || row.group === 'Not previewed')
-  // A rule no sampled work reached joins the same group, under its library.
+  // Why a library's changed rule was not previewed. A library with nothing
+  // sampled says so once, for all its rules.
+  const unpreviewedWhy = (library: (typeof previewLibraries)[number]) =>
+    library.cases.length
+      ? 'This rule takes effect on the next preparation.'
+      : `No work from ${libraryName(library.library)} was in this sample.`
+  // A rule no sampled work reached joins the same group: under its field in a
+  // sampled library, and as one row naming the settings, with no field, in a
+  // library with nothing sampled.
   const listedRows = [
     ...workRows,
-    ...previewLibraries.flatMap((library) =>
-      library.unpreviewed.map((field) => ({
-        library: library.library,
-        field: readableCategory(field),
-        group: 'Not previewed' as const,
-        work: '',
-        aside: '',
-        values: [],
-        why: 'This rule takes effect on the next preparation.',
-      })),
-    ),
+    ...previewLibraries.flatMap((library) => {
+      const row = { library: library.library, group: 'Not previewed' as const, work: '', aside: '' }
+      const why = unpreviewedWhy(library)
+      if (library.cases.length)
+        return library.unpreviewed.map((field) => ({
+          ...row,
+          field: readableCategory(field),
+          values: [],
+          why,
+        }))
+      const settings = plainList(library.unpreviewed.map(readableCategory), 'and')
+      return settings ? [{ ...row, field: '', values: [], why: `${settings}. ${why}` }] : []
+    }),
   ]
   const sampledWorks = previewLibraries.reduce((count, library) => count + library.cases.length, 0)
   const mediaSummary = (['ebook', 'audiobook'] as const)
@@ -910,62 +920,90 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                 <p>No library&apos;s fields change under this draft.</p>
               ) : null}
               <div id="policy-preview-outcomes" className="cm-policy-preview-list">
-                {[...new Set(listedRows.map((row) => row.library))].map((library) => (
-                  <section key={library} className="policy-preview-library">
-                    <h3>{libraryName(library)}</h3>
-                    {[
-                      ...new Set(
-                        listedRows.filter((row) => row.library === library).map((row) => row.field),
-                      ),
-                    ].map((field) => (
-                      <div key={field} className="write-plan-field">
-                        <h4>{field}</h4>
-                        {policyGroups.map((group) => {
-                          const grouped = listedRows.filter(
-                            (row) =>
-                              row.library === library && row.field === field && row.group === group,
-                          )
-                          // A row is one work, and "No change" beside "1 change"
-                          // would contradict itself, so the count is in works.
-                          const works = grouped.filter((row) => row.work).length
-                          return grouped.length ? (
-                            <RowGroup
-                              key={group}
-                              label={group}
-                              count={works === 1 ? '1 work' : works ? `${String(works)} works` : ''}
-                              rows={grouped}
-                              open={workRows.length <= POLICY_PREVIEW_OPEN_ALL}
-                            />
-                          ) : null
-                        })}
-                      </div>
-                    ))}
-                  </section>
-                ))}
                 {workRows.length
-                  ? null
-                  : previewLibraries
-                      .filter((library) => library.previewed.length)
+                  ? // Libraries keep the preview's order, whichever row comes first.
+                    previewLibraries
+                      .map((library) => library.library)
+                      .filter((library) => listedRows.some((row) => row.library === library))
                       .map((library) => (
-                        <div key={library.library}>
+                        <section key={library} className="policy-preview-library">
+                          <h3>{libraryName(library)}</h3>
+                          {[
+                            ...new Set(
+                              listedRows
+                                .filter((row) => row.library === library)
+                                .map((row) => row.field),
+                            ),
+                          ].map((field) => (
+                            // A library with nothing sampled has one row and no field.
+                            <div key={field} className="write-plan-field">
+                              {field ? <h4>{field}</h4> : null}
+                              {policyGroups.map((group) => {
+                                const grouped = listedRows.filter(
+                                  (row) =>
+                                    row.library === library &&
+                                    row.field === field &&
+                                    row.group === group,
+                                )
+                                // A row is one work, and "No change" beside "1 change"
+                                // would contradict itself, so the count is in works.
+                                const works = grouped.filter((row) => row.work).length
+                                return grouped.length ? (
+                                  <RowGroup
+                                    key={group}
+                                    label={group}
+                                    count={
+                                      works === 1 ? '1 work' : works ? `${String(works)} works` : ''
+                                    }
+                                    rows={grouped}
+                                    open={workRows.length <= POLICY_PREVIEW_OPEN_ALL}
+                                  />
+                                ) : null
+                              })}
+                            </div>
+                          ))}
+                        </section>
+                      ))
+                  : // With no work listed, every library reads as one line of the same kind.
+                    previewLibraries.flatMap((library) =>
+                      [
+                        ...(library.previewed.length
+                          ? [
+                              {
+                                fields: library.previewed,
+                                state: 'No changes from the draft in this sample',
+                                detail:
+                                  library.current_unapplied_count === 0
+                                    ? 'No undecided works left'
+                                    : `${String(library.current_unapplied_count)} undecided ${library.current_unapplied_count === 1 ? 'work' : 'works'}`,
+                              },
+                            ]
+                          : []),
+                        ...(library.unpreviewed.length
+                          ? [
+                              {
+                                fields: library.unpreviewed,
+                                state: 'Not previewed',
+                                detail: unpreviewedWhy(library),
+                              },
+                            ]
+                          : []),
+                      ].map((line) => (
+                        <div key={`${library.library}:${line.state}`}>
                           <span className="cm-policy-work-mark" aria-hidden="true">
                             {libraryName(library.library).slice(0, 2).toUpperCase()}
                           </span>
                           <span>
                             <strong>{libraryName(library.library)}</strong>
-                            <small>{library.previewed.map(readableCategory).join(', ')}</small>
+                            <small>{line.fields.map(readableCategory).join(', ')}</small>
                           </span>
                           <span className="cm-policy-impact">
-                            <b>No changes from the draft in this sample</b>
-                            <small>
-                              ·{' '}
-                              {library.current_unapplied_count === 0
-                                ? 'No undecided works left'
-                                : `${String(library.current_unapplied_count)} undecided ${library.current_unapplied_count === 1 ? 'work' : 'works'}`}
-                            </small>
+                            <b>{line.state}</b>
+                            <small>· {line.detail}</small>
                           </span>
                         </div>
-                      ))}
+                      )),
+                    )}
               </div>
             </div>
             {unchangedRows.length ? (
