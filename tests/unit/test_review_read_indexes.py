@@ -7,8 +7,9 @@ import sqlite3
 import tempfile
 import time
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
-from typing import TypeVar
+from typing import TypeVar, cast
 
 import pytest
 
@@ -779,12 +780,19 @@ def test_the_new_lens_reads_each_work_by_key_within_the_scale_budget() -> None:
                 page, steps[name], _elapsed = _call_with_step_limit(
                     connection,
                     _READ_VM_STEP_BUDGET,
-                    lambda lens=lens: browse.library(
-                        lens=lens, search=None, limit=50, cursor=None, now=1_000
+                    partial(
+                        browse.library,
+                        lens=lens,
+                        search=None,
+                        limit=50,
+                        cursor=None,
+                        now=1_000,
                     ),
                 )
-                assert page["counts"]["new"] == new, name
-                assert len(page["items"]) == (50 if lens == "all" else new), name
+                assert cast("dict[str, int]", page["counts"])["new"] == new, name
+                assert len(cast("list[object]", page["items"])) == (
+                    50 if lens == "all" else new
+                ), name
             progress, steps["progress"], _elapsed = _call_with_step_limit(
                 connection, _READ_VM_STEP_BUDGET, lambda: browse.progress((), 1_000)
             )

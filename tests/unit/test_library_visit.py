@@ -116,7 +116,7 @@ def test_the_first_mark_is_the_current_end_whatever_was_shown() -> None:
     "build",
     (
         lambda: _P(-1, 0, 0),
-        lambda: _P(True, 0, 0),  # type: ignore[arg-type]
+        lambda: _P(True, 0, 0),
         lambda: _P(0, 0, "1"),  # type: ignore[arg-type]
         lambda: LibraryVisit(_P(2, 2, 2), _P(2, 1, 2), 0),
         lambda: LibraryVisit(_P(0, 0, 0), _P(0, 0, 0), -1),

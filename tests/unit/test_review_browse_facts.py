@@ -31,6 +31,7 @@ from mechanical_librarian.domain.cover_evidence import (
 )
 from mechanical_librarian.domain.human_decision import HumanDecision, decision_actions
 from mechanical_librarian.domain.identifiers import canonical_json
+from mechanical_librarian.domain.library_visit import ListingPositions
 from mechanical_librarian.domain.metadata_report import (
     PROVIDER_AUTHORITIES,
     ClaimKind,
@@ -264,6 +265,8 @@ def _pages(case_document: str, report_document: str) -> str:
         (None,) * len(library_rows),
         0,
         0,
+        0,
+        ListingPositions(0, 0, 0),
     )
     repository.read_review_attention.return_value = ReviewAttentionSnapshot(
         attention_rows,
