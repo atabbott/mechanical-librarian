@@ -156,6 +156,9 @@ brackets are GitHub issues.
   the open field and ? lists the keys. Keys in the Library toolbar turns them
   off in this browser. A phone or tablet shows neither the numbers nor Keys
   (#1337).
+- Settings → Appearance has a Theme choice: Follow system, Light or Dark. It
+  applies at once and is saved in this browser. Follow system returns to the
+  system theme after a choice here or with the theme switch (#1341).
 
 ## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
 
