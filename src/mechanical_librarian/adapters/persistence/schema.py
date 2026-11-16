@@ -892,7 +892,7 @@ _HUMAN_DECISIONS_SQL = (
     "target_fingerprint TEXT NOT NULL CHECK(length(target_fingerprint)=64 AND target_fingerprint NOT GLOB '*[^0-9a-f]*'), "
     "destination TEXT NOT NULL CHECK(length(destination) BETWEEN 1 AND 64), "
     "actor TEXT NOT NULL CHECK(actor='owner'), "
-    "outcome TEXT NOT NULL CHECK(outcome IN ('accept','keep_current','reject','owner_entered','withdraw')), "
+    "outcome TEXT NOT NULL CHECK(outcome IN ('accept','keep_current','reject','owner_entered','withdraw','pin','unpin')), "
     "selected_value_document TEXT NOT NULL CHECK(typeof(selected_value_document)='text' AND length(CAST(selected_value_document AS BLOB)) BETWEEN 4 AND 32768), "
     "idempotency_digest TEXT NOT NULL UNIQUE CHECK(length(idempotency_digest)=64 AND idempotency_digest NOT GLOB '*[^0-9a-f]*'), "
     "request_digest TEXT NOT NULL CHECK(length(request_digest)=64 AND request_digest NOT GLOB '*[^0-9a-f]*'), "
@@ -1626,6 +1626,11 @@ _ATTENTION_INPUTS: dict[str, tuple[tuple[str, ...], str]] = {
         "CASE WHEN {row}.scope='destination' THEN {row}.destination END "
         "FROM current_review_packages c WHERE c.connection_name={row}.connection_name",
     ),
+    # A pin in force settles its field and a changed one asks it again.
+    "field_effect_manual_holds": (
+        ("insert", "update", "delete"),
+        _packages_of_case("{row}.destination"),
+    ),
 }
 
 
@@ -1675,6 +1680,12 @@ _ATTENTION_UPDATED_COLUMNS: dict[str, tuple[str, ...]] = {
         "selection_id",
     ),
     "field_effect_suspensions": ("scope", "connection_name", "destination"),
+    "field_effect_manual_holds": (
+        "review_case_id",
+        "destination",
+        "active",
+        "document",
+    ),
 }
 
 

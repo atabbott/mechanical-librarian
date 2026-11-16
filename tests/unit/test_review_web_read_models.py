@@ -4340,7 +4340,9 @@ def test_attention_consecutive_documents_keep_row_specific_classification():
         (3, "abstention", None, True),
         (4, None, "automatic_safety_suspended", False),
     )
-    rows = tuple((case.to_json(), report.to_json(), "title", *flag) for flag in flags)
+    rows = tuple(
+        (case.to_json(), report.to_json(), "title", *flag, False) for flag in flags
+    )
     expected = [
         item
         for count, outcome, cause, policy in flags
@@ -4400,7 +4402,7 @@ def test_attention_equal_ids_never_replace_exact_document_validation(
             )
             documents[index] = json.dumps(value)
     rows = tuple(
-        (*pair, "title", 1, None, None, False) for pair in (original, documents)
+        (*pair, "title", 1, None, None, False, False) for pair in (original, documents)
     )
     repository = Mock()
     repository.read_review_attention.return_value = ReviewAttentionSnapshot(rows, 2)
@@ -4434,7 +4436,7 @@ def test_attention_revalidates_each_raw_page_and_fresh_request(
     case, report = canonical_attention_pair
     documents = (case.to_json(), report.to_json())
     rows = tuple(
-        (*documents, destination, 1, None, None, False)
+        (*documents, destination, 1, None, None, False, False)
         for destination in ("authors", "authors", "title")
     )
     repository = Mock()
@@ -4491,6 +4493,7 @@ def test_attention_nonconsecutive_pair_is_parsed_again(canonical_attention_pair)
             1,
             None,
             None,
+            False,
             False,
         )
         for selected_case, selected_report in (

@@ -518,6 +518,13 @@ class _ProposedValue(_ClosedModel):
     )
 
 
+# Every owner decision outcome, `reject` as readable history and `pin` and
+# `unpin` as standing instructions (ADR-0085, Amendment 2).
+_HumanDecisionOutcome: TypeAlias = Literal[
+    "accept", "keep_current", "reject", "owner_entered", "withdraw", "pin", "unpin"
+]
+
+
 class _DecisionProjection(_ClosedModel):
     actor: str
     application: Literal["apply", "recorded_only"]
@@ -525,7 +532,7 @@ class _DecisionProjection(_ClosedModel):
     decision_id: str
     destination: str
     occurred_at: int
-    outcome: Literal["accept", "keep_current", "reject", "owner_entered", "withdraw"]
+    outcome: _HumanDecisionOutcome
     proposal_id: str
     review_case_id: str
     selected_value: _ProposedValue | None
@@ -852,13 +859,15 @@ class _DescriptionRetryAcknowledgement(_ClosedModel):
 
 
 class _OwnerSuggestion(_ClosedModel):
-    rule: Literal["title_case", "strip_part", "split_author", "combined", "previous"]
+    rule: Literal[
+        "title_case", "strip_part", "split_author", "combined", "previous", "pinned"
+    ]
     value: StrictStr = Field(min_length=1, max_length=512)
 
 
 class _OwnerEntry(_ClosedModel):
     max_characters: Literal[512]
-    suggestions: list[_OwnerSuggestion] = Field(max_length=5)
+    suggestions: list[_OwnerSuggestion] = Field(max_length=6)
 
 
 class _OwnerSubsetOption(_ClosedModel):
@@ -879,6 +888,18 @@ class _OwnerControl(_ClosedModel):
     entry: _OwnerEntry | None
     subset: _OwnerSubset | None
     withdraw: Literal["available", "automatic_hold", "in_progress", "written"] | None
+
+
+class _FieldPin(_ClosedModel):
+    """An owner pin: in force here, waiting to be read back, or changed."""
+
+    state: Literal["in_force", "waiting", "changed"]
+    value: _TargetField
+
+
+class _PinControl(_ClosedModel):
+    pin: Literal["available", "change_waiting"] | None
+    unpin: StrictBool
 
 
 class _ReviewField(_ClosedModel):
@@ -923,6 +944,8 @@ class _ReviewField(_ClosedModel):
     navigation_role: Literal["attention", "inspect"]
     notices: list[str]
     owner_control: _OwnerControl | None
+    pin: _FieldPin | None
+    pin_control: _PinControl | None
     proposed_values: list[_ProposedValue]
     choice_contexts: list["_FieldChoiceContext"]
     provenance: list[str]
@@ -1156,7 +1179,7 @@ class _HistoryDecisionItem(_ClosedModel):
     event_id: str
     kind: Literal["human_decision_recorded"]
     occurred_at: _Instant
-    outcome: Literal["accept", "keep_current", "reject", "owner_entered", "withdraw"]
+    outcome: _HumanDecisionOutcome
     previous_value: _ProposedValue | None
     review_case_id: str
     schema_version: HumanDecisionEventSchemaVersion
@@ -1668,6 +1691,7 @@ class _LibraryValueFlag(_ClosedModel):
 class _LibraryWork(_ClosedModel):
     authors: list[str]
     attention_count: _Count
+    pinned_count: _Count
     attention_state: Literal[
         "needs_attention", "no_attention_needed", "not_matched", "preparation_failed"
     ]
@@ -2311,7 +2335,7 @@ class _CoverConfirmation(_ClosedModel):
 class _DecisionRequest(_ClosedModel):
     cover_confirmation: _CoverConfirmation | None = None
     destination: StrictStr = Field(min_length=1, max_length=64)
-    outcome: Literal["accept", "keep_current", "reject", "owner_entered", "withdraw"]
+    outcome: _HumanDecisionOutcome
     proposal_id: StrictStr = Field(pattern=r"^review_proposal_[0-9a-f]{64}$")
     selected_value: _ProposedValue | None = None
     target_fingerprint: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
@@ -6035,6 +6059,10 @@ def _decision_call(call: Callable[[], dict[str, object]]) -> dict[str, object]:
             "nothing_to_withdraw": 409,
             "automatic_hold": 409,
             "decision_written": 409,
+            "pin_change_waiting": 409,
+            "already_pinned": 409,
+            "not_pinned": 409,
+            "pinned": 409,
             # Distinct from `stale`: the case stands, its field's offer moved
             # (#1355).
             "offer_changed": 409,

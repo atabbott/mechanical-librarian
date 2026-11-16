@@ -95,6 +95,7 @@ def _work(
         "media_kind": media_kind,
         "item": f"synthetic-item-{number}",
         "attention_count": attention,
+        "pinned_count": 0,
         "attention_state": (
             "needs_attention"
             if attention
@@ -555,6 +556,8 @@ def _field(
         ),
         "needs_attention": needs_attention,
         "manual_hold": manual_hold,
+        "pin": None,
+        "pin_control": None,
         "manual_return_requested": manual_return_requested,
         "manual_return_failed": manual_return_failed,
         "manual_required": needs_attention,

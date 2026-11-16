@@ -596,3 +596,12 @@ documents up to 262,144 bytes. Their `build_id` is null exactly for an edit
 version, held by a `CHECK` against the document's `source`. A v1 document is
 refused on readback, so every earlier application database is rejected before
 mutation and needs a clean rebuild; no adoption is supplied.
+
+Issue #1346 takes the clean-rebuild branch. `human-decision-v5` adds the
+`pin` and `unpin` outcomes and the `human_decisions` table's outcome `CHECK`
+admits them, so a v4 document is refused. `field-effect-manual-hold-v3` adds
+the closed `pin` key, so a v2 hold is refused on readback. The persisted
+attention facts gain triggers on `field_effect_manual_holds`. The proposal
+set, metadata report, proposal policy, shadow decision policy and
+decision-set versions do not move. Every earlier application database is
+rejected before mutation and needs a clean rebuild; no adoption is supplied.

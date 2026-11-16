@@ -745,6 +745,8 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
         destination: str,
         changed_at: int,
         decision_id: str,
+        *,
+        pin: dict[str, object] | None = None,
     ) -> None:
         document = canonical_effect_json(
             {
@@ -752,15 +754,24 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 "destination": destination,
                 "decision_id": decision_id,
                 "pending_return": None,
+                "pin": pin,
                 "review_case_id": review_case_id,
                 "schema_version": FIELD_EFFECT_MANUAL_HOLD_SCHEMA,
                 "updated_at": changed_at,
             }
         )
+        # An owner's hold write re-inserts its row, so it takes a fresh rowid
+        # and outranks, on an equal update time, a copy carried to a sibling
+        # case earlier (_WORK_LATEST_MANUAL_HOLDS_SQL). The explicit DELETE
+        # fires the attention delete trigger, as INSERT OR REPLACE would not.
+        self._connection.execute(
+            "DELETE FROM field_effect_manual_holds "
+            "WHERE review_case_id=? AND destination=?",
+            (review_case_id, destination),
+        )
         self._connection.execute(
             "INSERT INTO field_effect_manual_holds(review_case_id,destination,active,updated_at,document) "
-            "VALUES(?,?,1,?,?) ON CONFLICT(review_case_id,destination) DO UPDATE SET "
-            "active=1,updated_at=excluded.updated_at,document=excluded.document",
+            "VALUES(?,?,1,?,?)",
             (review_case_id, destination, changed_at, document),
         )
 
@@ -834,7 +845,10 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 return False
             active_document = row[0]
             raw = json.loads(active_document)
-            if raw.get("decision_id") != hold_token:
+            # A pin is released only by Unpin, so a pin recorded after the
+            # caller read the hold is refused here, in this write's own
+            # transaction (ADR-0085, Amendment 2).
+            if raw.get("decision_id") != hold_token or raw.get("pin") is not None:
                 transaction.rollback()
                 return False
             scan = self._connection.execute(
@@ -855,14 +869,21 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             }
             raw["updated_at"] = changed_at
             document = canonical_effect_json(raw)
+            # Re-inserted under the same document guard, so the request takes a
+            # fresh rowid like every owner hold write (_set_field_effect_manual_hold).
             updated = self._connection.execute(
-                "UPDATE field_effect_manual_holds SET updated_at=?,document=? "
+                "DELETE FROM field_effect_manual_holds "
                 "WHERE review_case_id=? AND destination=? AND active=1 AND document=?",
-                (changed_at, document, review_case_id, destination, active_document),
+                (review_case_id, destination, active_document),
             ).rowcount
             if updated != 1:
                 transaction.rollback()
                 return False
+            self._connection.execute(
+                "INSERT INTO field_effect_manual_holds(review_case_id,destination,"
+                "active,updated_at,document) VALUES(?,?,1,?,?)",
+                (review_case_id, destination, changed_at, document),
+            )
             if scan[0] == "completed_with_failures":
                 requeued = self._connection.execute(
                     "UPDATE review_preparation_scans SET state='queued',"
@@ -929,15 +950,24 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                     "destination": destination,
                     "review_case_id": review_case_id,
                     "pending_return": None,
+                    "pin": None,
                     "schema_version": FIELD_EFFECT_MANUAL_HOLD_SCHEMA,
                     "updated_at": changed_at,
                 }
             )
+            # Re-inserted under the same document guard, so the release takes a
+            # fresh rowid like every owner hold write (_set_field_effect_manual_hold).
             updated = self._connection.execute(
-                "UPDATE field_effect_manual_holds SET active=0,updated_at=?,document=? "
+                "DELETE FROM field_effect_manual_holds "
                 "WHERE review_case_id=? AND destination=? AND active=1 AND document=?",
-                (changed_at, document, review_case_id, destination, active_document),
+                (review_case_id, destination, active_document),
             ).rowcount
+            if updated == 1:
+                self._connection.execute(
+                    "INSERT INTO field_effect_manual_holds(review_case_id,destination,"
+                    "active,updated_at,document) VALUES(?,?,0,?,?)",
+                    (review_case_id, destination, changed_at, document),
+                )
             # Only the active generation's decision is held (#1573).
             automatic = self._connection.execute(
                 "SELECT decision_id FROM automatic_decisions "

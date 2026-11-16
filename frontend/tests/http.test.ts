@@ -1089,6 +1089,46 @@ describe('ReviewApiClient', () => {
     ).toBe(shown)
   })
 
+  it('reads a field’s pin and pin control, and refuses an unknown pin state (#1346)', async () => {
+    const pinned = targetField({ state: 'value', value: 'A Pinned Book' })
+    const field = (await readCase(closedDetail())).fields[0]
+    expect([field?.pin, field?.pinControl]).toEqual([null, null])
+    const read = (
+      await readCase(
+        closedDetail({
+          pin: { state: 'changed', value: pinned },
+          pin_control: { pin: 'available', unpin: true },
+        }),
+      )
+    ).fields[0]
+    expect(read?.pin).toEqual({ state: 'changed', value: pinned })
+    expect(read?.pinControl).toEqual({ pin: 'available', unpin: true })
+    const waiting = (
+      await readCase(closedDetail({ pin_control: { pin: 'change_waiting', unpin: false } }))
+    ).fields[0]
+    expect(waiting?.pinControl).toEqual({ pin: 'change_waiting', unpin: false })
+    // A pin on a chosen value waits until the value is read back (K5).
+    const chosen = (
+      await readCase(
+        closedDetail({
+          pin: { state: 'waiting', value: pinned },
+          pin_control: { pin: 'available', unpin: true },
+        }),
+      )
+    ).fields[0]
+    expect(chosen?.pin).toEqual({ state: 'waiting', value: pinned })
+    expect(chosen?.pinControl).toEqual({ pin: 'available', unpin: true })
+    await expect(
+      readCase(closedDetail({ pin_control: { pin: 'other', unpin: false } })),
+    ).rejects.toMatchObject(refused('enum@/fields/0/pin_control/pin'))
+    await expect(
+      readCase(closedDetail({ pin_control: { pin: true, unpin: false } })),
+    ).rejects.toMatchObject(refused('type@/fields/0/pin_control/pin'))
+    await expect(
+      readCase(closedDetail({ pin: { state: 'other', value: pinned } })),
+    ).rejects.toMatchObject(refused('enum@/fields/0/pin/state'))
+  })
+
   it('reads a cover’s current value as the current cover, never its id (#1363)', async () => {
     const cover = (state: string, value: string | null) =>
       readCase(closedDetail({ destination: 'cover', current: targetField({ state, value }) })).then(
@@ -1870,6 +1910,7 @@ describe('ReviewApiClient', () => {
       libraryDisplayName: 'Reading Room',
       mediaKind: 'epub',
       attentionCount: 1,
+      pinnedCount: 0,
       attention: 'needs_attention',
       detailUrl: '/review/case-1',
       detailKind: 'case',
@@ -1886,6 +1927,7 @@ describe('ReviewApiClient', () => {
       libraryDisplayName: 'Books',
       mediaKind: 'epub',
       attentionCount: 0,
+      pinnedCount: 0,
       attention: 'no_attention_needed',
       detailUrl: null,
       detailKind: null,
@@ -3213,7 +3255,7 @@ describe('ReviewApiClient', () => {
       csrf,
       fetch: vi.fn(async () =>
         Response.json(
-          { schema_version: 'review-library-v6', error: { code: 'busy' } },
+          { schema_version: 'review-library-v7', error: { code: 'busy' } },
           { status: 503 },
         ),
       ),
@@ -3293,13 +3335,17 @@ describe('ReviewApiClient', () => {
     await expect(
       readLibrary({ ...page, schema_version: 'review-library-v4' }),
     ).rejects.toMatchObject(refused('const@/schema_version'))
-    // v6 added the Looks wrong count, lens and each work's findings (#1334);
-    // a v5 document lacks them.
+    // v6 added each work's pinned field count (#1346); a v5 document lacks it.
     await expect(
       readLibrary({ ...page, schema_version: 'review-library-v5' }),
     ).rejects.toMatchObject(refused('const@/schema_version'))
+    // v7 added the Looks wrong count, lens and each work's findings (#1334);
+    // a v6 document lacks them.
     await expect(
       readLibrary({ ...page, schema_version: 'review-library-v6' }),
+    ).rejects.toMatchObject(refused('const@/schema_version'))
+    await expect(
+      readLibrary({ ...page, schema_version: 'review-library-v7' }),
     ).resolves.toBeDefined()
   })
 
@@ -3359,6 +3405,12 @@ describe('ReviewApiClient', () => {
     await expect(readLibrary({ ...flagged, items })).rejects.toMatchObject(
       refused('required@/items/0/value_flags'),
     )
+  })
+
+  it('reads each work’s pinned field count (#1346)', async () => {
+    const page = (count: number) => library({ items: [libraryWork({ pinned_count: count })] })
+    expect((await readLibrary(page(2))).works[0]?.pinnedCount).toBe(2)
+    await expect(readLibrary(page(-1))).rejects.toMatchObject(refused('min@/items/0/pinned_count'))
   })
 
   it('maps a library work cover and refuses a malformed one', async () => {

@@ -506,22 +506,31 @@ KEYWORDS: tuple[tuple[str, str, str, str, object], ...] = (
     ("S91", "_LibraryProgressField", "/properties/need_you", "minimum", 1),
     ("S92", "_LibraryProgressResponse", "/properties/fields", "maxItems", 16),
     ("S93", "_LibraryProgressResponse", "/properties/libraries", "maxItems", 256),
-    # Looks wrong: a closed rule list over three fields, at most nine (#1334).
+    # An owner pin's state and a work's pinned fields (#1346).
     (
         "S94",
+        "_FieldPin",
+        "/properties/state",
+        "enum",
+        ("in_force", "waiting", "changed"),
+    ),
+    ("S95", "_LibraryWork", "/properties/pinned_count", "minimum", 0),
+    # Looks wrong: a closed rule list over three fields, at most nine (#1334).
+    (
+        "S96",
         "_LibraryValueFlag",
         "/properties/rule",
         "enum",
         set(value_flags.VALUE_FLAG_RULES),
     ),
     (
-        "S95",
+        "S97",
         "_LibraryValueFlag",
         "/properties/destination",
         "enum",
         {"title", "authors", "narrators"},
     ),
-    ("S96", "_LibraryWork", "/properties/value_flags", "maxItems", 9),
+    ("S98", "_LibraryWork", "/properties/value_flags", "maxItems", 9),
 )
 
 

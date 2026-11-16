@@ -23,6 +23,10 @@ export const humanReasons = {
   reject: 'You declined the proposed change for this field.',
   owner_entered: 'You entered a value for this field.',
   withdraw: 'You withdrew your decision for this field.',
+  // A field's decision is never a pin or an unpin: the server reads a pin
+  // from its hold (ADR-0085, Amendment 2).
+  pin: 'You pinned this field.',
+  unpin: 'You unpinned this field.',
 } satisfies Record<DecisionOutcome, string>
 export const automaticReasons = {
   candidate: 'Automatic chose a proposed value.',
@@ -68,6 +72,8 @@ const contextKinds = {
   review_needed: 'unavailable',
   owner_choosable: 'unavailable',
   nothing_to_decide: 'unchanged',
+  pinned: 'unavailable',
+  pin_changed: 'unavailable',
 } as const satisfies Record<FieldCause, 'unchanged' | 'waiting' | 'unavailable'>
 // A held field never reads unchanged.
 export const contextKind = (field: ReviewField) => {

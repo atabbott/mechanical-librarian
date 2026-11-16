@@ -3585,7 +3585,7 @@ def test_terminal_catalogue_identity_uses_current_full_key_before_page_and_count
             for item in items
         )
         assert all(
-            len(row) == 8
+            len(row) == 9
             for row in repository.read_review_library(None, 10, 0, None).rows
         )
         second = browser.library(
@@ -3904,12 +3904,13 @@ def test_combined_browse_validates_empty_marker_and_totals(
     from mechanical_librarian.application.metadata_report import MetadataReportError
 
     repository = open_repository(tmp_path / "review.sqlite")
-    marker = 8
+    # An attention row carries its pin-changed flag before the marker (#1346).
+    marker = 8 if surface == "library" else 9
     reached = False
 
     def corrupt_row(cursor, row):
         nonlocal reached
-        if len(cursor.description) != (14 if surface == "library" else 10):
+        if len(cursor.description) != (14 if surface == "library" else 11):
             return row
         reached = True
         values = list(row)

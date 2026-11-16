@@ -422,6 +422,7 @@ def test_a_cover_answer_removes_a_released_cover_row_it_meets(tmp_path: Path) ->
             "decision_id": "human_decision_" + "0" * 64,
             "destination": "cover",
             "pending_return": None,
+            "pin": None,
             "review_case_id": case_id,
             "schema_version": FIELD_EFFECT_MANUAL_HOLD_SCHEMA,
             "updated_at": 150,

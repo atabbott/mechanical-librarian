@@ -408,8 +408,46 @@ assert PRIOR_REVIEW_WORK_SQL != persistence_schema._REVIEW_WORK_SQL
 
 # Every producer before #1285 admitted only the three original human outcomes.
 PRIOR_HUMAN_DECISIONS_SQL = persistence_schema._HUMAN_DECISIONS_SQL.replace(
-    "'reject','owner_entered','withdraw')", "'reject')"
+    "'reject','owner_entered','withdraw','pin','unpin')", "'reject')"
 )
+assert PRIOR_HUMAN_DECISIONS_SQL != persistence_schema._HUMAN_DECISIONS_SQL
+
+
+# Every producer before #1346 kept no pin: a pin in force settled nothing, a
+# changed pin asked nothing, and a pin or unpin row was no outcome. These undo
+# exactly the edits #1346 made to the attention source, so the oracles
+# below keep describing the predecessors they name.
+_PIN_CHANGED_SQL = review_sql._PIN_CHANGED_SQL
+_PIN_IN_FORCE_SQL = review_sql._pin_hold_sql(
+    "rc.review_case_id", "result.destination", True
+)
+_PINNED_REASON_HEAD = "(result.has_owner_decision_actions=1 AND ((result."
+_PINNED_REASON_TAIL = " OR " + _PIN_CHANGED_SQL + ")"
+assert review_sql._REVIEW_FIELD_ATTENTION_REASON_SQL.startswith(_PINNED_REASON_HEAD)
+assert review_sql._REVIEW_FIELD_ATTENTION_REASON_SQL.endswith(_PINNED_REASON_TAIL)
+PRE_1346_REVIEW_FIELD_ATTENTION_REASON_SQL = (
+    review_sql._REVIEW_FIELD_ATTENTION_REASON_SQL[1 : -len(_PINNED_REASON_TAIL)]
+)
+
+
+def without_pins(sql: str) -> str:
+    """The attention SQL as every producer before #1346 wrote it."""
+    unpinned = (
+        sql.replace(_PINNED_REASON_HEAD, _PINNED_REASON_HEAD[1:])
+        .replace(_PINNED_REASON_TAIL, "")
+        .replace("AND decision.outcome NOT IN ('pin','unpin') ", "")
+        .replace(
+            "),'withdraw')='withdraw' AND NOT " + _PIN_IN_FORCE_SQL + " ",
+            "),'withdraw')='withdraw' ",
+        )
+        .replace(" AND NOT " + _PIN_CHANGED_SQL + ")", ")")
+    )
+    assert "pin_hold" not in unpinned and "'pin'" not in unpinned
+    return unpinned
+
+
+PRE_1346_ATTENTION_FACT_SOURCE_SQL = without_pins(review_sql._ATTENTION_FACT_SOURCE_SQL)
+assert PRE_1346_ATTENTION_FACT_SOURCE_SQL != review_sql._ATTENTION_FACT_SOURCE_SQL
 # Before #1285 any owner decision settled a field; now only its latest one of
 # the case's episode does (#1358), unless it withdrew the field.
 HUMAN_DECIDED_SQL = (
@@ -429,7 +467,7 @@ PRIOR_HUMAN_DECIDED_SQL = (
 _KEPT_COVER_SQL = " AND NOT " + review_sql._VERIFIED_CURRENT_COVER_SQL
 # Nor did they split a cover the measured rules hold or suggest (#1363): a
 # manually ready comparison asked unless its current cover was kept.
-MEASURED_COVER_ATTENTION_SQL = review_sql._REVIEW_FIELD_ATTENTION_REASON_SQL.partition(
+MEASURED_COVER_ATTENTION_SQL = PRE_1346_REVIEW_FIELD_ATTENTION_REASON_SQL.partition(
     "OR " + review_sql._REVIEW_MANUAL_BIBLIOGRAPHIC_SQL
 )[0]
 MANUAL_READY_COVER_ATTENTION_SQL = (
@@ -460,14 +498,21 @@ PRIOR_ATTENTION_FACT_OBJECTS = tuple(
     (
         kind,
         name,
-        sql.replace(MEASURED_COVER_ATTENTION_SQL, MANUAL_READY_COVER_ATTENTION_SQL)
+        without_pins(sql)
+        .replace(MEASURED_COVER_ATTENTION_SQL, MANUAL_READY_COVER_ATTENTION_SQL)
         .replace(HUMAN_DECIDED_SQL, PRIOR_HUMAN_DECIDED_SQL)
         .replace(AUTOMATIC_DECIDED_SQL, PRIOR_AUTOMATIC_DECIDED_SQL)
         .replace(_KEPT_COVER_SQL, "")
         .replace(_RAW_REFRESH_SQL, "THEN result.unresolved_choice END"),
     )
     for kind, name, sql in persistence_schema._ATTENTION_FACT_OBJECTS
-    if not name.startswith(("review_case_episodes_", "metadata_policy_state_"))
+    if not name.startswith(
+        (
+            "review_case_episodes_",
+            "metadata_policy_state_",
+            "field_effect_manual_holds_",
+        )
+    )
 )
 
 assert any(
@@ -475,7 +520,7 @@ assert any(
 )
 # Open checks the stored facts against this source, so a store holding the
 # prior automatic decisions table is checked by the prior source.
-PRIOR_ATTENTION_FACT_SOURCE_SQL = review_sql._ATTENTION_FACT_SOURCE_SQL.replace(
+PRIOR_ATTENTION_FACT_SOURCE_SQL = PRE_1346_ATTENTION_FACT_SOURCE_SQL.replace(
     AUTOMATIC_DECIDED_SQL, PRIOR_AUTOMATIC_DECIDED_SQL
 )
 assert PRIOR_ATTENTION_FACT_SOURCE_SQL != review_sql._ATTENTION_FACT_SOURCE_SQL
