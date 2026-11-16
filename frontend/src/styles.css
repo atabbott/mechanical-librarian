@@ -980,6 +980,7 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .choice-pin { display:inline-grid; flex:none; place-items:center; min-width:max(44px,2.75rem); min-height:max(44px,2.75rem); margin-left:auto; padding:0; border:0; border-radius:8px; background:transparent; color:var(--soft); }
 .choice-pin svg { width:1.375rem; height:1.375rem; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
 .choice-pin.is-on { color:var(--accent-strong); }
+.choice-pin:focus-visible { outline-offset:-4px; }
 .choice-pin.is-on .head { fill:currentColor; }
 /* A busy pin dims its own colour, never the element, so its focus outline stays whole. */
 .choice-pin[aria-disabled='true'] { cursor:progress; color:color-mix(in srgb,var(--soft) 70%,var(--surface)); }
@@ -991,10 +992,16 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .context-value.has-pin > .choice-pin { grid-column:2; grid-row:2; margin:-2px -6px -2px 0; }
 .owner-recorded-pin { display:flex; align-items:center; gap:10px; }
 .owner-recorded-pin > .owner-recorded { flex:1 1 auto; min-width:0; }
+/* The pin stays beside the sentence it pins, however wide the canvas. */
+.owner-recorded-pin > .choice-pin { margin-left:0; }
 .pin-foot { display:flex; flex-direction:column; align-items:flex-start; max-width:66ch; }
 .pin-foot.has-note { margin-top:1rem; padding-top:14px; border-top:1px solid var(--line); }
 .pin-foot p { margin:0; overflow-wrap:break-word; line-height:1.5; }
 .pin-foot > :not(:first-child):not(:empty) { margin-top:10px; }
+/* With no sentence box the foot's first line keeps clear of what is above it. */
+.pin-foot:not(.has-note) > :first-child:not(:empty) { margin-top:10px; }
+/* Why a field has no pin is supporting text, not the state a pin in force shows. */
+.pin-why { color:var(--soft); }
 .pin-note { padding:.75rem; border:1px solid var(--accent); border-radius:4px; background:color-mix(in srgb,var(--accent) 15%,var(--surface)); }
 .pin-foot [role='alert'] { color:var(--danger); font-weight:650; }
 .metadata-choice.is-evidence-open { padding-bottom:0; }

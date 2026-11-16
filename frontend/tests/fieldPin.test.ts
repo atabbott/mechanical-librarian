@@ -197,11 +197,12 @@ describe('the sentence at the foot of the field', () => {
       classificationCause: 'pinned',
       classificationReason: PINNED_REASON,
     })
-    expect(pinFoot(inForce, shown)).toEqual({ sentence: PINNED_REASON, unpin: false })
+    expect(pinFoot(inForce, shown)).toEqual({ sentence: PINNED_REASON, unpin: false, quiet: false })
     // Unpin sits beside the sentence only where no value on screen carries the pin.
     expect(pinFoot(inForce, { pinOnScreen: false })).toEqual({
       sentence: PINNED_REASON,
       unpin: true,
+      quiet: false,
     })
     // Another cause's reason is never passed off as the pin's.
     expect(pinFoot({ ...inForce, classificationCause: 'unsupported' }, shown).sentence).toBe(
@@ -219,23 +220,26 @@ describe('the sentence at the foot of the field', () => {
       ).toEqual({
         sentence: 'You pinned this value. The pin starts once the change is written.',
         unpin: false,
+        quiet: false,
       })
   })
 
   it('says only that the value is pinned over a restoring Keep current', () => {
     expect(
       pinFoot(field({ pin: pinOf('waiting'), humanDecision: decided('keep_current') }), shown),
-    ).toEqual({ sentence: 'You pinned this value.', unpin: false })
+    ).toEqual({ sentence: 'You pinned this value.', unpin: false, quiet: false })
   })
 
   it('shows what was pinned, with Unpin, once the value changed', () => {
     expect(pinFoot(field({ pin: pinOf('changed') }), shown)).toEqual({
       sentence: 'You pinned “Old title”.',
       unpin: true,
+      quiet: false,
     })
     expect(pinFoot(field({ pin: pinOf('changed', null) }), shown)).toEqual({
       sentence: 'You pinned this field empty.',
       unpin: true,
+      quiet: false,
     })
     expect(
       pinFoot(
@@ -257,6 +261,7 @@ describe('the sentence at the foot of the field', () => {
       sentence:
         'A change to this field is recorded. Pin it once Audiobookshelf shows the new value.',
       unpin: false,
+      quiet: true,
     })
   })
 
@@ -272,6 +277,7 @@ describe('the sentence at the foot of the field', () => {
         sentence:
           'You chose Resume automatic handling for this field. Choose a value again to pin it.',
         unpin: false,
+        quiet: true,
       })
     },
   )
@@ -309,12 +315,16 @@ describe('the sentence at the foot of the field', () => {
       pinControl: { pin: 'change_waiting', unpin: false },
       humanDecision: decided('reject'),
     })
-    expect(pinFoot(rejected, shown)).toEqual({ sentence: null, unpin: false })
+    expect(pinFoot(rejected, shown)).toEqual({ sentence: null, unpin: false, quiet: false })
   })
 
   it('says nothing where a pin is offered and none stands, or none can be', () => {
-    expect(pinFoot(field(), shown)).toEqual({ sentence: null, unpin: false })
-    expect(pinFoot(field({ pinControl: null }), shown)).toEqual({ sentence: null, unpin: false })
+    expect(pinFoot(field(), shown)).toEqual({ sentence: null, unpin: false, quiet: false })
+    expect(pinFoot(field({ pinControl: null }), shown)).toEqual({
+      sentence: null,
+      unpin: false,
+      quiet: false,
+    })
   })
 })
 

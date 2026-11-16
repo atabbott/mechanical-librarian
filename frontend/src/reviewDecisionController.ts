@@ -279,9 +279,19 @@ export const useReviewDecisionController = ({
   const refreshAggregatesInBackground = () => {
     void refreshAggregates().catch(() => undefined)
   }
+  // The field whose choice was recorded on a case that could not be reloaded,
+  // so the pin that was to follow it was never sent.
+  const unsent = useRef<string | null>(null)
   const settle = async () => {
     converge()
-    return await refreshCase()
+    const refreshed = await refreshCase()
+    const destination = unsent.current
+    if (refreshed && destination !== null) {
+      unsent.current = null
+      const field = refreshed.fields.find((item) => item.destination === destination)
+      if (field?.pin == null) announce(reviewCaseId, destination, pinNotRecorded(field), true)
+    }
+    return refreshed
   }
   const lock = (destination: string, message: string) =>
     queryClient.setQueryData(reconciliationKey(reviewCaseId), {
@@ -350,6 +360,8 @@ export const useReviewDecisionController = ({
       if (!refreshed) {
         halt()
         forget(command)
+        // The pin that was to follow is named once the case can be read again.
+        unsent.current = pin ? command.destination : null
         lock(
           command.destination,
           'Your choice was recorded, but this work could not be reloaded. Choose Reload current case before choosing again.',
@@ -419,6 +431,9 @@ export const useReviewDecisionController = ({
       release(command.destination)
       converge()
       const pin = following.current.get(command.idempotencyKey)
+      // Read before anything forgets the command: a pin that followed a
+      // recorded choice says so when it fails.
+      const wasFollowing = followed.current.has(command.idempotencyKey)
       const refreshed = await refreshCase()
       const refreshedField = refreshed?.fields.find(
         (field) => field.destination === command.destination,
@@ -449,13 +464,12 @@ export const useReviewDecisionController = ({
         // The case above is already the refreshed one: the field shows what it
         // offers now, or the case shows it is being checked. Nothing to retry.
         forget(command)
-        announce(reviewCaseId, command.destination, offerChanged)
+        announce(reviewCaseId, command.destination, offerChanged, offerChanged !== '')
         if (!active(command.destination)) await onAdvance(command.destination)
         return
       }
       if (command.outcome === 'pin' || command.outcome === 'unpin') {
         // Never retried: the refreshed case says whether the pin stands.
-        const wasFollowing = followed.current.has(command.idempotencyKey)
         forget(command)
         if (pinStands(command.outcome, refreshedField))
           announce(reviewCaseId, command.destination, ownerOutcomes[command.outcome] ?? '')
@@ -478,6 +492,7 @@ export const useReviewDecisionController = ({
                 ...current,
                 destination: command.destination,
                 text: 'This field was already decided. The page shows that decision.',
+                alert: true,
               }
             : current,
         )
@@ -497,6 +512,7 @@ export const useReviewDecisionController = ({
                 ownerRefusalCopy(error, refreshedField) ??
                   'Your choice was not recorded. Choose again.',
               ),
+        true,
       )
       // The current field is already authoritative after reconciliation. Do
       // not make truthful failure feedback wait on a no-op same-field route

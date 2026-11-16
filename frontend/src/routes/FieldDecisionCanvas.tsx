@@ -509,9 +509,7 @@ export function FieldDecisionCanvas({
           }
           alert={
             pinStatusShown &&
-            (controller.alertFor(selected.destination) ||
-              controller.decision.isError ||
-              controller.reloadRequired)
+            (controller.alertFor(selected.destination) || controller.reloadRequired)
           }
           busy={pinBusy}
           onUnpin={() => pinControl({ on: true, press: { kind: 'unpin' } })?.onPress()}

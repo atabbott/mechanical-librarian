@@ -289,7 +289,9 @@ export function RecordedOutcome({
               {decision.outcome === 'keep_current'
                 ? 'Kept value'
                 : decision.outcome === 'owner_entered'
-                  ? 'Your value'
+                  ? field.pin && field.pin.state !== 'changed'
+                    ? 'Your value · Pinned'
+                    : 'Your value'
                   : 'Current value'}
             </dt>
             <dd>

@@ -154,7 +154,7 @@ describe('a pin after a value command', () => {
     after: (field: Field, sent: DecisionCommand) => Field,
     refuse: (sent: DecisionCommand, attempt: number) => unknown = () => undefined,
   ) => {
-    const state = { field: offered, current: true }
+    const state = { field: offered, current: true, unavailable: false }
     const record = vi.fn<ReviewHttp['recordDecision']>(async (caseId, sent) => {
       const refusal = await refuse(sent, record.mock.calls.length)
       if (refusal !== undefined) throw refusal as Error
@@ -177,6 +177,7 @@ describe('a pin after a value command', () => {
           target_fingerprint: sent.targetFingerprint,
         },
       )
+      if (state.unavailable) return { ...acknowledgement, confirmation: { status: 'unavailable' } }
       return {
         ...acknowledgement,
         confirmation: {
@@ -452,6 +453,85 @@ describe('a pin after a value command', () => {
     await waitFor(() => expect(moves.onStale).toHaveBeenCalledTimes(1))
     expect(moves.onStale.mock.calls[0]?.[0]).toMatchObject({ outcome: 'pin', destination: 'title' })
     expect(http.recordDecision).toHaveBeenCalledTimes(1)
+  })
+
+  it('hands a value command refused as stale to the stale path with its pin', async () => {
+    const { http } = store(ordinary, () => new ApiError(409, 'stale'))
+    const { hook, moves } = await mount(http)
+    press(hook, 'accept')
+    await waitFor(() => expect(moves.onStale).toHaveBeenCalledTimes(1))
+    // The pin, not the choice, is what the owner pressed and is told was not recorded.
+    expect(moves.onStale.mock.calls[0]?.[0]).toMatchObject({ outcome: 'pin', destination: 'title' })
+    expect(http.recordDecision).toHaveBeenCalledTimes(1)
+  })
+
+  it('says the choice stands when its pin fails on a field that no longer takes a choice', async () => {
+    const { http } = store(
+      (field, value) =>
+        value.outcome === 'accept' ? { ...field, needsAttention: false, editable: false } : field,
+      (value) => (value.outcome === 'pin' ? new ApiError(503, 'persistence') : undefined),
+    )
+    const { hook } = await mount(http)
+    press(hook, 'accept')
+    await waitFor(() =>
+      expect(hook.result.current.statusFor('title')).toBe(
+        'Your choice is recorded, but the pin was not. Press the pin again.',
+      ),
+    )
+    expect(hook.result.current.alertFor('title')).toBe(true)
+  })
+
+  it('names the pin that was not sent once a case that could not be reloaded is read again', async () => {
+    const { http, record, state } = store(ordinary)
+    state.unavailable = true
+    const { hook } = await mount(http)
+    press(hook, 'accept')
+    await waitFor(() => expect(hook.result.current.reloadRequired).toBe(true))
+    expect(record).toHaveBeenCalledTimes(1)
+    expect(hook.result.current.statusFor('title')).toBe('')
+    await act(async () => {
+      await hook.result.current.settle()
+    })
+    expect(hook.result.current.statusFor('title')).toBe(
+      'Your choice is recorded, but the pin was not. Press the pin again.',
+    )
+    expect(hook.result.current.alertFor('title')).toBe(true)
+    // A plain choice on such a case names no pin after the reload.
+    const plain = store(ordinary)
+    plain.state.unavailable = true
+    const second = await mount(plain.http)
+    act(() => {
+      second.hook.result.current.submit(command('accept', 'plain-key'))
+    })
+    await waitFor(() => expect(second.hook.result.current.reloadRequired).toBe(true))
+    await act(async () => {
+      await second.hook.result.current.settle()
+    })
+    expect(second.hook.result.current.statusFor('title')).toBe('')
+  })
+
+  it.each([
+    [new ApiError(422, 'invalid_selection'), 'Your choice was not recorded. Choose again.'],
+    [
+      new ApiError(503, 'persistence'),
+      'Your choice could not be confirmed. Choose Try the same decision again to send it once more.',
+    ],
+    [
+      new ApiError(409, 'offer_changed', 'digest_mismatch'),
+      'Not recorded: Book matching changed what this field offers. Choose again.',
+    ],
+    [
+      new ApiError(409, 'already_decided'),
+      'This field was already decided. The page shows that decision.',
+    ],
+  ])('says every failure of a choice as an alert (%#)', async (error, words) => {
+    const { http } = store(ordinary, () => error)
+    const { hook } = await mount(http)
+    act(() => {
+      hook.result.current.submit(command('accept', 'value-key'))
+    })
+    await waitFor(() => expect(hook.result.current.statusFor('title')).toBe(words))
+    expect(hook.result.current.alertFor('title')).toBe(true)
   })
 
   it('says a withdrawal refused over a pin in the owner’s words', () => {

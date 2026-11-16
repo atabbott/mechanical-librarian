@@ -112,15 +112,17 @@ export const footAlert = (said: string, unpinAtFoot: boolean) =>
 export const pinFoot = (
   field: ReviewField,
   { pinOnScreen }: { pinOnScreen: boolean },
-): { sentence: string | null; unpin: boolean } => {
+): { sentence: string | null; unpin: boolean; quiet: boolean } => {
   const pin = field.pin
-  if (pin === null)
-    return {
-      sentence: field.pinControl?.pin === 'change_waiting' ? notOffered(field) : null,
-      unpin: false,
-    }
-  if (pin.state === 'changed') return { sentence: pinnedValueSentence(field), unpin: true }
+  if (pin === null) {
+    const sentence = field.pinControl?.pin === 'change_waiting' ? notOffered(field) : null
+    // Why no pin can be pressed is an explanation, not a state of the field.
+    return { sentence, unpin: false, quiet: sentence !== null }
+  }
+  if (pin.state === 'changed')
+    return { sentence: pinnedValueSentence(field), unpin: true, quiet: false }
   return {
+    quiet: false,
     sentence:
       pin.state === 'in_force'
         ? field.classificationCause === 'pinned' && field.classificationReason

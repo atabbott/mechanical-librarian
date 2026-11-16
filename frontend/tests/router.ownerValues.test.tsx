@@ -1170,6 +1170,12 @@ describe('a pin on each value', () => {
     expect(screen.getByRole('radio', { name: PROPOSED })).toBeChecked()
     expect(screen.queryByText('Review complete')).toBeNull()
     expect(screen.queryByText('Your choice is recorded.')).toBeNull()
+    // The line under the choices stays quiet during a pin: the foot alone says it.
+    expect(screen.getAllByText('Pinned.')).toHaveLength(1)
+    // The sentence above already says the value is pinned, so the word is
+    // announced from the status and not printed again under it.
+    expect(within(foot).getByRole('status')).toHaveClass('sr-only')
+    expect(foot).toHaveClass('has-note')
   })
 
   it('P3 keeps and pins the current value, then unpins from the same card', async () => {
@@ -1186,6 +1192,8 @@ describe('a pin on each value', () => {
     await user.click(within(card(CURRENT)).getByRole('button', { name: 'Unpin' }))
     await waitFor(() => expect(within(foot).getByRole('status')).toHaveTextContent('Unpinned.'))
     expect(outcomes(http)).toEqual(['keep_current', 'pin', 'unpin'])
+    // Nothing else says the pin is gone, so the word stays in view.
+    expect(within(foot).getByRole('status')).not.toHaveClass('sr-only')
     expect(card(CURRENT)).toHaveTextContent('Your choice')
     expect(card(CURRENT)).not.toHaveTextContent('Pinned')
     const pin = within(card(CURRENT)).getByRole('button', { name: 'Pin this value' })
@@ -1390,6 +1398,10 @@ describe('a pin on each value', () => {
     )
     expect(screen.queryByRole('button', { name: 'Pin this value' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Unpin' })).toBeNull()
+    // An explanation, not a state: plain supporting text, not a pin's box.
+    expect(foot.querySelector('.pin-why')).toHaveTextContent('A change to this field is recorded.')
+    expect(foot.querySelector('.pin-note')).toBeNull()
+    expect(foot).not.toHaveClass('has-note')
   })
 
   it('P10 says the choice stands when its pin is refused, and the next press sends only the pin', async () => {
@@ -1492,6 +1504,75 @@ describe('a pin on each value', () => {
     expect(panel.querySelector('.owner-status')).toBeEmptyDOMElement()
     await user.click(within(panel).getByRole('button', { name: 'Unpin' }))
     await waitFor(() => expect(outcomes(http)).toEqual(['pin', 'unpin']))
+  })
+
+  it('P17 says a pin that stands after its request failed in the status, not the alert', async () => {
+    const user = userEvent.setup()
+    // The store records the pin and the answer is lost on the way back.
+    const lost = pins(offered, (command) => {
+      if (command.outcome !== 'pin') return undefined
+      lost.state.field = after(lost.state.field, command)
+      return new ApiError(503, 'persistence')
+    })
+    const foot = await show(lost.http)
+    await user.click(within(card(PROPOSED)).getByRole('button', { name: 'Pin this value' }))
+    await waitFor(() => expect(within(foot).getByRole('status')).toHaveTextContent('Pinned.'))
+    expect(within(foot).getByRole('alert')).toBeEmptyDOMElement()
+    expect(card(PROPOSED)).toHaveTextContent('Your choice · Pinned')
+    expect(outcomes(lost.http)).toEqual(['accept', 'pin'])
+  })
+
+  it('P18 moves a pin pressed on a replaced case to its successor and says it was not recorded', async () => {
+    const user = userEvent.setup()
+    let stale = false
+    // No owner control on the field: the foot is where the notice is said.
+    const plain: Field = { ...offered, ownerControl: null }
+    const http = {
+      ...owner(
+        () => [plain],
+        async () => {
+          stale = true
+          throw new ApiError(409, 'stale')
+        },
+      ),
+      getCaseSuccessor: vi.fn(async () => 'case-2'),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async (id) => {
+        if (stale && id === 'case-1') throw new ApiError(409, 'stale')
+        return { ...detail, id, fields: [plain] }
+      }),
+    }
+    const { router } = renderRoute('/library?lens=all&preview=case-1&field=title', http)
+    await screen.findByRole('region', { name: 'Pin on Title' })
+    await user.click(within(card(PROPOSED)).getByRole('button', { name: 'Pin this value' }))
+    await waitFor(() => expect(router.state.location.search.preview).toBe('case-2'))
+    // The owner stays on the work and the field, not sent to the Attention lens.
+    expect(router.state.location.search.field).toBe('title')
+    expect(router.state.location.search.lens).toBe('all')
+    const moved = await screen.findByRole('region', { name: 'Pin on Title' })
+    await waitFor(() =>
+      expect(within(moved).getByRole('status')).toHaveTextContent(
+        'Not recorded: the work changed. Review it again.',
+      ),
+    )
+    expect(within(moved).getByRole('status')).not.toHaveClass('sr-only')
+  })
+
+  it('P19 says Pinned beside a pinned value the owner entered', async () => {
+    const recorded: Field = {
+      ...enteredTitle,
+      editable: false,
+      pinControl: { pin: 'available', unpin: false },
+    }
+    const { http } = pins(recorded)
+    await show(http)
+    const outcome = screen.getByRole('region', { name: 'Title recorded outcome' })
+    expect(within(outcome).getByText('Your value')).toBeVisible()
+    await userEvent.setup().click(
+      within(screen.getByRole('region', { name: 'Your value for Title' })).getByRole('button', {
+        name: 'Pin this value',
+      }),
+    )
+    expect(await within(outcome).findByText('Your value · Pinned')).toBeVisible()
   })
 
   it('P14 shows no pin where the field offers none', async () => {

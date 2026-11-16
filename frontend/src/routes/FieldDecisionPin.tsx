@@ -56,7 +56,11 @@ export function FieldPinFoot({
   busy: boolean
   onUnpin: () => void
 }) {
-  const { sentence, unpin } = pinFoot(field, { pinOnScreen })
+  const { sentence, unpin, quiet } = pinFoot(field, { pinOnScreen })
+  // The sentence already says the value is pinned: the word is still
+  // announced, and not printed a second time under it.
+  const said = alert ? '' : status
+  const repeats = said === 'Pinned.' && sentence !== null && !quiet
   const section = useRef<HTMLElement>(null)
   // A settled press that took its own control away leaves focus on what the
   // foot says, never on nothing.
@@ -68,7 +72,7 @@ export function FieldPinFoot({
     const frame = requestAnimationFrame(() => {
       if (document.activeElement && document.activeElement !== document.body) return
       section.current
-        ?.querySelector<HTMLElement>('.pin-note, [role="status"]')
+        ?.querySelector<HTMLElement>('.pin-note, .pin-why, [role="status"]')
         ?.focus({ preventScroll: true })
     })
     return () => cancelAnimationFrame(frame)
@@ -76,11 +80,11 @@ export function FieldPinFoot({
   return (
     <section
       ref={section}
-      className={`pin-foot${sentence || unpin ? ' has-note' : ''}`}
+      className={`pin-foot${(sentence && !quiet) || unpin ? ' has-note' : ''}`}
       aria-label={`Pin on ${destinationLabel(field.destination)}`}
     >
       {sentence ? (
-        <p className="pin-note" tabIndex={-1}>
+        <p className={quiet ? 'pin-why' : 'pin-note'} tabIndex={-1}>
           {sentence}
         </p>
       ) : null}
@@ -97,8 +101,8 @@ export function FieldPinFoot({
         </button>
       ) : null}
       {/* Each is mounted empty before it speaks, so what a press did is announced. */}
-      <p role="status" tabIndex={-1}>
-        {alert ? '' : status}
+      <p role="status" tabIndex={-1} className={repeats ? 'sr-only' : undefined}>
+        {said}
       </p>
       {pressed ? <p role="alert">{alert ? footAlert(status, unpin) : ''}</p> : null}
     </section>
