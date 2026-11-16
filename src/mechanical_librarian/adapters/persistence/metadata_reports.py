@@ -417,6 +417,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                     )
                 )
             ),
+            current_resolved_metadata_policy=(
+                lambda library: self.current_resolved_metadata_policy(library)
+            ),
         )
         self._review_cases = SQLiteReviewCaseRepository(
             connection,
