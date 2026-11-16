@@ -88,6 +88,25 @@ const pinnedValueSentence = (field: ReviewField) => {
     : 'You pinned this field empty.'
 }
 
+// Why a field that could be pinned offers no pin now. With no answer of the
+// owner's standing, or with the owner's choice of the adviser's description,
+// a change waits to be written. Over a standing answer the server refuses
+// only once that answer's hold was released or a Resume was asked of it. A
+// rejection is history the owner can no longer record, so nothing is said.
+const notOffered = (field: ReviewField) =>
+  field.humanDecision === null ||
+  (field.destination === 'description' && field.descriptionAdvice?.selection?.origin === 'human')
+    ? 'A change to this field is recorded. Pin it once Audiobookshelf shows the new value.'
+    : field.humanDecision.outcome === 'reject'
+      ? null
+      : 'You chose Resume automatic handling for this field. Choose a value again to pin it.'
+
+// What a failed unpin says where the foot's own Unpin is the control to press.
+export const STILL_PINNED = 'This field is still pinned. Press the pin again.'
+const STILL_PINNED_AT_FOOT = 'This field is still pinned. Press Unpin again.'
+export const footAlert = (said: string, unpinAtFoot: boolean) =>
+  unpinAtFoot && said === STILL_PINNED ? STILL_PINNED_AT_FOOT : said
+
 // The sentence at the foot of the field and whether Unpin sits beside it:
 // only where no card or value on screen carries the pin.
 export const pinFoot = (
@@ -97,12 +116,7 @@ export const pinFoot = (
   const pin = field.pin
   if (pin === null)
     return {
-      // An owner answer on a field that offers no pin has more than one cause
-      // the case does not tell apart, so nothing is said there.
-      sentence:
-        field.pinControl?.pin === 'change_waiting' && field.humanDecision === null
-          ? 'A change to this field is recorded. Pin it once Audiobookshelf shows the new value.'
-          : null,
+      sentence: field.pinControl?.pin === 'change_waiting' ? notOffered(field) : null,
       unpin: false,
     }
   if (pin.state === 'changed') return { sentence: pinnedValueSentence(field), unpin: true }

@@ -1310,6 +1310,45 @@ describe('a pin on each value', () => {
     await waitFor(() => expect(within(foot).getByRole('status')).toHaveFocus())
   })
 
+  it('P15 says to press Unpin again when the foot’s Unpin fails', async () => {
+    const user = userEvent.setup()
+    const refuse = (command: DecisionCommand) =>
+      command.outcome === 'unpin' ? new ApiError(503, 'persistence') : undefined
+    // A changed pin is on no card: Unpin is the button at the foot.
+    const changed = pins(
+      {
+        ...offered,
+        classificationCause: 'pin_changed',
+        classificationReason: CHANGED,
+        pin: pinOf('changed', 'An older title'),
+        pinControl: { pin: 'available', unpin: true },
+      },
+      refuse,
+    )
+    const foot = await show(changed.http)
+    await user.click(within(foot).getByRole('button', { name: 'Unpin' }))
+    await waitFor(() =>
+      expect(within(foot).getByRole('alert')).toHaveTextContent(
+        'This field is still pinned. Press Unpin again.',
+      ),
+    )
+    expect(within(foot).getByRole('button', { name: 'Unpin' })).toBeVisible()
+  })
+
+  it('P16 says to press the pin again when an unpin from a card fails', async () => {
+    const user = userEvent.setup()
+    const { http } = pins(inForce, (command) =>
+      command.outcome === 'unpin' ? new ApiError(503, 'persistence') : undefined,
+    )
+    const cardFoot = await show(http)
+    await user.click(within(card(CURRENT)).getByRole('button', { name: 'Unpin' }))
+    await waitFor(() =>
+      expect(within(cardFoot).getByRole('alert')).toHaveTextContent(
+        'This field is still pinned. Press the pin again.',
+      ),
+    )
+  })
+
   it('P8 asks about a changed pin where no source offers a value', async () => {
     const user = userEvent.setup()
     const { http } = pins({

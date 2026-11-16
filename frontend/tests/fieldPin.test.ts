@@ -260,6 +260,56 @@ describe('the sentence at the foot of the field', () => {
     })
   })
 
+  it.each(['accept', 'keep_current', 'owner_entered'] as const)(
+    'says to choose again where no pin is offered over the owner’s %s',
+    (outcome) => {
+      // The answer's hold is released or a Resume is asked of it.
+      const resumed = field({
+        pinControl: { pin: 'change_waiting', unpin: false },
+        humanDecision: decided(outcome, outcome === 'keep_current' ? null : NEW),
+      })
+      expect(pinFoot(resumed, shown)).toEqual({
+        sentence:
+          'You chose Resume automatic handling for this field. Choose a value again to pin it.',
+        unpin: false,
+      })
+    },
+  )
+
+  it('says a recorded change comes first while the owner’s choice of advised text stands', () => {
+    const advised = field({
+      destination: 'description',
+      pinControl: { pin: 'change_waiting', unpin: false },
+      humanDecision: decided('keep_current'),
+      descriptionAdvice: { selection: { origin: 'human' } } as Field['descriptionAdvice'],
+    })
+    expect(pinFoot(advised, shown).sentence).toBe(
+      'A change to this field is recorded. Pin it once Audiobookshelf shows the new value.',
+    )
+    // Automatic's own advised text is no choice of the owner's.
+    const automatic = {
+      ...advised,
+      descriptionAdvice: {
+        selection: { origin: 'automatic_policy' },
+      } as Field['descriptionAdvice'],
+    }
+    expect(pinFoot(automatic, shown).sentence).toBe(
+      'You chose Resume automatic handling for this field. Choose a value again to pin it.',
+    )
+    // The same choice on another field's wire is not read.
+    expect(pinFoot({ ...advised, destination: 'title' }, shown).sentence).toBe(
+      'You chose Resume automatic handling for this field. Choose a value again to pin it.',
+    )
+  })
+
+  it('says nothing over an answer that is only history', () => {
+    const rejected = field({
+      pinControl: { pin: 'change_waiting', unpin: false },
+      humanDecision: decided('reject'),
+    })
+    expect(pinFoot(rejected, shown)).toEqual({ sentence: null, unpin: false })
+  })
+
   it('says nothing where a pin is offered and none stands, or none can be', () => {
     expect(pinFoot(field(), shown)).toEqual({ sentence: null, unpin: false })
     expect(pinFoot(field({ pinControl: null }), shown)).toEqual({ sentence: null, unpin: false })

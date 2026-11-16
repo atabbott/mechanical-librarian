@@ -3,7 +3,7 @@
 import { useEffect, useRef } from 'react'
 
 import type { ReviewField } from '../fieldDecision'
-import { pinFoot } from '../fieldPin'
+import { footAlert, pinFoot } from '../fieldPin'
 import type { PinControl } from '../fieldPin'
 import { destinationLabel } from '../labels'
 
@@ -100,7 +100,7 @@ export function FieldPinFoot({
       <p role="status" tabIndex={-1}>
         {alert ? '' : status}
       </p>
-      {pressed ? <p role="alert">{alert ? status : ''}</p> : null}
+      {pressed ? <p role="alert">{alert ? footAlert(status, unpin) : ''}</p> : null}
     </section>
   )
 }

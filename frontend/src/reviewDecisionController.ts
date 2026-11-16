@@ -10,6 +10,7 @@ import {
   refusalCopy,
 } from './api/http'
 import type { CaseDetailView, DecisionCommand, DecisionOutcome } from './api/http'
+import { STILL_PINNED } from './fieldPin'
 import {
   beginDecisionEcho,
   confirmDecisionCase,
@@ -92,7 +93,7 @@ const pinFailureCopy = (
   followed: boolean,
 ) =>
   command.outcome === 'unpin'
-    ? 'This field is still pinned. Press the pin again.'
+    ? STILL_PINNED
     : followed
       ? pinNotRecorded(field)
       : field?.pinControl?.pin === 'available'
