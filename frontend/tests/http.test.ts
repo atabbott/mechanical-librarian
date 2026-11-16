@@ -6172,6 +6172,7 @@ describe('policy decoding (#1692)', () => {
                   draft: impact,
                   active_destination: 'ask',
                   draft_destination: 'automatic',
+                  destination: 'subtitle',
                   changed: true,
                   ...comparison,
                 },

@@ -62,9 +62,13 @@ from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
     local_operation,
 )
+from mechanical_librarian.application.cover_policy import (
+    SCHEMA_VERSION as COVER_POLICY_REPORT_SCHEMA,
+)
 from mechanical_librarian.application.metadata_policy import (
     PolicyContentionError,
     PolicyPreviewCapture,
+    PolicyPreviewCover,
     PolicyPreviewLibraryCapture,
     PolicyTransition,
 )
@@ -72,6 +76,7 @@ from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.cover_qualification_policy import (
     cover_aware_qualified_policy_options,
 )
+from mechanical_librarian.domain.cover_rules import CoverOutcome
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyError,
     MetadataPolicyProfile,
@@ -474,7 +479,13 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 ):
                     raise MetadataReportError("policy preview is unavailable")
                 captured.append(
-                    PolicyPreviewLibraryCapture(library, resolution, total, pairs)
+                    PolicyPreviewLibraryCapture(
+                        library,
+                        resolution,
+                        total,
+                        pairs,
+                        tuple(self._preview_cover(report) for report, _ in pairs),
+                    )
                 )
                 remaining -= len(pairs)
             result = PolicyPreviewCapture(profile, row[0], tuple(captured))
@@ -483,6 +494,73 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
         except Exception:
             transaction.rollback()
             raise
+
+    def _preview_cover(self, report: MetadataReport) -> PolicyPreviewCover | None:
+        """Read what the work's current cover comparison decided, and no image.
+
+        The comparison is the one current for the work's current case. One
+        that is stale, was made for another report or carries no stage at the
+        current schema keeps its fetching flag and loses its outcome.
+        """
+        # A stored document the SQL cannot read is this work's alone: CASE
+        # checks its JSON, in order, before any of it is read, and the last
+        # column is NULL for it. A database that cannot be read still fails
+        # the preview.
+        row = self._connection.execute(
+            "SELECT CASE WHEN json_valid(c.document) THEN "
+            "json_extract(c.document,'$.provider_fetching') END,"
+            "CASE WHEN json_valid(c.document) THEN "
+            "json_extract(c.document,'$.policy_report_document') END,"
+            "c.report_id=l.report_id AND NOT EXISTS (SELECT 1 FROM "
+            "cover_consideration_events e WHERE e.consideration_id=c.consideration_id "
+            "AND e.kind='stale'),"
+            # A comparison stored while sources are fetching has no policy
+            # report (JSON null); SQLite 3.40 gives json_valid(NULL)=0, so
+            # only a present report is checked.
+            "CASE WHEN NOT json_valid(c.document) THEN NULL "
+            "WHEN json_extract(c.document,'$.policy_report_document') IS NOT NULL "
+            "AND NOT json_valid(json_extract(c.document,'$.policy_report_document')) "
+            "THEN NULL WHEN EXISTS (SELECT 1 FROM json_each(c.document,'$.candidates') "
+            "candidate WHERE candidate.type<>'object') THEN NULL "
+            "ELSE EXISTS (SELECT 1 FROM json_each(c.document,'$.candidates') candidate "
+            "WHERE json_extract(candidate.value,'$.reference')=json_extract("
+            "json_extract(c.document,'$.policy_report_document'),"
+            "'$.recommended_candidate_reference') "
+            "AND json_extract(candidate.value,'$.incumbent')=0 "
+            "AND json_extract(candidate.value,'$.selectable')=1 "
+            "AND json_array_length(candidate.value,'$.deterministic_citations')>0 "
+            "AND json_type(candidate.value,'$.deterministic_rank_key')='array') END "
+            "FROM current_review_case_lineages l "
+            "JOIN current_cover_considerations current "
+            "ON current.review_case_id=l.review_case_id "
+            "JOIN cover_considerations c ON c.consideration_id=current.consideration_id "
+            "WHERE l.report_id=?",
+            (report.report_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        if row[3] is None:
+            return PolicyPreviewCover(False, None, None, False)
+        try:
+            policy = json.loads(row[1])
+            stage = policy["stage"]
+            current = (
+                row[2] == 1
+                and policy["schema_version"] == COVER_POLICY_REPORT_SCHEMA
+                and stage["outcome"] in {outcome.value for outcome in CoverOutcome}
+                and (stage["reason"] is None or type(stage["reason"]) is str)
+            )
+        except (KeyError, TypeError, ValueError):
+            current = False
+        return PolicyPreviewCover(
+            row[0] != 0,
+            stage["outcome"] if current else None,
+            stage["reason"] if current else None,
+            current
+            and row[3] == 1
+            and policy.get("status") == "recommended"
+            and policy.get("actual_target_state") == "known_empty",
+        )
 
     @local_operation
     def metadata_policy_preview_baseline(

@@ -14482,6 +14482,7 @@ _POLICY_LABELS = (
     ".cm-segmented button, .cm-policy-representation > span, "
     ".cm-policy-control-heading strong, .cm-finish-tray > ol small, "
     ".cm-finish-actions button, .cm-finish-summary strong, .cm-policy-impact > b, "
+    ".write-plan-values dt, .write-plan-chooser, .write-plan-count, "
     ".cm-policy-route h1, .cm-policy-route h2"
 )
 _POLICY_MID_WORD = """selector => [...document.querySelectorAll(selector)].flatMap(node => {
@@ -14537,9 +14538,9 @@ def test_recorded_refusal_and_populated_policy_results_use_document_flow(tmp_pat
                     "No source offered a value that can be used here.", exact=True
                 )
             ).to_be_visible()
-            # Language is a rule the preview does not evaluate, ISBN one it
-            # evaluates without a change here, and Tags one it evaluates with
-            # changes: the mixed case a truthful preview has to keep apart.
+            # Language is evaluated with no change here, ISBN likewise, and
+            # Tags with changes: the mixed case a truthful preview has to
+            # keep apart. Language is compiled with the other fields (#1524).
             page.goto(f"{origin}/policy?section=identity")
             chapters = page.get_by_role("navigation", name="Policy chapters")
             # Language has one option, so its setting changes.
@@ -14576,37 +14577,64 @@ def test_recorded_refusal_and_populated_policy_results_use_document_flow(tmp_pat
                 for comparison in library["comparisons"]
                 for field in comparison["fields"]
             }
-            assert "language_rendering" not in evaluated
-            assert {"isbn_form", "tags"} <= evaluated
+            assert {"language_rendering", "isbn_form", "tags"} <= evaluated
             result = page.locator(".cm-policy-result")
             expect(result).to_be_visible()
             assert (
                 result.locator("xpath=..").get_attribute("class") == "cm-policy-editor"
             )
             assert page.locator(".cm-finish-tray .cm-policy-result").count() == 0
-            # Language was never evaluated, so it is stated as not previewed
-            # (below the collapsed previewed rows, by the library slug while
-            # Settings is unavailable or the library has no display name) and
-            # never as unchanged.
-            unpreviewed = result.locator(".cm-policy-preview-list > .is-unpreviewed")
-            expect(unpreviewed).to_have_count(1)
-            expect(unpreviewed.locator("strong")).to_have_text("Language")
-            expect(unpreviewed.locator("small").first).to_have_text("ebooks")
-            expect(unpreviewed.locator(".cm-policy-impact")).to_have_text(
-                "Not previewed.This rule takes effect on the next preparation."
-            )
+            # Every affected rule was evaluated, so none is stated as not
+            # previewed, and Language, which the draft leaves as it is, reads
+            # as unchanged and is not listed as a change.
+            expect(result.locator(".is-unpreviewed")).to_have_count(0)
+            expect(result.get_by_text("Not previewed")).to_have_count(0)
             expect(
                 result.get_by_text("No changes from the draft in this sample")
             ).to_have_count(0)
-            assert page.locator(".cm-policy-preview-list > div").last.evaluate(
-                "node => node.classList.contains('is-unpreviewed')"
+            # The changed works stand under their library and field, grouped
+            # by what the draft does, with three values to a row (#1524).
+            expect(result.locator(".policy-preview-library > h3")).to_have_text(
+                ["ebooks"]
             )
+            expect(result.locator(".write-plan-field > h4")).to_have_text(["Tags"])
+            group = result.locator("details.write-plan-group")
+            expect(group).to_have_count(1)
+            expect(group.locator("summary")).to_have_text("Filled10 works")
+            rows = group.locator(".write-plan-row")
+            expect(rows).to_have_count(10)
+            assert rows.first.locator("dt").all_text_contents() == [
+                "Current",
+                "Active policy",
+                "Draft",
+            ]
+            assert rows.first.locator("dd").all_text_contents() == [
+                "Not set",
+                "No changeTag handling is off.",
+                "Exploration",
+            ]
+            unchanged = result.locator(".cm-policy-projected-context")
+            expect(unchanged.locator("summary")).to_have_text(
+                "Same under both policies (80)"
+            )
+            assert unchanged.evaluate("node => node.open") is False
+            expect(
+                unchanged.get_by_text("Language: No change. Set to Ignore.")
+            ).to_have_count(10)
+            fold = group.locator("summary")
             for theme in ("light", "dark"):
                 page.locator("html").evaluate(
                     "(node, theme) => node.dataset.theme = theme", theme
                 )
-                for width in (1440, 390, 320):
+                for width, text in (
+                    (1440, ""),
+                    (1280, ""),
+                    (390, ""),
+                    (320, ""),
+                    (320, "200%"),
+                ):
                     page.set_viewport_size({"width": width, "height": 900})
+                    set_root_text(page, text)
                     if width == 1440:
                         result.scroll_into_view_if_needed()
                         assert result.evaluate("""node => {
@@ -14616,23 +14644,28 @@ def test_recorded_refusal_and_populated_policy_results_use_document_flow(tmp_pat
                             return result.right <= rail.left || result.left >= rail.right
                                 || result.bottom <= rail.top || result.top >= rail.bottom;
                         }""")
-                    expand = result.get_by_role(
-                        "button", name=re.compile(r"Show .* more")
-                    )
-                    expand.focus()
+                    # The group folds and opens from the keyboard, and focus
+                    # stays on its summary.
+                    fold.focus()
                     page.keyboard.press("Enter")
-                    if width == 1440:
-                        result.locator(
-                            ".cm-policy-preview"
-                        ).scroll_into_view_if_needed()
-                        assert result.evaluate("""node => {
-                            const panel = node.querySelector('.cm-policy-preview').getBoundingClientRect();
-                            const rail = document.querySelector('.cm-policy-sidebar')
-                                .getBoundingClientRect();
-                            return panel.right <= rail.left || panel.left >= rail.right
-                                || panel.bottom <= rail.top || panel.top >= rail.bottom;
-                        }""")
-                    last = page.locator(".cm-policy-preview-list > div").last
+                    assert group.evaluate("node => node.open") is False
+                    expect(rows.first).to_be_hidden()
+                    page.keyboard.press("Enter")
+                    assert group.evaluate("node => node.open") is True
+                    expect(fold).to_be_focused()
+                    # Wide, the three values of a row stand side by side on
+                    # one line; narrow, they stack in the same order.
+                    labels = rows.first.locator("dt").evaluate_all(
+                        "nodes => nodes.map(node => {"
+                        " const box = node.getBoundingClientRect();"
+                        " return [Math.round(box.left), Math.round(box.top)]; })"
+                    )
+                    lefts, tops = zip(*labels, strict=True)
+                    if width >= 1280:
+                        assert len(set(tops)) == 1 and lefts[0] < lefts[1] < lefts[2]
+                    else:
+                        assert len(set(lefts)) == 1 and tops[0] < tops[1] < tops[2]
+                    last = rows.last
                     last.scroll_into_view_if_needed()
                     expect(last).to_be_in_viewport()
                     assert page.locator(".cm-policy-preview-list").evaluate(
@@ -14641,29 +14674,24 @@ def test_recorded_refusal_and_populated_policy_results_use_document_flow(tmp_pat
                     assert page.evaluate(
                         "document.documentElement.scrollWidth <= innerWidth"
                     )
-                    if width < 1440:
+                    if width < 1280:
                         # The fixture's work titles are short; a long one is
                         # the title that a truncating cell would clip.
-                        page.locator(
-                            ".cm-policy-preview-list > div > span:nth-child(2) strong"
-                        ).first.evaluate(
+                        rows.first.locator(".write-plan-work strong").evaluate(
                             "node => { node.textContent = 'The Exceptionally Long "
                             "Collected Chronicle of the Synthetic Voyage, Volume "
                             "Twelve'; }"
                         )
-                        editor = page.locator(".cm-policy-editor")
+                        # With text at 200% the check is the preview's own:
+                        # the editor above it is not this test's to measure.
+                        measured = result if text else page.locator(".cm-policy-editor")
                         assert (
                             width,
+                            text,
                             theme,
-                            editor.evaluate(_POLICY_CLIPPED),
+                            measured.evaluate(_POLICY_CLIPPED),
                             page.evaluate(_POLICY_MID_WORD, _POLICY_LABELS),
-                        ) == (width, theme, [], [])
-                    collapse = result.get_by_role("button", name="Show fewer outcomes")
-                    collapse.focus()
-                    page.keyboard.press("Enter")
-                    expect(
-                        result.get_by_role("button", name=re.compile(r"Show .* more"))
-                    ).to_be_focused()
+                        ) == (width, text, theme, [], [])
                     page.get_by_role(
                         "button", name="Review activation", exact=True
                     ).scroll_into_view_if_needed()
@@ -14671,13 +14699,7 @@ def test_recorded_refusal_and_populated_policy_results_use_document_flow(tmp_pat
                         page.get_by_role("button", name="Review activation", exact=True)
                     ).to_be_visible()
             page.emulate_media(reduced_motion="reduce")
-            set_root_text(page, "200%")
-            page.set_viewport_size({"width": 320, "height": 900})
-            result.get_by_role("button", name=re.compile(r"Show .* more")).click()
-            last = page.locator(".cm-policy-preview-list > div").last
-            last.scroll_into_view_if_needed()
-            expect(last).to_be_in_viewport()
-            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+            # The loop leaves the page at 320 px with text at 200%.
             actions = page.locator(".cm-finish-actions")
             actions.scroll_into_view_if_needed()
             assert actions.evaluate("""node => {
@@ -14690,11 +14712,6 @@ def test_recorded_refusal_and_populated_policy_results_use_document_flow(tmp_pat
                         button.getBoundingClientRect().height <=
                         parseFloat(getComputedStyle(button).fontSize) * 5);
             }""")
-            result.get_by_role("button", name="Show fewer outcomes").focus()
-            page.keyboard.press("Enter")
-            expect(
-                result.get_by_role("button", name=re.compile(r"Show .* more"))
-            ).to_be_focused()
             assert (
                 page.evaluate(
                     "async () => (await fetch('/api/v1/metadata-policy/state')).json()"

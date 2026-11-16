@@ -107,9 +107,11 @@ itself ([review case operation](../operations/review-case.md)).
 
 The impact preview compares the active and draft policies on at most 20
 current works, read at one moment. It changes nothing and does not read
-Audiobookshelf again. Title, authors, narrators, date, publisher, language and
-cover are not previewed. Activating still checks that the active policy has not
-changed, or been reactivated, since. Neither step grants write permission.
+Audiobookshelf again. It covers all 14 fields. A cover is described in words,
+from the comparison already made; no image is read. A title and subtitle that
+would only be accepted together are not previewed as a pair. Activating still
+checks that the active policy has not changed, or been reactivated, since.
+Neither step grants write permission.
 How you read a preview is in the
 [review experience](review-experience.md#policy). Activation is in
 [review cases](../operations/review-case.md#policy-activation).
