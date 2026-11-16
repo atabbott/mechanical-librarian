@@ -88,7 +88,7 @@ refused.
 
 | Identifier | What it is |
 | --- | --- |
-| `metadata-report-v81` | The evidence report for one item ([Metadata report](../operations/metadata-report.md)) |
+| `metadata-report-v82` | The evidence report for one item ([Metadata report](../operations/metadata-report.md)) |
 | `proposal-set-v8` | Proposed values for one report ([Proposal sets](../operations/proposal-set.md)) |
 | `fixed-conservative-v47` | The proposal policy |
 | `closed-title-creator-publication-work-identity-v6` | The work-identity comparison |

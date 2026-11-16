@@ -98,8 +98,8 @@ RECORDING_LINK_AUTHORITIES: Final = frozenset(
 MAX_DISPLAY_CREATORS: Final = 10
 MAX_DISPLAY_CHARACTERS: Final = 512
 # Display creators are bounded by count and characters; the anchor reads the
-# record again, so a snapshot is never evidence.
-MAX_ANCHOR_CREATORS: Final = 4
+# record again, so a snapshot is never evidence. The anchor's own bound,
+# `MAX_ANCHOR_CREATORS`, lives with the report that carries it.
 
 _HARDCOVER_BOOK = re.compile(r"[1-9][0-9]{0,9}")
 _OPEN_LIBRARY_KEY = re.compile(
@@ -228,8 +228,58 @@ class OwnerLinkTarget:
 
 
 @dataclass(frozen=True, slots=True)
+class OwnerLinkLookup:
+    """What preparation reads a link by: the digest's four values.
+
+    The source is kept only for a work link; an edition or recording is the
+    same lookup whichever source the owner found it through.
+    """
+
+    medium: str
+    scope: OwnerLinkScope
+    provider: str | None
+    identity: str
+
+    def __post_init__(self) -> None:
+        if (
+            self.medium not in OWNER_LINK_MEDIA
+            or type(self.scope) is not OwnerLinkScope
+            or (self.provider is None) != (self.scope is not OwnerLinkScope.WORK)
+            or not record_identity_valid(
+                self.scope,
+                self.provider
+                or (
+                    "audible_catalog"
+                    if self.scope is OwnerLinkScope.RECORDING
+                    else "open_library"
+                ),
+                self.identity,
+            )
+            or (self.scope is OwnerLinkScope.EDITION and self.medium != "ebook")
+            or (self.scope is OwnerLinkScope.RECORDING and self.medium != "audiobook")
+            or (
+                self.provider is not None
+                and self.provider not in LINK_SOURCES_BY_MEDIUM[self.medium]
+            )
+        ):
+            raise OwnerLinkError("owner link lookup is invalid")
+
+    @property
+    def digest(self) -> str:
+        return link_digest(self.medium, self.scope, self.identity, self.provider or "")
+
+    @property
+    def claim(self) -> LocalClaim | None:
+        return owner_link_claim(self.scope, self.provider, self.identity)
+
+    @property
+    def authorities(self) -> frozenset[str]:
+        return link_authorities(self.scope, self.provider)
+
+
+@dataclass(frozen=True, slots=True)
 class OwnerLink:
-    """An item's current link, as preparation reads it."""
+    """An item's current link row, as the store reads it."""
 
     row_id: str
     medium: str
@@ -251,8 +301,19 @@ class OwnerLink:
     def digest(self) -> str:
         return link_digest(self.medium, self.scope, self.identity, self.provider)
 
+    @property
+    def lookup(self) -> OwnerLinkLookup:
+        return OwnerLinkLookup(
+            self.medium,
+            self.scope,
+            self.provider if self.scope is OwnerLinkScope.WORK else None,
+            self.identity,
+        )
 
-def link_identifier_kind(scope: OwnerLinkScope, provider: str) -> ClaimKind | None:
+
+def link_identifier_kind(
+    scope: OwnerLinkScope, provider: str | None
+) -> ClaimKind | None:
     """The identifier lane a link is read through, or None for a key lookup."""
     if scope is OwnerLinkScope.EDITION or (
         scope is OwnerLinkScope.WORK and provider == "google_books"
@@ -266,7 +327,7 @@ def link_identifier_kind(scope: OwnerLinkScope, provider: str) -> ClaimKind | No
 
 
 def owner_link_claim(
-    scope: OwnerLinkScope, provider: str, identity: str
+    scope: OwnerLinkScope, provider: str | None, identity: str
 ) -> LocalClaim | None:
     """The lookup input an identifier link is sent through its lanes with.
 
@@ -302,10 +363,31 @@ def owner_link_claim(
     )
 
 
-def link_authorities(scope: OwnerLinkScope, provider: str) -> frozenset[str]:
+def link_authorities(scope: OwnerLinkScope, provider: str | None) -> frozenset[str]:
     """The adapters a link lane is dispatched to (S18)."""
     if scope is OwnerLinkScope.EDITION:
         return EDITION_LINK_AUTHORITIES
     if scope is OwnerLinkScope.RECORDING:
         return RECORDING_LINK_AUTHORITIES
-    return frozenset({provider})
+    return frozenset() if provider is None else frozenset({provider})
+
+
+def link_record_identity(lookup: OwnerLinkLookup) -> str | None:
+    """The candidate identity a key lookup's record must carry (S19).
+
+    A Hardcover book or an Open Library work is named by the candidate's work
+    identity, an Open Library edition key by its own identity, an Inventaire
+    entity by its work identity. An identifier link has none: it is named by
+    the ISBN or ASIN the record states.
+    """
+    if lookup.scope is not OwnerLinkScope.WORK:
+        return None
+    if lookup.provider == "hardcover":
+        return f"hardcover-work-{int(lookup.identity):010d}"
+    if lookup.provider == "open_library":
+        if lookup.identity.startswith("/works/"):
+            return "open-library-work-" + lookup.identity.removeprefix("/works/")
+        return "open-library-edition-" + lookup.identity.removeprefix("/books/")
+    if lookup.provider == "inventaire":
+        return "inventaire-work-" + lookup.identity.replace(":", "-")
+    return None

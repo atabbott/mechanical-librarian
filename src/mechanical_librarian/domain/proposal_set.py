@@ -110,7 +110,7 @@ from mechanical_librarian.domain.metadata_report import (
     recording_association_references,
     recording_corroboration,
     recording_variant_conflict,
-    target_work_identity_context,
+    report_work_identity_context,
     work_discovery_lane_payloads,
 )
 from mechanical_librarian.domain.provider_value_language import (
@@ -1218,7 +1218,7 @@ def _supported_work_source(
     # A level admission is the level's exact work source (#1355, S10).
     if level is not None and level.admits(provider, candidate):
         return True
-    context = target_work_identity_context(report.target)
+    context = report_work_identity_context(report)
     return (
         context is not None
         and provider_candidate_exact_work_identity_admission(
@@ -3200,7 +3200,7 @@ def _plausible_narrator_candidates(
     report: MetadataReport, provider: ProviderObservation
 ) -> tuple[ProviderCandidate, ...]:
     """Retain each source-bound plausible recording, including lookup witnesses."""
-    context = target_work_identity_context(report.target)
+    context = report_work_identity_context(report)
     if (
         report.audio is None
         or context is None
@@ -4231,7 +4231,7 @@ def provider_candidate_represents_target_work(
         )
     ):
         return True
-    context = target_work_identity_context(report.target)
+    context = report_work_identity_context(report)
     if (
         context is not None
         and report.audio is not None
@@ -5308,7 +5308,7 @@ def _date_observations(report: MetadataReport) -> tuple[_Observed, ...]:
         else DateEvent.MANIFESTATION_PUBLICATION
     )
     scope = ClaimScope.WORK if report.audio is not None else ClaimScope.EDITION
-    work_context = target_work_identity_context(report.target)
+    work_context = report_work_identity_context(report)
     work_only = report.audio is not None and not admitted_audiobook_identity(report)
     claim: LocalClaim | ProviderClaim
     for claim in report.local_claims:

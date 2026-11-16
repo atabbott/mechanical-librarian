@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Any, Callable, Literal, Mapping, Self, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Callable, Literal, Mapping, Self, TypedDict, cast
 
 from mechanical_librarian.domain.audio_inspection import (
     MAX_AUDIO_TRACKS,
@@ -111,7 +111,10 @@ from mechanical_librarian.domain.work_identity import (
     _closed_equal as _closed_title_equal,
 )
 
-REPORT_SCHEMA = "metadata-report-v81"
+if TYPE_CHECKING:
+    from mechanical_librarian.domain.owner_link import OwnerLinkLookup
+
+REPORT_SCHEMA = "metadata-report-v82"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v6"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -751,10 +754,18 @@ class ProviderQueryKind(StrEnum):
     ISBN = "isbn"
     WORK = "work"
     ASIN = "asin"
+    # An owner link's record read by its key (#1477, ADR-0104): a Hardcover
+    # book id, an Open Library key or an Inventaire URI.
+    LINK = "link"
 
 
 PROVIDER_LANE_KINDS = frozenset(
-    {ProviderQueryKind.ISBN, ProviderQueryKind.WORK, ProviderQueryKind.ASIN}
+    {
+        ProviderQueryKind.ISBN,
+        ProviderQueryKind.WORK,
+        ProviderQueryKind.ASIN,
+        ProviderQueryKind.LINK,
+    }
 )
 PROVIDER_AUTHORITIES = frozenset(
     {
@@ -2846,6 +2857,10 @@ class ProviderLaneObservation:
                 or not self.input_references
             ):
                 raise ReportValueError("provider ISBN lane is invalid")
+        elif self.kind is ProviderQueryKind.LINK:
+            # A link lane is asked with the owner's link alone (#1477).
+            if self.matched_family is not None or self.input_references:
+                raise ReportValueError("provider link lane inputs are invalid")
         elif self.matched_family is not None or not self.input_references:
             # A WORK or ASIN lane carries no ISBN family, and every lane names
             # the local claims it was dispatched from.
@@ -3924,6 +3939,10 @@ class WorkLanePayload:
     input_references: tuple[str, ...]
     title_basis: str | None = None
     author_basis: str | None = None
+    # The asserted lane asked with an owner link's anchor (#1477): the linked
+    # record's title and creators in place of the target's. It is the
+    # asserted lane in every other respect.
+    anchor: bool = False
 
     @property
     def identity(self) -> str:
@@ -3933,6 +3952,8 @@ class WorkLanePayload:
             "kind": ProviderQueryKind.WORK.value,
             "title": self.title,
         }
+        if self.anchor:
+            payload["anchor"] = OWNER_LINK_CLAIM_BASIS
         if self.title_basis is not None:
             payload["title_basis"] = self.title_basis
         if self.author_basis is not None:
@@ -3983,8 +4004,15 @@ def work_discovery_lane_payloads(
     local_claims: tuple[LocalClaim, ...],
     discovery_titles: tuple[AudioDiscoveryTitle, ...] | None = None,
     companion: CompanionEbook | None = None,
+    *,
+    anchored: bool = False,
+    anchor: tuple[str, tuple[str, ...]] | None = None,
 ) -> tuple[WorkLanePayload, ...]:
     """Return the WORK lanes one plan dispatches and one report replays.
+
+    An item whose owner link anchors (#1477, ADR-0104) asks one WORK lane,
+    with the linked record's title and creators in place of every asserted,
+    alternative and fallback lane, and none while that record is unread.
 
     The asserted lane is the target's own title and complete author set, read
     from the target-title claim. `discovery_titles` is `None` for an ebook,
@@ -3994,6 +4022,17 @@ def work_discovery_lane_payloads(
     (series collapse) the alternative replaces the asserted lane rather than
     joining it.
     """
+    if anchored:
+        anchor_references = tuple(
+            sorted(
+                claim.reference
+                for claim in local_claims
+                if claim.kind is ClaimKind.TITLE and claim.basis == "target_metadata"
+            )
+        )
+        if anchor is None or not anchor_references:
+            return ()
+        return (WorkLanePayload(anchor[0], anchor[1], anchor_references, anchor=True),)
     values = {field.destination: field for field in fields}
     title = values[TargetDestination.TITLE]
     authors = values[TargetDestination.AUTHORS]
@@ -5462,6 +5501,240 @@ def _validate_sidecar_claims(
                 raise ReportValueError("audio sidecar claim echoes the target")
 
 
+MAX_ANCHOR_CREATORS = 4
+
+
+def owner_link_anchor_values(
+    candidate: ProviderCandidate,
+) -> tuple[str, tuple[str, ...]] | None:
+    """The linked record's work title and creators, as the anchor asks them.
+
+    Read from the same complete work claim set exact admission reads, then
+    normalized and bounded as a WORK lane's title and authors are. A record
+    that states no complete set anchors nothing (#1477).
+    """
+    claims = _provider_candidate_work_identity_claims(candidate)
+    if claims is None:
+        return None
+    title = normalize_title(claims[0])
+    creators: list[str] = []
+    for value in claims[1]:
+        name = normalize_title(value)
+        if name and name.casefold() not in {other.casefold() for other in creators}:
+            creators.append(name)
+    if not title or not creators:
+        return None
+    return title, tuple(creators[:MAX_ANCHOR_CREATORS])
+
+
+@dataclass(frozen=True, slots=True)
+class OwnerLinkFacts:
+    """What one preparation read through the item's owner link (#1477).
+
+    The four lookup values are the link's digest, which the report binds, so
+    a changed link makes a new report. `outcome` is what the read found,
+    `reason` names a failed edition or recording re-check, and `anchor` is
+    the linked record's title and creators the other sources were asked with.
+    """
+
+    medium: str
+    scope: str
+    provider: str | None
+    identity: str
+    outcome: str
+    reason: str | None = None
+    anchor: tuple[str, tuple[str, ...]] | None = None
+
+    def __post_init__(self) -> None:
+        # Imported here: the link module reads this one's identifier grammar.
+        from mechanical_librarian.domain.owner_link import (
+            OwnerLinkContradiction,
+            OwnerLinkError,
+            OwnerLinkOutcome,
+        )
+
+        try:
+            self.lookup  # noqa: B018 - the lookup validates the four values
+        except (OwnerLinkError, ValueError) as error:
+            raise ReportValueError("owner link facts are invalid") from error
+        reasons = {value.value for value in OwnerLinkContradiction}
+        if (
+            self.outcome not in {value.value for value in OwnerLinkOutcome}
+            or (self.reason is not None) != (self.outcome == "contradicted")
+            or (self.reason is not None and self.reason not in reasons)
+            or (self.anchor is not None and self.outcome != "admitted")
+        ):
+            raise ReportValueError("owner link facts are invalid")
+        if self.anchor is not None:
+            title, creators = (
+                self.anchor
+                if type(self.anchor) is tuple and len(self.anchor) == 2
+                else (None, None)
+            )
+            if (
+                type(title) is not str
+                or not title
+                or normalize_title(title) != title
+                or type(creators) is not tuple
+                or not 1 <= len(creators) <= MAX_ANCHOR_CREATORS
+                or any(
+                    type(value) is not str
+                    or not value
+                    or normalize_title(value) != value
+                    for value in creators
+                )
+                or len({value.casefold() for value in creators}) != len(creators)
+            ):
+                raise ReportValueError("owner link anchor is invalid")
+            _text(title, "owner link anchor title", MAX_SCALAR_CHARACTERS)
+            for value in creators:
+                _text(value, "owner link anchor creator", MAX_SCALAR_CHARACTERS)
+
+    @property
+    def lookup(self) -> OwnerLinkLookup:
+        from mechanical_librarian.domain.owner_link import (
+            OwnerLinkLookup,
+            OwnerLinkScope,
+        )
+
+        return OwnerLinkLookup(
+            self.medium, OwnerLinkScope(self.scope), self.provider, self.identity
+        )
+
+    @property
+    def digest(self) -> str:
+        return self.lookup.digest
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "anchor": None
+            if self.anchor is None
+            else {"creators": list(self.anchor[1]), "title": self.anchor[0]},
+            "digest": self.digest,
+            "identity": self.identity,
+            "medium": self.medium,
+            "outcome": self.outcome,
+            "provider": self.provider,
+            "reason": self.reason,
+            "scope": self.scope,
+        }
+
+
+def _owner_link_from_data(value: object) -> OwnerLinkFacts | None:
+    if value is None:
+        return None
+    item = _object(
+        value,
+        {
+            "anchor",
+            "digest",
+            "identity",
+            "medium",
+            "outcome",
+            "provider",
+            "reason",
+            "scope",
+        },
+    )
+    anchor = None
+    if item["anchor"] is not None:
+        values = _object(item["anchor"], {"creators", "title"})
+        anchor = (values["title"], tuple(_strings(values["creators"])))
+    facts = OwnerLinkFacts(
+        item["medium"],
+        item["scope"],
+        item["provider"],
+        item["identity"],
+        item["outcome"],
+        item["reason"],
+        anchor,
+    )
+    if facts.digest != item["digest"]:
+        raise ReportValueError("owner link digest is inconsistent")
+    return facts
+
+
+def owner_link_lanes(
+    report: MetadataReport,
+) -> tuple[tuple[ProviderObservation, ProviderLaneObservation], ...]:
+    """Every lane the report's owner link was read through (#1477).
+
+    A key lookup's lane is a `link` lane; an identifier link's lanes are the
+    ISBN or ASIN lanes asked with its lane-input claim.
+    """
+    claim = None if report.owner_link is None else report.owner_link.lookup.claim
+    reference = None if claim is None else claim.reference
+    return tuple(
+        (provider, lane)
+        for provider in report.providers
+        for lane in provider.lanes
+        if lane.kind is ProviderQueryKind.LINK
+        or (reference is not None and reference in lane.input_references)
+    )
+
+
+def owner_link_admission(
+    report: MetadataReport, provider: str, candidate: str
+) -> str | None:
+    """How a report kept one record through the owner link, if it did.
+
+    `owner_link` for a record a link lane admitted, `owner_link_anchor` for
+    one the anchored WORK lane admitted, and `None` for any record another
+    lane also kept: such a record stands on that lane's own admission. Derived
+    and never stored, like `candidate_admission_basis`.
+    """
+    if report.owner_link is None:
+        return None
+    observation = next(
+        (value for value in report.providers if value.provider == provider), None
+    )
+    if observation is None:
+        return None
+    link_lanes = {
+        lane.identity
+        for value, lane in owner_link_lanes(report)
+        if value is observation
+    }
+    anchored = (
+        {
+            payload.identity
+            for payload in work_discovery_lane_payloads(
+                report.target.fields,
+                report.local_claims,
+                anchored=True,
+                anchor=report.owner_link.anchor,
+            )
+        }
+        if report.owner_link.anchor is not None
+        else set()
+    )
+    holders = [
+        lane.identity
+        for lane in observation.lanes
+        if any(member.edition_identity == candidate for member in lane.candidates)
+    ]
+    if not holders:
+        return None
+    if all(identity in link_lanes for identity in holders):
+        return "owner_link"
+    if all(identity in link_lanes or identity in anchored for identity in holders):
+        return "owner_link_anchor"
+    return None
+
+
+def report_work_identity_context(
+    report: MetadataReport,
+) -> tuple[str, tuple[str, ...]] | None:
+    """The title and creators a report's records are compared with (#1477).
+
+    The owner link's anchor where the report read one, otherwise the target's
+    own exact title and complete creator set.
+    """
+    if report.owner_link is not None and report.owner_link.anchor is not None:
+        return report.owner_link.anchor
+    return target_work_identity_context(report.target)
+
+
 @dataclass(frozen=True, slots=True)
 class MetadataReport:
     report_id: str
@@ -5484,6 +5757,9 @@ class MetadataReport:
     # Shadow evidence of a cover recovered from a malformed EPUB declaration
     # (#1357). It is never a cover source and only an EPUB report states one.
     cover_recovery: EpubCoverRecovery | None = None
+    # What preparation read through the item's owner link (#1477), or `None`
+    # when the item had no current link.
+    owner_link: OwnerLinkFacts | None = None
 
     def _validate_companion_lanes(self, is_audio: bool) -> None:
         """Replay what an audiobook's companion EPUB contributed (#1468).
@@ -5565,6 +5841,57 @@ class MetadataReport:
                 raise ReportValueError("provider companion lane is missing")
 
     def __post_init__(self) -> None:
+        is_audio = self._validate_sections()
+        target_title, target_authors = self._target_work_values()
+        planned, ebook_planned = self._planned_work_lanes(target_authors)
+        asserted = next(
+            (
+                identity
+                for identity, value in planned.items()
+                if value.title_basis is None
+            ),
+            None,
+        )
+        for provider in self.providers:
+            self._validate_work_lane_plan(
+                provider, planned, asserted, target_title, target_authors, is_audio
+            )
+            self._validate_work_lane_admissions(
+                provider, planned, ebook_planned, target_title, target_authors
+            )
+            self._validate_ladder_records(provider, planned, ebook_planned, is_audio)
+        self._validate_lane_dispatch(planned)
+        self._validate_derived_results()
+        self._validate_lane_references(is_audio)
+        self._validate_owner_link({**planned, **ebook_planned})
+        self._validate_admission_bases(planned)
+        self._validate_identity_refused()
+        # An observation that names a candidate is a comparison, and a
+        # comparison is only readable against the thing it was made with. A
+        # citation naming an identity this report does not retain would be
+        # presented as a matched edition an owner could go and look at, so it
+        # is refused here rather than read later. Demotion to work scope keeps
+        # the candidate, so preparation's own records still resolve; only an
+        # identity that is in no lane at all fails.
+        if self.audio is not None:
+            retained = {
+                candidate.identity
+                for provider in self.providers
+                for candidate in provider.candidates
+            }
+            if any(
+                observation.candidate is not None
+                and observation.candidate not in retained
+                for observation in self.audio.observations
+            ):
+                raise ReportValueError("audio observation cites an unknown candidate")
+        if self.report_id != report_content_address(self._identity_data()):
+            raise ReportValueError("report identity is inconsistent")
+        if len(self.to_json().encode("utf-8")) > MAX_REPORT_BYTES:
+            raise ReportValueError("report exceeds its byte limit")
+
+    def _validate_sections(self) -> bool:
+        """Check each section's own shape; return whether the file is audio."""
         if (
             _REPORT_ID.fullmatch(self.report_id) is None
             or type(self.target) is not TargetFacts
@@ -5657,6 +5984,16 @@ class MetadataReport:
         names = tuple(value.provider for value in self.providers)
         if names != tuple(sorted(set(names))):
             raise ReportValueError("provider observations are not in canonical order")
+        return is_audio
+
+    def _target_work_values(self) -> tuple[str, tuple[str, ...]]:
+        """The title and authors this report's WORK lanes admitted against.
+
+        The owner link's anchor where the report read one (#1477), otherwise
+        the target's own title and value authors.
+        """
+        if self.owner_link is not None and self.owner_link.anchor is not None:
+            return self.owner_link.anchor
         target_title = self.target.current_title
         target_authors_value = next(
             (
@@ -5673,6 +6010,23 @@ class MetadataReport:
             and all(type(value) is str for value in target_authors_value)
             else ()
         )
+        return target_title or "", target_authors
+
+    def _planned_work_lanes(
+        self, target_authors: tuple[str, ...]
+    ) -> tuple[dict[str, WorkLanePayload], dict[str, WorkLanePayload]]:
+        """The audiobook and ebook WORK lanes this report replays against."""
+        if self._owner_link_anchors():
+            anchored = {
+                payload.identity: payload
+                for payload in work_discovery_lane_payloads(
+                    self.target.fields,
+                    self.local_claims,
+                    anchored=True,
+                    anchor=cast("OwnerLinkFacts", self.owner_link).anchor,
+                )
+            }
+            return (anchored, {}) if self.audio is not None else ({}, anchored)
         # An audiobook report replays the WORK lanes its plan could carry, so
         # a lane identity names exactly the title it was dispatched with.
         planned = (
@@ -5707,326 +6061,351 @@ class MetadataReport:
             )
             else {}
         )
-        asserted = next(
-            (
-                identity
-                for identity, value in planned.items()
-                if value.title_basis is None
-            ),
-            None,
+        return planned, ebook_planned
+
+    def _owner_link_anchors(self) -> bool:
+        """Whether the report's WORK lanes were asked with its link's anchor."""
+        if self.owner_link is None or self.owner_link.outcome == "medium_changed":
+            return False
+        # Imported here: the link module reads this one's identifier grammar.
+        from mechanical_librarian.domain.owner_link import (
+            OwnerLinkScope,
+            owner_link_anchors,
         )
-        for provider in self.providers:
-            work_identities = {
-                lane.identity
-                for lane in provider.lanes
-                if lane.kind is ProviderQueryKind.WORK
-            }
-            if self.audio is not None and work_identities:
-                if not work_identities.issubset(planned):
-                    raise ReportValueError("provider work lane is unknown")
-                # An alternative lane is absent when it was suppressed; the
-                # asserted lane, where the plan has one, never is.
-                if any(
-                    identity not in work_identities
-                    and planned[identity].title_basis is None
-                    for identity in planned
-                ):
-                    raise ReportValueError("provider work lanes do not match the plan")
-            if provider.recording_lookup_candidates:
-                lookup_lanes = tuple(
-                    lane
-                    for lane in provider.lanes
-                    if lane.kind is ProviderQueryKind.WORK
-                    and (asserted is None or lane.identity == asserted)
-                )
-                if len(lookup_lanes) != 1 or not lookup_lanes[0].input_references:
-                    raise ReportValueError("recording lookup lane is missing")
-                lane = lookup_lanes[0]
-                work_inputs = {
-                    claim.reference
-                    for claim in self.local_claims
-                    if claim.kind is ClaimKind.TITLE
-                    and claim.basis == "target_metadata"
-                    and claim.canonical == target_title
-                }
-                if (
-                    not set(lane.input_references).issubset(work_inputs)
-                    or lane.identity != asserted
-                    or lane.status is not ProviderStatus.NO_MATCH
-                ):
-                    raise ReportValueError("recording lookup lane is inconsistent")
-            if provider.recording_lookup_candidates and (
-                not is_audio
-                or any(
-                    not provider_candidate_exact_work_identity_admission(
-                        candidate,
-                        target_title or "",
-                        target_authors,
-                        audiobook=self.audio is not None,
-                    ).admitted
-                    for candidate in provider.recording_lookup_candidates
+
+        return owner_link_anchors(OwnerLinkScope(self.owner_link.scope))
+
+    def _validate_owner_link(self, work_plan: dict[str, WorkLanePayload]) -> None:
+        """Replay what the report read through its owner link (#1477).
+
+        Link lanes go only to the link's own sources, with its own lookup;
+        the outcome is what those lanes found; an anchor is the work of a
+        record they admitted; and while a link anchors, every WORK lane was
+        asked with that anchor, or none was asked at all.
+        """
+        facts = self.owner_link
+        link_lanes = owner_link_lanes(self)
+        if facts is None:
+            if link_lanes:
+                raise ReportValueError("provider link lane has no owner link")
+            return
+        if type(facts) is not OwnerLinkFacts:
+            raise ReportValueError("owner link facts are invalid")
+        # Imported here: the link module reads this one's identifier grammar.
+        from mechanical_librarian.domain.owner_link import (
+            DIRECT_LOOKUP_PROVIDERS,
+            OwnerLinkScope,
+            link_record_identity,
+        )
+
+        lookup = facts.lookup
+        medium = "audiobook" if self.audio is not None else "ebook"
+        if (facts.medium != medium) != (facts.outcome == "medium_changed") or (
+            facts.outcome == "medium_changed" and link_lanes
+        ):
+            raise ReportValueError("owner link medium is inconsistent")
+        claim = lookup.claim
+        direct = (
+            lookup.scope is OwnerLinkScope.WORK
+            and lookup.provider in DIRECT_LOOKUP_PROVIDERS
+        )
+        expected = link_record_identity(lookup)
+        kept: list[ProviderCandidate] = []
+        for provider, lane in link_lanes:
+            if provider.authority not in lookup.authorities or (
+                lane.kind is ProviderQueryKind.LINK
+                if claim is not None
+                else lane.kind is not ProviderQueryKind.LINK
+            ):
+                raise ReportValueError("provider link lane is invalid")
+            if claim is not None and (
+                lane.kind.value != claim.kind.value
+                or lane.input_references != (claim.reference,)
+                or (
+                    lane.kind is ProviderQueryKind.ISBN
+                    and lane.matched_family != claim.canonical
                 )
             ):
-                raise ReportValueError("recording lookup work identity is inconsistent")
+                raise ReportValueError("provider link lane is invalid")
             candidates = {value.identity: value for value in provider.candidates}
-            for lane in provider.lanes:
-                payload = planned.get(lane.identity)
-                if (
-                    payload is None
-                    or payload.title_basis is None
-                    or lane.status is not ProviderStatus.CANDIDATES
-                ):
-                    continue
-                lane_candidates = tuple(
-                    candidates[value.edition_identity] for value in lane.candidates
-                )
-                # The alternative lane retains one band-corroborated recording,
-                # which is what keeps its marketplace evidence.
-                if len(lane_candidates) != 1 or not any(
-                    value.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
-                    and value.scope is ClaimScope.EDITION
-                    for value in lane_candidates[0].evidence
-                ):
-                    raise ReportValueError("provider alternative candidate is invalid")
-            witness = provider.edition_enrichment_overflow
-            if witness is not None:
-                work_lanes = tuple(
-                    lane
-                    for lane in provider.lanes
-                    if lane.kind is ProviderQueryKind.WORK
-                    and lane.status is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
-                )
-                lineage = (
-                    work_lanes[0].transformation_lineage
-                    if len(work_lanes) == 1
-                    else provider.transformation_lineage
-                )
-                dispatch = (
-                    work_lanes[0].dispatch_lineage
-                    if len(work_lanes) == 1
-                    else provider.dispatch_lineage
-                )
-                admission = replay_provider_work_identity_admission(
-                    local_title=target_title or "",
-                    local_authors=target_authors,
-                    provider_title=witness.title,
-                    provider_authors=tuple(
-                        author.value or "" for author in witness.authors
-                    ),
-                    provider_work_identity=witness.work_identity,
-                    dispatch_lineage=dispatch,
+            for member in lane.candidates:
+                candidate = candidates[member.edition_identity]
+                if expected is not None and expected not in {
+                    candidate.identity,
+                    candidate.work_identity,
+                }:
+                    raise ReportValueError("provider link lane names another record")
+                kept.append(candidate)
+        statuses = {lane.status for _, lane in link_lanes}
+        merged = any(
+            value.category is FailureCategory.IDENTITY
+            for _, lane in link_lanes
+            for value in lane.diagnostics
+        )
+        outcome = facts.outcome
+        if (
+            (outcome == "admitted") != bool(kept)
+            or (outcome == "merged") != merged
+            or (merged and (not direct or statuses != {ProviderStatus.NO_MATCH}))
+            or (outcome == "missing" and statuses != {ProviderStatus.NO_MATCH})
+            or (
+                outcome == "unavailable"
+                and statuses <= {ProviderStatus.CANDIDATES, ProviderStatus.NO_MATCH}
+            )
+            or (outcome == "source_disabled" and link_lanes)
+            or (outcome == "contradicted" and ProviderStatus.CANDIDATES in statuses)
+        ):
+            raise ReportValueError("owner link outcome does not replay")
+        if facts.anchor is not None and facts.anchor not in {
+            owner_link_anchor_values(value) for value in kept
+        }:
+            raise ReportValueError("owner link anchor does not replay")
+        if lookup.scope is OwnerLinkScope.WORK and any(
+            provider.authority == lookup.provider
+            and any((provider, lane) not in link_lanes for lane in provider.lanes)
+            for provider in self.providers
+        ):
+            raise ReportValueError("linked source was asked past its link")
+        if self._owner_link_anchors() and any(
+            lane.kind is ProviderQueryKind.WORK and lane.identity not in work_plan
+            for provider in self.providers
+            for lane in provider.lanes
+        ):
+            raise ReportValueError("provider work lane is not anchored")
+
+    def _validate_work_lane_plan(
+        self,
+        provider: ProviderObservation,
+        planned: dict[str, WorkLanePayload],
+        asserted: str | None,
+        target_title: str,
+        target_authors: tuple[str, ...],
+        is_audio: bool,
+    ) -> None:
+        """Replay one observation's WORK lanes against the plan."""
+        work_identities = {
+            lane.identity
+            for lane in provider.lanes
+            if lane.kind is ProviderQueryKind.WORK
+        }
+        if self.audio is not None and work_identities:
+            if not work_identities.issubset(planned):
+                raise ReportValueError("provider work lane is unknown")
+            # An alternative lane is absent when it was suppressed; the
+            # asserted lane, where the plan has one, never is.
+            if any(
+                identity not in work_identities
+                and planned[identity].title_basis is None
+                for identity in planned
+            ):
+                raise ReportValueError("provider work lanes do not match the plan")
+        if provider.recording_lookup_candidates:
+            lookup_lanes = tuple(
+                lane
+                for lane in provider.lanes
+                if lane.kind is ProviderQueryKind.WORK
+                and (asserted is None or lane.identity == asserted)
+            )
+            if len(lookup_lanes) != 1 or not lookup_lanes[0].input_references:
+                raise ReportValueError("recording lookup lane is missing")
+            lane = lookup_lanes[0]
+            work_inputs = {
+                claim.reference
+                for claim in self.local_claims
+                if claim.kind is ClaimKind.TITLE
+                and claim.basis == "target_metadata"
+                and claim.canonical == self.target.current_title
+            }
+            if (
+                not set(lane.input_references).issubset(work_inputs)
+                or lane.identity != asserted
+                or lane.status is not ProviderStatus.NO_MATCH
+            ):
+                raise ReportValueError("recording lookup lane is inconsistent")
+        if provider.recording_lookup_candidates and (
+            not is_audio
+            or any(
+                not provider_candidate_exact_work_identity_admission(
+                    candidate,
+                    target_title or "",
+                    target_authors,
                     audiobook=self.audio is not None,
-                )
-                if (
-                    not admission.admitted
-                    or admission.transformation != lineage
-                    or any(
-                        (payload := planned.get(lane.identity)) is not None
-                        and payload.title_basis is not None
-                        for lane in work_lanes
-                    )
-                ):
-                    raise ReportValueError(
-                        "edition overflow witness does not match target"
-                    )
+                ).admitted
+                for candidate in provider.recording_lookup_candidates
+            )
+        ):
+            raise ReportValueError("recording lookup work identity is inconsistent")
+        candidates = {value.identity: value for value in provider.candidates}
+        for lane in provider.lanes:
+            payload = planned.get(lane.identity)
+            if (
+                payload is None
+                or payload.title_basis is None
+                or lane.status is not ProviderStatus.CANDIDATES
+            ):
+                continue
+            lane_candidates = tuple(
+                candidates[value.edition_identity] for value in lane.candidates
+            )
+            # The alternative lane retains one band-corroborated recording,
+            # which is what keeps its marketplace evidence.
+            if len(lane_candidates) != 1 or not any(
+                value.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
+                and value.scope is ClaimScope.EDITION
+                for value in lane_candidates[0].evidence
+            ):
+                raise ReportValueError("provider alternative candidate is invalid")
+
+    def _validate_work_lane_admissions(
+        self,
+        provider: ProviderObservation,
+        planned: dict[str, WorkLanePayload],
+        ebook_planned: dict[str, WorkLanePayload],
+        target_title: str,
+        target_authors: tuple[str, ...],
+    ) -> None:
+        """Replay what each WORK lane of one observation admitted."""
+        candidates = {value.identity: value for value in provider.candidates}
+        witness = provider.edition_enrichment_overflow
+        if witness is not None:
             work_lanes = tuple(
                 lane
                 for lane in provider.lanes
                 if lane.kind is ProviderQueryKind.WORK
-                and lane.status is ProviderStatus.CANDIDATES
+                and lane.status is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
             )
-            # Band claims reach only the asserted lane of an audiobook plan at
-            # an audiobook authority, so a band-corroborated lineage anywhere
-            # else does not replay (#1260).
-            band_claims = (
-                self.local_claims
-                if self.audio is not None
-                and provider.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
-                else None
+            lineage = (
+                work_lanes[0].transformation_lineage
+                if len(work_lanes) == 1
+                else provider.transformation_lineage
             )
-            # The corroborated rule reads only the catalogue's asserted lane,
-            # beside its band claims (#1307).
-            corroboration = (
-                recording_corroboration(self.target.fields)
-                if band_claims is not None
-                and provider.authority == CORROBORATED_RULE_AUTHORITY
-                else None
+            dispatch = (
+                work_lanes[0].dispatch_lineage
+                if len(work_lanes) == 1
+                else provider.dispatch_lineage
+            )
+            admission = replay_provider_work_identity_admission(
+                local_title=target_title or "",
+                local_authors=target_authors,
+                provider_title=witness.title,
+                provider_authors=tuple(
+                    author.value or "" for author in witness.authors
+                ),
+                provider_work_identity=witness.work_identity,
+                dispatch_lineage=dispatch,
+                audiobook=self.audio is not None,
             )
             if (
-                not work_lanes
-                and provider.query_kind is ProviderQueryKind.WORK
-                and provider.status is ProviderStatus.CANDIDATES
+                not admission.admitted
+                or admission.transformation != lineage
+                or any(
+                    (payload := planned.get(lane.identity)) is not None
+                    and payload.title_basis is not None
+                    for lane in work_lanes
+                )
             ):
-                set_admission = provider_candidate_set_work_identity_admission(
-                    provider.candidates,
-                    target_title or "",
-                    target_authors,
-                    provider.dispatch_lineage,
-                    audiobook=self.audio is not None,
-                    band_claims=band_claims,
-                    corroboration=corroboration,
-                    leading_number=corroboration is not None,
-                    library_languages=self.library_languages,
-                    echoed_languages=echoed_target_values(
-                        self.audio, self.target.fields, AudioInspectionField.LANGUAGE
-                    ),
-                )
-                if (
-                    not set_admission.admitted
-                    or set_admission.candidates != provider.candidates
-                    or set_admission.transformation != provider.transformation_lineage
-                ):
-                    raise ReportValueError(
-                        "provider work identity lineage is inconsistent"
-                    )
-            for lane in work_lanes:
-                lane_candidates = tuple(
-                    candidates[value.edition_identity] for value in lane.candidates
-                )
-                # An alternative lane admits against the title it asked with.
-                payload = planned.get(lane.identity)
-                creators = ebook_planned.get(lane.identity)
-                set_admission = provider_candidate_set_work_identity_admission(
-                    lane_candidates,
-                    (
-                        payload.title
-                        if payload is not None and payload.title_basis is not None
-                        else target_title or ""
-                    ),
-                    # The companion fallback (#1468) and the EPUB-creator
-                    # fallback (#1380) ask with creators the target lacks.
-                    (
-                        payload.authors
-                        if payload is not None
-                        and payload.title_basis == COMPANION_WORK_BASIS
-                        else creators.authors
-                        if creators is not None and creators.author_basis is not None
-                        else target_authors
-                    ),
-                    lane.dispatch_lineage,
-                    audiobook=self.audio is not None,
-                    band_claims=(
-                        band_claims
-                        if payload is not None and payload.title_basis is None
-                        else None
-                    ),
-                    corroboration=(
-                        corroboration
-                        if payload is not None and payload.title_basis is None
-                        else None
-                    ),
-                    leading_number=corroboration is not None
-                    and payload is not None
-                    and payload.title_basis is None,
-                    library_languages=self.library_languages,
-                    echoed_languages=echoed_target_values(
-                        self.audio, self.target.fields, AudioInspectionField.LANGUAGE
-                    ),
-                )
-                if (
-                    not set_admission.admitted
-                    or set_admission.candidates != lane_candidates
-                    or set_admission.transformation != lane.transformation_lineage
-                ):
-                    raise ReportValueError(
-                        "provider work identity lineage is inconsistent"
-                    )
-            # An exhausted lane walked its own title's whole audiobook ladder,
-            # in ladder order, so its lineages replay from the plan alone. An
-            # ebook ladder ends at its first rung with products, so its record
-            # is the whole ladder when every rung was empty, and otherwise the
-            # ladder up to the one refused rung (#1499).
-            for lane in provider.lanes:
-                if not lane.exhausted_dispatch:
-                    continue
-                payload = (planned if is_audio else ebook_planned).get(lane.identity)
-                if (
-                    payload is None
-                    or (
-                        is_audio
-                        and (
-                            provider.authority not in AUDIOBOOK_PROVIDER_AUTHORITIES
-                            or lane.exhausted_dispatch
-                            != lane_work_ladder(provider.authority, payload)
-                        )
-                    )
-                    or (
-                        not is_audio
-                        and lane.exhausted_dispatch
-                        != _ebook_ladder_record(payload, lane)
-                    )
-                ):
-                    raise ReportValueError(
-                        "provider exhausted dispatch is inconsistent"
-                    )
-            # A recording-lookup hint (#1257) replays from the asserted lane's
-            # own ladder and the item's own runtime, and never names a product
-            # the observation already retains.
-            for lane in provider.lanes:
-                if not lane.recording_lookup_hints:
-                    continue
-                payload = planned.get(lane.identity)
-                # Only Audible produces hints; any other authority's is forged.
-                if (
-                    self.audio is None
-                    or provider.authority != "audible_catalog"
-                    or payload is None
-                    or payload.title_basis is not None
-                ):
-                    raise ReportValueError(
-                        "recording lookup hint provenance is invalid"
-                    )
-                ladder = lane_work_ladder(provider.authority, payload)
-                if any(
-                    hint.rung not in ladder for hint in lane.recording_lookup_hints
-                ) or (
-                    lane.status is ProviderStatus.CANDIDATES
-                    # A rule admission follows the whole ladder (#1307), so
-                    # every rung's hints stand beside it.
-                    and not _corroborated_lane(lane)
-                    and (
-                        lane.dispatch_lineage not in ladder
-                        or any(
-                            ladder.index(hint.rung)
-                            > ladder.index(lane.dispatch_lineage)
-                            for hint in lane.recording_lookup_hints
-                        )
-                    )
-                ):
-                    raise ReportValueError("recording lookup hint rung is inconsistent")
-                held = candidate_asins(
-                    (*provider.candidates, *provider.recording_lookup_candidates)
-                )
-                if any(hint.asin in held for hint in lane.recording_lookup_hints):
-                    raise ReportValueError(
-                        "recording lookup hint duplicates a retained product"
-                    )
-                # Imported here: the corroboration module imports this one, and
-                # it alone owns the tight band (ADR-0064).
-                from mechanical_librarian.domain.audiobook_corroboration import (
-                    CorroborationOutcome,
-                    local_claim_runtime_seconds,
-                    runtime_agreement,
-                )
+                raise ReportValueError("edition overflow witness does not match target")
+        work_lanes = tuple(
+            lane
+            for lane in provider.lanes
+            if lane.kind is ProviderQueryKind.WORK
+            and lane.status is ProviderStatus.CANDIDATES
+        )
+        # Band claims reach only the asserted lane of an audiobook plan at
+        # an audiobook authority, so a band-corroborated lineage anywhere
+        # else does not replay (#1260).
+        band_claims = (
+            self.local_claims
+            if self.audio is not None
+            and provider.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
+            else None
+        )
+        # The corroborated rule reads only the catalogue's asserted lane,
+        # beside its band claims (#1307).
+        corroboration = (
+            recording_corroboration(self.target.fields)
+            if band_claims is not None
+            and provider.authority == CORROBORATED_RULE_AUTHORITY
+            else None
+        )
+        if (
+            not work_lanes
+            and provider.query_kind is ProviderQueryKind.WORK
+            and provider.status is ProviderStatus.CANDIDATES
+        ):
+            set_admission = provider_candidate_set_work_identity_admission(
+                provider.candidates,
+                target_title or "",
+                target_authors,
+                provider.dispatch_lineage,
+                audiobook=self.audio is not None,
+                band_claims=band_claims,
+                corroboration=corroboration,
+                leading_number=corroboration is not None,
+                library_languages=self.library_languages,
+                echoed_languages=echoed_target_values(
+                    self.audio, self.target.fields, AudioInspectionField.LANGUAGE
+                ),
+            )
+            if (
+                not set_admission.admitted
+                or set_admission.candidates != provider.candidates
+                or set_admission.transformation != provider.transformation_lineage
+            ):
+                raise ReportValueError("provider work identity lineage is inconsistent")
+        for lane in work_lanes:
+            lane_candidates = tuple(
+                candidates[value.edition_identity] for value in lane.candidates
+            )
+            # An alternative lane admits against the title it asked with.
+            payload = planned.get(lane.identity)
+            creators = ebook_planned.get(lane.identity)
+            set_admission = provider_candidate_set_work_identity_admission(
+                lane_candidates,
+                (
+                    payload.title
+                    if payload is not None and payload.title_basis is not None
+                    else target_title or ""
+                ),
+                # The companion fallback (#1468) and the EPUB-creator
+                # fallback (#1380) ask with creators the target lacks.
+                (
+                    payload.authors
+                    if payload is not None
+                    and payload.title_basis == COMPANION_WORK_BASIS
+                    else creators.authors
+                    if creators is not None and creators.author_basis is not None
+                    else target_authors
+                ),
+                lane.dispatch_lineage,
+                audiobook=self.audio is not None,
+                band_claims=(
+                    band_claims
+                    if payload is not None and payload.title_basis is None
+                    else None
+                ),
+                corroboration=(
+                    corroboration
+                    if payload is not None and payload.title_basis is None
+                    else None
+                ),
+                leading_number=corroboration is not None
+                and payload is not None
+                and payload.title_basis is None,
+                library_languages=self.library_languages,
+                echoed_languages=echoed_target_values(
+                    self.audio, self.target.fields, AudioInspectionField.LANGUAGE
+                ),
+            )
+            if (
+                not set_admission.admitted
+                or set_admission.candidates != lane_candidates
+                or set_admission.transformation != lane.transformation_lineage
+            ):
+                raise ReportValueError("provider work identity lineage is inconsistent")
 
-                local = local_claim_runtime_seconds(self.local_claims)
-                if local is None or any(
-                    runtime_agreement(
-                        local, hint.runtime_seconds, provider_minutes=True
-                    ).outcome
-                    is not CorroborationOutcome.CORROBORATED
-                    for hint in lane.recording_lookup_hints
-                ):
-                    raise ReportValueError(
-                        "recording lookup hint is outside the tight band"
-                    )
-            # One asserted lane per provider, so the bound is per observation.
-            if (
-                sum(len(lane.recording_lookup_hints) for lane in provider.lanes)
-                > MAX_RECORDING_LOOKUP_HINTS
-            ):
-                raise ReportValueError("recording lookup hints exceed their bound")
-        self._validate_lane_dispatch(planned)
+    def _validate_derived_results(self) -> None:
+        """Field results, identifier evidence and cover sources re-derive."""
         if (
             type(self.field_results) is not tuple
             or any(type(value) is not FieldResult for value in self.field_results)
@@ -6051,13 +6430,118 @@ class MetadataReport:
                 raise ReportValueError("cover evidence is incomplete")
         except CoverEvidenceError as error:
             raise ReportValueError("cover evidence is invalid") from error
-        known = set(references)
+
+    def _validate_ladder_records(
+        self,
+        provider: ProviderObservation,
+        planned: dict[str, WorkLanePayload],
+        ebook_planned: dict[str, WorkLanePayload],
+        is_audio: bool,
+    ) -> None:
+        """Replay one observation's exhausted ladders and lookup hints."""
+        # An exhausted lane walked its own title's whole audiobook ladder,
+        # in ladder order, so its lineages replay from the plan alone. An
+        # ebook ladder ends at its first rung with products, so its record
+        # is the whole ladder when every rung was empty, and otherwise the
+        # ladder up to the one refused rung (#1499).
+        for lane in provider.lanes:
+            if not lane.exhausted_dispatch:
+                continue
+            payload = (planned if is_audio else ebook_planned).get(lane.identity)
+            if (
+                payload is None
+                or (
+                    is_audio
+                    and (
+                        provider.authority not in AUDIOBOOK_PROVIDER_AUTHORITIES
+                        or lane.exhausted_dispatch
+                        != lane_work_ladder(provider.authority, payload)
+                    )
+                )
+                or (
+                    not is_audio
+                    and lane.exhausted_dispatch != _ebook_ladder_record(payload, lane)
+                )
+            ):
+                raise ReportValueError("provider exhausted dispatch is inconsistent")
+        # A recording-lookup hint (#1257) replays from the asserted lane's
+        # own ladder and the item's own runtime, and never names a product
+        # the observation already retains.
+        for lane in provider.lanes:
+            if not lane.recording_lookup_hints:
+                continue
+            payload = planned.get(lane.identity)
+            # Only Audible produces hints; any other authority's is forged.
+            if (
+                self.audio is None
+                or provider.authority != "audible_catalog"
+                or payload is None
+                or payload.title_basis is not None
+            ):
+                raise ReportValueError("recording lookup hint provenance is invalid")
+            ladder = lane_work_ladder(provider.authority, payload)
+            if any(hint.rung not in ladder for hint in lane.recording_lookup_hints) or (
+                lane.status is ProviderStatus.CANDIDATES
+                # A rule admission follows the whole ladder (#1307), so
+                # every rung's hints stand beside it.
+                and not _corroborated_lane(lane)
+                and (
+                    lane.dispatch_lineage not in ladder
+                    or any(
+                        ladder.index(hint.rung) > ladder.index(lane.dispatch_lineage)
+                        for hint in lane.recording_lookup_hints
+                    )
+                )
+            ):
+                raise ReportValueError("recording lookup hint rung is inconsistent")
+            held = candidate_asins(
+                (*provider.candidates, *provider.recording_lookup_candidates)
+            )
+            if any(hint.asin in held for hint in lane.recording_lookup_hints):
+                raise ReportValueError(
+                    "recording lookup hint duplicates a retained product"
+                )
+            # Imported here: the corroboration module imports this one, and
+            # it alone owns the tight band (ADR-0064).
+            from mechanical_librarian.domain.audiobook_corroboration import (
+                CorroborationOutcome,
+                local_claim_runtime_seconds,
+                runtime_agreement,
+            )
+
+            local = local_claim_runtime_seconds(self.local_claims)
+            if local is None or any(
+                runtime_agreement(
+                    local, hint.runtime_seconds, provider_minutes=True
+                ).outcome
+                is not CorroborationOutcome.CORROBORATED
+                for hint in lane.recording_lookup_hints
+            ):
+                raise ReportValueError(
+                    "recording lookup hint is outside the tight band"
+                )
+        # One asserted lane per provider, so the bound is per observation.
+        if (
+            sum(len(lane.recording_lookup_hints) for lane in provider.lanes)
+            > MAX_RECORDING_LOOKUP_HINTS
+        ):
+            raise ReportValueError("recording lookup hints exceed their bound")
+
+    def _validate_lane_references(self, is_audio: bool) -> None:
+        """Every lane input and comparison names a claim this report holds."""
+        known = {value.reference for value in self.local_claims}
         self._validate_companion_lanes(is_audio)
-        # A companion claim is a lane input only, never a local claim (#1468).
-        lane_known = known | (
-            set()
-            if self.companion is None
-            else {claim.reference for claim in self.companion.claims}
+        # A companion claim is a lane input only, never a local claim (#1468),
+        # and so is an identifier link's lookup claim (#1477).
+        link_claim = None if self.owner_link is None else self.owner_link.lookup.claim
+        lane_known = (
+            known
+            | (
+                set()
+                if self.companion is None
+                else {claim.reference for claim in self.companion.claims}
+            )
+            | (set() if link_claim is None else {link_claim.reference})
         )
         if any(
             not set(provider.input_references).issubset(lane_known)
@@ -6131,31 +6615,6 @@ class MetadataReport:
                 )
                 if candidate != expected:
                     raise ReportValueError("provider comparison links are inconsistent")
-        self._validate_admission_bases(planned)
-        self._validate_identity_refused()
-        # An observation that names a candidate is a comparison, and a
-        # comparison is only readable against the thing it was made with. A
-        # citation naming an identity this report does not retain would be
-        # presented as a matched edition an owner could go and look at, so it
-        # is refused here rather than read later. Demotion to work scope keeps
-        # the candidate, so preparation's own records still resolve; only an
-        # identity that is in no lane at all fails.
-        if self.audio is not None:
-            retained = {
-                candidate.identity
-                for provider in self.providers
-                for candidate in provider.candidates
-            }
-            if any(
-                observation.candidate is not None
-                and observation.candidate not in retained
-                for observation in self.audio.observations
-            ):
-                raise ReportValueError("audio observation cites an unknown candidate")
-        if self.report_id != report_content_address(self._identity_data()):
-            raise ReportValueError("report identity is inconsistent")
-        if len(self.to_json().encode("utf-8")) > MAX_REPORT_BYTES:
-            raise ReportValueError("report exceeds its byte limit")
 
     def _validate_identity_refused(self) -> None:
         """Read retained refused WORK answers back as their producer kept them.
@@ -6409,6 +6868,7 @@ class MetadataReport:
         companion: CompanionEbook | None = None,
         library_languages: tuple[str, ...] = (),
         cover_recovery: EpubCoverRecovery | None = None,
+        owner_link: OwnerLinkFacts | None = None,
     ) -> Self:
         local_status = (
             "candidate"
@@ -6510,6 +6970,7 @@ class MetadataReport:
                     companion,
                     library_languages,
                     cover_recovery,
+                    owner_link,
                 )
                 data.pop("report_id")
                 address = report_content_address(data)
@@ -6538,6 +6999,7 @@ class MetadataReport:
             companion=companion,
             library_languages=library_languages,
             cover_recovery=cover_recovery,
+            owner_link=owner_link,
         )
 
     def _identity_data(self) -> dict[str, object]:
@@ -6561,6 +7023,7 @@ class MetadataReport:
             self.companion,
             self.library_languages,
             self.cover_recovery,
+            self.owner_link,
         )
 
     def to_json(self) -> str:
@@ -8108,6 +8571,7 @@ def _report_data(
     companion: CompanionEbook | None = None,
     library_languages: tuple[str, ...] = (),
     cover_recovery: EpubCoverRecovery | None = None,
+    owner_link: OwnerLinkFacts | None = None,
 ) -> dict[str, object]:
     return {
         "audio": None if audio is None else audio.to_data(),
@@ -8124,6 +8588,7 @@ def _report_data(
             "reasons": list(local_reasons),
             "status": local_status,
         },
+        "owner_link": None if owner_link is None else owner_link.to_data(),
         "providers": [value.to_data() for value in providers],
         "report_id": report_id,
         "schema_version": REPORT_SCHEMA,
@@ -8152,6 +8617,7 @@ def _report_from_data(value: object) -> MetadataReport:
             "identifier_evidence",
             "library_languages",
             "local",
+            "owner_link",
             "providers",
             "report_id",
             "schema_version",
@@ -8212,6 +8678,7 @@ def _report_from_data(value: object) -> MetadataReport:
         None
         if local["cover_recovery"] is None
         else EpubCoverRecovery.from_data(local["cover_recovery"]),
+        _owner_link_from_data(root["owner_link"]),
     )
 
 
