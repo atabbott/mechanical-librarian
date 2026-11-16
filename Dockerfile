@@ -13,7 +13,7 @@
 # `FFMPEG_VERSION` and `FFMPEG_SHA256` here, not by a base-image rebuild.
 FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 AS probe-build
 ARG FFMPEG_VERSION=9.0.2
-ARG FFMPEG_SHA256=de668509caf9e35e3cd162473441fdb29538c6d96ed080292b3cf9e6fc5d558f
+ARG FFMPEG_SHA256=8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
         ca-certificates curl gcc libc6-dev make pkg-config xz-utils \
@@ -29,7 +29,7 @@ WORKDIR /src/ffmpeg-${FFMPEG_VERSION}
 RUN ./configure \
         --disable-everything --disable-network --disable-autodetect --disable-doc \
         --disable-avdevice --disable-avfilter --disable-swscale --disable-swresample \
-        --disable-postproc --disable-encoders --disable-muxers --disable-filters \
+        --disable-encoders --disable-muxers --disable-filters \
         --disable-indevs --disable-outdevs --disable-hwaccels --disable-bsfs \
         --disable-ffmpeg --disable-ffplay \
         --disable-x86asm \
