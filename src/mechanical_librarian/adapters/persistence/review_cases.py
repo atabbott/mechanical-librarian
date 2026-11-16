@@ -840,52 +840,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             )
             parameters.extend((limit, offset))
             rows = self._connection.execute(
-                _library_candidates_sql(attached)
-                + ",totals AS (SELECT count(*) AS total,COALESCE(sum(attention),0) "
-                "AS attention_total,COALESCE(sum(CASE WHEN attention=0 AND "
-                "match_reason IS NOT NULL THEN 1 ELSE 0 END),0) AS not_matched_total,"
-                "COALESCE(sum(CASE WHEN "
-                + _PREPARATION_FAILED_SQL
-                + " THEN 1 ELSE 0 END),0) AS preparation_failed_total,"
-                "COALESCE(sum(flagged),0) AS flagged_total,"
-                "COALESCE(sum(is_new),0) AS new_total,"
-                + LIBRARY_LISTING_END_SQL
-                + " FROM candidates),page AS MATERIALIZED (SELECT "
-                "1 AS present,case_id,report_id,proposal_set_id,"
-                "connection_name,library_name,item_id,outcome,"
-                "CASE WHEN attention=1 THEN 0 ELSE 1 END AS attention_order,"
-                "CASE WHEN attention=1 AND provider_limited=1 THEN 1 ELSE 0 END "
-                "AS provider_order,"
-                # Failed preparations, then unmatched works, follow the
-                # attention group as blocks, so the `all` lens keeps each
-                # together ahead of clear works.
-                "CASE WHEN "
-                + _PREPARATION_FAILED_SQL
-                + " THEN 0 WHEN attention=0 AND match_reason IS NOT NULL THEN 1 "
-                "ELSE 2 END AS match_order,CASE WHEN attention=0 THEN match_reason END "
-                "AS match_reason,title_order,case_order,work_id,attempt,stage,"
-                "failure_root,recovery_attempt,failure_code,display_title,display_authors,display_format FROM candidates WHERE "
-                + condition
-                + " ORDER BY attention_order,provider_order,match_order,title_order,"
-                "library_name,item_id,connection_name,case_order LIMIT ? OFFSET ?) "
-                "SELECT rc.document,CASE WHEN page.present=1 AND page.report_id IS NULL THEN json_object("
-                "'attempt',page.attempt,'connection',page.connection_name,"
-                "'failure_root',page.failure_root,'item',page.item_id,'lane',page.stage,"
-                "'library',page.library_name,'recovery_attempt',page.recovery_attempt,"
-                "'schema_version','review-terminal-work-v1','status',page.failure_code,"
-                "'work_id',page.work_id,'title',page.display_title,'authors',json(page.display_authors),"
-                "'media_kind',page.display_format) ELSE mr.document END,page.proposal_set_id,"
-                "page.connection_name,page.library_name,page.item_id,page.outcome, "
-                "page.match_reason,COALESCE(page.present,0),totals.total,"
-                "totals.attention_total,totals.not_matched_total,"
-                "totals.preparation_failed_total,totals.flagged_total,"
-                "totals.new_total,totals.listing_packages,totals.listing_works,"
-                "totals.listing_reports "
-                "FROM totals LEFT JOIN page ON 1 LEFT JOIN review_cases rc ON rc.review_case_id=page.case_id "
-                "LEFT JOIN metadata_reports mr ON mr.report_id=page.report_id "
-                "ORDER BY page.attention_order,page.provider_order,page.match_order,"
-                "page.title_order,page.library_name,page.item_id,page.connection_name,"
-                "page.case_order",
+                _library_page_sql(attached, condition),
                 tuple(parameters),
             ).fetchall()
             if not rows:
@@ -1587,6 +1542,58 @@ def _review_search_pattern(search: str | None) -> tuple[str | None, str]:
         search.casefold().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     )
     return search, f"%{escaped}%"
+
+
+def _library_page_sql(attached: bool, condition: str) -> str:
+    """The Library page statement: the lens's rows under the totals of all."""
+    return (
+        _library_candidates_sql(attached)
+        + ",totals AS (SELECT count(*) AS total,COALESCE(sum(attention),0) "
+        "AS attention_total,COALESCE(sum(CASE WHEN attention=0 AND "
+        "match_reason IS NOT NULL THEN 1 ELSE 0 END),0) AS not_matched_total,"
+        "COALESCE(sum(CASE WHEN "
+        + _PREPARATION_FAILED_SQL
+        + " THEN 1 ELSE 0 END),0) AS preparation_failed_total,"
+        "COALESCE(sum(flagged),0) AS flagged_total,"
+        "COALESCE(sum(is_new),0) AS new_total,"
+        + LIBRARY_LISTING_END_SQL
+        + " FROM candidates),page AS MATERIALIZED (SELECT "
+        "1 AS present,case_id,report_id,proposal_set_id,"
+        "connection_name,library_name,item_id,outcome,"
+        "CASE WHEN attention=1 THEN 0 ELSE 1 END AS attention_order,"
+        "CASE WHEN attention=1 AND provider_limited=1 THEN 1 ELSE 0 END "
+        "AS provider_order,"
+        # Failed preparations, then unmatched works, follow the
+        # attention group as blocks, so the `all` lens keeps each
+        # together ahead of clear works.
+        "CASE WHEN "
+        + _PREPARATION_FAILED_SQL
+        + " THEN 0 WHEN attention=0 AND match_reason IS NOT NULL THEN 1 "
+        "ELSE 2 END AS match_order,CASE WHEN attention=0 THEN match_reason END "
+        "AS match_reason,title_order,case_order,work_id,attempt,stage,"
+        "failure_root,recovery_attempt,failure_code,display_title,display_authors,display_format FROM candidates WHERE "
+        + condition
+        + " ORDER BY attention_order,provider_order,match_order,title_order,"
+        "library_name,item_id,connection_name,case_order LIMIT ? OFFSET ?) "
+        "SELECT rc.document,CASE WHEN page.present=1 AND page.report_id IS NULL THEN json_object("
+        "'attempt',page.attempt,'connection',page.connection_name,"
+        "'failure_root',page.failure_root,'item',page.item_id,'lane',page.stage,"
+        "'library',page.library_name,'recovery_attempt',page.recovery_attempt,"
+        "'schema_version','review-terminal-work-v1','status',page.failure_code,"
+        "'work_id',page.work_id,'title',page.display_title,'authors',json(page.display_authors),"
+        "'media_kind',page.display_format) ELSE mr.document END,page.proposal_set_id,"
+        "page.connection_name,page.library_name,page.item_id,page.outcome, "
+        "page.match_reason,COALESCE(page.present,0),totals.total,"
+        "totals.attention_total,totals.not_matched_total,"
+        "totals.preparation_failed_total,totals.flagged_total,"
+        "totals.new_total,totals.listing_packages,totals.listing_works,"
+        "totals.listing_reports "
+        "FROM totals LEFT JOIN page ON 1 LEFT JOIN review_cases rc ON rc.review_case_id=page.case_id "
+        "LEFT JOIN metadata_reports mr ON mr.report_id=page.report_id "
+        "ORDER BY page.attention_order,page.provider_order,page.match_order,"
+        "page.title_order,page.library_name,page.item_id,page.connection_name,"
+        "page.case_order"
+    )
 
 
 def _library_candidates_sql(attached: bool) -> str:
