@@ -615,8 +615,9 @@ after any change. A search in which a provider could not answer, as
 in which every provider answered, or its case, and is tried again within the
 week. A search that now identifies nothing never takes a case away. A changed
 file, a requested refresh, a scan reset because its library's settings
-changed, or any other fresh start prepares the book again as before and sets its next time anew. Each search keeps its report as
-history, so the report history grows by about four reports per book a year.
+changed, or any other fresh start prepares the book again as before and sets
+its next time anew. Each search keeps its report as history, so the report
+history grows by about four reports per book a year.
 
 For an evidence-only item, a work match or an unavailable provider does not
 mean no recording exists. Check the provider statuses and the title, author and

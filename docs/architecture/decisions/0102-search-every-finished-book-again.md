@@ -43,13 +43,13 @@ daily limit: as many as needed to search everything every 90 days.
    A provider-retry successor takes its mark by the same rule. A changed file,
    a stale report, a requested refresh, a failed provider stage or a scan
    reset by `recover_review_pipeline` after its library id or producer
-   changed still starts the work afresh and clears the mark. A work finished before this decision
-   has no mark; the next scan that keeps it complete gives it its slot after
-   the scan plus seven days, with no backfill.
+   changed still starts the work afresh and clears the mark. A work finished
+   before this decision has no mark; the next scan that keeps it complete
+   gives it its slot after the scan plus seven days, with no backfill.
 4. **Live ask.** A due work returns to extraction and is claimed holding a
-   mark that has passed, so every provider asks live and replaces what is held, as ADR-0101
-   already does for ADR-0089's search. Pacing, quotas and provider recovery
-   are unchanged.
+   mark that has passed, so every provider asks live and replaces what is
+   held, as ADR-0101 already does for ADR-0089's search. Pacing, quotas and
+   provider recovery are unchanged.
 5. **What a search may replace.** Only a claim whose mark had passed by its
    publication is considered, and only while the item's current package names
    a report of the same file that the publication just replaced. A package
@@ -74,7 +74,9 @@ daily limit: as many as needed to search everything every 90 days.
      mark - week) > completed_at`), of an audiobook that again admits no
      recording, while a case is open: ADR-0089's rule, unchanged. Once a slot
      time has passed, the search is that period's slot search even if a weekly
-     mark fired it.
+     mark fired it. The retry a week after a failed search is a weekly search
+     in this sense, so for an audiobook that then admits no recording this
+     rule applies until its next slot.
    - **Nothing identified.** A search that now identifies nothing (its report
      admits no work identity) never takes a case away, whatever fired it. A
      search that stops listing a book is a more likely cause than the book
@@ -102,10 +104,10 @@ daily limit: as many as needed to search everything every 90 days.
 - Each search re-reads its book's files and asks every source live, about
   four times a year per book.
 - Each search keeps its report as history, whether or not it changes
-  anything: about four reports per book a year. Two retained library runs
-  average 41 to 51 KB a report, so about 0.5 GB a year for 2,300 books, the
-  same order as ADR-0089's weekly searches. No rule removes superseded
-  reports yet; that is separate work.
+  anything: about four reports per book a year. At roughly 50 KB a report
+  that is about 0.2 GB a year for each 1,000 books, the same order as
+  ADR-0089's weekly searches. No rule removes superseded reports yet; that is
+  separate work.
 - If a source answers identical asks with different values that reach
   proposals, that book gets a new case every 90 days.
 - Comparing proposals evaluates the new report inside the publication
