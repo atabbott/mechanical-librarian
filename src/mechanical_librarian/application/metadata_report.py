@@ -5,11 +5,11 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from dataclasses import field as dataclass_field
 from enum import StrEnum
-from typing import Never, Protocol, cast
+from typing import TYPE_CHECKING, Never, Protocol, cast
 
 from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.application.configuration import (
@@ -174,7 +174,11 @@ from mechanical_librarian.domain.metadata_report import (
     work_discovery_lane_payloads,
     work_ladder_diagnostics,
 )
-from mechanical_librarian.domain.owner_link import OwnerLink, OwnerLinkLookup
+from mechanical_librarian.domain.owner_link import (
+    OwnerLink,
+    OwnerLinkLookup,
+    OwnerLinkScope,
+)
 from mechanical_librarian.domain.validation import (
     nonempty_text,
     optional,
@@ -188,6 +192,11 @@ from mechanical_librarian.domain.work_identity import (
     replay_provider_work_identity_admission,
     work_query_ladder,
 )
+
+if TYPE_CHECKING:
+    from mechanical_librarian.application.owner_link_preparation import (
+        OwnerLinkPhase,
+    )
 
 
 class MetadataReportError(RuntimeError):
@@ -666,6 +675,10 @@ class MetadataDiscoveryPlan:
         ):
             raise MetadataReportError("provider discovery plan is invalid")
         known |= companion_references
+        # The owner's identifier link stands behind its own lane (#1477).
+        link_claim = None if self.owner_link is None else self.owner_link.claim
+        if link_claim is not None:
+            known.add(link_claim.reference)
         asin_lanes = tuple(
             lane for lane in self.lanes if lane.kind is ProviderQueryKind.ASIN
         )
@@ -937,6 +950,9 @@ def _work_discovery_lanes(
     local_claims: tuple[LocalClaim, ...],
     audio: AudioFacts | None = None,
     companion: CompanionEbook | None = None,
+    *,
+    anchored: bool = False,
+    anchor: tuple[str, tuple[str, ...]] | None = None,
 ) -> tuple[MetadataDiscoveryLane, ...]:
     """Build the WORK lanes both media plans share from one payload set."""
     return tuple(
@@ -954,6 +970,8 @@ def _work_discovery_lanes(
             local_claims,
             None if audio is None else audio.discovery_titles,
             companion,
+            anchored=anchored,
+            anchor=anchor,
         )
     )
 
@@ -963,11 +981,14 @@ def metadata_discovery_plan(
     local_claims: tuple[LocalClaim, ...],
     *,
     library_languages: tuple[str, ...] = (),
+    anchored: bool = False,
+    anchor: tuple[str, tuple[str, ...]] | None = None,
 ) -> MetadataDiscoveryPlan:
     """Plan one ebook's discovery.
 
     `library_languages` ride on the plan for the providers that read them;
-    neither a lane's identity nor a report's replay reads them (#1380).
+    neither a lane's identity nor a report's replay reads them (#1380). While
+    an owner link anchors, the WORK lane asks with its `anchor` (#1477).
     """
     families: dict[str, list[LocalClaim]] = {}
     for claim in local_claims:
@@ -1006,7 +1027,11 @@ def metadata_discovery_plan(
             )
         )
 
-    lanes.extend(_work_discovery_lanes(target.fields, local_claims))
+    lanes.extend(
+        _work_discovery_lanes(
+            target.fields, local_claims, anchored=anchored, anchor=anchor
+        )
+    )
     ordered_lanes = tuple(sorted(lanes, key=lambda value: value.identity))
     if _metadata_discovery_query_count(ordered_lanes) > MAX_PROVIDER_DISCOVERY_QUERIES:
         return MetadataDiscoveryPlan(
@@ -1177,6 +1202,8 @@ def audiobook_discovery_plan(
     audio: AudioFacts | None = None,
     library_languages: tuple[str, ...] = (),
     companion: CompanionEbook | None = None,
+    anchored: bool = False,
+    anchor: tuple[str, tuple[str, ...]] | None = None,
 ) -> MetadataDiscoveryPlan:
     """Plan one audiobook's discovery from its own identifier surfaces.
 
@@ -1198,6 +1225,11 @@ def audiobook_discovery_plan(
     title collapses to a series name the target records (#1255).
     """
     context = metadata_lookup(target, ())
+    # While an owner link anchors, every lookup admits against the linked
+    # record's work rather than the target's (#1477).
+    work_title, work_authors = (
+        anchor if anchored and anchor is not None else (context.title, context.authors)
+    )
     if audio is not None:
         # The plan keeps only the discovery titles a lane may ask, so every
         # lookup it hands out reads the alternative title the lane asks
@@ -1222,8 +1254,8 @@ def audiobook_discovery_plan(
             (),
             True,
             audio,
-            context.title,
-            context.authors,
+            work_title,
+            work_authors,
             library_languages=library_languages,
         )
     lanes: list[MetadataDiscoveryLane] = []
@@ -1240,7 +1272,14 @@ def audiobook_discovery_plan(
         lanes.append(_asin_discovery_lane(asin, references))
     if not lanes:
         lanes.extend(
-            _work_discovery_lanes(target.fields, local_claims, audio, companion)
+            _work_discovery_lanes(
+                target.fields,
+                local_claims,
+                audio,
+                companion,
+                anchored=anchored,
+                anchor=anchor,
+            )
         )
     # The companion EPUB's ISBN asks for the book beside whichever lanes the
     # recording's own surfaces planned (#1468). It never replaces them: an
@@ -1274,16 +1313,16 @@ def audiobook_discovery_plan(
             (),
             True,
             audio,
-            context.title,
-            context.authors,
+            work_title,
+            work_authors,
             library_languages=library_languages,
         )
     return MetadataDiscoveryPlan(
         local_claims,
         ordered_lanes,
         audio=audio,
-        work_title=context.title,
-        work_authors=context.authors,
+        work_title=work_title,
+        work_authors=work_authors,
         recording_corroboration=(
             None if audio is None else recording_corroboration(target.fields)
         ),
@@ -1806,6 +1845,143 @@ def _merged_lane_candidates(
             ):
                 conflict = True
     return candidates_by_identity, conflict
+
+
+def persisted_lane_result(
+    lane: MetadataDiscoveryLane,
+    observation: ProviderLaneObservation,
+    candidates: Mapping[str, ProviderCandidate],
+    evidence: ProviderObservation,
+    aggregate_accessed_at: str | None,
+) -> ProviderLaneResult:
+    """Carry one persisted lane over into a new observation, byte for byte.
+
+    `evidence` is the observation the lane was read from, whose products,
+    refused products and audio editions the lane keeps. A retry successor
+    carries its unselected lanes this way, and preparation its link phase's
+    lane beside the main phase's (#1477).
+    """
+    overflow = (
+        evidence.edition_enrichment_overflow
+        if lane.kind.value == "work"
+        and observation.status is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
+        else None
+    )
+    return ProviderLaneResult(
+        lane,
+        observation.status,
+        tuple(candidates[item.edition_identity] for item in observation.candidates),
+        aggregate_accessed_at,
+        overflow,
+        observation.diagnostics,
+        observation.dispatch_lineage,
+        observation.transformation_lineage,
+        exhausted_dispatch=observation.exhausted_dispatch,
+        recording_lookup_hints=observation.recording_lookup_hints,
+        dispatch=observation.dispatch,
+        # What an ASIN lane refused stays with the stub it explains.
+        refused_products=tuple(
+            product
+            for product in evidence.refused_products
+            if lane.kind is ProviderQueryKind.ASIN
+            and any(
+                item.edition_identity == product.identity
+                for item in observation.candidates
+            )
+        ),
+        # Each lane keeps how it kept its recordings (#1723): an
+        # unselected lane its old values, a retried lane its new
+        # dispatch's. A WORK lane's too is copied, never read again
+        # off the merged products, whose evidence another lane's copy
+        # may have widened, so an unselected lane stays byte for byte.
+        admission_bases=tuple(
+            sorted(
+                (item.edition_identity, item.admission_basis)
+                for item in observation.candidates
+                if item.admission_basis is not None
+            )
+        ),
+        admission_bases_recorded=True,
+        # A WORK lane's refused answers stay with the lane that added
+        # them (#1355): a retried lane's are its new dispatch's, and an
+        # identity whose record the observation no longer holds stays
+        # counted as truncated.
+        identity_refused_candidates=tuple(
+            candidate
+            for candidate in evidence.identity_refused_candidates
+            if candidate.identity in observation.identity_refused_new
+        ),
+        identity_refused_dropped=tuple(
+            identity
+            for identity in observation.identity_refused_new
+            if identity
+            not in {
+                candidate.identity for candidate in evidence.identity_refused_candidates
+            }
+        ),
+        # An audio edition stays with the WORK lane that admitted its
+        # book (#962); the aggregate drops any whose work is gone.
+        audio_editions=tuple(
+            edition
+            for edition in evidence.audio_editions
+            if lane.kind in {ProviderQueryKind.WORK, ProviderQueryKind.ISBN}
+            and observation.status is ProviderStatus.CANDIDATES
+            and any(
+                item.edition_identity == edition.work_identity
+                for item in observation.candidates
+            )
+        ),
+    )
+
+
+def merge_phase_observations(
+    parts: tuple[tuple[MetadataDiscoveryPlan, ProviderObservation], ...],
+) -> ProviderObservation:
+    """One provider's observations of two dispatch phases, as one (#1477).
+
+    The link phase reads the owner's link before the main phase searches, and
+    one provider states one observation per report, so its lanes are carried
+    over into one observation exactly as a retry successor carries a lane.
+    """
+    first = parts[0][1]
+    accessed_at = next(
+        (value.accessed_at for _, value in reversed(parts) if value.accessed_at),
+        None,
+    )
+    results: list[ProviderLaneResult] = []
+    for plan, observation in parts:
+        planned = {lane.identity: lane for lane in plan.lanes}
+        candidates = {value.identity: value for value in observation.candidates}
+        for lane in observation.lanes:
+            results.append(
+                persisted_lane_result(
+                    planned[lane.identity], lane, candidates, observation, accessed_at
+                )
+            )
+    diagnostics: tuple[FailureDiagnostic, ...] = ()
+    for _, observation in parts:
+        diagnostics = merge_provider_diagnostics(diagnostics, observation.diagnostics)
+    return provider_observation(
+        first.provider,
+        tuple(results),
+        authority=first.authority,
+        diagnostics=diagnostics,
+        request_accounting=ProviderRequestAccounting(
+            *(
+                sum(
+                    getattr(observation.request_accounting, field)
+                    for _, observation in parts
+                )
+                for field in (
+                    "logical_requests",
+                    "initial_dispatches",
+                    "retry_dispatches",
+                    "replays",
+                    "undispatched_incomplete",
+                )
+            )
+        ),
+    )
 
 
 def provider_observation(
@@ -3952,6 +4128,15 @@ def _target_asserted_asin_claims(
     )
 
 
+def _recording_link_stands(link: OwnerLink | None) -> bool:
+    """Whether an audiobook's owner link names its recording (#1477)."""
+    return (
+        link is not None
+        and link.medium == "audiobook"
+        and link.scope is OwnerLinkScope.RECORDING
+    )
+
+
 def _prior_admission_claims(
     prior: MetadataReport | None, extracted: tuple[LocalClaim, ...]
 ) -> tuple[LocalClaim, ...]:
@@ -4071,10 +4256,16 @@ class GenerateMetadataReport:
         local: InspectionResult | None = None
         audio: AudioInspectionResult | None = None
         companion: CompanionEbook | None = None
+        link: OwnerLink | None = None
         try:
             repository = self._repository_factory()
             current_document = repository.current_optional(
                 self._connection.name, self._library.name, item, item_identity
+            )
+            # The item's owner link is read once, beside its current report,
+            # and steers this whole preparation (#1477).
+            link = repository.current_owner_link(
+                self._connection.name, self._library.name, item
             )
             # The current report is keyed on this exact item identity, which
             # for an audiobook is its ordered track set: a changed set reads
@@ -4173,7 +4364,13 @@ class GenerateMetadataReport:
             else (
                 *target_title_claim,
                 *_target_asserted_asin_claims(initial),
-                *_prior_admission_claims(prior, extracted),
+                # The owner's recording link supersedes a carried admission
+                # (#1477): the item is asked with the product the owner chose.
+                *(
+                    ()
+                    if _recording_link_stands(link)
+                    else _prior_admission_claims(prior, extracted)
+                ),
                 *extracted,
             )
         )
@@ -4189,11 +4386,34 @@ class GenerateMetadataReport:
                 combined_claims,
                 expected_current,
                 companion,
+                link,
             )
-        # ``local`` is the extraction result on every remaining path: the
-        # audiobook branch returned above and the gate admitted no third kind.
-        local = cast("InspectionResult", local)
-        plan = metadata_discovery_plan(
+        return self._publish_ebook_report(
+            repository,
+            item,
+            file_index,
+            selected,
+            initial,
+            cast("InspectionResult", local),
+            combined_claims,
+            expected_current,
+            link,
+        )
+
+    def _publish_ebook_report(
+        self,
+        repository: ReportRepository,
+        item: str,
+        file_index: int,
+        selected: TargetFile,
+        initial: TargetSnapshot,
+        local: InspectionResult,
+        combined_claims: tuple[LocalClaim, ...],
+        expected_current: str | None,
+        link: OwnerLink | None,
+    ) -> str:
+        """Publish one ebook report: its link phase, then its own plan."""
+        base_plan = metadata_discovery_plan(
             initial, combined_claims, library_languages=self._library.languages
         )
         cover_aggregate_deadline = time.monotonic() + 60.0
@@ -4211,9 +4431,30 @@ class GenerateMetadataReport:
             # original failure while releasing the already-open repository.
             _release_repository(repository, error)
             raise
-        observations, descriptors = self._observe_providers(
-            repository, plan, cover_aggregate_deadline, item, "discovery"
+        phase = self._observe_owner_link(
+            repository, link, base_plan, cover_aggregate_deadline, item, initial
         )
+        plan = (
+            metadata_discovery_plan(
+                initial,
+                combined_claims,
+                library_languages=self._library.languages,
+                anchored=True,
+                anchor=phase.anchor,
+            )
+            if phase.anchored
+            else base_plan
+        )
+        observations, descriptors = self._observe_providers(
+            repository,
+            plan,
+            cover_aggregate_deadline,
+            item,
+            "discovery",
+            self._main_bindings(phase),
+        )
+        observations = phase.merged((plan,), observations)
+        descriptors = (*phase.descriptors, *descriptors)
 
         reasons = tuple(
             sorted(
@@ -4254,6 +4495,7 @@ class GenerateMetadataReport:
                 field_results=derive_field_results(combined_claims),
                 cover_sources=cover_sources,
                 cover_recovery=local.cover_recovery,
+                owner_link=phase.facts,
             )
         except Exception as error:
             # Cleanup only: the report assembly spans domain construction over
@@ -4533,6 +4775,7 @@ class GenerateMetadataReport:
         combined_claims: tuple[LocalClaim, ...],
         expected_current: str | None,
         companion: CompanionEbook | None = None,
+        link: OwnerLink | None = None,
     ) -> str:
         """Publish one audiobook report over its own discovery plan.
 
@@ -4578,7 +4821,7 @@ class GenerateMetadataReport:
                 audio.audio.discovery_titles, initial.fields
             ),
         )
-        plan = audiobook_discovery_plan(
+        base_plan = audiobook_discovery_plan(
             initial,
             combined_claims,
             audio=facts,
@@ -4606,20 +4849,38 @@ class GenerateMetadataReport:
             ).current_title
             or ""
         )
+        phase = self._observe_owner_link(
+            repository, link, base_plan, cover_aggregate_deadline, item, initial
+        )
+        plan = (
+            audiobook_discovery_plan(
+                initial,
+                combined_claims,
+                audio=facts,
+                library_languages=self._library.languages,
+                companion=companion,
+                anchored=True,
+                anchor=phase.anchor,
+            )
+            if phase.anchored
+            else base_plan
+        )
+        catalogue_plan = audiobook_carried_plan(plan)
         observations, descriptors = self._observe_providers(
             repository,
             plan,
             cover_aggregate_deadline,
             item,
             "discovery",
-            catalogue_plan=audiobook_carried_plan(plan),
+            self._main_bindings(phase),
+            catalogue_plan=catalogue_plan,
             recording_title=recording_title,
         )
         feed = audiobook_asin_feed_plan(initial, plan, observations)
         unanswered = {value.provider for value in observations if not value.lanes}
         targets = tuple(
             binding
-            for binding in self._providers
+            for binding in self._main_bindings(phase)
             if binding.enabled and binding.name in unanswered
         )
         if feed is not None and targets:
@@ -4642,6 +4903,10 @@ class GenerateMetadataReport:
                 tuple(value for value in descriptors if value.provider not in replaced)
                 + fed_descriptors
             )
+        observations = phase.merged(
+            (plan, catalogue_plan, *(() if feed is None else (feed,))), observations
+        )
+        descriptors = (*phase.descriptors, *descriptors)
         try:
             # An audiobook has no locally extracted cover: its embedded art is
             # recorded as presence inside ``audio`` and never decoded, so the
@@ -4684,11 +4949,72 @@ class GenerateMetadataReport:
                 audio=_audio_with_runtime_observations(facts, tuple(observations)),
                 companion=companion,
                 library_languages=self._library.languages,
+                owner_link=phase.facts,
             )
         except Exception as error:
             _release_repository(repository, error)
             raise
         return self._publish(repository, report, expected_current)
+
+    def _observe_owner_link(
+        self,
+        repository: ReportRepository,
+        link: OwnerLink | None,
+        plan: MetadataDiscoveryPlan,
+        deadline: float,
+        item: str,
+        initial: TargetSnapshot,
+    ) -> OwnerLinkPhase:
+        """Read the item's owner link at its own sources, before any search.
+
+        A link recorded for the other medium is not read. Otherwise the
+        link's lane is dispatched to the link's sources alone, through the
+        same provider loop, and settled into the report's link facts.
+        """
+        # Imported here: the link phase is built on this module's dispatch.
+        from mechanical_librarian.application.owner_link_preparation import (
+            OwnerLinkPhase,
+            link_phase_plan,
+            medium_changed_phase,
+            settle_owner_link,
+        )
+
+        if link is None:
+            return OwnerLinkPhase()
+        if link.medium != ("ebook" if plan.audio is None else "audiobook"):
+            return medium_changed_phase(link)
+        lookup = link.lookup
+        link_plan = link_phase_plan(plan, lookup)
+        bindings = tuple(
+            binding
+            for binding in self._providers
+            if binding.authority in lookup.authorities
+        )
+        observations, descriptors = (
+            self._observe_providers(
+                repository, link_plan, deadline, item, "link", bindings
+            )
+            if bindings
+            else ((), ())
+        )
+        return settle_owner_link(
+            lookup,
+            link_plan,
+            observations,
+            descriptors,
+            work_title=TargetFacts(
+                self._connection.name, self._library.name, item, initial.fields
+            ).current_title
+            or "",
+        )
+
+    def _main_bindings(self, phase: OwnerLinkPhase) -> tuple[ProviderBinding, ...]:
+        """Every binding but a work link's own source, which the link read."""
+        return tuple(
+            binding
+            for binding in self._providers
+            if phase.linked_source is None or binding.authority != phase.linked_source
+        )
 
     def _inspect_companion(self, companion: TargetFile) -> CompanionEbook:
         """Read an audiobook's companion EPUB as corroboration, never as a gate.

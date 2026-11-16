@@ -6137,22 +6137,27 @@ class MetadataReport:
                     raise ReportValueError("provider link lane names another record")
                 kept.append(candidate)
         statuses = {lane.status for _, lane in link_lanes}
+        unasked = {ProviderStatus.DISABLED, ProviderStatus.NOT_NEEDED}
+        answered = {ProviderStatus.CANDIDATES, ProviderStatus.NO_MATCH, *unasked}
         merged = any(
             value.category is FailureCategory.IDENTITY
+            and lane.status is ProviderStatus.NO_MATCH
             for _, lane in link_lanes
             for value in lane.diagnostics
         )
         outcome = facts.outcome
         if (
             (outcome == "admitted") != bool(kept)
-            or (outcome == "merged") != merged
-            or (merged and (not direct or statuses != {ProviderStatus.NO_MATCH}))
-            or (outcome == "missing" and statuses != {ProviderStatus.NO_MATCH})
+            or (outcome == "merged" and (not merged or not direct))
             or (
-                outcome == "unavailable"
-                and statuses <= {ProviderStatus.CANDIDATES, ProviderStatus.NO_MATCH}
+                outcome == "missing"
+                and (
+                    ProviderStatus.NO_MATCH not in statuses
+                    or not statuses <= {ProviderStatus.NO_MATCH, *unasked}
+                )
             )
-            or (outcome == "source_disabled" and link_lanes)
+            or (outcome == "unavailable" and statuses <= answered)
+            or (outcome == "source_disabled" and not statuses <= unasked)
             or (outcome == "contradicted" and ProviderStatus.CANDIDATES in statuses)
         ):
             raise ReportValueError("owner link outcome does not replay")
@@ -6668,6 +6673,7 @@ class MetadataReport:
         )
 
         is_audio = self.audio is not None
+        link_claim = None if self.owner_link is None else self.owner_link.lookup.claim
         for provider in self.providers:
             candidates = {value.identity: value for value in provider.candidates}
             for lane in provider.lanes:
@@ -6722,6 +6728,13 @@ class MetadataReport:
                         providers=self.providers,
                         companion=self.companion,
                         library_languages=self.library_languages,
+                        owner_link_asin=(
+                            link_claim.canonical
+                            if link_claim is not None
+                            and link_claim.kind is ClaimKind.ASIN
+                            and link_claim.reference in lane.input_references
+                            else None
+                        ),
                     ):
                         raise ReportValueError(
                             "provider admission basis does not replay"

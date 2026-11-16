@@ -19,6 +19,9 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Final
 
+from mechanical_librarian.domain.audiobook_corroboration import (
+    candidate_narrator_disjoint,
+)
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
     validate_projection_text,
@@ -28,9 +31,14 @@ from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
     LocalClaim,
+    ProviderCandidate,
     canonical_asin,
     canonical_json,
+    edition_marketplace_evidence,
+    identifier_only_candidate,
     isbn_family,
+    manifestation_publication_contradicted,
+    recording_variant_conflict,
 )
 
 
@@ -390,4 +398,45 @@ def link_record_identity(lookup: OwnerLinkLookup) -> str | None:
         return "open-library-edition-" + lookup.identity.removeprefix("/books/")
     if lookup.provider == "inventaire":
         return "inventaire-work-" + lookup.identity.replace(":", "-")
+    return None
+
+
+def owner_link_contradiction(
+    scope: OwnerLinkScope,
+    candidate: ProviderCandidate,
+    *,
+    link_claim: LocalClaim | None,
+    local_claims: tuple[LocalClaim, ...],
+    work_title: str,
+    library_languages: tuple[str, ...] = (),
+    echoed_languages: tuple[str, ...] = (),
+    echoed_narrators: tuple[str, ...] = (),
+) -> OwnerLinkContradiction | None:
+    """Why a linked edition or recording is not this item's, if it is not.
+
+    The owner chose the record; the file still has a say. An edition link's
+    record must not state a print format for the linked ISBN, and a recording
+    link's product must be a whole recording inside the runtime band (its
+    lane already demoted one that is not), of no other variant, crediting a
+    narrator the recording's own credits name. A work link is never
+    re-checked here: its record is the work, whatever the file's edition.
+    """
+    if scope is OwnerLinkScope.EDITION:
+        if link_claim is not None and manifestation_publication_contradicted(
+            candidate, (link_claim,)
+        ):
+            return OwnerLinkContradiction.FORMAT
+        return None
+    if scope is not OwnerLinkScope.RECORDING:
+        return None
+    if recording_variant_conflict(
+        candidate, local_claims, work_title, library_languages, echoed_languages
+    ):
+        return OwnerLinkContradiction.VARIANT
+    if identifier_only_candidate(candidate) or not edition_marketplace_evidence(
+        candidate
+    ):
+        return OwnerLinkContradiction.RUNTIME
+    if candidate_narrator_disjoint(candidate, local_claims, echoed_narrators):
+        return OwnerLinkContradiction.NARRATORS
     return None

@@ -2380,8 +2380,12 @@ def asin_lane_admission_basis_replays(
     providers: tuple[ProviderObservation, ...],
     companion: CompanionEbook | None,
     library_languages: tuple[str, ...],
+    owner_link_asin: str | None = None,
 ) -> bool:
     """Whether one ASIN lane's stated route replays from the report (#1723).
+
+    An owner's recording link (#1477) names its product as the item's own
+    ASIN would, so `target` replays on the lane that asked with it.
 
     Every route is read against the lane's own queried ASIN. `target` stands
     when some target route admits: an independent local ASIN, exact
@@ -2421,6 +2425,7 @@ def asin_lane_admission_basis_replays(
         corroboration = recording_corroboration(target.fields)
         return (
             queried in local_identifier_asins(local_claims)
+            or (owner_link_asin is not None and queried == owner_link_asin)
             or work_admitted
             or _chapter_candidate_support(
                 candidate,

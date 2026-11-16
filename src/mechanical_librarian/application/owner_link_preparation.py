@@ -1,0 +1,266 @@
+"""Preparation's link phase: reading an item's owner link (#1477, ADR-0104).
+
+Before any other source is asked, the link's own sources read the record the
+owner chose: a key lookup at the work link's source, or the link's ISBN or
+ASIN on its own lane at the medium's identifier sources. An edition or
+recording record is re-checked against the file, a failing one is dropped,
+and what was found becomes the report's `owner_link` facts. While the link
+anchors, the main phase asks every other source with the kept record's title
+and creators, and each provider's two observations become one.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, replace
+
+from mechanical_librarian.application.metadata_report import (
+    OWNER_LINK_MERGED_DIAGNOSTIC,
+    MetadataDiscoveryPlan,
+    ProviderCoverDescriptor,
+    ProviderLaneResult,
+    merge_phase_observations,
+    owner_link_plan,
+    provider_observation,
+)
+from mechanical_librarian.domain.metadata_report import (
+    DispatchOutcome,
+    OwnerLinkFacts,
+    ProviderCandidate,
+    ProviderLaneDispatch,
+    ProviderObservation,
+    ProviderStatus,
+    owner_link_anchor_values,
+)
+from mechanical_librarian.domain.owner_link import (
+    OwnerLink,
+    OwnerLinkContradiction,
+    OwnerLinkLookup,
+    OwnerLinkOutcome,
+    OwnerLinkScope,
+    owner_link_anchors,
+    owner_link_contradiction,
+)
+
+# Lane statuses that are an answer about the record rather than a failure to
+# read it: a recovery never retries them.
+_ANSWERED = frozenset(
+    {ProviderStatus.CANDIDATES, ProviderStatus.NO_MATCH, ProviderStatus.DISABLED}
+)
+
+
+@dataclass(frozen=True, slots=True)
+class OwnerLinkPhase:
+    """What the link phase read, and what the main phase is asked with."""
+
+    facts: OwnerLinkFacts | None = None
+    plan: MetadataDiscoveryPlan | None = None
+    observations: tuple[ProviderObservation, ...] = ()
+    descriptors: tuple[ProviderCoverDescriptor, ...] = ()
+
+    @property
+    def anchored(self) -> bool:
+        """Whether the main phase's WORK lanes ask with the link's anchor."""
+        return (
+            self.facts is not None
+            and self.facts.outcome != OwnerLinkOutcome.MEDIUM_CHANGED
+            and owner_link_anchors(OwnerLinkScope(self.facts.scope))
+        )
+
+    @property
+    def anchor(self) -> tuple[str, tuple[str, ...]] | None:
+        return None if self.facts is None else self.facts.anchor
+
+    @property
+    def linked_source(self) -> str | None:
+        """A work link's source, which the main phase does not ask again."""
+        if self.facts is None or self.facts.outcome == OwnerLinkOutcome.MEDIUM_CHANGED:
+            return None
+        return self.facts.provider
+
+    def merged(
+        self,
+        plans: tuple[MetadataDiscoveryPlan, ...],
+        observations: tuple[ProviderObservation, ...],
+    ) -> tuple[ProviderObservation, ...]:
+        """Each provider's link-phase and main-phase observations, as one.
+
+        `plans` are every plan the main phase handed out, whose lanes its
+        observations carry: the plan, the catalogue's and the ASIN feed's.
+        """
+        if self.plan is None or not self.observations:
+            return observations
+        main_plan = replace(
+            plans[0],
+            lanes=tuple(
+                {lane.identity: lane for plan in plans for lane in plan.lanes}.values()
+            ),
+        )
+        linked = {value.provider: value for value in self.observations}
+        main = {value.provider: value for value in observations}
+        result: list[ProviderObservation] = []
+        for name in sorted(set(linked) | set(main)):
+            first, second = linked.get(name), main.get(name)
+            if first is None or not first.lanes:
+                result.append(main[name] if second is not None else linked[name])
+            elif second is None or not second.lanes:
+                result.append(first)
+            else:
+                result.append(
+                    merge_phase_observations(((self.plan, first), (main_plan, second)))
+                )
+        return tuple(result)
+
+
+def medium_changed_phase(link: OwnerLink) -> OwnerLinkPhase:
+    """A link recorded for the other medium is not read at all."""
+    lookup = link.lookup
+    return OwnerLinkPhase(
+        OwnerLinkFacts(
+            lookup.medium,
+            lookup.scope.value,
+            lookup.provider,
+            lookup.identity,
+            OwnerLinkOutcome.MEDIUM_CHANGED.value,
+        )
+    )
+
+
+def link_phase_plan(
+    plan: MetadataDiscoveryPlan, lookup: OwnerLinkLookup
+) -> MetadataDiscoveryPlan:
+    """The plan the link's own sources are handed: the link's lane alone."""
+    return owner_link_plan(plan, lookup)
+
+
+def settle_owner_link(
+    lookup: OwnerLinkLookup,
+    plan: MetadataDiscoveryPlan,
+    observations: tuple[ProviderObservation, ...],
+    descriptors: tuple[ProviderCoverDescriptor, ...],
+    *,
+    work_title: str,
+) -> OwnerLinkPhase:
+    """Re-check what the link phase read and name what it found.
+
+    A record that fails its edition or recording re-check is dropped from its
+    lane, which then found nothing; the first such failure is the reason. The
+    outcome is `admitted` when any source kept the record, otherwise the
+    re-check's `contradicted`, then `unavailable` when a source could not be
+    read (recovery retries it), then `merged`, `missing`, and finally
+    `source_disabled` when no source of the link was asked.
+    """
+    kept: list[tuple[str, ProviderCandidate]] = []
+    reasons: list[OwnerLinkContradiction] = []
+    settled: list[ProviderObservation] = []
+    for observation in observations:
+        if len(observation.lanes) != 1:
+            settled.append(observation)
+            continue
+        (lane,) = observation.lanes
+        candidates = {value.identity: value for value in observation.candidates}
+        survivors: list[ProviderCandidate] = []
+        for member in lane.candidates:
+            candidate = candidates[member.edition_identity]
+            reason = owner_link_contradiction(
+                lookup.scope,
+                candidate,
+                link_claim=lookup.claim,
+                local_claims=plan.local_claims,
+                work_title=work_title,
+                library_languages=plan.library_languages,
+                echoed_languages=plan.echoed_languages,
+                echoed_narrators=plan.echoed_narrators,
+            )
+            if reason is None:
+                survivors.append(candidate)
+            else:
+                reasons.append(reason)
+        kept.extend((observation.provider, value) for value in survivors)
+        settled.append(
+            observation
+            if len(survivors) == len(lane.candidates)
+            else _without_records(observation, plan, tuple(survivors))
+        )
+    statuses = {lane.status for value in settled for lane in value.lanes}
+    if kept:
+        outcome = OwnerLinkOutcome.ADMITTED
+    elif reasons:
+        outcome = OwnerLinkOutcome.CONTRADICTED
+    elif not statuses <= _ANSWERED:
+        outcome = OwnerLinkOutcome.UNAVAILABLE
+    elif any(
+        OWNER_LINK_MERGED_DIAGNOSTIC in lane.diagnostics
+        and lane.status is ProviderStatus.NO_MATCH
+        for value in settled
+        for lane in value.lanes
+    ):
+        outcome = OwnerLinkOutcome.MERGED
+    elif ProviderStatus.NO_MATCH in statuses:
+        outcome = OwnerLinkOutcome.MISSING
+    else:
+        outcome = OwnerLinkOutcome.SOURCE_DISABLED
+    anchor = next(
+        (
+            values
+            for _, candidate in sorted(
+                kept, key=lambda item: (item[0], item[1].identity)
+            )
+            if (values := owner_link_anchor_values(candidate)) is not None
+        ),
+        None,
+    )
+    facts = OwnerLinkFacts(
+        lookup.medium,
+        lookup.scope.value,
+        lookup.provider,
+        lookup.identity,
+        outcome.value,
+        reasons[0].value if outcome is OwnerLinkOutcome.CONTRADICTED else None,
+        anchor,
+    )
+    return OwnerLinkPhase(facts, plan, tuple(settled), descriptors)
+
+
+def _without_records(
+    observation: ProviderObservation,
+    plan: MetadataDiscoveryPlan,
+    survivors: tuple[ProviderCandidate, ...],
+) -> ProviderObservation:
+    """The link lane with only the records that passed their re-check."""
+    (lane,) = observation.lanes
+    (planned,) = (value for value in plan.lanes if value.identity == lane.identity)
+    status = ProviderStatus.CANDIDATES if survivors else ProviderStatus.NO_MATCH
+    return provider_observation(
+        observation.provider,
+        (
+            ProviderLaneResult(
+                planned,
+                status,
+                survivors,
+                observation.accessed_at,
+                diagnostics=lane.diagnostics,
+                dispatch=(
+                    None
+                    if lane.dispatch is None
+                    else ProviderLaneDispatch(
+                        DispatchOutcome.ADMITTED if survivors else DispatchOutcome.EMPTY
+                    )
+                ),
+                admission_bases=tuple(
+                    sorted(
+                        (member.edition_identity, member.admission_basis)
+                        for member in lane.candidates
+                        if member.admission_basis is not None
+                        and any(
+                            value.identity == member.edition_identity
+                            for value in survivors
+                        )
+                    )
+                ),
+                admission_bases_recorded=True,
+            ),
+        ),
+        authority=observation.authority,
+        diagnostics=observation.diagnostics,
+        request_accounting=observation.request_accounting,
+    )
