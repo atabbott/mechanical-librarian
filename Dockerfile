@@ -12,7 +12,7 @@
 # exchange this project owns the pin: a CVE in FFmpeg is answered by bumping
 # `FFMPEG_VERSION` and `FFMPEG_SHA256` here, not by a base-image rebuild.
 FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 AS probe-build
-ARG FFMPEG_VERSION=7.1.5
+ARG FFMPEG_VERSION=9.0.2
 ARG FFMPEG_SHA256=de668509caf9e35e3cd162473441fdb29538c6d96ed080292b3cf9e6fc5d558f
 RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
