@@ -493,6 +493,7 @@ def _companion_report(
     work: dict[str | None, tuple[ProviderCandidate, ...]] | None = None,
     companion: CompanionEbook | None = None,
     audio: AudioFacts | None = None,
+    anchored: bool = False,
 ) -> MetadataReport:
     """An audiobook with a companion EPUB, and Audible's answers.
 
@@ -531,7 +532,9 @@ def _companion_report(
             for field in fields
         )
     snapshot = TargetSnapshot("audiobook", title, (), fields=fields)
-    plan = audiobook_discovery_plan(snapshot, claims, audio=audio, companion=companion)
+    plan = audiobook_discovery_plan(
+        snapshot, claims, audio=audio, companion=companion, anchored=anchored
+    )
     feed = app.audiobook_asin_feed_plan(snapshot, plan, hardcover)
     assert feed is not None
     audible = _observe(plan, work=work)
@@ -812,6 +815,21 @@ def test_a_fed_lookup_records_the_companion_identity_it_admitted_by(
     assert selected is not None
     assert (selected["basis"], selected["searched"]) == (basis, searched)
     _assert_scope_invariant(report)
+
+
+@pytest.mark.parametrize("target", [True, False], ids=["target-work", "no-target-work"])
+def test_a_standing_link_with_no_anchor_admits_nothing_by_the_companion(
+    target: bool,
+) -> None:
+    # Codex P2-1 on #1938: while an owner's link stands with no anchor read,
+    # the asserted ASIN's product is not admitted against the companion's
+    # title or work: those are the item's own values too.
+    product = _c_product(title="Companion Title", creator=_C_AUTHOR)
+    # Control: with no link the companion route admits it.
+    unlinked = _companion_report(product, linked=False, target=target)
+    assert _bases(unlinked)[("asin", f"enrichment-{_LINKED}")] is not None
+    linked = _companion_report(product, linked=False, target=target, anchored=True)
+    assert _bases(linked)[("asin", f"enrichment-{_LINKED}")] is None
 
 
 def test_a_linked_lookup_records_the_companion_isbn() -> None:

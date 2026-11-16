@@ -72,7 +72,9 @@ about the work, and it should steer what preparation reads.
    `missing`, `merged`, `contradicted`, `source_disabled`, or an admitted
    record that states no complete creator set), no WORK lane is planned and
    no lane admits against any title or creators: the local values never
-   admit a record while the owner's link stands. The report replays each
+   admit a record while the owner's link stands. That includes an
+   identifier lane's alternative routes, the item's discovery titles and its
+   companion EPUB's title and work, whether or not an anchor was read. The report replays each
    admission against the same context, the anchor while the link stands. An
    item whose own title surfaces are all empty gets no anchored WORK lane,
    because the lane's inputs are the target's own title claims; a link

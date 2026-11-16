@@ -387,6 +387,10 @@ class MetadataLookup:
     # and an identifier link's ISBN or ASIN is a lane input like a companion
     # claim, never a local claim.
     owner_link: OwnerLinkLookup | None = None
+    # Whether the item's owner link stands (#1477, ADR-0104): an identifier
+    # lane then admits by no title route of the item's own, its alternative
+    # discovery titles or its companion EPUB's, only by the anchor's work.
+    owner_link_stands: bool = False
 
     @property
     def query_claims(self) -> tuple[LocalClaim, ...]:
@@ -458,10 +462,15 @@ class MetadataLookup:
         ):
             raise MetadataReportError("provider lookup is invalid")
         if (
-            self.owner_link is not None and type(self.owner_link) is not OwnerLinkLookup
-        ) or (
-            self.kind is ProviderQueryKind.LINK
-            and (self.owner_link is None or self.owner_link.claim is not None)
+            (
+                self.owner_link is not None
+                and type(self.owner_link) is not OwnerLinkLookup
+            )
+            or (type(self.owner_link_stands) is not bool)
+            or (
+                self.kind is ProviderQueryKind.LINK
+                and (self.owner_link is None or self.owner_link.claim is not None)
+            )
         ):
             raise MetadataReportError("provider lookup is invalid")
         if self.kind is ProviderQueryKind.ISBN:
@@ -617,9 +626,12 @@ class MetadataDiscoveryPlan:
     companion_linked_asins: tuple[str, ...] = ()
     # See `MetadataLookup`: the item's owner link (#1477).
     owner_link: OwnerLinkLookup | None = None
+    owner_link_stands: bool = False
 
     def __post_init__(self) -> None:
         _validate_recording_context(self.audio, self.work_title, self.work_authors)
+        if type(self.owner_link_stands) is not bool:
+            raise MetadataReportError("provider discovery plan is invalid")
         if (
             self.companion is not None
             and (type(self.companion) is not CompanionEbook or self.audio is None)
@@ -1348,6 +1360,7 @@ def audiobook_discovery_plan(
             audio, target.fields, AudioInspectionField.CONTRIBUTOR
         ),
         companion=None if audio is None else companion,
+        owner_link_stands=anchored,
     )
 
 
@@ -1701,6 +1714,7 @@ def audiobook_asin_feed_plan(
         echoed_narrators=plan.echoed_narrators,
         companion=plan.companion,
         owner_link=plan.owner_link,
+        owner_link_stands=plan.owner_link_stands,
         companion_linked_asins=companion_linked_asins(
             plan.local_claims, plan.audio, observations, plan.companion
         ),
@@ -3107,19 +3121,24 @@ def _identifier_lane_candidates(
     # search asked with the companion EPUB's own title and creators (#1468).
     # With one, it is the title the item's alternative WORK lane asks
     # (#1255): the plan's first surviving discovery title, with the target's
-    # authors.
-    alternative = alternative_lane_identity(
-        (
-            lookup.audio.discovery_titles[0]
-            if lookup.audio is not None and lookup.audio.discovery_titles
-            else None
-        ),
-        (
-            (lookup.work_title, lookup.work_authors)
-            if lookup.work_title is not None and lookup.work_authors
-            else None
-        ),
-        lookup.companion,
+    # authors. While the owner's link stands none of them admits: each is
+    # the item's own value, and only the anchor's work does (#1477).
+    alternative = (
+        None
+        if lookup.owner_link_stands
+        else alternative_lane_identity(
+            (
+                lookup.audio.discovery_titles[0]
+                if lookup.audio is not None and lookup.audio.discovery_titles
+                else None
+            ),
+            (
+                (lookup.work_title, lookup.work_authors)
+                if lookup.work_title is not None and lookup.work_authors
+                else None
+            ),
+            lookup.companion,
+        )
     )
     # The carried edition may first have been matched on the item's
     # alternative discovery title (#1255), so its lookup is admitted against
