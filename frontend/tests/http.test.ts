@@ -32,6 +32,7 @@ import {
   targetIdentity,
 } from './wireFixtures'
 import activationCapture from './wire/post-metadata-policy-activate.200.json'
+import libraryProgressCapture from './wire/get-library-progress.200.json'
 import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 
 import {
@@ -1088,6 +1089,46 @@ describe('ReviewApiClient', () => {
     ).toBe(shown)
   })
 
+  it('reads a field’s pin and pin control, and refuses an unknown pin state (#1346)', async () => {
+    const pinned = targetField({ state: 'value', value: 'A Pinned Book' })
+    const field = (await readCase(closedDetail())).fields[0]
+    expect([field?.pin, field?.pinControl]).toEqual([null, null])
+    const read = (
+      await readCase(
+        closedDetail({
+          pin: { state: 'changed', value: pinned },
+          pin_control: { pin: 'available', unpin: true },
+        }),
+      )
+    ).fields[0]
+    expect(read?.pin).toEqual({ state: 'changed', value: pinned })
+    expect(read?.pinControl).toEqual({ pin: 'available', unpin: true })
+    const waiting = (
+      await readCase(closedDetail({ pin_control: { pin: 'change_waiting', unpin: false } }))
+    ).fields[0]
+    expect(waiting?.pinControl).toEqual({ pin: 'change_waiting', unpin: false })
+    // A pin on a chosen value waits until the value is read back (K5).
+    const chosen = (
+      await readCase(
+        closedDetail({
+          pin: { state: 'waiting', value: pinned },
+          pin_control: { pin: 'available', unpin: true },
+        }),
+      )
+    ).fields[0]
+    expect(chosen?.pin).toEqual({ state: 'waiting', value: pinned })
+    expect(chosen?.pinControl).toEqual({ pin: 'available', unpin: true })
+    await expect(
+      readCase(closedDetail({ pin_control: { pin: 'other', unpin: false } })),
+    ).rejects.toMatchObject(refused('enum@/fields/0/pin_control/pin'))
+    await expect(
+      readCase(closedDetail({ pin_control: { pin: true, unpin: false } })),
+    ).rejects.toMatchObject(refused('type@/fields/0/pin_control/pin'))
+    await expect(
+      readCase(closedDetail({ pin: { state: 'other', value: pinned } })),
+    ).rejects.toMatchObject(refused('enum@/fields/0/pin/state'))
+  })
+
   it('reads a cover’s current value as the current cover, never its id (#1363)', async () => {
     const cover = (state: string, value: string | null) =>
       readCase(closedDetail({ destination: 'cover', current: targetField({ state, value }) })).then(
@@ -1868,6 +1909,7 @@ describe('ReviewApiClient', () => {
       libraryDisplayName: 'Reading Room',
       mediaKind: 'epub',
       attentionCount: 1,
+      pinnedCount: 0,
       attention: 'needs_attention',
       detailUrl: '/review/case-1',
       detailKind: 'case',
@@ -1883,6 +1925,7 @@ describe('ReviewApiClient', () => {
       libraryDisplayName: 'Books',
       mediaKind: 'epub',
       attentionCount: 0,
+      pinnedCount: 0,
       attention: 'no_attention_needed',
       detailUrl: null,
       detailKind: null,
@@ -3209,7 +3252,7 @@ describe('ReviewApiClient', () => {
       csrf,
       fetch: vi.fn(async () =>
         Response.json(
-          { schema_version: 'review-library-v5', error: { code: 'busy' } },
+          { schema_version: 'review-library-v6', error: { code: 'busy' } },
           { status: 503 },
         ),
       ),
@@ -3288,9 +3331,19 @@ describe('ReviewApiClient', () => {
     await expect(
       readLibrary({ ...page, schema_version: 'review-library-v4' }),
     ).rejects.toMatchObject(refused('const@/schema_version'))
+    // v6 added each work's pinned field count (#1346); a v5 document lacks it.
     await expect(
       readLibrary({ ...page, schema_version: 'review-library-v5' }),
+    ).rejects.toMatchObject(refused('const@/schema_version'))
+    await expect(
+      readLibrary({ ...page, schema_version: 'review-library-v6' }),
     ).resolves.toBeDefined()
+  })
+
+  it('reads each work’s pinned field count (#1346)', async () => {
+    const page = (count: number) => library({ items: [libraryWork({ pinned_count: count })] })
+    expect((await readLibrary(page(2))).works[0]?.pinnedCount).toBe(2)
+    await expect(readLibrary(page(-1))).rejects.toMatchObject(refused('min@/items/0/pinned_count'))
   })
 
   it('maps a library work cover and refuses a malformed one', async () => {
@@ -6743,6 +6796,89 @@ describe('taste profile decoder (#1372)', () => {
         taste_mapping: { engine: 'codex', model: 'gpt-5.6-sol' },
       }),
     ).rejects.toBeInstanceOf(Error)
+  })
+})
+
+describe('Library progress (#1335)', () => {
+  const answering = (response: Response) =>
+    new ReviewApiClient({ csrf, fetch: vi.fn<typeof fetch>(async () => response) })
+
+  it('reads the captured answer as Library counts per library and per field', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => Response.json(libraryProgressCapture.body))
+    const view = await new ReviewApiClient({ csrf, fetch: fetchMock }).getLibraryProgress()
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/library/progress')
+    expect(view).toEqual({
+      totals: { all: 2, attention: 1, clear: 0, notMatched: 1, failed: 0 },
+      libraries: [
+        {
+          connection: 'primary',
+          library: 'audiobooks',
+          libraryDisplayName: 'audiobooks',
+          counts: { all: 1, attention: 0, clear: 0, notMatched: 1, failed: 0 },
+        },
+        {
+          connection: 'primary',
+          library: 'ebooks',
+          libraryDisplayName: 'ebooks',
+          counts: { all: 1, attention: 1, clear: 0, notMatched: 0, failed: 0 },
+        },
+      ],
+      fields: [{ destination: 'title', needYou: 1 }],
+    })
+  })
+
+  it('refuses a field outside the vocabulary or one nobody needs', async () => {
+    const body = libraryProgressCapture.body
+    await expect(
+      answering(
+        Response.json({ ...body, fields: [{ destination: 'shelf', need_you: 1 }] }),
+      ).getLibraryProgress(),
+    ).rejects.toMatchObject(refused('enum@/fields/0/destination'))
+    await expect(
+      answering(
+        Response.json({ ...body, fields: [{ destination: 'title', need_you: 0 }] }),
+      ).getLibraryProgress(),
+    ).rejects.toMatchObject(refused('min@/fields/0/need_you'))
+    await expect(
+      answering(Response.json({ ...body, run_id: 'run-1' })).getLibraryProgress(),
+    ).rejects.toBeInstanceOf(ResponseDecodeError)
+  })
+
+  it('hands an expired session to sign-in and keeps a storage fault as 503', async () => {
+    const expired = vi.fn()
+    await expect(
+      new ReviewApiClient({
+        csrf,
+        fetch: vi.fn(async () => Response.json({ error: { code: 'session' } }, { status: 401 })),
+        onSessionExpired: expired,
+      }).getLibraryProgress(),
+    ).rejects.toBeInstanceOf(SessionExpiredError)
+    await vi.waitFor(() => expect(expired).toHaveBeenCalledOnce())
+    await expect(
+      answering(
+        Response.json(
+          { error: { code: 'unavailable' }, schema_version: 'review-error-v1' },
+          { status: 503 },
+        ),
+      ).getLibraryProgress(),
+    ).rejects.toMatchObject({ status: 503, code: 'unavailable' })
+  })
+
+  it('refuses an answer from another build and raises the shell recovery', async () => {
+    const mismatch = vi.fn()
+    await expect(
+      new ReviewApiClient({
+        csrf,
+        buildIdentity: 'c'.repeat(64),
+        fetch: vi.fn(async () =>
+          Response.json(libraryProgressCapture.body, {
+            headers: { 'x-ml-build-identity': 'e'.repeat(64) },
+          }),
+        ),
+        onBuildMismatch: mismatch,
+      }).getLibraryProgress(),
+    ).rejects.toBeInstanceOf(BuildMismatchError)
+    expect(mismatch).toHaveBeenCalledOnce()
   })
 })
 

@@ -1344,10 +1344,12 @@ def _automatic_lineage(outcome: str) -> tuple[str, str]:
     )
 
 
+# A pin or unpin row is never the latest owner decision (#1346).
+_NOT_A_PIN_ROW = " AND current.outcome NOT IN ('pin','unpin')"
 _CURRENT_OWNER_DECISION = (
     "human.ordinal=(SELECT MAX(current.ordinal) FROM human_decisions current "
     "WHERE current.review_case_id=human.review_case_id AND "
-    "current.destination=human.destination)"
+    "current.destination=human.destination" + _NOT_A_PIN_ROW + ")"
 )
 _LINEAGE_REWRITES = {
     "documents": (
@@ -1469,7 +1471,8 @@ def test_lineage_membership_restores_the_1204_text(
     # an automatic description under the owner's hold as it holds the rest;
     # #1358 then left an earlier episode's decision unplanned, and #1568 left
     # an automatic one unplanned outside the Automatic posture, and #1573
-    # one of an earlier policy generation.
+    # one of an earlier policy generation; #1346 left pin and unpin rows out
+    # of the owner's latest decision.
     restored = {
         name: hashlib.sha256(
             _before_1568(_before_1573(_before_1205(name, statement)))
@@ -1477,6 +1480,7 @@ def test_lineage_membership_restores_the_1204_text(
             .replace(_HELD_DESCRIPTION, "", 1)
             .replace(_FIELD_EFFECT_HOLDS_DECISION_SQL, _HELD_1204)
             .replace(_episode_decision_sql("human") + " AND ", "")
+            .replace(_NOT_A_PIN_ROW, "")
             .encode()
         ).hexdigest()
         for name, statement in _statements(connection).items()

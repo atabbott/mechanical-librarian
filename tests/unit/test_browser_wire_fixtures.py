@@ -57,11 +57,18 @@ from mechanical_librarian.domain.description_advice import (
     DescriptionAdviceBinding,
     DescriptionAdviceSettings,
 )
-from mechanical_librarian.domain.metadata_report import MetadataReport
+from mechanical_librarian.domain.metadata_report import (
+    FileFacts,
+    MetadataReport,
+    TargetFacts,
+    default_target_fields,
+)
+from mechanical_librarian.domain.proposal_set import evaluate_report
 from tests.support.cover_taste import record_owner_cover_decisions
 from tests.support.description_advice import _prepared, _preserved_description_report
 from tests.support.field_effects import _EffectEnvironment, _plan
 from tests.support.field_effects import effects as effects
+from tests.support.review_cases import _report
 from tests.support.review_web_doubles import FakePreparation
 from tests.unit.review_app_fixture import (
     TEST_REACT_BUILD_IDENTITY,
@@ -715,3 +722,33 @@ def test_taste_profile(tmp_path) -> None:
         repository.close()
     _expect_wire("get-covers-taste", capture, {})
     _expect_wire("post-covers-taste-rules", edited, {})
+
+
+def test_library_progress(tmp_path) -> None:
+    """Library progress over a work needing the owner and one not matched (#1335)."""
+    repository = open_repository(tmp_path / "reports.sqlite", cross_thread=True)
+    try:
+        for report in (
+            _report("Synthetic attention work"),
+            MetadataReport.create(
+                target=TargetFacts(
+                    "primary",
+                    "audiobooks",
+                    "item-2",
+                    default_target_fields("Synthetic unmatched work"),
+                ),
+                file=FileFacts(0, "c" * 64, "d" * 64),
+                local_claims=(),
+                local_reasons=("no_opening_claims",),
+                providers=(),
+            ),
+        ):
+            repository.publish(report, lambda: True)
+            proposal = evaluate_report(report)
+            repository.publish_proposal(proposal)
+            repository.admit_review_case(proposal)
+        with _signed_in(tmp_path, repository) as live:
+            capture = live.call("GET", "/api/v1/library/progress")
+    finally:
+        repository.close()
+    _expect_wire("get-library-progress", capture, {})

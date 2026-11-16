@@ -23,6 +23,10 @@ Admission returns one typed result:
 A ProposalSet is actionable when any result is `propose_change`,
 `acceptable_choice` or `unresolved_choice`.
 
+A scheduled search whose proposals equal the current case's, that fails at a
+provider, or that now identifies nothing never reaches admission
+([metadata report](metadata-report.md#after-the-report)).
+
 Failures are redacted to `invalid`, `incompatible`, `currentness` (including
 an unavailable currentness check) or `persistence`.
 
@@ -82,7 +86,10 @@ Library, Attention and case detail share one closed field classification:
 - `needs_attention` and `manual_fallback` are the only states that join
   Attention and that Next visits. An automatic abstention is `manual_fallback`.
 - `automatic_recorded` stays inspectable and editable but is not owner work.
-- `human_recorded` is a recorded owner decision.
+- `human_recorded` is a recorded owner decision or a pin in force. A pinned
+  field whose library value changed is `needs_attention` until the owner pins
+  it again, unpins it or chooses another value. A pin on a chosen value that
+  is not yet written leaves the field as its decision reads.
 - `unsupported` explains the missing capability without offering an empty
   value.
 - `owner_choosable` is an editable settled fill that is neither queued nor
@@ -170,7 +177,8 @@ contract.
 
 A field decision names the displayed proposal ID and target fingerprint and
 one outcome: `accept` (with the exact proposed value), `keep_current`,
-`reject`, `owner_entered` (with the owner's value) or `withdraw`. It needs a
+`reject`, `owner_entered` (with the owner's value), `withdraw`, `pin` or
+`unpin`. It needs a
 16–128 character `Idempotency-Key` and the session CSRF token. A
 field-decision body is capped at 8 KiB and a sign-in body at 2 KiB; a larger
 body is refused before parsing.
@@ -179,6 +187,12 @@ body is refused before parsing.
   Conflicts and stale state fail with no partial decision or event.
 - Errors: `404` for an absent case, `401` for an invalid session, `403` for a
   CSRF mismatch, `503` for a persistence outage.
+- A pin is refused with `409 pin_change_waiting` while a change to the field
+  that is not the owner's standing answer waits to be written, or while the
+  owner's choice of the advised description stands, and
+  `409 already_pinned` when the field is already pinned at this value; an
+  unpin is refused with `409 not_pinned`, and a withdrawal with `409 pinned`
+  while the field is pinned.
 - The response's `confirmation` is `confirmed` with the current case, or
   `unavailable` if readback failed after commit. Unavailable is still
   recorded; the browser offers a reload and never resubmits.

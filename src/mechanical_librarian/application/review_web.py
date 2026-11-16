@@ -76,6 +76,7 @@ from mechanical_librarian.domain.human_decision import (
     owner_text,
     owner_value_admitted,
     owner_value_suggestions,
+    pinned_field_fingerprint,
     preserved_description,
 )
 from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
@@ -130,9 +131,9 @@ from mechanical_librarian.domain.shadow_outcome import (
 )
 from mechanical_librarian.domain.validation import owner_password
 
-ReviewCaseDetailSchemaVersion = Literal["review-case-detail-v8"]
+ReviewCaseDetailSchemaVersion = Literal["review-case-detail-v9"]
 REVIEW_CASE_DETAIL_SCHEMA: Final[ReviewCaseDetailSchemaVersion] = (
-    "review-case-detail-v8"
+    "review-case-detail-v9"
 )
 
 ReviewCaseEvidenceSchemaVersion = Literal["review-case-evidence-v5"]
@@ -148,8 +149,8 @@ REVIEW_CASE_HISTORY_SCHEMA: Final[ReviewCaseHistorySchemaVersion] = (
     "review-case-history-v4"
 )
 
-ReviewLibrarySchemaVersion = Literal["review-library-v5"]
-REVIEW_LIBRARY_SCHEMA: Final[ReviewLibrarySchemaVersion] = "review-library-v5"
+ReviewLibrarySchemaVersion = Literal["review-library-v6"]
+REVIEW_LIBRARY_SCHEMA: Final[ReviewLibrarySchemaVersion] = "review-library-v6"
 
 ReviewReportDetailSchemaVersion = Literal["review-report-detail-v6"]
 REVIEW_REPORT_DETAIL_SCHEMA: Final[ReviewReportDetailSchemaVersion] = (
@@ -324,6 +325,11 @@ class CurrentReviewCaseSnapshot:
     # Destinations whose automatic handling an owner hold keeps off on this
     # case, including a hold carried forward from an earlier case (ADR-0085).
     held_destinations: tuple[str, ...] = ()
+    # Each pin on this case's holds: its destination, whether it is in force
+    # here, and the pinned case's target field as JSON (ADR-0085, Amendment 2).
+    pins: tuple[tuple[str, bool, str], ...] = ()
+    # Destinations whose change waits to be written, so a pin is refused.
+    change_waiting_destinations: tuple[str, ...] = ()
     # Held destinations whose return to automatic handling the owner has
     # requested; the hold stays until the requested checks finish (#1755).
     return_requested_destinations: tuple[str, ...] = ()
@@ -353,6 +359,7 @@ class ReviewLibrarySnapshot:
             tuple[str, ...],
             str | None,
             int,
+            int,
         ],
         ...,
     ]
@@ -374,9 +381,27 @@ class ReviewLibrarySnapshot:
 @dataclass(frozen=True, slots=True)
 class ReviewAttentionSnapshot:
     rows: tuple[
-        tuple[str, str, str, int, str | None, ReviewFieldCause | None, bool], ...
+        tuple[str, str, str, int, str | None, ReviewFieldCause | None, bool, bool],
+        ...,
     ]
     total: int
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewLibraryProgress:
+    """Library's counts and Attention's fields, per library, from one snapshot.
+
+    Computed on request and never stored (#1335). Each library row carries the
+    totals Library's page carries, so the works with no attention needed are
+    derived the same way.
+    """
+
+    # (connection, library, all, needs_attention, not_matched,
+    # preparation_failed), one row per library that has works.
+    libraries: tuple[tuple[str, str, int, int, int, int], ...]
+    # (connection, library, destination, works whose field needs the owner),
+    # one row per field with at least one such work.
+    fields: tuple[tuple[str, str, str, int], ...]
 
 
 class ReviewSessionStore(Protocol):
@@ -477,6 +502,22 @@ _LIBRARY_LENSES: dict[str, LibraryLensFilter | None] = {
 }
 
 _Validated = TypeVar("_Validated")
+
+
+def _library_counts(
+    total: int, needs_attention: int, not_matched: int, preparation_failed: int
+) -> dict[str, int]:
+    """Library's lens counts: what is left of All is the no-attention lens."""
+    return {
+        "all": total,
+        "needs_attention": needs_attention,
+        "no_attention_needed": total
+        - needs_attention
+        - not_matched
+        - preparation_failed,
+        "not_matched": not_matched,
+        "preparation_failed": preparation_failed,
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -616,6 +657,9 @@ class ReviewLibraryStore(Protocol):
         offset: int,
         library_labels: LibraryLabels = (),
     ) -> ReviewAttentionSnapshot: ...
+    def read_review_library_progress(
+        self, library_labels: LibraryLabels = ()
+    ) -> ReviewLibraryProgress: ...
     def read_current_report_document(
         self, connection: str, library: str, item: str
     ) -> str | None: ...
@@ -1249,6 +1293,7 @@ def _classify_field(
     cover_preparation_available: bool,
     actions: tuple[HumanDecisionAction, ...],
     owner_entry: bool,
+    pin: Literal["in_force", "changed"] | None,
 ) -> ReviewFieldClassification:
     """Classify one field from its proposal, decisions and cover state."""
     snapshot = context.snapshot
@@ -1407,6 +1452,7 @@ def _classify_field(
         kept_by_fill_policy=policy_settled and destination != "tags",
         kept_by_tags_off=policy_settled and destination == "tags",
         single_source=single_source,
+        pin=pin,
         repeated_description=repeated,
     )
 
@@ -1498,6 +1544,11 @@ class InspectCurrentReviewCase:
                 projected = _automatic_decision_projection(document)
                 if projected is None:
                     decision = HumanDecision.from_json(document)
+                    if decision.outcome in {"pin", "unpin"}:
+                        # Never a field's latest decision: a pin acts through
+                        # its hold, and the answer under it stands (ADR-0085,
+                        # Amendment 2).
+                        continue
                     decisions[decision.destination] = decision
                     if decision.outcome == "withdraw":
                         # A withdrawn field is undecided again (ADR-0085). A
@@ -1668,6 +1719,23 @@ class InspectCurrentReviewCase:
         reasons = result["reasons"]
         assert type(reasons) is list
         decision = decisions.get(destination)
+        # A pin on this case's hold and the value it keeps, as the current
+        # value is shown: in force, waiting for the owner's standing answer
+        # to be read back, or changed (ADR-0085, Amendment 2).
+        pin = next((row[1:] for row in snapshot.pins if row[0] == destination), None)
+        pin_state: Literal["in_force", "waiting", "changed"] | None = (
+            None
+            if pin is None
+            else "in_force"
+            if pin[0]
+            else "changed"
+            if decision is None
+            else "waiting"
+        )
+        pinned_field: dict[str, object] | None = None
+        if pin is not None:
+            pinned_field = json.loads(pin[1])
+            pinned_field.pop("restorable", None)
         automatic_decision, automatic_selection_sources = _automatic_field_decision(
             context, destination, alternatives
         )
@@ -1715,6 +1783,9 @@ class InspectCurrentReviewCase:
             decision,
             automatic_decision is not None,
             snapshot,
+            None
+            if pinned_field is None or pin_state != "changed"
+            else pinned_field["value"],
         )
         # The owner's hold follows the work: a successor case holds the
         # field as the owner's decision on the earlier case left it, once
@@ -1743,11 +1814,15 @@ class InspectCurrentReviewCase:
             cover_preparation_available=cover_preparation_available,
             actions=actions,
             owner_entry=owner_entry,
+            # A waiting pin leaves the field as its answer reads.
+            pin=None if pin_state == "waiting" else pin_state,
         )
         # Classification retains the field's owner context. Action
         # availability is a separate exact-proposal contract; an empty
         # action list is context-only, never an implied choice envelope.
-        has_owner_action = bool(actions) or cover_preparation_available
+        has_owner_action = (
+            bool(actions) or cover_preparation_available or pin_state == "changed"
+        )
         needs_attention = classification.needs_attention and has_owner_action
         inventory_role = _field_inventory_role(
             classification.state,
@@ -1761,9 +1836,32 @@ class InspectCurrentReviewCase:
         if inventory_role == "contextual":
             owner_control = None
         # Held only while the hold row is in force: Return to automatic
-        # releases it on the deciding case too (#1358).
-        manual_hold = destination in snapshot.held_destinations and (
-            carried_hold or (decision is not None and automatic_decision is not None)
+        # releases it on the deciding case too (#1358). A pinned field offers
+        # Unpin instead, so its hold is not one Resume can release.
+        manual_hold = (
+            pin_state is None
+            and destination in snapshot.held_destinations
+            and (
+                carried_hold
+                or (decision is not None and automatic_decision is not None)
+            )
+        )
+        # A readable primary field can have a value pinned, or says a change
+        # to it waits to be written (#1346, J2).
+        pin_offer = (
+            None
+            if destination == "cover"
+            or inventory_role != "primary"
+            or pinned_field_fingerprint(context.case, destination) is None
+            else "change_waiting"
+            if destination in snapshot.change_waiting_destinations
+            else "available"
+        )
+        pin_control: dict[str, object] | None = (
+            None
+            if inventory_role == "contextual"
+            or (pin_offer is None and pin_state is None)
+            else {"pin": pin_offer, "unpin": pin_state is not None}
         )
         return self._field_document(
             context,
@@ -1784,6 +1882,10 @@ class InspectCurrentReviewCase:
             manual_hold=manual_hold,
             has_owner_action=has_owner_action,
             needs_attention=needs_attention,
+            pin=None
+            if pin_state is None
+            else {"state": pin_state, "value": pinned_field},
+            pin_control=pin_control,
         )
 
     def _field_document(
@@ -1807,6 +1909,8 @@ class InspectCurrentReviewCase:
         manual_hold: bool,
         has_owner_action: bool,
         needs_attention: bool,
+        pin: dict[str, object] | None,
+        pin_control: dict[str, object] | None,
     ) -> dict[str, object]:
         """The field's wire document, kept apart from the decisions above it."""
         case = context.case
@@ -1865,6 +1969,8 @@ class InspectCurrentReviewCase:
                 reasons,
             ),
             "owner_control": owner_control,
+            "pin": pin,
+            "pin_control": pin_control,
             # The offer a choice binds: its value, proposal and rule (#1355).
             "offer_digest": offer_digest(proposals, destination),
             "proposal_id": proposal["proposal_id"],
@@ -2568,6 +2674,7 @@ class BrowseReviewLibrary:
                     shadow_abstention_destinations,
                     terminal_document,
                     attention_count,
+                    pinned_count,
                 ) = row
                 items.append(
                     _library_item(
@@ -2579,6 +2686,7 @@ class BrowseReviewLibrary:
                         shadow_abstention_destinations,
                         terminal_document,
                         attention_count,
+                        pinned_count,
                         decision_scope=scope,
                         validated=self._validated,
                         match_state=(
@@ -2596,16 +2704,12 @@ class BrowseReviewLibrary:
             # the page rather than silently dropping a work from the library.
             raise ReviewWebError("unavailable") from error
         return {
-            "counts": {
-                "all": snapshot.total,
-                "needs_attention": snapshot.attention_total,
-                "no_attention_needed": snapshot.total
-                - snapshot.attention_total
-                - snapshot.not_matched_total
-                - snapshot.preparation_failed_total,
-                "not_matched": snapshot.not_matched_total,
-                "preparation_failed": snapshot.preparation_failed_total,
-            },
+            "counts": _library_counts(
+                snapshot.total,
+                snapshot.attention_total,
+                snapshot.not_matched_total,
+                snapshot.preparation_failed_total,
+            ),
             "items": items,
             "lens": lens,
             "next_cursor": (
@@ -2627,6 +2731,55 @@ class BrowseReviewLibrary:
             "page": offset // bounded_limit + 1,
             "query": normalized,
             "schema_version": REVIEW_LIBRARY_SCHEMA,
+        }
+
+    def progress(self, library_labels: LibraryLabels = ()) -> dict[str, object]:
+        """Library's counts in total and per library, and Attention's fields.
+
+        Libraries follow the active settings, then any stable name they no
+        longer configure alphabetically. Fields come most-needed first.
+        """
+        try:
+            snapshot = self._repository.read_review_library_progress(library_labels)
+        except Exception as error:
+            raise ReviewWebError("unavailable") from error
+        order = {
+            (connection, library): index
+            for index, (connection, library, _label) in enumerate(library_labels)
+        }
+        labels = {
+            (connection, library): label
+            for connection, library, label in library_labels
+        }
+        libraries = sorted(
+            snapshot.libraries,
+            key=lambda row: (order.get((row[0], row[1]), len(order)), row[1], row[0]),
+        )
+        fields: dict[str, int] = {}
+        for _connection, _library, destination, works in snapshot.fields:
+            fields[destination] = fields.get(destination, 0) + works
+        return {
+            "totals": _library_counts(
+                sum(row[2] for row in libraries),
+                sum(row[3] for row in libraries),
+                sum(row[4] for row in libraries),
+                sum(row[5] for row in libraries),
+            ),
+            "libraries": [
+                {
+                    "connection": connection,
+                    "library": library,
+                    "library_display_name": labels.get((connection, library), library),
+                    "counts": _library_counts(*counts),
+                }
+                for connection, library, *counts in libraries
+            ],
+            "fields": [
+                {"destination": destination, "need_you": works}
+                for destination, works in sorted(
+                    fields.items(), key=lambda item: (-item[1], item[0])
+                )
+            ],
         }
 
     def attention(
@@ -2669,6 +2822,7 @@ class BrowseReviewLibrary:
                         automatic_outcome,
                         cause,
                         policy_attention,
+                        pin_changed,
                     ) = row
                     if (
                         parsed is None
@@ -2691,6 +2845,7 @@ class BrowseReviewLibrary:
                         automatic_outcome=automatic_outcome,
                         cause=cause,
                         policy_attention=policy_attention,
+                        pin_changed=pin_changed,
                     )
                     if len(items) < bounded_limit:
                         consumed += 1
@@ -3153,11 +3308,14 @@ def _owner_control(
     decision: HumanDecision | None,
     automatic: bool,
     snapshot: CurrentReviewCaseSnapshot,
+    pinned: object,
 ) -> dict[str, object] | None:
     """Project F59's owner controls for one field, or ``None`` when it has none.
 
     Each part is offered only where the store would accept that command now;
     the store still decides, and refuses a stale panel inline (ADR-0085).
+    ``pinned`` is the value a changed pin keeps, suggested like the previous
+    one (ADR-0085, Amendment 2).
     """
     destination = cast(str, proposal["destination"])
     current = target_fields[destination]["value"]
@@ -3202,6 +3360,13 @@ def _owner_control(
             and all(previous != item["value"] for item in suggestions)
         ):
             suggestions.append({"rule": "previous", "value": previous})
+        if (
+            type(pinned) is str
+            and owner_text(pinned)
+            and pinned != current
+            and all(pinned != item["value"] for item in suggestions)
+        ):
+            suggestions.append({"rule": "pinned", "value": pinned})
         entry = {"max_characters": OWNER_TEXT_MAXIMUM, "suggestions": suggestions}
     subset = None
     if (
@@ -3223,11 +3388,14 @@ def _owner_control(
                 )
             ],
         }
+    # An answer cannot be withdrawn while its field is pinned (ADR-0085,
+    # Amendment 2).
     withdraw = None
     if (
         decision is not None
         and decision.outcome != "reject"
         and destination not in UNREVERSIBLE_DESTINATIONS
+        and all(row[0] != destination for row in snapshot.pins)
     ):
         withdraw = (
             "automatic_hold"
@@ -4345,6 +4513,7 @@ def _library_item(
     shadow_abstention_destinations: tuple[str, ...] = (),
     terminal_document: str | None = None,
     attention_count: int | None = None,
+    pinned_count: int = 0,
     *,
     decision_scope: DecisionScope | None = None,
     validated: ValidatedDocumentCache | None = None,
@@ -4402,6 +4571,7 @@ def _library_item(
                 return {
                     "authors": authors,
                     "attention_count": 0,
+                    "pinned_count": 0,
                     # Failed is its own lens, never counted as needing no
                     # attention (#1413).
                     "attention_state": "preparation_failed",
@@ -4510,7 +4680,7 @@ def _library_item(
             decision.validate_in(scope)
             if decision.outcome == "withdraw":
                 decisions.discard(decision.destination)
-            else:
+            elif decision.outcome not in {"pin", "unpin"}:
                 decisions.add(decision.destination)
         else:
             destination = str(automatic["destination"])
@@ -4574,6 +4744,8 @@ def _library_item(
     value = {
         "authors": _report_authors(report.target),
         "attention_count": current_attention_count,
+        # The fields an owner pin holds on this case (ADR-0085, Amendment 2).
+        "pinned_count": pinned_count,
         # The cover the library holds, retained by this report, so the row can
         # show the book it stands for; `library_cover` serves only this preview
         # (#1290). The row names no connection, so the server states the
@@ -4676,6 +4848,7 @@ def _attention_item(
     automatic_outcome: str | None = None,
     cause: ReviewFieldCause | None = None,
     policy_attention: bool = False,
+    pin_changed: bool = False,
 ) -> dict[str, object] | None:
     if _omitted_for_epub(destination, report.file.format):
         return None
@@ -4708,6 +4881,7 @@ def _attention_item(
         cause=cause,
         current_value=None,
         proposed_values=(),
+        pin="changed" if pin_changed else None,
     )
     if not classification.needs_attention:
         # Query membership can race a durable automatic or human decision.  A

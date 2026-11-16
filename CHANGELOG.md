@@ -30,6 +30,9 @@ brackets are GitHub issues.
   every source again for every book.
   [Upgrades](docs/operations/upgrades.md#keeping-provider-answers) says how
   (#1064).
+- Every finished book is searched again every 90 days, spread evenly across
+  the library. Its review case changes only when the new answers would propose
+  something different, and a failed search changes nothing (#1916).
 
 ## 0.36.1 — Persistence health (in progress)
 
@@ -97,6 +100,12 @@ brackets are GitHub issues.
   Activity hides a one-page pager. Phones get a 16 px margin, and the masthead
   scrolls away when taller than a sixth of the window (#1894).
 
+## 0.36.0 — Standing owner instructions (in progress)
+
+- **Clean rebuild required.** Stored owner decisions and field holds changed
+  shape, ready for pinning a field of a work. Nothing looks different yet
+  (#1346).
+
 ## 0.33.0 — First library (in progress)
 
 - **Clean rebuild required** only for an install whose setup was interrupted.
@@ -123,6 +132,11 @@ brackets are GitHub issues.
   fields: each prepared change's current and new value, who chose it and why.
   Download CSV and Download JSON save the whole plan, up to 20,000 changes, as
   it is made; nothing is stored or granted (#1336).
+- A finished run's box in Library says where the whole library stands, such as
+  "1,840 of 2,026 works settled · 174 need you", each count linked to its
+  lens, until you dismiss the run. Activity has a Library progress card with
+  the same counts per library and the works that need you per field. Counts of
+  works group their digits (#1335).
 
 ## 0.31.0 — Coverage: admission rules and reviewer-informed covers (in progress)
 

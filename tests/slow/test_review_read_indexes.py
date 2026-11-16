@@ -164,7 +164,11 @@ def test_production_surfaces_use_measured_indexes_within_scale_budget() -> None:
                 "Attention",
                 lambda: browse.attention(search=None, limit=50, cursor=None),
             ),
+            # Library progress counts every candidate, as each page's totals
+            # do, and reads no shadow outcome (#1335).
+            ("Library progress", lambda: browse.progress()),
         )
+        library_steps = 0
         for name, call in calls:
             result, steps, elapsed = support._call_with_step_limit(
                 connection, support._READ_VM_STEP_BUDGET, call
@@ -172,6 +176,10 @@ def test_production_surfaces_use_measured_indexes_within_scale_budget() -> None:
             assert result is not None, name
             assert steps <= support._READ_VM_STEP_BUDGET, name
             assert elapsed < support._READ_WALL_BUDGET_SECONDS, name
+            if name == "Library":
+                library_steps = steps
+            elif name == "Library progress":
+                assert steps <= library_steps * 3 // 2, (steps, library_steps)
 
             statements: list[str] = []
             connection.set_trace_callback(statements.append)
@@ -195,7 +203,9 @@ def test_production_surfaces_use_measured_indexes_within_scale_budget() -> None:
                 re.match(r"SCAN (f|pointed)\b", step) for step in materialized_plan
             ), name
 
-        plan_calls = calls + (
+        plan_calls = tuple(
+            (name, call) for name, call in calls if name != "Library progress"
+        ) + (
             (
                 "selected work and history",
                 lambda: repository.read_current_review_case(case_id, 100),

@@ -497,6 +497,119 @@ def test_offer_change_appends_valueless_matching_changed_decision(
         store.close()
 
 
+def _valueless(store: OwnerStore, outcome: str, at: int) -> HumanDecision:
+    """Record a valueless owner command on the description, in its offer."""
+    shown = offer_of(store)
+    proposal = next(value for value in shown if value["destination"] == "description")
+    decision = HumanDecision.create(
+        store.case,
+        proposal_id=str(proposal["proposal_id"]),
+        target_fingerprint=store.case.target_fingerprint,
+        destination="description",
+        actor="owner",
+        outcome=outcome,
+        selected_value=None,
+        idempotency_key=f"{outcome.replace('_', '-')}-description-{at:04d}",
+        occurred_at=at,
+        offer=shown,
+    )
+    store.repository.record_human_decision(decision)
+    return decision
+
+
+def _description(store: OwnerStore) -> dict[str, Any]:
+    return next(
+        value
+        for value in InspectCurrentReviewCase(store.repository).run(
+            store.case.review_case_id
+        )["fields"]
+        if value["destination"] == "description"
+    )
+
+
+@pytest.mark.parametrize(
+    "answers", [(), ("keep_current",)], ids=["pin_only", "keep_current_then_pin"]
+)
+def test_offer_change_leaves_a_pinned_field_pinned(
+    tmp_path: Path, answers: tuple[str, ...]
+) -> None:
+    """A pin in force keeps its field out of the question: the check appends
+    no `matching_changed` row over it, alone or over the Keep current it
+    marks, so the pinned field is not asked again (#1346, AC10, K-D14)."""
+    store = _store(tmp_path, _WIDE)
+    try:
+        for at, outcome in enumerate((*answers, "pin"), 68):
+            _valueless(store, outcome, at)
+        _change(store, _IDENTIFIER, 70)
+        _check(store, 71)
+        assert [decision.outcome for decision in _decisions(store)] == [
+            *answers,
+            "pin",
+        ]
+        field = _description(store)
+        assert (field["classification_cause"], field["needs_attention"]) == (
+            "pinned",
+            False,
+        )
+    finally:
+        store.close()
+
+
+def test_offer_change_closes_a_pinned_choice(tmp_path: Path) -> None:
+    """A pin is never the latest decision, so the check still finds the
+    choice under it: the superseded choice's write closes and is never made,
+    and the field asks, showing the value that was pinned (#1346, K-D14)."""
+    store = _store(tmp_path, _WIDE)
+    try:
+        standing = _record(store, SYNOPSIS, "level-choice-0003")
+        operation = store.plan(standing)
+        _valueless(store, "pin", 69)
+        assert _description(store)["pin"]["state"] == "waiting"
+        _change(store, _IDENTIFIER, 70)
+        _check(store, 71)
+        *_, cause = _decisions(store)
+        assert [decision.outcome for decision in _decisions(store)] == [
+            "accept",
+            "pin",
+            "withdraw",
+        ]
+        assert cause == HumanDecision.matching_changed(
+            store.case, standing, _IDENTIFIER.value, offer_of(store), 71
+        )
+        assert _effect(store, operation.plan.plan_id) == ("stale", "matching_changed")
+        assert standing.to_json() not in (
+            store.repository.pending_field_effect_decision_documents(32)
+        )
+        field = _description(store)
+        assert field["human_decision"] is None
+        assert field["pin"]["state"] == "changed"
+        assert field["pin"]["value"]["value"] == SYNOPSIS
+        assert (field["classification_cause"], field["needs_attention"]) == (
+            "pin_changed",
+            True,
+        )
+    finally:
+        store.close()
+
+
+def test_asked_again_note_skips_pin_rows(tmp_path: Path) -> None:
+    """Activity still notes a choice Book matching asked again when a pin and
+    an unpin were recorded after it: neither is the row that asked (#1346)."""
+    store = _store(tmp_path, _WIDE)
+    try:
+        standing = _record(store, SYNOPSIS, "level-choice-0004")
+        marks = [_valueless(store, "pin", 68), _valueless(store, "unpin", 69)]
+        _change(store, _IDENTIFIER, 70)
+        _check(store, 71)
+        with owner_client(store, tmp_path) as (client, _csrf):
+            notes = {event["event_id"]: event["note"] for event in _activity(client)}
+        assert notes[_event_id(standing)] == "asked_again_matching"
+        # The pin and the unpin were not asked again themselves.
+        assert [notes[_event_id(mark)] for mark in marks] == [None, None]
+    finally:
+        store.close()
+
+
 def test_old_level_effect_waits_for_reconciliation(tmp_path: Path) -> None:
     """An owner write on a case still reconciled at the old level waits,
     unclaimed and still "Planned", noted as waiting for the check; once the

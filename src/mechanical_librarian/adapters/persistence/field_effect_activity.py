@@ -452,7 +452,8 @@ _PENDING_PREPARED_SQL = (
     + "CASE WHEN human.review_case_id IN (SELECT review_case_id FROM current_review_case_lineages) "
     "THEN human.ordinal=(SELECT MAX(current.ordinal) FROM human_decisions current "
     "WHERE current.review_case_id=human.review_case_id AND "
-    "current.destination=human.destination) END AND "
+    "current.destination=human.destination "
+    "AND current.outcome NOT IN ('pin','unpin')) END AND "
     + _episode_decision_sql("human")
     + " AND NOT EXISTS ("
     "SELECT 1 FROM field_effect_manual_holds returned WHERE "
@@ -1728,7 +1729,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "stale.decision_id=human.decision_id AND stale.kind='stale'))) AND "
                 "human.ordinal=(SELECT MAX(current.ordinal) FROM human_decisions current "
                 "WHERE current.review_case_id=human.review_case_id AND "
-                "current.destination=human.destination) AND "
+                "current.destination=human.destination "
+                # A pin or unpin row is never the latest decision (ADR-0085,
+                # Amendment 2).
+                "AND current.outcome NOT IN ('pin','unpin')) AND "
                 # An earlier episode's decision of a case admitted again is
                 # history, never pending work (#1358).
                  + _episode_decision_sql("human") + " AND NOT EXISTS ("
@@ -3687,11 +3691,15 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "ON current.review_case_id=decision.review_case_id "
                 "WHERE event.event_id IN ("
                 + ",".join("?" for _ in decisions)
-                + ") AND (SELECT json_extract(later.document,'$.cause') "
+                # A pin or unpin row is neither the choice asked again nor
+                # the row that asked (ADR-0085, Amendment 2).
+                + ") AND decision.outcome NOT IN ('pin','unpin') "
+                "AND (SELECT json_extract(later.document,'$.cause') "
                 "FROM human_decisions later "
                 "WHERE later.review_case_id=decision.review_case_id "
                 "AND later.destination=decision.destination "
                 "AND later.ordinal>decision.ordinal "
+                "AND later.outcome NOT IN ('pin','unpin') "
                 "ORDER BY later.ordinal LIMIT 1)='matching_changed'",
                 decisions,
             ).fetchall()

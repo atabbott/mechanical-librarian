@@ -13,12 +13,18 @@ from starlette.testclient import TestClient
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
 from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.interfaces.web.app import (
+    _LibraryProgressResponse,
+    _PreparationResponse,
+)
 from tests.browser import fidelity_cohort
 from tests.browser.fidelity_cohort import (
     COHORT_WRITE_PLANS,
+    LIBRARY_PROGRESS_STATES,
     LIBRARY_WORKS,
     THROTTLE_LONG_LIBRARY,
     RichFidelityApiMiddleware,
+    finished_preparation,
     rich_payload,
 )
 from tests.browser.test_review_browser import _report
@@ -317,3 +323,23 @@ def test_preparation_carries_three_throttled_sources_and_every_remedy() -> None:
     }
     assert {entry["state"] for entry in entries} == {"waiting", "dormant", "exhausted"}
     assert sorted(entry["deferred"] for entry in entries) == [1, 214, 10_000]
+
+
+def test_library_progress_states_are_ones_the_server_could_answer() -> None:
+    """The cohort's progress and finished-run states pass the wire models (#1335)."""
+    library = rich_payload("/api/v1/library?lens=all")
+    assert isinstance(library, dict)
+    default = rich_payload("/api/v1/library/progress")
+    assert isinstance(default, dict)
+    # The cohort's own progress agrees with its Library counts.
+    assert default["totals"] == library["counts"]
+    for state in (default, *LIBRARY_PROGRESS_STATES.values()):
+        _LibraryProgressResponse.model_validate(state)
+        libraries = state["libraries"]
+        assert isinstance(libraries, list)
+        totals = state["totals"]
+        assert isinstance(totals, dict)
+        for key, total in totals.items():
+            assert total == sum(row["counts"][key] for row in libraries)
+    for run, failed in (("completed_clean", 0), ("completed_with_failures", 2)):
+        _PreparationResponse.model_validate(finished_preparation(run, failed=failed))

@@ -95,11 +95,11 @@ status line that says who accepted it and when.
 | [0082](0082-runtime-activity-facts.md) | accepted | Reuse Activity facts with exact source witnesses |
 | [0083](0083-validated-browse-document-reuse.md) | accepted | Reuse validated browse documents by exact bytes |
 | [0084](0084-persisted-attention-facts.md) | accepted | Persist which fields need the owner |
-| [0085](0085-owner-entered-values-withdrawal-and-reselection.md) | accepted; Amendment 1 proposed | Admit owner-entered values, withdrawal and reselection |
+| [0085](0085-owner-entered-values-withdrawal-and-reselection.md) | accepted; Amendments 1 and 2 proposed | Admit owner-entered values, withdrawal and reselection |
 | [0086](0086-deployment-held-setup-claim-token.md) | accepted | Require a deployment-held claim token for the first owner |
 | [0087](0087-operation-bound-qualification-authority.md) | accepted | Bind qualification authority to permitted operations |
 | [0088](0088-carried-recording-admission.md) | accepted | Carry an admitted audiobook edition into the next preparation |
-| [0089](0089-unmatched-audiobook-research.md) | accepted | Search an unmatched audiobook again |
+| [0089](0089-unmatched-audiobook-research.md) | accepted; amended by 0102 (proposed) | Search an unmatched audiobook again |
 | [0090](0090-hardcover-audio-edition-witness.md) | accepted | Hardcover audio editions witness which recording an audiobook is |
 | [0091](0091-decode-browser-responses-and-report-uncertain-writes.md) | accepted | Decode every browser response and report uncertain writes truthfully |
 | [0092](0092-keep-the-automatic-decision-abstention-gate.md) | accepted | Keep the automatic-decision abstention gate and define the would-admit note |
@@ -111,4 +111,5 @@ status line that says who accepted it and when.
 | [0098](0098-revised-cover-observation-vocabulary.md) | proposed | Revise the cover observation vocabulary and keep observations advisory |
 | [0099](0099-qualify-automatic-description-advice.md) | proposed | Qualify automatic description advice on the owner's decisions before it writes without asking |
 | [0100](0100-confine-parser-helpers.md) | proposed | Confine parser helpers, and keep parsing where Landlock is missing |
-| [0101](0101-reuse-stored-provider-answers.md) | proposed | Reuse stored provider answers, with live fallback |
+| [0101](0101-reuse-stored-provider-answers.md) | proposed; amended by 0102 (proposed) | Reuse stored provider answers, with live fallback |
+| [0102](0102-search-every-finished-book-again.md) | proposed | Search every finished book again every 90 days |
