@@ -1265,6 +1265,77 @@ def test_cover_rows_come_from_each_stored_stage_without_a_write_or_an_identity(
     assert re.search(r"[0-9a-f]{16}", serialised) is None
 
 
+def test_a_comparison_without_a_policy_report_still_says_sources_are_fetching(
+    tmp_path,
+) -> None:
+    """A comparison stored before any cover preview arrived keeps its reason.
+
+    SQLite 3.40, which the image ships, answers json_valid(NULL) with 0 where
+    later versions answer NULL; the reader is given that behaviour here so the
+    test holds on every engine.
+    """
+    from mechanical_librarian.application.metadata_policy import (
+        PolicyPreviewCover,
+        preview_policy,
+    )
+    from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
+
+    database = tmp_path / "state.sqlite3"
+    repository = open_repository(database)
+    report = _case_report(0)
+    repository.publish(report, lambda: True)
+    proposal = evaluate_report(report)
+    repository.publish_proposal(proposal)
+    review_case_id = json.loads(repository.admit_review_case(proposal))[
+        "review_case_id"
+    ]
+    record = repository.record_cover_consideration
+
+    def without_policy_report(document: str, **options: Any) -> Any:
+        value = json.loads(document)
+        value["policy_report_document"] = None
+        return record(
+            json.dumps(value, separators=(",", ":"), sort_keys=True), **options
+        )
+
+    repository.record_cover_consideration = without_policy_report
+    _record_cover_comparison(
+        repository, report, review_case_id, 0, outcome="empty", fetching=True
+    )
+    repository.close()
+    reader = open_shadow_preview_repository(database)
+
+    def json_valid_as_shipped(value: object) -> int:
+        if value is None:
+            return 0
+        try:
+            json.loads(value if isinstance(value, str) else str(value))
+        except ValueError:
+            return 0
+        return 1
+
+    reader._connection.create_function(
+        "json_valid", 1, json_valid_as_shipped, deterministic=True
+    )
+    assert (PolicyPreviewCover(True, None, None, False),) == (
+        reader.capture_policy_preview(("ebooks",), 20).libraries[0].covers
+    )
+    active = MetadataPolicyProfile.builtin()
+    draft = MetadataPolicyProfile.create(
+        "Draft",
+        dict(active.options),
+        dict(active.destinations) | {"cover_order": "ask"},
+    )
+    preview = preview_policy(draft, ("ebooks",), {}, reader)
+    reader.close()
+    assert [("not_previewed", "provider_fetching")] == [
+        (field.draft.outcome, field.draft.reason)
+        for case in preview.libraries[0].comparisons
+        for field in case.fields
+        if field.destination == "cover"
+    ]
+
+
 def test_an_unreadable_cover_document_is_not_previewed_for_its_work_alone(
     tmp_path,
 ) -> None:

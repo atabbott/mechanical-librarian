@@ -514,8 +514,12 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
             "c.report_id=l.report_id AND NOT EXISTS (SELECT 1 FROM "
             "cover_consideration_events e WHERE e.consideration_id=c.consideration_id "
             "AND e.kind='stale'),"
+            # A comparison stored while sources are fetching has no policy
+            # report (JSON null); SQLite 3.40 gives json_valid(NULL)=0, so
+            # only a present report is checked.
             "CASE WHEN NOT json_valid(c.document) THEN NULL "
-            "WHEN NOT json_valid(json_extract(c.document,'$.policy_report_document')) "
+            "WHEN json_extract(c.document,'$.policy_report_document') IS NOT NULL "
+            "AND NOT json_valid(json_extract(c.document,'$.policy_report_document')) "
             "THEN NULL WHEN EXISTS (SELECT 1 FROM json_each(c.document,'$.candidates') "
             "candidate WHERE candidate.type<>'object') THEN NULL "
             "ELSE EXISTS (SELECT 1 FROM json_each(c.document,'$.candidates') candidate "
