@@ -2784,6 +2784,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             }
         )
         replaced: dict[str, object] = {}
+        # A keep plans a write only to go back on the case's own write, so its
+        # first plan names the written value and the value before it (#1523).
+        went_back: dict[str, dict[str, object]] = {}
         if human_ids:
             for decision_id, effect_document in self._connection.execute(
                 "SELECT decision_id,document FROM field_effects WHERE decision_id IN ("
@@ -2791,9 +2794,13 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 + ") ORDER BY rowid DESC",
                 human_ids,
             ):
-                replaced[decision_id] = FieldEffectOperation.from_json(
-                    effect_document
-                ).plan.pre_value
+                plan = FieldEffectOperation.from_json(effect_document).plan
+                replaced[decision_id] = plan.pre_value
+                went_back[decision_id] = {
+                    "destination": plan.destination,
+                    "written": plan.pre_value,
+                    "before": plan.desired_value,
+                }
         projected_events: list[dict[str, object]] = []
         decision: (
             HumanDecision
@@ -3295,6 +3302,16 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     and decision.decision_id in replaced
                 ):
                     durable["pre_value"] = replaced[decision.decision_id]
+                planned = went_back.get(decision.decision_id)
+                if (
+                    decision.outcome == "keep_current"
+                    and planned is not None
+                    and planned["destination"] == decision.destination
+                ):
+                    durable["went_back"] = {
+                        "written": planned["written"],
+                        "before": planned["before"],
+                    }
             elif source_kind == "isbn_refusal":
                 if isbn is None:
                     raise FieldEffectError("persistence")

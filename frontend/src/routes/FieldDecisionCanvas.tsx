@@ -406,11 +406,10 @@ export function FieldDecisionCanvas({
                 : selected.humanDecision === null && selected.manualHold
                   ? 'Your earlier decision still holds this field. '
                   : 'The recorded outcome is marked below. '}
-              {anotherOffered
-                ? 'You can choose another value.'
-                : noWayBack(selected)
-                  ? `There was no ${destinationPhrase(selected.destination)} before this change, and the ${destinationPhrase(selected.destination)} can’t be emptied.`
-                  : ''}
+              {noWayBack(selected)
+                ? `The ${destinationPhrase(selected.destination)} was empty before your change, and it can’t be emptied.${anotherOffered ? ' ' : ''}`
+                : ''}
+              {anotherOffered ? 'You can choose another value.' : ''}
             </p>
           ) : selectedOptional ? (
             <p>{fieldReason(selected)}</p>

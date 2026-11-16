@@ -502,7 +502,9 @@ describe('a clear in History and the recorded outcome', () => {
     const kept = (await screen.findByRole('heading', { name: 'Subtitle' })).closest('article')
     expect(kept).toHaveTextContent('You went back to the value before your change.')
     expect(kept).toHaveTextContent('From A Novel of the Outer Banks')
-    expect(kept).toHaveTextContent('To Cleared')
+    // A keep restores Not set; only a clear reads Cleared.
+    expect(kept).toHaveTextContent('To Not set')
+    expect(kept).not.toHaveTextContent('Cleared')
     const filled = screen.getByRole('heading', { name: 'ISBN' }).closest('article')
     expect(filled).toHaveTextContent('From Not set')
     expect(filled).toHaveTextContent('To 9780306406157')
@@ -716,27 +718,48 @@ describe('the keep card on a field this case wrote (#1523)', () => {
     expect(screen.getByText('Before your change')).toBeVisible()
   })
 
-  it('offers no card and says why on an ISBN written over nothing', async () => {
-    const written = decided(isbnOver(null), { kind: 'text', value: '9781861972712' })
-    if (!written.humanDecision) throw new Error('a recorded decision is required')
-    renderRoute(
-      '/library?lens=all&preview=case-1&field=isbn',
-      owner({
-        ...written,
-        editable: true,
-        needsAttention: false,
-        // Withdraw alone is no other value to choose.
-        ownerControl: control({ withdraw: 'written' }),
-        pinControl: null,
-        humanDecision: { ...written.humanDecision, outcome: 'accept' },
-      }),
-    )
-    const said = await screen.findByText(
-      /There was no ISBN before this change, and the ISBN can’t be emptied\./u,
-    )
-    expect(said).not.toHaveTextContent('You can choose another value.')
-    expect(keepCardShown()).toBeNull()
-  })
+  it.each([
+    ['nothing else', [{ kind: 'text', value: '9781861972712' }], false],
+    [
+      'another proposal',
+      [
+        { kind: 'text', value: '9781861972712' },
+        { kind: 'text', value: '9780306406157' },
+      ],
+      true,
+    ],
+  ] as const)(
+    'offers no card and says why on an ISBN written over nothing, with %s on offer',
+    async (_, proposedValues, another) => {
+      const written = decided(
+        { ...isbnOver(null), proposedValues: [...proposedValues] },
+        { kind: 'text', value: '9781861972712' },
+      )
+      if (!written.humanDecision) throw new Error('a recorded decision is required')
+      renderRoute(
+        '/library?lens=all&preview=case-1&field=isbn',
+        owner({
+          ...written,
+          editable: true,
+          needsAttention: false,
+          // Withdraw alone is no other value to choose.
+          ownerControl: control({ withdraw: 'written' }),
+          pinControl: null,
+          humanDecision: { ...written.humanDecision, outcome: 'accept' },
+        }),
+      )
+      const heading = await screen.findByRole('heading', { name: 'ISBN' })
+      const said = heading.parentElement?.querySelector('p')
+      expect(said).toHaveTextContent(
+        'The ISBN was empty before your change, and it can’t be emptied.',
+      )
+      expect(said).not.toHaveTextContent(/There was|this change/u)
+      if (another)
+        expect(said).toHaveTextContent(/can’t be emptied\. You can choose another value\.$/u)
+      else expect(said).not.toHaveTextContent('You can choose another value.')
+      expect(keepCardShown()).toBeNull()
+    },
+  )
 })
 
 describe('an emptied form that clears nothing (#1523)', () => {

@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -460,6 +460,51 @@ def test_keeping_an_empty_genres_after_a_write_goes_back_to_empty(
         == keep.decision_id
     )
     assert keep.decision_id not in _pending(store)
+    # Activity says the keep went back on the write, never that it kept the
+    # current value (#1523).
+    (row,) = (
+        event
+        for event in _activity(store)
+        if event["field_label"] == "Genres"
+        and event["state"] in {"keep_current", "went_back"}
+    )
+    assert (row["state"], row["change"], row["change_detail"]) == (
+        "went_back",
+        "Fantasy → Not set",
+        "Set Genres back from Fantasy to Not set",
+    )
+    assert row["evidence"][:2] == [
+        {"label": "Written value", "value": "Fantasy"},
+        {"label": "Value before your change", "value": "Not set"},
+    ]
+    assert "Kept" not in row["change"] and "Current value" not in str(row["evidence"])
+
+
+def _activity(store: OwnerStore) -> list[dict[str, Any]]:
+    target = store.case.target
+    events = ContinuousGuardedApplication(
+        store.repository,
+        {},
+        {},
+        PersistedFieldEffectAuthority(store.repository),
+        ((str(target["connection"]), str(target["library"])),),
+        lambda: 2_000,
+        lambda *_: None,
+        activity_only=True,
+    ).activity()["events"]
+    return cast("list[dict[str, Any]]", events)
+
+
+def test_a_plain_keep_still_reads_kept_in_activity(store: OwnerStore) -> None:
+    keep = store.decide("keep_current", destination="genres")
+    assert keep.decision_id not in _pending(store)
+    (row,) = (
+        event
+        for event in _activity(store)
+        if event["field_label"] == "Genres" and event["category"] == "owner"
+    )
+    assert row["state"] == "keep_current"
+    assert row["change"] == "Left genres unset"
 
 
 def test_keeping_an_empty_isbn_after_a_write_is_refused(store: OwnerStore) -> None:

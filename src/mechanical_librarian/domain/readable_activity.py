@@ -35,6 +35,7 @@ __all__ = [
     "failure_reason",
     "field_phrase",
     "keep_change",
+    "went_back_change",
     "policy_destination_label",
     "policy_option_label",
     "policy_setting_label",
@@ -353,6 +354,19 @@ def set_change(
         if named
         else f"{before} {_ARROW} {after}",
         f"Set {field} from {before} to {after}",
+    )
+
+
+def went_back_change(
+    destination: str, written: object, before: object
+) -> ReadableChange:
+    """State a keep that went back on the case's own write: from the written
+    value to the value before it, never as a value kept (#1523)."""
+    field = destination_label(destination)
+    was = value_text(destination, written, limit=CHANGE_LIMIT)
+    back = value_text(destination, before, limit=CHANGE_LIMIT)
+    return ReadableChange(
+        f"{was} {_ARROW} {back}", f"Set {field} back from {was} to {back}"
     )
 
 

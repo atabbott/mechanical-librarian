@@ -166,7 +166,13 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
             </p>
             <p className="diagnostic-value">
               <span>To</span>{' '}
-              {historyValue(item.destination, item.selectedValue, emptyWords(item, CLEARED_TEXT))}
+              {historyValue(
+                item.destination,
+                item.selectedValue,
+                // A keep that went back to an empty field restores Not set,
+                // as its card said; only a clear reads Cleared (#1523).
+                emptyWords(item, item.outcome === 'keep_current' ? NOT_SET : CLEARED_TEXT),
+              )}
             </p>
           </>
         )}
@@ -277,7 +283,8 @@ function displayRetainedHistoryValue(
 }
 
 // An empty field before a change reads as Activity says it, and a change that
-// ends in an empty field reads as a clear does (#1523).
+// ends in an empty field reads as a clear does, unless a keep restored it
+// (#1523).
 const NOT_SET = 'Not set'
 // An owner item's null is always an empty field. An automatic item with
 // neither value was not matched to its outcome, so its null is unknown.

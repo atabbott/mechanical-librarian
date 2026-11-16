@@ -77,8 +77,10 @@ changes nothing. An emptied scalar reads back as `null` and an emptied list as
    (Clear for an empty value, or that value as the previous value, names or
    genres), and where there is none, a field read empty that cannot be
    emptied, saying so in one sentence. History reads that keep as "You went
-   back to the value before your change." The server path and its refusal
-   stay for API callers.
+   back to the value before your change.", its To an empty value as Not set,
+   and Activity reads it as a change from the written value to that value
+   with the result Went back, from the keep's own first plan. The server
+   path and its refusal stay for API callers.
 5. **The kept case.** When the pipeline admits a ProposalSet with nothing
    actionable while the work's latest verified write, of any origin and
    destination, covers included, is under 2,592,000 seconds old by the

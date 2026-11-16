@@ -44,6 +44,7 @@ from mechanical_librarian.domain.readable_activity import (
     policy_setting_label,
     set_change,
     value_text,
+    went_back_change,
 )
 
 __all__ = [
@@ -63,6 +64,7 @@ class ActivityResult(StrEnum):
 
     ACCEPTED = "Accepted"
     KEPT_CURRENT = "Kept current"
+    WENT_BACK = "Went back"
     REJECTED = "Rejected"
     OWNER_ENTERED = "Entered by you"
     WITHDRAWN = "Withdrawn"
@@ -116,6 +118,7 @@ _CATEGORIES = {
 _RESULT_LABELS = {
     "accept": ActivityResult.ACCEPTED,
     "keep_current": ActivityResult.KEPT_CURRENT,
+    "went_back": ActivityResult.WENT_BACK,
     "reject": ActivityResult.REJECTED,
     "owner_entered": ActivityResult.OWNER_ENTERED,
     "withdraw": ActivityResult.WITHDRAWN,
@@ -397,6 +400,23 @@ def _decision_facts(
     )
     selected = record.get("selected_value")
     chosen = {"label": "Chosen by", "value": "You"}
+    went_back = record.get("went_back")
+    if state == "keep_current" and type(went_back) is dict:
+        # A keep that went back on the case's own write changed the library:
+        # from the written value to the value before it (#1523).
+        return went_back_change(
+            destination, went_back.get("written"), went_back.get("before")
+        ), [
+            {
+                "label": "Written value",
+                "value": value_text(destination, went_back.get("written")),
+            },
+            {
+                "label": "Value before your change",
+                "value": value_text(destination, went_back.get("before")),
+            },
+            chosen,
+        ]
     if state == "keep_current":
         return keep_change(destination, current), [
             {"label": "Current value", "value": value_text(destination, current)},
@@ -559,6 +579,9 @@ def readable_activity_event(
         change, facts = _write_facts(record, destination, origin, state, failure)
     elif source_kind == "human_decision":
         change, facts = _decision_facts(record, destination, state, report)
+        if state == "keep_current" and type(record.get("went_back")) is dict:
+            # Its result says it went back, as History does, not Kept current.
+            event["state"] = "went_back"
     elif source_kind == "description_preparation":
         description = {
             "requested": "Description advice requested",

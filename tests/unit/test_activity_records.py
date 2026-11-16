@@ -117,6 +117,7 @@ def _facts(event: dict[str, object]) -> dict[str, str]:
     (
         ("accept", "Accepted"),
         ("keep_current", "Kept current"),
+        ("went_back", "Went back"),
         ("reject", "Rejected"),
         ("owner_entered", "Entered by you"),
         ("withdraw", "Withdrawn"),
@@ -294,6 +295,33 @@ def test_an_owner_keep_states_one_retained_value_and_no_new_one() -> None:
     assert event["change"] == "Kept The Dispossessed"
     assert event["change_detail"] == "Kept Title as The Dispossessed"
     assert "New value" not in _facts(event)
+
+
+def test_a_keep_that_went_back_on_a_write_reads_as_that_change() -> None:
+    """A keep whose own plan wrote back the value before the case's write
+    reads from the written value to that value, with Went back (#1523)."""
+    report = _titled("The Dispossessed")
+    event = _project(
+        _event(
+            state="keep_current",
+            record={
+                "source_kind": "human_decision",
+                "target_fingerprint": report.target.fingerprint,
+                "selected_value": None,
+                "went_back": {"written": "Anarres", "before": "The Dispossessed"},
+            },
+        ),
+        report,
+    )
+    assert event["state"] == "went_back"
+    assert event["change"] == "Anarres → The Dispossessed"
+    assert event["change_detail"] == "Set Title back from Anarres to The Dispossessed"
+    assert _facts(event) == {
+        "Written value": "Anarres",
+        "Value before your change": "The Dispossessed",
+        "Chosen by": "You",
+    }
+    assert "Kept" not in str(event)
 
 
 def test_an_owner_rejection_prepares_nothing_and_invents_nothing() -> None:
