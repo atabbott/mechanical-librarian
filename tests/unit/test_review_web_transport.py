@@ -2044,6 +2044,27 @@ def test_library_visit_is_guarded_and_publishes_only_a_moved_boundary(
     assert failed.json()["error"]["code"] == "persistence"
     assert updates.sequence == before + 1
 
+    # Only a store failure is a 503; a programming error is not hidden as one.
+    web.repository.library_visit_moves = RuntimeError("defect")
+    with pytest.raises(RuntimeError):
+        web.client.post(path, headers=headers, json={"listing": None})
+
+
+def test_library_reads_are_given_the_application_clock(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    """Both Library reads see the clock, so New can end at the gap (#1351, AC4).
+
+    A read left without it would fall back to time zero and keep the last
+    boundary for good, on every device, until a visit was posted.
+    """
+    web.login()
+    web.now += 123
+    assert web.client.get("/api/v1/library").status_code == 200
+    assert web.client.get("/api/v1/library/progress").status_code == 200
+    assert web.repository.library_read_clocks == [web.now]
+    assert web.repository.progress_read_clocks == [web.now]
+
 
 def _locked_read(*_args: object, **_kwargs: object) -> object:
     raise sqlite3.OperationalError("database is locked")

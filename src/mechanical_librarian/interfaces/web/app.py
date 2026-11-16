@@ -5436,7 +5436,8 @@ def _register_browse_and_preparation_routes(
         "/api/v1/library/visit",
         status_code=204,
         responses={
-            status: {"model": _ErrorResponse} for status in (401, 403, 413, 422, 503)
+            status: {"model": _ErrorResponse}
+            for status in (401, 403, 409, 413, 422, 503)
         },
     )
     def library_visit(
@@ -5453,7 +5454,7 @@ def _register_browse_and_preparation_routes(
                 if listing is None
                 else ListingPositions(listing.packages, listing.works, listing.reports)
             )
-        except Exception:
+        except ReviewApplicationError:
             raise HTTPException(503, detail={"code": "persistence"}) from None
         return Response(status_code=204)
 

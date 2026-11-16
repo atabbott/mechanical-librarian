@@ -228,6 +228,9 @@ class FakeReviewRepository:
         # Each recorded use of Library, and what the next one answers (#1351).
         self.library_visits: list[tuple[ListingPositions | None, int]] = []
         self.library_visit_moves: bool | Exception = False
+        # The clock each Library and progress read was given (#1351).
+        self.library_read_clocks: list[int] = []
+        self.progress_read_clocks: list[int] = []
         # The durable safety posture a fresh store starts with (#780). The
         # double previously had none, so every safety read through it was
         # "automatic safety is unavailable" whether or not a test meant it.
@@ -905,6 +908,7 @@ class FakeReviewRepository:
         validated: ValidatedDocumentCache | None = None,
         now: int = 0,
     ) -> ReviewLibrarySnapshot:
+        self.library_read_clocks.append(now)
         rows = self.list_current_review_case_documents(
             search, limit, offset, lens, library_labels
         )
@@ -1038,6 +1042,7 @@ class FakeReviewRepository:
     def read_review_library_progress(
         self, library_labels: LibraryLabels = (), now: int = 0
     ) -> ReviewLibraryProgress:
+        self.progress_read_clocks.append(now)
         # The Library and Attention answers above, grouped as the adapter
         # groups them; the double holds no terminal row of its own.
         works: dict[tuple[str, str], list[int]] = {}
