@@ -2684,7 +2684,7 @@ it('shows file-managed current cover settings read-only (#1363)', async () => {
   renderRoute('/policy?section=curation', http)
   const region = await screen.findByRole('region', { name: 'Current covers' })
   expect(
-    within(region).getByText('These settings are managed by deployment configuration.'),
+    await within(region).findByText('These settings are managed by deployment configuration.'),
   ).toBeVisible()
   for (const button of within(region).getAllByRole('button', { pressed: false }))
     expect(button).toBeDisabled()
