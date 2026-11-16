@@ -119,7 +119,8 @@ about the work, and it should steer what preparation reads.
    own values, or it represents the work only against the anchor. The audio
    editions the linked Hardcover book lists are leads like a search's: they
    feed the per-ASIN sources, and what those return is kept through the
-   link.
+   link. A lead with no main-phase input to stand on, as for a title-less
+   item with no identifier lane, is not asked.
 8. **Preparation and recovery.** The report binds the link digest, so a link
    change gives a new report and case on the next preparation. A failed link
    lane enrolls in provider recovery like any lane. The successor rebuilds it

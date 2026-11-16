@@ -70,6 +70,8 @@ from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ProviderQueryKind,
     TargetDestination,
+    TargetField,
+    TargetFieldState,
 )
 from mechanical_librarian.domain.owner_link import (
     OwnerLink,
@@ -96,6 +98,28 @@ AUDIO_TITLE = "Ember Tide Protocol"
 AUDIO_AUTHOR = "Corin Halloway"
 AUDIO_LINK = OwnerLinkTarget(OwnerLinkScope.WORK, "hardcover", "4321", AUDIO_TITLE)
 LEAD_ASIN = "B0SYNL0NG3"
+
+
+_LEAD_EDITION = {
+    "id": 77,
+    "book_id": 4321,
+    "asin": LEAD_ASIN,
+    "audio_seconds": 58_200,
+    "image": None,
+    "language": None,
+    "contributions": [
+        {
+            "id": 7,
+            "contribution": "Author",
+            "author": {"id": 9, "name": AUDIO_AUTHOR},
+        },
+        {
+            "id": 8,
+            "contribution": "Narrator",
+            "author": {"id": 10, "name": "Ilsa Brandt"},
+        },
+    ],
+}
 
 
 def _ungated() -> ExitStack:
@@ -342,12 +366,24 @@ def _audio_report(
     editions: tuple[dict[str, object], ...] = (),
     link: OwnerLinkTarget = AUDIO_LINK,
     cover_observer: Any = None,
+    titled: bool = True,
 ) -> MetadataReport:
     path = prep._store(tmp_path)
     prep._link(path, "audio", "audiobook", link)
     selected = TargetFile("a" * 64, "book.m4b", "m4b")
+    fields = prep._fields()
+    if not titled:
+        fields = tuple(
+            TargetField(TargetDestination.TITLE, TargetFieldState.EMPTY, None)
+            if field.destination is TargetDestination.TITLE
+            else field
+            for field in fields
+        )
     snapshot = TargetSnapshot(
-        "audiobook", prep.LOCAL_TITLE, (selected,), fields=prep._fields()
+        "audiobook",
+        prep.LOCAL_TITLE if titled else None,
+        (selected,),
+        fields=fields,
     )
     bindings = (
         ProviderBinding(
@@ -434,29 +470,9 @@ def test_hardcover_link_audio_editions_feed_the_asin_sources_as_link_reached(
 ) -> None:
     # S18: the linked book's audio editions are leads like a search's. With
     # no Audible match, the lead reaches Audnexus on the anchor's inputs.
-    edition = {
-        "id": 77,
-        "book_id": 4321,
-        "asin": LEAD_ASIN,
-        "audio_seconds": 58_200,
-        "image": None,
-        "language": None,
-        "contributions": [
-            {
-                "id": 7,
-                "contribution": "Author",
-                "author": {"id": 9, "name": AUDIO_AUTHOR},
-            },
-            {
-                "id": 8,
-                "contribution": "Narrator",
-                "author": {"id": 10, "name": "Ilsa Brandt"},
-            },
-        ],
-    }
     (tmp_path / "lead").mkdir(mode=0o700)
     (tmp_path / "bare").mkdir(mode=0o700)
-    report = _audio_report(tmp_path / "lead", search=False, editions=(edition,))
+    report = _audio_report(tmp_path / "lead", search=False, editions=(_LEAD_EDITION,))
     audnexus = prep._provider(report, "audnexus")
     assert [value.identity for value in audnexus.candidates] == [
         f"audnexus-book-{LEAD_ASIN}"
@@ -590,3 +606,26 @@ def test_a_successor_whose_retry_reads_the_first_anchor_asks_for_preparation(
     source = replace(facts, anchor=None)
     assert resettled_owner_link(source, report.providers, None).anchor is None
     assert owner_link_anchor_moved(source, report.providers, None)
+
+
+def test_a_title_less_item_s_link_leads_without_inputs_ask_nothing(
+    tmp_path: Path,
+) -> None:
+    # Codex R1-2 on #1938: a title-less audiobook with no ASIN of its own has
+    # no main lane for a linked Hardcover book's audio-edition leads to stand
+    # on. A lead with no input provenance is not asked, and the report
+    # publishes the link's own evidence.
+    report = _audio_report(
+        tmp_path,
+        search=False,
+        editions=(_LEAD_EDITION,),
+        titled=False,
+    )
+    assert report.owner_link is not None
+    assert report.owner_link.outcome == "admitted"
+    hardcover = prep._provider(report, "hardcover")
+    assert [lane.kind for lane in hardcover.lanes] == [ProviderQueryKind.LINK]
+    assert [value.identity for value in hardcover.candidates] == [
+        "hardcover-work-0000004321"
+    ]
+    assert not prep._provider(report, "audnexus").candidates

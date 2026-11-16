@@ -1695,9 +1695,14 @@ def audiobook_asin_feed_plan(
     room = MAX_ASIN_DISCOVERY_LANES - sum(
         lane.kind is ProviderQueryKind.ASIN for lane in plan.lanes
     )
+    # A lead with no input provenance is not asked: a linked Hardcover book's
+    # audio editions of a title-less item with no other lane have no input
+    # to stand on, and a work link carries no claim of its own (#1477).
     lanes = tuple(
         _asin_discovery_lane(asin, references)
-        for asin, references in tuple(ordered.items())[:room]
+        for asin, references in tuple(
+            (asin, references) for asin, references in ordered.items() if references
+        )[:room]
     )
     if not lanes:
         return None
