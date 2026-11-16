@@ -13,6 +13,7 @@ import type {
   TargetDestination,
 } from '../api/http'
 import { BuildMismatchError, displayValue } from '../api/http'
+import { humanReasons } from '../fieldReasons'
 import { StaleBuildRead } from '../components/StaleBuildRead'
 import { railOffers } from '../reviewChoiceCounts'
 import { RecordedTime } from '../components/RecordedTime'
@@ -109,7 +110,10 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
   if (item.category === 'owner' || item.category === 'automatic') {
     // A withdrawal selects nothing, so it has no value to change to; its
     // sentence says what happened.
-    const withdrawn = item.category === 'owner' && item.outcome === 'withdraw'
+    // A pin or an unpin carries no value either (ADR-0085, Amendment 2).
+    const valueless =
+      item.category === 'owner' &&
+      (item.outcome === 'withdraw' || item.outcome === 'pin' || item.outcome === 'unpin')
     const action =
       item.category === 'owner'
         ? item.outcome === 'accept'
@@ -120,7 +124,9 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
               ? 'You entered a value.'
               : item.outcome === 'withdraw'
                 ? 'You withdrew your choice.'
-                : 'You declined the proposed change.'
+                : item.outcome === 'pin' || item.outcome === 'unpin'
+                  ? humanReasons[item.outcome]
+                  : 'You declined the proposed change.'
         : item.outcome === 'candidate'
           ? 'Automatic chose a proposed value.'
           : item.outcome === 'keep_current'
@@ -137,7 +143,7 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
           <p className="diagnostic-value">
             <span>Kept</span> {displayRetainedHistoryValue(item)}
           </p>
-        ) : withdrawn ? null : (
+        ) : valueless ? null : (
           <>
             <p className="diagnostic-value">
               <span>From</span> {historyValue(item.destination, item.previousValue)}

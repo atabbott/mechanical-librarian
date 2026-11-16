@@ -482,14 +482,18 @@ panel is one Strong Catalogue Line frame with 12px corners and the two headings
 sit above it, one over each side; at 1024px and below the sides stack as two
 boxes, each under its heading. The current value starts level with the first
 proposed value, values are serif and left-aligned, and a choice is as tall as
-its words. Evidence is a small underlined link with a 44px target. A field's
+its words. Each choice's foot holds Evidence on the left, a small underlined
+link with a 44px target, and the value's pin on the right: an icon button with
+a 44px target, an outline when off and filled when pinned, with the word
+"Pinned" on the choice. A row of the closed `No change:` panel carries the
+same pin beside the field's name, and says "Pinned" when it is on. A field's
 choices are one radio group: each states its state with a 20px ring in the
 field-line colour, set in a gutter and centred on the value's first line, which hover previews with a dot. The recorded choice fills
 the ring, takes the Archive Teal Wash with a 2px inner accent edge, and says
 "Your choice" in words; a recommendation is stated in its label, not by a wash.
 Keyboard focus is a 3px focus-colour outline drawn inside the choice. Automatic,
 resolved, or stale fields must not present a false choice. Field tabs name their status in words (Needs you,
-Decided, Automatic, Optional, No change), never by a glyph.
+Decided, Pinned, Automatic, Optional, No change), never by a glyph.
 
 ### Cover Choice
 

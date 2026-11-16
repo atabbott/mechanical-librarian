@@ -13,6 +13,8 @@ import {
 } from '../fieldReasons'
 import { destinationLabel } from '../labels'
 import { ChoiceEvidencePanel, DescriptionText } from './FieldDecisionChoices'
+import type { PinControl } from '../fieldPin'
+import { PinButton } from './FieldDecisionPin'
 
 // The Library field panel for a field with nothing new to choose: why it is
 // shown and its current value. Moved out of the Library route under the
@@ -23,16 +25,22 @@ export function SettledFieldContext({
   ownerEntry,
   expanded,
   toggle,
+  pin,
 }: {
   field: ReviewField
   actionable: boolean
   ownerEntry: boolean
   expanded: boolean
   toggle: () => void
+  pin?: PinControl | undefined
 }) {
+  // A pinned field says why it reads as it does at its foot, once.
+  const reasonShown = field.pin
+    ? Boolean(field.earlierAutomaticValue)
+    : actionable || !ownerEntry || Boolean(field.earlierAutomaticValue)
   return (
     <>
-      {actionable || !ownerEntry || field.earlierAutomaticValue ? (
+      {reasonShown ? (
         <p className={actionable ? 'decision-recorded' : 'decision-context'}>
           {actionable
             ? `${fieldReason(field)}${field.humanDecision || field.automaticDecision ? ` The recorded value remains ${decisionValue(field)}.` : ''}`
@@ -41,7 +49,9 @@ export function SettledFieldContext({
               : 'No source offered a different value.'}
         </p>
       ) : null}
-      {!actionable ? <ContextValue field={field} expanded={expanded} toggle={toggle} /> : null}
+      {!actionable || field.pin ? (
+        <ContextValue field={field} expanded={expanded} toggle={toggle} pin={pin} />
+      ) : null}
     </>
   )
 }
@@ -50,22 +60,26 @@ export function ContextValue({
   field,
   expanded,
   toggle,
+  pin,
 }: {
   field: ReviewField
   expanded: boolean
   toggle: () => void
+  // The pin beside the current value of a field with nothing to choose.
+  pin?: PinControl | undefined
 }) {
   const context = choiceContext(field, null)
   const evidenceId = `context-evidence-${field.destination}`
+  const valueId = `context-value-${field.destination}`
   return (
     <section
-      className="context-value"
+      className={`context-value${pin ? ' has-pin' : ''}`}
       aria-label={`${destinationLabel(field.destination)} current value`}
     >
       <dl>
         <div>
-          <dt>Current value</dt>
-          <dd>
+          <dt>{field.pin?.state === 'in_force' ? 'Current value · Pinned' : 'Current value'}</dt>
+          <dd id={valueId}>
             {field.destination === 'description' ? (
               <DescriptionText key={field.currentValue} value={field.currentValue} />
             ) : (
@@ -89,6 +103,7 @@ export function ContextValue({
       >
         {expanded ? 'Hide evidence' : 'Evidence'}
       </button>
+      {pin ? <PinButton {...pin} describedBy={valueId} /> : null}
       {expanded ? (
         <ChoiceEvidencePanel
           context={context}
@@ -219,11 +234,14 @@ export function RecordedOutcome({
   mediaKind,
   expanded,
   toggle,
+  pin,
 }: {
   field: ReviewField
   mediaKind: string
   expanded: boolean
   toggle: () => void
+  // The pin beside a recorded value the library already shows (#1346).
+  pin?: PinControl | undefined
 }) {
   const decision = field.humanDecision ?? field.automaticDecision
   if (!decision) return null
@@ -243,7 +261,20 @@ export function RecordedOutcome({
       : choiceContext(field, null)
   const combinedTags = combinedAutomaticTags(field, mediaKind)
   const evidenceId = `recorded-evidence-${field.destination}`
+  const valueId = `recorded-value-${field.destination}`
+  const pinned = pin && field.pin?.state === 'in_force' ? ' · Pinned' : ''
   const accepted = decision.outcome === 'accept' || decision.outcome === 'candidate'
+  const evidenceToggle = (
+    <button
+      type="button"
+      className="context-evidence-toggle"
+      aria-controls={evidenceId}
+      aria-expanded={expanded}
+      onClick={toggle}
+    >
+      {expanded ? 'Hide evidence' : 'Evidence'}
+    </button>
+  )
   return (
     <section
       className="recorded-outcome"
@@ -259,8 +290,8 @@ export function RecordedOutcome({
       <dl>
         {accepted ? (
           <div>
-            <dt>Chosen value</dt>
-            <dd>
+            <dt>Chosen value{pinned}</dt>
+            <dd id={valueId}>
               {field.destination === 'description' ? (
                 <DescriptionText key={decisionValue(field)} value={decisionValue(field)} />
               ) : (
@@ -272,12 +303,14 @@ export function RecordedOutcome({
           <div>
             <dt>
               {decision.outcome === 'keep_current'
-                ? 'Kept value'
+                ? `Kept value${pinned}`
                 : decision.outcome === 'owner_entered'
-                  ? 'Your value'
-                  : 'Current value'}
+                  ? field.pin && field.pin.state !== 'changed'
+                    ? 'Your value · Pinned'
+                    : 'Your value'
+                  : `Current value${pinned}`}
             </dt>
-            <dd>
+            <dd id={valueId}>
               {field.destination === 'description' ? (
                 <DescriptionText key={decisionValue(field)} value={decisionValue(field)} />
               ) : (
@@ -299,15 +332,14 @@ export function RecordedOutcome({
       <NarratorsAutomaticStatement field={field} />
       <AsinAutomaticStatement field={field} />
       <VerifiedManifestationIsbnAutomaticStatement field={field} />
-      <button
-        type="button"
-        className="context-evidence-toggle"
-        aria-controls={evidenceId}
-        aria-expanded={expanded}
-        onClick={toggle}
-      >
-        {expanded ? 'Hide evidence' : 'Evidence'}
-      </button>
+      {pin ? (
+        <div className="recorded-outcome-actions">
+          {evidenceToggle}
+          <PinButton {...pin} describedBy={valueId} />
+        </div>
+      ) : (
+        evidenceToggle
+      )}
       {expanded ? (
         combinedTags ? (
           <div id={evidenceId}>

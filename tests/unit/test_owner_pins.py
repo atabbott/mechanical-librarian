@@ -755,9 +755,8 @@ def test_a_changed_pin_joins_attention_without_alternatives(tmp_path: Path) -> N
     store.publish(report)
     publisher = _field(store, "publisher")
     assert publisher["classification"] == "unsupported"
-    assert publisher["pin_control"] is None
+    assert publisher["inventory_role"] == "contextual"
     assert _asked(store, "publisher") is False
-    # The API accepts a pin on a contextual row (R8).
     store.decide("pin", destination="publisher")
     store.publish(rewritten(report, publisher="Changed Elsewhere"))
     assert _asked(store, "publisher") is True
@@ -766,6 +765,118 @@ def test_a_changed_pin_joins_attention_without_alternatives(tmp_path: Path) -> N
         "needs_attention",
         "pin_changed",
     )
+    # Its value changed and it needs the owner, so it leaves the panel.
+    assert field["inventory_role"] == "primary"
+    assert field["pin_control"] == {"pin": "available", "unpin": True}
+    store.close()
+
+
+# L.17: a field with nothing to decide is pinned where it sits.
+def test_a_field_with_nothing_to_decide_offers_a_pin(tmp_path: Path) -> None:
+    store, report, _ = _store(tmp_path, title="ask")
+    store.publish(report)
+    publisher = _field(store, "publisher")
+    assert (publisher["inventory_role"], publisher["classification_cause"]) == (
+        "contextual",
+        "nothing_to_decide",
+    )
+    assert publisher["pin_control"] == {"pin": "available", "unpin": False}
+    cover = _field(store, "cover")
+    assert cover["inventory_role"] == "contextual"
+    assert cover["pin_control"] is None
+    # Nothing readable, nothing to pin.
+    store.publish(_with_state(report, "publisher", TargetFieldState.UNLOADED))
+    unreadable = _field(store, "publisher")
+    assert unreadable["inventory_role"] == "contextual"
+    assert unreadable["pin_control"] is None
+    store.close()
+
+
+def test_a_pinned_field_with_nothing_to_decide_stays_where_it_was(
+    tmp_path: Path,
+) -> None:
+    store, report, _ = _store(tmp_path, title="ask")
+    store.publish(report)
+    assert _library_pinned_count(store) == 0
+    store.decide("pin", destination="publisher")
+
+    def pinned() -> None:
+        field = _field(store, "publisher")
+        assert field["inventory_role"] == "contextual"
+        assert (field["classification"], field["classification_cause"]) == (
+            "human_recorded",
+            "pinned",
+        )
+        assert field["classification_reason"] == (
+            "You pinned this field empty. Mechanical Librarian will not ask about "
+            "it or fill it unless it changes in Audiobookshelf."
+        )
+        assert field["pin"]["state"] == "in_force"
+        assert field["pin_control"] == {"pin": "available", "unpin": True}
+        assert field["owner_control"] is None
+        assert _asked(store, "publisher") is False
+        assert _library_pinned_count(store) == 1
+
+    pinned()
+    # A later case of the work keeps it there.
+    store.publish(rewritten(report, title=ANOTHER))
+    pinned()
+    # A pinned field that had a question keeps its own tab.
+    store.decide("pin")
+    assert _field(store, "title")["inventory_role"] == "primary"
+    assert _library_pinned_count(store) == 2
+    store.close()
+
+
+def test_unpin_returns_a_field_with_nothing_to_decide_to_its_pin(
+    tmp_path: Path,
+) -> None:
+    store, report, _ = _store(tmp_path, title="ask")
+    store.publish(report)
+    store.decide("pin", destination="publisher")
+    store.decide("unpin", destination="publisher")
+    field = _field(store, "publisher")
+    assert (field["inventory_role"], field["classification_cause"]) == (
+        "contextual",
+        "nothing_to_decide",
+    )
+    assert field["pin"] is None
+    assert field["pin_control"] == {"pin": "available", "unpin": False}
+    assert _library_pinned_count(store) == 0
+    store.close()
+
+
+# R-f: a suspended field keeps its row whether its pin stands or has changed.
+def test_a_suspended_field_with_nothing_to_decide_keeps_its_row_pinned(
+    tmp_path: Path,
+) -> None:
+    store, report, _ = _store(tmp_path, title="ask")
+    store.publish(report)
+    store.repository.suspend_field_effect_capability(
+        scope="destination",
+        connection=report.target.connection,
+        destination="publisher",
+        reason="field_unavailable",
+        changed_at=store.clock(),
+    )
+    suspended = _field(store, "publisher")
+    assert suspended["inventory_role"] == "contextual"
+    assert suspended["classification_cause"] == "external_field_failure"
+    assert suspended["pin_control"] == {"pin": "available", "unpin": False}
+    store.decide("pin", destination="publisher")
+    pinned = _field(store, "publisher")
+    assert (pinned["inventory_role"], pinned["classification_cause"]) == (
+        "contextual",
+        "pinned",
+    )
+    assert pinned["pin_control"] == {"pin": "available", "unpin": True}
+    store.publish(rewritten(report, publisher="Changed Elsewhere"))
+    changed = _field(store, "publisher")
+    assert changed["pin"]["state"] == "changed"
+    assert changed["inventory_role"] == "contextual"
+    assert changed["classification_cause"] == "external_field_failure"
+    assert changed["pin_control"] == {"pin": "available", "unpin": True}
+    assert _asked(store, "publisher") is False
     store.close()
 
 

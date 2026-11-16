@@ -590,7 +590,10 @@
       "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
       "uncertainty": [],
       "pin": null,
-      "pin_control": null
+      "pin_control": {
+        "pin": "available",
+        "unpin": false
+      }
     },
     {
       "automatic_decision": null,
@@ -646,7 +649,10 @@
       "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
       "uncertainty": [],
       "pin": null,
-      "pin_control": null
+      "pin_control": {
+        "pin": "available",
+        "unpin": false
+      }
     },
     {
       "automatic_decision": null,
@@ -862,7 +868,10 @@
       "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
       "uncertainty": [],
       "pin": null,
-      "pin_control": null
+      "pin_control": {
+        "pin": "available",
+        "unpin": false
+      }
     },
     {
       "automatic_decision": null,
@@ -918,7 +927,10 @@
       "target_fingerprint": "41bf67c497edc1bcee794ca22daef350537ac4ad8947d7598365447bb0e4446e",
       "uncertainty": [],
       "pin": null,
-      "pin_control": null
+      "pin_control": {
+        "pin": "available",
+        "unpin": false
+      }
     },
     {
       "automatic_decision": null,

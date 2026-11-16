@@ -2,7 +2,7 @@ import { queryWorkClass } from '../queryWork'
 import { KeyBadge } from './ReviewKeys'
 import { descriptionAdviceStatus } from '../descriptionAdviceStatus'
 import { useInfiniteQuery } from '@tanstack/react-query'
-import { useRef, useState } from 'react'
+import { useId, useRef, useState } from 'react'
 
 import { BuildMismatchError } from '../api/http'
 import type { ChoiceContextView, EvidenceView } from '../api/http'
@@ -18,6 +18,8 @@ import {
 import { useReviewContext } from '../router'
 
 import type { ReviewField } from '../fieldDecision'
+import type { PinControl } from '../fieldPin'
+import { PinButton } from './FieldDecisionPin'
 // A limitation is a comparison condition, which reads as a sentence, or the
 // server's own sentence; an unnamed condition code is never shown.
 const limitationText = (limitation: string) => {
@@ -243,6 +245,8 @@ export function MetadataChoice({
   label,
   longDescription,
   onChoose,
+  pin,
+  pinned = false,
   radio,
   recording,
   selected,
@@ -262,6 +266,10 @@ export function MetadataChoice({
   label: string
   longDescription: boolean
   onChoose: () => void
+  // The pin at the card's foot, where the field offers one (#1346).
+  pin?: PinControl | undefined
+  // The card carries the field's pin: it reads as chosen and says Pinned.
+  pinned?: boolean
   radio: ReturnType<typeof choiceRadios>[number]['radio']
   recording: boolean
   selected: boolean
@@ -288,9 +296,16 @@ export function MetadataChoice({
         ? context.recommendationReason
         : ''
   const hasEvidence = Boolean(context && (context.evidence.length || context.limitations.length))
+  const valueId = useId()
+  // A pin carried from an earlier case marks a card no decision of this case chose.
+  const badge = selected
+    ? `${automatic ? 'Automatic’s choice' : 'Your choice'}${pinned ? ' · Pinned' : ''}`
+    : pinned
+      ? 'Pinned'
+      : null
   return (
     <article
-      className={`metadata-choice${current ? ' is-current' : ''}${context?.recommendation === 'recommended' ? ' is-recommended' : ''}${selected ? ' is-selected' : ''}${expanded ? ' is-evidence-open' : ''}`}
+      className={`metadata-choice${current ? ' is-current' : ''}${context?.recommendation === 'recommended' ? ' is-recommended' : ''}${selected || pinned ? ' is-selected' : ''}${expanded ? ' is-evidence-open' : ''}`}
     >
       {longDescription ? (
         <div className="description-choice-content">
@@ -304,17 +319,16 @@ export function MetadataChoice({
         aria-label={`Choose ${advice ? 'advised' : current ? 'current' : 'proposed'} ${longDescription ? 'description' : `value: ${value}`}`}
         {...radio}
         disabled={disabled}
-        onClick={onChoose}
+        // Choosing the pinned value again would record a new decision and end the pin.
+        onClick={pinned ? undefined : onChoose}
       >
         <KeyBadge position={radio['aria-posinset']} />
         <small>
           {label}
           {context?.recommendation === 'recommended' ? `${label ? ' · ' : ''}Recommended` : ''}
-          {selected ? (
-            <b className="choice-chosen">{automatic ? 'Automatic’s choice' : 'Your choice'}</b>
-          ) : null}
+          {badge ? <b className="choice-chosen">{badge}</b> : null}
         </small>
-        <strong>
+        <strong id={valueId}>
           {/* Keeps the first line clear of the key badge (styles.css). */}
           <i className="review-key-space" />
           <wbr className="review-key-break" />
@@ -325,17 +339,22 @@ export function MetadataChoice({
         {rationale ? <span>{rationale}</span> : null}
         {recommendation ? <span className="choice-recommendation">{recommendation}</span> : null}
       </button>
-      {hasEvidence ? (
-        <button
-          type="button"
-          className="choice-evidence-toggle"
-          aria-controls={evidenceId}
-          aria-expanded={expanded}
-          aria-label={evidenceLabel}
-          onClick={toggle}
-        >
-          {expanded ? 'Hide evidence' : 'Evidence'}
-        </button>
+      {hasEvidence || pin ? (
+        <div className="choice-foot">
+          {hasEvidence ? (
+            <button
+              type="button"
+              className="choice-evidence-toggle"
+              aria-controls={evidenceId}
+              aria-expanded={expanded}
+              aria-label={evidenceLabel}
+              onClick={toggle}
+            >
+              {expanded ? 'Hide evidence' : 'Evidence'}
+            </button>
+          ) : null}
+          {pin ? <PinButton {...pin} describedBy={valueId} /> : null}
+        </div>
       ) : null}
       {expanded ? (
         <ChoiceEvidencePanel

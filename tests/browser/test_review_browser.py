@@ -511,7 +511,7 @@ def _server(
     owner_write: bool = False,
     owner_recur: bool = False,
     owner_library_change: bool = False,
-    owner_readback: list[Callable[[str, bool], str]] | None = None,
+    owner_readback: list[Callable[..., str]] | None = None,
     language_fixture: tuple[str, ...] | None = None,
     language_current: str | None = None,
     language_audio: bool = False,
@@ -1920,12 +1920,12 @@ def _server(
         # The library edits the title while the page is open: read the work
         # back as its successor and announce Library, as a scan does, naming
         # the successor case or not.
-        def read_back(title: str, named: bool) -> str:
+        def read_back(title: str, named: bool, **others: str) -> str:
             current = ReviewCase.create_from_data(
                 json.loads(repository.get_review_case(case_id))["case"]
             )
             successor_id, _ = _read_back_title(
-                repository, report, current, genre_destination, title, 910
+                repository, report, current, genre_destination, title, 910, **others
             )
             app.state.review_application.updates.publish(
                 "library", successor_id if named else None
@@ -2204,10 +2204,17 @@ def _seed_owner_write(
 
 
 def _read_back_title(
-    repository, report, case: ReviewCase, destination: str, title: str, at: int
+    repository,
+    report,
+    case: ReviewCase,
+    destination: str,
+    title: str,
+    at: int,
+    **others: str,
 ):
-    """Publish the work as the library now reads it, with this title, under
-    the policy `publish_genre_case` activated, and admit its successor case."""
+    """Publish the work as the library now reads it, with this title and any
+    other field values named, under the policy `publish_genre_case` activated,
+    and admit its successor case."""
     from mechanical_librarian.domain.metadata_policy import (
         DEFAULT_OPTIONS,
         OPTION_CATALOGUE,
@@ -2217,7 +2224,7 @@ def _read_back_title(
     )
     from tests.support.owner_values import rewritten
 
-    successor = rewritten(report, title=title)
+    successor = rewritten(report, title=title, **others)
     repository.publish(successor, lambda: True, report.report_id)
     destinations = {
         name: "unsupported" if name == "explicit" else "ask"
@@ -7923,15 +7930,15 @@ def test_first_review_guide_follows_setup_once_and_opens_the_first_field() -> No
                             channels[0].publish("library", None)
                             expect(dialog).to_be_visible()
                             words = dialog.locator("[aria-live='polite']")
-                            for step in (1, 2, 3):
-                                expect(words).to_contain_text(f"Step {step} of 3")
+                            for step in (1, 2, 3, 4):
+                                expect(words).to_contain_text(f"Step {step} of 4")
                                 # The step's name and sentence need no scrolling.
                                 assert dialog.evaluate(_GUIDE_WORDS_SEEN), (
                                     width,
                                     height,
                                     step,
                                 )
-                                if step < 3:
+                                if step < 4:
                                     # Wherever he scrolled the example to.
                                     dialog.locator(".first-review-body").evaluate(
                                         "body => body.scrollTo(0, body.scrollHeight)"
@@ -7996,15 +8003,15 @@ def test_first_review_guide_follows_setup_once_and_opens_the_first_field() -> No
                             == "first-review-heading"
                         )
                         live = dialog.locator("[aria-live='polite']")
-                        expect(live).to_contain_text("Step 1 of 3")
+                        expect(live).to_contain_text("Step 1 of 4")
                         assert len(owed_now(context)) == 1
 
                         # A reload before closing starts it again at step 1.
                         dialog.get_by_role("button", name="Next").click()
-                        expect(live).to_contain_text("Step 2 of 3")
+                        expect(live).to_contain_text("Step 2 of 4")
                         page.reload()
                         expect(dialog).to_be_visible()
-                        expect(live).to_contain_text("Step 1 of 3")
+                        expect(live).to_contain_text("Step 1 of 4")
                         expect(heading).to_be_focused()
 
                         if width == 390:
@@ -8043,7 +8050,19 @@ def test_first_review_guide_follows_setup_once_and_opens_the_first_field() -> No
                         )
                         boxes.append(dialog.evaluate(_GUIDE_BOX))
                         dialog.get_by_role("button", name="Next").click()
-                        expect(live).to_contain_text("Step 3 of 3")
+                        expect(live).to_contain_text("Step 3 of 4")
+                        boxes.append(dialog.evaluate(_GUIDE_BOX))
+                        # A press on the example's pin chooses it and pins it.
+                        dialog.get_by_role("button", name="Pin this value").last.click()
+                        expect(dialog.get_by_role("status")).to_have_text(
+                            "This is an example, so nothing was pinned."
+                        )
+                        expect(
+                            dialog.get_by_role("button", name="Unpin")
+                        ).to_have_count(1)
+                        boxes.append(dialog.evaluate(_GUIDE_BOX))
+                        dialog.get_by_role("button", name="Next").click()
+                        expect(live).to_contain_text("Step 4 of 4")
                         boxes.append(dialog.evaluate(_GUIDE_BOX))
                         # Hiding the example's evidence does not move them either.
                         dialog.get_by_role("button", name="Back").click()
@@ -8055,7 +8074,7 @@ def test_first_review_guide_follows_setup_once_and_opens_the_first_field() -> No
                         ).to_have_count(0)
                         boxes.append(dialog.evaluate(_GUIDE_BOX))
                         dialog.get_by_role("button", name="Next").click()
-                        expect(live).to_contain_text("Step 3 of 3")
+                        expect(live).to_contain_text("Step 4 of 4")
                         assert all(box == boxes[0] for box in boxes), boxes
                         opener = dialog.get_by_role(
                             "button", name="Open your first field"
@@ -13201,6 +13220,173 @@ def test_an_open_entry_moves_to_the_case_that_superseded_it(library_last, named)
         ).to_be_visible()
         expect(page.locator(".decision-canvas > header h3")).to_be_focused()
         _said_nothing_false_while_moving(page)
+
+
+def _pin_foot(page: Page, field: str):
+    return page.get_by_role("region", name=f"Pin on {field}", exact=True)
+
+
+def _pins_hold_their_size(page: Page) -> None:
+    """Every pin on screen is a 44 px target and the page never scrolls sideways."""
+    for width, size in ((1440, ""), (390, ""), (390, "200%"), (320, "200%")):
+        page.set_viewport_size({"width": width, "height": 900})
+        set_root_text(page, size)
+        try:
+            pins = page.evaluate(
+                "() => [...document.querySelectorAll('.choice-pin')].map(node => {"
+                " const box = node.getBoundingClientRect();"
+                " return [box.width, box.height, box.left, box.right] })"
+            )
+            assert pins, (width, size)
+            assert all(
+                round(w) >= 44 and round(h) >= 44 and left >= 0 and right <= width
+                for w, h, left, right in pins
+            ), (width, size, pins)
+            assert page.evaluate("document.documentElement.scrollWidth") <= width, (
+                width,
+                size,
+            )
+        finally:
+            set_root_text(page, "")
+    page.set_viewport_size({"width": 1440, "height": 900})
+
+
+def test_owner_pins_values_and_sees_a_pin_the_library_changed():
+    """#1346: one press of a card's pin records the value and then the pin and
+    stays on the field; a pin on a current value is in force at once; the
+    Library row counts both and History names them; a field with nothing to
+    decide is pinned from its row of the No change panel and stays there; and
+    when the library then shows another value, the field says which value was
+    pinned and offers Unpin, and the panel's field has a tab of its own."""
+    readback: list[Callable[..., str]] = []
+    posts: list[str] = []
+    with _owner_page(
+        genre_fixture=("Fantasy",), genre_current=("Drama",), owner_readback=readback
+    ) as (page, origin, case_id):
+
+        def sent(request) -> None:
+            if request.method == "POST" and request.url.endswith("/decisions"):
+                posts.append(json.loads(request.post_data)["outcome"])
+
+        page.on("request", sent)
+        page.goto(f"{origin}/library?lens=all&preview={case_id}&field=genres")
+        card = page.get_by_role("radio", name="Choose proposed value: Fantasy").locator(
+            "xpath=ancestor::article[1]"
+        )
+        pin = card.get_by_role("button", name="Pin this value", exact=True)
+        expect(pin).not_to_have_attribute("aria-pressed", re.compile(""))
+        _pins_hold_their_size(page)
+        pin.click()
+        foot = _pin_foot(page, "Genres")
+        expect(
+            foot.get_by_role("status").get_by_text("Pinned.", exact=True)
+        ).to_be_visible()
+        assert posts == ["accept", "pin"]
+        assert "field=genres" in page.url
+        expect(card).to_contain_text("Your choice · Pinned")
+        expect(card.get_by_role("button", name="Unpin", exact=True)).to_be_focused()
+        expect(foot).to_contain_text(
+            "You pinned this value. The pin starts once the change is written."
+        )
+        expect(foot.get_by_role("button", name="Unpin", exact=True)).to_have_count(0)
+        _pins_hold_their_size(page)
+
+        # A field with nothing to choose: the pin beside its current value.
+        del posts[:]
+        page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
+        value = page.get_by_role("region", name="Title current value", exact=True)
+        value.get_by_role("button", name="Pin this value", exact=True).click()
+        expect(
+            _pin_foot(page, "Title")
+            .get_by_role("status")
+            .get_by_text("Pinned.", exact=True)
+        ).to_be_visible()
+        assert posts == ["pin"]
+        expect(value).to_contain_text("Current value · Pinned")
+        expect(value.get_by_role("button", name="Unpin", exact=True)).to_be_focused()
+        expect(
+            page.locator(".field-filmstrip button", has_text="Title")
+        ).to_contain_text("Pinned")
+        _pins_hold_their_size(page)
+
+        page.goto(f"{origin}/library?lens=all")
+        expect(
+            page.get_by_role(
+                "button", name=re.compile(r"^Real Tigers\..*2 fields pinned$")
+            )
+        ).to_be_visible()
+        page.goto(f"{origin}/review/{case_id}?field=title&subview=history")
+        expect(page.get_by_text("You pinned this field.", exact=True)).to_have_count(2)
+
+        # A field with nothing to decide: the pin in its row of the panel.
+        del posts[:]
+        page.goto(f"{origin}/library?lens=all&preview={case_id}&field=genres")
+        panel = page.locator(".automatic-resolution-details")
+        summary = panel.locator("summary")
+        assert not panel.evaluate("node => node.open")
+        expect(summary).not_to_contain_text("pinned")
+        summary.click()
+        expect(summary).to_contain_text("Hide")
+        row = panel.locator(".automatic-resolution-row", has_text="Publisher")
+        # On a phone at 200% text the word Pinned wraps under the name: the
+        # pin keeps the first line, and the row grows by no line of its own.
+        page.set_viewport_size({"width": 390, "height": 900})
+        set_root_text(page, "200%")
+
+        def pin_top() -> float:
+            return (
+                row.locator(".choice-pin").bounding_box()["y"] - row.bounding_box()["y"]
+            )
+
+        before = pin_top()
+        row.get_by_role("button", name="Pin this value", exact=True).click()
+        expect(row.get_by_role("status")).to_have_text("Pinned.")
+        expect(row.get_by_text("Pinned", exact=True)).to_be_visible()
+        assert abs(pin_top() - before) < 1, (before, pin_top())
+        status = row.get_by_role("status").bounding_box()
+        assert status["width"] <= 1 and status["height"] <= 1, status
+        set_root_text(page, "")
+        page.set_viewport_size({"width": 1440, "height": 900})
+        assert posts == ["pin"]
+        assert "field=genres" in page.url
+        assert panel.evaluate("node => node.open")
+        expect(row.get_by_role("button", name="Unpin", exact=True)).to_be_focused()
+        expect(row.get_by_text("Pinned", exact=True)).to_be_visible()
+        expect(row).to_contain_text("You pinned this field empty.")
+        expect(summary).to_contain_text("· 1 pinned")
+        expect(
+            page.locator(".field-filmstrip button", has_text="Publisher")
+        ).to_have_count(0)
+        _pins_hold_their_size(page)
+        expect(
+            page.get_by_role(
+                "button", name=re.compile(r"^Real Tigers\..*3 fields pinned$")
+            )
+        ).to_be_visible()
+
+        # The library shows another title and a publisher: neither pin held.
+        successor = readback[0](OWNER_EDIT, True, publisher="Changed Elsewhere")
+        assert successor != case_id
+        page.goto(f"{origin}/library?lens=all&preview={successor}&field=title")
+        expect(
+            page.locator(".field-filmstrip button", has_text="Publisher")
+        ).to_contain_text("Needs you")
+        expect(
+            page.locator(".automatic-resolution-row", has_text="Publisher")
+        ).to_have_count(0)
+        foot = _pin_foot(page, "Title")
+        expect(foot).to_contain_text("You pinned “Real Tigers”.")
+        expect(
+            page.locator(".field-filmstrip button", has_text="Title")
+        ).to_contain_text("Needs you")
+        del posts[:]
+        foot.get_by_role("button", name="Unpin", exact=True).click()
+        expect(
+            foot.get_by_role("status").get_by_text("Unpinned.", exact=True)
+        ).to_be_visible()
+        assert posts == ["unpin"]
+        expect(foot).not_to_contain_text("You pinned")
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
 
 
 # Genres is the work's only attention field, so a decision moves it between

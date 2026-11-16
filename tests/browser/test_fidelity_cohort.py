@@ -76,6 +76,47 @@ def test_held_case_carries_a_manual_hold() -> None:
     assert not any(field["manual_return_failed"] for field in held["fields"])
 
 
+def test_pins_case_carries_every_pin_state_and_a_row_counts_pins() -> None:
+    pins = rich_payload("/api/v1/review-cases/case-pins")
+    assert isinstance(pins, dict)
+    fields = {field["destination"]: field for field in pins["fields"]}
+    assert {
+        name: field["pin"] and field["pin"]["state"] for name, field in fields.items()
+    } == {
+        "title": "in_force",
+        "authors": "waiting",
+        "genres": "changed",
+        "publisher": None,
+        "language": "in_force",
+    }
+    # The No change panel holds a field that can be pinned and one pinned there.
+    assert {
+        name: field["pin_control"]
+        for name, field in fields.items()
+        if field["inventory_role"] == "contextual"
+    } == {
+        "publisher": {"pin": "available", "unpin": False},
+        "language": {"pin": "available", "unpin": True},
+    }
+    # The pin in force sits beside a value with nothing to choose, the waiting
+    # pin on the value the owner chose, and only the changed pin asks.
+    assert fields["title"]["decision_actions"] == []
+    assert (
+        fields["authors"]["human_decision"]["selected_value"]["value"]
+        == (fields["authors"]["pin"]["value"]["value"])
+    )
+    assert [name for name, field in fields.items() if field["needs_attention"]] == [
+        "genres"
+    ]
+    assert all(
+        field["pin_control"] == {"pin": "available", "unpin": True}
+        for field in fields.values()
+        if field["pin"]
+    )
+    assert [work["pinned_count"] for work in LIBRARY_WORKS].count(3) == 1
+    assert sum(1 for work in LIBRARY_WORKS if work["pinned_count"]) == 1
+
+
 @pytest.mark.parametrize(
     "state", tuple(COHORT_WRITE_PLANS), ids=tuple(COHORT_WRITE_PLANS)
 )

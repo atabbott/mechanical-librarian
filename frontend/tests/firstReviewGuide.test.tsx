@@ -128,7 +128,7 @@ describe('first review guide', () => {
       'first-review-heading',
     )
     expect(focused).toContain('first-review-heading')
-    expect(within(dialog).getByText('Step 1 of 3', { ignore: '[aria-hidden] *' })).toBeVisible()
+    expect(within(dialog).getByText('Step 1 of 4', { ignore: '[aria-hidden] *' })).toBeVisible()
     // Opening does not use it up: a reload before closing shows it again.
     expect(owed()).toBe(true)
   })
@@ -175,21 +175,27 @@ describe('first review guide', () => {
     expect(live).toHaveAttribute('aria-atomic', 'true')
     expect(button(dialog, 'Next')).not.toHaveAttribute('aria-describedby')
     expect(step()).toBe(
-      'EvidenceStep 1 of 3Each field asks one question. Evidence under a value lists the sources that gave it.',
+      'EvidenceStep 1 of 4Each field asks one question. Evidence under a value lists the sources that gave it.',
     )
     expect(within(dialog).getByText('Example field')).toBeVisible()
     expect(within(dialog).queryByRole('button', { name: 'Back' })).toBeNull()
 
     await user.click(button(dialog, 'Next'))
     expect(step()).toBe(
-      'ChoicesStep 2 of 3Keep the current value or choose a new one. Try it on this example.',
+      'ChoicesStep 2 of 4Keep the current value or choose a new one. Try it on this example.',
     )
     // Next is still there, so focus stays on it.
     expect(button(dialog, 'Next')).toHaveFocus()
 
     await user.click(button(dialog, 'Next'))
     expect(step()).toBe(
-      'WritesStep 3 of 3A choice records your decision for this one field. Nothing is written to Audiobookshelf until you give write permission in Activity.',
+      'PinsStep 3 of 4Press a value’s pin to choose it and pin it. Mechanical Librarian will not ask about a pinned field or change it unless its value changes in Audiobookshelf.',
+    )
+    expect(button(dialog, 'Next')).toHaveFocus()
+
+    await user.click(button(dialog, 'Next'))
+    expect(step()).toBe(
+      'WritesStep 4 of 4A choice records your decision for this one field. Nothing is written to Audiobookshelf until you give write permission in Activity.',
     )
     expect(within(dialog).queryByRole('button', { name: 'Next' })).toBeNull()
     // Next is gone, so focus moves to the step's main button.
@@ -197,19 +203,21 @@ describe('first review guide', () => {
     expect(button(dialog, 'Open your first field')).toHaveClass('button-primary')
     // Focus gets there before the sentence is read, so the button carries it.
     expect(button(dialog, 'Open your first field')).toHaveAccessibleDescription(
-      /^Writes Step 3 of 3 A choice records your decision/u,
+      /^Writes Step 4 of 4 A choice records your decision/u,
     )
     // The example is not live on the last step.
     expect(dialog.querySelector('.first-review-example')).toHaveAttribute('inert')
 
     await user.click(button(dialog, 'Back'))
-    expect(step()).toMatch(/^ChoicesStep 2 of 3/u)
+    expect(step()).toMatch(/^PinsStep 3 of 4/u)
     expect(dialog.querySelector('.first-review-example')).not.toHaveAttribute('inert')
     await user.click(button(dialog, 'Back'))
-    expect(step()).toMatch(/^EvidenceStep 1 of 3/u)
+    expect(step()).toMatch(/^ChoicesStep 2 of 4/u)
+    await user.click(button(dialog, 'Back'))
+    expect(step()).toMatch(/^EvidenceStep 1 of 4/u)
     expect(button(dialog, 'Next')).toHaveFocus()
     // One copy of every step holds the dialog's height; none is read aloud.
-    expect(dialog.querySelectorAll('.first-review-step[aria-hidden="true"]')).toHaveLength(3)
+    expect(dialog.querySelectorAll('.first-review-step[aria-hidden="true"]')).toHaveLength(4)
     expect(new Set([...document.querySelectorAll('[id]')].map((each) => each.id)).size).toBe(
       document.querySelectorAll('[id]').length,
     )
@@ -245,22 +253,63 @@ describe('first review guide', () => {
     expect(owed()).toBe(true)
   })
 
-  it.each([0, 1, 2])('Close on step %i ends it for good and leaves the dialog', async (presses) => {
-    const { dialog, user } = await openGuide()
-    for (let press = 0; press < presses; press += 1) await user.click(button(dialog, 'Next'))
+  it('lets the example be pinned on its own step without sending anything', async () => {
+    const { dialog, http, user } = await openGuide()
+    const before = changes(http)
+    await user.click(button(dialog, 'Next'))
+    await user.click(button(dialog, 'Next'))
+    expect(stepHeading(dialog)[0]).toBe('Pins')
+    const status = within(dialog).getByRole('status')
+    expect(status).toBeEmptyDOMElement()
+    const proposed = within(dialog).getByRole('radio', {
+      name: 'Choose proposed value: Example Story',
+    })
+    const pins = within(dialog).getAllByRole('button', { name: 'Pin this value' })
+    // Each value carries its pin, as on a real field.
+    expect(pins.map((pin) => pin.getAttribute('aria-describedby') !== null)).toEqual([true, true])
+    const [, pin] = pins
+    if (!pin) throw new Error('the proposed value has no pin')
+    expect(pin).toHaveAccessibleDescription('Example Story')
 
-    await user.click(button(dialog, 'Close'))
+    // One press chooses the value and pins it.
+    await user.click(pin)
 
-    expect(document.querySelector('dialog.first-review-guide')).toBeNull()
-    expect(owed()).toBe(false)
-    expect(document.querySelector('#main-content')).toContainElement(
-      document.activeElement as HTMLElement,
-    )
-    cleanup()
-    renderRoute(queueOpen, withQueue())
-    await firstRow()
-    expect(document.querySelector('dialog.first-review-guide')).toBeNull()
+    expect(proposed).toBeChecked()
+    expect(within(proposed).getByText('Your choice · Pinned')).toBeVisible()
+    const unpin = within(dialog).getByRole('button', { name: 'Unpin' })
+    expect(unpin).toHaveClass('is-on')
+    expect(unpin).toHaveAccessibleDescription('Example Story')
+    expect(status).toHaveTextContent(/^This is an example, so nothing was pinned\.$/u)
+
+    // A pin that is on unpins, and the choice stands.
+    await user.click(unpin)
+    expect(within(dialog).getAllByRole('button', { name: 'Pin this value' })).toHaveLength(2)
+    expect(proposed).toBeChecked()
+    expect(within(proposed).getByText('Your choice')).toBeVisible()
+    expect(changes(http)).toEqual(before)
+    expect(before.length).toBeGreaterThan(10)
+    expect(owed()).toBe(true)
   })
+
+  it.each([0, 1, 2, 3])(
+    'Close on step %i ends it for good and leaves the dialog',
+    async (presses) => {
+      const { dialog, user } = await openGuide()
+      for (let press = 0; press < presses; press += 1) await user.click(button(dialog, 'Next'))
+
+      await user.click(button(dialog, 'Close'))
+
+      expect(document.querySelector('dialog.first-review-guide')).toBeNull()
+      expect(owed()).toBe(false)
+      expect(document.querySelector('#main-content')).toContainElement(
+        document.activeElement as HTMLElement,
+      )
+      cleanup()
+      renderRoute(queueOpen, withQueue())
+      await firstRow()
+      expect(document.querySelector('dialog.first-review-guide')).toBeNull()
+    },
+  )
 
   it('Escape ends it as Close does', async () => {
     const { dialog } = await openGuide()
@@ -310,6 +359,7 @@ describe('first review guide', () => {
     const { dialog, router, user } = await openGuide()
     await user.click(button(dialog, 'Next'))
     await user.click(button(dialog, 'Next'))
+    await user.click(button(dialog, 'Next'))
     await user.click(button(dialog, 'Open your first field'))
 
     await waitFor(() => expect(router.state.location.search).toEqual(fromQueue))
@@ -331,6 +381,7 @@ describe('first review guide', () => {
     act(() => updates.announce({ sequence: 1, subject: null, topic: 'library' }))
     await waitFor(() => expect(http.getAttention).toHaveBeenCalled())
     await user.click(button(dialog, 'Next'))
+    await user.click(button(dialog, 'Next'))
 
     // It stays open, and its last step no longer offers a field to open.
     await waitFor(() => expect(button(dialog, 'Close')).toHaveClass('button-primary'))
@@ -342,6 +393,7 @@ describe('first review guide', () => {
     owe()
     renderRoute('/library?lens=all', withQueue())
     const dialog = await screen.findByRole('dialog', { name: 'How a decision works' })
+    fireEvent.click(button(dialog, 'Next'))
     fireEvent.click(button(dialog, 'Next'))
     // A click that does not focus the button leaves focus on the example's card.
     const card = within(dialog).getAllByRole('radio')[1]
@@ -362,6 +414,7 @@ describe('first review guide', () => {
     const user = userEvent.setup()
     await user.click(button(dialog, 'Next'))
     await user.click(button(dialog, 'Next'))
+    await user.click(button(dialog, 'Next'))
     expect(button(dialog, 'Open your first field')).toHaveFocus()
 
     http.getAttention = vi.fn<ReviewHttp['getAttention']>(async () => ({ total: 0, items: [] }))
@@ -371,7 +424,7 @@ describe('first review guide', () => {
       expect(within(dialog).queryByRole('button', { name: 'Open your first field' })).toBeNull(),
     )
     expect(button(dialog, 'Close')).toHaveFocus()
-    expect(button(dialog, 'Close')).toHaveAccessibleDescription(/^Writes Step 3 of 3 /u)
+    expect(button(dialog, 'Close')).toHaveAccessibleDescription(/^Writes Step 4 of 4 /u)
   })
 
   it('leaves the control that had focus when it opens the first field', async () => {
@@ -387,6 +440,7 @@ describe('first review guide', () => {
     act(() => updates.announce({ sequence: 1, subject: null, topic: 'library' }))
     const dialog = await screen.findByRole('dialog', { name: 'How a decision works' })
     const user = userEvent.setup()
+    await user.click(button(dialog, 'Next'))
     await user.click(button(dialog, 'Next'))
     await user.click(button(dialog, 'Next'))
     // What Library focuses for the page, as it stands when the button is pressed.

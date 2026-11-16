@@ -102,9 +102,12 @@ brackets are GitHub issues.
 
 ## 0.36.0 — Standing owner instructions (in progress)
 
-- **Clean rebuild required.** Stored owner decisions and field holds changed
-  shape, ready for pinning a field of a work. Nothing looks different yet
-  (#1346).
+- **Clean rebuild required.** Each value in a field's choices has a pin. Pressing
+  it chooses that value and pins it: while Audiobookshelf shows the pinned value,
+  Mechanical Librarian does not ask about the field again and Automatic leaves it
+  alone. If the value changes there, the field asks again and shows what you
+  pinned. A field with nothing to decide is pinned in the `No change:` panel.
+  Covers have no pin. Library counts pinned fields; the guide shows a pin (#1346).
 
 ## 0.33.0 — First library (in progress)
 

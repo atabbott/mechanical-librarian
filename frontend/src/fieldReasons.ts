@@ -72,7 +72,7 @@ const contextKinds = {
   review_needed: 'unavailable',
   owner_choosable: 'unavailable',
   nothing_to_decide: 'unchanged',
-  pinned: 'unavailable',
+  pinned: 'unchanged',
   pin_changed: 'unavailable',
 } as const satisfies Record<FieldCause, 'unchanged' | 'waiting' | 'unavailable'>
 // A held field never reads unchanged.
@@ -137,6 +137,9 @@ export const questionNotice = (field: ReviewField) =>
     ? field.notices.find((notice) => materialReasonLabel(notice) !== undefined)
     : undefined
 export const questionReason = (field: ReviewField, mediaKind: string) => {
+  // A changed pin is the question: the server's sentence says what changed.
+  if (field.pin?.state === 'changed' && field.classificationReason)
+    return field.classificationReason
   const notice = questionNotice(field)
   const label = notice === undefined ? undefined : noticeText(field, notice, mediaKind)
   return (
