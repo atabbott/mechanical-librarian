@@ -33,6 +33,7 @@ How the pipeline prepares each work, stage by stage:
 - [Scope and non-goals](product/scope.md)
 - [Roadmap](product/roadmap.md)
 - [Review experience](product/review-experience.md), its
+  [first review](product/first-review.md) guide, its
   [taste profile](product/cover-taste-profile.md),
   [Library progress](product/library-progress.md),
   [Looks wrong](product/looks-wrong.md),

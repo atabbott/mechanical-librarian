@@ -1,15 +1,12 @@
 import {
   invalidateBackgroundQueries,
   prefetchBackgroundQuery,
-  runRequiredRead,
-  useRequiredRead,
-  queryWorkClass,
   useRequiredQuery as useQuery,
 } from '../queryWork'
+import { FirstReviewGuide } from './FirstReviewGuide'
 import { RecordingIdentityBasis } from '../components/RecordingIdentityBasis'
 import { StaleBuildRead } from '../components/StaleBuildRead'
-import { useInfiniteQuery } from '@tanstack/react-query'
-import { Link, useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
+import { useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
 import {
   useCallback,
   useEffect,
@@ -19,10 +16,9 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react'
-import type { SyntheticEvent } from 'react'
 import type { QueryExecuteOptions, QueryKey } from '@tanstack/react-query'
 
-import { ApiError, BuildMismatchError } from '../api/http'
+import { BuildMismatchError } from '../api/http'
 import type {
   DecisionCommand,
   LibrarySearch,
@@ -32,8 +28,6 @@ import type {
 } from '../api/http'
 import { useAttentionRail } from '../attentionRail'
 import { focusFieldHeading, useRouteReadyFocus } from '../focus'
-import { destinationLabel, mediaKindLabels } from '../labels'
-import { coalesceMilliseconds } from '../liveInvalidation'
 import {
   detailQuery,
   libraryQuery,
@@ -43,15 +37,12 @@ import {
   ProviderThrottleNotice,
   usePreparation,
   useReviewContext,
-  normalizeDetailSearch,
 } from '../router'
 import { WriteReadyNotice } from '../components/WriteReadyNotice'
-import { StatusPill } from '../components/StatusPill'
 import { actionable, requestKey, useReviewDecisionController } from '../reviewDecisionController'
 import { emptyUnproposed, primaryField, railOffers } from '../reviewChoiceCounts'
 import { advancePresentationSettled } from '../reviewAdvancePresentation'
 
-import { authoredOwnerRecorded, decisionValue } from '../fieldDecision'
 import type { ReviewField } from '../fieldDecision'
 import { LibraryViewSwitch } from '../components/LibraryViewSwitch'
 import { CaseCheckingLine } from '../components/CaseCheckingLine'
@@ -60,7 +51,7 @@ import { ReviewKeys } from './ReviewKeys'
 import { useStaleCoverReview } from './StaleCoverReview'
 import { useCoverPrepareFailure } from '../coverChoices'
 import { FieldDecisionCanvas } from './FieldDecisionCanvas'
-import { fieldDecisionMode, optionalChoice, ownerOutcome } from '../fieldDecisionMode'
+import { fieldDecisionMode, ownerOutcome } from '../fieldDecisionMode'
 import { PreparationDetail } from './PreparationDetail'
 import {
   librarySearchIdentity,
@@ -71,18 +62,16 @@ import { WorkSources, WorkSummary } from './WorkSummary'
 import { AttentionRail } from './AttentionRail'
 import { LibraryWorks } from './LibraryWorks'
 import { useAutomaticHandling } from '../automaticHandling'
-import { BookMark } from '../components/BookMark'
 import { RESTART_SENTENCE, workCount } from '../libraryWork'
-import { contextKind, fieldReason } from '../fieldReasons'
-const searchNavigationDelay = 150
+import { useAttentionQueue } from '../attentionQueue'
+import { useCaseSuccessor } from '../caseSuccessor'
+import { useLibrarySearchNavigation } from '../librarySearchNavigation'
+import { ContextualFields } from './ContextualFields'
+import { FieldFilmstrip } from './FieldFilmstrip'
+import { SelectedWorkHeader } from './SelectedWorkHeader'
 const noWorks: readonly LibraryWorkView[] = []
 // A pointer crossing several rows warms only the one it rests on.
 const prefetchIntentDelay = 50
-// Live Library invalidation batches the documented fifty-work burst for 120 ms.
-// Keep each distinct subject from that bounded batch long enough to compare it
-// with the next bounded page read, but never treat a frame as selection
-// authority.
-const maxCoalescedSuccessorCandidates = 50
 // The compact layout, where the selected work replaces the list.
 const compactQuery = '(max-width: 1024px)'
 const compactWidth = () =>
@@ -105,22 +94,6 @@ const useMediaMatch = (query: string) =>
   )
 const narrowWidth = () =>
   typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 760px)').matches
-
-// A recording's settled fill stays choosable without asking for review (#1249).
-// A field tab says where its field stands in words, never a glyph: an
-// undecided optional field and a decided one both drew a check (#1290).
-const fieldStatus = (field: ReviewField) =>
-  actionable(field)
-    ? (['needs', 'Needs you'] as const)
-    : field.humanDecision || authoredOwnerRecorded(field) || field.manualHold
-      ? (['decided', 'Decided'] as const)
-      : field.classification === 'automatic_recorded' || field.automaticDecision
-        ? (['automatic', 'Automatic'] as const)
-        : optionalChoice(field)
-          ? (['optional', 'Optional'] as const)
-          : (['unchanged', 'No change'] as const)
-const heldPhrase = (count: number, kind: 'waiting' | 'unavailable') =>
-  `${String(count)} ${count === 1 ? 'field' : 'fields'} ${kind === 'waiting' ? 'waiting' : 'unavailable'}`
 
 export default function LibraryPage({
   data,
@@ -183,12 +156,6 @@ export default function LibraryPage({
     preparationSelected,
   )
   const currentSearch = useRef(search)
-  const pendingSearchQuery = useRef<{ q: string | null; attention?: boolean } | null>(null)
-  const searchNavigation = useRef<Promise<void> | null>(null)
-  const searchCommitTimer = useRef<number | null>(null)
-  const searchGeneration = useRef(0)
-  const observedSearchIdentity = useRef(librarySearchIdentity(search))
-  const expectedSearchIdentity = useRef<string | null>(null)
   const retryButton = useRef<HTMLButtonElement>(null)
   const completionRegion = useRef<HTMLElement>(null)
   const activeFieldButton = useRef<HTMLButtonElement>(null)
@@ -241,29 +208,10 @@ export default function LibraryPage({
     libraryDisplayName?: string
     mediaKind: MediaKind
   } | null>(null)
-  const selectedTargetRef = useRef<{
-    caseId: string
-    connection: string
-    library: string
-    item: string
-  } | null>(null)
-  const selectedPreviewRef = useRef<string | undefined>(undefined)
   const selectedDetailRetry = useRef<string | null>(null)
   const selectedDetailRetryButton = useRef<HTMLButtonElement>(null)
   // The preview whose detail was last shown ready, until the preview changes.
   const selectedDetailShown = useRef<string | null>(null)
-  const pendingSuccessorRef = useRef(new Set<string>())
-  const lineageGenerationRef = useRef(0)
-  const [reconciledSuccessorIdentity, setReconciledSuccessorIdentity] = useState<string | null>(
-    null,
-  )
-  const [activeLineageGeneration, setActiveLineageGeneration] = useState<number | null>(null)
-  const [lineageReconciliation, setLineageReconciliation] = useState<{
-    predecessor: string
-    selection: string
-    generation: number
-  } | null>(null)
-  const [successorGeneration, setSuccessorGeneration] = useState(0)
   const [frozenFieldOrders, setFrozenFieldOrders] = useState<
     Readonly<Record<string, readonly string[]>>
   >({})
@@ -291,30 +239,16 @@ export default function LibraryPage({
     text: string
   } | null>(null)
   const headingFocus = useRef<string | null>(null)
-  // The case being left for its successor: while it is, its own failed read
-  // and its absence from Library are the move, not something to report.
-  const [movingFrom, setMovingFrom] = useState<string | null>(null)
-  // The selected case once any path knows a successor is pending for it (a
-  // lineage check, a Library update naming one, or a stale command): until
-  // the move settles, its absence from Library is that move, not news. It is
-  // set where the successor becomes known and cleared only where a move ends,
-  // since a move can start before a lineage check's own update lands.
-  const [successorPending, setSuccessorPending] = useState<string | null>(null)
+  const noticeMovedOwner = useCallback((caseId: string, destination: string, text: string) => {
+    setOwnerNotice({ caseId, destination, text })
+    headingFocus.current = caseId
+  }, [])
   const ownerField = useRef<string | null>(null)
-  // The case whose owner form was open, or whose owner control had focus,
-  // when the Library said it changed; the refetch that follows can unmount it.
-  const ownerEngaged = useRef<string | null>(null)
   const [openedWork, setOpenedWork] = useState<LibraryWorkView | null>(null)
   const [expandedChoiceState, setExpandedChoiceState] = useState<{
     work: string
     keys: ReadonlySet<string>
   }>({ work: '', keys: new Set() })
-  // The URL owns the query. This holds only the exact characters typed since the
-  // last URL move, so a trailing space survives the round trip; the moment the
-  // URL says something this echo does not, the URL wins — which is what makes
-  // Back, Forward and a deep link reseed the box instead of fighting it.
-  const [typedQuery, setTypedQuery] = useState({ echo: search.q ?? '', text: search.q ?? '' })
-  const [searchPending, setSearchPending] = useState(false)
   const urlQuery = search.q ?? ''
   const searchIdentity = librarySearchIdentity(search)
   const locationRevision = useRouterState({
@@ -332,41 +266,9 @@ export default function LibraryPage({
     searchIdentity,
   })
   const { cleaningUp } = preparationDismissal
-  const queryText = searchPending || typedQuery.echo === urlQuery ? typedQuery.text : urlQuery
+  const { queryText, searchPending, runSearch, changeAttentionSearch, submitSearch } =
+    useLibrarySearchNavigation({ urlQuery, searchIdentity, navigate, revealWorkspace })
   const selectedReviewCaseId = search.preview ?? ''
-  useEffect(() => {
-    if (selectedPreviewRef.current !== search.preview) {
-      setActiveLineageGeneration(null)
-      setLineageReconciliation(null)
-      setSuccessorPending(null)
-    }
-    selectedPreviewRef.current = search.preview
-    pendingSuccessorRef.current.clear()
-  }, [search.preview])
-  const invalidateSearch = useCallback(() => {
-    ++searchGeneration.current
-    pendingSearchQuery.current = null
-    expectedSearchIdentity.current = null
-    if (searchCommitTimer.current !== null) {
-      window.clearTimeout(searchCommitTimer.current)
-      searchCommitTimer.current = null
-    }
-  }, [])
-  useEffect(() => {
-    if (observedSearchIdentity.current === searchIdentity) return
-    observedSearchIdentity.current = searchIdentity
-    if (expectedSearchIdentity.current === searchIdentity) {
-      expectedSearchIdentity.current = null
-      return
-    }
-    invalidateSearch()
-    setSearchPending(false)
-  }, [invalidateSearch, searchIdentity])
-  useEffect(() => {
-    return () => {
-      invalidateSearch()
-    }
-  }, [invalidateSearch])
   // A search or lens may temporarily hide the open work's card. The row the
   // owner opened is kept so the summary does not vanish mid-inspection and
   // send them back to the list; clearing the selection releases it.
@@ -412,107 +314,13 @@ export default function LibraryPage({
     ...detailQuery(http, selectedReviewCaseId),
     enabled: Boolean(search.preview) && !preparationSelected,
   })
-  const activeLineageReconciliation =
-    lineageReconciliation !== null &&
-    lineageReconciliation.predecessor === search.preview &&
-    lineageReconciliation.selection === search.preview &&
-    activeLineageGeneration === lineageReconciliation.generation
-  const lineageSuccessor = useQuery({
-    queryKey: [
-      'review-case-successor',
-      lineageReconciliation?.predecessor ?? null,
-      lineageReconciliation?.generation ?? null,
-    ],
-    queryFn: (queryContext) =>
-      http.getCaseSuccessor(
-        lineageReconciliation?.predecessor ?? '',
-        queryContext.signal,
-        queryWorkClass(queryContext),
-      ),
-    enabled: activeLineageReconciliation,
-    retry: (failureCount) => activeLineageReconciliation && failureCount < 1,
-    retryDelay: coalesceMilliseconds,
-    retryOnMount: false,
-    refetchInterval: false,
-    refetchOnMount: false,
-    refetchOnReconnect: false,
-    refetchOnWindowFocus: false,
-  })
-  // Keep the queue this rail last showed while a newer search reads; a failed
-  // read shows nothing, so it leaves nothing to revive.
-  const showingAttention = useRef(false)
-  const attentionQuery = useInfiniteQuery({
-    queryKey: ['attention', 'workspace', search.q ?? null, search.attentionCursor ?? null],
-    initialPageParam: search.attentionCursor,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-    queryFn: (queryContext) =>
-      http.getAttention(
-        {
-          ...(search.q ? { q: search.q } : {}),
-          ...(queryContext.pageParam ? { cursor: queryContext.pageParam } : {}),
-        },
-        queryContext.signal,
-        queryWorkClass(queryContext),
-      ),
-    getNextPageParam: (page) => page.nextCursor ?? undefined,
-    staleTime: 15_000,
-    retry: false,
-    placeholderData: (previous) => (showingAttention.current ? previous : undefined),
-  })
-  useEffect(() => {
-    showingAttention.current = attentionQuery.data !== undefined
-  })
-  useLayoutEffect(
-    () => onRailRetaining?.(attentionQuery.isPlaceholderData),
-    [onRailRetaining, attentionQuery.isPlaceholderData],
+  const { attention, attentionItems, attentionGroups } = useAttentionQueue(
+    http,
+    queryClient,
+    search.q,
+    search.attentionCursor,
+    onRailRetaining,
   )
-  const attention = useMemo(
-    () => ({
-      ...attentionQuery,
-      refetch: () =>
-        runRequiredRead(
-          queryClient,
-          ['attention', 'workspace', search.q ?? null, search.attentionCursor ?? null],
-          () => attentionQuery.refetch(),
-        ),
-      fetchNextPage: () =>
-        runRequiredRead(
-          queryClient,
-          ['attention', 'workspace', search.q ?? null, search.attentionCursor ?? null],
-          () => attentionQuery.fetchNextPage(),
-        ),
-    }),
-    [attentionQuery, queryClient, search.q, search.attentionCursor],
-  )
-  useRequiredRead(queryClient, [
-    'attention',
-    'workspace',
-    search.q ?? null,
-    search.attentionCursor ?? null,
-  ])
-  const attentionItems = useMemo(
-    () =>
-      attention.data?.pages.flatMap((page, pageIndex) => {
-        const cursor = attention.data.pageParams[pageIndex]
-        return page.items.map((item) => ({
-          ...item,
-          attentionCursor: typeof cursor === 'string' ? cursor : undefined,
-        }))
-      }) ?? [],
-    [attention.data],
-  )
-  // One group per work, in first-appearance order; a work that continues onto
-  // the next page joins its existing group.
-  const attentionGroups = useMemo(() => {
-    const groups = new Map<string, (typeof attentionItems)[number][]>()
-    for (const item of attentionItems) {
-      const group = groups.get(item.id)
-      if (group) group.push(item)
-      else groups.set(item.id, [item])
-    }
-    return [...groups.values()]
-  }, [attentionItems])
   const selectedIdentity = useMemo(
     () =>
       search.preview
@@ -554,190 +362,27 @@ export default function LibraryPage({
         mediaKind: selectedIdentity.mediaKind,
       }
   }, [search.preview, selectedIdentity])
-  useEffect(() => {
-    if (search.preview && detail.data?.id === search.preview) {
-      selectedTargetRef.current = { caseId: search.preview, ...detail.data.target }
-      if (pendingSuccessorRef.current.size) {
-        setSuccessorPending(search.preview)
-        setSuccessorGeneration((generation) => generation + 1)
-      }
-    }
-  }, [detail.data, search.preview])
-  useLayoutEffect(() => {
-    const reconciliation = lineageReconciliation
-    if (
-      !lineageSuccessor.isSuccess ||
-      reconciliation === null ||
-      reconciliation.selection !== search.preview ||
-      selectedPreviewRef.current !== reconciliation.selection ||
-      activeLineageGeneration !== reconciliation.generation
-    )
-      return
-    // A successful null is authoritative; only the query's single bounded
-    // retry treats transport failure as pending reconciliation.
-    const named = lineageSuccessor.data
-    const following =
-      named !== null && pendingSuccessorRef.current.size < maxCoalescedSuccessorCandidates
-    queueMicrotask(() => {
-      setActiveLineageGeneration(null)
-      setLineageReconciliation(null)
-      if (following && selectedTargetRef.current?.caseId === reconciliation.selection)
-        setSuccessorPending(reconciliation.selection)
-    })
-    if (following) {
-      pendingSuccessorRef.current.add(named)
-      setSuccessorGeneration((generation) => generation + 1)
-    }
-  }, [
-    activeLineageGeneration,
-    lineageReconciliation,
-    lineageSuccessor.data,
-    lineageSuccessor.isSuccess,
-    search.preview,
-  ])
-  useLayoutEffect(() => {
-    const reconciliation = lineageReconciliation
-    if (
-      !lineageSuccessor.isError ||
-      lineageSuccessor.failureCount < 2 ||
-      reconciliation === null ||
-      reconciliation.selection !== search.preview ||
-      activeLineageGeneration !== reconciliation.generation
-    )
-      return
-    queueMicrotask(() => {
-      setActiveLineageGeneration(null)
-      setLineageReconciliation(null)
-    })
-  }, [
-    activeLineageGeneration,
-    lineageReconciliation,
-    lineageSuccessor.failureCount,
-    lineageSuccessor.isError,
-    search.preview,
-  ])
-  useEffect(() => {
-    if (!updates || !search.preview) return
-    return updates.subscribe((update) => {
-      if (update.topic !== 'library') return
-      if (
-        document.querySelector(
-          '.owner-controls form, .owner-controls button:focus, .owner-controls input:focus',
-        )
-      )
-        ownerEngaged.current = search.preview ?? null
-      if (update.subject === null) {
-        const predecessor = search.preview
-        if (!predecessor) return
-        const generation = ++lineageGenerationRef.current
-        setActiveLineageGeneration(generation)
-        setLineageReconciliation({ predecessor, selection: predecessor, generation })
-        return
-      }
-      if (update.subject === search.preview) return
-      if (
-        pendingSuccessorRef.current.size < maxCoalescedSuccessorCandidates &&
-        !pendingSuccessorRef.current.has(update.subject)
-      ) {
-        pendingSuccessorRef.current.add(update.subject)
-        if (selectedTargetRef.current?.caseId === search.preview)
-          setSuccessorPending(search.preview ?? null)
-        // Query structural sharing can make the next bounded Library read
-        // referentially identical after a no-match batch. Candidate arrival is
-        // itself the reason to reconcile that read once more.
-        setSuccessorGeneration((generation) => generation + 1)
-      }
-    })
-  }, [http, search.preview, updates])
-  useEffect(() => {
-    const selectedTarget = selectedTargetRef.current
-    const successorIds = [...pendingSuccessorRef.current]
-    if (
-      !data ||
-      retained ||
-      !selectedTarget ||
-      !successorIds.length ||
-      selectedTarget.caseId !== search.preview ||
-      works.some((work) => work.reviewCaseId === search.preview)
-    )
-      return
-    pendingSuccessorRef.current.clear()
-    setMovingFrom(selectedTarget.caseId)
-    void (async () => {
-      try {
-        const predecessor = await http.getCaseDetail(selectedTarget.caseId)
-        if (
-          predecessor.current ||
-          predecessor.target.connection !== selectedTarget.connection ||
-          predecessor.target.library !== selectedTarget.library ||
-          predecessor.target.item !== selectedTarget.item
-        ) {
-          setMovingFrom(null)
-          setSuccessorPending(null)
-          return
-        }
-      } catch (error) {
-        // The server refuses a superseded case's read as stale; that is the
-        // case no longer being current. Each successor's target is checked.
-        if (!(error instanceof ApiError && error.code === 'stale')) {
-          // The check itself failed, so the case is read again while what the
-          // owner has open stays; a failed read then drops it (#1365).
-          void queryClient.refetchQueries({
-            queryKey: detailQuery(http, selectedTarget.caseId).queryKey,
-            exact: true,
-          })
-          setMovingFrom(null)
-          setSuccessorPending(null)
-          return
-        }
-      }
-      for (const successorId of successorIds) {
-        try {
-          const successor = await http.getCaseDetail(successorId)
-          if (
-            !successor.current ||
-            successor.target.connection !== selectedTarget.connection ||
-            successor.target.library !== selectedTarget.library ||
-            successor.target.item !== selectedTarget.item
-          )
-            continue
-          setReconciledSuccessorIdentity(successor.id)
-          const destination = ownerField.current
-          if (destination && ownerEngaged.current === selectedTarget.caseId) {
-            ownerEngaged.current = null
-            setOwnerNotice({
-              caseId: successor.id,
-              destination,
-              text: 'The work changed. Review it again.',
-            })
-            headingFocus.current = successor.id
-          }
-          await navigate({
-            replace: true,
-            search: (current) =>
-              current.preview === selectedTarget.caseId
-                ? { ...current, preview: successor.id }
-                : current,
-          })
-          setMovingFrom(null)
-          setSuccessorPending(null)
-          return
-        } catch {
-          // A case can disappear again between the bounded page read and its
-          // authoritative detail read. The remaining coalesced candidates may
-          // still name its replacement.
-        }
-      }
-      // A move that ends nowhere leaves a predecessor its own read refused, so
-      // its retained case read is read again rather than shown as current.
-      void queryClient.resetQueries({
-        queryKey: detailQuery(http, selectedTarget.caseId).queryKey,
-        exact: true,
-      })
-      setMovingFrom(null)
-      setSuccessorPending(null)
-    })()
-  }, [data, retained, works, http, navigate, queryClient, search.preview, successorGeneration])
+  const {
+    activeLineageReconciliation,
+    reconciledSuccessorIdentity,
+    setReconciledSuccessorIdentity,
+    movingFrom,
+    setMovingFrom,
+    successorPending,
+    setSuccessorPending,
+  } = useCaseSuccessor({
+    preview: search.preview,
+    http,
+    updates,
+    queryClient,
+    navigate,
+    data,
+    retained,
+    works,
+    detailData: detail.data,
+    ownerField,
+    noticeMovedOwner,
+  })
   const completionIdentity = complete?.id === selectedReviewCaseId ? complete.identity : undefined
   const [pendingIdentity, setPendingIdentity] = useState<{
     id: string
@@ -798,11 +443,6 @@ export default function LibraryPage({
   }, [ownerWriteInFlight, queryClient, shownCaseId, updates])
   const contextualFields =
     detail.data?.fields.filter((field) => field.inventoryRole === 'contextual') ?? []
-  const contextualSummary = {
-    unchanged: contextualFields.filter((field) => contextKind(field) === 'unchanged'),
-    waiting: contextualFields.filter((field) => contextKind(field) === 'waiting').length,
-    unavailable: contextualFields.filter((field) => contextKind(field) === 'unavailable').length,
-  }
   const activeQueueIndex = selected
     ? attentionItems.findIndex(
         (item) => item.id === search.preview && item.destination === selected.destination,
@@ -1246,56 +886,6 @@ export default function LibraryPage({
     if (generation !== workSelectionGeneration.current) return
     setOpenedWork(work)
   }
-  // Progressive filtering keeps the typed text local so each keystroke paints.
-  // A short bounded delay avoids loading an obsolete clear before the next
-  // typed value; the URL remains the owner after the committed replacement.
-  const scheduleSearchNavigation = (delay = searchNavigationDelay) => {
-    if (searchCommitTimer.current !== null) window.clearTimeout(searchCommitTimer.current)
-    searchCommitTimer.current = window.setTimeout(() => {
-      searchCommitTimer.current = null
-      if (searchNavigation.current !== null || pendingSearchQuery.current === null) return
-      const generation = searchGeneration.current
-      const drain = async () => {
-        try {
-          while (generation === searchGeneration.current && pendingSearchQuery.current !== null) {
-            const pending = pendingSearchQuery.current
-            pendingSearchQuery.current = null
-            await navigate({
-              replace: pending.attention === undefined,
-              resetScroll: !revealWorkspace.current,
-              search: (current) => {
-                if (generation !== searchGeneration.current) return current
-                const next = { ...current }
-                if (pending.q !== null) {
-                  delete next.cursor
-                  delete next.attentionCursor
-                  if (pending.q) next.q = pending.q
-                  else delete next.q
-                }
-                if (pending.attention === true) next.attention = 'open'
-                else if (pending.attention === false) delete next.attention
-                expectedSearchIdentity.current = librarySearchIdentity(next)
-                return next
-              },
-            })
-          }
-        } catch {
-          // A later owner edit may start a fresh drain; a failed read navigation
-          // is never retried without that new intent.
-        } finally {
-          searchNavigation.current = null
-          if (generation === searchGeneration.current) {
-            expectedSearchIdentity.current = null
-            if (pendingSearchQuery.current !== null) scheduleSearchNavigation()
-            else setSearchPending(false)
-          } else if (pendingSearchQuery.current !== null) {
-            scheduleSearchNavigation()
-          }
-        }
-      }
-      searchNavigation.current = drain()
-    }, delay)
-  }
   const prefetchTimer = useRef<number | null>(null)
   useEffect(
     () => () => {
@@ -1320,13 +910,6 @@ export default function LibraryPage({
   }
   const lensIntent = (lens: LibrarySearch['lens']) =>
     prefetchOnIntent(libraryQuery(http, { lens, ...(search.q ? { q: search.q } : {}) }))
-  const runSearch = (value: string) => {
-    const q = value.trim()
-    setTypedQuery({ echo: q, text: value })
-    setSearchPending(true)
-    pendingSearchQuery.current = { ...pendingSearchQuery.current, q }
-    scheduleSearchNavigation()
-  }
   const closeAttention = () => {
     attentionFocus.returnFocus(Boolean(search.preview ?? search.work) && narrowWidth())
     changeAttention(false)
@@ -1338,15 +921,7 @@ export default function LibraryPage({
       revealWorkspace.current = Boolean(search.preview ?? search.work) && narrowWidth()
       attentionFocus.cancelOpeningReveal()
     }
-    pendingSearchQuery.current = {
-      q: searchPending ? queryText.trim() : null,
-      attention: open,
-    }
-    scheduleSearchNavigation(0)
-  }
-  const submitSearch = (event: SyntheticEvent<HTMLFormElement, SubmitEvent>) => {
-    event.preventDefault()
-    runSearch(queryText)
+    changeAttentionSearch(open)
   }
   // A retained page's cursors belong to the key the URL just left.
   const movePage = (cursor: string | undefined) => {
@@ -1500,6 +1075,10 @@ export default function LibraryPage({
       </header>
       <PreparationNotice routeIdentity={routeIdentity} />
       <ProviderThrottleNotice />
+      <FirstReviewGuide
+        first={attention.isPlaceholderData ? undefined : attentionItems[0]}
+        onOpen={selectFromQueue}
+      />
       <div
         className={`library-workspace${hasSelection ? ' has-selection' : ''}${search.attention === 'open' ? ' attention-open' : ''}`}
       >
@@ -1651,73 +1230,17 @@ export default function LibraryPage({
             </div>
           ) : (
             <>
-              <header
-                className="selected-work-header"
-                tabIndex={-1}
-                {...(search.preview && search.attention !== 'open'
-                  ? { 'data-route-focus': 'true' }
-                  : {})}
-              >
-                <BookMark
-                  title={displayedIdentity.title}
-                  cover={
-                    currentWorks.find((work) => work.reviewCaseId === selectedReviewCaseId)?.cover
-                  }
-                />
-                <div>
-                  <h2>{displayedIdentity.title}</h2>
-                  <p>
-                    {displayedIdentity.authors.length
-                      ? displayedIdentity.authors.join(', ')
-                      : 'Author details unavailable'}{' '}
-                    · {displayedIdentity.libraryDisplayName ?? displayedIdentity.library} ·{' '}
-                    {mediaKindLabels[displayedIdentity.mediaKind]}
-                  </p>
-                </div>
-                <dl className="selected-work-status">
-                  <div>
-                    <dt>Needs you</dt>
-                    <dd>{String(attentionFields.length)}</dd>
-                  </div>
-                  <div>
-                    <dt>Automatic</dt>
-                    <dd>
-                      {String(
-                        detail.data.fields.filter(
-                          (field) =>
-                            field.humanDecision === null &&
-                            field.automaticDecision !== null &&
-                            !field.manualHold,
-                        ).length,
-                      )}
-                    </dd>
-                  </div>
-                </dl>
-                <nav className="selected-work-diagnostics" aria-label="Evidence and history">
-                  <Link
-                    params={{ reviewCaseId: detail.data.id }}
-                    search={normalizeDetailSearch({
-                      ...search,
-                      subview: 'evidence',
-                      field: selected?.destination,
-                    })}
-                    to="/review/$reviewCaseId"
-                  >
-                    Evidence
-                  </Link>
-                  <Link
-                    params={{ reviewCaseId: detail.data.id }}
-                    search={normalizeDetailSearch({
-                      ...search,
-                      subview: 'history',
-                      field: selected?.destination,
-                    })}
-                    to="/review/$reviewCaseId"
-                  >
-                    History
-                  </Link>
-                </nav>
-              </header>
+              <SelectedWorkHeader
+                search={search}
+                identity={displayedIdentity}
+                cover={
+                  currentWorks.find((work) => work.reviewCaseId === selectedReviewCaseId)?.cover
+                }
+                reviewCaseId={detail.data.id}
+                fields={detail.data.fields}
+                needsYou={attentionFields.length}
+                selectedDestination={selected?.destination}
+              />
               {detail.data.comparisonNotices.length ? (
                 <aside className="comparison-notice" aria-label="Provider comparison condition">
                   {detail.data.comparisonNotices.map((notice) => (
@@ -1725,56 +1248,28 @@ export default function LibraryPage({
                   ))}
                 </aside>
               ) : null}
-              <section className="field-map" aria-label={`Fields in ${displayedIdentity.title}`}>
-                <nav ref={fieldRail} className="field-filmstrip" aria-label="Review fields">
-                  {renderedRailFields.map((field) => (
-                    <button
-                      key={field.destination}
-                      ref={
-                        revealFocusDestination === field.destination
-                          ? (button) => {
-                              if (button) {
-                                setRevealFocusDestination(null)
-                                button.focus()
-                                const rail = fieldRail.current
-                                if (rail) centreFieldRail(rail, button)
-                              }
-                            }
-                          : selected?.destination === field.destination
-                            ? activeFieldButton
-                            : undefined
-                      }
-                      aria-current={selected?.destination === field.destination}
-                      className={!actionable(field) ? 'is-recorded' : undefined}
-                      onClick={() => {
-                        if (complete?.id === selectedReviewCaseId)
-                          setCompletionInspection(field.destination)
-                        selectCase(selectedReviewCaseId, field.destination)
-                      }}
-                    >
-                      <strong>{destinationLabel(field.destination)}</strong>{' '}
-                      <span className={`field-status is-${fieldStatus(field)[0]}`}>
-                        {fieldStatus(field)[1]}
-                      </span>
-                    </button>
-                  ))}
-                  {omittedFields.length ? (
-                    <button
-                      type="button"
-                      className="field-more"
-                      onClick={() => {
-                        setRevealFocusDestination(omittedFields[0]?.destination ?? null)
-                        setShownEmptyFields((current) => ({
-                          ...current,
-                          [selectedReviewCaseId]: true,
-                        }))
-                      }}
-                    >
-                      {`Show ${String(omittedFields.length)} more field${omittedFields.length === 1 ? '' : 's'}`}
-                    </button>
-                  ) : null}
-                </nav>
-              </section>
+              <FieldFilmstrip
+                title={displayedIdentity.title}
+                fields={renderedRailFields}
+                omittedCount={omittedFields.length}
+                selectedDestination={selected?.destination}
+                fieldRail={fieldRail}
+                activeFieldButton={activeFieldButton}
+                revealFocusDestination={revealFocusDestination}
+                clearRevealFocus={() => setRevealFocusDestination(null)}
+                centreFieldRail={centreFieldRail}
+                onSelectField={(destination) => {
+                  if (complete?.id === selectedReviewCaseId) setCompletionInspection(destination)
+                  selectCase(selectedReviewCaseId, destination)
+                }}
+                onShowMore={() => {
+                  setRevealFocusDestination(omittedFields[0]?.destination ?? null)
+                  setShownEmptyFields((current) => ({
+                    ...current,
+                    [selectedReviewCaseId]: true,
+                  }))
+                }}
+              />
               <CaseCheckingLine
                 checking={detail.data.checking}
                 givenUp={detail.data.checkGivenUp}
@@ -1845,55 +1340,7 @@ export default function LibraryPage({
                   />
                 </section>
               ) : null}
-              {contextualFields.length ? (
-                <details className="automatic-resolution-details">
-                  <summary>
-                    <span>
-                      {contextualSummary.unchanged.length ? (
-                        <span>
-                          No change:{' '}
-                          {contextualSummary.unchanged
-                            .map((field) => destinationLabel(field.destination))
-                            .join(', ')}
-                        </span>
-                      ) : null}
-                      {contextualSummary.waiting ? (
-                        <span>{heldPhrase(contextualSummary.waiting, 'waiting')}</span>
-                      ) : null}
-                      {contextualSummary.unavailable ? (
-                        <span>{heldPhrase(contextualSummary.unavailable, 'unavailable')}</span>
-                      ) : null}
-                    </span>
-                    <small>Show why</small>
-                  </summary>
-                  <div className="automatic-resolution-list">
-                    {contextualFields.map((field) => {
-                      const kind = contextKind(field)
-                      return (
-                        <div
-                          className={`automatic-resolution-row is-${kind}`}
-                          key={field.destination}
-                        >
-                          <strong>
-                            {destinationLabel(field.destination)}
-                            {kind === 'unchanged' ? null : (
-                              <StatusPill tone="notice">
-                                {kind === 'waiting' ? 'Waiting' : 'Unavailable'}
-                              </StatusPill>
-                            )}
-                          </strong>
-                          <small>{decisionValue(field)}</small>
-                          <small>
-                            {kind === 'unchanged'
-                              ? 'No source offered a different value.'
-                              : fieldReason(field)}
-                          </small>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </details>
-              ) : null}
+              {contextualFields.length ? <ContextualFields fields={contextualFields} /> : null}
               <WorkSources
                 comparison={selectedMode.choiceMode}
                 outcomes={selectedLibraryWork?.preparationOutcomes ?? []}

@@ -1788,6 +1788,46 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
   .taste-section li:not(.taste-editing) > .taste-who { grid-column:2; grid-row:2; justify-self:start; align-self:center; padding-top:0; }
   .taste-section li:not(.taste-editing) > .taste-pencil { grid-column:3; grid-row:2; justify-self:end; align-self:center; margin-block:0; }
 }
+/* The first review guide (#1338): a modal dialog over Library, and a full
+   sheet on a phone. The steps share one grid cell, so its height is fixed. */
+dialog.first-review-guide { box-sizing:border-box; width:min(52rem,calc(100vw - 2rem)); max-height:calc(100dvh - 2rem); padding:0; overflow:hidden; border:1px solid var(--line); border-radius:1rem; color:var(--ink); background:var(--surface); box-shadow:0 16px 46px rgb(30 40 37 / .08); }
+:root[data-theme='dark'] dialog.first-review-guide { box-shadow:0 18px 52px rgb(0 0 0 / .28); }
+dialog.first-review-guide[open] { display:flex; flex-direction:column; }
+dialog.first-review-guide::backdrop { background:rgb(23 32 30 / .42); }
+:root[data-theme='dark'] dialog.first-review-guide::backdrop { background:rgb(0 0 0 / .6); }
+.first-review-body { display:grid; flex:1 1 auto; align-content:start; gap:14px; min-height:0; overflow-y:auto; padding:24px 28px 16px; }
+.first-review-body > h2 { margin:0; font-family:Georgia,'Times New Roman',serif; font-size:1.5rem; letter-spacing:-.02em; }
+.first-review-body > h2:focus { outline:none; }
+.first-review-example[inert] { opacity:.55; }
+.first-review-example { display:grid; gap:4px; padding:16px; border:1px solid var(--line); border-radius:12px; background:var(--page); }
+.first-review-work { margin:0; color:var(--soft); font-size:.8125rem; }
+.first-review-work strong { color:var(--ink); }
+.first-review-group { margin:6px 0 0; color:var(--soft); font-size:.75rem; font-weight:700; }
+.first-review-question { margin:4px 0 0; font-family:Georgia,'Times New Roman',serif; font-size:1.2rem; letter-spacing:-.02em; }
+.first-review-reason { margin:0 0 4px; color:var(--soft); font-size:.875rem; }
+.first-review-guide .protected-choice .direct-choice-grid { align-items:start; }
+/* Room for "Your choice", so a tap does not grow the card. */
+.first-review-example .choice-select > small { min-height:1lh; }
+.first-review-steps { display:grid; }
+.first-review-step { grid-area:1 / 1; display:grid; align-content:start; gap:8px; }
+.first-review-step[aria-hidden='true'] { visibility:hidden; }
+.first-review-text { display:grid; gap:8px; }
+.first-review-text > header { display:flex; flex-wrap:wrap; align-items:baseline; justify-content:space-between; gap:4px 16px; }
+.first-review-text h3 { margin:0; font-size:1rem; }
+.first-review-text p { max-width:68ch; margin:0; line-height:1.5; }
+.first-review-text .first-review-count { color:var(--soft); font-size:.8125rem; font-weight:650; }
+.first-review-status { margin:0; color:var(--accent-strong); font-size:.875rem; font-weight:700; }
+.first-review-footer { display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:14px 28px 18px; border-top:1px solid var(--line); background:var(--surface); }
+.first-review-spacer { flex:1 1 auto; }
+.first-review-footer button { min-width:6.5rem; }
+@media (max-width:760px) {
+  dialog.first-review-guide { width:100%; max-width:100%; height:100dvh; max-height:100dvh; margin:0; border:0; border-radius:0; }
+  .first-review-body { padding:20px 16px 12px; }
+  .first-review-footer { padding:12px 16px 16px; }
+  .first-review-example { padding:12px; }
+  .first-review-footer button { flex:1 1 auto; min-width:0; }
+  .first-review-spacer { display:none; }
+}
 
 /* The write plan (#1336): a library's fields read as one column of full-width
    rows, each listing its prepared changes under it; the lead and the two
