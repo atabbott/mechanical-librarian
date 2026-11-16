@@ -5673,6 +5673,15 @@ def owner_link_lanes(
     )
 
 
+def owner_link_records(report: MetadataReport) -> bool:
+    """Whether any record the report holds was kept only through its link."""
+    return report.owner_link is not None and any(
+        owner_link_admission(report, provider.provider, candidate.identity) is not None
+        for provider in report.providers
+        for candidate in provider.candidates
+    )
+
+
 def owner_link_admission(
     report: MetadataReport, provider: str, candidate: str
 ) -> str | None:

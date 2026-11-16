@@ -29,7 +29,10 @@ from mechanical_librarian.domain.description_advice import (
     description_digest,
     description_document,
 )
-from mechanical_librarian.domain.metadata_report import MetadataReport
+from mechanical_librarian.domain.metadata_report import (
+    MetadataReport,
+    owner_link_records,
+)
 from mechanical_librarian.domain.review_case import ReviewCase
 
 if TYPE_CHECKING:
@@ -340,6 +343,10 @@ def admit_staged_description(
         if bound_report.audio is not None and not admitted_audiobook_identity(
             bound_report
         ):
+            return
+        # Shadow-first (#1477, S26): a description read beside records only
+        # the owner's link kept is suggested, never applied automatically.
+        if owner_link_records(bound_report):
             return
     store = repository.description_advice_store()
     advice = store.read(action.review_case_id)

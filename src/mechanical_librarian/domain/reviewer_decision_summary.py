@@ -17,6 +17,7 @@ from mechanical_librarian.domain.metadata_report import (
     IdentifierRelation,
     MetadataReport,
     TargetDestination,
+    owner_link_admission,
 )
 from mechanical_librarian.domain.proposal_set import (
     EVIDENCE_LED_TITLE_REASON,
@@ -115,6 +116,7 @@ def validate_candidate_decision_summary(
             "bibliographic_compatibility_ids",
             "creator_roles",
             "independent_title",
+            "owner_link_only",
             "recording_support",
             "narrator_agreement",
             "evidence_scope",
@@ -142,6 +144,7 @@ def validate_candidate_decision_summary(
         raise DecisionSummaryValueError("candidate decision summary is invalid")
     if (
         type(summary["recording_support"]) is not bool
+        or type(summary["owner_link_only"]) is not bool
         or type(summary["narrator_agreement"]) is not bool
         or summary["narrator_agreement"]
         and destination != "narrators"
@@ -525,6 +528,9 @@ def candidate_decision_summary(
     )
     return {
         "narrator_agreement": narrator_agreement,
+        "owner_link_only": owner_link_only(
+            report, tuple(cast("list[str]", alternative["evidence_references"]))
+        ),
         "recording_support": any(
             provider_candidate_represents_target_recording(report, provider, candidate)
             and (
@@ -569,6 +575,28 @@ def candidate_decision_summary(
             "target_only_preservation": 0,
         },
     }, role_references
+
+
+def owner_link_only(report: MetadataReport, references: tuple[str, ...]) -> bool:
+    """Whether every provider record a value cites was kept only by the link.
+
+    A record a link lane or the anchored WORK lane alone admitted (#1477) is
+    the owner's choice, not a source's independent agreement: until the link
+    rules qualify, no automatic decision binds it (shadow-first, S26).
+    """
+    if report.owner_link is None:
+        return False
+    cited = set(references)
+    records = [
+        (provider.provider, candidate.identity)
+        for provider in report.providers
+        for candidate in provider.candidates
+        if cited.intersection(claim.reference for claim in candidate.claims)
+    ]
+    return bool(records) and all(
+        owner_link_admission(report, provider, identity) is not None
+        for provider, identity in records
+    )
 
 
 def proposal_decision_summary(
@@ -621,6 +649,7 @@ __all__ = [
     "candidate_decision_summary",
     "compatibility_by_candidate",
     "proposal_decision_summary",
+    "owner_link_only",
     "validate_candidate_decision_summary",
     "validate_proposal_decision_summary",
 ]

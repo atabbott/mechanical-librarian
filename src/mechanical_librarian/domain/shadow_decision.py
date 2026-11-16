@@ -32,7 +32,7 @@ from mechanical_librarian.domain.shadow_review_actions import (
 )
 
 DECISION_SET_SCHEMA = "shadow-decision-set-v1"
-DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v27"
+DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v28"
 MAX_DECISION_SET_BYTES = 1_048_576
 
 _SUPPORTED_DESTINATIONS = frozenset(
@@ -55,6 +55,7 @@ _REASON_CODES = frozenset(
         "insufficient_support",
         "isbn_title_material_conflict",
         "no_eligible_action",
+        "owner_link_unqualified",
         "target_only_preservation",
         "unique_supported_candidate",
         "unique_supported_preservation",
@@ -71,6 +72,15 @@ _PRAISE_RULE = {
     "praise_opening": PRAISE_OPENING,
 }
 _RULE_TABLE = {
+    # Shadow-first for the owner's link (#1477, S26): a value every cited
+    # record of which only the link or its anchor admitted is never decided
+    # automatically; the decision notes what the ungated engine would admit.
+    "owner_link_unqualified": {
+        "ineligible": "every_cited_provider_record_owner_link_or_anchor_admitted",
+        "reason": "owner_link_unqualified",
+        "would_admit": "sole_ungated_candidate",
+        "decision_unchanged": "manual",
+    },
     "scalar_incumbent_title": {
         "sole_eligible_candidate_equals_current": True,
         "compiled_keep_has_identical_citations": True,
@@ -369,6 +379,7 @@ class _CandidateSummary(TypedDict):
     creator_roles: dict[str, object]
     evidence_scope: str
     independent_title: bool
+    owner_link_only: bool
     recording_support: bool
     narrator_agreement: bool
     publication: dict[str, object] | None
@@ -439,9 +450,17 @@ class ShadowDecision:
     citation_ids: tuple[str, ...]
     combination_ids: tuple[str, ...]
     reason_code: str
+    # ADR-0092's would-admit note: the alternative the ungated engine selects
+    # where the owner-link gate abstained (#1477). It grants nothing.
+    would_admit: str | None = None
 
     @classmethod
-    def create(cls, action: PolicyAction, reason_code: str) -> ShadowDecision:
+    def create(
+        cls,
+        action: PolicyAction,
+        reason_code: str,
+        would_admit: str | None = None,
+    ) -> ShadowDecision:
         if type(action) is not PolicyAction or reason_code not in _REASON_CODES:
             raise ShadowDecisionError("shadow decision action is invalid")
         data: dict[str, object] = {
@@ -453,6 +472,7 @@ class ShadowDecision:
             "proposal_id": action.proposal_id,
             "reason_code": reason_code,
             "recommendation": action.recommendation,
+            **({} if would_admit is None else {"would_admit": would_admit}),
         }
         # The mapping below restates the dataclass fields key by key, so it is
         # exactly a _DecisionFields; the cast lets mypy check the ** unpack.
@@ -471,6 +491,7 @@ class ShadowDecision:
                     "reason_code": reason_code,
                 },
             ),
+            would_admit=would_admit,
         )
 
     def __post_init__(self) -> None:
@@ -501,6 +522,17 @@ class ShadowDecision:
                 type(value) is not str or not value for value in self.combination_ids
             )
             or self.reason_code not in _REASON_CODES
+            or (self.would_admit is not None)
+            != (self.reason_code == "owner_link_unqualified")
+            or (
+                self.would_admit is not None
+                and (
+                    type(self.would_admit) is not str
+                    or re.fullmatch(r"alternative_[0-9a-f]{64}", self.would_admit)
+                    is None
+                    or self.recommendation != "manual"
+                )
+            )
             or self.decision_id != _decision_identity(data)
         ):
             raise ShadowDecisionError("shadow decision is invalid")
@@ -515,6 +547,7 @@ class ShadowDecision:
             "proposal_id": self.proposal_id,
             "reason_code": self.reason_code,
             "recommendation": self.recommendation,
+            **({} if self.would_admit is None else {"would_admit": self.would_admit}),
         }
 
     def to_data(self) -> dict[str, object]:
@@ -653,7 +686,7 @@ class ShadowDecisionSet:
             for value in data["decisions"]:
                 if (
                     type(value) is not dict
-                    or set(value) != decision_fields
+                    or set(value) - {"would_admit"} != decision_fields
                     or type(value["citation_ids"]) is not list
                     or type(value["combination_ids"]) is not list
                 ):
@@ -669,6 +702,7 @@ class ShadowDecisionSet:
                         tuple(value["citation_ids"]),
                         tuple(value["combination_ids"]),
                         value["reason_code"],
+                        value.get("would_admit"),
                     )
                 )
             result = cls(
@@ -778,6 +812,8 @@ def _candidate_is_eligible(
     proposal: dict[str, object],
     candidate: dict[str, object],
     action: PolicyAction,
+    *,
+    gated: bool = True,
 ) -> bool:
     # validate_candidate_decision_summary and validate_proposal_decision_summary
     # ran over every packet summary in ShadowReviewPacket.__post_init__, so
@@ -811,6 +847,8 @@ def _candidate_is_eligible(
         and reasons[0] in DECORATION_TIDY_TITLE_REASONS
     )
     if _degraded_candidate_reason(proposal, candidate) is not None:
+        return False
+    if gated and summary["owner_link_only"]:
         return False
     recording_support = summary["recording_support"]
     narrator_agreement = destination == "narrators" and summary["narrator_agreement"]
@@ -894,6 +932,8 @@ def _eligible_actions(
     packet: ShadowReviewPacket,
     catalogue: PolicyActionCatalogue,
     proposal: dict[str, object],
+    *,
+    gated: bool = True,
 ) -> tuple[PolicyAction, ...]:
     # Packet entry validated the proposal summary and the candidate list.
     # A language conflict is the owner's; respelling a current language as
@@ -926,7 +966,7 @@ def _eligible_actions(
                     candidate["assessment"] == "preserves_target"
                     and candidate_action is not None
                     and _candidate_is_eligible(
-                        packet, proposal, candidate, candidate_action
+                        packet, proposal, candidate, candidate_action, gated=gated
                     )
                 ):
                     preservation.append(candidate)
@@ -950,7 +990,7 @@ def _eligible_actions(
                 continue
             candidate = _candidate_for_action(proposal, action)
             if candidate is not None and _candidate_is_eligible(
-                packet, proposal, candidate, action
+                packet, proposal, candidate, action, gated=gated
             ):
                 actions.append(action)
     if proposal["destination"] == "title" and len(actions) == 1:
@@ -1205,6 +1245,27 @@ def _compatible_audiobook_publisher(
     )
 
 
+def _owner_link_would_admit(
+    packet: ShadowReviewPacket,
+    catalogue: PolicyActionCatalogue,
+    proposal: dict[str, object],
+) -> str | None:
+    """The candidate only the owner-link gate kept from deciding (#1477, S26).
+
+    Ungated, the engine would select exactly this candidate; gated, it
+    abstained. The decision stays manual and names it as ADR-0092's note.
+    """
+    if not any(
+        cast("_CandidateSummary", value["decision_summary"])["owner_link_only"]
+        for value in cast("list[dict[str, object]]", proposal["candidates"])
+    ):
+        return None
+    ungated = _eligible_actions(packet, catalogue, proposal, gated=False)
+    if len(ungated) != 1 or ungated[0].recommendation != "recommend_candidate":
+        return None
+    return ungated[0].candidate_id
+
+
 def decide_shadow_packet(packet: ShadowReviewPacket) -> ShadowDecisionSet:
     """Select one closed action per proposal without provider execution or writes."""
     if type(packet) is not ShadowReviewPacket:
@@ -1288,6 +1349,12 @@ def decide_shadow_packet(packet: ShadowReviewPacket) -> ShadowDecisionSet:
         else:
             action = _manual_action(catalogue, proposal_id)
             reason = _base_reason(proposal, eligible)
+            would_admit = _owner_link_would_admit(packet, catalogue, proposal)
+            if would_admit is not None:
+                decisions.append(
+                    ShadowDecision.create(action, "owner_link_unqualified", would_admit)
+                )
+                continue
         decisions.append(ShadowDecision.create(action, reason))
     if tuple(value.proposal_id for value in decisions) != tuple(
         value["proposal_id"] for value in packet.proposals

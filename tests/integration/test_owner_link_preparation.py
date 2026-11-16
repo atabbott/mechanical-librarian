@@ -13,6 +13,7 @@ import json
 import sqlite3
 from collections.abc import Callable
 from pathlib import Path
+from unittest import mock
 
 import httpx
 import pytest
@@ -52,6 +53,7 @@ from mechanical_librarian.application.metadata_report import (
 from mechanical_librarian.application.provider_recovery_policy import (
     provider_recovery_decision,
 )
+from mechanical_librarian.domain import proposal_set
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     LocalClaim,
@@ -524,16 +526,7 @@ def _audnexus(runtime_minutes: int) -> AudnexusMetadataProvider:
     )
 
 
-@pytest.mark.parametrize(
-    ("minutes", "outcome", "reason"),
-    [
-        pytest.param(970, "admitted", None, id="inside-runtime-band"),
-        pytest.param(500, "contradicted", "runtime", id="outside-runtime-band"),
-    ],
-)
-def test_a_recording_link_is_re_checked_against_the_files_runtime(
-    tmp_path: Path, minutes: int, outcome: str, reason: str | None
-) -> None:
+def _recording_report(tmp_path: Path, minutes: int) -> MetadataReport:
     path = _store(tmp_path)
     _link(
         path,
@@ -545,7 +538,7 @@ def test_a_recording_link_is_re_checked_against_the_files_runtime(
     snapshot = TargetSnapshot(
         "audiobook", LOCAL_TITLE, (selected,), fields=_fields(LOCAL_TITLE)
     )
-    report = MetadataReport.from_json(
+    return MetadataReport.from_json(
         GenerateMetadataReport(
             target=FakeTarget([snapshot, snapshot]),
             inspector=FakeInspector(InspectionResult("c" * 64, ())),
@@ -576,6 +569,19 @@ def test_a_recording_link_is_re_checked_against_the_files_runtime(
             ),
         ).run(ITEM, 0)
     )
+
+
+@pytest.mark.parametrize(
+    ("minutes", "outcome", "reason"),
+    [
+        pytest.param(970, "admitted", None, id="inside-runtime-band"),
+        pytest.param(500, "contradicted", "runtime", id="outside-runtime-band"),
+    ],
+)
+def test_a_recording_link_is_re_checked_against_the_files_runtime(
+    tmp_path: Path, minutes: int, outcome: str, reason: str | None
+) -> None:
+    report = _recording_report(tmp_path, minutes)
     facts = report.owner_link
     assert facts is not None
     assert (facts.outcome, facts.reason) == (outcome, reason)
@@ -593,3 +599,25 @@ def test_a_recording_link_is_re_checked_against_the_files_runtime(
         assert owner_link_admission(report, "audnexus", member.edition_identity) == (
             "owner_link"
         )
+
+
+def test_an_identifier_is_never_proposed_from_a_record_only_the_link_kept(
+    tmp_path: Path,
+) -> None:
+    # S25 (#1477): a recording link's record names the book; the ASIN it
+    # carries is not proposed from it. The ungated control shows that record
+    # would otherwise supply exactly that observation.
+    report = _recording_report(tmp_path, 970)
+    (member,) = (
+        candidate
+        for lane in _provider(report, "audnexus").lanes
+        if lane.kind is ProviderQueryKind.ASIN
+        for candidate in lane.candidates
+    )
+    assert owner_link_admission(report, "audnexus", member.edition_identity) == (
+        "owner_link"
+    )
+    assert proposal_set._observations(report, TargetDestination.ASIN) == ()
+    with mock.patch.object(proposal_set, "owner_link_admission", return_value=None):
+        ungated = proposal_set._observations(report, TargetDestination.ASIN)
+    assert [observed.value.value for observed in ungated] == [ASIN]

@@ -2,8 +2,26 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from typing import Any, cast
+from unittest import mock
+
 import pytest
 
+from mechanical_librarian.application import cover_identity
+from mechanical_librarian.application.cover_identity import _classify_sources
+from mechanical_librarian.application.description_advice import (
+    admit_staged_description,
+)
+from mechanical_librarian.domain.cover_evidence import (
+    CoverArtifact,
+    CoverDesignation,
+    CoverProvenance,
+    CoverSource,
+    CoverSourceKind,
+    CoverSourceState,
+    cover_source_id,
+)
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -27,10 +45,13 @@ from mechanical_librarian.domain.metadata_report import (
     discovery_lane_identity,
     owner_link_admission,
     owner_link_anchor_values,
+    owner_link_records,
     provider_lane_candidate_reference,
     report_work_identity_context,
     work_discovery_lane_payloads,
 )
+from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
+from tests.support.cover_producers import _preview
 from tests.support.metadata_report_schemas import default_target_fields
 
 TITLE = "Local Title"
@@ -312,3 +333,67 @@ def test_a_changed_digest_is_refused_on_readback() -> None:
 
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(canonical_json(document))
+
+
+# --- Shadow-first (#1477, S26) ----------------------------------------------
+
+
+def _linked_cover() -> CoverSource:
+    return CoverSource(
+        cover_source_id(CoverSourceKind.HARDCOVER, "hardcover:work:linked"),
+        CoverSourceKind.HARDCOVER,
+        CoverSourceState.RETRIEVED,
+        CoverArtifact.create(b"linked", _preview(5), "image/png", 400, 600),
+        provenance=CoverProvenance("hardcover", CoverDesignation.DEFAULT, LINK_RECORD),
+    )
+
+
+def test_a_report_holding_a_link_kept_record_says_so() -> None:
+    assert owner_link_records(_report(_facts()))
+    assert not owner_link_records(_report(None, lane_status=None))
+
+
+def test_a_cover_only_the_link_kept_is_never_verified() -> None:
+    report = _report(_facts())
+    level = WorkIdentityLevel.TITLE_AND_CREATOR
+    assert _classify_sources(report, (_linked_cover(),), level) == (
+        "plausible_match",
+        ["owner_link_unqualified"],
+        [],
+    )
+    # Control: without the gate the same record reaches the ordinary rules.
+    with mock.patch.object(cover_identity, "owner_link_admission", return_value=None):
+        ungated = _classify_sources(report, (_linked_cover(),), level)
+    assert "owner_link_unqualified" not in ungated[1]
+
+
+class _DescriptionRepository:
+    def __init__(self, report: MetadataReport) -> None:
+        self.report = report
+        self.store_reads = 0
+
+    def get(self, _report_id: str) -> str:
+        return self.report.to_json()
+
+    def description_advice_store(self) -> SimpleNamespace:
+        self.store_reads += 1
+        return SimpleNamespace(read=lambda _case: None)
+
+
+@pytest.mark.parametrize(
+    ("linked", "store_reads"),
+    [
+        pytest.param(True, 0, id="link-kept-record-abstains"),
+        pytest.param(False, 1, id="unlinked-report-reads-advice"),
+    ],
+)
+def test_automatic_description_admission_abstains_beside_a_link_kept_record(
+    linked: bool, store_reads: int
+) -> None:
+    report = _report(_facts()) if linked else _report(None, lane_status=None)
+    repository = _DescriptionRepository(report)
+    action = SimpleNamespace(
+        review_case_id="review_case_" + "0" * 64, report_id=report.report_id
+    )
+    admit_staged_description(cast("Any", repository), cast("Any", action))
+    assert repository.store_reads == store_reads

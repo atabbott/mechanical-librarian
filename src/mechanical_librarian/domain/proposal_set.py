@@ -100,6 +100,7 @@ from mechanical_librarian.domain.metadata_report import (
     manifestation_publication_contradicted,
     normalize_date_value,
     normalize_title,
+    owner_link_admission,
     provider_candidate_exact_work_identity_admission,
     provider_candidate_series_identity_matches,
     provider_candidate_set_exact_work_identity_admission,
@@ -142,7 +143,9 @@ PROPOSAL_SCHEMA = "proposal-set-v8"
 # may be applied, and it is bound into the set's identity rather than derived
 # beside it (#966).
 MEDIA_KINDS = ("ebook", "audiobook")
-POLICY_VERSION = "fixed-conservative-v47"
+POLICY_VERSION = "fixed-conservative-v48"
+# The identifier destinations S25 keeps off owner-link evidence (#1477).
+_IDENTIFIER_DESTINATIONS = frozenset({TargetDestination.ISBN, TargetDestination.ASIN})
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -2288,6 +2291,14 @@ def _observations(
             ):
                 continue
             if (provider.provider, candidate.identity) in withheld:
+                continue
+            # An identifier is never proposed from a record only the owner's
+            # link or its anchor kept (#1477, S25): the link names the work,
+            # and identifiers keep their own rules.
+            if destination in _IDENTIFIER_DESTINATIONS and (
+                owner_link_admission(report, provider.provider, candidate.identity)
+                is not None
+            ):
                 continue
             # Sibling ASINs of one recording are one edition (#1316).
             edition_asin = (
