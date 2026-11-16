@@ -90,8 +90,10 @@ CEILING = {
     # refuses signing out other browsers too.
     # 3367 since #1336 opened the write plan's export reader beside the
     # permission reader: one more query-only projection, its window and close,
-    # and one keyword argument at each review application.
-    "composition.py": 3367,
+    # and one keyword argument at each review application. 3368 since #1494
+    # passed the recovery store's answered sources to the throttling read: one
+    # argument.
+    "composition.py": 3368,
     # 142 since #1372 PR 1c's run_taste_build_reviewer, the taste build's
     # counterpart of run_description_reviewer.
     "contained_reviewer.py": 142,

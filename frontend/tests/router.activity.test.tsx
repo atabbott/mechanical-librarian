@@ -5238,6 +5238,8 @@ describe('owner language in Activity (#1286)', () => {
       reasons: ['burst_throttled'],
       deferred: 3,
       next_retry_at: null,
+      notice_at: null,
+      untried: false,
       ...overrides,
     }
     const http: ReviewHttp = {
@@ -5251,7 +5253,12 @@ describe('owner language in Activity (#1286)', () => {
         actionable: false,
         paused: false,
         libraries: [],
-        provider_throttling: { generation: 1, retry: 'available', entries: [throttle] },
+        provider_throttling: {
+          generation: 1,
+          retry: 'available',
+          entries: [throttle],
+          answered: [],
+        },
       })),
     }
     renderRoute('/activity', http)

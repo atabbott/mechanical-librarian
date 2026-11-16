@@ -158,8 +158,13 @@ class RecoveryMember:
 
 @dataclass(frozen=True, slots=True)
 class RecoveryRun:
+    """How one run ended: its state, the fanout members that succeeded, and
+    whether it settled any member at all (stale, failed or completed, canary
+    or fanout), which changes what is waiting whatever the final state."""
+
     state: str
     fanout: int = 0
+    settled: bool = False
 
 
 class ScopedProviderRecoveryRunner:
@@ -248,6 +253,7 @@ class ScopedProviderRecoveryRunner:
         )
         if fanout_state is None and claimed is None:
             return RecoveryRun("idle")
+        settled = False
         if fanout_state is not None:
             canary = None
         else:
@@ -270,7 +276,10 @@ class ScopedProviderRecoveryRunner:
                 now=self._current(current),
                 blocked_targets=blocked,
             )
-            return RecoveryRun(missing.state if missing is not None else "idle")
+            return RecoveryRun(
+                missing.state if missing is not None else "idle",
+                settled=missing is not None,
+            )
         if fanout_state is None:
             assert claimed is not None
             while canary is not None:
@@ -305,7 +314,7 @@ class ScopedProviderRecoveryRunner:
                             now=current,
                         )
                         self._job_event(started, canary, "held")
-                        return RecoveryRun("target_held")
+                        return RecoveryRun("target_held", settled=settled)
                     if failure == "stale":
                         self._store.complete_stale_job(
                             job=canary,
@@ -313,6 +322,7 @@ class ScopedProviderRecoveryRunner:
                             now=current,
                         )
                         self._job_event(started, canary, "stale")
+                        settled = True
                         canary = self._store.claim_job(
                             recovery=claimed,
                             token=token,
@@ -331,7 +341,7 @@ class ScopedProviderRecoveryRunner:
                             evidence=evidence,
                         )
                         self._job_event(started, canary, "failed", evidence)
-                        return RecoveryRun(exhausted.state)
+                        return RecoveryRun(exhausted.state, settled=True)
                     self._store.complete_canary_failure(
                         job=canary,
                         token=token,
@@ -342,7 +352,7 @@ class ScopedProviderRecoveryRunner:
                         retry_after=retry_after,
                     )
                     self._job_event(started, canary, "failed", evidence)
-                    return RecoveryRun("waiting")
+                    return RecoveryRun("waiting", settled=True)
                 current = self._current(current)
                 fanout_state = self._store.authorize_fanout(
                     job=canary,
@@ -357,6 +367,7 @@ class ScopedProviderRecoveryRunner:
                     "settled",
                     evidence or RecoveryAttemptEvidence("completed"),
                 )
+                settled = True
                 break
             if canary is None:
                 completed = self._store.complete_success(
@@ -364,7 +375,7 @@ class ScopedProviderRecoveryRunner:
                     recovery=claimed,
                     now=self._current(current),
                 )
-                return RecoveryRun(completed.state)
+                return RecoveryRun(completed.state, settled=settled)
         assert fanout_state is not None
         fanout = 0
         while not self._cancelled():
@@ -404,6 +415,7 @@ class ScopedProviderRecoveryRunner:
                 )
                 self._job_event(started, member, "settled", completed_evidence)
                 fanout += 1
+                settled = True
             except Exception as error:
                 # ``_classify_failure`` does the naming here as it does in the
                 # canary lane, but this block is wider than that one: it also
@@ -428,7 +440,7 @@ class ScopedProviderRecoveryRunner:
                         now=current,
                     )
                     self._job_event(started, member, "held")
-                    return RecoveryRun("target_held", fanout)
+                    return RecoveryRun("target_held", fanout, settled)
                 if failure == "stale":
                     self._store.complete_stale_job(
                         job=member,
@@ -436,6 +448,7 @@ class ScopedProviderRecoveryRunner:
                         now=current,
                     )
                     self._job_event(started, member, "stale")
+                    settled = True
                 elif failure in RECOVERY_FAILURES:
                     self._store.interrupt_fanout(
                         job=member,
@@ -447,7 +460,7 @@ class ScopedProviderRecoveryRunner:
                         retry_after=retry_after,
                     )
                     self._job_event(started, member, "failed", evidence)
-                    return RecoveryRun("waiting", fanout)
+                    return RecoveryRun("waiting", fanout, True)
                 else:
                     self._store.complete_job(
                         job=member,
@@ -458,16 +471,17 @@ class ScopedProviderRecoveryRunner:
                         evidence=evidence,
                     )
                     self._job_event(started, member, "failed", evidence)
+                    settled = True
         if self._cancelled():
-            return RecoveryRun("fanout", fanout)
+            return RecoveryRun("fanout", fanout, settled)
         if self._store.fanout_pending(recovery=fanout_state):
-            return RecoveryRun("fanout", fanout)
+            return RecoveryRun("fanout", fanout, settled)
         completed = self._store.finish_fanout(
             recovery=fanout_state,
             token=token,
             now=self._current(current),
         )
-        return RecoveryRun(completed.state, fanout)
+        return RecoveryRun(completed.state, fanout, settled)
 
 
 __all__ = [

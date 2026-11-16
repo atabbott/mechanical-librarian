@@ -332,17 +332,9 @@ describe('Application shell', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Preparation needs attention' }))
     expect(await screen.findByText('Complete · some works could not finish')).toBeVisible()
-    expect(
-      screen.getByText(
-        // A finished scan's split is its buckets below, in the same words.
-        '7 of 7 checked',
-      ),
-    ).toBeVisible()
-    // A finished scan lists the buckets books actually reached, not a wall of
-    // zeros for the ones nothing did.
-    expect(
-      [...document.querySelectorAll('.preparation-stages dt')].map((term) => term.textContent),
-    ).toEqual(['Ready to browse', 'Could not finish'])
+    // The popover counts works; the stage buckets stay in the Library panel (#1494).
+    expect(screen.getByText('7 of 7 works checked')).toBeVisible()
+    expect(document.querySelector('.preparation-stages')).toBeNull()
     expect(screen.queryByText('Not started')).toBeNull()
     expect(screen.queryByText('Reading your files')).toBeNull()
   })
@@ -465,23 +457,13 @@ describe('Application shell', () => {
     const audiobooks = screen.getByText('Audiobooks', { selector: 'strong' }).closest('article')
     const magazines = screen.getByText('Magazines', { selector: 'strong' }).closest('article')
     if (!books || !audiobooks || !magazines) throw new Error('each library has its own row')
-    // A finished row states its split once, in its buckets, in the run line's
-    // words: the run line is the Books buckets, the one library in the run.
-    const buckets = (row: Element) =>
-      [...row.querySelectorAll('.preparation-stages div')].map((bucket) => [
-        bucket.querySelector('dt')?.textContent,
-        bucket.querySelector('dd')?.textContent,
-      ])
+    // Each row counts works checked; the split stays in the run line (#1494).
     expect(within(books).getByText('Complete · some works could not finish')).toBeVisible()
-    expect(within(books).getByText('4 of 4 checked')).toBeVisible()
-    expect(buckets(books)).toEqual([
-      ['Ready to browse', '1'],
-      ['Not matched', '1'],
-      ['Could not finish', '2'],
-    ])
+    expect(within(books).getByText('4 of 4 works checked')).toBeVisible()
+    expect(books.querySelector('.preparation-stages')).toBeNull()
     expect(within(audiobooks).getByText('Complete · not in this run')).toBeVisible()
-    expect(within(audiobooks).getByText('1 of 1 checked')).toBeVisible()
-    expect(buckets(audiobooks)).toEqual([['Recorded, nothing to decide', '1']])
+    expect(within(audiobooks).getByText('1 of 1 works checked')).toBeVisible()
+    expect(audiobooks.querySelector('.preparation-stages')).toBeNull()
     expect(within(magazines).getByText('Not scanned yet')).toBeVisible()
 
     // Figures not yet known read as an ellipsis, and nothing is marked.
@@ -584,7 +566,7 @@ describe('Application shell', () => {
     await user.click(trigger)
     expect(screen.getByRole('heading', { name: 'Preparation stopped' })).toBeVisible()
     expect(screen.getByText(/Restart the Mechanical Librarian service/)).toBeVisible()
-    expect(screen.getByText('2 of 4 checked')).toBeVisible()
+    expect(screen.getByText('2 of 4 works checked')).toBeVisible()
     for (const name of ['Scan now', 'Retry', 'Pause']) {
       const control = screen.getByRole('button', { name })
       expect(control).toHaveAttribute('aria-disabled', 'true')
@@ -635,7 +617,8 @@ describe('Application shell', () => {
     // A state reads in the owner's words, never as the store's identifier; the
     // transport refuses a state the label table does not name (#1286).
     expect(screen.getByText('Finding works')).toBeVisible()
-    expect(screen.getByText(wholeText('1 of 2 checked · 0 ready to browse'))).toBeVisible()
+    expect(screen.getByText('1 of 2 works checked')).toBeVisible()
+    expect(screen.queryByText(/ready to browse/u)).toBeNull()
     expect(
       screen.getByText(
         'Scan now prepares a library again, including the books that could not finish.',
@@ -659,6 +642,70 @@ describe('Application shell', () => {
     await waitFor(() => expect(trigger).toHaveFocus())
     expect(screen.queryByRole('heading', { name: 'Background activity' })).toBeNull()
   })
+
+  it.each(['/library?lens=all', '/settings?group=connection'])(
+    'hands focus to the Settings route when the popover key link is followed from %s (#1494 R4)',
+    async (start) => {
+      const user = userEvent.setup()
+      const { view: settingsView } = await import('./settingsFixtures')
+      const http: ReviewHttp = {
+        ...createHttp(),
+        getSettings: vi.fn(async () => settingsView()),
+        getPreparation: vi.fn(async (): Promise<PreparationView> => ({
+          ...idlePreparation,
+          libraries: [
+            {
+              stages: [],
+              blocked: 0,
+              recorded: 0,
+              not_matched: 0,
+              checked: 2,
+              connection: 'primary',
+              library: 'Books',
+              library_id: 'books',
+              ready: 2,
+              rescan_requested: false,
+              scan_id: null,
+              state: 'completed',
+              total: 2,
+            },
+          ],
+          provider_throttling: {
+            generation: 1,
+            retry: 'available',
+            entries: [
+              {
+                library: 'Books',
+                adapter: 'google_books',
+                state: 'waiting',
+                reasons: ['quota_exhausted'],
+                deferred: 5,
+                next_retry_at: null,
+                remedy: 'add_api_key',
+                notice_at: null,
+                untried: false,
+              },
+            ],
+            answered: [],
+          },
+        })),
+      }
+      renderRoute(start, http)
+      await user.click(
+        await screen.findByRole('button', { name: 'Preparation idle. A source needs you.' }),
+      )
+      const popover = await screen.findByRole('region', { name: 'Background activity' })
+      await user.click(within(popover).getByRole('link', { name: 'Add a Google Books API key' }))
+      expect(screen.queryByRole('region', { name: 'Background activity' })).toBeNull()
+      const main = document.getElementById('main-content')
+      await waitFor(() => expect(main).toHaveAttribute('data-restored-path', '/settings'))
+      await waitFor(() => {
+        const active = document.activeElement
+        expect(active).not.toBe(document.body)
+        expect(main?.contains(active)).toBe(true)
+      })
+    },
+  )
 
   it('closes the preparation panel when focus tabs off either end of it', async () => {
     const user = userEvent.setup()
@@ -2280,6 +2327,22 @@ describe('Theme rule', () => {
     await userEvent.setup().click(toggle)
     expect(document.documentElement.dataset.theme).toBe('light')
     expect(document.cookie).toContain('ml_theme=light')
+  })
+
+  it('shows the theme switch and Sign out as icons with their names and tooltips (#1494)', async () => {
+    document.cookie = 'ml_theme=light; Path=/'
+    renderRoute('/library?lens=all')
+    const theme = await screen.findByRole('button', { name: 'Use dark mode' })
+    const signOut = screen.getByRole('button', { name: 'Sign out' })
+    for (const button of [theme, signOut]) {
+      expect(button.querySelector('svg')).toHaveAttribute('aria-hidden', 'true')
+      const tooltip = button.querySelector('.masthead-tooltip')
+      expect(tooltip).toHaveAttribute('aria-hidden', 'true')
+      // The tooltip is the only text, and it says the name.
+      expect(button).toHaveTextContent(tooltip?.textContent ?? '', { normalizeWhitespace: true })
+      expect(tooltip?.textContent).toBe(button.getAttribute('aria-label'))
+    }
+    expect(theme).not.toHaveTextContent(/^(Light|Dark)/u)
   })
 
   it('keeps a saved choice over the system preference', async () => {
