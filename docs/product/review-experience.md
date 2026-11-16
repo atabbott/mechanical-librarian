@@ -68,12 +68,11 @@ covers the claim token and container.
   refusal sits beside its field and clears when the field changes. It gives a
   safe cause and one remedy, never a code, and stays in view at 200% text.
 - Completed steps collapse to a row with Change. The step list stays beside
-  the step while it fits the window, and scrolls inside itself when it does
-  not. Reopening a step removes only the answers and secrets that depend on
+  the step while it fits the window, and otherwise scrolls inside itself.
+  Reopening a step removes only the answers and secrets that depend on
   it. Resuming setup returns to the first incomplete step. A change in another
   tab restores the latest recorded step.
-- The password step shows a one-line plain-HTTP notice only when the page is
-  not served over HTTPS.
+- The password step shows a one-line plain-HTTP notice only without HTTPS.
 - A failed connection names its cause, the address and one remedy. The causes
   include a name that does not resolve, a refused connection, an unverified
   certificate, no answer in time and a rejected key. Setup refuses an address
@@ -92,7 +91,7 @@ covers the claim token and container.
   sources that suit the chosen libraries start ticked, and each can be
   unticked before Continue. Hardcover and Google Books need an API key while
   they are on. Without either, setup says most ebooks will wait for your
-  review, and still lets you continue.
+  review, and lets you continue.
 - The reviewer step checks an existing Codex sign-in by itself and offers one
   Sign in with ChatGPT button. OpenRouter starts on the recommended model with
   its cost per 1,000 works; other models wait behind Choose another model, and
@@ -104,10 +103,11 @@ covers the claim token and container.
 
 Before Start a summary lists each answer in step order, and each row reopens
 its step. It says once: `Nothing in your library changes. Writes stay off until
-you turn them on in Activity.` Start then switches the same address to the
+you turn them on in Activity.` Start switches the same address to the
 workspace, starts preparation and opens Library, signed in, on the new run
 when it is known within a few seconds. Library's write handoff appears once a
-prepared change waits for write permission.
+prepared change waits for write permission. The
+[first review](first-review.md) guide opens when a field first needs you.
 
 ## Workspace shell
 

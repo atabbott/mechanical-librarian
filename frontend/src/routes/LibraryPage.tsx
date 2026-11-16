@@ -6,6 +6,7 @@ import {
   queryWorkClass,
   useRequiredQuery as useQuery,
 } from '../queryWork'
+import { FirstReviewGuide } from './FirstReviewGuide'
 import { RecordingIdentityBasis } from '../components/RecordingIdentityBasis'
 import { StaleBuildRead } from '../components/StaleBuildRead'
 import { useInfiniteQuery } from '@tanstack/react-query'
@@ -1492,6 +1493,10 @@ export default function LibraryPage({
       </header>
       <PreparationNotice routeIdentity={routeIdentity} />
       <ProviderThrottleNotice />
+      <FirstReviewGuide
+        first={attention.isPlaceholderData ? undefined : attentionItems[0]}
+        onOpen={selectFromQueue}
+      />
       <div
         className={`library-workspace${hasSelection ? ' has-selection' : ''}${search.attention === 'open' ? ' attention-open' : ''}`}
       >

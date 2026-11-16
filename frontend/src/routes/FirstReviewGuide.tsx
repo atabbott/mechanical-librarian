@@ -1,0 +1,288 @@
+// The first review guide (#1338): a short walkthrough of one example field,
+// shown once after setup when a field first needs a decision. It calls no API
+// and stores nothing; its only write removes the cookie that setup's Start set.
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+
+import type { ChoiceContextView } from '../api/http'
+import { choiceRadios, moveChoiceFocus } from '../choiceGroup'
+import { MetadataChoice } from './FieldDecisionChoices'
+
+const owedNow = () => /(?:^|; )ml_first_review=owed(?:;|$)/.test(document.cookie)
+const clearOwed = () => {
+  document.cookie = 'ml_first_review=; Path=/; Max-Age=0'
+}
+
+// One list: the counter takes its length, so a step is added here alone.
+const steps = [
+  {
+    name: 'Evidence',
+    text: 'Each field asks one question. Evidence under a value lists the sources that gave it.',
+  },
+  {
+    name: 'Choices',
+    text: 'Keep the current value or choose a new one. Try it on this example.',
+  },
+  {
+    name: 'Writes',
+    text: 'A choice records your decision for this one field. Nothing is written to Audiobookshelf until you give write permission in Activity.',
+  },
+]
+const last = steps.length - 1
+const recordedNothing = 'This is an example, so nothing was recorded.'
+const question = 'Which title should this work use?'
+
+// The example's values, in the server's own formats ("Title: …" and the
+// source names). The current card has no evidence, so the example creates no
+// `choice-evidence-current` id beside a real field's.
+const currentContext: ChoiceContextView = {
+  alternativeId: null,
+  evidence: [],
+  limitations: [],
+  rationale: '',
+  recommendation: 'no_recommendation',
+  recommendationReason: '',
+  selection: 'current',
+  matchBasis: null,
+}
+const proposedContext: ChoiceContextView = {
+  alternativeId: 'example',
+  evidence: ['Hardcover', 'Open Library'].map((source) => ({
+    language: null,
+    observation: 'Title: Example Story',
+    role: 'external_corroboration' as const,
+    source,
+  })),
+  limitations: [],
+  rationale: 'Hardcover, Open Library',
+  recommendation: 'no_recommendation',
+  recommendationReason: '',
+  selection: 'proposed',
+  matchBasis: null,
+}
+const values = [
+  { id: 'current' as const, current: true, value: 'Example Story - Disc 1' },
+  { id: 'proposed' as const, current: false, value: 'Example Story' },
+]
+type Pick = (typeof values)[number]['id'] | null
+
+/** The example field, on the cards a real field uses. Its choice is local state. */
+function ExampleField({
+  locked,
+  pick,
+  setPick,
+}: {
+  locked: boolean
+  pick: Pick
+  setPick: (pick: Pick) => void
+}) {
+  const [evidenceOpen, setEvidenceOpen] = useState(true)
+  const choices = choiceRadios(values, (choice) => ({
+    checked: pick === choice.id,
+    disabled: false,
+  }))
+  const card = (choice: (typeof choices)[number]) => (
+    <MetadataChoice
+      key={choice.id}
+      context={choice.current ? currentContext : proposedContext}
+      current={choice.current}
+      disabled={false}
+      evidenceName={`Evidence for ${choice.current ? 'current' : 'proposed'} value: ${choice.value}`}
+      expanded={!choice.current && evidenceOpen}
+      label=""
+      longDescription={false}
+      onChoose={() => setPick(choice.id)}
+      radio={choice.radio}
+      recording={false}
+      selected={pick === choice.id}
+      toggle={() => setEvidenceOpen(!evidenceOpen)}
+      value={choice.value}
+    />
+  )
+  return (
+    <div className="first-review-example" inert={locked || undefined}>
+      <p className="first-review-work">
+        <strong>Example Story</strong> · Example Author
+      </p>
+      <p className="first-review-group">Example field</p>
+      <h3 className="first-review-question">{question}</h3>
+      <p className="first-review-reason">Two sources give the title without the disc number.</p>
+      <section className="direct-choice protected-choice">
+        <div
+          className="direct-choice-grid"
+          role="radiogroup"
+          aria-label={question}
+          onKeyDown={moveChoiceFocus}
+        >
+          <div className="current-choice-list">
+            <header>
+              <strong>Keep current value</strong>
+            </header>
+            {choices.filter((choice) => choice.current).map(card)}
+          </div>
+          <div className="proposed-choice-list has-one-choice">
+            <header>
+              <strong>Choose a new value</strong>
+            </header>
+            {choices.filter((choice) => !choice.current).map(card)}
+          </div>
+        </div>
+      </section>
+    </div>
+  )
+}
+
+const stepText = (index: number) => (
+  <>
+    <header>
+      <h3>{steps[index]?.name}</h3>
+      <p className="first-review-count">
+        Step {index + 1} of {steps.length}
+      </p>
+    </header>
+    <p>{steps[index]?.text}</p>
+  </>
+)
+
+function Guide({ onClose, onOpenFirst }: { onClose: () => void; onOpenFirst?: () => void }) {
+  const dialog = useRef<HTMLDialogElement>(null)
+  const heading = useRef<HTMLHeadingElement>(null)
+  const footer = useRef<HTMLElement>(null)
+  const before = useRef<Element | null>(null)
+  const [step, setStep] = useState(0)
+  const [pick, setPick] = useState<Pick>(null)
+  useEffect(() => {
+    const element = dialog.current
+    if (!element || element.open) return
+    before.current = document.activeElement
+    element.showModal()
+    heading.current?.focus()
+    // The example is tallest as it opens. Holding that height keeps the
+    // heading and the buttons still when its evidence is hidden.
+    const hold = () => {
+      element.style.minHeight = ''
+      element.style.minHeight = `${String(element.offsetHeight)}px`
+    }
+    hold()
+    window.addEventListener('resize', hold)
+    return () => {
+      window.removeEventListener('resize', hold)
+      element.close()
+    }
+  }, [])
+  // Closes at once, so the page is live again before anything else moves focus.
+  const end = (then: () => void) => {
+    dialog.current?.close()
+    // Back to the control that had focus. A place Library focused for a
+    // screen reader gives way to the one it would focus now.
+    const was = before.current
+    const back =
+      was instanceof HTMLElement && was.tabIndex >= 0 && was.isConnected
+        ? was
+        : document.querySelector<HTMLElement>('#main-content [data-route-focus]')
+    back?.focus({ preventScroll: true })
+    then()
+  }
+  useLayoutEffect(() => {
+    // A step change removes Back or Next. Focus stays on the pressed button
+    // while it is still there, and otherwise moves to the step's main button.
+    if (dialog.current?.open && !footer.current?.contains(document.activeElement))
+      footer.current?.querySelector<HTMLElement>('.button-primary')?.focus()
+  }, [step])
+  return createPortal(
+    <dialog
+      ref={dialog}
+      className="first-review-guide"
+      aria-labelledby="first-review-heading"
+      onCancel={(event) => {
+        event.preventDefault()
+        end(onClose)
+      }}
+    >
+      <div className="first-review-body">
+        <h2 id="first-review-heading" ref={heading} tabIndex={-1}>
+          How a decision works
+        </h2>
+        <ExampleField locked={step === last} pick={pick} setPick={setPick} />
+        {/* The live step and a hidden copy of every step share one cell, so
+            the dialog keeps the height of its tallest step. */}
+        <div className="first-review-steps">
+          <div className="first-review-step">
+            <div className="first-review-text" aria-live="polite">
+              {stepText(step)}
+            </div>
+            <p className="first-review-status" role="status">
+              {pick && step < last ? recordedNothing : null}
+            </p>
+          </div>
+          {steps.map((each, index) => (
+            <div key={each.name} className="first-review-step" aria-hidden="true">
+              <div className="first-review-text">{stepText(index)}</div>
+              <p className="first-review-status" />
+            </div>
+          ))}
+        </div>
+      </div>
+      <footer className="first-review-footer" ref={footer}>
+        {step > 0 ? (
+          <button type="button" onClick={() => setStep(step - 1)}>
+            Back
+          </button>
+        ) : null}
+        <span className="first-review-spacer" />
+        <button
+          type="button"
+          className={step === last && !onOpenFirst ? 'button-primary' : undefined}
+          onClick={() => end(onClose)}
+        >
+          Close
+        </button>
+        {step < last ? (
+          <button type="button" className="button-primary" onClick={() => setStep(step + 1)}>
+            Next
+          </button>
+        ) : onOpenFirst ? (
+          <button type="button" className="button-primary" onClick={() => end(onOpenFirst)}>
+            Open your first field
+          </button>
+        ) : null}
+      </footer>
+    </dialog>,
+    document.body,
+  )
+}
+
+/**
+ * Mounted by Library. `first` is the Attention queue's first item, and
+ * `onOpen` opens it as the queue's own row does.
+ */
+export function FirstReviewGuide({
+  first,
+  onOpen,
+}: {
+  first: { id: string; destination: string; attentionCursor: string | undefined } | undefined
+  onOpen: (reviewCaseId: string, field: string, attentionCursor: string | undefined) => void
+}) {
+  const [owed, setOwed] = useState(owedNow)
+  // Once open it stays open until closed, even if the queue empties meanwhile.
+  const [opened, setOpened] = useState(false)
+  if (owed && first && !opened) setOpened(true)
+  if (!owed || !opened) return null
+  const close = () => {
+    clearOwed()
+    setOwed(false)
+  }
+  return (
+    <Guide
+      onClose={close}
+      {...(first
+        ? {
+            onOpenFirst: () => {
+              close()
+              onOpen(first.id, first.destination, first.attentionCursor)
+            },
+          }
+        : {})}
+    />
+  )
+}
