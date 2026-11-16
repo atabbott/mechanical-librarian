@@ -69,6 +69,7 @@ from mechanical_librarian.domain.metadata_report import (
     LocalClaim,
     MetadataReport,
     ProviderQueryKind,
+    ProviderStatus,
     TargetDestination,
     TargetField,
     TargetFieldState,
@@ -701,3 +702,88 @@ def test_a_wider_level_reads_the_standing_link_not_the_local_values(
     # file's own title and author.
     with mock.patch.object(type(report.owner_link), "stands", False):
         assert admitted()
+
+
+OTHER_ISBN = "9781861972712"
+
+
+def _volumes(isbn: str, count: int) -> object:
+    return {
+        "totalItems": count,
+        "items": [
+            {
+                "id": f"volume_other_{index}",
+                "volumeInfo": {
+                    "title": f"Other Title {index}",
+                    "authors": [prep.LOCAL_AUTHOR],
+                    "industryIdentifiers": [{"type": "ISBN_13", "identifier": isbn}],
+                    "printType": "BOOK",
+                    "language": "en",
+                },
+            }
+            for index in range(count)
+        ],
+    }
+
+
+def test_a_link_record_stays_when_the_phases_together_pass_the_bound(
+    tmp_path: Path,
+) -> None:
+    # Codex R2 on #1938: the link phase keeps one record and the main phase
+    # five others, each within the bound, together over it. The main phase's
+    # lanes take the shared overflow; the link record's lane keeps it, so the
+    # link still replays admitted with its anchor and the report publishes.
+    path = prep._store(tmp_path)
+    prep._link(
+        path,
+        "ebooks",
+        "ebook",
+        OwnerLinkTarget(
+            OwnerLinkScope.EDITION,
+            "google_books",
+            prep.ISBN,
+            prep.LINKED_TITLE,
+            (prep.LINKED_AUTHOR,),
+        ),
+    )
+    opening = LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed=OTHER_ISBN,
+        canonical=OTHER_ISBN,
+        excerpt=OTHER_ISBN,
+        applicability="ebook",
+        checksum="valid_isbn_13",
+        applicability_basis="ebook",
+    )
+    report = prep._prepare_ebook(
+        path,
+        (
+            ProviderBinding(
+                "google_books",
+                True,
+                lambda: prep._google(
+                    [],
+                    lambda query: (
+                        prep._volume(prep.LINKED_TITLE, prep.LINKED_AUTHOR)
+                        if query == f"isbn:{prep.ISBN}"
+                        else _volumes(OTHER_ISBN, 5)
+                        if query == f"isbn:{OTHER_ISBN}"
+                        else {"totalItems": 0}
+                    ),
+                ),
+                authority="google_books",
+            ),
+        ),
+        (opening,),
+    )
+    facts = report.owner_link
+    assert facts is not None
+    assert (facts.outcome, facts.anchor) == (
+        "admitted",
+        (prep.LINKED_TITLE, (prep.LINKED_AUTHOR,)),
+    )
+    google = prep._provider(report, "google_books")
+    by_family = {lane.matched_family: lane for lane in google.lanes}
+    assert len(by_family[prep.ISBN].candidates) == 1
+    assert by_family[OTHER_ISBN].status is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
+    assert not by_family[OTHER_ISBN].candidates

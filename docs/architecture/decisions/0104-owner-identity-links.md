@@ -49,7 +49,11 @@ about the work, and it should steer what preparation reads.
 
    A record that is absent is `missing`. A redirect or a `canonical_id` naming
    another record is `merged`. The pointer is never followed
-   ([provider egress](../provider-egress.md#owner-links)).
+   ([provider egress](../provider-egress.md#owner-links)). A provider's link
+   and main phases join into one observation under one candidate bound.
+   When together they pass it, or conflict, the main phase's lanes take the
+   overflow and the link lane keeps its record, so the link's outcome and
+   anchor stand as settled.
 4. **Admission `owner_link`.** A record the link lane returns is admitted on
    the link: it names the identity at every Book matching level. An edition
    link is re-checked at every preparation against the format the record

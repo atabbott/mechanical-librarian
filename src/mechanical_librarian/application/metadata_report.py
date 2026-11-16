@@ -1983,22 +1983,51 @@ def merge_phase_observations(
         (value.accessed_at for _, value in reversed(parts) if value.accessed_at),
         None,
     )
-    results: list[ProviderLaneResult] = []
+    phases: list[tuple[ProviderLaneResult, ...]] = []
     for plans, observation in parts:
         planned: dict[str, MetadataDiscoveryLane] = {}
         for plan in plans:
             for planned_lane in plan.lanes:
                 planned.setdefault(planned_lane.identity, planned_lane)
         candidates = {value.identity: value for value in observation.candidates}
-        for lane in observation.lanes:
-            results.append(
+        phases.append(
+            tuple(
                 persisted_lane_result(
                     planned[lane.identity], lane, candidates, observation, accessed_at
                 )
+                for lane in observation.lanes
             )
+        )
     diagnostics: tuple[FailureDiagnostic, ...] = ()
     for _, observation in parts:
         diagnostics = merge_provider_diagnostics(diagnostics, observation.diagnostics)
+    # Each phase kept its records within the observation's bound. When they
+    # together pass it, or conflict, the later phase's lanes take the
+    # aggregate failure and the link record's lane keeps what it kept, so
+    # the settled link facts and their anchor still replay (#1477).
+    held, conflict = _merged_lane_candidates(phases[0])
+    combined, combined_conflict = _merged_lane_candidates(
+        tuple(result for phase in phases for result in phase)
+    )
+    if (
+        not conflict
+        and len(held) <= MAX_CANDIDATES
+        and (combined_conflict or len(combined) > MAX_CANDIDATES)
+    ):
+        failure = (
+            ProviderStatus.MALFORMED
+            if combined_conflict
+            else ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
+        )
+        phases[1:] = [
+            tuple(_aggregate_failed_result(result, failure) for result in phase)
+            for phase in phases[1:]
+        ]
+        if combined_conflict:
+            diagnostics = merge_provider_diagnostics(
+                diagnostics, (_IDENTITY_CONFLICT_DIAGNOSTIC,)
+            )
+    results = [result for phase in phases for result in phase]
     return provider_observation(
         first.provider,
         tuple(results),
@@ -2017,6 +2046,38 @@ def merge_phase_observations(
                     "replays",
                     "undispatched_incomplete",
                 )
+            )
+        ),
+    )
+
+
+def _aggregate_failed_result(
+    result: ProviderLaneResult, failure: ProviderStatus
+) -> ProviderLaneResult:
+    """A candidate-bearing lane as the observation's aggregate failure leaves it."""
+    if result.status is not ProviderStatus.CANDIDATES:
+        return result
+    return ProviderLaneResult(
+        result.lane,
+        failure,
+        accessed_at=result.accessed_at,
+        diagnostics=(
+            merge_provider_diagnostics(
+                result.diagnostics, (_IDENTITY_CONFLICT_DIAGNOSTIC,)
+            )
+            if failure is ProviderStatus.MALFORMED
+            else result.diagnostics
+        ),
+        dispatch=(
+            None
+            if result.dispatch is None
+            else replace(
+                result.dispatch,
+                outcome=(
+                    DispatchOutcome.UNAVAILABLE
+                    if failure is ProviderStatus.MALFORMED
+                    else DispatchOutcome.OVERFLOW
+                ),
             )
         ),
     )
@@ -2053,36 +2114,7 @@ def provider_observation(
             else ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
         )
         results = tuple(
-            (
-                ProviderLaneResult(
-                    result.lane,
-                    aggregate_failure,
-                    accessed_at=result.accessed_at,
-                    diagnostics=(
-                        merge_provider_diagnostics(
-                            result.diagnostics,
-                            (_IDENTITY_CONFLICT_DIAGNOSTIC,),
-                        )
-                        if aggregate_failure is ProviderStatus.MALFORMED
-                        else result.diagnostics
-                    ),
-                    dispatch=(
-                        None
-                        if result.dispatch is None
-                        else replace(
-                            result.dispatch,
-                            outcome=(
-                                DispatchOutcome.UNAVAILABLE
-                                if aggregate_failure is ProviderStatus.MALFORMED
-                                else DispatchOutcome.OVERFLOW
-                            ),
-                        )
-                    ),
-                )
-                if result.status is ProviderStatus.CANDIDATES
-                else result
-            )
-            for result in results
+            _aggregate_failed_result(result, aggregate_failure) for result in results
         )
         candidates_by_identity = {}
         if conflict:
