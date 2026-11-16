@@ -3870,6 +3870,17 @@ _FIELD_TAB_TEXT = """() => [...document.querySelectorAll(
 }))"""
 
 
+def _field_tabs_are_whole(page: Page, tabs: list[dict[str, Any]], where: str) -> None:
+    assert [tab for tab in tabs if tab["clipped"] > 0] == [], (where, tabs)
+    assert [tab for tab in tabs if tab["text"].rstrip().endswith(("…", "..."))] == [], (
+        where,
+        tabs,
+    )
+    assert page.evaluate(
+        "() => document.documentElement.scrollWidth <= window.innerWidth"
+    ), where
+
+
 def test_compact_field_tabs_show_whole_names_and_status_words() -> None:
     """At phone widths and 200% text every field tab's name and status word
     is whole: none is clipped and none ends in an ellipsis (#1290)."""
@@ -3898,18 +3909,23 @@ def test_compact_field_tabs_show_whole_names_and_status_words() -> None:
                         where,
                         tabs,
                     )
-                    assert [tab for tab in tabs if tab["clipped"] > 0] == [], (
-                        where,
-                        tabs,
+                    _field_tabs_are_whole(page, tabs, where)
+                    # A pinned field says Pinned, whole, beside a waiting pin's
+                    # Decided and a changed pin's Needs you (#1346).
+                    page.goto(
+                        "https://react-platform.invalid/library?lens=all"
+                        "&preview=case-pins"
                     )
+                    expect(
+                        page.locator(".field-filmstrip .field-status").first
+                    ).to_be_visible()
+                    tabs = page.evaluate(_FIELD_TAB_TEXT)
                     assert [
-                        tab
+                        tab["text"]
                         for tab in tabs
-                        if tab["text"].rstrip().endswith(("…", "..."))
-                    ] == [], (where, tabs)
-                    assert page.evaluate(
-                        "() => document.documentElement.scrollWidth <= window.innerWidth"
-                    ), where
+                        if tab["text"] in {"Pinned", "Decided", "Needs you"}
+                    ] == ["Pinned", "Decided", "Needs you"], (where, tabs)
+                    _field_tabs_are_whole(page, tabs, where)
 
 
 def test_compact_selection_brings_back_to_works_into_view() -> None:
@@ -4390,6 +4406,41 @@ _OPTION_BESIDE_CHECKBOX = (
 )
 
 
+_PIN_WORDS = ".pin-foot, .choice-foot, .context-value dt, .choice-select > small"
+_PIN_BOXES = (
+    "() => [...document.querySelectorAll('.choice-pin')].map(node => {"
+    " const box = node.getBoundingClientRect();"
+    " return [box.width, box.height, box.left, box.right] })"
+)
+
+
+def _pins_keep_their_words_and_size(page: Page, where: str, width: int) -> None:
+    """In each state of a pin the words around it stay whole, the pin is a
+    44 px target inside the page, and the page is no wider than the window
+    (#1346)."""
+    for field, said in (
+        ("title", "Current value · Pinned"),
+        ("authors", "Your choice · Pinned"),
+        ("genres", "You pinned “Alternate history”."),
+    ):
+        page.goto(
+            "https://react-platform.invalid/library?lens=all"
+            f"&preview=case-pins&field={field}"
+        )
+        expect(page.locator(".decision-canvas").get_by_text(said)).to_be_visible()
+        page.evaluate(_TWO_FRAMES)
+        state = f"{where}, pinned {field}"
+        broken = page.evaluate(_POLICY_MID_WORD, _PIN_WORDS)
+        assert not broken, f"{state}: {broken}"
+        pins = page.evaluate(_PIN_BOXES)
+        assert pins, state
+        assert all(
+            round(w) >= 44 and round(h) >= 44 and left >= 0 and right <= width
+            for w, h, left, right in pins
+        ), f"{state}: {pins}"
+        assert page.evaluate("document.documentElement.scrollWidth") <= width, state
+
+
 def test_owner_controls_keep_every_word_whole_in_both_themes() -> None:
     """The entry and subset controls, with the previous value among their
     choices, break no word at any width or text size, in light and dark, with
@@ -4432,6 +4483,7 @@ def test_owner_controls_keep_every_word_whole_in_both_themes() -> None:
                 for width in (1440, 1100, 884, 761, 760, 390, 320):
                     where = f"{scheme}, {text} text at {width}px"
                     page.set_viewport_size({"width": width, "height": 900})
+                    _pins_keep_their_words_and_size(page, where, width)
                     page.goto(
                         "https://react-platform.invalid/library?lens=all"
                         "&preview=case-1&field=title"
@@ -4902,6 +4954,9 @@ def test_words_break_only_where_they_must() -> None:
         "selected": "/library?lens=all&preview=case-1",
         "attention": "/library?lens=all&attention=open",
         "review": "/review/case-1",
+        "pinned": "/library?lens=all&preview=case-pins&field=title",
+        "pin waiting": "/library?lens=all&preview=case-pins&field=authors",
+        "pin changed": "/library?lens=all&preview=case-pins&field=genres",
         "policy": "/policy?section=identity",
         "activity": "/activity?eventType=all&rangeDays=30&page=1&pageSize=25",
         "settings": "/settings?group=connection",
@@ -5152,6 +5207,23 @@ def test_insets_and_columns_never_cut_a_word_short() -> None:
                 for word in page.evaluate(
                     _SPLIT_THOUGH_THE_COLUMN_FITS,
                     [".activity-recovery", ".cm-activity-route"],
+                )
+            ]
+            # The changed pin's sentence sits in a bordered note at the foot of
+            # the field; its insets leave each word the line the canvas allows
+            # (#1346).
+            page.goto(
+                "https://react-platform.invalid/library?lens=all"
+                "&preview=case-pins&field=genres"
+            )
+            page.wait_for_load_state("networkidle")
+            expect(page.locator(".pin-note")).to_be_visible()
+            page.evaluate(_TWO_FRAMES)
+            failures += [
+                f"pin note, 200% text at {width}px: {word}"
+                for word in page.evaluate(
+                    _SPLIT_THOUGH_THE_COLUMN_FITS,
+                    [".pin-foot", ".decision-canvas"],
                 )
             ]
         assert failures == [], "\n".join(failures)

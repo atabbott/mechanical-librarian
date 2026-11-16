@@ -81,6 +81,7 @@ def _work(
     preparation_outcomes: list[dict[str, object]] | None = None,
     summary: dict[str, object] | None = None,
     cover: dict[str, object] | None = None,
+    pinned: int = 0,
 ) -> dict[str, object]:
     return {
         "cover": cover,
@@ -93,7 +94,7 @@ def _work(
         "media_kind": media_kind,
         "item": f"synthetic-item-{number}",
         "attention_count": attention,
-        "pinned_count": 0,
+        "pinned_count": pinned,
         "attention_state": (
             "needs_attention"
             if attention
@@ -220,6 +221,8 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
         case="case-5",
         attention=0,
         dispositions=["automatic"],
+        # A row that counts its pinned fields (#1346).
+        pinned=3,
     ),
     TERMINAL_LIBRARY_WORK,
     _work(
@@ -426,6 +429,8 @@ def _field(
     inventory_role: str | None = None,
     preservation_only: bool | None = None,
     owner_control: dict[str, object] | None = None,
+    pin: dict[str, object] | None = None,
+    pin_control: dict[str, object] | None = None,
 ) -> dict[str, object]:
     # The response schema states every projection member; the cohort names
     # only the ones a view reads. The rest take values no view shows, and an
@@ -512,8 +517,8 @@ def _field(
         ),
         "needs_attention": needs_attention,
         "manual_hold": manual_hold,
-        "pin": None,
-        "pin_control": None,
+        "pin": pin,
+        "pin_control": pin_control,
         "manual_return_requested": manual_return_requested,
         "manual_return_failed": manual_return_failed,
         "manual_required": needs_attention,
@@ -676,6 +681,81 @@ def _case(case_id: str) -> dict[str, object]:
                         },
                         "withdraw": None,
                     },
+                ),
+            ],
+        }
+
+    if case_id == "case-pins":
+        # One field for each state of an owner pin (#1346):
+        # in force on a value with nothing to choose, waiting on the value the
+        # owner chose, and changed in the library with alternatives left.
+        offered = {"pin": "available", "unpin": True}
+        long_title = "The Incomprehensibilities of Counterrevolutionary Cartographers"
+        chosen = ["Mara Venn", "Ivo North", "Pax Rill"]
+        return {
+            **_case("case-1"),
+            "review_case_id": case_id,
+            "fields": [
+                _field(
+                    "title",
+                    long_title,
+                    [],
+                    needs_attention=False,
+                    classification="human_recorded",
+                    classification_cause="pinned",
+                    classification_reason=(
+                        "You pinned this value. Mechanical Librarian will not ask "
+                        "about it or change it unless it changes in Audiobookshelf."
+                    ),
+                    editable=True,
+                    pin={
+                        "state": "in_force",
+                        "value": {
+                            "destination": "title",
+                            "state": "value",
+                            "value": long_title,
+                        },
+                    },
+                    pin_control=offered,
+                ),
+                _field(
+                    "authors",
+                    ["Mara Venn", "Ivo North"],
+                    [["Mara Venn"], chosen],
+                    needs_attention=False,
+                    editable=True,
+                    human_decision={
+                        "outcome": "accept",
+                        "actor": "owner",
+                        "selected_value": {"kind": "synthetic", "value": chosen},
+                    },
+                    pin={
+                        "state": "waiting",
+                        "value": {
+                            "destination": "authors",
+                            "state": "value",
+                            "value": chosen,
+                        },
+                    },
+                    pin_control=offered,
+                ),
+                _field(
+                    "genres",
+                    ["History"],
+                    [["History", "Travel"]],
+                    classification_cause="pin_changed",
+                    classification_reason=(
+                        "Audiobookshelf shows a different value from the one you pinned."
+                    ),
+                    pin={
+                        "state": "changed",
+                        "value": {
+                            "destination": "genres",
+                            "state": "value",
+                            "value": ["Alternate history"],
+                        },
+                    },
+                    pin_control=offered,
                 ),
             ],
         }

@@ -94,7 +94,6 @@ export function ContextValue({
           </div>
         ) : null}
       </dl>
-      {pin ? <PinButton {...pin} describedBy={valueId} /> : null}
       <button
         type="button"
         className="context-evidence-toggle"
@@ -104,6 +103,7 @@ export function ContextValue({
       >
         {expanded ? 'Hide evidence' : 'Evidence'}
       </button>
+      {pin ? <PinButton {...pin} describedBy={valueId} /> : null}
       {expanded ? (
         <ChoiceEvidencePanel
           context={context}

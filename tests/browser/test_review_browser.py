@@ -12297,6 +12297,120 @@ def test_an_open_entry_moves_to_the_case_that_superseded_it(library_last, named)
         _said_nothing_false_while_moving(page)
 
 
+def _pin_foot(page: Page, field: str):
+    return page.get_by_role("region", name=f"Pin on {field}", exact=True)
+
+
+def _pins_hold_their_size(page: Page) -> None:
+    """Every pin on screen is a 44 px target and the page never scrolls sideways."""
+    for width, size in ((1440, ""), (390, ""), (390, "200%"), (320, "200%")):
+        page.set_viewport_size({"width": width, "height": 900})
+        set_root_text(page, size)
+        try:
+            pins = page.evaluate(
+                "() => [...document.querySelectorAll('.choice-pin')].map(node => {"
+                " const box = node.getBoundingClientRect();"
+                " return [box.width, box.height, box.left, box.right] })"
+            )
+            assert pins, (width, size)
+            assert all(
+                round(w) >= 44 and round(h) >= 44 and left >= 0 and right <= width
+                for w, h, left, right in pins
+            ), (width, size, pins)
+            assert page.evaluate("document.documentElement.scrollWidth") <= width, (
+                width,
+                size,
+            )
+        finally:
+            set_root_text(page, "")
+    page.set_viewport_size({"width": 1440, "height": 900})
+
+
+def test_owner_pins_values_and_sees_a_pin_the_library_changed():
+    """#1346: one press of a card's pin records the value and then the pin and
+    stays on the field; a pin on a current value is in force at once; the
+    Library row counts both and History names them; and when the library then
+    shows another value, the field says which value was pinned and offers
+    Unpin."""
+    readback: list[Callable[[str, bool], str]] = []
+    posts: list[str] = []
+    with _owner_page(
+        genre_fixture=("Fantasy",), genre_current=("Drama",), owner_readback=readback
+    ) as (page, origin, case_id):
+
+        def sent(request) -> None:
+            if request.method == "POST" and request.url.endswith("/decisions"):
+                posts.append(json.loads(request.post_data)["outcome"])
+
+        page.on("request", sent)
+        page.goto(f"{origin}/library?lens=all&preview={case_id}&field=genres")
+        card = page.get_by_role("radio", name="Choose proposed value: Fantasy").locator(
+            "xpath=ancestor::article[1]"
+        )
+        pin = card.get_by_role("button", name="Pin this value", exact=True)
+        expect(pin).not_to_have_attribute("aria-pressed", re.compile(""))
+        _pins_hold_their_size(page)
+        pin.click()
+        foot = _pin_foot(page, "Genres")
+        expect(
+            foot.get_by_role("status").get_by_text("Pinned.", exact=True)
+        ).to_be_visible()
+        assert posts == ["accept", "pin"]
+        assert "field=genres" in page.url
+        expect(card).to_contain_text("Your choice · Pinned")
+        expect(card.get_by_role("button", name="Unpin", exact=True)).to_be_focused()
+        expect(foot).to_contain_text(
+            "You pinned this value. The pin starts once the change is written."
+        )
+        expect(foot.get_by_role("button", name="Unpin", exact=True)).to_have_count(0)
+        _pins_hold_their_size(page)
+
+        # A field with nothing to choose: the pin beside its current value.
+        del posts[:]
+        page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
+        value = page.get_by_role("region", name="Title current value", exact=True)
+        value.get_by_role("button", name="Pin this value", exact=True).click()
+        expect(
+            _pin_foot(page, "Title")
+            .get_by_role("status")
+            .get_by_text("Pinned.", exact=True)
+        ).to_be_visible()
+        assert posts == ["pin"]
+        expect(value).to_contain_text("Current value · Pinned")
+        expect(value.get_by_role("button", name="Unpin", exact=True)).to_be_focused()
+        expect(
+            page.locator(".field-filmstrip button", has_text="Title")
+        ).to_contain_text("Pinned")
+        _pins_hold_their_size(page)
+
+        page.goto(f"{origin}/library?lens=all")
+        expect(
+            page.get_by_role(
+                "button", name=re.compile(r"^Real Tigers\..*2 fields pinned$")
+            )
+        ).to_be_visible()
+        page.goto(f"{origin}/review/{case_id}?field=title&subview=history")
+        expect(page.get_by_text("You pinned this field.", exact=True)).to_have_count(2)
+
+        # The library shows another title: the pin on Title did not hold it.
+        successor = readback[0](OWNER_EDIT, True)
+        assert successor != case_id
+        page.goto(f"{origin}/library?lens=all&preview={successor}&field=title")
+        foot = _pin_foot(page, "Title")
+        expect(foot).to_contain_text("You pinned “Real Tigers”.")
+        expect(
+            page.locator(".field-filmstrip button", has_text="Title")
+        ).to_contain_text("Needs you")
+        del posts[:]
+        foot.get_by_role("button", name="Unpin", exact=True).click()
+        expect(
+            foot.get_by_role("status").get_by_text("Unpinned.", exact=True)
+        ).to_be_visible()
+        assert posts == ["unpin"]
+        expect(foot).not_to_contain_text("You pinned")
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
 # Genres is the work's only attention field, so a decision moves it between
 # the Needs attention and No attention needed lenses.
 _SOLE_GENRES: dict[str, Any] = {
