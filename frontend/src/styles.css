@@ -1797,6 +1797,7 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 :root[data-theme='dark'] .review-keys-dialog { background:var(--surface-strong); border-color:var(--soft); }
 :root[data-theme='dark'] .review-keys-dialog::backdrop { background:rgb(0 0 0 / .65); }
 .review-keys-dialog h2 { margin:0 0 .75rem; font-size:1.15rem; }
+.review-keys-dialog h2:focus { outline:none; }
 .review-keys-list { display:grid; margin:0; }
 .review-keys-list > div { display:flex; flex-wrap:wrap; align-items:center; gap:.4rem .75rem; padding:.55rem 0; border-bottom:1px solid var(--line); }
 .review-keys-list dt { flex:0 1 4.75rem; display:flex; flex-wrap:wrap; gap:.25rem; }

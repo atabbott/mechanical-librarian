@@ -12071,14 +12071,22 @@ def test_keyboard_only_triage_journey(width):
             assert (page.url, len(decisions)) == (url, sent), key
 
         def press_on(key: str, control) -> None:
-            """Press a key for a control. Off screen, the first press only shows
-            and focuses it."""
+            """Press a key for a control. With its centre off screen, the first
+            press only shows and focuses it, with the whole of its card."""
             box = control.bounding_box()
             assert box is not None
-            if box["y"] >= height:
+            if box["y"] + box["height"] / 2 > height:
                 unmoved(key)
                 expect(control).to_be_focused()
-                expect(control).to_be_in_viewport()
+                expect(control).to_be_in_viewport(ratio=1)
+                card = page.locator(".metadata-choice").filter(has=control)
+                if card.count():
+                    # Its source line and Evidence link are on screen too.
+                    expect(control.locator("span").last).to_be_in_viewport(ratio=1)
+                    expect(
+                        card.get_by_role("button", name=re.compile("^Evidence"))
+                    ).to_be_in_viewport(ratio=1)
+                    expect(card).to_be_in_viewport(ratio=1)
             page.keyboard.press(key)
 
         page.set_viewport_size({"width": width, "height": height})
@@ -12181,13 +12189,35 @@ def test_keyboard_only_triage_journey(width):
         keys = page.get_by_role("dialog", name="Keys")
         switch = keys.get_by_role("checkbox", name="Use these keys")
         expect(keys).to_be_visible()
-        expect(switch).to_be_focused()
+        # The list opens at its top, with focus on its heading.
+        heading = keys.get_by_role("heading", name="Keys")
+        expect(heading).to_be_focused()
+        assert keys.evaluate("list => list.scrollTop") == 0
         assert page.evaluate("document.querySelector('dialog').matches(':modal')")
         unmoved("1")
         unmoved("j")
+        page.keyboard.press("Tab")
+        expect(switch).to_be_focused()
+        page.keyboard.press("Tab")
+        expect(keys.get_by_role("button", name="Close")).to_be_focused()
         page.keyboard.press("Escape")
         expect(keys).to_be_hidden()
         expect(outcome).to_be_focused()
+        if width == 390:
+            # A narrow window with text at twice the size: the list is taller
+            # than the window and still opens at its top.
+            page.set_viewport_size({"width": 320, "height": 568})
+            page.evaluate("document.documentElement.style.fontSize = '200%'")
+            page.keyboard.press("?")
+            expect(heading).to_be_focused()
+            assert keys.evaluate(
+                "list => list.scrollHeight > list.clientHeight && list.scrollTop === 0"
+            )
+            expect(heading).to_be_in_viewport(ratio=1)
+            page.keyboard.press("Escape")
+            expect(outcome).to_be_focused()
+            page.evaluate("document.documentElement.style.fontSize = ''")
+            page.set_viewport_size({"width": width, "height": height})
 
         # One work on the page: J past the last field goes nowhere.
         page.keyboard.press("j")
@@ -12196,6 +12226,7 @@ def test_keyboard_only_triage_journey(width):
 
         # Switched off, no key acts, and the choice survives a reload.
         page.keyboard.press("?")
+        page.keyboard.press("Tab")
         expect(switch).to_be_focused()
         page.keyboard.press("Space")
         expect(switch).not_to_be_checked()

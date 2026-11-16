@@ -215,6 +215,8 @@ const tab = (name: string) =>
   within(screen.getByRole('navigation', { name: 'Review fields' })).getByRole('button', {
     name: new RegExp(`^${name}`, 'u'),
   })
+const box = (left: number, top: number, width: number, height: number) =>
+  ({ left, top, right: left + width, bottom: top + height, width, height }) as DOMRect
 const press = (key: string, init: KeyboardEventInit = {}) =>
   act(async () => {
     fireEvent.keyDown(document.activeElement ?? document.body, { key, ...init })
@@ -593,10 +595,20 @@ describe('review keys', () => {
     )
     const dialog = present(document.querySelector('dialog'))
     tab('Title').focus()
+    const scrolled = vi.spyOn(dialog, 'scrollTop', 'set')
     await press('?')
     expect(dialog.open).toBe(true)
+    expect(scrolled.mock.calls).toEqual([[0]])
     expect(within(dialog).getByRole('heading', { name: 'Keys' })).toBeInTheDocument()
     expect(dialog).toHaveAccessibleName('Keys')
+    // It opens at its top: focus is on the heading, and Tab goes on to the controls.
+    const heading = within(dialog).getByRole('heading', { name: 'Keys' })
+    expect(heading).toHaveFocus()
+    expect(heading).toHaveAttribute('tabindex', '-1')
+    await user.tab()
+    expect(within(dialog).getByRole('checkbox', { name: 'Use these keys' })).toHaveFocus()
+    await user.tab()
+    expect(within(dialog).getByRole('button', { name: 'Close' })).toHaveFocus()
     // While the list is open no other key acts.
     within(dialog).getByRole('checkbox', { name: 'Use these keys' }).focus()
     await press('2')
@@ -609,6 +621,7 @@ describe('review keys', () => {
     const keys = screen.getByRole('button', { name: 'Keys' })
     await user.click(keys)
     expect(dialog.open).toBe(true)
+    expect(heading).toHaveFocus()
     await user.click(within(dialog).getByRole('button', { name: 'Close' }))
     expect(dialog.open).toBe(false)
     expect(keys).toHaveFocus()
@@ -731,17 +744,50 @@ describe('review keys', () => {
     const http = store(() => [title])
     await openAt(http, 'title')
     const card = present(screen.getAllByRole('radio')[1])
-    const rect = vi.spyOn(card, 'getBoundingClientRect').mockReturnValue({
-      top: innerHeight + 40,
-      bottom: innerHeight + 200,
-      width: 300,
-      height: 160,
-    } as DOMRect)
+    const whole = present(card.closest<HTMLElement>('.metadata-choice'))
+    // Its top edge is inside the window, its centre is not.
+    const rect = vi
+      .spyOn(card, 'getBoundingClientRect')
+      .mockReturnValue(box(40, innerHeight - 20, 300, 160))
     await press('2')
     expect(card).toHaveFocus()
-    expect(card.scrollIntoView).toHaveBeenCalled()
+    // The whole card is shown, with its source line and Evidence link.
+    const reveal = vi.mocked(whole.scrollIntoView).mock
+    expect(reveal.contexts).toEqual([whole])
+    expect(reveal.calls).toEqual([[{ block: 'nearest', inline: 'nearest' }]])
     expect(http.recordDecision).not.toHaveBeenCalled()
-    rect.mockReturnValue({ top: 200, bottom: 360, width: 300, height: 160 } as DOMRect)
+    // Taller than the window, it is shown from its top.
+    vi.spyOn(whole, 'offsetHeight', 'get').mockReturnValue(innerHeight + 1)
+    await press('2')
+    expect(reveal.calls[1]).toEqual([{ block: 'start', inline: 'nearest' }])
+    expect(http.recordDecision).not.toHaveBeenCalled()
+    // With its centre in the window it records, though its end is still cut off.
+    rect.mockReturnValue(box(40, innerHeight - 100, 300, 160))
+    await press('2')
+    await waitFor(() => expect(http.recordDecision).toHaveBeenCalledTimes(1))
+  })
+
+  it('shows a cover the strip hides to one side before a digit records it', async () => {
+    const http = store(() => [coverField])
+    await openAt(http, 'cover')
+    const card = present(screen.getAllByRole('radio')[1])
+    const whole = present(card.closest<HTMLElement>('.cover-choice'))
+    // A strip 390 wide that scrolls sideways; the window is wider and taller.
+    const strip = present(whole.parentElement)
+    strip.style.overflowX = 'auto'
+    vi.spyOn(strip, 'clientWidth', 'get').mockReturnValue(390)
+    vi.spyOn(strip, 'clientHeight', 'get').mockReturnValue(400)
+    vi.spyOn(strip, 'getBoundingClientRect').mockReturnValue(box(0, 100, 390, 400))
+    expect(innerWidth).toBeGreaterThan(700)
+    const rect = vi.spyOn(card, 'getBoundingClientRect').mockReturnValue(box(480, 120, 240, 360))
+    await press('2')
+    expect(card).toHaveFocus()
+    const reveal = vi.mocked(whole.scrollIntoView).mock
+    expect(reveal.contexts).toEqual([whole])
+    expect(reveal.calls).toEqual([[{ block: 'nearest', inline: 'nearest' }]])
+    expect(http.recordDecision).not.toHaveBeenCalled()
+    // Half of the card is past the strip's edge, but its centre is inside.
+    rect.mockReturnValue(box(260, 120, 240, 360))
     await press('2')
     await waitFor(() => expect(http.recordDecision).toHaveBeenCalledTimes(1))
   })
