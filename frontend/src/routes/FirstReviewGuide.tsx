@@ -188,9 +188,15 @@ function Guide({ onClose, onOpenFirst }: { onClose: () => void; onOpenFirst?: ()
   useLayoutEffect(() => {
     // A step change removes Back or Next, and an emptied queue removes the
     // last step's main button. Focus stays on the pressed button while it is
-    // still there, and otherwise moves to the main button.
+    // still there, and otherwise moves to the main button. So does focus left
+    // in the example when the last step stops it being live, as after a click
+    // on Next where a click does not focus a button.
     const active = document.activeElement
-    if (dialog.current?.open && (active === document.body || active === dialog.current))
+    const lost =
+      active === document.body ||
+      active === dialog.current ||
+      (step === last && active?.closest('.first-review-example'))
+    if (dialog.current?.open && lost)
       footer.current?.querySelector<HTMLElement>('.button-primary')?.focus()
   }, [step, opens])
   useLayoutEffect(() => {

@@ -311,6 +311,20 @@ describe('first review guide', () => {
     expect(dialog).toHaveAttribute('open')
   })
 
+  it('moves focus out of the example when the last step stops it being live', async () => {
+    owe()
+    renderRoute('/library?lens=all', withQueue())
+    const dialog = await screen.findByRole('dialog', { name: 'How a decision works' })
+    fireEvent.click(button(dialog, 'Next'))
+    // A click that does not focus the button leaves focus on the example's card.
+    const card = within(dialog).getAllByRole('radio')[1]
+    act(() => card?.focus())
+    expect(card).toHaveFocus()
+    fireEvent.click(button(dialog, 'Next'))
+    expect(dialog.querySelector('.first-review-example')).toHaveAttribute('inert')
+    expect(button(dialog, 'Open your first field')).toHaveFocus()
+  })
+
   it('moves focus to Close when the queue empties under the last step’s main button', async () => {
     const updates = createLiveStream()
     owe()
