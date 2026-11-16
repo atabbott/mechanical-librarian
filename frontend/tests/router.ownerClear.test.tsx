@@ -694,7 +694,8 @@ describe('the keep card on a field this case wrote (#1523)', () => {
         ...written,
         editable: true,
         needsAttention: false,
-        ownerControl: null,
+        // Withdraw alone is no other value to choose.
+        ownerControl: control({ withdraw: 'written' }),
         pinControl: null,
         humanDecision: { ...written.humanDecision, outcome: 'accept' },
       }),

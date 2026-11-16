@@ -337,7 +337,9 @@ export function FieldDecisionCanvas({
   // recorded outcome says it may be changed only when one is (#1523).
   const anotherOffered =
     selected.destination === 'cover' ||
-    selected.ownerControl !== null ||
+    Boolean(
+      selected.ownerControl?.entry ?? selected.ownerControl?.subset ?? selected.ownerControl?.names,
+    ) ||
     directChoices.some((choice) => !choice.selected)
   // A decision Automatic made before the pin is not the field's recorded outcome.
   const outcomeShown = !choicesShown && selectedRecorded && selected === field
