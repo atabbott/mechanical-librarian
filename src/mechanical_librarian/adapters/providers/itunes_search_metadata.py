@@ -583,6 +583,7 @@ def _lane_lookup(
         lane.authors,
         audio=plan.audio,
         companion=plan.companion,
+        owner_link=plan.owner_link,
         companion_linked_asins=plan.companion_linked_asins,
         work_title=plan.work_title,
         work_authors=plan.work_authors,

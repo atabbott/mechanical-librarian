@@ -6,7 +6,7 @@ import random
 import re
 import time
 from dataclasses import replace
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 import httpx
 
@@ -28,6 +28,7 @@ from mechanical_librarian.adapters.providers.sdk import (
 )
 from mechanical_librarian.adapters.providers.visible_text import stated_description
 from mechanical_librarian.application.metadata_report import (
+    OWNER_LINK_MERGED_DIAGNOSTIC,
     CoverRedirects,
     MetadataDiscoveryLane,
     MetadataDiscoveryPlan,
@@ -40,6 +41,7 @@ from mechanical_librarian.application.metadata_report import (
     identifier_suppresses_discovery,
     merge_provider_cover_descriptors,
     observe_work_ladder,
+    owner_link_lane_diagnostics,
     provider_discovery_lane_order,
     provider_isbn_applicability,
     provider_observation,
@@ -89,6 +91,7 @@ from mechanical_librarian.domain.metadata_report import (
     provider_candidate_work_identity_contradiction,
     validate_observed_title,
 )
+from mechanical_librarian.domain.owner_link import OwnerLinkLookup
 from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
     WorkDispatchRung,
@@ -268,6 +271,7 @@ class InventaireMetadataProvider:
                     lane.title,
                     lane.authors,
                     lane.matched_family,
+                    owner_link=plan.owner_link,
                 )
                 lane_result, _ = ledger.resolve(
                     kind=lookup.kind.value,
@@ -284,7 +288,9 @@ class InventaireMetadataProvider:
                         qualified.status,
                         qualified.candidates,
                         qualified.accessed_at,
-                        diagnostics=lane_result.diagnostics,
+                        diagnostics=owner_link_lane_diagnostics(
+                            qualified, lane_result.diagnostics
+                        ),
                         dispatch_lineage=qualified.dispatch_lineage,
                         transformation_lineage=qualified.transformation_lineage,
                         exhausted_dispatch=lane_result.exhausted_dispatch,
@@ -367,14 +373,17 @@ class InventaireMetadataProvider:
     def _observe_lookup(
         self, lookup: MetadataLookup, *, deadline: float | None
     ) -> ProviderObservation:
+        if lookup.kind is ProviderQueryKind.LINK:
+            return self._observe_link(lookup, deadline=deadline)
         if lookup.kind is ProviderQueryKind.ISBN:
             family = lookup.matched_family or _single_isbn_family(lookup.local_claims)
             if family is None:
                 return self._result(lookup, ProviderStatus.INSUFFICIENT_INPUT)
+            # An owner-link ISBN is asked on its own lane, never compared.
             references = tuple(
                 sorted(
                     claim.reference
-                    for claim in lookup.local_claims
+                    for claim in lookup.query_claims
                     if claim.kind is ClaimKind.ISBN
                     and claim.canonical is not None
                     and isbn_family(claim.canonical) == family
@@ -441,6 +450,73 @@ class InventaireMetadataProvider:
             if last.status is not ProviderStatus.NO_MATCH:
                 return last
         return last
+
+    def _observe_link(
+        self, lookup: MetadataLookup, *, deadline: float | None
+    ) -> ProviderObservation:
+        """Read the one work entity an owner's link names (#1477, ADR-0104).
+
+        An entity the answer does not hold is `missing`; one it redirects was
+        merged into another, and the redirect is never followed. The work is
+        shaped exactly as a search's work is.
+        """
+        link = cast("OwnerLinkLookup", lookup.owner_link)
+        try:
+            payload = self._request(
+                INVENTAIRE_ENTITIES_URL,
+                httpx.QueryParams(
+                    [
+                        ("uris", link.identity),
+                        *(("attributes", value) for value in _ENTITY_ATTRIBUTES),
+                        ("lang", "en"),
+                    ]
+                ),
+                deadline=deadline,
+            )
+            entities = payload.get("entities")
+            redirects = payload.get("redirects", {})
+            missing = payload.get("notFound", [])
+            if (
+                type(entities) is not dict
+                or type(redirects) is not dict
+                or type(missing) is not list
+                or len(entities) > 1
+            ):
+                raise ValueError("provider entities are malformed")
+            if link.identity in redirects:
+                return replace(
+                    self._result(lookup, ProviderStatus.NO_MATCH),
+                    diagnostics=(
+                        *self._schema_diagnostics(),
+                        OWNER_LINK_MERGED_DIAGNOSTIC,
+                    ),
+                )
+            if link.identity in missing or link.identity not in entities:
+                return self._result(lookup, ProviderStatus.NO_MATCH)
+            work = entities[link.identity]
+            if type(work) is not dict or _entity_uri(work) != link.identity:
+                raise ValueError("provider entity identity is inconsistent")
+            labels = self._resolve_labels((work,), deadline=deadline)
+            candidate = _work_candidate(self._name, work, lookup.local_claims, labels)
+            descriptor = _work_cover_descriptor(self._name, work, self._pacer.wait)
+            merged = merge_provider_cover_descriptors(
+                self._cover_descriptors, () if descriptor is None else (descriptor,)
+            )
+            if merged is None:
+                raise ValueError("provider cover descriptors conflict")
+            self._cover_descriptors = merged
+        except ProviderFailure as error:
+            return self._result(lookup, error.status)
+        except (
+            EvidenceValueError,
+            KeyError,
+            TypeError,
+            ValueError,
+            UnicodeError,
+            RecursionError,
+        ):
+            return self._result(lookup, ProviderStatus.MALFORMED)
+        return self._candidates_result(lookup, (candidate,))
 
     def _observe_work_query(
         self,

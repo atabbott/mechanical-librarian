@@ -174,7 +174,7 @@ from mechanical_librarian.domain.metadata_report import (
     work_discovery_lane_payloads,
     work_ladder_diagnostics,
 )
-from mechanical_librarian.domain.owner_link import OwnerLink
+from mechanical_librarian.domain.owner_link import OwnerLink, OwnerLinkLookup
 from mechanical_librarian.domain.validation import (
     nonempty_text,
     optional,
@@ -374,11 +374,28 @@ class MetadataLookup:
     # companion ISBN names, counted against the file (#1468). An identifier
     # lane admits such a product's work as it admits an alternative title's.
     companion_linked_asins: tuple[str, ...] = ()
+    # The item's owner link (#1477): a key lookup reads it on a `link` lane,
+    # and an identifier link's ISBN or ASIN is a lane input like a companion
+    # claim, never a local claim.
+    owner_link: OwnerLinkLookup | None = None
 
     @property
     def query_claims(self) -> tuple[LocalClaim, ...]:
         """The claims an identifier query may read: the companion's ISBN only
-        on the companion's own ISBN lane."""
+        on the companion's own ISBN lane, the owner link's identifier only on
+        its own lane."""
+        link = None if self.owner_link is None else self.owner_link.claim
+        if link is not None and (
+            (
+                self.kind is ProviderQueryKind.ISBN
+                and self.matched_family == link.canonical
+            )
+            or (
+                self.kind is ProviderQueryKind.ASIN
+                and self.requested_asin == link.canonical
+            )
+        ):
+            return (*self.local_claims, link)
         lane = companion_isbn_lane(self.companion)
         if (
             self.kind is ProviderQueryKind.ISBN
@@ -429,6 +446,13 @@ class MetadataLookup:
             self.kind is not ProviderQueryKind.ASIN
             or type(self.requested_asin) is not str
             or canonical_asin(self.requested_asin) != self.requested_asin
+        ):
+            raise MetadataReportError("provider lookup is invalid")
+        if (
+            self.owner_link is not None and type(self.owner_link) is not OwnerLinkLookup
+        ) or (
+            self.kind is ProviderQueryKind.LINK
+            and (self.owner_link is None or self.owner_link.claim is not None)
         ):
             raise MetadataReportError("provider lookup is invalid")
         if self.kind is ProviderQueryKind.ISBN:
@@ -484,6 +508,7 @@ class MetadataDiscoveryLane:
                 ProviderQueryKind.ISBN,
                 ProviderQueryKind.WORK,
                 ProviderQueryKind.ASIN,
+                ProviderQueryKind.LINK,
             }
             or type(self.input_references) is not tuple
             or tuple(sorted(set(self.input_references))) != self.input_references
@@ -521,6 +546,17 @@ class MetadataDiscoveryLane:
                 or self.title is not None
                 or self.authors
                 or not self.input_references
+            ):
+                raise MetadataReportError("provider discovery lane is invalid")
+        elif self.kind is ProviderQueryKind.LINK:
+            # A key lookup is asked with the owner's link alone (#1477).
+            if (
+                self.input_references
+                or self.matched_family is not None
+                or self.canonical_isbns
+                or self.title is not None
+                or self.authors
+                or self.canonical_asin is not None
             ):
                 raise MetadataReportError("provider discovery lane is invalid")
         elif (
@@ -570,6 +606,8 @@ class MetadataDiscoveryPlan:
     # See `MetadataLookup`: the companion EPUB and the ASINs its book links.
     companion: CompanionEbook | None = None
     companion_linked_asins: tuple[str, ...] = ()
+    # See `MetadataLookup`: the item's owner link (#1477).
+    owner_link: OwnerLinkLookup | None = None
 
     def __post_init__(self) -> None:
         _validate_recording_context(self.audio, self.work_title, self.work_authors)
@@ -1320,6 +1358,53 @@ def _asin_discovery_lane(
     )
 
 
+def owner_link_discovery_lane(link: OwnerLinkLookup) -> MetadataDiscoveryLane:
+    """The one lane an owner link is read through (#1477, ADR-0104).
+
+    A key lookup is a `link` lane keyed on the link's digest. An edition or
+    Google Books link is an ISBN lane, and a recording or Audible work link an
+    ASIN lane, each asked with the link's own lane-input claim, so it is never
+    the lane a local claim of the same identifier plans.
+    """
+    claim = link.claim
+    if claim is None:
+        return MetadataDiscoveryLane(
+            discovery_lane_identity(
+                {"kind": ProviderQueryKind.LINK.value, "link_digest": link.digest}
+            ),
+            ProviderQueryKind.LINK,
+            (),
+        )
+    if claim.kind is ClaimKind.ASIN:
+        return _asin_discovery_lane(link.identity, (claim.reference,))
+    return MetadataDiscoveryLane(
+        discovery_lane_identity(
+            {
+                "canonical_isbns": [link.identity],
+                "input_references": [claim.reference],
+                "kind": ProviderQueryKind.ISBN.value,
+                "matched_family": link.identity,
+            }
+        ),
+        ProviderQueryKind.ISBN,
+        (claim.reference,),
+        link.identity,
+        (link.identity,),
+    )
+
+
+def owner_link_plan(
+    plan: MetadataDiscoveryPlan, link: OwnerLinkLookup
+) -> MetadataDiscoveryPlan:
+    """The plan the link phase hands the link's own sources: its lane alone."""
+    return replace(
+        plan,
+        lanes=(owner_link_discovery_lane(link),),
+        overflow=False,
+        owner_link=link,
+    )
+
+
 def promoted_asins(
     observations: tuple[ProviderObservation, ...],
 ) -> tuple[str, ...]:
@@ -1566,6 +1651,7 @@ def audiobook_asin_feed_plan(
         echoed_languages=plan.echoed_languages,
         echoed_narrators=plan.echoed_narrators,
         companion=plan.companion,
+        owner_link=plan.owner_link,
         companion_linked_asins=companion_linked_asins(
             plan.local_claims, plan.audio, observations, plan.companion
         ),
@@ -1581,6 +1667,27 @@ _IDENTITY_CONFLICT_DIAGNOSTIC = FailureDiagnostic(
     FailureStage.IDENTITY,
     retryable=False,
 )
+# A key lookup whose record the source merged into another (#1477): the
+# lane found no record of its own, and says why. Never retried.
+OWNER_LINK_MERGED_DIAGNOSTIC = FailureDiagnostic(
+    FailureCategory.IDENTITY,
+    FailureComponent.PROVIDER,
+    FailureStage.IDENTITY,
+    retryable=False,
+)
+
+
+def owner_link_lane_diagnostics(
+    observation: ProviderObservation, diagnostics: tuple[FailureDiagnostic, ...]
+) -> tuple[FailureDiagnostic, ...]:
+    """A link lane's diagnostics, with the merged record's where it was."""
+    if (
+        observation.query_kind is ProviderQueryKind.LINK
+        and observation.status is ProviderStatus.NO_MATCH
+        and OWNER_LINK_MERGED_DIAGNOSTIC in observation.diagnostics
+    ):
+        return merge_provider_diagnostics(diagnostics, (OWNER_LINK_MERGED_DIAGNOSTIC,))
+    return diagnostics
 
 
 def _marketplaces(candidate: ProviderCandidate) -> set[ProviderEvidence]:
@@ -2728,8 +2835,16 @@ def _identifier_lane_candidates(
         or observation.authority not in AUDIOBOOK_PROVIDER_AUTHORITIES
     ):
         return observation.candidates, (), ()
+    # The owner's recording link names this recording as the item's own
+    # identifier would (#1477), and is re-checked the same way.
+    link = None if lookup.owner_link is None else lookup.owner_link.claim
     independent = (
         lookup.requested_asin in local_identifier_asins(lookup.local_claims)
+        or (
+            link is not None
+            and link.kind is ClaimKind.ASIN
+            and lookup.requested_asin == link.canonical
+        )
         if lookup.requested_asin is not None
         else bool(local_identifier_asins(lookup.local_claims))
     )
