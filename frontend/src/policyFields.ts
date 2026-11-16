@@ -34,6 +34,12 @@ export const operationWords = {
   replace_invalid: 'replace unreadable',
   replace_recording: 'replace valid',
 } as const
+export const policyDestinationLabels = {
+  ask: 'Ask me',
+  automatic: 'Automatic',
+  ignore: 'Ignore',
+  unsupported: 'Not supported',
+} as const
 
 export interface FieldDefinition {
   key: string

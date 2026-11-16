@@ -50,6 +50,7 @@ import {
   fields,
   operationScopeLabels,
   operationWords,
+  policyDestinationLabels,
   policyRepresentationGuidance,
   readableCategory,
   representationConsequence,
@@ -799,7 +800,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                   </header>
                   {field.unsupported ? (
                     <div className="cm-policy-unavailable">
-                      <strong>Not supported</strong>
+                      <strong>{policyDestinationLabels.unsupported}</strong>
                       <span>This field is shown but cannot be changed.</span>
                     </div>
                   ) : (
@@ -818,11 +819,11 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                           options={[
                             {
                               value: 'automatic',
-                              label: 'Automatic',
+                              label: policyDestinationLabels.automatic,
                               disabled: !automaticAvailable,
                             },
-                            { value: 'ask', label: 'Ask me' },
-                            { value: 'ignore', label: 'Ignore' },
+                            { value: 'ask', label: policyDestinationLabels.ask },
+                            { value: 'ignore', label: policyDestinationLabels.ignore },
                           ]}
                           onChange={(next) =>
                             editDraft({
