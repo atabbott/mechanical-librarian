@@ -1418,8 +1418,9 @@ class SQLiteProviderRecoveryStore:
         began: the first scope event after the later of its last recovery and
         its last daily quota deferral that changes the recorded health, so time
         in a quota wait never counts. An event that repeats the health before it
-        (a report publication naming its outcome) changes nothing. It is
-        ``None`` while that quota wait lasts. This is one read under the store
+        (a report publication naming its outcome) changes nothing: it neither
+        starts the wait nor, naming an earlier quota outcome, counts as a quota
+        deferral. It is ``None`` while that quota wait lasts. This is one read under the store
         lock and never begins a transaction.
         """
         try:
@@ -1443,6 +1444,12 @@ class SQLiteProviderRecoveryStore:
                     "WHERE f.connection=h.connection AND f.adapter=h.adapter AND f.scope=h.scope "
                     "AND f.generation=h.generation AND f.job_attempt IS NULL "
                     "AND (f.state='recovered' OR f.outcome='quota_exhausted') "
+                    "AND (f.state='recovered' OR (f.state,f.attempt,f.next_eligible_at) IS NOT ("
+                    "SELECT q.state,q.attempt,q.next_eligible_at FROM provider_recovery_events q "
+                    "INDEXED BY provider_recovery_events_scope_latest "
+                    "WHERE q.connection=f.connection AND q.adapter=f.adapter AND q.scope=f.scope "
+                    "AND q.generation=f.generation AND q.job_attempt IS NULL "
+                    "AND q.sequence<f.sequence ORDER BY q.sequence DESC LIMIT 1)) "
                     "ORDER BY f.sequence DESC LIMIT 1),0) "
                     "AND (e.state,e.attempt,e.next_eligible_at) IS NOT (SELECT p.state,p.attempt,"
                     "p.next_eligible_at FROM provider_recovery_events p "

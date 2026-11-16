@@ -5757,6 +5757,37 @@ def test_waiting_since_ignores_a_report_published_during_a_daily_quota_wait(
     store.close()
 
 
+def test_waiting_since_keeps_the_wait_when_an_earlier_quota_report_is_published(
+    tmp_path: Path,
+) -> None:
+    store = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
+    _fail(store, "quota_exhausted", 100, retry_after=1_000)
+    claimed = store.claim_one(generation=1, now=1_100, token="owner")
+    assert claimed is not None
+    store.complete(token="owner", recovery=claimed, now=1_100, failure="transient")
+    ((before),) = store.throttling_snapshot()
+    assert 1_100 == before["waiting_since"]
+    # The quota wait is over. A report that met the quota earlier is published
+    # now and copies the health unchanged: it defers nothing, so the wait that
+    # followed the quota wait keeps its start.
+    assert 1 == store.enqueue_jobs(
+        (_job("a"),), enqueued_at=1_200, outcomes={_job("a"): "quota_exhausted"}
+    )
+    ((after),) = store.throttling_snapshot()
+    assert (before["next_eligible_at"], 1_100) == (
+        after["next_eligible_at"],
+        after["waiting_since"],
+    )
+    # A real quota deferral after it still stops the clock.
+    _fail(store, "quota_exhausted", 1_300, retry_after=_DAY)
+    ((deferred),) = store.throttling_snapshot()
+    assert (1_300 + _DAY, None) == (
+        deferred["next_eligible_at"],
+        deferred["waiting_since"],
+    )
+    store.close()
+
+
 def test_waiting_since_restarts_with_retry_now_and_survives_a_restart(
     tmp_path: Path,
 ) -> None:
