@@ -193,6 +193,7 @@ def test_progress_totals_are_library_counts_and_its_fields_attention_rows(
             "no_attention_needed": 1,
             "not_matched": 1,
             "preparation_failed": 1,
+            "flagged": 0,
         }
         # Equal to every Library answer's counts, whatever its lens and page.
         for lens in _LENSES:
@@ -219,6 +220,7 @@ def test_progress_totals_are_library_counts_and_its_fields_attention_rows(
                     "no_attention_needed": 1,
                     "not_matched": 0,
                     "preparation_failed": 0,
+                    "flagged": 0,
                 },
             ),
             (
@@ -230,6 +232,7 @@ def test_progress_totals_are_library_counts_and_its_fields_attention_rows(
                     "no_attention_needed": 0,
                     "not_matched": 1,
                     "preparation_failed": 0,
+                    "flagged": 0,
                 },
             ),
             (
@@ -241,6 +244,7 @@ def test_progress_totals_are_library_counts_and_its_fields_attention_rows(
                     "no_attention_needed": 0,
                     "not_matched": 0,
                     "preparation_failed": 1,
+                    "flagged": 0,
                 },
             ),
         ]
@@ -304,6 +308,7 @@ def test_progress_refuses_counts_whose_lenses_do_not_partition_all(
     (
         ("negative", "library"),
         ("boolean", "library"),
+        ("over_total_flagged", "library"),
         ("over_attention", "field"),
         ("unknown_library", "field"),
     ),
@@ -316,7 +321,7 @@ def test_progress_refuses_an_invalid_row(
 
     def corrupt(cursor: sqlite3.Cursor, row: tuple[object, ...]) -> tuple[object, ...]:
         nonlocal reached
-        width = 7 if statement == "library" else 4
+        width = 8 if statement == "library" else 4
         if len(cursor.description) != width:
             return row
         reached = True
@@ -327,6 +332,8 @@ def test_progress_refuses_an_invalid_row(
             values[2] = True
         elif corruption == "over_attention":
             values[3] = 2
+        elif corruption == "over_total_flagged":
+            values[7] = cast(int, values[2]) + 1
         else:
             values[1] = "elsewhere"
         return tuple(values)
@@ -342,15 +349,17 @@ def test_progress_refuses_an_invalid_row(
 
 
 # The Library page statement as it was before #1335 extracted its candidate
-# relation: the trace of each read below, as its SHA-256 at the base commit.
+# relation, plus #1334's Looks wrong column and total: the trace of each read
+# below, as its SHA-256. Without exactly those four additions each statement
+# is byte for byte the one #1335 pinned.
 _PAGE_STATEMENT_DIGESTS = {
-    (False, None): "cc942ce8b5ffa7c29456e893b765645202b2b9cda86e81333039304fc7f7b7b6",
+    (False, None): "cd1da80fb72d18824f792d70f4984b1f3681e194e9989d30463059a47e26fa83",
     (False, "needs_attention"): (
-        "a75d30c43b3e52a2c49b1f9d8e7b3ad92092b70509987d3a2ce990100ad21a1a"
+        "0c1744992cd3df5f136631c3436dea392fb19f78b46a862e5220b23ff0a5faa3"
     ),
-    (True, None): "945725359c9ce89a0f6adc2b2c3beefa22526c65815ed11c5815d731f9e433f2",
+    (True, None): "919f858bd4312b9e4f298d61d694aae2fd96ed3049e8ce394ada68008d20355a",
     (True, "needs_attention"): (
-        "806bc20d398f378b4c3f87d87390146644f6ab53919b5e511c258deadb38df11"
+        "a846a032eb815b83e8882954eb9b228d7dbb3a32024c1dfd105c3d714ac1848a"
     ),
 }
 
@@ -546,9 +555,9 @@ def test_progress_reads_its_two_statements_on_one_snapshot() -> None:
         finally:
             reader._connection.set_trace_callback(None)
         assert started and errors == []
-        assert before.libraries == (("primary", "ebooks", 1, 1, 0, 0),)
+        assert before.libraries == (("primary", "ebooks", 1, 1, 0, 0, 0),)
         assert before.fields == (("primary", "ebooks", "title", 1),)
         after = reader.read_review_library_progress(())
-        assert after.libraries == (("primary", "ebooks", 1, 0, 0, 0),)
+        assert after.libraries == (("primary", "ebooks", 1, 0, 0, 0, 0),)
         assert after.fields == ()
         reader.close()

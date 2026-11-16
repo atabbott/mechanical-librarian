@@ -840,6 +840,16 @@ def test_a_changed_browse_fact_identity_is_not_the_seeded_schema() -> None:
     assert not store.is_exact_schema_only()
 
 
+def test_a_changed_value_flag_rule_list_is_not_the_seeded_schema() -> None:
+    connection, store = _real_store()
+    assert store.is_exact_schema_only()
+    connection.execute(
+        "UPDATE browse_fact_identity SET value_flag_rules='value-flag-rules-v0'"
+    )
+
+    assert not store.is_exact_schema_only()
+
+
 def test_setup_write_rollback_cannot_discard_a_returned_owner_session(
     tmp_path: Path,
 ) -> None:

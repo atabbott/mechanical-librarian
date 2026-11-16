@@ -292,6 +292,7 @@ _BRIDGE_POPULATED_TABLES = {
     "metadata_report_browse_authors",
     "metadata_report_browse_facts",
     "metadata_report_cover_references",
+    "metadata_report_value_flags",
     "metadata_reports",
 }
 

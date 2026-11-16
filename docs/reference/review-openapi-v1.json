@@ -7664,6 +7664,7 @@
           "lens": {
             "enum": [
               "all",
+              "flagged",
               "needs_attention",
               "no_attention_needed",
               "not_matched",
@@ -7711,7 +7712,7 @@
             "title": "Query"
           },
           "schema_version": {
-            "const": "review-library-v6",
+            "const": "review-library-v7",
             "title": "Schema Version",
             "type": "string"
           }
@@ -7727,6 +7728,41 @@
           "schema_version"
         ],
         "title": "_LibraryResponse",
+        "type": "object"
+      },
+      "_LibraryValueFlag": {
+        "additionalProperties": false,
+        "description": "One Looks wrong finding: the rule and the field it names, never a value.",
+        "properties": {
+          "destination": {
+            "enum": [
+              "title",
+              "authors",
+              "narrators"
+            ],
+            "title": "Destination",
+            "type": "string"
+          },
+          "rule": {
+            "enum": [
+              "title_part_number",
+              "title_disc_number",
+              "title_is_author",
+              "title_has_author",
+              "title_all_capitals",
+              "title_all_lower_case",
+              "title_announcement",
+              "credit_label"
+            ],
+            "title": "Rule",
+            "type": "string"
+          }
+        },
+        "required": [
+          "destination",
+          "rule"
+        ],
+        "title": "_LibraryValueFlag",
         "type": "object"
       },
       "_LibraryWork": {
@@ -7876,6 +7912,14 @@
             "title": "Title",
             "type": "string"
           },
+          "value_flags": {
+            "items": {
+              "$ref": "#/components/schemas/_LibraryValueFlag"
+            },
+            "maxItems": 9,
+            "title": "Value Flags",
+            "type": "array"
+          },
           "work_id": {
             "title": "Work Id",
             "type": "string"
@@ -7895,7 +7939,8 @@
           "review_case_id",
           "title",
           "work_id",
-          "preparation_outcomes"
+          "preparation_outcomes",
+          "value_flags"
         ],
         "title": "_LibraryWork",
         "type": "object"
@@ -11052,6 +11097,11 @@
             "title": "All",
             "type": "integer"
           },
+          "flagged": {
+            "minimum": 0.0,
+            "title": "Flagged",
+            "type": "integer"
+          },
           "needs_attention": {
             "minimum": 0.0,
             "title": "Needs Attention",
@@ -11075,6 +11125,7 @@
         },
         "required": [
           "all",
+          "flagged",
           "needs_attention",
           "no_attention_needed",
           "not_matched",
