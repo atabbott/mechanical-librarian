@@ -8,7 +8,10 @@ as another case or as none. A case left behind returns only as a new episode,
 whose authority none of the old plans carries, so the write would wait for
 good. Preparation therefore closes it in the transaction that admits or retires
 the work, with a cover's cleanup. A write on the work's current case, including
-one that returned as itself, keeps waiting and is still written once.
+one that returned as itself, keeps waiting and is still written once. A
+scheduled search that changes nothing moves the work past nothing, and one
+that changes the proposals moves on exactly as a requested refresh does
+(ADR-0102).
 
 The field cases drive the real preparation harness of
 `test_leaving_automatic_posture.py`; the cover cases build the same pipeline
@@ -17,6 +20,7 @@ over the real owner cover decision of `test_waiting_plan_identity.py`.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Callable
 from pathlib import Path
@@ -28,11 +32,21 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
     open_repository,
 )
+from mechanical_librarian.adapters.persistence.review_preparation import (
+    RESEARCH_INTERVAL_SECONDS,
+    mark_preparation_work_fresh,
+    next_research_slot,
+)
 from mechanical_librarian.application.catalogue import CatalogueEntry
+from mechanical_librarian.application.field_effects import TargetEffectResult
 from mechanical_librarian.application.review_pipeline import (
     PipelineAction,
     ReviewPipelineRepository,
     ReviewPreparationPipeline,
+)
+from mechanical_librarian.domain.field_effect import (
+    FieldEffectOperation,
+    FieldEffectPlan,
 )
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
 from mechanical_librarian.domain.metadata_report import MetadataReport
@@ -50,6 +64,7 @@ from tests.integration.test_policy_activation_waiting_writes import (
     _reopen_fields,
 )
 from tests.support.owner_values import rewritten
+from tests.unit.test_unmatched_recording_research import _restamped
 from tests.unit.test_waiting_plan_identity import (
     _cleanup,
     _CoverLane,
@@ -511,3 +526,227 @@ def test_a_failed_preparation_keeps_the_waiting_cover(
         assert (left.state, left.failure) == _CLOSED
         assert _cleanup(cover.repository, waiting_id) == [("pending",)]
     cover.reopen()
+
+
+def _searching(
+    report: MetadataReport, at: int
+) -> Callable[[ReviewPipelineRepository, PipelineAction, bool], tuple[str, bool]]:
+    """Publish ``report`` with the real publication receipt, as preparation's
+    extraction does, so a scheduled search meets its keep rule."""
+
+    def extract(
+        repository: ReviewPipelineRepository, action: PipelineAction, claim_next: bool
+    ) -> tuple[str, bool]:
+        concrete = cast(SQLiteMetadataReportRepository, repository)
+        target = report.target
+        current = concrete.current_optional(
+            target.connection, target.library, target.item, report.file.identity
+        )
+        concrete.publish(
+            report,
+            lambda: True,
+            None if current is None else MetadataReport.from_json(current).report_id,
+            after_publication=lambda bound, value: (
+                bound.complete_review_extraction_publication(
+                    action, value.report_id, at, 0, None, claim_next, None, False
+                )
+            ),
+        )
+        return report.report_id, True
+
+    return extract
+
+
+def _work(library: _Library) -> tuple[object, ...]:
+    return cast(
+        tuple[object, ...],
+        library.root._connection.execute(
+            "SELECT work_id,stage,state,outcome,report_id,review_case_id,"
+            "research_not_before FROM review_preparation_work"
+        ).fetchone(),
+    )
+
+
+def _search_again(
+    library: _Library,
+    report: MetadataReport,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    scheduled: bool,
+) -> int:
+    """Prepare the unchanged work again: at its slot, or on a refresh request."""
+    work_id = str(_work(library)[0])
+    at = next_research_slot(work_id, library.now[0] + RESEARCH_INTERVAL_SECONDS)
+    if scheduled:
+        library.root._connection.execute(
+            "UPDATE review_preparation_work SET research_not_before=?", (at,)
+        )
+    else:
+        mark_preparation_work_fresh(
+            library.root._connection, "primary", "ebooks", "item-1"
+        )
+    monkeypatch.setattr(library.pipeline, "_extract", _searching(report, at))
+    library.root.request_review_scan("primary", "ebooks", "lib-1", _PRODUCER, at)
+    _discover(
+        library.root,
+        (_entry("primary", "ebooks", "item-1", library.report.file.identity, 1),),
+        at,
+        2,
+    )
+    library.now[0] = at
+    library.drain()
+    return at
+
+
+def _review_rows(library: _Library) -> tuple[object, ...]:
+    return tuple(
+        library.root._connection.execute(query).fetchall()
+        for query in (
+            "SELECT * FROM current_review_case_lineages",
+            "SELECT * FROM current_review_packages",
+            "SELECT * FROM current_metadata_reports",
+            "SELECT * FROM current_metadata_report_lineages",
+            "SELECT * FROM review_case_transitions",
+            "SELECT * FROM human_decisions",
+            "SELECT * FROM automatic_decisions",
+            "SELECT * FROM field_effects",
+            "SELECT * FROM proposal_sets",
+        )
+    )
+
+
+def test_a_scheduled_search_that_changes_nothing_keeps_the_waiting_write(
+    library: _Library, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Under a bound policy with destinations, the same evidence asked live
+    keeps the case, the owner's decision, Automatic's decisions and the write
+    still waiting on that case (ADR-0102)."""
+    decision_id, waiting_id, lane = _waiting_field(library, tmp_path)
+    policy = library.root.current_resolved_metadata_policy("ebooks")
+    assert policy is not None and "automatic" in dict(policy.destinations).values()
+    case_before = library.case_id()
+    before = _review_rows(library)
+    again = _restamped(library.report, 1)
+    assert again.report_id != library.report.report_id
+
+    at = _search_again(library, again, monkeypatch, scheduled=True)
+
+    assert _review_rows(library) == before
+    assert library.case_id() == case_before
+    assert _decision_plans(library.root, decision_id) == [(waiting_id, *_WAITING)]
+    work = _work(library)
+    assert work[1:6] == (
+        "complete",
+        "complete",
+        "case",
+        library.report.report_id,
+        case_before,
+    )
+    assert work[6] == next_research_slot(str(work[0]), at + RESEARCH_INTERVAL_SECONDS)
+    assert library.root.get(again.report_id)
+    lane.reconnect()
+    assert lane.sent == [waiting_id]
+    _reopen_fields(library, tmp_path)
+
+
+def _changed_search_rows(
+    library: _Library, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scheduled: bool
+) -> tuple[object, ...]:
+    decision_id, waiting_id, lane = _waiting_field(library, tmp_path)
+    destination = json.loads(
+        library.root._connection.execute(
+            "SELECT document FROM human_decisions WHERE decision_id=?", (decision_id,)
+        ).fetchone()[0]
+    )["destination"]
+    case_before = library.case_id()
+    _search_again(
+        library,
+        rewritten(library.report, title="Another title"),
+        monkeypatch,
+        scheduled=scheduled,
+    )
+    case_after = library.case_id()
+    assert case_after != case_before
+    assert _transitions(library.root)[-1] == (
+        "review-admission-v1",
+        "superseded",
+        case_before,
+        case_after,
+    )
+    _assert_field_closed(library, lane, decision_id, waiting_id)
+    return (
+        library.root.field_effect_manual_hold_token(case_after, destination),
+        decision_id,
+        tuple(
+            library.root._connection.execute(
+                "SELECT state,json_extract(document,'$.failure') FROM field_effects "
+                "ORDER BY rowid"
+            ).fetchall()
+        ),
+        _transitions(library.root),
+    )
+
+
+@pytest.mark.parametrize("scheduled", [True, False], ids=["slot", "refresh"])
+def test_a_scheduled_search_with_changed_proposals_moves_on_as_a_refresh_does(
+    library: _Library,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    scheduled: bool,
+) -> None:
+    """A changed scheduled search takes the ordinary path: the case is
+    superseded, the write waiting on it closes, and the owner's hold carries
+    to the new case (ADR-0085), exactly as on a requested refresh."""
+    hold, decision_id, effects, transitions = _changed_search_rows(
+        library, tmp_path, monkeypatch, scheduled
+    )
+    assert hold == decision_id
+    assert [row[:2] for row in transitions] == [
+        ("review-admission-v1", "admitted"),
+        ("review-admission-v1", "superseded"),
+    ]
+    assert effects == (("superseded", "authority_superseded"),)
+    _reopen_fields(library, tmp_path)
+
+
+@pytest.mark.parametrize("scheduled", [True, False], ids=["slot", "refresh"])
+def test_a_changed_scheduled_search_meets_an_executing_write_as_a_refresh_does(
+    library: _Library, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scheduled: bool
+) -> None:
+    """A changed scheduled search that runs while a write is being applied
+    leaves the same rows as a refresh-requested preparation in its place: the
+    case is superseded and the write in flight finishes and is verified."""
+    decision_id = _owner_decision_id(library)
+    lane = _FieldLane(library, tmp_path)
+    library.now[0] = 13
+    apply = lane.target.apply
+    during: list[list[tuple[str, str, str | None]]] = []
+
+    def applying(plan: FieldEffectPlan) -> TargetEffectResult:
+        during.append(_decision_plans(library.root, decision_id))
+        _search_again(
+            library,
+            rewritten(library.report, title="Another title"),
+            monkeypatch,
+            scheduled=scheduled,
+        )
+        return apply(plan)
+
+    lane.target.apply = applying  # type: ignore[method-assign]  # reason: the preparation runs inside the fake's write, while the plan is applying.
+    case_before = library.case_id()
+    lane.scheduler.schedule()
+    (document,) = library.root._connection.execute(
+        "SELECT document FROM field_effects WHERE decision_id=?", (decision_id,)
+    ).fetchone()
+    plan_id = FieldEffectOperation.from_json(document).plan.plan_id
+    lane.target.seed(FieldEffectOperation.from_json(document).plan)
+    lane.scheduler._run_until_idle()
+
+    assert during == [[(plan_id, "applying", None)]]
+    assert _decision_plans(library.root, decision_id) == [(plan_id, "verified", None)]
+    case_after = library.case_id()
+    assert [row[1:] for row in _transitions(library.root)] == [
+        ("admitted", None, case_before),
+        ("superseded", case_before, case_after),
+    ]
+    _reopen_fields(library, tmp_path)

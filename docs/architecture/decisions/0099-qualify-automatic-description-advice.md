@@ -52,11 +52,12 @@ Codex profile digest comes from the image's build and cannot be reproduced
 from a checkout.
 
 The advice choice on the work's page is enabled only when the field is
-editable, which needs a source description that differs from the library's.
-Where every source repeats the library's description, the owner can neither
-choose the advice nor keep the current description. Until #1895, Automatic
-still admitted and wrote there, because admission checked neither the policy
-destination nor the decision actions.
+editable. Before #1905 that needed a source description that differed from
+the library's: where every source repeated the library's description, the
+owner could neither choose the advice nor keep the current description. Until
+#1895, Automatic still admitted and wrote there, because admission checked
+neither the policy destination nor the decision actions. Since #1905 such a
+field offers the adviser's text and Keep current while its advice is shown.
 
 ## Decision
 
@@ -100,12 +101,12 @@ destination nor the decision actions.
    eligible, decided before any advice, and current eligible advice still
    undecided are not labels. The owner chose that keeping the current
    description counts as wrong on 2026-11-15.
-6. **Fields the owner cannot choose.** Where every source repeats the
-   library's description, the advice cannot be chosen, so those fields cannot
-   be labelled and qualification does not cover them. Since #1895 (issue
-   #1892), Automatic never writes a description field with no decision
-   actions, so the labelled population is the whole population Automatic may
-   write.
+6. **Fields every source repeats.** Where every source repeats the
+   library's description, the field offers the adviser's text and Keep
+   current while its advice is shown (#1905), so those fields are labelled
+   like any other. Since #1895 (issue #1892), Automatic never writes a
+   description field the owner could not choose or reverse, so the labelled
+   population is the whole population Automatic may write.
 7. **Identity.** Labels are pooled by the advice's engine, model, instruction
    digest, output-schema digest and cleanup digest, as ADR-0087 binds a
    qualification to the operation it permits. Each of the eight cleanup

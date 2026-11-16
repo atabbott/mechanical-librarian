@@ -36,7 +36,8 @@ from mechanical_librarian.domain.metadata_report import MetadataReport
 # Whether the case's description field offers the owner a choice: the same
 # fact, read from the current offer, that makes the field editable and offers
 # Keep current. Description advice never decides a field the owner could not
-# have decided or reversed (configuration.md, Description advice).
+# have decided or reversed (configuration.md, Description advice); a field
+# every source repeats offers both beside advice (`_description_choosable`).
 _DESCRIPTION_CHOICE_SQL = (
     "SELECT 1 FROM review_case_field_facts WHERE review_case_id=? "
     "AND destination='description' AND has_owner_decision_actions=1"
@@ -300,10 +301,7 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                 "SELECT d.document FROM current_description_decisions p JOIN description_decisions d ON d.decision_id=p.decision_id WHERE p.review_case_id=?",
                 (case_id,),
             ).fetchone()
-            choosable = (
-                self._connection.execute(_DESCRIPTION_CHOICE_SQL, (case_id,)).fetchone()
-                is not None
-            )
+            choosable = self._description_choosable(case_id)
             if origin == "automatic_policy":
                 safety = self._connection.execute(
                     "SELECT paused,global_suspension,category_suspensions_document FROM automatic_safety_state WHERE singleton=1"
@@ -416,6 +414,31 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
             transaction.rollback()
             raise
 
+    def _description_choosable(self, case_id: str) -> bool:
+        """Whether the description offers the owner a choice with its advice.
+
+        The field's facts say so, or every source repeats the current text,
+        where the field offers the adviser's text and Keep current only beside
+        advice (#1905). The live proposal stands for the current offer without
+        reading level storage (ADR-0096 "Readers"): a level never substitutes
+        a description whose alternatives all repeat it, and a substituted one
+        has a differing alternative, so its facts already say choosable
+        (amendment 24). Advice exists only for an admitted case, so the read
+        needs no recording check.
+        """
+        from mechanical_librarian.domain.human_decision import preserved_description
+        from mechanical_librarian.domain.review_case import ReviewCase, current_offer
+
+        if self._connection.execute(_DESCRIPTION_CHOICE_SQL, (case_id,)).fetchone():
+            return True
+        row = self._connection.execute(
+            "SELECT document FROM review_cases WHERE review_case_id=?", (case_id,)
+        ).fetchone()
+        return row is not None and any(
+            preserved_description(proposal)
+            for proposal in current_offer(ReviewCase.from_json(row[0]), None)
+        )
+
     @local_operation
     def authority_value(self, decision: AuthoredDescriptionDecision) -> object:
         from mechanical_librarian.domain.field_effect import FieldEffectError
@@ -449,9 +472,7 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
             ).fetchone()
             # An owner's choice keeps its authority when the offer changes;
             # an automatic one writes only while the field offers a choice.
-            choosable = self._connection.execute(
-                _DESCRIPTION_CHOICE_SQL, (decision.review_case_id,)
-            ).fetchone()
+            choosable = self._description_choosable(decision.review_case_id)
             if (
                 not self.current_settings().automatic_application
                 # A stored automatic decision writes only while a shipped
@@ -460,7 +481,7 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                 or candidate.output.disposition != "ready"
                 or not automatic_description_floor_met(candidate.output.description)
                 or owner_final is not None
-                or choosable is None
+                or not choosable
                 or posture != ("automatic",)
                 or safety is None
                 or safety[0]
