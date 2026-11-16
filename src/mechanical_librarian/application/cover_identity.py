@@ -61,12 +61,18 @@ from mechanical_librarian.domain.work_identity_levels import (
     WorkIdentityLevel,
 )
 
-SCHEMA_VERSION = "cover-identity-report-v3"
+SCHEMA_VERSION = "cover-identity-report-v4"
 _OUTCOMES = frozenset(
     {
         "verified_manifestation_match",
         "verified_work_match",
         "title_creator_work_match",
+        # A cover whose every record only the owner's link or its anchor kept
+        # (#1477, S26): the linked record's own, then one that matches only the
+        # linked record's title and creators. Neither verifies, so no switch or
+        # automatic cover mode binds it.
+        "owner_link_match",
+        "owner_link_anchor_match",
         "plausible_match",
         "unknown",
         "conflict",
@@ -118,7 +124,8 @@ _CLASSIFIER_RULES = (
     "level-title-and-creator-nested-author-lists:own-list-comparison",
     "level-title-and-creator-overlapping-author-lists:level-refused",
     "level-contradiction-gate-per-level:exact-and-wide-apart",
-    "owner-link-or-anchor-admitted-records-only:plausible-owner-link-unqualified",
+    "owner-link-or-anchor-admitted-records-with-a-link-record:owner-link-match",
+    "owner-link-anchor-admitted-records-only:owner-link-anchor-match",
 )
 CLASSIFIER_REFERENCE = (
     "cover_identity_classifier_"
@@ -467,11 +474,18 @@ def _classify_sources(
         return "unknown", ["unbound_provider_identity"], []
     # A cover whose every record only the owner's link or its anchor kept is
     # shadow-first (#1477, S26): it never verifies, so no switch or automatic
-    # cover mode can bind it until the link rules qualify.
-    if all(
-        owner_link_reached(report, match[1], match[2]) is not None for match in matches
-    ):
-        return "plausible_match", ["owner_link_unqualified"], []
+    # cover mode can bind it until the link rules qualify. A record the link
+    # lane itself kept is the linked book's; one only the anchor reached
+    # shares its title and creators and needs the unverified confirmation.
+    reached = {owner_link_reached(report, match[1], match[2]) for match in matches}
+    if None not in reached:
+        return (
+            "owner_link_match"
+            if "owner_link" in reached
+            else "owner_link_anchor_match",
+            ["owner_link_unqualified"],
+            [],
+        )
     if all(_listed(match[0]) for match in matches):
         return _classify_listed_edition(report, matches, level)
     evidence: list[str] = []

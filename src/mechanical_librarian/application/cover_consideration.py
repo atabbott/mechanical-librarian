@@ -91,10 +91,11 @@ from mechanical_librarian.domain.proposal_set import (
     work_route_cover_offered,
     work_route_cover_sources,
 )
+from mechanical_librarian.domain.shadow_outcome import OWNER_LINK_WOULD_ADMIT_RULE
 from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 
-CoverConsiderationSchemaVersion = Literal["cover-consideration-v10"]
-SCHEMA_VERSION: Final[CoverConsiderationSchemaVersion] = "cover-consideration-v10"
+CoverConsiderationSchemaVersion = Literal["cover-consideration-v11"]
+SCHEMA_VERSION: Final[CoverConsiderationSchemaVersion] = "cover-consideration-v11"
 _IDENTITY_ELIGIBLE = frozenset({"verified_manifestation_match", "verified_work_match"})
 CoverConsiderationCurrentness = Literal["current", "refresh_required", "inactive"]
 _CONSIDERATION_FIELDS = frozenset(
@@ -131,6 +132,24 @@ _CONSIDERATION_FIELDS = frozenset(
     }
 )
 _LEVEL_MATCH = "title_creator_work_match"
+# The owner-link outcomes (#1477, S26). Neither is identity-eligible, so
+# neither is selectable, ranked or switched to; the owner may choose either.
+_LINK_MATCH = "owner_link_match"
+_LINK_ANCHOR_MATCH = "owner_link_anchor_match"
+# How a candidate's match is stated. The linked book's own cover is the same
+# book, so it asks no unverified-match confirmation; every other outcome that
+# no identifier verified does.
+_MATCH_STATES: Final = MappingProxyType(
+    {
+        "verified_manifestation_match": "same_edition",
+        "verified_work_match": "same_book",
+        _LINK_MATCH: "same_book",
+    }
+)
+# Display only, as `title_and_author` is: what the card names the match by.
+_LINK_REASONS: Final = MappingProxyType(
+    {_LINK_MATCH: "linked_book", _LINK_ANCHOR_MATCH: "linked_title_and_author"}
+)
 
 
 def _validate_consideration_level(value: dict[str, object]) -> None:
@@ -346,10 +365,7 @@ def _larger_copy_candidate(
         "deterministic_rank": acceptable.index(reference) + 1,
         "deterministic_rank_key": list(rank_key),
         "incumbent": False,
-        "match_state": {
-            "verified_manifestation_match": "same_edition",
-            "verified_work_match": "same_book",
-        }[str(identity_row["outcome"])],
+        "match_state": _MATCH_STATES[str(identity_row["outcome"])],
         "observation": None,
         "ordinal": len(packet_candidates),
         "original_sha256": artifact.original_digest,
@@ -668,10 +684,15 @@ def _would_admit(
     ):
         return None
     policy = json.loads(policy_report_document)
+    # The owner-link outcomes rank as S26 places them: the linked book's own
+    # cover after a verified work match, an anchor-only one with the level
+    # match (#1477).
     tiers = {
         "verified_manifestation_match": 0,
         "verified_work_match": 1,
-        _LEVEL_MATCH: 2,
+        _LINK_MATCH: 2,
+        _LEVEL_MATCH: 3,
+        _LINK_ANCHOR_MATCH: 3,
     }
     Key = tuple[int, int, int, int, int, int, str]
     keyed: list[tuple[Key, dict[str, object]]] = []
@@ -728,14 +749,22 @@ def _would_admit(
     ):
         return None
     identity = cast("dict[str, object]", best["identity"])
-    if identity["outcome"] != _LEVEL_MATCH or best["reference"] == policy.get(
-        "recommended_candidate_reference"
-    ):
+    if identity["outcome"] not in {
+        _LEVEL_MATCH,
+        _LINK_MATCH,
+        _LINK_ANCHOR_MATCH,
+    } or best["reference"] == policy.get("recommended_candidate_reference"):
         return None
-    rule = next(
-        reason
-        for reason in cast("list[str]", identity["reasons"])
-        if reason.startswith("work_identity:")
+    # An owner-link cover is noted under the owner-link rule, as a field's
+    # would-admit note is (ADR-0092, #1477 S26).
+    rule = (
+        OWNER_LINK_WOULD_ADMIT_RULE
+        if identity["outcome"] != _LEVEL_MATCH
+        else next(
+            reason
+            for reason in cast("list[str]", identity["reasons"])
+            if reason.startswith("work_identity:")
+        )
     )
     return {"candidate_reference": best["reference"], "rule": rule}
 
@@ -2052,10 +2081,9 @@ class CoverConsiderationService:
                         None if rank_key is None else list(rank_key)
                     ),
                     "incumbent": bool(candidate["incumbent"]),
-                    "match_state": {
-                        "verified_manifestation_match": "same_edition",
-                        "verified_work_match": "same_book",
-                    }.get(str(identity_row["outcome"]), "match_not_confirmed"),
+                    "match_state": _MATCH_STATES.get(
+                        str(identity_row["outcome"]), "match_not_confirmed"
+                    ),
                     "observation": observation_row,
                     "original_sha256": artifact.original_digest,
                     "ordinal": ordinal,
@@ -2120,7 +2148,10 @@ class CoverConsiderationService:
                 # Display only: the match state stays `match_not_confirmed`, so
                 # every unverified-match gate reads it as today (#1355, A2).
                 match_reason=(
-                    "matched_book"
+                    _LINK_REASONS[cast("str", identity_row["outcome"])]
+                    if type(identity_row) is dict
+                    and identity_row.get("outcome") in _LINK_REASONS
+                    else "matched_book"
                     if candidate["reference"] in matched_book
                     else "title_and_author"
                     if candidate["incumbent"] is False

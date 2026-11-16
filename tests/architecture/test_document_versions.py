@@ -70,7 +70,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.application.cover_consideration",
         "SCHEMA_VERSION",
-        "cover-consideration-v10",
+        "cover-consideration-v11",
     ),
     (
         "mechanical_librarian.domain.cover_taste",
@@ -110,7 +110,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.application.review_web",
         "REVIEW_CASE_EVIDENCE_SCHEMA",
-        "review-case-evidence-v5",
+        "review-case-evidence-v6",
     ),
     (
         "mechanical_librarian.application.review_web",
@@ -135,7 +135,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.application.review_web",
         "REVIEW_REPORT_DETAIL_SCHEMA",
-        "review-report-detail-v6",
+        "review-report-detail-v7",
     ),
     (
         "mechanical_librarian.domain.shadow_review_actions",
@@ -175,7 +175,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.application.cover_policy",
         "SCHEMA_VERSION",
-        "cover-policy-report-v5",
+        "cover-policy-report-v6",
     ),
     (
         "mechanical_librarian.domain.shadow_outcome",
@@ -206,7 +206,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.application.cover_identity",
         "SCHEMA_VERSION",
-        "cover-identity-report-v3",
+        "cover-identity-report-v4",
     ),
     (
         "mechanical_librarian.domain.audio_inspection",

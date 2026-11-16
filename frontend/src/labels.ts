@@ -651,6 +651,7 @@ export const automaticRefusalReasons: Readonly<Record<string, string>> = {
   series_provider_failure_isbn: 'An ISBN lookup did not return a usable answer.',
   series_provider_failure_work: 'A title and author lookup did not return a usable answer.',
   series_provider_failure_asin: 'An ASIN lookup did not return a usable answer.',
+  owner_link_unqualified: 'Only the book you linked supports this value, so it is left to you.',
 }
 
 export const evidenceRoleLabel = (role: EvidenceRole) =>

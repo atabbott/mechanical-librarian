@@ -1212,11 +1212,12 @@
     "missing_lineage_count": 0,
     "next_cursor": null,
     "review_case_id": "review_case_a441009f289e33ef0de0eafd434ac2e62fc000afc53dbfe71b5e7df98203c283",
-    "schema_version": "review-case-evidence-v5",
+    "schema_version": "review-case-evidence-v6",
     "source_ledger": [
       {
         "companion_isbn": false,
         "cover_only": false,
+        "anchored": false,
         "provider_requests": 1,
         "lane_kind": "work",
         "provider": "Audible",
@@ -1226,6 +1227,7 @@
       {
         "companion_isbn": false,
         "cover_only": false,
+        "anchored": false,
         "provider_requests": 2,
         "lane_kind": "asin",
         "provider": "Audnexus",
@@ -1235,6 +1237,7 @@
       {
         "companion_isbn": false,
         "cover_only": false,
+        "anchored": false,
         "provider_requests": 2,
         "lane_kind": "asin",
         "provider": "Audnexus",

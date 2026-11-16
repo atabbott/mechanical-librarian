@@ -5,7 +5,9 @@ adapters over synthetic answers and a real report store, then
 `evaluate_report`, the shadow review packet, `decide_shadow_packet` and the
 cover identity classifier. One ebook and one audiobook work link: the report
 publishes, no `recommend_candidate` stands only on records the link or its
-anchor reached, no ASIN proposal cites them, and no such cover verifies. Each
+anchor reached, no ASIN proposal cites them, and no such cover verifies: it
+reads `owner_link_match` or `owner_link_anchor_match`, outside the eligible
+identities every switch and automatic cover mode reads. Each
 assertion has an ungated control showing the same records would otherwise
 have decided, been proposed or verified.
 """
@@ -40,6 +42,7 @@ from mechanical_librarian.application.configuration import (
     ReportLimits,
     TargetConnectionConfiguration,
 )
+from mechanical_librarian.application.cover_consideration import _IDENTITY_ELIGIBLE
 from mechanical_librarian.application.metadata_report import (
     GenerateMetadataReport,
     InspectionResult,
@@ -170,6 +173,7 @@ def _asin_citations(report: MetadataReport) -> set[str]:
     }
 
 
+_LINK_OUTCOMES = {"owner_link_match", "owner_link_anchor_match"}
 _COVER_KINDS = {
     "audible_catalog": CoverSourceKind.AUDIBLE_CATALOG,
     "hardcover": CoverSourceKind.HARDCOVER,
@@ -277,13 +281,16 @@ def test_an_ebook_work_link_decides_nothing_on_what_only_it_reached(
         recommendation == "recommend_candidate"
         for recommendation, _ in _decisions(report).values()
     )
-    assert _cover_outcomes(report) == ["plausible_match"]
+    # The linked record's own cover is the linked book's: never verified, so
+    # never selectable, ranked or switched to.
+    assert _cover_outcomes(report) == ["owner_link_match"]
+    assert not set(_cover_outcomes(report)) & _IDENTITY_ELIGIBLE
     # Control: ungated, the same records count as any other source's. This
     # single-source ebook stays manual on the engine's own preservation and
     # sufficiency rules, so the gate's effect shows in the packet summary.
     with _ungated():
         assert not any(_link_only(report).values())
-        assert _cover_outcomes(report) != ["plausible_match"]
+        assert not set(_cover_outcomes(report)) & _LINK_OUTCOMES
 
 
 # --- Audiobook: a Hardcover work link, Audible search and the Audnexus feed --
@@ -459,9 +466,15 @@ def test_an_audiobook_work_link_publishes_and_decides_nothing_it_alone_reached(
         recommendation == "recommend_candidate" for recommendation, _ in gated.values()
     )
     assert not _asin_citations(report) & reached
-    assert set(_cover_outcomes(report)) == {"plausible_match"}
+    # The linked record's cover and one Audible kept on the anchor alone.
+    assert set(_cover_outcomes(report)) == {
+        "owner_link_match",
+        "owner_link_anchor_match",
+    }
+    assert not set(_cover_outcomes(report)) & _IDENTITY_ELIGIBLE
     with _ungated():
-        assert set(_cover_outcomes(report)) != {"plausible_match"}
+        # Ungated, Audible's record verifies by the work it admitted.
+        assert set(_cover_outcomes(report)) & _IDENTITY_ELIGIBLE
         ungated = _decisions(report)
         assert _asin_citations(report) & reached
     assert any(

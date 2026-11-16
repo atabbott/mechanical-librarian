@@ -356,8 +356,9 @@ def test_a_report_holding_a_link_kept_record_says_so() -> None:
 def test_a_cover_only_the_link_kept_is_never_verified() -> None:
     report = _report(_facts())
     level = WorkIdentityLevel.TITLE_AND_CREATOR
+    # The linked record's own cover: never verified (#1477, increment 2).
     assert _classify_sources(report, (_linked_cover(),), level) == (
-        "plausible_match",
+        "owner_link_match",
         ["owner_link_unqualified"],
         [],
     )

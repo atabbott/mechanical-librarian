@@ -4318,7 +4318,9 @@
               {
                 "enum": [
                   "matched_book",
-                  "title_and_author"
+                  "title_and_author",
+                  "linked_book",
+                  "linked_title_and_author"
                 ],
                 "type": "string"
               },
@@ -4718,6 +4720,8 @@
               "verified_manifestation_match",
               "verified_work_match",
               "title_creator_work_match",
+              "owner_link_match",
+              "owner_link_anchor_match",
               "plausible_match",
               "unknown",
               "conflict"
@@ -6526,7 +6530,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "review-case-evidence-v5",
+            "const": "review-case-evidence-v6",
             "title": "Schema Version",
             "type": "string"
           },
@@ -11416,6 +11420,10 @@
       "_ProviderOutcome": {
         "additionalProperties": false,
         "properties": {
+          "anchored": {
+            "title": "Anchored",
+            "type": "boolean"
+          },
           "companion_isbn": {
             "title": "Companion Isbn",
             "type": "boolean"
@@ -11430,7 +11438,8 @@
               "work",
               "asin",
               "discovery",
-              "none"
+              "none",
+              "link"
             ],
             "title": "Lane Kind",
             "type": "string"
@@ -11477,6 +11486,7 @@
           "cover_only",
           "provider_requests",
           "lane_kind",
+          "anchored",
           "provider",
           "reason",
           "status"
@@ -11956,7 +11966,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "review-report-detail-v6",
+            "const": "review-report-detail-v7",
             "title": "Schema Version",
             "type": "string"
           },

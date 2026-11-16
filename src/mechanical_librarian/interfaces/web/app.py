@@ -697,6 +697,9 @@ class _CoverIdentity(_ClosedModel):
         "verified_manifestation_match",
         "verified_work_match",
         "title_creator_work_match",
+        # Only the owner's link or its anchor reached it (#1477, S26).
+        "owner_link_match",
+        "owner_link_anchor_match",
         "plausible_match",
         "unknown",
         "conflict",
@@ -742,9 +745,19 @@ class _CoverCandidate(_ClosedModel):
     match_state: Literal["same_edition", "same_book", "match_not_confirmed"]
     # A proposed cover from the exactly matched book of an audiobook with no
     # admitted recording, or one whose source record has the book's title and
-    # author at the chosen Book matching level; display only, its identity and
-    # match state stay as stated (#1642, #1355).
-    match_reason: Literal["matched_book", "title_and_author"] | None
+    # author at the chosen Book matching level, or one only the owner's link
+    # reached: the linked book's own, or one with its title and author;
+    # display only, its identity and match state stay as stated (#1642,
+    # #1355, #1477).
+    match_reason: (
+        Literal[
+            "matched_book",
+            "title_and_author",
+            "linked_book",
+            "linked_title_and_author",
+        ]
+        | None
+    )
     observation: _CoverObservation | None
     original_sha256: str
     ordinal: _Count
@@ -1520,7 +1533,10 @@ class _ProviderOutcome(_ClosedModel):
     # iTunes asked for an audiobook's cover alone (#1779).
     cover_only: bool
     provider_requests: int = Field(ge=0)
-    lane_kind: Literal["isbn", "work", "asin", "discovery", "none"]
+    # `link` reads an owner link's record by its key (#1477).
+    lane_kind: Literal["isbn", "work", "asin", "discovery", "none", "link"]
+    # A WORK lane asked with the linked record's title and authors (#1477).
+    anchored: bool
     provider: str = Field(max_length=128)
     reason: str = Field(max_length=512)
     status: Literal[

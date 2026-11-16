@@ -297,8 +297,8 @@ KEYWORDS: tuple[tuple[str, str, str, str, object], ...] = (
         "/properties/lane_kind",
         "enum",
         # An owner-link lane reaches the wire with the link's own screens
-        # (#1477): until then no caller records a link, so no report holds one.
-        _values(ProviderQueryKind) - {ProviderQueryKind.LINK.value},
+        # (#1477), so every query kind does.
+        _values(ProviderQueryKind),
     ),
     (
         "S47",

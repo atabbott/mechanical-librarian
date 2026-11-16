@@ -89,13 +89,17 @@ from .cover_observation import (
 from .cover_packet_semantics import bind_cover_packet, canonical_packet_json
 from .cover_packets import cover_source_reference
 
-CoverPolicyReportSchemaVersion = Literal["cover-policy-report-v5"]
-SCHEMA_VERSION: Final[CoverPolicyReportSchemaVersion] = "cover-policy-report-v5"
+CoverPolicyReportSchemaVersion = Literal["cover-policy-report-v6"]
+SCHEMA_VERSION: Final[CoverPolicyReportSchemaVersion] = "cover-policy-report-v6"
 CoverPolicySchemaVersion = Literal["cover-policy-v2"]
 POLICY_SCHEMA_VERSION: Final[CoverPolicySchemaVersion] = "cover-policy-v2"
 _IDENTITY_OUTCOMES = frozenset(
     {
         "conflict",
+        # Rows only, never elected: the owner-link outcomes are shadow-first
+        # (#1477, S26).
+        "owner_link_anchor_match",
+        "owner_link_match",
         "plausible_match",
         "title_creator_work_match",
         "unknown",

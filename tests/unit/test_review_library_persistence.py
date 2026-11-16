@@ -205,6 +205,7 @@ def test_terminal_provider_taxonomy_projects_closed_safe_outcomes() -> None:
     assert all(
         set(outcome)
         == {
+            "anchored",
             "companion_isbn",
             "cover_only",
             "lane_kind",
@@ -216,6 +217,7 @@ def test_terminal_provider_taxonomy_projects_closed_safe_outcomes() -> None:
         and outcome["provider_requests"] == 0
         and outcome["companion_isbn"] is False
         and outcome["cover_only"] is False
+        and outcome["anchored"] is False
         for outcome in outcomes
     )
     assert "diagnostic" not in json.dumps(outcomes)

@@ -147,9 +147,9 @@ REVIEW_CASE_DETAIL_SCHEMA: Final[ReviewCaseDetailSchemaVersion] = (
     "review-case-detail-v9"
 )
 
-ReviewCaseEvidenceSchemaVersion = Literal["review-case-evidence-v5"]
+ReviewCaseEvidenceSchemaVersion = Literal["review-case-evidence-v6"]
 REVIEW_CASE_EVIDENCE_SCHEMA: Final[ReviewCaseEvidenceSchemaVersion] = (
-    "review-case-evidence-v5"
+    "review-case-evidence-v6"
 )
 
 HUMAN_DECISION_ACK_SCHEMA: Final = "human-decision-ack-v1"
@@ -163,9 +163,9 @@ REVIEW_CASE_HISTORY_SCHEMA: Final[ReviewCaseHistorySchemaVersion] = (
 ReviewLibrarySchemaVersion = Literal["review-library-v9"]
 REVIEW_LIBRARY_SCHEMA: Final[ReviewLibrarySchemaVersion] = "review-library-v9"
 
-ReviewReportDetailSchemaVersion = Literal["review-report-detail-v6"]
+ReviewReportDetailSchemaVersion = Literal["review-report-detail-v7"]
 REVIEW_REPORT_DETAIL_SCHEMA: Final[ReviewReportDetailSchemaVersion] = (
-    "review-report-detail-v6"
+    "review-report-detail-v7"
 )
 
 # A degraded value with nothing proposed beside it is the current one (#1283).
@@ -217,6 +217,7 @@ _AUTOMATIC_REFUSAL_TEXT = {
     "series_provider_failure_isbn": "An ISBN lookup did not return a usable answer.",
     "series_provider_failure_work": "A title and author lookup did not return a usable answer.",
     "series_provider_failure_asin": "An ASIN lookup did not return a usable answer.",
+    "owner_link_unqualified": "Only the book you linked supports this value, so it is left to you.",
 }
 
 CoverReadObservation = tuple[tuple[str, str], frozenset[tuple[str, str, str, str]]]
@@ -4406,6 +4407,26 @@ _COVER_ONLY_FAILURE_REASON = (
 )
 
 
+# The lanes an owner link was read through (#1477) say what that read found:
+# by the link's outcome where the lane found nothing, and that it read the
+# record where the lane kept one. A link the source could not answer keeps the
+# generic failure reason, which already says so.
+_LINK_LANE_REASONS = {
+    ("admitted", "candidates"): "Read the linked record.",
+    ("missing", "no_match"): "No longer has the linked record.",
+    ("merged", "no_match"): "Merged the linked record into another one.",
+    ("contradicted", "no_match"): (
+        "The linked record no longer matches this work's edition."
+    ),
+}
+# The WORK lane asked with the linked record's title and authors (#1477).
+_ANCHORED_WORK_REASONS = {
+    "candidates": (
+        "Returned possible matches for the linked record's title and authors."
+    ),
+}
+
+
 def _provider_outcomes(lanes: tuple[ProviderLaneFacts, ...]) -> list[dict[str, object]]:
     """Expose only bounded lane state, never diagnostics or queries.
 
@@ -4422,6 +4443,11 @@ def _provider_outcomes(lanes: tuple[ProviderLaneFacts, ...]) -> list[dict[str, o
             if lane.adapter_fault
             else _REFUSED_PROVIDER_REASON
             if lane.dispatch == "refused" or lane.identity_refused
+            else _LINK_LANE_REASONS[(lane.link_outcome, lane.status)]
+            if lane.link_outcome is not None
+            and (lane.link_outcome, lane.status) in _LINK_LANE_REASONS
+            else _ANCHORED_WORK_REASONS[lane.status]
+            if lane.anchored and lane.status in _ANCHORED_WORK_REASONS
             else _COVER_ONLY_REASONS.get(lane.status, _COVER_ONLY_FAILURE_REASON)
             if lane.cover_only
             and (
@@ -4441,6 +4467,9 @@ def _provider_outcomes(lanes: tuple[ProviderLaneFacts, ...]) -> list[dict[str, o
             # A cover-only lane, which Sources labels by its cover and Library
             # leaves out of a work's match and limit (#1779).
             "cover_only": lane.cover_only,
+            # A WORK lane asked with the owner link's anchor, which Sources
+            # labels by the linked record (#1477).
+            "anchored": lane.anchored,
         }
         for lane in lanes
     ]
