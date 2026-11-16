@@ -98,9 +98,10 @@ describe('what a press of a card’s pin sends', () => {
       press: { kind: 'value_then_pin', outcome: 'keep_current' },
     })
     // A changed pin is on no card, so the current card pins the new value.
-    expect(
-      cardPin(field({ pin: pinOf('changed'), pinControl: pinnedControl }), current),
-    ).toEqual({ on: false, press: { kind: 'value_then_pin', outcome: 'keep_current' } })
+    expect(cardPin(field({ pin: pinOf('changed'), pinControl: pinnedControl }), current)).toEqual({
+      on: false,
+      press: { kind: 'value_then_pin', outcome: 'keep_current' },
+    })
   })
 
   it('pins the current value alone where Keep current is not offered', () => {
@@ -116,9 +117,9 @@ describe('what a press of a card’s pin sends', () => {
       press: { kind: 'value_then_pin', outcome: 'accept' },
     })
     // A pin in force on the current value moves with the new choice.
-    expect(
-      cardPin(field({ pin: pinOf('in_force'), pinControl: pinnedControl }), proposed),
-    ).toEqual({ on: false, press: { kind: 'value_then_pin', outcome: 'accept' } })
+    expect(cardPin(field({ pin: pinOf('in_force'), pinControl: pinnedControl }), proposed)).toEqual(
+      { on: false, press: { kind: 'value_then_pin', outcome: 'accept' } },
+    )
   })
 
   it('shows no pin where the server offers none', () => {
@@ -219,7 +220,7 @@ describe('the sentence at the foot of the field', () => {
           pin: {
             state: 'changed',
             value: { destination: 'language', state: 'value', value: 'en' },
-          } as NonNullable<Field['pin']>,
+          },
         }),
         shown,
       ).sentence,
