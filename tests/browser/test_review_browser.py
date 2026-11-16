@@ -12250,6 +12250,21 @@ def test_keyboard_only_triage_journey(width):
         ).to_be_focused()
         assert [sent["outcome"] for sent in decisions] == ["accept", "withdraw"]
 
+        # No key acts while owner entry is open, so no card shows its number
+        # then; the numbers return when it closes.
+        expect(badges).to_have_count(2)
+        expect(badges.first).to_be_visible()
+        choose = page.get_by_role("button", name="Choose genres", exact=True)
+        press_on("e", choose)
+        expect(page.locator("form.owner-entry")).to_be_visible()
+        expect(badges).to_have_count(2)
+        expect(badges.locator("visible=true")).to_have_count(0)
+        unmoved("2")
+        page.keyboard.press("Escape")
+        expect(page.locator("form.owner-entry")).to_have_count(0)
+        expect(choose).to_be_focused()
+        expect(badges.locator("visible=true")).to_have_count(2)
+
         if width == 390:
             # The masthead scrolls away at this width and covers nothing, so a
             # card at the very top of a short window is in view.
@@ -12292,6 +12307,7 @@ def test_keyboard_only_triage_journey(width):
             # A card above the window is shown by the first press and recorded
             # by the second.
             place(current, -200)
+            expect(current).not_to_be_in_viewport()
             with page.expect_response(
                 lambda response: response.url.endswith("/decisions")
             ) as recorded:
@@ -12303,6 +12319,9 @@ def test_keyboard_only_triage_journey(width):
             # Withdraw with its lower edge below the window is shown first too.
             withdraw = page.get_by_role("button", name="Withdraw", exact=True)
             place(withdraw, 450)
+            assert withdraw.evaluate(
+                "control => control.getBoundingClientRect().bottom > innerHeight"
+            )
             with page.expect_response(
                 lambda response: response.url.endswith("/decisions")
             ):

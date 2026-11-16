@@ -1789,6 +1789,8 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 .review-key-badge { display:none; }
 :root[data-review-keys='on'] .library-page :is(.value-choice, .library-cover-card):not(:disabled) > .review-key-badge { display:inline-grid; position:absolute; z-index:1; top:.65rem; right:.65rem; }
 .library-page .library-cover-card { position:relative; }
+/* No key acts while owner entry is open, so the badges go; the corner they keep clear stays, and no card changes height. */
+.library-page:has(form.owner-entry) .review-key-badge { visibility:hidden; }
 :root[data-review-keys='on'] .library-page .library-cover-card:not(:disabled) > .review-key-badge { top:1rem; right:1rem; box-shadow:0 1px 3px rgb(0 0 0 / .25); }
 /* The badge keeps a corner clear of the label line, so Your choice never runs under it, and of the value only as far down and in as the badge reaches past the card's 16px and 20px padding: later lines run full width. */
 :root[data-review-keys='on'] .library-page .metadata-choice .choice-select:has(> .review-key-badge):not(:disabled) > small { padding-inline-end:2rem; }

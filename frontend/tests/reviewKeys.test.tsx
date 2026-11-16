@@ -892,6 +892,8 @@ describe('review keys', () => {
     await press('2')
     expect(card).toHaveFocus()
     expect(http.recordDecision).not.toHaveBeenCalled()
+    // Back where the page was, one pixel over the edge.
+    page.scrollTo(0)
     page.place(card, box(40, innerHeight - 159, 300, 160))
     await press('2')
     await waitFor(() => expect(http.recordDecision).toHaveBeenCalledTimes(1))
@@ -1023,6 +1025,32 @@ describe('review keys', () => {
     expect(http.recordDecision).not.toHaveBeenCalled()
     await press('2')
     await waitFor(() => expect(http.recordDecision).toHaveBeenCalledTimes(1))
+  })
+
+  it('lets the strip cut a cover inside its own padding, and no further', async () => {
+    const http = store(() => [coverField])
+    await openAt(http, 'cover')
+    const card = present(screen.getAllByRole('radio')[1])
+    const whole = present(card.closest<HTMLElement>('.cover-choice'))
+    card.style.padding = '10px'
+    const page = scrollingPage(8, { box: present(whole.parentElement), at: box(16, 100, 343, 400) })
+    // The strip ends at 359. Cut by 12 px, two more than the padding and one
+    // more than rounding allows, the cover is shown first.
+    page.place(whole, box(203, 110, 168, 380), true)
+    page.place(card, box(203, 110, 168, 337), true)
+    await press('2')
+    expect(card).toHaveFocus()
+    expect(vi.mocked(whole.scrollIntoView).mock.contexts).toEqual([whole])
+    expect(http.recordDecision).not.toHaveBeenCalled()
+    // Cut by 6 px, as the second cover is at 390 px, it records at once.
+    page.place(whole, box(197 + 12, 110, 168, 380), true)
+    page.place(card, box(197 + 12, 110, 168, 337), true)
+    expect(card.getBoundingClientRect().right).toBe(365)
+    await press('2')
+    await waitFor(() => expect(http.recordDecision).toHaveBeenCalledTimes(1))
+    expect(
+      vi.mocked(whole.scrollIntoView).mock.contexts.filter((box) => box === whole),
+    ).toHaveLength(1)
   })
 
   it('shows a cover whose caption is below the window first, though the strip leaves it little room', async () => {
