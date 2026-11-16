@@ -9,6 +9,7 @@ export interface RowValue {
   readonly note?: string | undefined
 }
 export interface GroupedRow {
+  /** The work, or nothing for a row that is about no one work. */
   readonly work: string
   /** What stands beside the work: its authors, or its medium. */
   readonly aside: string
@@ -25,7 +26,7 @@ export const RowGroup = ({
   more,
 }: {
   label: string
-  /** How much the group holds, in words; it can be more than it shows. */
+  /** How much the group holds, in words, or nothing; it can be more than it shows. */
   count: string
   rows: readonly GroupedRow[]
   open: boolean
@@ -35,7 +36,7 @@ export const RowGroup = ({
   const summary = (
     <>
       <span className="write-plan-chooser">{label}</span>
-      <span className="write-plan-count">{count}</span>
+      {count ? <span className="write-plan-count">{count}</span> : null}
     </>
   )
   // With no row to show there is nothing to open: the group is its line alone.
@@ -54,20 +55,24 @@ export const RowGroup = ({
         {rows.map((row, index) => (
           // Rows carry no identity by design: their place is their key.
           <li key={index} className="write-plan-row">
-            <p className="write-plan-work">
-              <strong>{row.work}</strong> <span>{row.aside}</span>
-            </p>
-            <dl className="write-plan-values">
-              {row.values.map((value) => (
-                <div key={value.label}>
-                  <dt>{value.label}</dt>
-                  <dd>
-                    {value.value}
-                    {value.note ? <small>{value.note}</small> : null}
-                  </dd>
-                </div>
-              ))}
-            </dl>
+            {row.work ? (
+              <p className="write-plan-work">
+                <strong>{row.work}</strong> <span>{row.aside}</span>
+              </p>
+            ) : null}
+            {row.values.length ? (
+              <dl className="write-plan-values">
+                {row.values.map((value) => (
+                  <div key={value.label}>
+                    <dt>{value.label}</dt>
+                    <dd>
+                      {value.value}
+                      {value.note ? <small>{value.note}</small> : null}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            ) : null}
             {row.why ? <p className="write-plan-why">{row.why}</p> : null}
           </li>
         ))}

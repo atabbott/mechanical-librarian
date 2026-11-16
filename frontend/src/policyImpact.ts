@@ -72,7 +72,6 @@ const hasMetadataValue = (value: unknown) => value !== null && value !== undefin
 const reasonSentence = (reason: string) => `${reason.charAt(0).toUpperCase()}${reason.slice(1)}.`
 const humanReason = (reason: string | null) => {
   if (reason === 'ambiguous_evidence') return 'the sources do not agree on one value'
-  if (reason === 'policy_ignored') return 'Ignore leaves this field unchanged'
   if (reason === 'policy_off') return 'tag handling is off'
   if (reason === 'explicit_unsupported')
     return 'Not supported leaves the explicit-content flag unchanged'
@@ -90,10 +89,12 @@ const humanReason = (reason: string | null) => {
   return 'no supported value found'
 }
 
+// The group and the cell already say nothing changes; the note says why.
+const ignored = 'Set to Ignore.'
 const coverUnpreviewed: Readonly<Record<string, string>> = {
-  cover_not_compared: 'The covers for this work have not been compared yet.',
+  cover_not_compared: "No scan has compared this work's covers yet.",
   provider_fetching: 'Sources are still being fetched.',
-  cover_compared_next_scan: 'The covers are compared again on the next scan.',
+  cover_compared_next_scan: 'The next scan compares the covers again.',
 }
 
 // The server keeps its closed outcome and reason codes for audit detail. This
@@ -118,17 +119,21 @@ export const policyCell = (
       value: typeof field.desired_value === 'string' ? field.desired_value : 'No change',
       note:
         field.reason === 'policy_ignored'
-          ? reasonSentence(humanReason(field.reason))
+          ? ignored
           : field.reason
             ? coverNoteLabel(field.reason, audiobook)
             : undefined,
     }
-  // A sentence that already says the field is left to the owner stands alone.
   const refusal =
     automaticRefusalReasons[field.reason ?? ''] ??
     'No value would be chosen for you, and no more specific reason is known.'
-  if (field.reason === 'automatic_unqualified') return { effect: 'ask', value: refusal }
   const language = field.field === 'language_rendering'
+  // The sentence that says the field is left to the owner sits under the value
+  // it leaves, and stands alone only where no value is proposed.
+  if (field.reason === 'automatic_unqualified')
+    return hasMetadataValue(field.desired_value)
+      ? { effect: 'ask', value: previewValue(field.desired_value, language), note: refusal }
+      : { effect: 'ask', value: refusal }
   if (
     (field.outcome === 'projected' || field.outcome === 'suggested') &&
     !sameMetadataValue(field.current_value, field.desired_value) &&
@@ -162,12 +167,20 @@ export const policyCell = (
       (field.outcome === 'no_op' || sameMetadataValue(field.current_value, field.desired_value)) &&
       (!field.reason || field.reason === 'target_preserved' || field.reason === 'unchanged')
         ? undefined
-        : reasonSentence(humanReason(field.reason)),
+        : field.reason === 'policy_ignored'
+          ? ignored
+          : reasonSentence(humanReason(field.reason)),
   }
 }
 
 /** What happens under the draft, in the order the groups are listed. */
-export const policyGroups = ['Filled', 'Changed', 'Left to you', 'No change'] as const
+export const policyGroups = [
+  'Filled',
+  'Changed',
+  'Left to you',
+  'No change',
+  'Not previewed',
+] as const
 
 export interface PolicyPreviewRow extends PolicyImpactRow, GroupedRow {
   readonly id: string
@@ -175,8 +188,6 @@ export interface PolicyPreviewRow extends PolicyImpactRow, GroupedRow {
   readonly media: 'ebook' | 'audiobook'
   readonly field: string
   readonly group: (typeof policyGroups)[number]
-  /** Why the row could not be previewed, when it could not. */
-  readonly unpreviewed?: string | undefined
   /** The draft's result on one line, for the unchanged outcomes. */
   readonly summary: string
 }
@@ -209,28 +220,37 @@ export const policyPreviewRows = (
           ),
           changed: field.changed,
           group:
-            draft.effect === 'write'
-              ? hasMetadataValue(current)
-                ? 'Changed'
-                : 'Filled'
-              : draft.effect === 'ask'
-                ? 'Left to you'
-                : 'No change',
-          unpreviewed: draft.effect === 'unpreviewed' ? draft.note : undefined,
+            draft.effect === 'unpreviewed'
+              ? 'Not previewed'
+              : draft.effect === 'write'
+                ? hasMetadataValue(current)
+                  ? 'Changed'
+                  : 'Filled'
+                : draft.effect === 'ask'
+                  ? 'Left to you'
+                  : 'No change',
           summary: draft.note
             ? `${draft.value.replace(/[^.]$/u, '$&.')} ${draft.note}`
             : draft.value,
           work: item.work_label,
           aside: audiobook ? 'Audiobook' : 'Ebook',
-          values: [
-            {
-              label: 'Current',
-              value: previewValue(current, field.draft.field === 'language_rendering'),
-            },
-            { label: 'Active policy', value: active.value, note: shared ? undefined : active.note },
-            { label: 'Draft', value: draft.value, note: shared ? undefined : draft.note },
-          ],
-          why: shared ? active.note : undefined,
+          // A row that was not previewed is its work and the reason alone.
+          values:
+            draft.effect === 'unpreviewed'
+              ? []
+              : [
+                  {
+                    label: 'Current',
+                    value: previewValue(current, field.draft.field === 'language_rendering'),
+                  },
+                  {
+                    label: 'Active policy',
+                    value: active.value,
+                    note: shared ? undefined : active.note,
+                  },
+                  { label: 'Draft', value: draft.value, note: shared ? undefined : draft.note },
+                ],
+          why: draft.effect === 'unpreviewed' ? draft.note : shared ? active.note : undefined,
         }
       })
     }),

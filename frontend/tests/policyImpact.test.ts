@@ -87,7 +87,8 @@ describe('policy impact projections', () => {
     ).toBe('English')
   })
 
-  it('lets the sentence that already says left to you stand alone (#1524)', () => {
+  it('sets the not-offered sentence under the value it leaves to you (#1524)', () => {
+    const sentence = 'Automatic is not offered for this kind of change, so it is left to you.'
     expect(
       policyCell(
         field({
@@ -98,49 +99,40 @@ describe('policy impact projections', () => {
         }),
         'automatic',
       ),
-    ).toEqual({
-      effect: 'ask',
-      value: 'Automatic is not offered for this kind of change, so it is left to you.',
-    })
+    ).toEqual({ effect: 'ask', value: 'Ilsa Brandt', note: sentence })
+    // With no value proposed, the sentence stands alone.
+    expect(
+      policyCell(field({ outcome: 'abstain', reason: 'automatic_unqualified' }), 'automatic'),
+    ).toEqual({ effect: 'ask', value: sentence })
   })
 
   it('reads a cover as the words the application built, with its rule (#1524)', () => {
     const cover = (values: Parameters<typeof field>[0], audiobook = false) =>
       policyCell(field({ field: 'cover_order', ...values }), 'automatic', audiobook)
-    expect(
-      cover({
-        desired_value: 'Filled with a confirmed cover',
-        reason: 'deterministic_confirmed_order',
-      }),
-    ).toEqual({
+    // A fill carries no rule sentence: it would be the same on every row.
+    expect(cover({ desired_value: 'Fills the empty cover' })).toEqual({
       effect: 'write',
-      value: 'Filled with a confirmed cover',
-      note: 'Confirmed covers are ranked in a fixed order',
+      value: 'Fills the empty cover',
+      note: undefined,
     })
-    expect(
-      cover({
-        outcome: 'suggested',
-        desired_value: 'A confirmed cover is suggested',
-        reason: 'deterministic_confirmed_order',
-      }),
-    ).toEqual({
+    expect(cover({ outcome: 'suggested', desired_value: 'Suggests a confirmed cover' })).toEqual({
       effect: 'ask',
-      value: 'A confirmed cover is suggested',
-      note: 'Confirmed covers are ranked in a fixed order',
+      value: 'Suggests a confirmed cover',
+      note: undefined,
     })
     expect(
       cover({
         outcome: 'suggested',
-        desired_value: 'A replacement is suggested',
+        desired_value: 'Suggests a replacement',
         reason: 'below_floor',
       }),
-    ).toEqual({ effect: 'ask', value: 'A replacement is suggested', note: 'Under 300 px' })
+    ).toEqual({ effect: 'ask', value: 'Suggests a replacement', note: 'Under 300 px' })
     // The shape rule names the work's medium.
     expect(
       cover(
         {
           outcome: 'suggested',
-          desired_value: 'A replacement is suggested',
+          desired_value: 'Suggests a replacement',
           reason: 'wrong_shape',
         },
         true,
@@ -170,16 +162,16 @@ describe('policy impact projections', () => {
     expect(cover({ outcome: 'no_op', reason: 'policy_ignored' })).toEqual({
       effect: 'none',
       value: 'No change',
-      note: 'Ignore leaves this field unchanged.',
+      note: 'Set to Ignore.',
     })
   })
 
   it.each([
-    ['cover_not_compared', 'The covers for this work have not been compared yet.'],
+    ['cover_not_compared', "No scan has compared this work's covers yet."],
     ['provider_fetching', 'Sources are still being fetched.'],
-    ['cover_compared_next_scan', 'The covers are compared again on the next scan.'],
+    ['cover_compared_next_scan', 'The next scan compares the covers again.'],
     // A reason this build does not know reads as the most general one.
-    ['another_reason', 'The covers are compared again on the next scan.'],
+    ['another_reason', 'The next scan compares the covers again.'],
   ])('says why a cover row is not previewed: %s (#1524)', (reason, note) => {
     expect(
       policyCell(field({ field: 'cover_order', outcome: 'not_previewed', reason }), 'automatic'),
@@ -250,7 +242,7 @@ describe('policy impact projections', () => {
     })
     expect(
       policyCell(field({ field: 'tags', outcome: 'abstain', reason: 'policy_ignored' }), 'ignore'),
-    ).toEqual(none('Ignore leaves this field unchanged.'))
+    ).toEqual(none('Set to Ignore.'))
     expect(
       policyCell(
         field({ field: 'explicit', outcome: 'abstain', reason: 'explicit_unsupported' }),
@@ -297,7 +289,7 @@ describe('policy impact projections', () => {
         }),
         'ignore',
       ),
-    ).toEqual(none('Ignore leaves this field unchanged.'))
+    ).toEqual(none('Set to Ignore.'))
     expect(
       policyCell(
         field({

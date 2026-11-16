@@ -387,7 +387,22 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
   )
   const changedRows = previewRows.filter((row) => row.changed)
   // Only what the draft changes is listed, and any row that was not previewed.
-  const listedRows = previewRows.filter((row) => row.changed || row.unpreviewed)
+  const workRows = previewRows.filter((row) => row.changed || row.group === 'Not previewed')
+  // A rule no sampled work reached joins the same group, under its library.
+  const listedRows = [
+    ...workRows,
+    ...previewLibraries.flatMap((library) =>
+      library.unpreviewed.map((field) => ({
+        library: library.library,
+        field: readableCategory(field),
+        group: 'Not previewed' as const,
+        work: '',
+        aside: '',
+        values: [],
+        why: 'This rule takes effect on the next preparation.',
+      })),
+    ),
+  ]
   const sampledWorks = previewLibraries.reduce((count, library) => count + library.cases.length, 0)
   const mediaSummary = (['ebook', 'audiobook'] as const)
     .flatMap((media) => {
@@ -400,12 +415,12 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       )
       return works
         ? [
-            `${media === 'ebook' ? 'Ebooks' : 'Audiobooks'}: ${String(works)} sampled ${works === 1 ? 'work' : 'works'}${rows ? ` · ${String(rows)} changed ${rows === 1 ? 'field' : 'fields'}` : ''}`,
+            `${media === 'ebook' ? 'Ebooks' : 'Audiobooks'}: ${String(works)} sampled ${works === 1 ? 'work' : 'works'}${rows ? ` · ${String(rows)} ${rows === 1 ? 'field' : 'fields'} affected` : ''}`,
           ]
         : []
     })
     .join(' · ')
-  const unchangedRows = previewRows.filter((row) => !row.changed && !row.unpreviewed)
+  const unchangedRows = previewRows.filter((row) => !row.changed && row.group !== 'Not previewed')
   const mediaQualification = (
     field: FieldDefinition,
     option: string,
@@ -609,7 +624,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
         ? 'Ready to activate'
         : stage === 'preview'
           ? impactTotals?.changedWorks
-            ? `${String(impactTotals.changedWorks)} sampled ${impactTotals.changedWorks === 1 ? 'work' : 'works'} with changes`
+            ? `${String(impactTotals.changedWorks)} sampled ${impactTotals.changedWorks === 1 ? 'work' : 'works'} affected`
             : 'Impact preview ready'
           : stage === 'validating'
             ? 'Validating the draft…'
@@ -630,7 +645,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       : stage === 'activation'
         ? 'Check the preview before activating.'
         : stage === 'preview'
-          ? `Validated${impactTotals?.materialChanges ? ` · ${String(impactTotals.materialChanges)} ${impactTotals.materialChanges === 1 ? 'changed field' : 'changed fields'} in the sample` : ''}${changedChapterLabels.length ? ` · you changed ${changedChapterLabels.join(', ')}` : ''}. Activate to make it the active policy. Reloading the page starts again from the active policy.`
+          ? `Validated${impactTotals?.materialChanges ? ` · ${String(impactTotals.materialChanges)} ${impactTotals.materialChanges === 1 ? 'field' : 'fields'} affected in the sample` : ''}${changedChapterLabels.length ? ` · you changed ${changedChapterLabels.join(', ')}` : ''}. Activate to make it the active policy. Reloading the page starts again from the active policy.`
           : stage === 'validating'
             ? ''
             : draftDisplay.changed
@@ -863,11 +878,11 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
           <section className="cm-policy-result" ref={resultRef} tabIndex={-1}>
             <div className="cm-policy-preview">
               <header>
-                <div>
-                  <strong>Impact preview</strong>
-                </div>
+                <h2>Impact preview</h2>
                 {impactTotals?.changedWorks ? (
-                  <b aria-label={`${String(impactTotals.changedWorks)} sampled works with changes`}>
+                  <b
+                    aria-label={`${String(impactTotals.changedWorks)} sampled ${impactTotals.changedWorks === 1 ? 'work' : 'works'} affected`}
+                  >
                     {String(impactTotals.changedWorks)}
                   </b>
                 ) : null}
@@ -895,60 +910,40 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                 <p>No library&apos;s fields change under this draft.</p>
               ) : null}
               <div id="policy-preview-outcomes" className="cm-policy-preview-list">
-                {listedRows.length
-                  ? [...new Set(listedRows.map((row) => row.library))].map((library) => (
-                      <section key={library} className="policy-preview-library">
-                        <h3>{libraryName(library)}</h3>
-                        {[
-                          ...new Set(
-                            listedRows
-                              .filter((row) => row.library === library)
-                              .map((row) => row.field),
-                          ),
-                        ].map((field) => {
-                          const rows = listedRows.filter(
-                            (row) => row.library === library && row.field === field,
+                {[...new Set(listedRows.map((row) => row.library))].map((library) => (
+                  <section key={library} className="policy-preview-library">
+                    <h3>{libraryName(library)}</h3>
+                    {[
+                      ...new Set(
+                        listedRows.filter((row) => row.library === library).map((row) => row.field),
+                      ),
+                    ].map((field) => (
+                      <div key={field} className="write-plan-field">
+                        <h4>{field}</h4>
+                        {policyGroups.map((group) => {
+                          const grouped = listedRows.filter(
+                            (row) =>
+                              row.library === library && row.field === field && row.group === group,
                           )
-                          return (
-                            <div key={field} className="write-plan-field">
-                              <h4>{field}</h4>
-                              {policyGroups.map((group) => {
-                                const grouped = rows.filter(
-                                  (row) => row.changed && row.group === group,
-                                )
-                                return grouped.length ? (
-                                  <RowGroup
-                                    key={group}
-                                    label={group}
-                                    // A row is one work, and "No change" beside "1 change" would
-                                    // contradict itself, so the count is in works.
-                                    count={
-                                      grouped.length === 1
-                                        ? '1 work'
-                                        : `${String(grouped.length)} works`
-                                    }
-                                    rows={grouped}
-                                    open={changedRows.length <= POLICY_PREVIEW_OPEN_ALL}
-                                  />
-                                ) : null
-                              })}
-                              {rows
-                                .filter((row) => !row.changed)
-                                .map((row) => (
-                                  <div key={row.id} className="policy-preview-unpreviewed">
-                                    <p className="write-plan-work">
-                                      <strong>{row.work}</strong> <span>{row.aside}</span>
-                                    </p>
-                                    <p className="write-plan-why">
-                                      <b>Not previewed.</b> {row.unpreviewed}
-                                    </p>
-                                  </div>
-                                ))}
-                            </div>
-                          )
+                          // A row is one work, and "No change" beside "1 change"
+                          // would contradict itself, so the count is in works.
+                          const works = grouped.filter((row) => row.work).length
+                          return grouped.length ? (
+                            <RowGroup
+                              key={group}
+                              label={group}
+                              count={works === 1 ? '1 work' : works ? `${String(works)} works` : ''}
+                              rows={grouped}
+                              open={workRows.length <= POLICY_PREVIEW_OPEN_ALL}
+                            />
+                          ) : null
                         })}
-                      </section>
-                    ))
+                      </div>
+                    ))}
+                  </section>
+                ))}
+                {workRows.length
+                  ? null
                   : previewLibraries
                       .filter((library) => library.previewed.length)
                       .map((library) => (
@@ -971,32 +966,11 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                           </span>
                         </div>
                       ))}
-                {previewLibraries.flatMap((library) =>
-                  library.unpreviewed.map((field) => (
-                    <div key={`${library.library}:${field}`} className="is-unpreviewed">
-                      <span className="cm-policy-work-mark" aria-hidden="true">
-                        {libraryName(library.library).slice(0, 2).toUpperCase()}
-                      </span>
-                      <span>
-                        <strong>{readableCategory(field)}</strong>
-                        <small>{libraryName(library.library)}</small>
-                      </span>
-                      <span className="cm-policy-impact">
-                        <b>Not previewed.</b>
-                        <small>This rule takes effect on the next preparation.</small>
-                      </span>
-                    </div>
-                  )),
-                )}
               </div>
             </div>
             {unchangedRows.length ? (
               <details className="cm-policy-projected-context">
-                <summary>Unchanged outcomes ({unchangedRows.length})</summary>
-                <p>
-                  These compare the draft with the library's current values. The draft does not
-                  cause them.
-                </p>
+                <summary>Same under both policies ({unchangedRows.length})</summary>
                 {unchangedRows.map((row) => (
                   <p key={row.id}>
                     <strong>{row.work}</strong> · {row.media === 'ebook' ? 'Ebook' : 'Audiobook'} ·{' '}

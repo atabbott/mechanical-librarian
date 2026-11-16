@@ -13526,12 +13526,12 @@ def test_recorded_refusal_and_populated_policy_results_use_document_flow(tmp_pat
                 "Exploration",
             ]
             unchanged = result.locator(".cm-policy-projected-context")
-            expect(unchanged.locator("summary")).to_have_text("Unchanged outcomes (80)")
+            expect(unchanged.locator("summary")).to_have_text(
+                "Same under both policies (80)"
+            )
             assert unchanged.evaluate("node => node.open") is False
             expect(
-                unchanged.get_by_text(
-                    "Language: No change. Ignore leaves this field unchanged."
-                )
+                unchanged.get_by_text("Language: No change. Set to Ignore.")
             ).to_have_count(10)
             fold = group.locator("summary")
             for theme in ("light", "dark"):
@@ -13548,15 +13548,13 @@ def test_recorded_refusal_and_populated_policy_results_use_document_flow(tmp_pat
                     page.set_viewport_size({"width": width, "height": 900})
                     set_root_text(page, text)
                     if width == 1440:
-                        result.locator(
-                            ".cm-policy-preview"
-                        ).scroll_into_view_if_needed()
+                        result.scroll_into_view_if_needed()
                         assert result.evaluate("""node => {
-                            const panel = node.querySelector('.cm-policy-preview').getBoundingClientRect();
+                            const result = node.getBoundingClientRect();
                             const rail = document.querySelector('.cm-policy-sidebar')
                                 .getBoundingClientRect();
-                            return panel.right <= rail.left || panel.left >= rail.right
-                                || panel.bottom <= rail.top || panel.top >= rail.bottom;
+                            return result.right <= rail.left || result.left >= rail.right
+                                || result.bottom <= rail.top || result.top >= rail.bottom;
                         }""")
                     # The group folds and opens from the keyboard, and focus
                     # stays on its summary.
