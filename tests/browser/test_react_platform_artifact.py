@@ -89,8 +89,13 @@ _CONTENT_OVERFLOW = """
   if (root === null) return null;
   let worst = 0;
   for (const node of [root, ...root.querySelectorAll('*')]) {
-    worst = Math.max(worst, node.scrollWidth - node.clientWidth);
     const style = getComputedStyle(node);
+    // Text kept for screen readers alone is clipped to nothing on purpose:
+    // what it holds scrolls inside its one pixel and none of it is seen. Its
+    // own box is still held inside its parent below.
+    const unseen = style.position === 'absolute' &&
+      style.clip === 'rect(0px, 0px, 0px, 0px)';
+    if (!unseen) worst = Math.max(worst, node.scrollWidth - node.clientWidth);
     const box = node.getBoundingClientRect();
     const right = box.right - parseFloat(style.borderRightWidth || 0) -
       parseFloat(style.paddingRight || 0);
