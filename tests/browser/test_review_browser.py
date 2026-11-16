@@ -12669,17 +12669,25 @@ def test_genre_creator_equivalence_owner_journey(destination):
 
 
 @contextmanager
-def _owner_page(**fixture) -> Iterator[tuple[Page, str, str]]:
-    """A signed-in page over a genre work the owner reviews by hand (#1285)."""
+def _owner_page(
+    *, touch: tuple[int, int] | None = None, **fixture
+) -> Iterator[tuple[Page, str, str]]:
+    """A signed-in page over a genre work the owner reviews by hand (#1285).
+
+    `touch` gives a phone or tablet of that size: touch input and no hover."""
     with tempfile.TemporaryDirectory() as directory, sync_playwright() as playwright:
         root = Path(directory)
         root.chmod(0o700)
         hash_path = root / "owner.hash"
         hash_path.write_text(PasswordHasher().hash(_PASSWORD))
         hash_path.chmod(0o600)
+        width, height = touch or (1440, 900)
         browser = playwright.chromium.launch(headless=True)
         context = browser.new_context(
-            viewport={"width": 1440, "height": 900}, reduced_motion="reduce"
+            viewport={"width": width, "height": height},
+            has_touch=touch is not None,
+            is_mobile=touch is not None,
+            reduced_motion="reduce",
         )
         page = context.new_page()
         with (
@@ -12898,6 +12906,442 @@ def test_owner_chooses_a_genre_subset_then_withdraws_it():
         page.get_by_role("link", name="History", exact=True).click()
         expect(page.get_by_text("You withdrew your choice.")).to_be_visible()
         expect(page.get_by_text("You entered a value.")).to_be_visible()
+
+
+def _field_tab(page: Page, name: str):
+    return page.get_by_role("navigation", name="Review fields").get_by_role(
+        "button", name=re.compile(f"^{name}")
+    )
+
+
+@pytest.mark.parametrize("width", (1440, 390))
+def test_keyboard_only_triage_journey(width):
+    """#1337: one work reviewed with the keyboard alone. Each key presses the
+    control a pointer would press, and an off-screen control is shown first."""
+    height = 844
+    with _owner_page(
+        genre_fixture=("Drama", "Fantasy", "Mystery"), genre_current=("Drama",)
+    ) as (page, origin, case_id):
+        decisions: list[dict] = []
+        page.on(
+            "request",
+            lambda request: (
+                decisions.append(json.loads(request.post_data or "{}"))
+                if request.method == "POST" and request.url.endswith("/decisions")
+                else None
+            ),
+        )
+
+        def unmoved(key: str) -> None:
+            """A key that must do nothing: no navigation and no decision."""
+            url, sent = page.url, len(decisions)
+            page.keyboard.press(key)
+            page.wait_for_timeout(300)
+            assert (page.url, len(decisions)) == (url, sent), key
+
+        def press_on(key: str, control) -> None:
+            """Press a key for a control. Unless all of it is on screen, the
+            first press only shows and focuses it, with the whole of its card."""
+            if not control.evaluate(
+                """control => {
+                  const root = document.documentElement
+                  const top = root.dataset.masthead === 'static' ? 0
+                    : parseFloat(getComputedStyle(root).getPropertyValue('--masthead-clearance'))
+                  const box = control.getBoundingClientRect()
+                  return box.top >= top && box.bottom <= innerHeight
+                }"""
+            ):
+                unmoved(key)
+                expect(control).to_be_focused()
+                expect(control).to_be_in_viewport(ratio=1)
+                card = page.locator(".metadata-choice").filter(has=control)
+                if card.count():
+                    # Its source line and Evidence link are on screen too.
+                    expect(card).to_be_in_viewport(ratio=1)
+                    if control is proposed:
+                        expect(control.locator("span").last).to_be_in_viewport(ratio=1)
+                        expect(
+                            card.get_by_role("button", name=re.compile("^Evidence"))
+                        ).to_be_in_viewport(ratio=1)
+            page.keyboard.press(key)
+
+        page.set_viewport_size({"width": width, "height": height})
+        page.goto(f"{origin}/library?lens=all")
+        row = page.get_by_role("button", name=re.compile(r"^Real Tigers\."))
+        expect(row).to_be_visible()
+        # Typing in search types: no key acts and nothing opens.
+        search = page.get_by_role("searchbox")
+        search.focus()
+        opened = "preview=" in page.url
+        page.keyboard.type("j2?")
+        expect(search).to_have_value("j2?")
+        expect(page.get_by_role("dialog", name="Keys")).to_be_hidden()
+        assert "field=" not in page.url and ("preview=" in page.url) == opened
+        page.keyboard.press("Control+A")
+        page.keyboard.press("Backspace")
+        expect(row).to_be_visible()
+        page.keyboard.press("Tab")
+        expect(row).to_be_focused()
+        if not opened:
+            # A compact window lists the works first: J opens the first one.
+            page.keyboard.press("j")
+            expect(page).to_have_url(re.compile(f"preview={case_id}"))
+        expect(_field_tab(page, "Authors")).to_have_attribute("aria-current", "true")
+        for name in ("Series", "Genres"):
+            page.keyboard.press("j")
+            expect(_field_tab(page, name)).to_be_focused()
+            expect(page).to_have_url(re.compile(f"field={name.lower()}"))
+        badges = page.locator(".decision-canvas .review-key-badge")
+        expect(badges).to_have_text(["1", "2"])
+        expect(badges.first).to_be_visible()
+
+        # 2 chooses the second card, once.
+        proposed = page.get_by_role(
+            "radio", name="Choose proposed value: Drama · Fantasy · Mystery"
+        )
+        if width == 390:
+            # Back at the top of the page, the cards are below the window.
+            page.keyboard.press("Home")
+            page.wait_for_function("() => scrollY === 0")
+            expect(proposed).not_to_be_in_viewport()
+        with page.expect_response(
+            lambda response: response.url.endswith("/decisions")
+        ) as recorded:
+            press_on("2", proposed)
+        assert recorded.value.status == 200
+        assert [
+            (sent["destination"], sent["outcome"], sent["selected_value"])
+            for sent in decisions
+        ] == [
+            (
+                "genres",
+                "accept",
+                {"kind": "list", "value": ["Drama", "Fantasy", "Mystery"]},
+            )
+        ]
+        # The next field needing a decision opens with focus on its first card.
+        expect(page).to_have_url(re.compile("field=description"))
+        expect(page.locator('.decision-canvas [role="radio"]').first).to_be_focused()
+
+        # K goes back, and U withdraws the decision on the field on screen.
+        page.keyboard.press("k")
+        expect(_field_tab(page, "Genres")).to_be_focused()
+        with page.expect_response(
+            lambda response: response.url.endswith("/decisions")
+        ) as withdrawn:
+            press_on("u", page.get_by_role("button", name="Withdraw", exact=True))
+        assert withdrawn.value.status == 200
+        expect(
+            page.get_by_text(
+                "Withdrawn. This field needs a decision again.", exact=True
+            )
+        ).to_be_focused()
+        assert [sent["outcome"] for sent in decisions] == ["accept", "withdraw"]
+
+        # No key acts while owner entry is open, so no card shows its number
+        # then; the numbers return when it closes.
+        expect(badges).to_have_count(2)
+        expect(badges.first).to_be_visible()
+        choose = page.get_by_role("button", name="Choose genres", exact=True)
+        press_on("e", choose)
+        expect(page.locator("form.owner-entry")).to_be_visible()
+        expect(badges).to_have_count(2)
+        expect(badges.locator("visible=true")).to_have_count(0)
+        unmoved("2")
+        page.keyboard.press("Escape")
+        expect(page.locator("form.owner-entry")).to_have_count(0)
+        expect(choose).to_be_focused()
+        expect(badges.locator("visible=true")).to_have_count(2)
+
+        if width == 390:
+            # The masthead scrolls away at this width and covers nothing, so a
+            # card at the very top of a short window is in view.
+            page.set_viewport_size({"width": width, "height": 480})
+            expect(page.locator("html")).to_have_attribute("data-masthead", "static")
+            current = page.get_by_role("radio", name="Choose current value: Drama")
+
+            def place(control, top: int) -> None:
+                """Scroll the page so the control's top edge is there."""
+                control.evaluate(
+                    "(control, top) => scrollBy(0, control.getBoundingClientRect().top - top)",
+                    top,
+                )
+                page.wait_for_function(
+                    "([control, top]) => Math.abs(control.getBoundingClientRect().top - top) < 1",
+                    arg=[control.element_handle(), top],
+                )
+
+            # A card in the top 150 px records on the first press.
+            place(proposed, 40)
+            box = proposed.bounding_box()
+            assert box is not None and box["y"] + box["height"] <= 150
+            with page.expect_response(
+                lambda response: response.url.endswith("/decisions")
+            ) as recorded:
+                page.keyboard.press("2")
+            assert recorded.value.status == 200
+            expect(page).to_have_url(re.compile("field=description"))
+            page.keyboard.press("k")
+            expect(_field_tab(page, "Genres")).to_be_focused()
+            with page.expect_response(
+                lambda response: response.url.endswith("/decisions")
+            ):
+                press_on("u", page.get_by_role("button", name="Withdraw", exact=True))
+            expect(
+                page.get_by_text(
+                    "Withdrawn. This field needs a decision again.", exact=True
+                )
+            ).to_be_focused()
+            # A card above the window is shown by the first press and recorded
+            # by the second.
+            place(current, -200)
+            expect(current).not_to_be_in_viewport()
+            with page.expect_response(
+                lambda response: response.url.endswith("/decisions")
+            ) as recorded:
+                press_on("1", current)
+            assert recorded.value.status == 200
+            expect(page).to_have_url(re.compile("field=description"))
+            page.keyboard.press("k")
+            expect(_field_tab(page, "Genres")).to_be_focused()
+            # Withdraw with its lower edge below the window is shown first too.
+            withdraw = page.get_by_role("button", name="Withdraw", exact=True)
+            place(withdraw, 450)
+            assert withdraw.evaluate(
+                "control => control.getBoundingClientRect().bottom > innerHeight"
+            )
+            with page.expect_response(
+                lambda response: response.url.endswith("/decisions")
+            ):
+                press_on("u", withdraw)
+            assert [sent["outcome"] for sent in decisions[2:]] == [
+                "accept",
+                "withdraw",
+                "keep_current",
+                "withdraw",
+            ]
+            page.set_viewport_size({"width": width, "height": height})
+
+        # E opens the entry empty: the key itself is not typed into it.
+        for name in ("Description", "ISBN", "Title"):
+            page.keyboard.press("j")
+            expect(_field_tab(page, name)).to_be_focused()
+        press_on("e", page.get_by_role("button", name="Enter a value", exact=True))
+        entry = page.get_by_role("textbox", name="Your value for Title")
+        expect(entry).to_be_focused()
+        expect(entry).to_have_value("")
+        page.keyboard.type("Real Lions junk")
+        expect(entry).to_have_value("Real Lions junk")
+        with page.expect_response(
+            lambda response: response.url.endswith("/decisions")
+        ) as entered:
+            page.keyboard.press("Enter")
+        assert entered.value.status == 200
+        assert (decisions[-1]["outcome"], decisions[-1]["selected_value"]) == (
+            "owner_entered",
+            {"kind": "text", "value": "Real Lions junk"},
+        )
+        outcome = page.get_by_text("You entered “Real Lions junk”.", exact=True)
+        expect(outcome).to_be_focused()
+
+        # ? lists the keys in a modal; nothing behind it takes a key.
+        page.keyboard.press("?")
+        keys = page.get_by_role("dialog", name="Keys")
+        switch = keys.get_by_role("checkbox", name="Use these keys")
+        expect(keys).to_be_visible()
+        # The list opens at its top, with focus on its heading.
+        heading = keys.get_by_role("heading", name="Keys")
+        expect(heading).to_be_focused()
+        assert keys.evaluate("list => list.scrollTop") == 0
+        assert page.evaluate("document.querySelector('dialog').matches(':modal')")
+        unmoved("1")
+        unmoved("j")
+        page.keyboard.press("Tab")
+        expect(switch).to_be_focused()
+        page.keyboard.press("Tab")
+        expect(keys.get_by_role("button", name="Close")).to_be_focused()
+        page.keyboard.press("Escape")
+        expect(keys).to_be_hidden()
+        expect(outcome).to_be_focused()
+        if width == 390:
+            # A narrow window with text at twice the size: the list is taller
+            # than the window and still opens at its top.
+            page.set_viewport_size({"width": 320, "height": 568})
+            page.evaluate("document.documentElement.style.fontSize = '200%'")
+            page.keyboard.press("?")
+            expect(heading).to_be_focused()
+            assert keys.evaluate(
+                "list => list.scrollHeight > list.clientHeight && list.scrollTop === 0"
+            )
+            expect(heading).to_be_in_viewport(ratio=1)
+            page.keyboard.press("Escape")
+            expect(outcome).to_be_focused()
+            page.evaluate("document.documentElement.style.fontSize = ''")
+            page.set_viewport_size({"width": width, "height": height})
+
+        # One work on the page: J past the last field goes nowhere.
+        page.keyboard.press("j")
+        expect(_field_tab(page, "Tags")).to_be_focused()
+        unmoved("j")
+
+        # Switched off, no key acts, and the choice survives a reload.
+        page.keyboard.press("?")
+        page.keyboard.press("Tab")
+        expect(switch).to_be_focused()
+        page.keyboard.press("Space")
+        expect(switch).not_to_be_checked()
+        page.keyboard.press("Escape")
+        expect(badges.first).to_be_hidden()
+        page.reload()
+        expect(_field_tab(page, "Tags")).to_have_attribute("aria-current", "true")
+        expect(page.locator("html")).to_have_attribute("data-review-keys", "off")
+        expect(badges).to_have_count(2)
+        expect(badges.first).to_be_hidden()
+        for key in ("?", "k", "1", "e"):
+            unmoved(key)
+        expect(keys).to_be_hidden()
+        assert len(decisions) == (7 if width == 390 else 3)
+
+
+@pytest.mark.parametrize("size", ((390, 844), (820, 1180)))
+def test_review_keys_show_nothing_on_a_phone_or_tablet(size):
+    """#1337: where the main input is touch, no card shows a number, Library
+    has no Keys button and no card keeps room for a number. The keys still act
+    for a keyboard attached to the device."""
+    with _owner_page(
+        touch=size,
+        genre_fixture=("Drama", "Fantasy", "Mystery"),
+        genre_current=("Drama",),
+    ) as (page, origin, case_id):
+        assert page.evaluate(
+            "matchMedia('(hover: none) and (pointer: coarse)').matches"
+        )
+        page.goto(f"{origin}/library?lens=all&preview={case_id}&field=genres")
+        cards = page.locator('.decision-canvas [role="radio"]')
+        names = (
+            "Choose current value: Drama",
+            "Choose proposed value: Drama · Fantasy · Mystery",
+        )
+
+        def named() -> None:
+            expect(cards).to_have_count(len(names))
+            for name in names:
+                expect(page.get_by_role("radio", name=name, exact=True)).to_be_visible()
+
+        def heights() -> list[list[float]]:
+            """Each card's height at the default text size and at twice it,
+            where a card that kept room for a number is a line taller."""
+            measured = []
+            for text in ("", "200%"):
+                set_root_text(page, text)
+                measured.append(
+                    cards.evaluate_all(
+                        "cards => cards.map(card => card.getBoundingClientRect().height)"
+                    )
+                )
+            set_root_text(page, "")
+            return measured
+
+        named()
+        expect(page.locator("html")).to_have_attribute("data-review-keys", "on")
+        badges = page.locator(".decision-canvas .review-key-badge")
+        expect(badges).to_have_count(2)
+        expect(badges.locator("visible=true")).to_have_count(0)
+        toggle = page.locator(".review-keys-toggle")
+        expect(toggle).to_have_count(1)
+        # Not shown and not focusable.
+        assert toggle.evaluate("button => getComputedStyle(button).display") == "none"
+        # The keys act: J and K move between the fields.
+        tab = _field_tab(page, "Genres")
+        tab.focus()
+        page.keyboard.press("j")
+        expect(_field_tab(page, "Description")).to_be_focused()
+        page.keyboard.press("k")
+        expect(tab).to_be_focused()
+        # ? lists the keys, and closing the list puts focus back where it was.
+        page.keyboard.press("?")
+        keys = page.get_by_role("dialog", name="Keys")
+        expect(keys.get_by_role("heading", name="Keys")).to_be_focused()
+        page.keyboard.press("Escape")
+        expect(keys).to_be_hidden()
+        expect(tab).to_be_focused()
+        with_keys = heights()
+        expect(tab).to_be_focused()
+
+        # Switched off, every card is as tall as it was and is named the same.
+        page.keyboard.press("?")
+        page.keyboard.press("Tab")
+        page.keyboard.press("Space")
+        page.keyboard.press("Escape")
+        expect(page.locator("html")).to_have_attribute("data-review-keys", "off")
+        expect(tab).to_be_focused()
+        assert heights() == with_keys
+        named()
+        expect(badges.locator("visible=true")).to_have_count(0)
+
+        # Off is not one-way: Keys shows while they are off and switches them
+        # on again, then goes.
+        expect(toggle).to_be_visible()
+        unmoved = page.url
+        page.keyboard.press("j")
+        page.keyboard.press("?")
+        expect(keys).to_be_hidden()
+        assert page.url == unmoved
+        toggle.click()
+        switch = keys.get_by_role("checkbox", name="Use these keys")
+        expect(switch).not_to_be_checked()
+        switch.check()
+        keys.get_by_role("button", name="Close").click()
+        expect(keys).to_be_hidden()
+        expect(page.locator("html")).to_have_attribute("data-review-keys", "on")
+        expect(toggle).to_be_hidden()
+        # Keys opened the list and is gone: its toolbar has focus, not the page.
+        expect(page.locator("header.library-header")).to_be_focused()
+        expect(page.locator("header.library-header")).to_have_accessible_name(
+            "Library controls"
+        )
+        assert not page.evaluate("document.activeElement === document.body")
+        expect(badges.locator("visible=true")).to_have_count(0)
+        assert heights() == with_keys
+        page.keyboard.press("j")
+        expect(page).to_have_url(re.compile("field=description"))
+
+
+@pytest.mark.parametrize("width", (1440, 390))
+def test_keyboard_moves_between_works(width):
+    """#1337: J past the last field opens the next work and K before the first
+    opens the previous one; both stop at the ends of the list."""
+    with _owner_page(cohort=1) as (page, origin, case_id):
+        page.set_viewport_size({"width": width, "height": 844})
+        page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
+        expect(_field_tab(page, "Title")).to_have_attribute("aria-current", "true")
+        expect(page.locator("button.library-work-row")).to_have_count(2)
+
+        def unmoved(key: str) -> None:
+            url = page.url
+            page.keyboard.press(key)
+            page.wait_for_timeout(300)
+            assert page.url == url, key
+
+        # The first work: K before its first field goes nowhere.
+        unmoved("k")
+        page.keyboard.press("j")
+        expect(_field_tab(page, "Series")).to_be_focused()
+        page.keyboard.press("j")
+        expect(
+            page.get_by_role("heading", name="Cohort work 000", level=2)
+        ).to_be_visible()
+        assert case_id not in page.url
+        # It opens at its own first field, with focus inside the work.
+        expect(_field_tab(page, "Series")).to_have_attribute("aria-current", "true")
+        assert page.evaluate(
+            "document.activeElement.closest('.workspace-detail') !== null"
+        )
+        # The last work: J past its last field goes nowhere.
+        unmoved("j")
+        page.keyboard.press("k")
+        expect(page).to_have_url(re.compile(f"preview={case_id}"))
+        expect(_field_tab(page, "Title")).to_have_attribute("aria-current", "true")
 
 
 def _choose_previous_title(page: Page, origin: str, case_id: str):

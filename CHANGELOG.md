@@ -154,6 +154,11 @@ brackets are GitHub issues.
 - **Clean rebuild required.** While works have arrived since your last visit,
   Library has a New lens after All, with their count. Every device shares the
   same last visit (#1351).
+- Library takes single keys for review: J and K move between fields and works,
+  1 to 3 choose a value, E enters your own value, U withdraws your decision on
+  the open field and ? lists the keys. Keys in the Library toolbar turns them
+  off in this browser. A phone or tablet shows neither the numbers nor Keys
+  (#1337).
 - Settings → Appearance has a Theme choice: Follow system, Light or Dark. It
   applies at once and is saved in this browser. Follow system returns to the
   system theme after a choice here or with the theme switch (#1341).
