@@ -9,6 +9,8 @@ import type { ReviewField } from '../fieldDecision'
 import { destinationLabel } from '../labels'
 import { writtenRefusal } from '../reviewDecisionController'
 import { StatusPill } from '../components/StatusPill'
+import type { PinControl } from '../fieldPin'
+import { PinButton } from './FieldDecisionPin'
 
 // F59's owner controls (ADR-0085): enter a value, choose genres and withdraw a
 // decision. Going back to an earlier value is choosing it again, from the same
@@ -33,6 +35,7 @@ export function OwnerControls({
   status,
   failed,
   submit,
+  pin,
 }: {
   field: ReviewField
   disabled: boolean
@@ -40,6 +43,8 @@ export function OwnerControls({
   status: string
   failed: boolean
   submit: (outcome: OwnerOutcome, value: DecisionCommand['selectedValue']) => string
+  // The pin beside the value the owner entered, which has no card (#1346).
+  pin?: PinControl | undefined
 }) {
   const control = field.ownerControl ?? null
   const label = destinationLabel(field.destination)
@@ -51,6 +56,7 @@ export function OwnerControls({
   // The notice or refusal the owner has moved past by opening or closing a
   // form; it stays unsaid until the next command.
   const [dismissed, setDismissed] = useState<string | null>(null)
+  const recordedId = useId()
   const inputId = useId()
   const countId = useId()
   const problemId = useId()
@@ -195,13 +201,21 @@ export function OwnerControls({
       {refusal}
     </p>
   )
+  const recordedLine = recordedCopy ? (
+    <p ref={recorded} id={recordedId} tabIndex={-1} className="owner-recorded">
+      {recordedCopy}
+    </p>
+  ) : null
   return (
     <section ref={section} className="owner-controls" aria-label={`Your value for ${label}`}>
-      {recordedCopy ? (
-        <p ref={recorded} tabIndex={-1} className="owner-recorded">
-          {recordedCopy}
-        </p>
-      ) : null}
+      {recordedCopy && pin ? (
+        <div className="owner-recorded-pin">
+          {recordedLine}
+          <PinButton {...pin} describedBy={recordedId} />
+        </div>
+      ) : (
+        recordedLine
+      )}
       {writing ? <p className="owner-note">{withdrawCopy.in_progress}</p> : null}
       {entry && mode !== 'entry' && !writing ? (
         <button
@@ -264,7 +278,11 @@ export function OwnerControls({
                     input.current?.focus()
                   }}
                 >
-                  {suggestion.rule === 'previous' ? 'Use previous value ' : 'Use '}
+                  {suggestion.rule === 'previous'
+                    ? 'Use previous value '
+                    : suggestion.rule === 'pinned'
+                      ? 'Use pinned value '
+                      : 'Use '}
                   {/* Library text may break anywhere; the copy around it never does. */}
                   <span className="owner-suggestion-value">“{suggestion.value}”</span>
                 </button>

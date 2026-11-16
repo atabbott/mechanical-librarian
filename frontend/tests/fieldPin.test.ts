@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { CaseDetailView, DecisionOutcome } from '../src/api/http'
 import { fieldDecisionMode, ownerOutcome } from '../src/fieldDecisionMode'
-import { cardPin, pinFoot, pinnedCard, valuePin } from '../src/fieldPin'
+import { cardPin, cardPinned, pinFoot, pinnedCard, underPin, valuePin } from '../src/fieldPin'
 import { questionReason } from '../src/fieldReasons'
 import { actionable } from '../src/reviewDecisionController'
 import { detail } from './fixtures'
@@ -51,6 +51,30 @@ describe('which card carries the pin', () => {
     expect(pinnedCard(field({ pin: pinOf('in_force') }))).toBe('current')
     expect(pinnedCard(field({ pin: pinOf('waiting') }))).toBe('chosen')
     expect(pinnedCard(field({ pin: pinOf('changed') }))).toBeNull()
+  })
+})
+
+describe('a card that says Pinned', () => {
+  it('says so whether or not a pin can be pressed now', () => {
+    const held = field({ pin: pinOf('in_force'), pinControl: null })
+    expect(cardPinned(held, current)).toBe(true)
+    expect(cardPinned(held, proposed)).toBe(false)
+    expect(cardPin(held, current)).toBeNull()
+    expect(cardPinned(field({ pin: pinOf('changed') }), current)).toBe(false)
+    expect(cardPinned(held, { ...current, advice: true })).toBe(false)
+  })
+
+  it('shows no automatic decision as the choice of a field pinned without an answer', () => {
+    const automatic = { outcome: 'candidate', selected_value: NEW } as NonNullable<
+      Field['automaticDecision']
+    >
+    const pinned = field({ pin: pinOf('in_force'), automaticDecision: automatic })
+    expect(underPin(pinned).automaticDecision).toBeNull()
+    // An answer of the owner's speaks for the field, and an unpinned field is untouched.
+    const answered = { ...pinned, humanDecision: decided('keep_current') }
+    expect(underPin(answered)).toBe(answered)
+    const plain = field({ automaticDecision: automatic })
+    expect(underPin(plain)).toBe(plain)
   })
 })
 

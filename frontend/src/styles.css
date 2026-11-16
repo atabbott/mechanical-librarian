@@ -945,7 +945,7 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .variant-m-workspace .field-filmstrip button > strong { max-width: 100%; overflow: hidden; font-size: .75rem; text-overflow: ellipsis; white-space: nowrap; }
 .variant-m-workspace .field-filmstrip button > .field-status { max-width: 100%; color: var(--soft); font-size: .75rem; font-weight: 650; }
 .variant-m-workspace .field-filmstrip .field-status.is-needs { color: color-mix(in srgb, var(--notice) 85%, var(--ink)); }
-.variant-m-workspace .field-filmstrip .field-status:is(.is-decided, .is-automatic) { color: var(--accent-strong); }
+.variant-m-workspace .field-filmstrip .field-status:is(.is-decided, .is-automatic, .is-pinned) { color: var(--accent-strong); }
 .variant-m-workspace .field-filmstrip .field-more { flex: 0 0 auto; padding-inline: .9rem; color: var(--accent-strong); font-size: .75rem; font-weight: 700; white-space: nowrap; }
 .variant-m-workspace .field-filmstrip button[aria-current='true'] { color: var(--ink); background: var(--accent-soft); box-shadow: inset 0 -2px var(--accent-strong); }
 .variant-m-workspace .field-filmstrip button.is-recorded { color: var(--accent-strong); background: color-mix(in srgb, var(--accent-soft) 27%, transparent); }
@@ -967,12 +967,34 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 /* Every card has the same padding, and its Evidence control sits directly under its value (#1519). */
 /* The radio sits beside the value, in a gutter of its own, so a choice is as tall as its words. */
 .metadata-choice .choice-select { position:relative; min-height:2.75rem; gap:.25rem; padding:16px 20px 16px 52px; }
-.metadata-choice .choice-select:has(+ .choice-evidence-toggle) { padding-bottom:0; }
+.metadata-choice .choice-select:has(+ .choice-foot) { padding-bottom:0; }
 /* The ring is centred on the value's first line, whatever its size or length. */
 .metadata-choice .choice-select > strong { position:relative; }
 .metadata-choice .choice-select > strong::before { position:absolute; top:calc((1lh - 20px) / 2); left:-32px; }
-/* Evidence reads as a quiet link under the source line; its 44px target overlaps the card's padding. */
-.metadata-choice .choice-evidence-toggle { position:static; justify-self:start; margin:-6px 20px 2px 42px; min-height:44px; padding:0 10px; border:0; border-radius:6px; background:transparent; color:var(--accent-strong); font-size:.75rem; font-weight:700; text-decoration:underline; text-underline-offset:3px; }
+/* The card's foot holds Evidence on the left and the value's pin opposite it; its 44px targets overlap the card's padding. */
+.metadata-choice .choice-foot { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:0 10px; margin:-6px 10px 2px 42px; }
+/* Evidence reads as a quiet link under the source line. */
+.metadata-choice .choice-evidence-toggle { position:static; min-height:44px; padding:0 10px; border:0; border-radius:6px; background:transparent; color:var(--accent-strong); font-size:.75rem; font-weight:700; text-decoration:underline; text-underline-offset:3px; }
+/* A value's pin: an outline when off and filled when pinned, beside the word Pinned on its value (#1346). */
+.choice-pin { display:inline-grid; flex:none; place-items:center; min-width:44px; min-height:44px; margin-left:auto; padding:0; border:0; border-radius:8px; background:transparent; color:var(--soft); }
+.choice-pin svg { width:22px; height:22px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+.choice-pin.is-on { color:var(--accent-strong); }
+.choice-pin.is-on .head { fill:currentColor; }
+/* A busy pin dims its own colour, never the element, so its focus outline stays whole. */
+.choice-pin[aria-disabled='true'] { cursor:progress; color:color-mix(in srgb,var(--soft) 70%,var(--surface)); }
+.choice-pin.is-on[aria-disabled='true'] { color:color-mix(in srgb,var(--accent-strong) 70%,var(--surface)); }
+.context-value.has-pin { grid-template-columns:minmax(0,1fr) auto; align-items:center; }
+.context-value.has-pin > * { grid-column:1 / -1; }
+.context-value.has-pin > dl { grid-column:1; }
+.context-value.has-pin > .choice-pin { grid-column:2; grid-row:1; }
+.owner-recorded-pin { display:flex; align-items:center; gap:10px; }
+.owner-recorded-pin > .owner-recorded { flex:1 1 auto; min-width:0; }
+.pin-foot { display:flex; flex-direction:column; align-items:flex-start; max-width:66ch; }
+.pin-foot.has-note { margin-top:1rem; padding-top:14px; border-top:1px solid var(--line); }
+.pin-foot p { margin:0; overflow-wrap:break-word; line-height:1.5; }
+.pin-foot > :not(:first-child):not(:empty) { margin-top:10px; }
+.pin-note { padding:.75rem; border:1px solid var(--accent); border-radius:4px; background:color-mix(in srgb,var(--accent) 15%,var(--surface)); }
+.pin-foot [role='alert'] { color:var(--danger); font-weight:650; }
 .metadata-choice.is-evidence-open { padding-bottom:0; }
 .metadata-choice:hover, .metadata-choice:has(:focus-visible) { background:color-mix(in srgb, var(--accent-soft) 45%, var(--surface-strong)); }
 .metadata-choice:hover .choice-select, .metadata-choice:has(:focus-visible) .choice-select { background:transparent; }

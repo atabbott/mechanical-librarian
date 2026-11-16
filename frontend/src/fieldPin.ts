@@ -33,16 +33,24 @@ const ownerChose = (field: ReviewField, card: PinCard) =>
     card.kind === 'current' ? null : card.value,
   )
 
+// The card says Pinned whether or not a pin can be pressed now.
+export const cardPinned = (field: ReviewField, card: PinCard) => {
+  const pinned = pinnedCard(field)
+  return (
+    !card.advice &&
+    (pinned === 'current'
+      ? card.kind === 'current'
+      : pinned === 'chosen' && ownerChose(field, card))
+  )
+}
+
 export const cardPin = (
   field: ReviewField,
   card: PinCard,
 ): { on: boolean; press: PinPress } | null => {
   if (!pinOffered(field) || card.advice) return null
-  const chosen = ownerChose(field, card)
-  const pinned = pinnedCard(field)
-  if (pinned === 'current' ? card.kind === 'current' : pinned === 'chosen' && chosen)
-    return { on: true, press: { kind: 'unpin' } }
-  if (chosen) return { on: false, press: { kind: 'pin' } }
+  if (cardPinned(field, card)) return { on: true, press: { kind: 'unpin' } }
+  if (ownerChose(field, card)) return { on: false, press: { kind: 'pin' } }
   if (!card.offered) return null
   if (card.kind === 'proposed')
     return { on: false, press: { kind: 'value_then_pin', outcome: 'accept' } }
@@ -64,6 +72,14 @@ export const valuePin = (
   const on = value === 'current' ? field.pin?.state === 'in_force' : field.pin !== null
   return { on, press: { kind: on ? 'unpin' : 'pin' } }
 }
+
+// While a pin stands with no answer of the owner's on the case, Automatic
+// decides nothing for the field, so a decision it made before the pin is not
+// shown as the field's choice.
+export const underPin = (field: ReviewField): ReviewField =>
+  field.pin !== null && field.humanDecision === null && field.automaticDecision !== null
+    ? { ...field, automaticDecision: null }
+    : field
 
 const pinnedValueSentence = (field: ReviewField) => {
   const value = field.pin?.value
@@ -102,3 +118,46 @@ export const pinFoot = (
     unpin: !pinOnScreen,
   }
 }
+
+export interface PinControl {
+  on: boolean
+  // Busy, not disabled, so the pin keeps focus while its command records.
+  busy: boolean
+  onPress: () => void
+}
+
+// What a press of a pin sends: the value command where the value is not yet
+// the owner's choice, then the pin; else the pin or the unpin alone.
+export const pinControls =
+  ({
+    busy,
+    choose,
+    pinAfter,
+    shown,
+  }: {
+    busy: boolean
+    choose: (
+      outcome: DecisionCommand['outcome'],
+      selectedValue?: DecisionCommand['selectedValue'],
+    ) => string
+    pinAfter: (idempotencyKey: string) => void
+    // The pin's status is said at the foot of the field from here on.
+    shown: () => void
+  }) =>
+  (
+    pin: { on: boolean; press: PinPress } | null,
+    selectedValue?: DecisionCommand['selectedValue'],
+  ): PinControl | undefined =>
+    pin
+      ? {
+          on: pin.on,
+          busy,
+          onPress: () => {
+            if (busy) return
+            if (pin.press.kind === 'value_then_pin')
+              pinAfter(choose(pin.press.outcome, selectedValue))
+            else choose(pin.press.kind)
+            shown()
+          },
+        }
+      : undefined

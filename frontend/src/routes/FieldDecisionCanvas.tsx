@@ -44,6 +44,8 @@ import {
 import { OwnerControls } from './FieldDecisionOwner'
 import { ownerOutcome } from '../fieldDecisionMode'
 import type { fieldDecisionMode } from '../fieldDecisionMode'
+import { cardPin, cardPinned, pinControls, underPin, valuePin } from '../fieldPin'
+import { FieldPinFoot } from './FieldDecisionPin'
 
 // The Library page's decision canvas: one field of the selected work, its
 // question, its choices and what recording one does. The page owns selection,
@@ -57,7 +59,7 @@ type Choose = (
 ) => string
 
 export function FieldDecisionCanvas({
-  field: selected,
+  field,
   mode,
   reviewCaseId: selectedReviewCaseId,
   mediaKind,
@@ -103,13 +105,23 @@ export function FieldDecisionCanvas({
     advice: selectedAdvice,
     choiceMode: selectedChoiceMode,
   } = mode
+  const selected = underPin(field)
   const ownerKey = `${selectedReviewCaseId}:${selected.destination}`
   const ownerStatusShown = ownerCommand === ownerKey
+  // A pin's status is said at the foot of the field, beside what it did.
+  const pinStatusShown = ownerCommand === `${ownerKey}:pin`
   const effect = effectSummary(selected)
   const choiceStatus = controller.choiceStatusFor(
     selected.destination,
-    selectedChoiceMode && !ownerStatusShown,
+    selectedChoiceMode && !ownerStatusShown && !pinStatusShown,
   )
+  const pinBusy = controller.recording || controller.checking || controller.reloadRequired
+  const pinControl = pinControls({
+    busy: pinBusy,
+    choose: (outcome, value) => choose(selected, outcome, value),
+    pinAfter: controller.pinAfter,
+    shown: () => setOwnerCommand(`${ownerKey}:pin`),
+  })
   const selectedCoverPreparation =
     selected.destination === 'cover' &&
     selected.coverConsideration?.current !== true &&
@@ -119,6 +131,16 @@ export function FieldDecisionCanvas({
     selected.destination === 'cover' &&
     (selected.coverConsideration !== null || selectedCoverPreparation)
   const selectedProgress = controller.phase(selected.destination)
+  // A pin or an unpin chooses no card: the recorded choice stays marked.
+  const cardProgress =
+    selectedProgress?.command.outcome === 'pin' || selectedProgress?.command.outcome === 'unpin'
+      ? null
+      : selectedProgress
+  const currentCard = {
+    kind: 'current',
+    advice: false,
+    offered: selected.editable && !controller.checking,
+  } as const
   // The line beside "Choose a new value" says what a tap is doing once there is
   // something to say. An owner command says what it did in its own status, once (S4).
   const choiceProgress =
@@ -135,7 +157,7 @@ export function FieldDecisionCanvas({
   type DirectChoice = Omit<Parameters<typeof MetadataChoice>[0], 'radio'>
   const currentChoice: DirectChoice | null = selected.decisionActions.includes('keep_current')
     ? {
-        automatic: automaticallySelected(selected, selectedProgress),
+        automatic: automaticallySelected(selected, cardProgress),
         context: choiceContext(selected, null),
         current: true,
         disabled: controller.checking,
@@ -148,13 +170,15 @@ export function FieldDecisionCanvas({
         label: '',
         longDescription: isLongDescription(selected.destination, selected.currentValue),
         onChoose: () => choose(selected, 'keep_current'),
+        pin: pinControl(cardPin(selected, currentCard)),
+        pinned: cardPinned(selected, currentCard),
         recording:
           commandSelected(
             selectedProgress?.command ?? null,
             selected.destination,
             'keep_current',
           ) && selectedProgress?.phase === 'recording',
-        selected: choiceSelected(selected, selectedProgress, 'keep_current'),
+        selected: choiceSelected(selected, cardProgress, 'keep_current'),
         toggle: () => toggleChoiceEvidence(`${selected.destination}:current`),
         value: valueText(selected.destination, selected.currentValue),
       }
@@ -168,9 +192,10 @@ export function FieldDecisionCanvas({
               ?.alternativeId ?? null,
           )
           const key = `${selected.destination}:${context?.alternativeId ?? String(index)}`
+          const card = { ...currentCard, kind: 'proposed', value } as const
           return {
             id: key,
-            automatic: automaticallySelected(selected, selectedProgress),
+            automatic: automaticallySelected(selected, cardProgress),
             context,
             current: false,
             disabled: controller.checking,
@@ -182,6 +207,8 @@ export function FieldDecisionCanvas({
             label: '',
             longDescription: isLongDescription(selected.destination, displayValue(value.value)),
             onChoose: () => choose(selected, 'accept', value),
+            pin: pinControl(cardPin(selected, card), value),
+            pinned: cardPinned(selected, card),
             recording:
               commandSelected(
                 selectedProgress?.command ?? null,
@@ -189,7 +216,7 @@ export function FieldDecisionCanvas({
                 'accept',
                 value,
               ) && selectedProgress?.phase === 'recording',
-            selected: choiceSelected(selected, selectedProgress, 'accept', value),
+            selected: choiceSelected(selected, cardProgress, 'accept', value),
             toggle: () => toggleChoiceEvidence(key),
             value: valueText(selected.destination, displayValue(value.value)),
           }
@@ -275,8 +302,24 @@ export function FieldDecisionCanvas({
   const newChoices = [...proposedChoices, ...retainedAdviceChoice, ...adviceChoice]
   const directChoices = choiceRadios(
     [...(currentChoice ? [{ ...currentChoice, id: 'current' }] : []), ...newChoices],
-    (choice) => ({ checked: choice.selected, disabled: choice.disabled }),
+    (choice) => ({ checked: choice.selected || choice.pinned === true, disabled: choice.disabled }),
   )
+  const choicesShown = (selectedChoiceMode || selectedCoverInspection) && !controller.reloadRequired
+  // A decision Automatic made before the pin is not the field's recorded outcome.
+  const outcomeShown = !choicesShown && selectedRecorded && selected === field
+  const contextPin = pinControl(valuePin(selected, 'current'))
+  const enteredPin =
+    selected.humanDecision?.outcome === 'owner_entered'
+      ? pinControl(valuePin(selected, 'entered'))
+      : undefined
+  const pinOnScreen =
+    (choicesShown && directChoices.some((choice) => choice.pin?.on)) ||
+    (!choicesShown && !outcomeShown && contextPin?.on === true) ||
+    (!controller.reloadRequired && enteredPin?.on === true)
+  const staleNotice =
+    ownerNotice?.caseId === selectedReviewCaseId && ownerNotice.destination === selected.destination
+      ? ownerNotice.text
+      : ''
 
   return (
     <article
@@ -292,7 +335,7 @@ export function FieldDecisionCanvas({
         <div>
           {/* Takes focus when a retry below it leaves nothing in its place. */}
           <h3 className="decision-question" tabIndex={-1}>
-            {selectedActionable
+            {selectedActionable && selectedChoiceMode
               ? decisionQuestion(selected.destination)
               : destinationLabel(selected.destination)}
           </h3>
@@ -304,10 +347,13 @@ export function FieldDecisionCanvas({
               {questionReason(selected, mediaKind)}
             </p>
           ) : selectedRevisitable ? (
+            // A pin in force is said once, at the foot of the field.
             <p>
-              {selected.humanDecision === null && selected.manualHold
-                ? 'Your earlier decision still holds this field.'
-                : 'The recorded outcome is marked below.'}{' '}
+              {selected.pin?.state === 'in_force'
+                ? ''
+                : selected.humanDecision === null && selected.manualHold
+                  ? 'Your earlier decision still holds this field. '
+                  : 'The recorded outcome is marked below. '}
               You can choose another value.
             </p>
           ) : selectedOptional ? (
@@ -318,7 +364,7 @@ export function FieldDecisionCanvas({
           ) : null}
         </div>
       </header>
-      {(selectedChoiceMode || selectedCoverInspection) && !controller.reloadRequired ? (
+      {choicesShown ? (
         selected.destination === 'cover' ? (
           <LibraryCoverChoices
             reviewCaseId={selectedReviewCaseId}
@@ -409,7 +455,7 @@ export function FieldDecisionCanvas({
             ) : null}
           </section>
         )
-      ) : selectedRecorded ? (
+      ) : outcomeShown ? (
         <RecordedOutcome
           field={selected}
           mediaKind={mediaKind}
@@ -423,6 +469,7 @@ export function FieldDecisionCanvas({
           ownerEntry={selectedOwnerEntry}
           expanded={expandedChoices.has(`${selected.destination}:context`)}
           toggle={() => toggleChoiceEvidence(`${selected.destination}:context`)}
+          pin={contextPin}
         />
       )}
       {choiceStatus.offerChanged ? <p role="status">{choiceStatus.text}</p> : null}
@@ -433,12 +480,7 @@ export function FieldDecisionCanvas({
           disabled={controller.recording || controller.reloadRequired || controller.checking}
           progress={selectedProgress}
           status={
-            ownerNotice?.caseId === selectedReviewCaseId &&
-            ownerNotice.destination === selected.destination
-              ? ownerNotice.text
-              : ownerStatusShown
-                ? controller.statusFor(selected.destination)
-                : ''
+            staleNotice || (ownerStatusShown ? controller.statusFor(selected.destination) : '')
           }
           failed={controller.decision.isError}
           submit={(outcome, value) => {
@@ -446,10 +488,34 @@ export function FieldDecisionCanvas({
             setOwnerCommand(ownerKey)
             return key
           }}
+          pin={enteredPin}
         />
       ) : null}
       {selected.manualHold ? (
         <AutomaticHandlingPanel handling={automaticHandling} selected={selected} />
+      ) : null}
+      {selected.pinControl ? (
+        <FieldPinFoot
+          field={selected}
+          pinOnScreen={pinOnScreen}
+          pressed={pinStatusShown}
+          status={
+            pinStatusShown
+              ? controller.statusFor(selected.destination) ||
+                (controller.messageFor(selected.destination) ?? '')
+              : selected.ownerControl
+                ? ''
+                : staleNotice
+          }
+          alert={
+            pinStatusShown &&
+            (controller.alertFor(selected.destination) ||
+              controller.decision.isError ||
+              controller.reloadRequired)
+          }
+          busy={pinBusy}
+          onUnpin={() => pinControl({ on: true, press: { kind: 'unpin' } })?.onPress()}
+        />
       ) : null}
       {comparisonNotices(selected).length ? (
         <aside className="comparison-notice" aria-label="Comparison condition">
