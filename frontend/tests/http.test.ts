@@ -1171,7 +1171,6 @@ describe('ReviewApiClient', () => {
       names: null,
       clear: false,
       current: null,
-      previous_empty: false,
       withdraw: null,
     }
     expect(

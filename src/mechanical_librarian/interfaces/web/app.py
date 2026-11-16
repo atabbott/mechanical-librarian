@@ -998,8 +998,7 @@ class _OwnerControl(_ClosedModel):
 
     `current` is the value owner entry compares with, raw: the case's value,
     or on the case that wrote the field, the written value (ADR-0104). `clear`
-    says an empty value is accepted here, and `previous_empty` that the field
-    was empty before its latest verified write.
+    says an empty value is accepted here.
     """
 
     entry: _OwnerEntry | None
@@ -1007,7 +1006,6 @@ class _OwnerControl(_ClosedModel):
     names: _OwnerNames | None
     clear: StrictBool
     current: StrictStr | list[StrictStr] | None
-    previous_empty: StrictBool
     withdraw: Literal["available", "automatic_hold", "in_progress", "written"] | None
 
 

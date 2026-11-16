@@ -8446,7 +8446,7 @@
       },
       "_OwnerControl": {
         "additionalProperties": false,
-        "description": "F59's owner controls for one field; each part is offered or null.\n\n`current` is the value owner entry compares with, raw: the case's value,\nor on the case that wrote the field, the written value (ADR-0104). `clear`\nsays an empty value is accepted here, and `previous_empty` that the field\nwas empty before its latest verified write.",
+        "description": "F59's owner controls for one field; each part is offered or null.\n\n`current` is the value owner entry compares with, raw: the case's value,\nor on the case that wrote the field, the written value (ADR-0104). `clear`\nsays an empty value is accepted here.",
         "properties": {
           "clear": {
             "title": "Clear",
@@ -8489,10 +8489,6 @@
               }
             ]
           },
-          "previous_empty": {
-            "title": "Previous Empty",
-            "type": "boolean"
-          },
           "subset": {
             "anyOf": [
               {
@@ -8527,7 +8523,6 @@
           "names",
           "clear",
           "current",
-          "previous_empty",
           "withdraw"
         ],
         "title": "_OwnerControl",

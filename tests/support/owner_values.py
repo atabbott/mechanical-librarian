@@ -189,9 +189,11 @@ class OwnerStore:
         """Record one owner command on the case, through the repository.
 
         An owner-entered value is checked against what the field held before
-        its latest verified write, as the web command reads it.
+        its latest verified write, and on the case that wrote the field against
+        what it wrote, as the web command reads them (#1523).
         """
         case = case or self.case
+        written = dict(self.repository.written_field_values(case.review_case_id))
         proposal = next(
             value for value in case.proposals if value["destination"] == destination
         )
@@ -207,6 +209,9 @@ class OwnerStore:
             occurred_at=self.clock(),
             previous=self.previous().get(destination)
             if outcome == "owner_entered"
+            else None,
+            written=(written[destination],)
+            if outcome == "owner_entered" and destination in written
             else None,
         )
         self.repository.record_human_decision(decision)

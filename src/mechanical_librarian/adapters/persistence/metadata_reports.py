@@ -544,6 +544,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 lambda row: self._validate_shadow_outcome_row(row)
             ),
             previous_field_values=self._field_effect_activity._previous_field_values,
+            written_field_values=self._field_effect_activity._written_field_values,
         )
         self._review_projections = SQLiteReviewProjectionRepository(
             connection,
@@ -610,6 +611,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             ),
             current_cover_authority=(lambda: self._cover_read_authority()),
             previous_field_values=self._field_effect_activity._previous_field_values,
+            written_field_values=self._field_effect_activity._written_field_values,
         )
         self.bind_operation_admission(None)
 
@@ -857,6 +859,11 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         return self._field_effect_activity.previous_field_values(
             connection, library, work_id
         )
+
+    def written_field_values(
+        self, review_case_id: str
+    ) -> tuple[tuple[str, object], ...]:
+        return self._field_effect_activity.written_field_values(review_case_id)
 
     def grant_field_effect_consents(
         self,

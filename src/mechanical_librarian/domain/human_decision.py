@@ -63,6 +63,11 @@ OWNER_SUBSET_DESTINATION = "genres"
 # Authors on both media and narrators on audiobooks take a list of names, one
 # per line, in the owner's order (ADR-0104).
 OWNER_NAMES_DESTINATIONS = ("authors", "narrators")
+OWNER_ENTRY_DESTINATIONS = (
+    *OWNER_TEXT_DESTINATIONS,
+    OWNER_SUBSET_DESTINATION,
+    *OWNER_NAMES_DESTINATIONS,
+)
 OWNER_TEXT_MAXIMUM = 512
 OWNER_SUBSET_MAXIMUM = 32
 OWNER_NAMES_MAXIMUM = 32
@@ -419,12 +424,7 @@ def owner_value_admitted(proposal: Mapping[str, object]) -> bool:
     """Whether this field takes an owner-entered value, subset or names at all."""
     result = proposal.get("result")
     return (
-        proposal.get("destination")
-        in (
-            *OWNER_TEXT_DESTINATIONS,
-            OWNER_SUBSET_DESTINATION,
-            *OWNER_NAMES_DESTINATIONS,
-        )
+        proposal.get("destination") in OWNER_ENTRY_DESTINATIONS
         and type(result) is dict
         and result.get("outcome") != "ineligible"
     )
@@ -617,17 +617,20 @@ def validate_owner_value(
     proposal: Mapping[str, object],
     selected_value: dict[str, object] | None,
     previous: object = None,
+    written: tuple[object] | None = None,
 ) -> None:
     """The case half of an owner-entered value: in the union and a change.
 
     It runs only for a new command, where the case's target is the one the
     owner saw. ``previous`` is what the field held before its latest verified
-    write. The server compares; it never rewrites what was submitted.
+    write. ``written`` holds what the case's own latest verified write put in
+    the field, which is then its current value (#1523, S5). The server
+    compares; it never rewrites what was submitted.
     """
     destination = str(proposal["destination"])
     assert type(selected_value) is dict
     value = selected_value["value"]
-    current = target_value(case, destination)
+    current = target_value(case, destination) if written is None else written[0]
     # A clear needs no union: an empty field refuses it as unchanged below.
     if destination == OWNER_SUBSET_DESTINATION and value is not None:
         order = {
@@ -1033,6 +1036,7 @@ class HumanDecision:
         idempotency_key: str,
         occurred_at: int,
         previous: object = None,
+        written: tuple[object] | None = None,
         offer: tuple[dict[str, object], ...] | None = None,
         offered_alternatives_digest: str | None = None,
     ) -> Self:
@@ -1040,7 +1044,8 @@ class HumanDecision:
 
         ``offer`` is the case's ``current_offer`` (its live proposals when
         omitted). ``offered_alternatives_digest`` is the offer the page showed;
-        omitted, it is the current offer's own digest.
+        omitted, it is the current offer's own digest. ``previous`` and
+        ``written`` are as `validate_owner_value` reads them.
         """
         if (
             actor != "owner"
@@ -1070,7 +1075,7 @@ class HumanDecision:
         _require_owner_medium(case, proposal, outcome)
         validate_decision_action(proposal, outcome, selected_value)
         if outcome == "owner_entered":
-            validate_owner_value(case, proposal, selected_value, previous)
+            validate_owner_value(case, proposal, selected_value, previous, written)
         _require_pinnable_value(case, outcome, destination)
         value = cls._formed(
             case.review_case_id,
@@ -1238,12 +1243,13 @@ class HumanDecision:
         case: ReviewCase,
         previous: object = None,
         offer: tuple[dict[str, object], ...] | None = None,
+        written: tuple[object] | None = None,
     ) -> None:
         """Validate a newly submitted command against the current owner envelope.
 
         ``offer`` is the case's current offer (its live proposals when
-        omitted); ``previous`` is what the field held before its latest
-        verified write.
+        omitted); ``previous`` and ``written`` are as `validate_owner_value`
+        reads them.
         """
         proposals = case.proposals if offer is None else offer
         proposal = _proposal(proposals, self.destination, self.proposal_id)
@@ -1267,6 +1273,7 @@ class HumanDecision:
                 ),
                 self.selected_value,
                 previous,
+                written,
             )
 
     def _validate_for(

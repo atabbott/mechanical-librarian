@@ -46,7 +46,6 @@
           },
           "clear": true,
           "current": null,
-          "previous_empty": false,
           "withdraw": null
         },
         "proposed_values": [
@@ -281,8 +280,7 @@
           "withdraw": null,
           "clear": false,
           "current": "Synthetic Journey",
-          "names": null,
-          "previous_empty": false
+          "names": null
         },
         "proposed_values": [],
         "choice_contexts": [
@@ -456,7 +454,6 @@
           },
           "clear": false,
           "current": ["Example Author"],
-          "previous_empty": false,
           "withdraw": null
         },
         "proposed_values": [],

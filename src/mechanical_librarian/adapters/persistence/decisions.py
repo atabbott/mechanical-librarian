@@ -275,6 +275,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
         previous_field_values: Callable[
             [str, str, str], tuple[tuple[str, object], ...]
         ],
+        written_field_values: Callable[[str], tuple[tuple[str, object], ...]],
     ) -> None:
         super().__init__(connection, binding)
         self._requeue_title_projections = requeue_title_projections
@@ -288,6 +289,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
         self._set_field_effect_manual_hold = set_field_effect_manual_hold
         self._validate_shadow_outcome_row = validate_shadow_outcome_row
         self._previous_field_values = previous_field_values
+        self._written_field_values = written_field_values
 
     def _record_automatic_outcomes(
         self, outcome: ShadowOutcomeSet, occurred_at: int
@@ -662,6 +664,10 @@ class SQLiteDecisionRepository(ConnectionScoped):
             if case_level_unreconciled(self._connection, case.review_case_id):
                 raise _UnreconciledCase
             offer = self._require_current_offer(case)
+            entered = decision.outcome == "owner_entered"
+            written = (
+                dict(self._written_field_values(case.review_case_id)) if entered else {}
+            )
             decision.validate_new_for(
                 case,
                 dict(
@@ -671,9 +677,12 @@ class SQLiteDecisionRepository(ConnectionScoped):
                         str(target["item"]),
                     )
                 ).get(decision.destination)
-                if decision.outcome == "owner_entered"
+                if entered
                 else None,
                 offer,
+                (written[decision.destination],)
+                if decision.destination in written
+                else None,
             )
             self._record_cover_decision_outcome(
                 decision, cover_consideration_id, cover_confirmation, validate_only=True

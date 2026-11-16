@@ -168,7 +168,6 @@
         "current": null,
         "entry": null,
         "names": null,
-        "previous_empty": false,
         "subset": {
           "max_items": 32,
           "options": [
@@ -380,7 +379,6 @@
           "suggestions": []
         },
         "names": null,
-        "previous_empty": false,
         "subset": null,
         "withdraw": null
       },
@@ -540,7 +538,6 @@
           "max_items": 32,
           "previous": null
         },
-        "previous_empty": false,
         "subset": null,
         "withdraw": null
       },

@@ -329,6 +329,9 @@ class CurrentReviewCaseSnapshot:
     # each owner-entry field held before its latest verified write (ADR-0085).
     decision_effect_states: tuple[tuple[str, str], ...] = ()
     previous_values: tuple[tuple[str, object], ...] = ()
+    # What this case's own latest verified write put in each owner-entry
+    # field, which owner entry reads as its current value (#1523, S5).
+    written_values: tuple[tuple[str, object], ...] = ()
     # Destinations whose automatic handling an owner hold keeps off on this
     # case, including a hold carried forward from an earlier case (ADR-0085).
     held_destinations: tuple[str, ...] = ()
@@ -726,6 +729,9 @@ class HumanDecisionStore(CurrentReviewCaseStore, Protocol):
     def review_case_checking(self, review_case_id: str) -> bool: ...
     def previous_field_values(
         self, connection: str, library: str, work_id: str
+    ) -> tuple[tuple[str, object], ...]: ...
+    def written_field_values(
+        self, review_case_id: str
     ) -> tuple[tuple[str, object], ...]: ...
     def record_human_decision(
         self,
@@ -2541,6 +2547,7 @@ class RecordHumanDecision:
                 # only consequence is that no ``human_wait`` sample is recorded.
                 ready_at = None
             previous = None
+            written: tuple[object] | None = None
             if outcome == "owner_entered":
                 # A contextual row offers no owner entry, so it takes none.
                 if any(
@@ -2563,8 +2570,13 @@ class RecordHumanDecision:
                             str(target["item"]),
                         )
                     ).get(destination)
+                    written_values = dict(
+                        self._repository.written_field_values(review_case_id)
+                    )
                 except Exception as error:
                     raise ReviewWebError("persistence") from error
+                if destination in written_values:
+                    written = (written_values[destination],)
             try:
                 # The field's offer as it stands now; the store reads it again
                 # inside the write (#1355, S10).
@@ -2586,6 +2598,7 @@ class RecordHumanDecision:
                 idempotency_key=idempotency_key,
                 occurred_at=self._clock(),
                 previous=previous,
+                written=written,
             )
             if outcome == "keep_current" and self._keep_refused(
                 review_case_id, offer, proposal_id
@@ -3391,7 +3404,13 @@ def _owner_control(
     an audiobook; a clearable field also takes an empty value (ADR-0104).
     """
     destination = cast(str, proposal["destination"])
-    current = target_fields[destination]["value"]
+    # On the case that wrote the field, what it wrote is current (#1523, S5).
+    written = dict(snapshot.written_values)
+    current = (
+        written[destination]
+        if destination in written
+        else target_fields[destination]["value"]
+    )
     previous = dict(snapshot.previous_values).get(destination)
     open_ = (
         destination not in snapshot.suspended_destinations
@@ -3493,7 +3512,6 @@ def _owner_control(
         "names": names,
         "clear": entered and destination in CLEARABLE_DESTINATIONS,
         "current": current if entered else None,
-        "previous_empty": False,
         "withdraw": withdraw,
     }
 

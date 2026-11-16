@@ -34,9 +34,10 @@ from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyProfile,
     resolve_policy,
 )
-from mechanical_librarian.domain.metadata_report import MetadataReport
+from mechanical_librarian.domain.metadata_report import ClaimScope, MetadataReport
 from tests.support.genre_reports import genre_report, publish_genre_case
 from tests.support.owner_values import OwnerStore, rewritten
+from tests.support.proposal_evidence import _local_subtitle
 
 ORCHARD = {"kind": "text", "value": "The Silent Orchard"}
 _FACTS_SQL = (
@@ -243,12 +244,146 @@ def test_the_previous_value_is_offered_after_a_write(store: OwnerStore) -> None:
     assert store.previous() == {}
     assert {"rule": "previous", "value": "Real Tigers"} not in _suggestions(store)
     store.write(store.decide("owner_entered", ORCHARD))
-    # On the writing case the field still reads as before the write, so the
-    # earlier value is the current one and is not suggested.
+    # On the writing case the written value is current at once, so the value
+    # it replaced is suggested with no scan (#1523, S5).
     assert store.previous() == {"title": "Real Tigers"}
-    assert {"rule": "previous", "value": "Real Tigers"} not in _suggestions(store)
+    assert _suggestions(store)[-1] == {"rule": "previous", "value": "Real Tigers"}
+    assert _field(store, "title")["owner_control"]["current"] == ORCHARD["value"]
     _successor(store, title="The Silent Orchard")
     assert _suggestions(store)[-1] == {"rule": "previous", "value": "Real Tigers"}
+
+
+# #1523 S5: going back on the case that was just written is an ordinary
+# owner-entered decision through the existing correction path.
+def test_going_back_on_the_written_case_writes_the_previous_value(
+    store: OwnerStore,
+) -> None:
+    written = store.write(store.decide("owner_entered", ORCHARD))
+    deciding = store.case.review_case_id
+    # The written value is the one refused as unchanged.
+    _refused(store, "owner_value_unchanged", "owner_entered", ORCHARD)
+    back = store.decide("owner_entered", {"kind": "text", "value": "Real Tigers"})
+    assert store.case.review_case_id == deciding
+    operation = store.write(back)
+    assert (operation.plan.pre_value, operation.plan.desired_value) == (
+        written.plan.desired_value,
+        "Real Tigers",
+    )
+    assert store.target.read(operation.plan).value == "Real Tigers"
+    # Now the value written last is current, and the one before it is offered.
+    assert _field(store, "title")["owner_control"]["current"] == "Real Tigers"
+    assert store.previous() == {"title": "The Silent Orchard"}
+    assert _suggestions(store)[-1] == {
+        "rule": "previous",
+        "value": "The Silent Orchard",
+    }
+
+
+def test_going_back_while_the_write_is_in_flight_refuses_as_today(
+    store: OwnerStore,
+) -> None:
+    # Until the write is verified the case reads its target, so the earlier
+    # value is still the current one; another value meets `already_decided`.
+    operation = store.plan(store.decide("owner_entered", ORCHARD))
+    refusals: list[str] = []
+
+    def back(_plan) -> None:
+        before = _rows(store)
+        try:
+            store.decide("owner_entered", {"kind": "text", "value": "Real Tigers"})
+        except HumanDecisionError as error:
+            refusals.append(error.code)
+        assert _rows(store) == before
+
+    store.target.before_apply = back
+    assert store.service.apply(operation.plan.plan_id).state == "verified"
+    assert refusals == ["owner_value_unchanged"]
+    assert store.patches == [operation.plan.plan_id]
+
+
+def test_going_back_after_an_external_change_stales_unwritten(
+    store: OwnerStore,
+) -> None:
+    store.write(store.decide("owner_entered", ORCHARD))
+    operation = store.plan(
+        store.decide("owner_entered", {"kind": "text", "value": "Real Tigers"})
+    )
+    assert operation.plan.pre_value == "The Silent Orchard"
+    store.target.drift(operation.plan, "Edited in the library")
+    staled = store.service.apply(operation.plan.plan_id)
+    assert (staled.state, staled.failure) == ("stale", "target_changed")
+
+
+# #1523 S6: on a successor the earlier value is offered only while the field
+# still reads what the latest write left.
+def test_a_successor_changed_elsewhere_offers_no_previous_value(
+    store: OwnerStore,
+) -> None:
+    store.write(store.decide("owner_entered", ORCHARD))
+    _successor(store, title="Edited in the library")
+    assert store.previous() == {"title": "Real Tigers"}
+    assert {"rule": "previous", "value": "Real Tigers"} not in _suggestions(store)
+    assert _field(store, "title")["owner_control"]["current"] == (
+        "Edited in the library"
+    )
+
+
+# #1523, amendment 1: after a write that filled an empty subtitle, emptying
+# the input is going back. No empty suggestion is sent; the clear is recorded
+# on the writing case and written through the guarded path.
+def test_a_clear_after_a_fill_goes_back_to_the_empty_field(tmp_path: Path) -> None:
+    base = genre_report()
+    report = MetadataReport.create(
+        target=base.target,
+        file=base.file,
+        local_claims=(
+            *base.local_claims,
+            _local_subtitle("A Quiet Subtitle", ClaimScope.WORK),
+        ),
+        local_reasons=base.local_reasons,
+        providers=base.providers,
+    )
+    store = OwnerStore(tmp_path, report)
+    try:
+        filled = store.write(
+            store.decide(
+                "accept",
+                {"kind": "text", "value": "A Quiet Subtitle"},
+                destination="subtitle",
+            )
+        )
+        assert filled.plan.pre_value is None
+        assert store.previous() == {}
+        control = _field(store, "subtitle")["owner_control"]
+        assert (control["clear"], control["current"]) == (True, "A Quiet Subtitle")
+        assert all(
+            item["rule"] != "previous" for item in control["entry"]["suggestions"]
+        )
+        clear = store.decide(
+            "owner_entered", {"kind": "empty", "value": None}, destination="subtitle"
+        )
+        written = store.write(clear)
+        assert (written.plan.pre_value, written.plan.desired_value) == (
+            "A Quiet Subtitle",
+            None,
+        )
+        assert store.target.read(written.plan).value is None
+        assert (
+            store.repository.field_effect_manual_hold_token(
+                store.case.review_case_id, "subtitle"
+            )
+            == clear.decision_id
+        )
+        # Cleared again, the field is empty, so another clear is unchanged.
+        _refused(
+            store,
+            "owner_value_unchanged",
+            "owner_entered",
+            {"kind": "empty", "value": None},
+            destination="subtitle",
+        )
+    finally:
+        store.close()
 
 
 def test_reselecting_the_previous_value_writes_it_back_under_the_guards(
