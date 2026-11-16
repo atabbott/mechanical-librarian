@@ -246,9 +246,10 @@ instruction that one field of one work is finished.
   pending count or authority reader accepts them. A pin may be recorded on
   any field of the case except the cover, whether or not the field offers a
   choice. It is refused while a change to the field waits to be written and
-  no answer of the owner's stands on the case, and where an answer stands
-  whose hold was released or has a Resume asked of it
-  (`pin_change_waiting`). It is refused where the library's value could
+  no answer of the owner's stands on the case, where an answer stands
+  whose hold was released or has a Resume asked of it, and on a description
+  while the owner's choice of the advised text stands, which a pin would
+  otherwise drop before it is written (`pin_change_waiting`). It is refused where the library's value could
   not be read (`unsupported`) and where the field is already pinned at this
   value (`already_pinned`). `unpin` is refused where no pin stands
   (`not_pinned`). Neither row is ever a field's latest decision: every reader

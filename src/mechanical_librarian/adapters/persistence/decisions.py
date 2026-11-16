@@ -169,7 +169,8 @@ def field_change_waiting_sql(case: str, destination: str) -> str:
     """Whether a pin on the field of the case is refused as `pin_change_waiting`.
 
     Where no answer of the owner's stands on the case, a write for the field
-    waits (`_field_effect_waiting_sql`). Where one stands, its hold is not its
+    waits (`_field_effect_waiting_sql`), or the owner's choice of the advised
+    description stands, which a pin would drop unwritten. Where one stands, its hold is not its
     own standing hold: released, with a Resume asked of it, or under another
     token, so a pin there would revive a write that is over (ADR-0085,
     Amendment 2). It lives here rather than in `review_sql`, which imports
@@ -185,9 +186,15 @@ def field_change_waiting_sql(case: str, destination: str) -> str:
         "AND json_extract(standing_hold.document,'$.pending_return') IS NULL "
         "AND json_extract(standing_hold.document,'$.decision_id')="
         + _standing_decision_sql("decision_id", case, destination)
-        + ") ELSE "
+        + ") ELSE ("
         + _field_effect_waiting_sql(case, destination)
-        + " END)"
+        # The owner's own choice of the advised description is recorded
+        # apart from the field's answers, and a pin would replace it.
+        + f" OR ({destination}='description' AND EXISTS (SELECT 1 FROM "
+        "current_description_decisions chosen_advice JOIN description_decisions "
+        "advice ON advice.decision_id=chosen_advice.decision_id "
+        f"WHERE chosen_advice.review_case_id={case} "
+        "AND json_extract(advice.document,'$.origin')='human'))) END)"
     )
 
 

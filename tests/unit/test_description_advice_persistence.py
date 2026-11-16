@@ -995,21 +995,32 @@ def test_a_pinned_description_admits_no_automatic_advice(tmp_path):
     repository.close()
 
 
-def test_a_pin_never_reopens_a_description_choice(tmp_path, monkeypatch):
+@pytest.mark.parametrize("beneath", ["keep_current", "nothing", "nothing_repeated"])
+def test_a_pin_never_reopens_a_description_choice(tmp_path, monkeypatch, beneath):
     """ADR-0085 Amendment 2 (#1346, K-D11): where the owner's advice choice
-    stands over an earlier answer on the description, the field's hold is the
-    advice choice's and not that answer's, so a pin is refused. Accepting it
-    would drop the advice choice and make the earlier answer the field's
-    decision again."""
+    stands on the description, alone or over an earlier answer, a pin is
+    refused. Accepting it would drop the advice choice, so the chosen text
+    would never be written, and would make an earlier answer the field's
+    decision again. The same holds on a description every source repeats
+    (#1912)."""
+    from mechanical_librarian.application.review_web import InspectCurrentReviewCase
     from mechanical_librarian.domain.human_decision import (
         HumanDecision,
         HumanDecisionError,
     )
     from mechanical_librarian.domain.review_case import ReviewCase
-    from tests.support.description_advice import _prepared
+    from tests.support.description_advice import (
+        _prepared,
+        _preserved_description_report,
+    )
 
     qualify_description_advice(monkeypatch)
-    repository, store, binding, original, _ = _prepared(tmp_path)
+    repository, store, binding, original, _ = _prepared(
+        tmp_path,
+        report_override=_preserved_description_report()
+        if beneath == "nothing_repeated"
+        else None,
+    )
     connection = repository._connection
     case = ReviewCase.create_from_data(
         json.loads(repository.get_review_case(binding.review_case_id))["case"]
@@ -1045,11 +1056,13 @@ def test_a_pin_never_reopens_a_description_choice(tmp_path, monkeypatch):
             repository.pending_field_effect_decision_documents(32),
         )
 
-    kept = owner("keep_current", 11)
-    repository.record_human_decision(kept)
+    if beneath == "keep_current":
+        repository.record_human_decision(owner("keep_current", 11))
     chosen = store.admit(original.candidate_id, binding, "human", "e" * 64, 12)
     before = state()
     assert before[0] == [(binding.review_case_id, chosen.decision_id)]
+    # The advice choice is the description's pending write.
+    assert chosen.to_json() in repository.pending_field_effect_decision_documents(32)
     assert (
         repository.field_effect_manual_hold_token(binding.review_case_id, "description")
         == chosen.decision_id
@@ -1058,4 +1071,12 @@ def test_a_pin_never_reopens_a_description_choice(tmp_path, monkeypatch):
         repository.record_human_decision(owner("pin", 13))
     assert refused.value.code == "pin_change_waiting"
     assert state() == before
+    description = next(
+        field
+        for field in InspectCurrentReviewCase(repository).run(binding.review_case_id)[
+            "fields"
+        ]
+        if field["destination"] == "description"
+    )
+    assert description["pin_control"] == {"pin": "change_waiting", "unpin": False}
     repository.close()

@@ -4266,38 +4266,62 @@ def test_pin_and_unpin_through_the_decision_route(tmp_path: Path) -> None:
         store.close()
 
 
-def test_choose_then_pin_through_the_decision_route(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "destination,selected",
+    [
+        ("genres", {"kind": "list", "value": ["Fantasy"]}),
+        ("explicit", {"kind": "boolean", "value": True}),
+    ],
+    ids=["list", "boolean"],
+)
+def test_choose_then_pin_through_the_decision_route(
+    tmp_path: Path, destination: str, selected: dict[str, Any]
+) -> None:
     """The one press is two requests: the value command, then the pin, each
     accepted before the write lands; the answer then cannot be withdrawn
-    while its field is pinned (#1346, KC9, K-D18)."""
+    while its field is pinned. The pinned value is read back with its own
+    JSON type, in the acknowledgement and the case (#1346, KC9, K-D18)."""
+    from tests.support.audiobook_reports import (
+        synthetic_audiobook_bibliographic_report,
+    )
     from tests.support.genre_reports import genre_report
     from tests.support.owner_values import OwnerStore
 
-    store = OwnerStore(tmp_path, genre_report())
+    store = OwnerStore(
+        tmp_path,
+        genre_report()
+        if destination == "genres"
+        else synthetic_audiobook_bibliographic_report(adult_product=True),
+    )
     context = review_web_context(lambda *_: cast(Any, store.repository))
     web = next(context)
     try:
         case_id = store.case.review_case_id
         decide = _decision_poster(web, web.login(), case_id, "choose-pin-request")
-        chosen = decide("genres", "accept", {"kind": "list", "value": ["Fantasy"]})
+        chosen = decide(destination, "accept", selected)
         assert chosen.status_code == 200, chosen.text
-        pinned = decide("genres", "pin")
+        pinned = decide(destination, "pin")
         assert pinned.status_code == 200, pinned.text
+        read = web.client.get(f"/api/v1/review-cases/{case_id}")
+        assert read.status_code == 200, read.text
         field = next(
             field
-            for field in web.client.get(f"/api/v1/review-cases/{case_id}").json()[
-                "fields"
-            ]
-            if field["destination"] == "genres"
+            for field in read.json()["fields"]
+            if field["destination"] == destination
         )
         assert field["pin"] == {
             "state": "waiting",
-            "value": {"destination": "genres", "state": "value", "value": ["Fantasy"]},
+            "value": {
+                "destination": destination,
+                "state": "value",
+                "value": selected["value"],
+            },
         }
+        assert type(field["pin"]["value"]["value"]) is type(selected["value"])
         assert field["pin_control"] == {"pin": "available", "unpin": True}
         assert field["human_decision"]["decision_id"] == chosen.json()["decision_id"]
-        assert field["owner_control"]["withdraw"] is None
-        withdrawn = decide("genres", "withdraw")
+        assert (field["owner_control"] or {"withdraw": None})["withdraw"] is None
+        withdrawn = decide(destination, "withdraw")
         assert (withdrawn.status_code, withdrawn.json()["error"]["code"]) == (
             409,
             "pinned",

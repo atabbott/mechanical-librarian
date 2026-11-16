@@ -184,7 +184,8 @@ body is refused before parsing.
 - Errors: `404` for an absent case, `401` for an invalid session, `403` for a
   CSRF mismatch, `503` for a persistence outage.
 - A pin is refused with `409 pin_change_waiting` while a change to the field
-  that is not the owner's standing answer waits to be written and
+  that is not the owner's standing answer waits to be written, or while the
+  owner's choice of the advised description stands, and
   `409 already_pinned` when the field is already pinned at this value; an
   unpin is refused with `409 not_pinned`, and a withdrawal with `409 pinned`
   while the field is pinned.

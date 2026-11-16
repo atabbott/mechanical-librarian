@@ -11,6 +11,7 @@ where neither outcome existed. Synthetic fixtures only.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -53,7 +54,9 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     TargetField,
     TargetFieldState,
+    TargetSeries,
 )
+from tests.support.audiobook_reports import synthetic_audiobook_bibliographic_report
 from tests.support.evidence_led_titles import isbn_title_report
 from tests.support.genre_reports import genre_report
 from tests.support.owner_values import CAPABILITY, OwnerStore, rewritten
@@ -576,7 +579,9 @@ def test_choosing_another_value_ends_the_pin(
     )
 
 
-# R5: the authored description's second hold write keeps the pin.
+# R5: the authored description's second hold write keeps the pin. The
+# authored decision is Automatic's; the owner's own advice choice refuses a
+# pin (`test_a_pin_never_reopens_a_description_choice`).
 def test_a_pinned_description_keeps_its_pin_over_an_authored_decision(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -589,7 +594,7 @@ def test_a_pinned_description_keeps_its_pin_over_an_authored_decision(
 
     qualify_description_advice(monkeypatch)
     repository, store, binding, original, _ = _prepared(tmp_path)
-    store.admit(original.candidate_id, binding, "human", "e" * 64, 11)
+    store.admit(original.candidate_id, binding, "automatic_policy", "e" * 64, 11)
     connection = repository._connection
     assert connection.execute(
         "SELECT count(*) FROM current_description_decisions WHERE review_case_id=?",
@@ -1051,6 +1056,65 @@ def test_the_changed_field_suggests_the_pinned_value(tmp_path: Path) -> None:
     assert {"rule": "pinned", "value": ORIGINAL} in control["entry"]["suggestions"]
     answer = store.decide("owner_entered", {"kind": "text", "value": ORIGINAL})
     assert (_hold(store), _pin(store)) == (answer.decision_id, None)
+    store.close()
+
+
+# KC8 and K-D16: the pinned value reads with the JSON type it was chosen or
+# held with. A boolean stays a boolean, a list a list, a series its objects
+# with a null sequence, whether the pin keeps a chosen value or the case's.
+@pytest.mark.parametrize(
+    "destination,chosen,held,expected",
+    [
+        ("explicit", {"kind": "boolean", "value": True}, None, True),
+        ("explicit", None, False, False),
+        (
+            "title",
+            {"kind": "text", "value": "Synthetic Journey"},
+            None,
+            "Synthetic Journey",
+        ),
+        (
+            "series",
+            None,
+            (TargetSeries("Example Series", "3"), TargetSeries("Another Series")),
+            [
+                {"name": "Example Series", "sequence": "3"},
+                {"name": "Another Series", "sequence": None},
+            ],
+        ),
+        ("authors", None, None, ["Example Author"]),
+    ],
+    ids=["chosen_boolean", "held_boolean", "chosen_text", "held_series", "held_list"],
+)
+def test_a_pinned_value_reads_with_its_own_type(
+    tmp_path: Path, destination: str, chosen: Any, held: Any, expected: Any
+) -> None:
+    report = synthetic_audiobook_bibliographic_report(adult_product=True)
+    if held is not None:
+        fields = tuple(
+            TargetField(field.destination, TargetFieldState.VALUE, held)
+            if field.destination.value == destination
+            else field
+            for field in report.target.fields
+        )
+        report = MetadataReport.create(
+            target=replace(report.target, fields=fields),
+            file=report.file,
+            local_claims=report.local_claims,
+            local_reasons=report.local_reasons,
+            providers=report.providers,
+            audio=report.audio,
+        )
+    store = OwnerStore(tmp_path, report)
+    if chosen is not None:
+        store.decide("accept", chosen, destination=destination)
+    store.decide("pin", destination=destination)
+    pin = _field(store, destination)["pin"]
+    assert pin == {
+        "state": "in_force" if chosen is None else "waiting",
+        "value": {"destination": destination, "state": "value", "value": expected},
+    }
+    assert type(pin["value"]["value"]) is type(expected)
     store.close()
 
 

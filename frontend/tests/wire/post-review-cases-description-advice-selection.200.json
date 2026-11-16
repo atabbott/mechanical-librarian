@@ -834,7 +834,7 @@
             "uncertainty": ["populated_subjective_field", "populated_value_meets_floor"],
             "pin": null,
             "pin_control": {
-              "pin": "available",
+              "pin": "change_waiting",
               "unpin": false
             }
           },

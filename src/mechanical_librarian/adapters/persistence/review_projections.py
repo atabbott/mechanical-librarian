@@ -361,17 +361,27 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 ),
                 # The pinned value is the chosen value where the hold's
                 # decision chose one, and otherwise the value of that
-                # decision's case; a hold breaking that reads no pin.
+                # decision's case; a hold breaking that reads no pin. The
+                # chosen value is parsed here, not extracted in SQL, which
+                # would read a JSON boolean as an integer.
                 pins=tuple(
-                    (row[0], row[1] == 1, row[2])
+                    (
+                        row[0],
+                        row[1] == 1,
+                        _canonical_json(
+                            {
+                                "destination": row[0],
+                                "state": "value",
+                                "value": json.loads(row[3])["value"],
+                            }
+                        )
+                        if row[2] in {"accept", "owner_entered"}
+                        else row[4],
+                    )
                     for row in self._connection.execute(
                         "SELECT hold.destination,"
                         "json_extract(hold.document,'$.pin.in_force'),"
-                        "CASE WHEN human.outcome IN ('accept','owner_entered') "
-                        "THEN json_object('destination',hold.destination,'state',"
-                        "'value','value',"
-                        "json_extract(human.selected_value_document,'$.value')) "
-                        "ELSE target.value END "
+                        "human.outcome,human.selected_value_document,target.value "
                         "FROM field_effect_manual_holds hold JOIN human_decisions human "
                         "ON human.decision_id=json_extract(hold.document,'$.decision_id') "
                         "AND human.outcome IN ('pin','keep_current','accept','owner_entered') "
