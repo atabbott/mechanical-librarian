@@ -112,8 +112,8 @@ prepared change waits for write permission. The
 ## Workspace shell
 
 The destinations are Library (with Attention and work detail), Policy, Activity
-and Settings. Every page opens in the saved theme, or the system theme until
-one is saved, on its first frame.
+and Settings. Every page opens in the saved theme, or the system theme with
+none saved, on its first frame.
 
 Sign-in has Show password. It says whether the password was wrong or the device
 must wait five minutes after too many attempts. The app has no password reset
@@ -123,13 +123,13 @@ address while signed in goes straight to Library. Attention has no page of its
 own: an old `/attention` address opens Library with Attention open.
 
 The masthead holds still while the live-update and preparation status change.
-It stays at the top only while it takes at most a sixth of the window. When
-it is taller, it scrolls away, so it never covers content or focus. The
+It stays at the top only while it takes at most a sixth of the window. Taller,
+it scrolls away, so it never covers content or focus. The
 masthead marks the current destination, and Library stays marked while a
 review or Attention is open.
 
 Navigation appears without waiting for data. Loading reads as one small line
-beside a dot. The dot pulses unless reduced motion is set in your system or in
+beside a dot. The dot pulses unless reduced motion is set in your system or
 Settings › Appearance. A count that is loading or failed never shows as zero,
 and a failed read keeps a retry. A page that cannot load says why and what to
 do. Its status and code are under Technical detail.
@@ -145,7 +145,7 @@ unknown review path shows a recovery state, not an error.
 
 ## Preparation and source status
 
-The preparation panel states one run in five counts. Their labels are "ready
+The preparation panel states one run in five counts: "ready
 to browse", "recorded, nothing to decide", "not matched", "could not finish"
 and "in progress". Ready to browse and in progress always show. The others hide
 at zero; an unknown count reads `…`. Counts describe the run's books as
@@ -160,7 +160,7 @@ The masthead's background-work icon fills while libraries are prepared and
 marks what needs you. Its popover shows each library's scan state and works
 checked, marks a library outside the current run, and offers Scan now and
 Pause. Pause stops new scans. Source lookups already waiting keep their schedule. The popover fits the window
-below the masthead, and scrolls inside itself when it must. `Escape` closes it
+below the masthead, and scrolls inside itself if needed. `Escape` closes it
 and returns focus to its trigger. The popover disables a pending command
 instead of removing it, so focus stays put and a second press sends nothing.
 When no answer confirms a command's result, the popover shows the refreshed
@@ -178,16 +178,16 @@ A failure before a report has no automatic retry
 
 The masthead's background-work control shows when source lookups are waiting
 to retry. Its popover lists each source and library with the reason, the number
-waiting and the next automatic retry, offers Retry now, and says what Retry now
+waiting and the next automatic retry, offers Retry now, and says what it
 did. Library and Settings show a notice only when lookups will not be retried
-unless the owner acts, or when a source's lookups have waited 24 hours. A
+unless the owner acts, or a source's lookups have waited 24 hours. A
 refused key is never retried on its own: fix it, then use Retry now. An entry
 that needs an API key added or checked links to Settings › Metadata sources. A
 file-managed deployment shows the file instruction instead of Retry now.
 
 A work whose preparation could not finish stays in Library as a row that does
 not open, marked Could not finish. It keeps its title while the catalogue
-still matches. Each failure code has one reason and one next step. The next
+matches. Each failure code has one reason and one next step. The next
 step is a change you make followed by a scan, an automatic retry, or a new
 scan of the library. A new scan queues a failed book again from the step that
 failed. That retry rereads what earlier steps saved. So when saved data could
@@ -546,7 +546,7 @@ checks. A change to the libraries, their fields' write support or permission,
 or the active policy clears your choice and says why. Cancel or leaving the
 page clears it too. Confirming grants only the libraries you included. If the
 libraries, their fields, the policy or the database check changed since, it
-grants nothing and says so. Library and Activity both state a lapsed
+grants nothing and says so. Library and Activity state a lapsed
 permission, and neither says no action is needed while no library has permission
 ([ADR-0039](../architecture/decisions/0039-continuous-guarded-application.md)).
 
@@ -569,13 +569,13 @@ Settings has seven sections: Audiobookshelf, Libraries, Metadata sources,
 Reviewer, Background work, Access and diagnostics, and Appearance. The section
 is the `?group=` URL value. A message naming Settings → Reviewer or Settings →
 Audiobookshelf links there. A section index sits beside the page above 760
-pixels; at 760 or narrower a selector replaces it.
+pixels; otherwise a selector replaces it.
 
 The page edits one draft of all settings; each section counts its changes,
 indirect ones too. While anything is unsaved, a bottom tray shared with Policy
 lists before and after values and offers Discard all and Save settings. A tray
 taller than a third of the window scrolls with the page. Save settings checks
-every value and goes to the first one that needs fixing. "Settings saved and
+every value and goes to the first that needs fixing. "Settings saved and
 in use." appears once, above the page's end and the tray, so nothing moves. If
 settings changed elsewhere, saving loads them under your draft. An edit to a
 value changed in both places takes the newer value, and the tray counts these.
@@ -600,9 +600,12 @@ In Access and diagnostics, Sign out other browsers and, in store mode, Owner
 password (given the current one) apply at once and sign out every other
 browser ([deployment](../operations/deployment.md#owner-sessions)).
 
+In Appearance, Theme (Follow system, Light or Dark) applies at once and stays
+in this browser, in a file-managed deployment too.
+
 ## Words and values
 
-The voice is the one `DESIGN.md` states under Voice. Mechanical Librarian
+`DESIGN.md` states the voice under Voice. Mechanical Librarian
 never turns a code into words: it refuses an unknown code instead of
 sentence-casing it. Acronyms stay capitalised, languages read by name with
 their tag ("English (en)"), and sizes use MB. Times within the past hour are

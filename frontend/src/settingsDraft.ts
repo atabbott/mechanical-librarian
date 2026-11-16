@@ -56,7 +56,7 @@ export const sections: readonly { id: Group; label: string; description: string 
   { id: 'reviewer', label: 'Reviewer', description: 'Optional AI advice' },
   { id: 'background', label: 'Background work', description: 'Requests, limits and polling' },
   { id: 'access', label: 'Access and diagnostics', description: 'Sign-in length and timings' },
-  { id: 'appearance', label: 'Appearance', description: 'Motion' },
+  { id: 'appearance', label: 'Appearance', description: 'Motion and theme' },
 ]
 export const sectionLabel = (id: Group) =>
   sections.find((section) => section.id === id)?.label ?? id

@@ -4247,6 +4247,20 @@ def test_terminal_preparation_row_is_listed_and_found_by_its_library_title() -> 
         )
 
 
+# The theme and page background once the body has a painted background.
+_FIRST_PAINT = (
+    "() => { const body = document.body; if (!body) return null;"
+    " const background = getComputedStyle(body).backgroundColor;"
+    " return background === 'rgba(0, 0, 0, 0)' ? null :"
+    " [document.documentElement.dataset.theme ?? null, background] }"
+)
+
+
+def _painted(page: Page, url: str) -> list[str | None]:
+    page.goto(url, wait_until="commit")
+    return cast(list[str | None], page.wait_for_function(_FIRST_PAINT).json_value())
+
+
 def test_workspace_paints_the_saved_or_system_theme_before_the_application_loads() -> (
     None
 ):
@@ -4254,17 +4268,6 @@ def test_workspace_paints_the_saved_or_system_theme_before_the_application_loads
     before the application bundle runs, under the production CSP; the bundled
     Inter face loads from the same origin (#1289)."""
     held: list[Route] = []
-    first_paint = (
-        "() => { const body = document.body; if (!body) return null;"
-        " const background = getComputedStyle(body).backgroundColor;"
-        " return background === 'rgba(0, 0, 0, 0)' ? null :"
-        " [document.documentElement.dataset.theme ?? null, background] }"
-    )
-
-    def painted(page: Page, url: str) -> list[str | None]:
-        page.goto(url, wait_until="commit")
-        return cast(list[str | None], page.wait_for_function(first_paint).json_value())
-
     with _identity_library() as (page, origin, _queries):
         context = page.context
         errors: list[str] = []
@@ -4294,11 +4297,11 @@ def test_workspace_paints_the_saved_or_system_theme_before_the_application_loads
         )
         page.emulate_media(color_scheme="dark")
         url = f"{origin}/library?lens=all"
-        assert painted(page, url) == ["dark", "rgb(15, 21, 18)"]
+        assert _painted(page, url) == ["dark", "rgb(15, 21, 18)"]
         assert len(held) == 1
         held.pop().abort()
         context.add_cookies([{"name": "ml_theme", "value": "light", "url": origin}])
-        assert painted(page, url) == ["light", "rgb(244, 242, 236)"]
+        assert _painted(page, url) == ["light", "rgb(244, 242, 236)"]
         held.pop().abort()
         context.clear_cookies(name="ml_theme")
 
@@ -4312,12 +4315,12 @@ def test_workspace_paints_the_saved_or_system_theme_before_the_application_loads
         control.route(
             "**/assets/review-app/assets/theme-*.js", lambda route: route.abort()
         )
-        assert painted(control, url) == [None, "rgb(244, 242, 236)"]
+        assert _painted(control, url) == [None, "rgb(244, 242, 236)"]
         held.pop().abort()
         control.close()
 
         page.goto(url, wait_until="commit")
-        assert page.wait_for_function(first_paint).json_value()[0] == "dark"
+        assert page.wait_for_function(_FIRST_PAINT).json_value()[0] == "dark"
         held.pop().continue_()
         expect(page.get_by_role("heading", name="Works", exact=True)).to_be_visible()
         html = page.locator("html")
@@ -4343,6 +4346,83 @@ def test_workspace_paints_the_saved_or_system_theme_before_the_application_loads
             and cache_control == "private, max-age=31536000, immutable"
             for status, content_type, cache_control in fonts
         ), fonts
+        assert not [error for error in errors if "Content Security Policy" in error], (
+            errors
+        )
+
+
+def test_theme_chosen_in_settings_paints_first_and_reaches_sign_in() -> None:
+    """A Theme choice in Settings applies at once, is painted before the
+    application bundle runs after a reload, under the production CSP, and
+    reaches sign-in; Follow system forgets the choice everywhere (#1341)."""
+    dark, light = "rgb(15, 21, 18)", "rgb(244, 242, 236)"
+    held: list[Route] = []
+    hold = False
+    with _identity_library() as (page, origin, _queries):
+        context = page.context
+        errors: list[str] = []
+        page.on(
+            "console",
+            lambda message: (
+                errors.append(message.text) if message.type == "error" else None
+            ),
+        )
+        page.route(
+            "**/assets/review-app/assets/index-*.js",
+            lambda route: held.append(route) if hold else route.continue_(),
+        )
+        page.route("**/assets/login.js", lambda route: route.abort())
+        html = page.locator("html")
+        for system, choice, theme, background in (
+            ("light", "Dark", "dark", dark),
+            ("light", "Follow system", "light", light),
+            ("dark", "Light", "light", light),
+            ("dark", "Follow system", "dark", dark),
+        ):
+            case = (system, choice)
+            page.emulate_media(color_scheme=cast(Literal["dark", "light"], system))
+            page.goto(f"{origin}/settings?group=appearance")
+            segments = page.get_by_role("group", name="Theme")
+            # Each case starts on the other theme, so the choice is what turns it.
+            expect(html).not_to_have_attribute("data-theme", theme)
+            segments.get_by_role("button", name=choice, exact=True).click()
+            expect(html).to_have_attribute("data-theme", theme)
+            expect(
+                segments.get_by_role("button", name=choice, exact=True)
+            ).to_have_attribute("aria-pressed", "true")
+            assert page.evaluate("document.documentElement.style.colorScheme") == theme
+            saved = [
+                (
+                    cookie.get("value"),
+                    cookie.get("path"),
+                    cookie.get("sameSite"),
+                    cookie.get("secure"),
+                )
+                for cookie in context.cookies()
+                if cookie.get("name") == "ml_theme"
+            ]
+            assert saved == (
+                [] if choice == "Follow system" else [(theme, "/", "Strict", True)]
+            ), case
+
+            hold = True
+            assert _painted(page, f"{origin}/settings?group=appearance") == [
+                theme,
+                background,
+            ], case
+            held.pop().abort()
+            hold = False
+            # Sign-in's scripts are held back, so its paint is theme.js and the
+            # stylesheet: the saved choice, or the system with nothing saved.
+            page.goto(f"{origin}/login")
+            assert html.get_attribute("data-theme") == (
+                None if choice == "Follow system" else theme
+            ), case
+            assert (
+                page.evaluate("getComputedStyle(document.body).backgroundColor")
+                == background
+            ), case
+        assert not held
         assert not [error for error in errors if "Content Security Policy" in error], (
             errors
         )

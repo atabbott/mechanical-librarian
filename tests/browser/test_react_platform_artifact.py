@@ -5594,6 +5594,60 @@ def test_finish_actions_and_settings_fields_stay_inside_their_containers() -> No
         assert failures == [], "\n".join(failures)
 
 
+# The rows a segmented control's buttons sit on, and each label that is clipped
+# or has a word broken over two lines.
+_SEGMENT_LAYOUT = """(id) => {
+  const buttons = [...document.querySelectorAll(`#${id} button`)];
+  const broken = buttons.flatMap((button) => {
+    const label = button.textContent;
+    if (button.scrollWidth > button.clientWidth) return [`${label} is clipped`];
+    const text = button.firstChild;
+    return [...label.matchAll(/\\S+/g)].flatMap((word) => {
+      const range = document.createRange();
+      range.setStart(text, word.index);
+      range.setEnd(text, word.index + word[0].length);
+      return range.getClientRects().length > 1 ? [`${label} breaks ${word[0]}`] : [];
+    });
+  });
+  const rows = new Set(buttons.map((button) => Math.round(button.getBoundingClientRect().top)));
+  return { segments: buttons.length, rows: rows.size, broken };
+}"""
+
+
+def test_theme_segments_share_a_row_until_the_text_is_too_large() -> None:
+    """Theme's three segments share one row on a phone with every word whole,
+    and stack one per row at 320px with 200% text, where a row would clip a
+    label. Motion's two segments keep the layout they had (#1341)."""
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
+        browser = playwright.chromium.launch(headless=True)
+        stack.callback(browser.close)
+        page = browser.new_page(viewport={"width": 390, "height": 844}, locale="en-US")
+        page.add_init_script(_LIVE_UPDATE_STREAM)
+        _serve_cohort(page)
+        for width, text, theme_rows, motion_rows in (
+            (390, "", 1, 1),
+            (320, "", 1, 1),
+            (320, "200%", 3, 2),
+        ):
+            page.set_viewport_size({"width": width, "height": 844})
+            page.goto("https://react-platform.invalid/settings?group=appearance")
+            expect(page.get_by_role("group", name="Theme")).to_be_visible()
+            set_root_text(page, text)
+            where = f"at {width}px with {text or 'default'} text"
+            assert page.evaluate(_SEGMENT_LAYOUT, "settings-theme") == {
+                "segments": 3,
+                "rows": theme_rows,
+                "broken": [],
+            }, f"Theme {where}"
+            assert page.evaluate(_SEGMENT_LAYOUT, "settings-reduced_motion") == {
+                "segments": 2,
+                "rows": motion_rows,
+                "broken": [],
+            }, f"Motion {where}"
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
 # Finish tray steps and actions that run past the editor holding them.
 _PAST_THE_EDITOR = """() => {
   const editor = document.querySelector('.cm-policy-editor').getBoundingClientRect();
