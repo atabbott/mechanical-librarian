@@ -87,6 +87,7 @@ from mechanical_librarian.application.review_web import (
     LibraryLabels,
     LibraryLensFilter,
     ReviewAttentionSnapshot,
+    ReviewLibraryProgress,
     ReviewLibrarySnapshot,
     ValidatedDocumentCache,
 )
@@ -136,6 +137,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         read_current_attention_page: Callable[
             [str | None, int, int, LibraryLabels], ReviewAttentionPage
         ],
+        read_current_library_progress: Callable[[LibraryLabels], ReviewLibraryProgress],
         current_cover_authority: Callable[[], tuple[str | None, str | None]],
         current_resolved_metadata_policy: Callable[
             [str], ResolvedMetadataPolicy | None
@@ -157,6 +159,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         self.cover_consideration_history = cover_consideration_history
         self.read_current_library_page = read_current_library_page
         self.read_current_attention_page = read_current_attention_page
+        self.read_current_library_progress = read_current_library_progress
         self._current_cover_authority = current_cover_authority
         self.current_resolved_metadata_policy = current_resolved_metadata_policy
         self._previous_field_values = previous_field_values
@@ -1109,3 +1112,11 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             )
             snapshot = ReviewAttentionSnapshot(rows=page.rows, total=page.total)
         return snapshot
+
+    def read_review_library_progress(
+        self, library_labels: LibraryLabels = ()
+    ) -> ReviewLibraryProgress:
+        # Its work and field statements are one answer only on one snapshot.
+        with self._consistent_review_read():
+            progress = self.read_current_library_progress(library_labels)
+        return progress

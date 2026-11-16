@@ -32,6 +32,7 @@ import {
   targetIdentity,
 } from './wireFixtures'
 import activationCapture from './wire/post-metadata-policy-activate.200.json'
+import libraryProgressCapture from './wire/get-library-progress.200.json'
 import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 
 import {
@@ -6671,6 +6672,89 @@ describe('taste profile decoder (#1372)', () => {
         taste_mapping: { engine: 'codex', model: 'gpt-5.6-sol' },
       }),
     ).rejects.toBeInstanceOf(Error)
+  })
+})
+
+describe('Library progress (#1335)', () => {
+  const answering = (response: Response) =>
+    new ReviewApiClient({ csrf, fetch: vi.fn<typeof fetch>(async () => response) })
+
+  it('reads the captured answer as Library counts per library and per field', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => Response.json(libraryProgressCapture.body))
+    const view = await new ReviewApiClient({ csrf, fetch: fetchMock }).getLibraryProgress()
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/library/progress')
+    expect(view).toEqual({
+      totals: { all: 2, attention: 1, clear: 0, notMatched: 1, failed: 0 },
+      libraries: [
+        {
+          connection: 'primary',
+          library: 'audiobooks',
+          libraryDisplayName: 'audiobooks',
+          counts: { all: 1, attention: 0, clear: 0, notMatched: 1, failed: 0 },
+        },
+        {
+          connection: 'primary',
+          library: 'ebooks',
+          libraryDisplayName: 'ebooks',
+          counts: { all: 1, attention: 1, clear: 0, notMatched: 0, failed: 0 },
+        },
+      ],
+      fields: [{ destination: 'title', needYou: 1 }],
+    })
+  })
+
+  it('refuses a field outside the vocabulary or one nobody needs', async () => {
+    const body = libraryProgressCapture.body
+    await expect(
+      answering(
+        Response.json({ ...body, fields: [{ destination: 'shelf', need_you: 1 }] }),
+      ).getLibraryProgress(),
+    ).rejects.toMatchObject(refused('enum@/fields/0/destination'))
+    await expect(
+      answering(
+        Response.json({ ...body, fields: [{ destination: 'title', need_you: 0 }] }),
+      ).getLibraryProgress(),
+    ).rejects.toMatchObject(refused('min@/fields/0/need_you'))
+    await expect(
+      answering(Response.json({ ...body, run_id: 'run-1' })).getLibraryProgress(),
+    ).rejects.toBeInstanceOf(ResponseDecodeError)
+  })
+
+  it('hands an expired session to sign-in and keeps a storage fault as 503', async () => {
+    const expired = vi.fn()
+    await expect(
+      new ReviewApiClient({
+        csrf,
+        fetch: vi.fn(async () => Response.json({ error: { code: 'session' } }, { status: 401 })),
+        onSessionExpired: expired,
+      }).getLibraryProgress(),
+    ).rejects.toBeInstanceOf(SessionExpiredError)
+    await vi.waitFor(() => expect(expired).toHaveBeenCalledOnce())
+    await expect(
+      answering(
+        Response.json(
+          { error: { code: 'unavailable' }, schema_version: 'review-error-v1' },
+          { status: 503 },
+        ),
+      ).getLibraryProgress(),
+    ).rejects.toMatchObject({ status: 503, code: 'unavailable' })
+  })
+
+  it('refuses an answer from another build and raises the shell recovery', async () => {
+    const mismatch = vi.fn()
+    await expect(
+      new ReviewApiClient({
+        csrf,
+        buildIdentity: 'c'.repeat(64),
+        fetch: vi.fn(async () =>
+          Response.json(libraryProgressCapture.body, {
+            headers: { 'x-ml-build-identity': 'e'.repeat(64) },
+          }),
+        ),
+        onBuildMismatch: mismatch,
+      }).getLibraryProgress(),
+    ).rejects.toBeInstanceOf(BuildMismatchError)
+    expect(mismatch).toHaveBeenCalledOnce()
   })
 })
 

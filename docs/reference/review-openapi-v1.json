@@ -7604,6 +7604,107 @@
         "title": "_LibraryCover",
         "type": "object"
       },
+      "_LibraryProgressField": {
+        "additionalProperties": false,
+        "properties": {
+          "destination": {
+            "enum": [
+              "title",
+              "subtitle",
+              "authors",
+              "narrators",
+              "series",
+              "genres",
+              "publishedYear",
+              "publishedDate",
+              "publisher",
+              "description",
+              "isbn",
+              "asin",
+              "language",
+              "explicit",
+              "tags",
+              "cover"
+            ],
+            "title": "Destination",
+            "type": "string"
+          },
+          "need_you": {
+            "minimum": 1.0,
+            "title": "Need You",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "destination",
+          "need_you"
+        ],
+        "title": "_LibraryProgressField",
+        "type": "object"
+      },
+      "_LibraryProgressLibrary": {
+        "additionalProperties": false,
+        "properties": {
+          "connection": {
+            "maxLength": 512,
+            "title": "Connection",
+            "type": "string"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/_ReviewCounts"
+          },
+          "library": {
+            "maxLength": 512,
+            "title": "Library",
+            "type": "string"
+          },
+          "library_display_name": {
+            "maxLength": 512,
+            "title": "Library Display Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "connection",
+          "counts",
+          "library",
+          "library_display_name"
+        ],
+        "title": "_LibraryProgressLibrary",
+        "type": "object"
+      },
+      "_LibraryProgressResponse": {
+        "additionalProperties": false,
+        "description": "Library's counts in total and per library, and Attention's fields (#1335).\n\nComputed from current state on each request; `totals` equals the `counts`\n`GET /api/v1/library` answers on the same state.",
+        "properties": {
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/_LibraryProgressField"
+            },
+            "maxItems": 16,
+            "title": "Fields",
+            "type": "array"
+          },
+          "libraries": {
+            "items": {
+              "$ref": "#/components/schemas/_LibraryProgressLibrary"
+            },
+            "maxItems": 256,
+            "title": "Libraries",
+            "type": "array"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/_ReviewCounts"
+          }
+        },
+        "required": [
+          "fields",
+          "libraries",
+          "totals"
+        ],
+        "title": "_LibraryProgressResponse",
+        "type": "object"
+      },
       "_LibraryResponse": {
         "additionalProperties": false,
         "properties": {
@@ -14532,6 +14633,50 @@
           }
         ],
         "summary": "Library Cover"
+      }
+    },
+    "/api/v1/library/progress": {
+      "get": {
+        "description": "Read-only: Library's works settled and needing the owner (#1335).",
+        "operationId": "library_progress_api_v1_library_progress_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_LibraryProgressResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Library Progress"
       }
     },
     "/api/v1/library/report": {

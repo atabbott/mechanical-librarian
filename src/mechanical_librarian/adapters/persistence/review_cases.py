@@ -86,6 +86,7 @@ from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_web import (
     LibraryLabels,
     LibraryLensFilter,
+    ReviewLibraryProgress,
 )
 from mechanical_librarian.domain.field_effect import (
     canonical_json as canonical_effect_json,
@@ -803,73 +804,19 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             else:
                 raise MetadataReportError("review library lens is invalid")
             attached = self.catalogue is not None and self.catalogue.active
-            parameters: list[object] = [
-                *(
-                    [self.catalogue.fingerprint]
-                    if attached and self.catalogue is not None
-                    else []
-                ),
-                *cover_authority,
+            parameters = _library_candidate_parameters(
+                self.catalogue.fingerprint
+                if attached and self.catalogue is not None
+                else None,
+                cover_authority,
                 query,
                 pattern,
-                pattern,
-                pattern,
-                pattern,
-                pattern,
-                json.dumps(library_labels),
-                pattern,
-            ]
-            terminal_union = (
-                " UNION ALL SELECT NULL,NULL,NULL,connection_name,library_name,"
-                "item_id,NULL,0,0,NULL,1,ml_casefold(display_title),'',work_id,"
-                "attempt,stage,failure_root,recovery_attempt,failure_code,"
-                "display_title,display_authors,display_format FROM terminal"
-                + _TERMINAL_LIBRARY_SEARCH_SQL
-            )
-            parameters.extend(
-                (
-                    query,
-                    pattern,
-                    pattern,
-                    pattern,
-                    pattern,
-                    pattern,
-                    json.dumps(library_labels),
-                    pattern,
-                )
+                library_labels,
             )
             parameters.extend((limit, offset))
             rows = self._connection.execute(
-                "WITH "
-                + _terminal_library_sql(attached)
-                + ",candidates AS MATERIALIZED (SELECT rc.review_case_id AS case_id,"
-                "mr.report_id,"
-                "CASE WHEN "
-                "rc.proposal_set_id=ml.proposal_set_id AND rc.report_id=ml.report_id "
-                "THEN rc.proposal_set_id ELSE NULL END AS proposal_set_id,"
-                "ml.connection_name AS connection_name,ml.library_name AS library_name,"
-                "ml.item_id AS item_id,c.outcome AS outcome,"
-                "CASE WHEN "
-                + _LIBRARY_ATTENTION_SQL
-                + " THEN 1 ELSE 0 END AS attention,"
-                # Provider completeness matters only inside the attention
-                # group: the no-attention lens remains alphabetical.
-                "facts.provider_limited AS provider_limited,"
-                + _NOT_MATCHED_REASON_SQL
-                + " AS match_reason,"
-                + _LATEST_PREPARATION_FAILED_SQL
-                + " AS preparation_failed,"
-                "facts.title_key AS title_order,"
-                "COALESCE(rc.review_case_id,'') AS case_order,"
-                "NULL AS work_id,NULL AS attempt,NULL AS stage,NULL AS failure_root,"
-                "NULL AS recovery_attempt,NULL AS failure_code, NULL AS display_title,"
-                "NULL AS display_authors,NULL AS display_format "
-                + _CURRENT_LIBRARY_FROM_SQL
-                + _REPORT_BROWSE_FACTS_JOIN_SQL
-                + "WHERE COALESCE(c.outcome,'')<>'tombstoned'"
-                + _REVIEW_SEARCH_SQL
-                + terminal_union
-                + "),totals AS (SELECT count(*) AS total,COALESCE(sum(attention),0) "
+                _library_candidates_sql(attached)
+                + ",totals AS (SELECT count(*) AS total,COALESCE(sum(attention),0) "
                 "AS attention_total,COALESCE(sum(CASE WHEN attention=0 AND "
                 "match_reason IS NOT NULL THEN 1 ELSE 0 END),0) AS not_matched_total,"
                 "COALESCE(sum(CASE WHEN "
@@ -1077,6 +1024,97 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 raise MetadataReportError("review library count is invalid")
             return row[0] + terminal[0], row[1]
         except (sqlite3.Error, TypeError, ValueError) as error:
+            if isinstance(error, sqlite3.Error):
+                self._record_browse_unavailable_exception(error)
+            raise MetadataReportError("review library is unavailable") from error
+
+    @local_operation
+    def read_current_library_progress(
+        self, library_labels: LibraryLabels = ()
+    ) -> ReviewLibraryProgress:
+        """Library's lens counts and Attention's fields, grouped by library.
+
+        The works are counted over Library's own candidate relation with each
+        lens's own condition, and the fields over Attention's own count
+        statement, both under one read of the cover authority (#1335). The
+        caller holds the two statements on one snapshot.
+        """
+        try:
+            query, pattern = _review_search_pattern(None)
+            cover_authority = self._current_cover_authority()
+            attached = self.catalogue is not None and self.catalogue.active
+            library_rows = self._connection.execute(
+                _library_candidates_sql(attached)
+                + " SELECT connection_name,library_name,count(*),"
+                + ",".join(
+                    f"sum(CASE WHEN {condition} THEN 1 ELSE 0 END)"
+                    for condition in _LIBRARY_LENS_CONDITIONS.values()
+                )
+                + " FROM candidates GROUP BY connection_name,library_name "
+                "ORDER BY connection_name,library_name",
+                tuple(
+                    _library_candidate_parameters(
+                        self.catalogue.fingerprint
+                        if attached and self.catalogue is not None
+                        else None,
+                        cover_authority,
+                        query,
+                        pattern,
+                        library_labels,
+                    )
+                ),
+            ).fetchall()
+            field_rows = self._connection.execute(
+                "SELECT c.connection_name,c.library_name,f.destination,count(*) "
+                + _CURRENT_REVIEW_FROM_SQL
+                + _REPORT_BROWSE_FACTS_JOIN_SQL
+                + _ATTENTION_FACTS_JOIN_SQL
+                + "WHERE "
+                + _ATTENTION_FACT_CURRENT_SQL
+                + _REVIEW_SEARCH_SQL
+                + " GROUP BY c.connection_name,c.library_name,f.destination "
+                "ORDER BY c.connection_name,c.library_name,f.destination",
+                (
+                    *cover_authority,
+                    query,
+                    pattern,
+                    pattern,
+                    pattern,
+                    pattern,
+                    pattern,
+                    json.dumps(library_labels),
+                    pattern,
+                ),
+            ).fetchall()
+            libraries: list[tuple[str, str, int, int, int, int]] = []
+            needs_attention: dict[tuple[str, str], int] = {}
+            for row in library_rows:
+                # The lenses partition All, as Library's page counts them.
+                if (
+                    len(row) != 7
+                    or type(row[0]) is not str
+                    or type(row[1]) is not str
+                    or any(type(value) is not int or value < 0 for value in row[2:])
+                    or row[2] < 1
+                    or sum(row[3:]) != row[2]
+                    or (row[0], row[1]) in needs_attention
+                ):
+                    raise MetadataReportError("review library progress is invalid")
+                needs_attention[(row[0], row[1])] = row[3]
+                libraries.append((row[0], row[1], row[2], row[3], row[5], row[6]))
+            fields: list[tuple[str, str, str, int]] = []
+            for row in field_rows:
+                # A field needs the owner only on a work that does.
+                if (
+                    len(row) != 4
+                    or any(type(value) is not str for value in row[:3])
+                    or type(row[3]) is not int
+                    or not 1 <= row[3] <= needs_attention.get((row[0], row[1]), 0)
+                ):
+                    raise MetadataReportError("review library progress is invalid")
+                fields.append((row[0], row[1], row[2], row[3]))
+            return ReviewLibraryProgress(tuple(libraries), tuple(fields))
+        except (sqlite3.Error, MetadataReportError, TypeError, ValueError) as error:
             if isinstance(error, sqlite3.Error):
                 self._record_browse_unavailable_exception(error)
             raise MetadataReportError("review library is unavailable") from error
@@ -1497,3 +1535,72 @@ def _review_search_pattern(search: str | None) -> tuple[str | None, str]:
         search.casefold().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     )
     return search, f"%{escaped}%"
+
+
+def _library_candidates_sql(attached: bool) -> str:
+    """Library's one candidate relation: current packages and terminal failures.
+
+    The Library page and the Library progress read select their counts from
+    this same text (#1335), so their totals cannot drift apart. It binds the
+    parameters `_library_candidate_parameters` lists, in that order.
+    """
+    return (
+        "WITH "
+        + _terminal_library_sql(attached)
+        + ",candidates AS MATERIALIZED (SELECT rc.review_case_id AS case_id,"
+        "mr.report_id,"
+        "CASE WHEN "
+        "rc.proposal_set_id=ml.proposal_set_id AND rc.report_id=ml.report_id "
+        "THEN rc.proposal_set_id ELSE NULL END AS proposal_set_id,"
+        "ml.connection_name AS connection_name,ml.library_name AS library_name,"
+        "ml.item_id AS item_id,c.outcome AS outcome,"
+        "CASE WHEN " + _LIBRARY_ATTENTION_SQL + " THEN 1 ELSE 0 END AS attention,"
+        # Provider completeness matters only inside the attention
+        # group: the no-attention lens remains alphabetical.
+        "facts.provider_limited AS provider_limited,"
+        + _NOT_MATCHED_REASON_SQL
+        + " AS match_reason,"
+        + _LATEST_PREPARATION_FAILED_SQL
+        + " AS preparation_failed,"
+        "facts.title_key AS title_order,"
+        "COALESCE(rc.review_case_id,'') AS case_order,"
+        "NULL AS work_id,NULL AS attempt,NULL AS stage,NULL AS failure_root,"
+        "NULL AS recovery_attempt,NULL AS failure_code, NULL AS display_title,"
+        "NULL AS display_authors,NULL AS display_format "
+        + _CURRENT_LIBRARY_FROM_SQL
+        + _REPORT_BROWSE_FACTS_JOIN_SQL
+        + "WHERE COALESCE(c.outcome,'')<>'tombstoned'"
+        + _REVIEW_SEARCH_SQL
+        + " UNION ALL SELECT NULL,NULL,NULL,connection_name,library_name,"
+        "item_id,NULL,0,0,NULL,1,ml_casefold(display_title),'',work_id,"
+        "attempt,stage,failure_root,recovery_attempt,failure_code,"
+        "display_title,display_authors,display_format FROM terminal"
+        + _TERMINAL_LIBRARY_SEARCH_SQL
+        + ")"
+    )
+
+
+def _library_candidate_parameters(
+    fingerprint: str | None,
+    cover_authority: tuple[str | None, str | None],
+    query: str | None,
+    pattern: str,
+    library_labels: LibraryLabels,
+) -> list[object]:
+    """The values `_library_candidates_sql` binds; a fingerprint means attached."""
+    search = (
+        query,
+        pattern,
+        pattern,
+        pattern,
+        pattern,
+        pattern,
+        json.dumps(library_labels),
+        pattern,
+    )
+    return [
+        *([] if fingerprint is None else [fingerprint]),
+        *cover_authority,
+        *search,
+        *search,
+    ]

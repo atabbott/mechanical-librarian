@@ -5074,3 +5074,147 @@ def test_only_a_retained_cover_candidate_may_have_no_preview() -> None:
                 candidate_kind=kind, source_kinds=sources, **_PREVIEW
             )
         )
+
+
+def test_library_progress_answers_library_counts_and_attention_fields(
+    web: ReviewWebContext[_CloseRecordingRepository],
+) -> None:
+    """`GET /api/v1/library/progress` (#1335): counts and library names only."""
+    unmatched = _report(title="Private unmatched title", actionable=False)
+    web.repository.browse_without_cases.append(
+        MetadataReport.create(
+            target=TargetFacts(
+                unmatched.target.connection,
+                "audiobooks",
+                "private-item-2",
+                unmatched.target.fields,
+            ),
+            file=unmatched.file,
+            local_claims=unmatched.local_claims,
+            local_reasons=unmatched.local_reasons,
+            providers=unmatched.providers,
+        )
+    )
+    assert web.client.get("/api/v1/library/progress").status_code == 401
+    web.login()
+
+    response = web.client.get("/api/v1/library/progress")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body == {
+        "totals": {
+            "all": 2,
+            "needs_attention": 1,
+            "no_attention_needed": 0,
+            "not_matched": 1,
+            "preparation_failed": 0,
+        },
+        # No settings name either library: each reads as its stable name, and
+        # the unconfigured names come alphabetically.
+        "libraries": [
+            {
+                "connection": "primary",
+                "counts": {
+                    "all": 1,
+                    "needs_attention": 0,
+                    "no_attention_needed": 0,
+                    "not_matched": 1,
+                    "preparation_failed": 0,
+                },
+                "library": "audiobooks",
+                "library_display_name": "audiobooks",
+            },
+            {
+                "connection": "primary",
+                "counts": {
+                    "all": 1,
+                    "needs_attention": 1,
+                    "no_attention_needed": 0,
+                    "not_matched": 0,
+                    "preparation_failed": 0,
+                },
+                "library": "ebooks",
+                "library_display_name": "ebooks",
+            },
+        ],
+        "fields": [{"destination": "title", "need_you": 1}],
+    }
+    library = web.client.get("/api/v1/library?lens=all")
+    assert library.json()["counts"] == body["totals"]
+    attention = web.client.get("/api/v1/attention")
+    assert [item["destination"] for item in attention.json()["items"]] == ["title"]
+    for private in (
+        "Private unmatched title",
+        "private-item-2",
+        "item-1",
+        web.case.review_case_id,
+        "report_",
+    ):
+        assert private not in response.text
+
+    with patch.object(
+        web.repository,
+        "read_review_library_progress",
+        side_effect=MetadataReportError("review library is unavailable"),
+    ):
+        refused = web.client.get("/api/v1/library/progress")
+    assert refused.status_code == 503
+    assert refused.json() == {
+        "error": {"code": "unavailable"},
+        "schema_version": "review-error-v1",
+    }
+
+
+def test_library_progress_model_is_closed_and_bounded() -> None:
+    from mechanical_librarian.interfaces.web.app import _LibraryProgressResponse
+
+    counts = {
+        "all": 1,
+        "needs_attention": 1,
+        "no_attention_needed": 0,
+        "not_matched": 0,
+        "preparation_failed": 0,
+    }
+    valid: dict[str, Any] = {
+        "totals": counts,
+        "libraries": [
+            {
+                "connection": "primary",
+                "counts": counts,
+                "library": "ebooks",
+                "library_display_name": "Reading Room",
+            }
+        ],
+        "fields": [{"destination": "cover", "need_you": 1}],
+    }
+    assert _LibraryProgressResponse.model_validate(valid).model_dump() == valid
+    for invalid in (
+        {**valid, "run_id": "run"},
+        {**valid, "libraries": [{**valid["libraries"][0], "item": "item-1"}]},
+        {**valid, "fields": [{"destination": "cover", "need_you": 0}]},
+        {**valid, "fields": [{"destination": "shelf", "need_you": 1}]},
+        {**valid, "fields": [{"destination": "title", "need_you": 1}] * 17},
+        {**valid, "totals": {**counts, "all": -1}},
+    ):
+        with pytest.raises(ValidationError):
+            _LibraryProgressResponse.model_validate(invalid)
+
+
+@pytest.mark.parametrize("path", ("/api/v1/library/progress", "/api/v1/library"))
+def test_library_reads_answer_503_once_admission_closes(
+    web: ReviewWebContext[_CloseRecordingRepository], path: str
+) -> None:
+    """A closing application refuses a browse read as 503, never 500 (#1335)."""
+    web.login()
+    assert web.client.get(path).status_code == 200
+    # Shutdown closes admission; the read is refused before it starts.
+    web.client.app.state.review_application._admission.close()
+
+    refused = web.client.get(path)
+
+    assert refused.status_code == 503, refused.text
+    assert refused.json() == {
+        "error": {"code": "unavailable"},
+        "schema_version": "review-error-v1",
+    }
