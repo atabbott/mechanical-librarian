@@ -2651,8 +2651,59 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                         "active_destination": "ask",
                         "draft_destination": "automatic",
                         "changed": field["current_value"] != field["desired_value"],
+                        "destination": {
+                            "description_fill": "description",
+                            "isbn_form": "isbn",
+                        }.get(str(field["field"]), field["field"]),
                     }
                     for field in preview_fields
+                ]
+                + [
+                    # Publisher and cover are previewed from the outcome
+                    # compile and the stored cover comparison (#1524).
+                    {
+                        "active": {**after, **before},
+                        "draft": after,
+                        "active_destination": "ask",
+                        "draft_destination": "automatic",
+                        "changed": True,
+                        "destination": destination,
+                    }
+                    for destination, before, after in (
+                        (
+                            "publisher",
+                            {"outcome": "suggested"},
+                            {
+                                "current_value": "Old Lantern",
+                                "desired_value": "Lantern Row Press",
+                                "field": "publisher_preference",
+                                "narrowed_for_target": False,
+                                "option": "publisher",
+                                "outcome": "projected",
+                                "qualified_value": None,
+                                "reason": None,
+                                "target_state": "value",
+                            },
+                        ),
+                        (
+                            "cover",
+                            {
+                                "outcome": "suggested",
+                                "desired_value": "Suggests a confirmed cover",
+                            },
+                            {
+                                "current_value": None,
+                                "desired_value": "Fills the empty cover",
+                                "field": "cover_order",
+                                "narrowed_for_target": False,
+                                "option": "fixed_source_order",
+                                "outcome": "projected",
+                                "qualified_value": None,
+                                "reason": None,
+                                "target_state": "missing",
+                            },
+                        ),
+                    )
                 ],
             }
         ]

@@ -339,3 +339,77 @@ def test_oversized_and_special_profiles_fail_before_runner(special: str) -> None
             stdout=io.StringIO(),
             stderr=io.StringIO(),
         )
+
+
+def test_the_command_and_the_route_return_the_same_comparisons(tmp_path) -> None:
+    """One service answers both interfaces, the added rows included (#1524)."""
+    from mechanical_librarian.domain.proposal_set import evaluate_report
+    from tests.unit.test_browser_wire_fixtures import _signed_in
+    from tests.unit.test_policy_impact_persistence import (
+        _case_report,
+        _record_cover_comparison,
+    )
+
+    config = tmp_path / "config.json"
+    config.write_bytes(Path("docs/examples/synthetic-config.json").read_bytes())
+    database = tmp_path / "state.sqlite3"
+    repository = open_repository(database, cross_thread=True)
+    for index, outcome in enumerate(("fill", None)):
+        report = _case_report(index)
+        repository.publish(report, lambda: True)
+        proposal = evaluate_report(report)
+        repository.publish_proposal(proposal)
+        case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+        if outcome is not None:
+            _record_cover_comparison(
+                repository, report, case_id, index, outcome=outcome
+            )
+    builtin = MetadataPolicyProfile.builtin()
+    draft = MetadataPolicyProfile.create(
+        "Draft",
+        dict(builtin.options),
+        dict(builtin.destinations) | {"cover_order": "ask", "title_layout": "ask"},
+    )
+    try:
+        with _signed_in(
+            tmp_path, repository, policy_libraries=(("ebooks", None),)
+        ) as live:
+            response = live.client.post(
+                "/api/v1/metadata-policy/preview",
+                headers=live.headers,
+                json={
+                    "name": draft.name,
+                    "options": dict(draft.options),
+                    "destinations": dict(draft.destinations),
+                },
+            )
+    finally:
+        repository.close()
+    assert 200 == response.status_code, response.text
+    assert "no-store, private" == response.headers["cache-control"]
+    routed = response.json()
+
+    commanded = json.loads(
+        json.dumps(run_policy_preview(config, database, draft.to_data()))
+    )
+
+    assert ["cover_order", "title_layout"] == sorted(
+        routed["libraries"][0]["affected_categories"]
+    )
+    comparisons = routed["libraries"][0]["comparisons"]
+    assert comparisons == commanded["libraries"][0]["comparisons"]
+    assert [
+        ["title", "cover"],
+        ["title", "cover"],
+    ] == [
+        [field["destination"] for field in case["fields"][8:]] for case in comparisons
+    ]
+    filled, uncompared = (case["fields"][-1] for case in comparisons)
+    assert ("Fills the empty cover", "Suggests a confirmed cover") == (
+        filled["active"]["desired_value"],
+        filled["draft"]["desired_value"],
+    )
+    assert ("not_previewed", "cover_not_compared") == (
+        uncompared["draft"]["outcome"],
+        uncompared["draft"]["reason"],
+    )

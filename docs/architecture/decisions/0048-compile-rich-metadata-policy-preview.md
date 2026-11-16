@@ -49,3 +49,38 @@ current and proposed metadata, so the HTTP response remains authenticated and
 private/no-store and CLI output must be handled as private application data.
 The bounded replay costs no network access and creates no database or target
 write.
+
+## Amendment: the other six fields and the cover (proposed, #1524)
+
+Status: proposed. Only the owner's own answer accepts it.
+
+The preview also compares title, authors, narrators, publication date,
+publisher and language, and describes the cover. For those six text fields it
+runs the existing in-memory pipeline for each sampled work, under the active
+policy and under the draft, as far as the outcome set and stops there. All
+fourteen fields are then listed by one rule: a result is compared by what the
+policy does (the destination, whether the value is written or left to the
+owner, and the value), never by an identity that changes with the policy, and
+two results that both leave the field alone are equal whatever their words. So
+a kept genre or tag whose setting moves between Ask me and Automatic is no
+longer listed, although under Ask me review can still offer its candidate
+beside the kept value. A work is compiled only when the resolved draft differs
+from the resolved active policy for its library, at most twice.
+
+The admission layer is not moved. What admission binds or refuses after the
+outcome set is not previewed. The stated limit: a title and subtitle that
+would only be accepted together are previewed field by field, so the pair's
+effect is not shown.
+
+A cover row is words built from the stored comparison for the sampled report:
+its stage, and whether fetching had finished. It is read in the capture
+transaction when that comparison is current, bound to the report, not stale
+and at the current schema; otherwise, and for a stored document that cannot be
+read, the row says it was not previewed and why. No source is asked, no image
+is read, and no reference, artifact key, digest or token is carried. Current
+covers, holds, earlier choices and write posture are live state the preview
+does not read; a replacement always reads as a suggestion.
+
+`metadata-policy-preview-v1` keeps its name: one member, the library field a
+comparison is for, is added to each field comparison. Nothing is stored, and
+the response stays authenticated and private, no-store.

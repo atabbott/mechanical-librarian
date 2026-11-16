@@ -198,11 +198,12 @@ All owner surfaces need a session and are `private, no-store`.
   and never stored, logged or sent anywhere. Neither carries a work,
   item or decision identity, a path, an artifact key or a cover token: a cover
   is described in words (#1336).
-- **Policy preview** samples at most 50 records, truncated at 1 MiB. Rich-field
-  draft impact shows current and desired values for at most 20 cases per
-  library and is not persisted. The `policy-preview` command prints the same
-  private projection to stdout; keep it out of public logs and support
-  artifacts.
+- **Policy preview** samples at most 50 records, truncated at 1 MiB. Draft
+  impact shows current and resulting values for at most 20 works across all
+  libraries and is not persisted. A cover is described in words, with no
+  reference, artifact key, digest or token. The `policy-preview` command
+  prints the same private projection to stdout; keep it out of public logs
+  and support artifacts.
 - **Support preview and export** are capped, allow-listed and re-redacted;
   databases, environment, secrets, paths, metadata, excerpts, media, covers,
   recovery bytes and retained originals are excluded.

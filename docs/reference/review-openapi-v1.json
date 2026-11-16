@@ -8776,6 +8776,10 @@
             "title": "Changed",
             "type": "boolean"
           },
+          "destination": {
+            "title": "Destination",
+            "type": "string"
+          },
           "draft": {
             "$ref": "#/components/schemas/_RichFieldPreviewResponse"
           },
@@ -8795,7 +8799,8 @@
           "draft",
           "active_destination",
           "draft_destination",
-          "changed"
+          "changed",
+          "destination"
         ],
         "title": "_PolicyFieldComparisonResponse",
         "type": "object"

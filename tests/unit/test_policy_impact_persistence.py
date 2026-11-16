@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -406,8 +408,10 @@ def test_immutable_preview_refuses_a_changed_database(tmp_path):
         "changed",
     ),
     [
-        (("Exploration",), "fill_empty", "ask", "fill_empty", "automatic", True),
-        (("Exploration",), "fill_empty", "automatic", "fill_empty", "ask", True),
+        # A kept value reads "No change" under both settings, so the row is
+        # not listed (#1524, one listing rule for all fourteen fields).
+        (("Exploration",), "fill_empty", "ask", "fill_empty", "automatic", False),
+        (("Exploration",), "fill_empty", "automatic", "fill_empty", "ask", False),
         (None, "fill_empty", "ask", "fill_empty", "ignore", True),
         (None, "off", "ask", "off", "ask", False),
         (None, "fill_empty", "automatic", "fill_empty", "automatic", False),
@@ -568,7 +572,7 @@ def test_capture_rejects_malformed_or_incompatible_inputs(tmp_path, corruption) 
 @pytest.mark.parametrize(
     "active_route,draft_route", (("ask", "automatic"), ("automatic", "ask"))
 )
-def test_preserved_genre_routing_requires_qualified_work_evidence(
+def test_kept_genres_are_not_listed_between_ask_me_and_automatic_whatever_the_evidence(
     tmp_path, contradictory, active_route, draft_route
 ):
     from dataclasses import replace
@@ -674,7 +678,9 @@ def test_preserved_genre_routing_requires_qualified_work_evidence(
             for field in preview.libraries[0].comparisons[0].fields
             if field.draft.field == "genres"
         )
-        assert field.changed is not contradictory
+        # Both cells read "No change" for the kept genres, with or without
+        # the contradicting evidence, so neither is listed (#1524).
+        assert not field.changed
         for projected in (field.active, field.draft):
             assert (
                 projected.outcome,
@@ -827,7 +833,9 @@ def test_real_activation_api_rejects_aba_and_requires_preview_generation(tmp_pat
     ]
     + [("description_fill", "automatic", "ignore", True, True, False, True)]
     + [
-        ("genres", active, draft, True, recording, True, recording)
+        # Kept genres read "No change" under Ask me and Automatic alike, on a
+        # recording too, so the row is not listed (#1524).
+        ("genres", active, draft, True, recording, True, False)
         for active, draft in (("automatic", "ask"), ("ask", "automatic"))
         for recording in (False, True)
     ],
@@ -1057,3 +1065,330 @@ def test_work_manual_availability_is_policy_impact(
             assert wire["draft"]["desired_value"] is None
     finally:
         repository.close()
+
+
+def _record_cover_comparison(
+    repository,
+    report: MetadataReport,
+    review_case_id: str,
+    index: int,
+    *,
+    outcome: str,
+    reason: str | None = None,
+    fetching: bool = False,
+    schema_version: str | None = None,
+    policy_report_document: str | None = None,
+    candidates: list[object] | None = None,
+) -> str:
+    """Record a synthetic current comparison whose policy report has a stage."""
+    from mechanical_librarian.adapters.persistence.cover_considerations import (
+        COVER_CONSIDERATION_SCHEMA,
+    )
+    from mechanical_librarian.application.cover_policy import SCHEMA_VERSION
+
+    fills = outcome in {"fill", "replace", "suggest"}
+    reference = f"cover-candidate-reference-{index}"
+    policy_report = {
+        "actual_target_state": "known_empty"
+        if outcome in {"fill", "empty"}
+        else "known_populated",
+        "owner_ready": True,
+        "recommended_candidate_reference": reference if fills else None,
+        "schema_version": schema_version or SCHEMA_VERSION,
+        "stage": {
+            "choice": reference if fills else None,
+            "edition_preferred": False,
+            "exclusions": [],
+            "groups": [],
+            "issues": [reason] if reason else [],
+            "language": None,
+            "outcome": outcome,
+            "reason": reason,
+        },
+        "status": "recommended" if fills else "abstained",
+    }
+    consideration_id = f"cover_consideration_{index:064x}"
+    replay_digest = f"{index + 500:064x}"
+    repository.record_cover_consideration(
+        json.dumps(
+            {
+                "candidates": candidates
+                if candidates is not None
+                else [
+                    {
+                        "artifact_id": f"cover_artifact_{index:064x}",
+                        "deterministic_citations": ["cover-citation"],
+                        "deterministic_rank_key": [1],
+                        "incumbent": False,
+                        "reference": reference,
+                        "selectable": True,
+                    }
+                ]
+                if fills
+                else [],
+                "consideration_id": consideration_id,
+                "policy_reference": f"cover-policy-reference-{index}",
+                "policy_report_document": policy_report_document
+                or json.dumps(policy_report, separators=(",", ":"), sort_keys=True),
+                "provider_fetching": fetching,
+                "replay_digest": replay_digest,
+                "replay_reference": f"cover-replay-reference-{index}",
+                "report_document": report.to_json(),
+                "report_id": report.report_id,
+                "review_case_id": review_case_id,
+                "schema_version": COVER_CONSIDERATION_SCHEMA,
+                "supersedes_id": None,
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        ),
+        review_case_id=review_case_id,
+        report_id=report.report_id,
+        replay_digest=replay_digest,
+        supersedes_id=None,
+        occurred_at=10,
+    )
+    return consideration_id
+
+
+def test_cover_rows_come_from_each_stored_stage_without_a_write_or_an_identity(
+    tmp_path,
+) -> None:
+    """The capture's one narrow read answers every stage and fallback (#1524)."""
+    from mechanical_librarian.application.metadata_policy import (
+        PolicyPreviewCover,
+        preview_policy,
+    )
+    from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
+
+    comparisons: tuple[tuple[dict[str, Any], PolicyPreviewCover | None], ...] = (
+        ({"outcome": "fill"}, PolicyPreviewCover(False, "fill", None, True)),
+        (
+            {"outcome": "replace", "reason": "below_floor"},
+            PolicyPreviewCover(False, "replace", "below_floor", False),
+        ),
+        (
+            {"outcome": "suggest", "reason": "sharper_copy"},
+            PolicyPreviewCover(False, "suggest", "sharper_copy", False),
+        ),
+        ({"outcome": "keep"}, PolicyPreviewCover(False, "keep", None, False)),
+        ({"outcome": "hold"}, PolicyPreviewCover(False, "hold", None, False)),
+        ({"outcome": "empty"}, PolicyPreviewCover(False, "empty", None, False)),
+        # Sources are still being fetched.
+        (
+            {"outcome": "fill", "fetching": True},
+            PolicyPreviewCover(True, "fill", None, True),
+        ),
+        # A comparison that predates the stage at the current schema.
+        (
+            {"outcome": "fill", "schema_version": "cover-policy-report-v4"},
+            PolicyPreviewCover(False, None, None, False),
+        ),
+        # A stale comparison (retired below).
+        ({"outcome": "fill"}, PolicyPreviewCover(False, None, None, False)),
+        # No comparison at all.
+        ({}, None),
+        # A comparison made for another report.
+        (
+            {"outcome": "fill", "other_report": True},
+            PolicyPreviewCover(False, None, None, False),
+        ),
+    )
+    database = tmp_path / "state.sqlite3"
+    repository = open_repository(database)
+    for index, (comparison, _) in enumerate(comparisons):
+        report = _case_report(index)
+        repository.publish(report, lambda: True)
+        proposal = evaluate_report(report)
+        repository.publish_proposal(proposal)
+        review_case_id = json.loads(repository.admit_review_case(proposal))[
+            "review_case_id"
+        ]
+        if comparison:
+            compared = (
+                _case_report(0) if comparison.pop("other_report", False) else report
+            )
+            consideration_id = _record_cover_comparison(
+                repository, compared, review_case_id, index, **comparison
+            )
+            if index == 8:
+                repository._cover_considerations._record_cover_consideration_event(
+                    consideration_id, review_case_id, "stale", 11
+                )
+                repository._connection.commit()
+    repository.close()
+    before = database.read_bytes()
+    reader = open_shadow_preview_repository(database)
+
+    capture = reader.capture_policy_preview(("ebooks",), 20)
+    assert tuple(expected for _, expected in comparisons) == (
+        capture.libraries[0].covers
+    )
+
+    active = MetadataPolicyProfile.builtin()
+    draft = MetadataPolicyProfile.create(
+        "Draft",
+        dict(active.options),
+        dict(active.destinations) | {"cover_order": "ask"},
+    )
+    preview = preview_policy(draft, ("ebooks",), {}, reader)
+    reader.close()
+    assert before == database.read_bytes()
+    rows = [
+        next(field for field in case.fields if field.destination == "cover")
+        for case in preview.libraries[0].comparisons
+    ]
+    assert [
+        ("projected", "Fills the empty cover", True),
+        ("suggested", "Suggests a replacement", False),
+        ("suggested", "Suggests a replacement", False),
+        ("no_op", "Current cover kept", False),
+        ("no_op", "Current cover kept", False),
+        ("no_op", None, False),
+        ("not_previewed", None, False),
+        ("not_previewed", None, False),
+        ("not_previewed", None, False),
+        ("not_previewed", None, False),
+        ("not_previewed", None, False),
+    ] == [(row.active.outcome, row.active.desired_value, row.changed) for row in rows]
+    assert [
+        "provider_fetching",
+        "cover_compared_next_scan",
+        "cover_compared_next_scan",
+        "cover_not_compared",
+        "cover_compared_next_scan",
+    ] == [row.draft.reason for row in rows[6:]]
+    # A cover row is words: no reference, artifact id, digest or token.
+    serialised = json.dumps([row.to_data() for row in rows])
+    for identity in ("reference", "artifact", "cover_consideration", "replay"):
+        assert identity not in serialised
+    assert re.search(r"[0-9a-f]{16}", serialised) is None
+
+
+def test_a_comparison_without_a_policy_report_still_says_sources_are_fetching(
+    tmp_path, monkeypatch
+) -> None:
+    """A comparison stored before any cover preview arrived keeps its reason.
+
+    SQLite 3.40, which the image ships, answers json_valid(NULL) with 0 where
+    later versions answer NULL; the reader is given that behaviour here so the
+    test holds on every engine.
+    """
+    from mechanical_librarian.application.metadata_policy import (
+        PolicyPreviewCover,
+        preview_policy,
+    )
+    from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
+
+    database = tmp_path / "state.sqlite3"
+    repository = open_repository(database)
+    report = _case_report(0)
+    repository.publish(report, lambda: True)
+    proposal = evaluate_report(report)
+    repository.publish_proposal(proposal)
+    review_case_id = json.loads(repository.admit_review_case(proposal))[
+        "review_case_id"
+    ]
+    record = repository.record_cover_consideration
+
+    def without_policy_report(document: str, **options: Any) -> Any:
+        value = json.loads(document)
+        value["policy_report_document"] = None
+        return record(
+            json.dumps(value, separators=(",", ":"), sort_keys=True), **options
+        )
+
+    monkeypatch.setattr(repository, "record_cover_consideration", without_policy_report)
+    _record_cover_comparison(
+        repository, report, review_case_id, 0, outcome="empty", fetching=True
+    )
+    repository.close()
+    reader = open_shadow_preview_repository(database)
+
+    def json_valid_as_shipped(value: object) -> int:
+        if value is None:
+            return 0
+        try:
+            json.loads(value if isinstance(value, str) else str(value))
+        except ValueError:
+            return 0
+        return 1
+
+    reader._connection.create_function(
+        "json_valid", 1, json_valid_as_shipped, deterministic=True
+    )
+    assert (PolicyPreviewCover(True, None, None, False),) == (
+        reader.capture_policy_preview(("ebooks",), 20).libraries[0].covers
+    )
+    active = MetadataPolicyProfile.builtin()
+    draft = MetadataPolicyProfile.create(
+        "Draft",
+        dict(active.options),
+        dict(active.destinations) | {"cover_order": "ask"},
+    )
+    preview = preview_policy(draft, ("ebooks",), {}, reader)
+    reader.close()
+    assert [("not_previewed", "provider_fetching")] == [
+        (field.draft.outcome, field.draft.reason)
+        for case in preview.libraries[0].comparisons
+        for field in case.fields
+        if field.destination == "cover"
+    ]
+
+
+def test_an_unreadable_cover_document_is_not_previewed_for_its_work_alone(
+    tmp_path,
+) -> None:
+    """A stored document the SQL cannot read never fails the whole preview."""
+    from mechanical_librarian.application.metadata_policy import (
+        PolicyPreviewCover,
+        preview_policy,
+    )
+    from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
+
+    database = tmp_path / "state.sqlite3"
+    repository = open_repository(database)
+    # A policy report that is not JSON, a readable one, and candidates that
+    # are not objects.
+    unreadable: tuple[dict[str, Any], ...] = (
+        {"policy_report_document": "not json"},
+        {},
+        {"candidates": ["not an object"]},
+    )
+    for index, document in enumerate(unreadable):
+        report = _case_report(index)
+        repository.publish(report, lambda: True)
+        proposal = evaluate_report(report)
+        repository.publish_proposal(proposal)
+        review_case_id = json.loads(repository.admit_review_case(proposal))[
+            "review_case_id"
+        ]
+        _record_cover_comparison(
+            repository, report, review_case_id, index, outcome="fill", **document
+        )
+    repository.close()
+    reader = open_shadow_preview_repository(database)
+
+    assert (
+        PolicyPreviewCover(False, None, None, False),
+        PolicyPreviewCover(False, "fill", None, True),
+        PolicyPreviewCover(False, None, None, False),
+    ) == reader.capture_policy_preview(("ebooks",), 20).libraries[0].covers
+    active = MetadataPolicyProfile.builtin()
+    draft = MetadataPolicyProfile.create(
+        "Draft",
+        dict(active.options),
+        dict(active.destinations) | {"cover_order": "ask"},
+    )
+    preview = preview_policy(draft, ("ebooks",), {}, reader)
+    reader.close()
+    assert [
+        ("not_previewed", "cover_compared_next_scan"),
+        ("suggested", None),
+        ("not_previewed", "cover_compared_next_scan"),
+    ] == [
+        (field.draft.outcome, field.draft.reason)
+        for case in preview.libraries[0].comparisons
+        for field in case.fields
+        if field.destination == "cover"
+    ]

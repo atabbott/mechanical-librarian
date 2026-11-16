@@ -519,14 +519,14 @@ Policy rules are in the [automation policy](automation-policy.md). Each field
 leads with its setting: Automatic, Ask me, Ignore or Not supported. Limits
 appear beside each option and in activation review.
 
-A preview runs the draft on recorded evidence and changes nothing. It lists
-the changes the draft causes apart from Unchanged outcomes, and says why when
-the draft would choose nothing. Sampled works include those with no change,
-and changed fields count only what the draft causes. A rule no sampled work
-reached reads "Not previewed. This rule takes effect on the next preparation."
-An edited draft is named "Custom policy". Activation names the libraries that
-keep write permission, or says none has it and activating grants none. Rule
-codes appear only under "Technical detail".
+A preview runs the draft on recorded evidence and changes nothing. Under each
+library and field are the works the draft changes, grouped as Filled, Changed,
+Left to you or No change. Each sets the current value beside both policies'
+results. Results that read the same under both policies are listed apart and
+not counted. "Not previewed" holds what the preview could not reach, each
+with its reason. An edited draft is named "Custom policy". Activation names
+the libraries that keep write permission, or says none has it and activating
+grants none.
 
 ## Activity
 
