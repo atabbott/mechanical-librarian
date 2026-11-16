@@ -1519,6 +1519,30 @@ def _authored_description_selection(
     return authored_selection
 
 
+def _pin_control(
+    case: ReviewCase,
+    destination: str,
+    pin_state: str | None,
+    *,
+    change_waiting: bool,
+) -> dict[str, object] | None:
+    """Return whether a field offers Pin and Unpin (#1346, J2).
+
+    A readable field other than the cover can have a value pinned, or says
+    that a change to it waits to be written.
+    """
+    pin_offer = (
+        None
+        if destination == "cover" or pinned_field_fingerprint(case, destination) is None
+        else "change_waiting"
+        if change_waiting
+        else "available"
+    )
+    if pin_offer is None and pin_state is None:
+        return None
+    return {"pin": pin_offer, "unpin": pin_state is not None}
+
+
 class InspectCurrentReviewCase:
     def __init__(
         self,
@@ -1832,7 +1856,8 @@ class InspectCurrentReviewCase:
         owner_entry = owner_control is not None and (
             owner_control["entry"] is not None or owner_control["subset"] is not None
         )
-        classification = _classify_field(
+        classify = partial(
+            _classify_field,
             context,
             proposal,
             decision=decision,
@@ -1843,9 +1868,9 @@ class InspectCurrentReviewCase:
             cover_preparation_available=cover_preparation_available,
             actions=actions,
             owner_entry=owner_entry,
-            # A waiting pin leaves the field as its answer reads.
-            pin=None if pin_state == "waiting" else pin_state,
         )
+        # A waiting pin leaves the field as its answer reads.
+        classification = classify(pin=None if pin_state == "waiting" else pin_state)
         # Classification retains the field's owner context. Action
         # availability is a separate exact-proposal contract; an empty
         # action list is context-only, never an implied choice envelope.
@@ -1853,8 +1878,11 @@ class InspectCurrentReviewCase:
             bool(actions) or cover_preparation_available or pin_state == "changed"
         )
         needs_attention = classification.needs_attention and has_owner_action
+        # A pinned field sits where it would sit without the pin (#1346).
         inventory_role = _field_inventory_role(
-            classification.state,
+            classify(pin=None).state
+            if pin_state == "in_force"
+            else classification.state,
             destination,
             report.file.format,
             alternatives,
@@ -1874,23 +1902,6 @@ class InspectCurrentReviewCase:
                 carried_hold
                 or (decision is not None and automatic_decision is not None)
             )
-        )
-        # A readable primary field can have a value pinned, or says a change
-        # to it waits to be written (#1346, J2).
-        pin_offer = (
-            None
-            if destination == "cover"
-            or inventory_role != "primary"
-            or pinned_field_fingerprint(context.case, destination) is None
-            else "change_waiting"
-            if destination in snapshot.change_waiting_destinations
-            else "available"
-        )
-        pin_control: dict[str, object] | None = (
-            None
-            if inventory_role == "contextual"
-            or (pin_offer is None and pin_state is None)
-            else {"pin": pin_offer, "unpin": pin_state is not None}
         )
         return self._field_document(
             context,
@@ -1914,7 +1925,12 @@ class InspectCurrentReviewCase:
             pin=None
             if pin_state is None
             else {"state": pin_state, "value": pinned_field},
-            pin_control=pin_control,
+            pin_control=_pin_control(
+                context.case,
+                destination,
+                pin_state,
+                change_waiting=destination in snapshot.change_waiting_destinations,
+            ),
         )
 
     def _field_document(

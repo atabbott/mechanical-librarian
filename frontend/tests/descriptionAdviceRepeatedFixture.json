@@ -584,7 +584,10 @@
       "offer_digest": "577c573d394a7ea621946d8d3a3fb0810fa2652ecff2f4938ef6d4a41be159d9",
       "owner_control": null,
       "pin": null,
-      "pin_control": null,
+      "pin_control": {
+        "pin": "available",
+        "unpin": false
+      },
       "preservation_only": false,
       "proposal_id": "review_proposal_7e330a21b0a09ada36897f2f42ee57fc4c9085a07db1a6f6fddd4dfb01fc0102",
       "proposed_values": [],
@@ -640,7 +643,10 @@
       "offer_digest": "34431ecaae24e1240b48445bb50a92f4715deb3bd1c0c7b838099924ec67d30f",
       "owner_control": null,
       "pin": null,
-      "pin_control": null,
+      "pin_control": {
+        "pin": "available",
+        "unpin": false
+      },
       "preservation_only": false,
       "proposal_id": "review_proposal_a2827fdac09773a54c02b9a9055ba6540e8443d019c886e7371286b76a5f3ea8",
       "proposed_values": [],
@@ -824,7 +830,10 @@
       "offer_digest": "fef59839ad9e1c0f25e481b841027833ba88325b3532180e1437b93abc817be6",
       "owner_control": null,
       "pin": null,
-      "pin_control": null,
+      "pin_control": {
+        "pin": "available",
+        "unpin": false
+      },
       "preservation_only": false,
       "proposal_id": "review_proposal_a414ab4ad2e64b4e8cc4c7c53dc19e2e5b899d5a19003ee7f613c364afb01e2e",
       "proposed_values": [],
@@ -880,7 +889,10 @@
       "offer_digest": "2e8e4850cbf90c64e295797c0c025a94aa9dd8850d0ac35988626101cbdb5a31",
       "owner_control": null,
       "pin": null,
-      "pin_control": null,
+      "pin_control": {
+        "pin": "available",
+        "unpin": false
+      },
       "preservation_only": false,
       "proposal_id": "review_proposal_06df3b66d6e10853f945928d3caa70fea518ef73d3194e665bd4d65b6319225e",
       "proposed_values": [],

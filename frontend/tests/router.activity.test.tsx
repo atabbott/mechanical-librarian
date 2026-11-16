@@ -969,6 +969,22 @@ describe('Activity route', () => {
       },
       'Cover advice failed',
     ],
+    // The server's change already says Pinned or Unpinned; the result does
+    // not repeat it (#1346).
+    [
+      'pinned',
+      { events: [{ work_label: 'Pinned work', state: 'pin', origin: 'human', change: 'Pinned' }] },
+      'Recorded',
+    ],
+    [
+      'unpinned',
+      {
+        events: [
+          { work_label: 'Unpinned work', state: 'unpin', origin: 'human', change: 'Unpinned' },
+        ],
+      },
+      'Recorded',
+    ],
   ])('keeps the protected ledger row truthful for %s work', async (_name, current, rowStatus) => {
     const http: ReviewHttp = {
       ...createHttp(),
@@ -978,6 +994,9 @@ describe('Activity route', () => {
 
     expect(await screen.findByRole('heading', { name: 'No action needed' })).toBeVisible()
     expect(screen.getAllByText(rowStatus).at(-1)).toBeVisible()
+    const change =
+      current.events[0] && 'change' in current.events[0] ? current.events[0].change : ''
+    if (change) expect(screen.getAllByText(change)).toHaveLength(1)
   })
 
   it.each([

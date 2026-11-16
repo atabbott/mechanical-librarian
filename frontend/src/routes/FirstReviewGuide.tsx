@@ -24,12 +24,17 @@ const steps = [
     text: 'Keep the current value or choose a new one. Try it on this example.',
   },
   {
+    name: 'Pins',
+    text: 'Press a value’s pin to choose it and pin it. Mechanical Librarian will not ask about a pinned field or change it unless its value changes in Audiobookshelf.',
+  },
+  {
     name: 'Writes',
     text: 'A choice records your decision for this one field. Nothing is written to Audiobookshelf until you give write permission in Activity.',
   },
 ]
 const last = steps.length - 1
 const recordedNothing = 'This is an example, so nothing was recorded.'
+const pinnedNothing = 'This is an example, so nothing was pinned.'
 const question = 'Which title should this work use?'
 
 // The example's values, in the server's own formats ("Title: …" and the
@@ -65,16 +70,24 @@ const values = [
   { id: 'proposed' as const, current: false, value: 'Example Story' },
 ]
 type Pick = (typeof values)[number]['id'] | null
+// What the last press on the example did, so the status says it.
+type Said = typeof recordedNothing | typeof pinnedNothing | null
 
-/** The example field, on the cards a real field uses. Its choice is local state. */
+/**
+ * The example field, on the cards a real field uses. Its choice and its pin
+ * are local state: a pin chooses its value and pins it, and a pin that is on
+ * unpins, as on a real field (#1346).
+ */
 function ExampleField({
   locked,
   pick,
-  setPick,
+  pinned,
+  press,
 }: {
   locked: boolean
   pick: Pick
-  setPick: (pick: Pick) => void
+  pinned: Pick
+  press: (pick: Pick, pinned: Pick, said: Said) => void
 }) {
   const [evidenceOpen, setEvidenceOpen] = useState(true)
   const choices = choiceRadios(values, (choice) => ({
@@ -91,7 +104,13 @@ function ExampleField({
       expanded={!choice.current && evidenceOpen}
       label=""
       longDescription={false}
-      onChoose={() => setPick(choice.id)}
+      onChoose={() => press(choice.id, null, recordedNothing)}
+      pin={{
+        on: pinned === choice.id,
+        busy: false,
+        onPress: () => press(choice.id, pinned === choice.id ? null : choice.id, pinnedNothing),
+      }}
+      pinned={pinned === choice.id}
       radio={choice.radio}
       recording={false}
       selected={pick === choice.id}
@@ -151,6 +170,8 @@ function Guide({ onClose, onOpenFirst }: { onClose: () => void; onOpenFirst?: ()
   const before = useRef<Element | null>(null)
   const [step, setStep] = useState(0)
   const [pick, setPick] = useState<Pick>(null)
+  const [pinned, setPinned] = useState<Pick>(null)
+  const [said, setSaid] = useState<Said>(null)
   useEffect(() => {
     const element = dialog.current
     if (!element || element.open) return
@@ -233,7 +254,7 @@ function Guide({ onClose, onOpenFirst }: { onClose: () => void; onOpenFirst?: ()
               {stepText(step)}
             </div>
             <p className="first-review-status" role="status">
-              {pick && step < last ? recordedNothing : null}
+              {step < last ? said : null}
             </p>
           </div>
           {steps.map((each, index) => (
@@ -243,7 +264,16 @@ function Guide({ onClose, onOpenFirst }: { onClose: () => void; onOpenFirst?: ()
             </div>
           ))}
         </div>
-        <ExampleField locked={step === last} pick={pick} setPick={setPick} />
+        <ExampleField
+          locked={step === last}
+          pick={pick}
+          pinned={pinned}
+          press={(nextPick, nextPinned, nextSaid) => {
+            setPick(nextPick)
+            setPinned(nextPinned)
+            setSaid(nextSaid)
+          }}
+        />
       </div>
       <footer className="first-review-footer" ref={footer}>
         {step > 0 ? (

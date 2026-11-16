@@ -590,7 +590,10 @@
       "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
       "uncertainty": [],
       "pin": null,
-      "pin_control": null
+      "pin_control": {
+        "pin": "available",
+        "unpin": false
+      }
     },
     {
       "automatic_decision": null,
@@ -646,7 +649,10 @@
       "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
       "uncertainty": [],
       "pin": null,
-      "pin_control": null
+      "pin_control": {
+        "pin": "available",
+        "unpin": false
+      }
     },
     {
       "automatic_decision": {
@@ -839,7 +845,10 @@
       "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
       "uncertainty": [],
       "pin": null,
-      "pin_control": null
+      "pin_control": {
+        "pin": "available",
+        "unpin": false
+      }
     },
     {
       "automatic_decision": null,
@@ -895,7 +904,10 @@
       "target_fingerprint": "036652e04a211dce5b8430fada934ae4dafbb07ce21a9f6f39df2ffa5d23daa3",
       "uncertainty": [],
       "pin": null,
-      "pin_control": null
+      "pin_control": {
+        "pin": "available",
+        "unpin": false
+      }
     },
     {
       "automatic_decision": null,

@@ -50,7 +50,7 @@ import { ReviewCompletion } from './ReviewCompletion'
 import { ReviewKeys } from './ReviewKeys'
 import { useStaleCoverReview } from './StaleCoverReview'
 import { useCoverPrepareFailure } from '../coverChoices'
-import { FieldDecisionCanvas } from './FieldDecisionCanvas'
+import { FieldDecisionCanvas, ReloadCase } from './FieldDecisionCanvas'
 import { fieldDecisionMode, ownerOutcome } from '../fieldDecisionMode'
 import { PreparationDetail } from './PreparationDetail'
 import {
@@ -550,12 +550,19 @@ export default function LibraryPage({
             destination: command.destination,
             text: 'Not recorded: the work changed. Review it again.',
           })
-          headingFocus.current = successor
+          // A pin pressed in the No change panel has no tab: the owner stays
+          // on their field and the panel says it on the successor.
+          const tabbed = visibleFields.some((field) => field.destination === command.destination)
+          if (tabbed) headingFocus.current = successor
           await navigate({
             replace: true,
             search: (current) =>
               current.preview === predecessor
-                ? { ...current, preview: successor, field: command.destination }
+                ? {
+                    ...current,
+                    preview: successor,
+                    ...(tabbed ? { field: command.destination } : {}),
+                  }
                 : current,
           })
           setMovingFrom(null)
@@ -1330,6 +1337,12 @@ export default function LibraryPage({
               ) : (
                 <p>This work has no fields requiring a decision.</p>
               )}
+              {/* With no canvas on screen its Reload is offered here (#1346). */}
+              {controller.reloadRequired &&
+              (!selected ||
+                (complete?.id === selectedReviewCaseId && completionInspection === null)) ? (
+                <ReloadCase reloading={detail.isFetching} settle={controller.settle} />
+              ) : null}
               {detail.data.recordingIdentityBasis ||
               detail.data.recordingAdmissionBasis ||
               detail.data.audiobookReviewScope === 'work' ? (
@@ -1345,7 +1358,15 @@ export default function LibraryPage({
                   />
                 </section>
               ) : null}
-              {contextualFields.length ? <ContextualFields fields={contextualFields} /> : null}
+              {contextualFields.length ? (
+                <ContextualFields
+                  key={selectedReviewCaseId}
+                  fields={contextualFields}
+                  controller={controller}
+                  choose={choose}
+                  notice={ownerNotice?.caseId === selectedReviewCaseId ? ownerNotice : null}
+                />
+              ) : null}
               <WorkSources
                 comparison={selectedMode.choiceMode}
                 outcomes={selectedLibraryWork?.preparationOutcomes ?? []}
