@@ -96,7 +96,7 @@ describe('first review guide', () => {
     renderRoute(queueOpen, withQueue())
 
     await firstRow()
-    expect(document.querySelector('dialog')).toBeNull()
+    expect(document.querySelector('dialog.first-review-guide')).toBeNull()
     expect(screen.queryByText('How a decision works')).toBeNull()
   })
 
@@ -107,7 +107,7 @@ describe('first review guide', () => {
 
     await waitFor(() => expect(http.getAttention).toHaveBeenCalled())
     await screen.findByRole('complementary', { name: 'Attention queue' })
-    expect(document.querySelector('dialog')).toBeNull()
+    expect(document.querySelector('dialog.first-review-guide')).toBeNull()
     expect(document.body.textContent).not.toMatch(/How a decision works|Example|Step \d/u)
     expect(owed()).toBe(true)
   })
@@ -139,7 +139,7 @@ describe('first review guide', () => {
     const updates = createLiveStream()
     renderRoute('/library?lens=all', http, updates)
     await waitFor(() => expect(http.getAttention).toHaveBeenCalled())
-    expect(document.querySelector('dialog')).toBeNull()
+    expect(document.querySelector('dialog.first-review-guide')).toBeNull()
 
     http.getAttention = vi.fn<ReviewHttp['getAttention']>(async () => waiting)
     act(() => updates.announce({ sequence: 1, subject: null, topic: 'library' }))
@@ -162,7 +162,7 @@ describe('first review guide', () => {
     act(() => updates.announce({ sequence: 1, subject: null, topic: 'library' }))
 
     await firstRow()
-    expect(document.querySelector('dialog')).toBeNull()
+    expect(document.querySelector('dialog.first-review-guide')).toBeNull()
   })
 
   it('shows each step with its words, and moves with Next and Back', async () => {
@@ -299,7 +299,7 @@ describe('first review guide', () => {
 
       await user.click(button(dialog, 'Close'))
 
-      expect(document.querySelector('dialog')).toBeNull()
+      expect(document.querySelector('dialog.first-review-guide')).toBeNull()
       expect(owed()).toBe(false)
       expect(document.querySelector('#main-content')).toContainElement(
         document.activeElement as HTMLElement,
@@ -307,7 +307,7 @@ describe('first review guide', () => {
       cleanup()
       renderRoute(queueOpen, withQueue())
       await firstRow()
-      expect(document.querySelector('dialog')).toBeNull()
+      expect(document.querySelector('dialog.first-review-guide')).toBeNull()
     },
   )
 
@@ -318,7 +318,7 @@ describe('first review guide', () => {
     const cancel = new Event('cancel', { cancelable: true })
     fireEvent(dialog, cancel)
 
-    await waitFor(() => expect(document.querySelector('dialog')).toBeNull())
+    await waitFor(() => expect(document.querySelector('dialog.first-review-guide')).toBeNull())
     expect(cancel.defaultPrevented).toBe(true)
     expect(owed()).toBe(false)
   })
@@ -342,7 +342,7 @@ describe('first review guide', () => {
 
       fireEvent.click(button(dialog, 'Close'))
 
-      await waitFor(() => expect(document.querySelector('dialog')).toBeNull())
+      await waitFor(() => expect(document.querySelector('dialog.first-review-guide')).toBeNull())
       expect(
         holder === 'nothing' ? document.querySelector('#main-content [data-route-focus]') : search,
       ).toHaveFocus()
@@ -364,7 +364,7 @@ describe('first review guide', () => {
 
     await waitFor(() => expect(router.state.location.search).toEqual(fromQueue))
     expect(fromQueue).toMatchObject({ preview: 'case-1', field: 'title' })
-    expect(document.querySelector('dialog')).toBeNull()
+    expect(document.querySelector('dialog.first-review-guide')).toBeNull()
     expect(owed()).toBe(false)
   })
 
@@ -452,7 +452,7 @@ describe('first review guide', () => {
 
     fireEvent.click(button(dialog, 'Open your first field'))
 
-    await waitFor(() => expect(document.querySelector('dialog')).toBeNull())
+    await waitFor(() => expect(document.querySelector('dialog.first-review-guide')).toBeNull())
     expect(focused[0]).toBe(target)
     expect(focused).not.toContain(search)
     expect(search).not.toHaveFocus()

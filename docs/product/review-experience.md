@@ -14,7 +14,7 @@ Library, Attention, Evidence and History, Policy, Activity and Settings.
 - Review makes no destructive changes ([PRODUCT.md](../../PRODUCT.md)).
 - The server holds every decision. A refresh, another device, a restart or an
   upgrade cannot lose an acknowledged one, unless the upgrade needs a clean
-  rebuild. Browser storage holds display preferences only.
+  rebuild. Browser storage holds preferences only.
 
 ## Review cases
 
@@ -319,8 +319,9 @@ the request.
 
 A field's choices, and a cover comparison's cards, form one radio group with
 one Tab stop and no submit step. Arrow keys move without recording. Space,
-Enter or a tap records the choice once and moves to the next field. The choice
-you recorded says "Your choice".
+Enter or a tap records the choice once and moves to the next field. A recorded
+choice says "Your choice". [Review keys](review-keys.md) lists single keys for
+the same steps.
 
 The canvas moves on only once a fresh read of the case confirms the decision.
 Counts catch up afterwards. Recording a choice does not write it. When every
@@ -328,8 +329,8 @@ field is recorded, the work lists each field and its outcome and offers Review
 next work.
 
 If a choice could not be confirmed, the page keeps it, and Try the same
-decision again sends it once more, never recording it twice. Mechanical
-Librarian never resends it on its own. If no answer comes back, the page
+decision again resends it, never recording it twice. Mechanical Librarian never
+resends it unasked. If no answer comes back, the page
 reloads the case once and never says the choice was not recorded. If the work
 changed first, the page moves to the current case and says nothing was
 recorded.

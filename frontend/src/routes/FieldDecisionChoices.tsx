@@ -1,4 +1,5 @@
 import { queryWorkClass } from '../queryWork'
+import { KeyBadge } from './ReviewKeys'
 import { descriptionAdviceStatus } from '../descriptionAdviceStatus'
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { useId, useRef, useState } from 'react'
@@ -321,12 +322,16 @@ export function MetadataChoice({
         // Choosing the pinned value again would record a new decision and end the pin.
         onClick={pinned ? undefined : onChoose}
       >
+        <KeyBadge position={radio['aria-posinset']} />
         <small>
           {label}
           {context?.recommendation === 'recommended' ? `${label ? ' · ' : ''}Recommended` : ''}
           {badge ? <b className="choice-chosen">{badge}</b> : null}
         </small>
         <strong id={valueId}>
+          {/* Keeps the first line clear of the key badge (styles.css). */}
+          <i className="review-key-space" />
+          <wbr className="review-key-break" />
           {longDescription
             ? `Choose ${advice ? 'advised' : current ? 'current' : 'proposed'} description`
             : value}
