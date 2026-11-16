@@ -281,7 +281,9 @@ describe('the sentence at the foot of the field', () => {
       destination: 'description',
       pinControl: { pin: 'change_waiting', unpin: false },
       humanDecision: decided('keep_current'),
-      descriptionAdvice: { selection: { origin: 'human' } } as Field['descriptionAdvice'],
+      descriptionAdvice: { selection: { origin: 'human' } } as NonNullable<
+        Field['descriptionAdvice']
+      >,
     })
     expect(pinFoot(advised, shown).sentence).toBe(
       'A change to this field is recorded. Pin it once Audiobookshelf shows the new value.',
@@ -291,7 +293,7 @@ describe('the sentence at the foot of the field', () => {
       ...advised,
       descriptionAdvice: {
         selection: { origin: 'automatic_policy' },
-      } as Field['descriptionAdvice'],
+      } as NonNullable<Field['descriptionAdvice']>,
     }
     expect(pinFoot(automatic, shown).sentence).toBe(
       'You chose Resume automatic handling for this field. Choose a value again to pin it.',
