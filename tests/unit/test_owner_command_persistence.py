@@ -1476,3 +1476,28 @@ def test_a_keep_on_a_returned_episode_plans_nothing_and_stops_nothing(
     assert not store.repository._connection.execute(
         "SELECT 1 FROM field_effects WHERE decision_id=?", (keep.decision_id,)
     ).fetchall()
+
+
+@pytest.mark.parametrize("destination", sorted(_KEPT_THEN_RETURNED))
+def test_a_keep_on_a_returned_episode_reads_from_its_own_episode(
+    store: OwnerStore, destination: str
+) -> None:
+    """History's From for a keep follows only the writes of the case's current
+    episode, so a keep after the work returns never reads as going back over
+    a write of an earlier episode (#1523)."""
+    chosen, read_back, outcome, back = _KEPT_THEN_RETURNED[destination]
+    first = store.case.review_case_id
+    store.write(store.decide("accept", chosen, destination=destination))
+    _successor(store, **read_back)
+    store.write(store.decide(outcome, back, destination=destination))
+    assert store.publish(genre_report()).review_case_id == first
+    keep = store.decide("keep_current", destination=destination)
+    (entry,) = (
+        event
+        for event in store.repository.get_review_case_history(first, 50)
+        if event.get("decision_id") == keep.decision_id
+    )
+    # The episode wrote nothing, so the keep keeps what the case read: From and
+    # To are the same value, never C's first-episode write as From.
+    assert entry["previous_value"] == entry["selected_value"], entry
+    assert entry["previous_value"] != chosen

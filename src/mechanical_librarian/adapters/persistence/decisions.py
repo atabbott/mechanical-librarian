@@ -1769,6 +1769,12 @@ class SQLiteDecisionRepository(ConnectionScoped):
             "OR recorded.decision_id="
             + _FIELD_EFFECT_COMPANION_DECISION_SQL
             + ") WHERE effect.state='verified' "
+            # A decision of the case's current episode follows only that
+            # episode's writes: one planned before the work left the case and
+            # returned is not what the library held (#1523, #1358).
+            "AND (?<=COALESCE((SELECT decision_floor FROM review_case_episodes "
+            "WHERE review_case_id=?),0) OR +effect.rowid>COALESCE((SELECT "
+            "effect_floor FROM review_case_episodes WHERE review_case_id=?),0)) "
             "ORDER BY recorded.ordinal DESC,effect.rowid LIMIT 1",
             (
                 review_case_id,
@@ -1776,6 +1782,9 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 decision_row[0],
                 review_case_id,
                 decision.destination,
+                decision_row[0],
+                review_case_id,
+                review_case_id,
             ),
         ).fetchone()
         if prior is not None:
