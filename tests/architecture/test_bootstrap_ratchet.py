@@ -92,8 +92,9 @@ CEILING = {
     # permission reader: one more query-only projection, its window and close,
     # and one keyword argument at each review application. 3368 since #1494
     # passed the recovery store's answered sources to the throttling read: one
-    # argument.
-    "composition.py": 3368,
+    # argument. 3370 since #1523 passed the scan's time to admission: one
+    # parameter and one argument.
+    "composition.py": 3370,
     # 142 since #1372 PR 1c's run_taste_build_reviewer, the taste build's
     # counterpart of run_description_reviewer.
     "contained_reviewer.py": 142,
@@ -140,8 +141,9 @@ RESIDUAL: dict[str, int | None] = {
     # into ReviewPipelineStages; the stage logic moved to application in stage 4.
     # 202 since #1372 passed the taste build's wake as the background lane;
     # 203 since it leases that lane's repository and closes it on stop; 216
-    # since #1064 opens the provider-response store and closes it on stop.
-    _C + "create_review_pipeline": 216,
+    # since #1064 opens the provider-response store and closes it on stop;
+    # 217 since #1523 passes the scan's time to admission.
+    _C + "create_review_pipeline": 217,
     # Wires recovery to the built pipeline; catches an adapter error type.
     # 96 since #1064 passes the response store to the retry constructor.
     _C + "_provider_recovery_wiring": 96,

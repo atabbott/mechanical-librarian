@@ -64,6 +64,7 @@ from mechanical_librarian.adapters.persistence.preparation_presentation import (
     reopen_preparation_projection,
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
+    _LATEST_VERIFIED_WRITE_SQL,
     _active_generation_automatic_sql,
 )
 from mechanical_librarian.adapters.persistence.transactions import (
@@ -97,6 +98,7 @@ from mechanical_librarian.domain.proposal_set import (
     proposal_set_content_address,
 )
 from mechanical_librarian.domain.review_case import (
+    KEPT_CASE_SECONDS,
     ReviewAdmissionStaleError,
     ReviewCase,
     ReviewCaseValueError,
@@ -1212,52 +1214,13 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 report_id = proposal_set_id = review_case_id = None
                 research_not_before = None
             elif previous_state == "complete":
-                pointer = self._connection.execute(
-                    "SELECT proposal_set_id,report_id,review_case_id,outcome "
-                    "FROM current_review_case_lineages WHERE connection_name=? "
-                    "AND library_name=? AND item_id=?",
-                    (action.connection, action.library, entry.item_id),
-                ).fetchone()
-                pointer_matches = (
-                    pointer is not None
-                    and pointer[:3] == (proposal_set_id, report_id, review_case_id)
-                    and (
-                        pointer[3] in {"admitted", "superseded"}
-                        if review_case_id is not None
-                        else pointer[3] in {"no_case", "retired"}
-                    )
+                stage, state, outcome, review_case_id = self._settled_work_stage(
+                    action,
+                    entry.item_id,
+                    (proposal_set_id, report_id, review_case_id),
+                    cover_policy_reference,
+                    completed_at,
                 )
-                pending_description = (
-                    self._connection.execute(
-                        "SELECT 1 FROM description_preparation_pending WHERE review_case_id=?",
-                        (review_case_id,),
-                    ).fetchone()
-                    is not None
-                )
-                stale_cover = (
-                    cover_policy_reference is not None
-                    and review_case_id is not None
-                    and self._connection.execute(
-                        "SELECT 1 FROM current_cover_considerations pointer "
-                        "JOIN cover_considerations consideration "
-                        "ON consideration.consideration_id=pointer.consideration_id "
-                        "WHERE pointer.review_case_id=? AND json_extract("
-                        "consideration.document,'$.policy_reference') IS NOT ?",
-                        (review_case_id, cover_policy_reference),
-                    ).fetchone()
-                    is not None
-                )
-                if pointer_matches and (pending_description or stale_cover):
-                    stage = "projection"
-                    state = "queued"
-                    outcome = None
-                elif pointer_matches:
-                    stage = "complete"
-                    state = "complete"
-                    outcome = "case" if review_case_id is not None else "no_case"
-                else:
-                    stage = "admission"
-                    review_case_id = None
             if state == "complete" and research_not_before is None:
                 # A work finished before scheduled searches has no mark;
                 # it takes its slot from this scan, without a backfill.
@@ -1316,6 +1279,97 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 completed_at,
             ),
         )
+
+    def _settled_work_stage(
+        self,
+        action: PipelineAction,
+        item_id: str,
+        prepared: tuple[str | None, str | None, str | None],
+        cover_policy_reference: str | None,
+        completed_at: int,
+    ) -> tuple[str, str, str | None, str | None]:
+        """Where an unchanged work prepared to the end resumes.
+
+        It stays complete while its current case or answer stands, is projected
+        again for a pending description or a cover compared under another
+        policy, and is otherwise admitted again. Returns its stage, state,
+        outcome and case.
+        """
+        proposal_set_id, report_id, review_case_id = prepared
+        state = "queued"
+        outcome: str | None = None
+        pointer = self._connection.execute(
+            "SELECT pointer.proposal_set_id,pointer.report_id,"
+            "pointer.review_case_id,pointer.outcome,transition.reason "
+            "FROM current_review_case_lineages pointer "
+            "LEFT JOIN review_case_transitions transition "
+            "ON transition.transition_id=pointer.transition_id "
+            "WHERE pointer.connection_name=? "
+            "AND pointer.library_name=? AND pointer.item_id=?",
+            (action.connection, action.library, item_id),
+        ).fetchone()
+        pointer_matches = (
+            pointer is not None
+            and pointer[:3] == (proposal_set_id, report_id, review_case_id)
+            and (
+                pointer[3] in {"admitted", "superseded"}
+                if review_case_id is not None
+                else pointer[3] in {"no_case", "retired"}
+            )
+        )
+        pending_description = (
+            self._connection.execute(
+                "SELECT 1 FROM description_preparation_pending WHERE review_case_id=?",
+                (review_case_id,),
+            ).fetchone()
+            is not None
+        )
+        stale_cover = (
+            cover_policy_reference is not None
+            and review_case_id is not None
+            and self._connection.execute(
+                "SELECT 1 FROM current_cover_considerations pointer "
+                "JOIN cover_considerations consideration "
+                "ON consideration.consideration_id=pointer.consideration_id "
+                "WHERE pointer.review_case_id=? AND json_extract("
+                "consideration.document,'$.policy_reference') IS NOT ?",
+                (review_case_id, cover_policy_reference),
+            ).fetchone()
+            is not None
+        )
+        # A case kept for a recent write goes back to admission once
+        # the write is 30 days old, which retires it (#1523).
+        kept_expired = (
+            pointer_matches
+            and pointer[4] == "recent_write"
+            and (
+                self._connection.execute(
+                    _LATEST_VERIFIED_WRITE_SQL,
+                    (action.connection, action.library, item_id),
+                ).fetchone()[0]
+                or 0
+            )
+            <= completed_at - KEPT_CASE_SECONDS
+        )
+        if kept_expired:
+            stage = "admission"
+            review_case_id = None
+        elif (
+            pointer_matches
+            and pointer[4] != "recent_write"
+            and (pending_description or stale_cover)
+        ):
+            stage = "projection"
+            state = "queued"
+            outcome = None
+        elif pointer_matches:
+            stage = "complete"
+            state = "complete"
+            outcome = "case" if review_case_id is not None else "no_case"
+        else:
+            stage = "admission"
+            review_case_id = None
+        return stage, state, outcome, review_case_id
 
     def _commit_review_absences(self, scan_id: str, retired_at: int) -> None:
         scan = self._connection.execute(

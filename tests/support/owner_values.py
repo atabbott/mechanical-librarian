@@ -110,16 +110,17 @@ class OwnerStore:
         self.ticks += 1
         return self.ticks
 
-    def publish(self, report: MetadataReport) -> ReviewCase:
+    def publish(self, report: MetadataReport, *, now: int | None = None) -> ReviewCase:
         """Publish one report of the work and return its current case."""
-        status = self.admit(report)
+        status = self.admit(report, now=now)
         assert status in {"admitted", "superseded", "replayed"}, status
         return self.case
 
-    def admit(self, report: MetadataReport) -> str:
+    def admit(self, report: MetadataReport, *, now: int | None = None) -> str:
         """Publish one report and return its admission status, loading the case
         it admits; under an automatic policy the shadow outcome follows, as a
-        scan's read-back records it."""
+        scan's read-back records it. `now` is the time a scan admits at, which
+        keeps a recently written work's case (#1523)."""
         current = self.repository._connection.execute(
             "SELECT report_id FROM current_metadata_reports WHERE connection_name=? "
             "AND library_name=? AND item_id=? AND file_identity=?",
@@ -140,7 +141,7 @@ class OwnerStore:
             )
         )
         self.repository.publish_proposal(proposal)
-        admitted = json.loads(self.repository.admit_review_case(proposal))
+        admitted = json.loads(self.repository.admit_review_case(proposal, now=now))
         if admitted["status"] in {"admitted", "superseded", "replayed"}:
             case = self.load(admitted["review_case_id"])
             if resolved is not None:

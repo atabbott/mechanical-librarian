@@ -38,6 +38,9 @@ _TRANSITION_KIND = frozenset(
     {"admitted", "superseded", "no_case", "retired", "tombstoned"}
 )
 MAX_REVIEW_CASE_BYTES = 2_097_152
+# A work written within this many seconds keeps its case when a scan finds
+# nothing to decide, so the owner can still go back on the write (#1523).
+KEPT_CASE_SECONDS = 2_592_000
 # A case's level offer (#1355, S10): which manual fields a wider Book matching
 # level substitutes, and with which level alternatives. It is stored beside
 # the case, never in it, so case ids and documents do not move.
@@ -315,6 +318,7 @@ class ReviewTransition:
             or self.reason
             not in {
                 "actionable",
+                "recent_write",
                 "nonactionable",
                 "absent",
                 "ineligible",
@@ -339,7 +343,8 @@ class ReviewTransition:
         ):
             raise ReviewCaseValueError("review transition is invalid")
         if self.kind in {"admitted", "superseded"} and (
-            self.to_review_case_id is None or self.reason != "actionable"
+            self.to_review_case_id is None
+            or self.reason not in {"actionable", "recent_write"}
         ):
             raise ReviewCaseValueError("review transition is invalid")
         if self.kind == "no_case" and (

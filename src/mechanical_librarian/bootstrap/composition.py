@@ -1190,6 +1190,7 @@ def admit_review_case_loaded(
     repository_authority: object | None = None,
     pipeline_repository: SQLiteMetadataReportRepository | None = None,
     credentials: dict[str, str] | None = None,
+    now: int | None = None,
 ) -> str:
     artifacts = CoverArtifactStore(artifact_store_path, create=False)
     repository: NonClosingRepository | SQLiteMetadataReportRepository = (
@@ -1223,7 +1224,7 @@ def admit_review_case_loaded(
             return False
 
     try:
-        return AdmitReviewCase(repository, current).run(proposal_set_id)
+        return AdmitReviewCase(repository, current).run(proposal_set_id, now=now)
     finally:
         repository.close()
 
@@ -1677,7 +1678,7 @@ def create_review_pipeline(
         )
 
     def admit_review_case_for(
-        proposal_set_id: str, pipeline_repository: ReviewPipelineRepository
+        proposal_set_id: str, pipeline_repository: ReviewPipelineRepository, now: int
     ) -> str:
         return admit_review_case_loaded(
             configuration,
@@ -1687,6 +1688,7 @@ def create_review_pipeline(
             database_authority,
             cast("SQLiteMetadataReportRepository", pipeline_repository),
             credentials,
+            now,
         )
 
     def cover_considerations(

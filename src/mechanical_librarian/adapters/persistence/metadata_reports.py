@@ -1733,11 +1733,16 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     def get_proposal(self, proposal_set_id: str) -> str:
         return self._proposal_sets.get_proposal(proposal_set_id)
 
-    def admit_review_case(self, proposal_set: ProposalSet) -> str:
-        return self._review_cases.admit_review_case(proposal_set)
+    def admit_review_case(
+        self, proposal_set: ProposalSet, *, now: int | None = None
+    ) -> str:
+        return self._review_cases.admit_review_case(proposal_set, now=now)
 
     def review_case_exists(self, review_case_id: str) -> bool:
         return self._review_cases.review_case_exists(review_case_id)
+
+    def review_case_kept(self, review_case_id: str) -> bool:
+        return self._review_cases.review_case_kept(review_case_id)
 
     def current_review_case_successor(self, review_case_id: str) -> str | None:
         return self._review_cases.current_review_case_successor(review_case_id)

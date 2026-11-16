@@ -1302,3 +1302,61 @@ def test_a_pin_over_a_chosen_value_keeps_the_facts_equal_to_the_live_attention(
     store.decide("unpin")
     assert title_asked(0)
     store.close()
+
+
+def _kept_store_attention(tmp_path: Path, *, pin: bool):
+    """A written work kept for its recent write, with the reader of what it
+    asks: the facts, which equal their derivation, and the Library's count."""
+    from mechanical_librarian.application.review_web import BrowseReviewLibrary
+    from tests.support.owner_values import OwnerStore
+    from tests.support.review_cases import _report
+
+    store = OwnerStore(tmp_path, _report())
+    connection = store.repository._connection
+
+    def asked() -> tuple[object, ...]:
+        facts = _facts(connection)
+        assert facts == _derived(connection)
+        (item,) = cast(
+            "list[dict[str, object]]",
+            BrowseReviewLibrary(store.repository).library(
+                lens="all", search=None, limit=25, cursor=None
+            )["items"],
+        )
+        assert item["attention_count"] == len(facts)
+        assert store.repository.count_current_attention_fields(None, ()) == len(facts)
+        return tuple(fact[4] for fact in facts)
+
+    assert "title" in asked()
+    written = "Exact evaluator candidate"
+    decision = store.decide("owner_entered", {"kind": "text", "value": written})
+    if pin:
+        store.decide("pin")
+    store.write(decision)
+    (verified_at,) = connection.execute(
+        "SELECT MAX(occurred_at) FROM field_effect_events WHERE kind='verified'"
+    ).fetchone()
+    store.publish(_report(written, competing=False), now=verified_at + 1)
+    assert store.repository.review_case_kept(store.case.review_case_id)
+    return store, asked, verified_at
+
+
+def test_a_kept_case_adds_no_attention(tmp_path: Path) -> None:
+    """A case kept for a recent write has nothing to decide, so the work
+    asks nothing and adds no attention fact or count (#1523, S18)."""
+    store, asked, _ = _kept_store_attention(tmp_path, pin=False)
+    assert asked() == ()
+    store.close()
+
+
+def test_a_changed_pin_on_a_kept_case_asks(tmp_path: Path) -> None:
+    """A pin whose value changed elsewhere asks on a kept case as on any
+    case; while the pinned value stays, nothing is asked (#1523, S18)."""
+    from tests.support.review_cases import _report
+
+    store, asked, verified_at = _kept_store_attention(tmp_path, pin=True)
+    assert asked() == ()
+    store.publish(_report("Changed Elsewhere", actionable=False), now=verified_at + 2)
+    assert store.repository.review_case_kept(store.case.review_case_id)
+    assert asked() == ("title",)
+    store.close()
