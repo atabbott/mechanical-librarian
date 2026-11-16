@@ -17,6 +17,7 @@ import pytest
 from mechanical_librarian.adapters.field_effect_authority import (
     PersistedFieldEffectAuthority,
 )
+from mechanical_librarian.adapters.field_effect_fakes import FakeCapabilityObserver
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.persistence.review_sql import (
     _ATTENTION_FACT_SOURCE_SQL,
@@ -29,6 +30,10 @@ from mechanical_librarian.application.review_web import (
     ReviewWebError,
 )
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
+from mechanical_librarian.domain.field_effect import (
+    FieldEffectError,
+    FieldEffectOperation,
+)
 from mechanical_librarian.domain.human_decision import HumanDecisionError
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyProfile,
@@ -36,7 +41,7 @@ from mechanical_librarian.domain.metadata_policy import (
 )
 from mechanical_librarian.domain.metadata_report import ClaimScope, MetadataReport
 from tests.support.genre_reports import genre_report, publish_genre_case
-from tests.support.owner_values import OwnerStore, rewritten
+from tests.support.owner_values import CAPABILITY, OwnerStore, rewritten
 from tests.support.proposal_evidence import _local_subtitle
 
 ORCHARD = {"kind": "text", "value": "The Silent Orchard"}
@@ -1384,3 +1389,80 @@ def test_pin_and_unpin_history_events(store: OwnerStore) -> None:
         events[unpin.decision_id]["outcome"],
         events[unpin.decision_id]["selected_value"],
     ) == ("unpin", None)
+
+
+# #1523 review B1: a keep on a case that returned as a new episode (#1358)
+# has nothing in its own episode to go back from. It is not pending work, and
+# it never stops the scheduler from applying another write.
+_KEPT_THEN_RETURNED = {
+    # A clearable field the case read empty: filled on it, cleared on the
+    # kept case, and read empty again.
+    "genres": (
+        {"kind": "list", "value": ["Fantasy"]},
+        {"genres": ("Fantasy",)},
+        "owner_entered",
+        {"kind": "empty", "value": None},
+    ),
+    # A field the case read a value: changed on it, entered back on the kept
+    # case, and read with its first value again.
+    "authors": (
+        {"kind": "list", "value": ["Example, Ada"]},
+        {"authors": ("Example, Ada",)},
+        "owner_entered",
+        {"kind": "list", "value": ["Ada Example"]},
+    ),
+}
+
+
+@pytest.mark.parametrize("destination", sorted(_KEPT_THEN_RETURNED))
+def test_a_keep_on_a_returned_episode_plans_nothing_and_stops_nothing(
+    store: OwnerStore, destination: str
+) -> None:
+    chosen, read_back, outcome, back = _KEPT_THEN_RETURNED[destination]
+    first = store.case.review_case_id
+    store.write(store.decide("accept", chosen, destination=destination))
+    _successor(store, **read_back)
+    assert store.case.review_case_id != first
+    store.write(store.decide(outcome, back, destination=destination))
+    assert store.publish(genre_report()).review_case_id == first
+    keep = store.decide("keep_current", destination=destination)
+    pending = _pending(store)
+    assert keep.decision_id not in pending
+    # Resolved anyway, the keep binds nothing rather than planning a value.
+    with pytest.raises(FieldEffectError, match="authority_binding"):
+        PersistedFieldEffectAuthority(store.repository).resolve(keep)
+    # An unrelated write on the same case still applies in the next cycle.
+    isbn = store.decide(
+        "accept", {"kind": "text", "value": "9780306406157"}, destination="isbn"
+    )
+    target = store.case.target
+    context = (str(target["connection"]), str(target["library"]))
+    store.consent.allow(connection=context[0], library=context[1], destination="isbn")
+    store.repository.grant_field_effect_consents(
+        context[0], (context[1],), ("isbn",), store.clock()
+    )
+    assert isbn.decision_id in _pending(store)
+    scheduler = ContinuousGuardedApplication(
+        store.repository,
+        {context: store.service},
+        {context: FakeCapabilityObserver(CAPABILITY)},
+        PersistedFieldEffectAuthority(store.repository),
+        (context,),
+        store.clock,
+        lambda *_: None,
+    )
+    # Planning walks the pending queue past the keep to the ISBN; before
+    # #1523's fix the keep's plan raised here on every cycle.
+    scheduler.schedule(10)
+    (planned,) = store.repository._connection.execute(
+        "SELECT document FROM field_effects WHERE decision_id=?", (isbn.decision_id,)
+    ).fetchone()
+    store.target.seed(FieldEffectOperation.from_json(planned).plan)
+    for _ in range(4):
+        scheduler.run_cycle()
+    assert store.repository._connection.execute(
+        "SELECT state FROM field_effects WHERE decision_id=?", (isbn.decision_id,)
+    ).fetchall() == [("verified",)]
+    assert not store.repository._connection.execute(
+        "SELECT 1 FROM field_effects WHERE decision_id=?", (keep.decision_id,)
+    ).fetchall()

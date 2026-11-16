@@ -287,7 +287,11 @@ _CORRECTIVE_KEEP_CURRENT_SQL = (
     "AND earlier.destination=human.destination UNION ALL SELECT decision_id,-1 FROM "
     "description_decisions earlier WHERE earlier.review_case_id=human.review_case_id "
     "AND human.destination='description') recorded ON recorded.decision_id=prior.decision_id "
-    "WHERE prior.state='verified'))"
+    "WHERE prior.state='verified' "
+    # Only a write in the case's own episode, as `_episode_write` reads it: a
+    # returned case's earlier write is not what the library holds (#1358).
+    "AND +prior.rowid>COALESCE((SELECT effect_floor FROM review_case_episodes "
+    "WHERE review_case_id=human.review_case_id),0)))"
 )
 
 
@@ -776,10 +780,14 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 predecessor[0], decision.review_case_id, decision.destination
             ).desired_value
         if type(decision) is HumanDecision and decision.outcome == "keep_current":
-            if predecessor is not None:
-                value = self._decision_value_for_target(
-                    decision.destination, case_pre_value
-                )
+            # A keep writes only after a write it goes back from. Without one
+            # it binds nothing, and the scheduler names and skips it rather
+            # than planning an empty value (#1523).
+            if predecessor is None:
+                raise FieldEffectError("authority_binding")
+            value = self._decision_value_for_target(
+                decision.destination, case_pre_value
+            )
         dependency_digests: tuple[str, ...] = (decision.target_fingerprint,)
         if type(decision) is CoverAutomaticDecision:
             dependency_digests = (

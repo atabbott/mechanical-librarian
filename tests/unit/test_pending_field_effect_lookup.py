@@ -618,6 +618,13 @@ _ORIGINAL_LOOKUPS = {
 }
 
 
+def _authority_unbound(
+    repository: SQLiteMetadataReportRepository, decision: HumanDecision
+) -> None:
+    with pytest.raises(FieldEffectError, match="authority_binding"):
+        repository.field_effect_authority_source(decision)
+
+
 def _lookups(
     connection: sqlite3.Connection,
 ) -> tuple[str, dict[str, tuple[str, tuple[object, ...]]]]:
@@ -669,7 +676,9 @@ def _lookups(
             "SELECT earlier.decision_id,earlier.ordinal",
         ),
         "authority": (
-            lambda: repository.field_effect_authority_source(later),
+            # With no write to go back from, the keep binds nothing (#1523);
+            # its predecessor lookup has run by then.
+            lambda: _authority_unbound(repository, later),
             "SELECT ordinal FROM human_decisions WHERE decision_id=",
         ),
         "override": (
@@ -1383,6 +1392,13 @@ _KEEP_GOES_BACK_TO_EMPTY = (
     (
         "length(json_extract(target.value,'$.value'))>0))) AND EXISTS",
         "length(json_extract(target.value,'$.value'))>0)) AND EXISTS",
+    ),
+    # #1523 also read a keep's earlier write in the case's own episode only.
+    (
+        "WHERE prior.state='verified' AND +prior.rowid>COALESCE((SELECT "
+        "effect_floor FROM review_case_episodes WHERE "
+        "review_case_id=human.review_case_id),0)))",
+        "WHERE prior.state='verified'))",
     ),
 )
 
