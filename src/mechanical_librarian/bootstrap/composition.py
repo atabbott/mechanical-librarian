@@ -47,6 +47,7 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_item import (
 from mechanical_librarian.adapters.library_services.audiobookshelf_setup import (
     AudiobookshelfSetupProbe,
 )
+from mechanical_librarian.adapters.owner_previews import fetch_owner_preview
 from mechanical_librarian.adapters.persistence.activity_documents import (
     ActivityDocuments,
 )
@@ -204,6 +205,10 @@ from mechanical_librarian.application.metadata_report import (
     require_report_current,
 )
 from mechanical_librarian.application.operation_admission import OperationAdmission
+from mechanical_librarian.application.owner_search import (
+    OwnerSearchService,
+    OwnerSearchWorks,
+)
 from mechanical_librarian.application.owner_settings import (
     FileOwnerSettingsRepository,
     OwnerSettingsOperations,
@@ -1567,6 +1572,7 @@ def create_review_pipeline(
     first_boot: bool = False,
     admission: OperationAdmission | None = None,
     defer_cutover: Callable[[Callable[[], None]], None] | None = None,
+    pacers: _ProviderPacers | None = None,
 ) -> ReviewPreparationSupervisor:
     mounts = {item.name: item for item in configuration.mounts}
     clients = {item.name: item for item in configuration.connections}
@@ -1578,7 +1584,8 @@ def create_review_pipeline(
         maximum_bytes=configuration.limits.target_response_bytes,
         timeout_seconds=configuration.limits.timeout_seconds,
     )
-    pacers = _provider_pacers(configuration.providers)
+    # A store generation passes the pacers its owner search shares (#1477).
+    pacers = pacers or _provider_pacers(configuration.providers)
     discovery_lock = threading.Lock()
     if provider_recovery is None:
         raise ConfigurationError("provider recovery store is unavailable")
@@ -2218,6 +2225,34 @@ def _provider_throttling_reader(
     )
 
 
+def _compose_owner_search(
+    configuration: ApplicationConfiguration,
+    repository: OwnerSearchWorks,
+    credentials: dict[str, str],
+    pacers: _ProviderPacers,
+    provider_recovery: SQLiteProviderRecoveryStore,
+    retry: Literal["available", "managed_by_file"],
+) -> OwnerSearchService:
+    """Owner search on the pipeline's own pacers and adapters (#1477 L7)."""
+    return OwnerSearchService(
+        configuration=configuration,
+        works=repository,
+        adapter=partial(
+            _metadata_provider,
+            configuration=configuration,
+            credentials=credentials,
+            pacers=pacers,
+        ),
+        pacers=vars(pacers),
+        throttling=_provider_throttling_reader(
+            provider_recovery, configuration, credentials, retry
+        ),
+        fetch_preview=fetch_owner_preview,
+        clock=time.time,
+        monotonic=time.monotonic,
+    )
+
+
 def compose_store_runtime_generation(
     bootstrap: ReviewBootstrap,
     database_path: Path,
@@ -2292,6 +2327,7 @@ def compose_store_runtime_generation(
             tuple(settings_view.document.pending_restart),
             repository.has_first_boot_preparation(),
         )
+        pacers = _provider_pacers(configuration.providers)
         preparation = create_review_pipeline(
             configuration,
             database_path,
@@ -2310,6 +2346,7 @@ def compose_store_runtime_generation(
                 if activation is None or authority_snapshot is None
                 else activation.defer_cutover
             ),
+            pacers=pacers,
         )
         field_application = (
             compose_continuous_guarded_application(
@@ -2440,6 +2477,14 @@ def compose_store_runtime_generation(
                     provider_recovery, configuration, credentials, "available"
                 ),
                 provider_recovery=provider_recovery,
+                owner_search=_compose_owner_search(
+                    configuration,
+                    repository,
+                    credentials,
+                    pacers,
+                    provider_recovery,
+                    "available",
+                ),
             )
             review_app = create_review_app(review_application, review)
         except BaseException:
@@ -2862,6 +2907,7 @@ def run_review_server(
                 (),
                 repository.has_first_boot_preparation(),
             )
+            pacers = _provider_pacers(configuration.providers)
             preparation = create_review_pipeline(
                 configuration,
                 database_path,
@@ -2875,6 +2921,7 @@ def run_review_server(
                 credentials=credentials,
                 first_boot=first_boot,
                 admission=repository.operation_admission,
+                pacers=pacers,
             )
             field_application = (
                 compose_continuous_guarded_application(
@@ -2984,6 +3031,14 @@ def run_review_server(
                         provider_recovery, configuration, credentials, "managed_by_file"
                     ),
                     provider_recovery=provider_recovery,
+                    owner_search=_compose_owner_search(
+                        configuration,
+                        repository,
+                        credentials,
+                        pacers,
+                        provider_recovery,
+                        "managed_by_file",
+                    ),
                     align_book_matching=partial(
                         repository.align_book_matching, review.work_identity.value
                     ),

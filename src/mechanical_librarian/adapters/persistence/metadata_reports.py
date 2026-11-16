@@ -98,6 +98,7 @@ from mechanical_librarian.adapters.persistence.review_scans import (
     SQLiteReviewScanRepository,
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
+    _LATEST_PREPARATION_FAILED_SQL,
     _active_generation_automatic_sql,
 )
 from mechanical_librarian.adapters.persistence.reviewer_access import (
@@ -2769,6 +2770,40 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     ) -> OwnerLink | None:
         """The item's current owner link, read first by preparation (#1477)."""
         return current_owner_link(self._connection, connection, library, item)
+
+    @local_operation
+    def read_owner_search_work(
+        self, connection: str, library: str, item: str
+    ) -> tuple[str, str | None, bool] | None:
+        """One work as an owner search reads it (#1477), or `None`.
+
+        Its current report document, its current link row and whether its
+        latest preparation could not finish, in one statement so the three
+        agree. The link row is the one a choice must still find current.
+        """
+        try:
+            row = self._connection.execute(
+                "SELECT mr.document,(SELECT ol.link_row_id FROM current_owner_links ol "
+                "WHERE ol.connection_name=ml.connection_name "
+                "AND ol.library_name=ml.library_name AND ol.item_id=ml.item_id),"
+                + _LATEST_PREPARATION_FAILED_SQL
+                + " FROM current_review_packages ml "
+                "JOIN metadata_reports mr ON mr.report_id=ml.report_id "
+                "WHERE ml.connection_name=? AND ml.library_name=? AND ml.item_id=?",
+                (connection, library, item),
+            ).fetchone()
+        except sqlite3.Error as error:
+            raise MetadataReportError("owner search work is unavailable") from error
+        if row is None:
+            return None
+        document, link_row_id, failed = row
+        if (
+            type(document) is not str
+            or (link_row_id is not None and type(link_row_id) is not str)
+            or failed not in {0, 1}
+        ):
+            raise MetadataReportError("owner search work is unavailable")
+        return document, link_row_id, bool(failed)
 
     def preview_digest(
         self, report_id: str, artifact_id: str, preview_variant: str

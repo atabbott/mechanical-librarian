@@ -48,6 +48,7 @@ from mechanical_librarian.application.operations import (
     SupportExporter,
     TimingRepository,
 )
+from mechanical_librarian.application.owner_search import OwnerSearchService
 from mechanical_librarian.application.owner_settings import OwnerSettingsOperations
 from mechanical_librarian.application.review_covers import (
     CoverBrowseStore,
@@ -626,6 +627,7 @@ class ReviewApplication:
         acknowledge_first_boot: Callable[[], None] | None = None,
         provider_throttling: Callable[[], dict[str, object]] | None = None,
         align_book_matching: Callable[[int], object] | None = None,
+        owner_search: OwnerSearchService | None = None,
     ) -> None:
         self._updates = updates
         self._state_owner = state_owner
@@ -668,6 +670,12 @@ class ReviewApplication:
         self._acknowledge_first_boot = acknowledge_first_boot
         self._provider_throttling = provider_throttling
         self._align_book_matching = align_book_matching
+        self._owner_search = owner_search
+
+    @property
+    def owner_search(self) -> OwnerSearchService | None:
+        """This generation's owner search service (#1477), if composed."""
+        return self._owner_search
 
     def _reviewer_changed(self) -> None:
         # Other sessions still invalidate when a rescan request is refused.
@@ -1015,6 +1023,9 @@ class ReviewApplication:
 
     def logout(self, session_token: str, csrf_token: str) -> None:
         self._sessions.logout(session_token, csrf_token)
+        # The session's search state goes with it (#1477 S13).
+        if self._owner_search is not None:
+            self._owner_search.forget(session_token)
 
     def logout_others(self, session_token: str, csrf_token: str) -> int:
         return self._sessions.logout_others(session_token, csrf_token)
@@ -1847,7 +1858,11 @@ class ReviewApplication:
         return self.preparation()
 
     def _preparation_request(
-        self, action: Literal["request", "retry"], connection: str, library: str
+        self,
+        action: Literal["request", "retry"],
+        connection: str,
+        library: str,
+        trigger: PreparationTrigger = PreparationTrigger.MANUAL_SCAN,
     ) -> dict[str, object]:
         if self._preparation is None:
             raise ReviewApplicationError("unavailable")
@@ -1855,7 +1870,7 @@ class ReviewApplication:
         progress = (
             selected(connection, library)
             if action == "retry"
-            else selected(connection, library, trigger=PreparationTrigger.MANUAL_SCAN)
+            else selected(connection, library, trigger=trigger)
         )
         library_id = next(
             item[2]
@@ -2083,6 +2098,7 @@ def compose_review_application(
     provider_throttling: Callable[[], dict[str, object]] | None = None,
     provider_recovery: ProviderRecoverySchedule | None = None,
     align_book_matching: Callable[[int], object] | None = None,
+    owner_search: OwnerSearchService | None = None,
 ) -> ReviewApplication:
     """Compose every operation before the HTTP adapter is created."""
     gate = operation_lock or RLock()
@@ -2173,6 +2189,7 @@ def compose_review_application(
         acknowledge_first_boot=acknowledge_first_boot,
         provider_throttling=provider_throttling,
         align_book_matching=align_book_matching,
+        owner_search=owner_search,
     )
     return application
 

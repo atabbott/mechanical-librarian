@@ -60,6 +60,8 @@ _READERS: dict[str, str] = {
     "domain/metadata_report.py::derive_field_results": "per_source",
     "domain/metadata_report.py::recording_association_references": "embedded_only",
     "domain/metadata_report.py::source_state": "per_source",
+    # The search's prefilled identifiers leave out an asserted ASIN (#1477).
+    "domain/owner_link.py::from_report": "asin_by_basis",
     "domain/proposal_set.py::_unoffered_references": "beside_target",
     "domain/proposal_set.py::_observations": "beside_target",
     "domain/proposal_set.py::_narrator_corroboration_guard": "tightens",

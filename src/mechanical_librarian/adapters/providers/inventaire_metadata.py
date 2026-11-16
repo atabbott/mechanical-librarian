@@ -23,8 +23,10 @@ from mechanical_librarian.adapters.providers.sdk import (
     BoundedProviderSession,
     ProviderClocks,
     ProviderResponseFacts,
+    owner_search_page,
     provider_bounds,
     provider_client_lifetime,
+    run_owner_search,
 )
 from mechanical_librarian.adapters.providers.visible_text import stated_description
 from mechanical_librarian.application.metadata_report import (
@@ -91,7 +93,15 @@ from mechanical_librarian.domain.metadata_report import (
     provider_candidate_work_identity_contradiction,
     validate_observed_title,
 )
-from mechanical_librarian.domain.owner_link import OwnerLinkLookup
+from mechanical_librarian.domain.owner_link import (
+    OWNER_SEARCH_PAGE,
+    OWNER_SEARCH_REQUEST_LIMIT,
+    OwnerLinkLookup,
+    OwnerSearchAnswer,
+    OwnerSearchCover,
+    OwnerSearchQuery,
+    OwnerSearchRecord,
+)
 from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
     WorkDispatchRung,
@@ -117,6 +127,8 @@ _MAX_CANDIDATES = 2
 _MAX_AGGREGATE_RESPONSE_BYTES = 2_097_152
 _MAX_ATTEMPTS_PER_REQUEST = 3
 _MAX_ATTEMPTS_PER_OBSERVATION = 27
+# An owner search's one labels read names at most this many author entities.
+_MAX_OWNER_AUTHOR_LABELS = 20
 
 
 class InventairePacer(ProviderRequestPacer):
@@ -815,8 +827,9 @@ class InventaireMetadataProvider:
         *,
         deadline: float | None,
         query_retry: bool = False,
+        session: BoundedProviderSession | None = None,
     ) -> dict[str, Any]:
-        return self._session.request_json(
+        return (session or self._session).request_json(
             url,
             params=params,
             headers={"Accept": "application/json", "Accept-Encoding": "identity"},
@@ -824,6 +837,155 @@ class InventaireMetadataProvider:
             query_retry=query_retry,
             classify=_classify_response,
         )
+
+    def owner_search(
+        self, query: OwnerSearchQuery, *, deadline: float
+    ) -> OwnerSearchAnswer:
+        """One owner search, one attempt per request (#1477 S8).
+
+        A title search is one work search, one read of the first ten works it
+        names and one labels read of at most twenty of their authors; an ISBN
+        search is one read of that ISBN, whose edition names its work. A work
+        the read redirects or does not hold is dropped and counted.
+        """
+        session = self._session.owner_search(
+            _DiscoveryRequestLedger("inventaire", "entities-v5.1.1"),
+            requests=3 if query.lane == "title_authors" else 1,
+        )
+
+        def search() -> OwnerSearchAnswer:
+            if query.lane == "isbn":
+                return self._owner_isbn(session, query.isbn or "", deadline)
+            payload = self._request(
+                INVENTAIRE_SEARCH_URL,
+                {
+                    "search": " ".join((query.title or "", *query.authors)),
+                    "types": "works",
+                    "limit": str(OWNER_SEARCH_REQUEST_LIMIT),
+                    "lang": "en",
+                },
+                deadline=deadline,
+                session=session,
+            )
+            rows = payload.get("results")
+            if type(rows) is not list or len(rows) > OWNER_SEARCH_REQUEST_LIMIT:
+                raise ValueError("provider search results are malformed")
+            uris = [_owner_row_uri(row) for row in rows[:OWNER_SEARCH_PAGE]]
+            wanted = tuple(dict.fromkeys(uri for uri in uris if uri is not None))
+            works = self._owner_entities(session, wanted, _ENTITY_ATTRIBUTES, deadline)
+            labels = self._owner_author_labels(session, works, deadline)
+
+            def project(uri: str | None) -> OwnerSearchRecord | None:
+                work = None if uri is None else works.get(uri)
+                if uri is None or work is None:
+                    return None
+                return OwnerSearchRecord(
+                    _work_candidate(self._name, work, (), labels),
+                    uri,
+                    cover=_owner_cover(work),
+                )
+
+            return owner_search_page([*uris, *rows[OWNER_SEARCH_PAGE:]], project)
+
+        return run_owner_search(session, search)
+
+    def _owner_isbn(
+        self, session: BoundedProviderSession, isbn: str, deadline: float
+    ) -> OwnerSearchAnswer:
+        uri = "isbn:" + isbn
+        payload = self._request(
+            INVENTAIRE_ENTITIES_URL,
+            httpx.QueryParams(
+                [
+                    ("uris", uri),
+                    *(("attributes", value) for value in _ENTITY_ATTRIBUTES),
+                    ("lang", "en"),
+                ]
+            ),
+            deadline=deadline,
+            session=session,
+        )
+        entities = payload.get("entities")
+        redirects = payload.get("redirects", {})
+        if type(entities) is not dict or type(redirects) is not dict:
+            raise ValueError("provider entities are malformed")
+        target = redirects.get(uri)
+        edition = entities.get(target) if type(target) is str else None
+        if edition is None:
+            return OwnerSearchAnswer()
+
+        def project(entity: object) -> OwnerSearchRecord | None:
+            if type(entity) is not dict or _entity_uri(entity) != target:
+                return None
+            if isbn not in _isbn_families(entity):
+                return None
+            return OwnerSearchRecord(
+                _edition_candidate(self._name, entity, None, (), {}),
+                _one_optional_uri(entity, "wdt:P629"),
+                isbn,
+                cover=_owner_cover(entity),
+            )
+
+        return owner_search_page([edition], project)
+
+    def _owner_entities(
+        self,
+        session: BoundedProviderSession,
+        uris: tuple[str, ...],
+        attributes: tuple[str, ...],
+        deadline: float,
+    ) -> dict[str, dict[str, Any]]:
+        """One by-uris read; an entity it redirects or misnames is left out."""
+        if not uris:
+            return {}
+        payload = self._request(
+            INVENTAIRE_ENTITIES_URL,
+            httpx.QueryParams(
+                [
+                    *(("uris", uri) for uri in uris),
+                    *(("attributes", value) for value in attributes),
+                    ("lang", "en"),
+                ]
+            ),
+            deadline=deadline,
+            session=session,
+        )
+        entities = payload.get("entities")
+        if type(entities) is not dict or len(entities) > len(uris):
+            raise ValueError("provider entities are malformed")
+        admitted: dict[str, dict[str, Any]] = {}
+        for uri in uris:
+            entity = entities.get(uri)
+            if type(entity) is dict and entity.get("uri") == uri:
+                admitted[uri] = entity
+        return admitted
+
+    def _owner_author_labels(
+        self,
+        session: BoundedProviderSession,
+        works: dict[str, dict[str, Any]],
+        deadline: float,
+    ) -> dict[str, str]:
+        """The authors' labels, from one optional read; a failure names none."""
+        authors: list[str] = []
+        for work in works.values():
+            try:
+                authors.extend(_claim_strings(work, "wdt:P50"))
+            except (EvidenceValueError, TypeError, ValueError):
+                continue
+        wanted = tuple(
+            uri for uri in dict.fromkeys(authors) if _ENTITY_URI.fullmatch(uri)
+        )[:_MAX_OWNER_AUTHOR_LABELS]
+        try:
+            entities = self._owner_entities(session, wanted, ("labels",), deadline)
+        except (ProviderFailure, TypeError, ValueError):
+            return {}
+        labels: dict[str, str] = {}
+        for uri, entity in entities.items():
+            label = _optional_entity_label(entity, lambda _count: None)
+            if label is not None:
+                labels[uri] = label
+        return labels
 
     def _candidates_result(
         self,
@@ -1388,6 +1550,27 @@ def _image_path(entity: dict[str, Any]) -> str | None:
     if type(value) is not str or _IMAGE_PATH.fullmatch(value) is None:
         raise ValueError("provider cover path is malformed")
     return value
+
+
+def _owner_row_uri(row: object) -> str | None:
+    """A work search row's entity URI, or `None` for a row outside the grammar."""
+    if type(row) is not dict or row.get("type") != "works":
+        return None
+    uri = row.get("uri")
+    if type(uri) is not str or _ENTITY_URI.fullmatch(uri) is None:
+        return None
+    return uri
+
+
+def _owner_cover(entity: dict[str, Any]) -> OwnerSearchCover | None:
+    """Where a card's preview may come from: the entity's own image path."""
+    try:
+        path = _image_path(entity)
+    except (TypeError, ValueError):
+        return None
+    if path is None:
+        return None
+    return OwnerSearchCover(INVENTAIRE_ORIGIN + path, user_agent=INVENTAIRE_USER_AGENT)
 
 
 def _overflow_candidate(index: int) -> ProviderCandidate:

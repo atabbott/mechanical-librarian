@@ -557,13 +557,13 @@ assert PRIOR_AUTOMATIC_DECISIONS_SQL != persistence_schema._AUTOMATIC_DECISIONS_
 
 
 # Every producer before #1573 had four preparation triggers; confirming
-# Automatic reopened preparation under title recovery, and Book matching
-# (#1355) had no trigger of its own.
+# Automatic reopened preparation under title recovery, and neither Book
+# matching (#1355) nor a book link (#1477) had a trigger of its own.
 PRIOR_REVIEW_PREPARATION_PRESENTATION_SQL = (
     persistence_schema._REVIEW_PREPARATION_PRESENTATION_SQL.replace(
-        "'title_recovery','automatic_confirmed','matching_changed')",
+        "'title_recovery','automatic_confirmed','matching_changed','book_linked')",
         "'title_recovery')",
-    ).replace("trigger_ordinal BETWEEN 0 AND 5", "trigger_ordinal BETWEEN 0 AND 3")
+    ).replace("trigger_ordinal BETWEEN 0 AND 6", "trigger_ordinal BETWEEN 0 AND 3")
 )
 assert PRIOR_REVIEW_PREPARATION_PRESENTATION_SQL.count("'title_recovery')") == 1
 assert PRIOR_REVIEW_PREPARATION_PRESENTATION_SQL.count("BETWEEN 0 AND 3") == 1

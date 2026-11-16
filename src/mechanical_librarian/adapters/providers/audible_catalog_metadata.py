@@ -33,8 +33,10 @@ from mechanical_librarian.adapters.providers.sdk import (
     BoundedProviderSession,
     ProviderClocks,
     ProviderResponseFacts,
+    owner_search_page,
     provider_bounds,
     provider_client_lifetime,
+    run_owner_search,
 )
 from mechanical_librarian.adapters.providers.visible_text import (
     HTML_VISIBLE_TEXT_VERSION,
@@ -106,6 +108,13 @@ from mechanical_librarian.domain.metadata_report import (
     finalize_candidate_comparisons,
     normalize_date_value,
     validate_observed_title,
+)
+from mechanical_librarian.domain.owner_link import (
+    OWNER_SEARCH_REQUEST_LIMIT,
+    OwnerSearchAnswer,
+    OwnerSearchCover,
+    OwnerSearchQuery,
+    OwnerSearchRecord,
 )
 from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
@@ -646,6 +655,69 @@ class AudibleCatalogMetadataProvider:
             dispatch_lineage=WorkDispatchLineage.from_query(query),
         )
 
+    def owner_search(
+        self, query: OwnerSearchQuery, *, deadline: float
+    ) -> OwnerSearchAnswer:
+        """One owner search at the owner's chosen marketplace (#1477 S8).
+
+        A title search asks one catalog page of eleven products by the owner's
+        own title and author words; an ASIN search is one product lookup. A
+        product that does not project is dropped and counted, and an ASIN the
+        marketplace does not carry is an answer with no cards.
+        """
+        session = self._session.owner_search(
+            _DiscoveryRequestLedger("audible_catalog", "catalog-1.0")
+        )
+
+        def project(product: object) -> OwnerSearchRecord | None:
+            if type(product) is not dict:
+                return None
+            candidate = _candidate(
+                self._name,
+                product,
+                (),
+                marketplace=query.marketplace or "",
+                schema_rejections=lambda _count: None,
+            )
+            cover, _ = _cover_url(product.get("product_images"))
+            return OwnerSearchRecord(
+                candidate,
+                candidate.identity.removeprefix("audible-product-"),
+                cover=None if cover is None else OwnerSearchCover(cover),
+            )
+
+        def search() -> OwnerSearchAnswer:
+            url = AUDIBLE_CATALOG_URLS[query.marketplace or ""]
+            if query.lane == "asin":
+                try:
+                    payload = self._request(
+                        f"{url}/{query.asin}",
+                        {"response_groups": _RESPONSE_GROUPS},
+                        deadline=deadline,
+                        session=session,
+                    )
+                except ProviderFailure as error:
+                    if error.status is ProviderStatus.NO_MATCH:
+                        return OwnerSearchAnswer()
+                    raise
+                return owner_search_page(
+                    [_lookup_product(payload, lambda _count: None)], project
+                )
+            payload = self._request(
+                url,
+                {
+                    "author": " ".join(query.authors),
+                    "num_results": str(OWNER_SEARCH_REQUEST_LIMIT),
+                    "response_groups": _RESPONSE_GROUPS,
+                    "title": query.title or "",
+                },
+                deadline=deadline,
+                session=session,
+            )
+            return owner_search_page(payload.get("products", []), project)
+
+        return run_owner_search(session, search)
+
     def _cover_wait(self, deadline: float | None = None) -> bool:
         """Pace a cover fetch on the same shared start pacer the API uses."""
         return True if self._pacer is None else self._pacer.wait(deadline)
@@ -698,8 +770,9 @@ class AudibleCatalogMetadataProvider:
         deadline: float | None,
         query_retry: bool = False,
         maximum_bytes: int | None = None,
+        session: BoundedProviderSession | None = None,
     ) -> dict[str, Any]:
-        return self._session.request_json(
+        return (session or self._session).request_json(
             url,
             params=params,
             headers={

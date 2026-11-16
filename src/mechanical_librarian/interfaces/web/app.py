@@ -2348,6 +2348,7 @@ class _PreparationTriggerRecord(_ClosedModel):
         "title_recovery",
         "automatic_confirmed",
         "matching_changed",
+        "book_linked",
     ]
     accepted_count: int = Field(ge=1)
     first_accepted_at: int = Field(ge=0)
