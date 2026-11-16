@@ -469,6 +469,41 @@ describe('a clear in History and the recorded outcome', () => {
     expect(article).not.toHaveTextContent(/Unavailable|“”/u)
   })
 
+  it('reads a keep that went back to empty, and a fill of an empty field, naturally', async () => {
+    const getHistory = vi.fn<ReviewHttp['getHistory']>(async () => ({
+      items: [
+        {
+          category: 'owner' as const,
+          occurredAt: 1786000001,
+          applicationReason: null,
+          destination: 'subtitle' as const,
+          outcome: 'keep_current' as const,
+          previousValue: { kind: 'text', value: 'A Novel of the Outer Banks' },
+          selectedValue: null,
+        },
+        {
+          category: 'owner' as const,
+          occurredAt: 1786000000,
+          applicationReason: null,
+          destination: 'isbn' as const,
+          outcome: 'accept' as const,
+          previousValue: null,
+          selectedValue: { kind: 'text', value: '9780306406157' },
+        },
+      ],
+    }))
+    renderRoute('/review/case-1?field=title&subview=history', { ...createHttp(), getHistory })
+    const kept = (await screen.findByRole('heading', { name: 'Subtitle' })).closest('article')
+    expect(kept).toHaveTextContent('You kept the current value.')
+    expect(kept).toHaveTextContent('From A Novel of the Outer Banks')
+    expect(kept).toHaveTextContent('To Cleared')
+    const filled = screen.getByRole('heading', { name: 'ISBN' }).closest('article')
+    expect(filled).toHaveTextContent('From Not set')
+    expect(filled).toHaveTextContent('To 9780306406157')
+    for (const article of [kept, filled])
+      expect(article).not.toHaveTextContent('No value is recorded.')
+  })
+
   it('shows a recorded clear as Cleared beside Your value', async () => {
     const cleared = decided(field('subtitle', 'A Quiet Subtitle', textControl(null, true)), EMPTY)
     const http = owner({ ...cleared, editable: false, ownerControl: null })

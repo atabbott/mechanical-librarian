@@ -34,10 +34,15 @@ import {
 } from '../labels'
 import { detailRoute, normalizeDetailSearch, useReviewContext } from '../router'
 
-// A recorded value, a language read by its name (#1286).
-const historyValue = (destination: TargetDestination, value: HistoryValueView | null) =>
+// A recorded value, a language read by its name (#1286). `empty` is what an
+// empty field reads as where the item's null is known to mean empty (#1523).
+const historyValue = (
+  destination: TargetDestination,
+  value: HistoryValueView | null,
+  empty = 'No value is recorded.',
+) =>
   value === null
-    ? 'No value is recorded.'
+    ? empty
     : isClear(value)
       ? CLEARED_TEXT
       : destination === 'language' && typeof value.value === 'string'
@@ -151,10 +156,12 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
         ) : valueless ? null : (
           <>
             <p className="diagnostic-value">
-              <span>From</span> {historyValue(item.destination, item.previousValue)}
+              <span>From</span>{' '}
+              {historyValue(item.destination, item.previousValue, emptyWords(item, NOT_SET))}
             </p>
             <p className="diagnostic-value">
-              <span>To</span> {historyValue(item.destination, item.selectedValue)}
+              <span>To</span>{' '}
+              {historyValue(item.destination, item.selectedValue, emptyWords(item, CLEARED_TEXT))}
             </p>
           </>
         )}
@@ -249,7 +256,25 @@ function isRetention(
 function displayRetainedHistoryValue(
   item: Extract<HistoryView['items'][number], { category: 'owner' | 'automatic' }>,
 ) {
-  return historyValue(item.destination, item.selectedValue ?? item.previousValue)
+  return historyValue(
+    item.destination,
+    item.selectedValue ?? item.previousValue,
+    emptyWords(item, NOT_SET),
+  )
+}
+
+// An empty field before a change reads as Activity says it, and a change that
+// ends in an empty field reads as a clear does (#1523).
+const NOT_SET = 'Not set'
+// An owner item's null is always an empty field. An automatic item with
+// neither value was not matched to its outcome, so its null is unknown.
+function emptyWords(
+  item: Extract<HistoryView['items'][number], { category: 'owner' | 'automatic' }>,
+  words: string,
+) {
+  return item.category === 'owner' || item.previousValue !== null || item.selectedValue !== null
+    ? words
+    : undefined
 }
 
 function historyValuesMatch(previous: HistoryValueView | null, selected: HistoryValueView | null) {
