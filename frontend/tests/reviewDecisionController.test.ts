@@ -199,7 +199,11 @@ describe('a pin after a value command', () => {
       : sent.outcome === 'unpin'
         ? { ...field, pin: null, pinControl: { pin: 'available', unpin: false } }
         : { ...field, needsAttention: false }
-  const mount = async (http: ReviewHttp, caseId = 'case-1') => {
+  const mount = async (
+    http: ReviewHttp,
+    caseId = 'case-1',
+    shown: { fields: Field[]; active: () => boolean } = { fields: [offered], active: () => true },
+  ) => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     context.value = { http, queryClient }
     // The page has read each case it shows before a command can leave it.
@@ -209,8 +213,7 @@ describe('a pin after a value command', () => {
       ({ id }: { id: string }) =>
         useReviewDecisionController({
           reviewCaseId: id,
-          fields: [offered],
-          active: () => true,
+          ...shown,
           ...moves,
         }),
       {
@@ -508,6 +511,134 @@ describe('a pin after a value command', () => {
       await second.hook.result.current.settle()
     })
     expect(second.hook.result.current.statusFor('title')).toBe('')
+  })
+
+  const lockedAfterChoice = async () => {
+    const { http, record, state } = store(ordinary)
+    state.unavailable = true
+    const { hook } = await mount(http)
+    press(hook, 'accept')
+    await waitFor(() => expect(hook.result.current.reloadRequired).toBe(true))
+    state.unavailable = false
+    return { hook, record }
+  }
+  const unsentWords = 'Your choice is recorded, but the pin was not. Press the pin again.'
+
+  it('never names a pin that was not sent on another work, or after a later command', async () => {
+    const { hook } = await lockedAfterChoice()
+    // Another work is opened without Reload: its field of the same name is told nothing.
+    hook.rerender({ id: 'case-2' })
+    await act(async () => {
+      await hook.result.current.settle()
+    })
+    expect(hook.result.current.statusFor('title')).toBe('')
+    expect(hook.result.current.alertFor('title')).toBe(false)
+    // Back on the first work, the pin is still named once it is read again.
+    hook.rerender({ id: 'case-1' })
+    await act(async () => {
+      await hook.result.current.settle()
+    })
+    expect(hook.result.current.statusFor('title')).toBe(unsentWords)
+
+    // A command taken since is the later moment: the earlier pin is not named over it.
+    const later = await lockedAfterChoice()
+    later.hook.rerender({ id: 'case-2' })
+    act(() => {
+      later.hook.result.current.submit(command('unpin', 'unpin-on-case-2'))
+    })
+    await waitFor(() => expect(later.hook.result.current.statusFor('title')).toBe('Unpinned.'))
+    later.hook.rerender({ id: 'case-1' })
+    await act(async () => {
+      await later.hook.result.current.settle()
+    })
+    await waitFor(() => {
+      later.hook.rerender({ id: 'case-1' })
+      expect(later.hook.result.current.reloadRequired).toBe(false)
+    })
+    expect(later.hook.result.current.statusFor('title')).toBe('')
+  })
+
+  it('names the pin that was not sent when a later read lifts the lock without Reload', async () => {
+    const { hook, record } = await lockedAfterChoice()
+    const { http, queryClient } = context.value as { http: ReviewHttp; queryClient: QueryClient }
+    // A read of the case in the background, not the Reload button.
+    await act(async () => {
+      await queryClient.query({ ...detailQuery(http, 'case-1'), staleTime: 0 })
+    })
+    hook.rerender({ id: 'case-1' })
+    await waitFor(() => expect(hook.result.current.reloadRequired).toBe(false))
+    expect(hook.result.current.statusFor('title')).toBe(unsentWords)
+    expect(hook.result.current.alertFor('title')).toBe(true)
+    // The owner pins and unpins the field: a later reload says nothing over that.
+    press(hook, 'pin', 'pin-key')
+    await waitFor(() => expect(hook.result.current.statusFor('title')).toBe('Pinned.'))
+    press(hook, 'unpin', 'unpin-key')
+    await waitFor(() => expect(hook.result.current.statusFor('title')).toBe('Unpinned.'))
+    await act(async () => {
+      await hook.result.current.settle()
+    })
+    expect(hook.result.current.statusFor('title')).toBe('Unpinned.')
+    expect(hook.result.current.alertFor('title')).toBe(false)
+    expect(sent(record).map((value) => value.outcome)).toEqual(['accept', 'pin', 'unpin'])
+  })
+
+  // A field in the No change panel has no tab: its pin never moves the owner.
+  describe('on a field with nothing to decide', () => {
+    const contextual: Field = { ...offered, inventoryRole: 'contextual' }
+    const shown = { fields: [contextual], active: () => false }
+    const pressPin = async (
+      refuse?: Parameters<typeof store>[1],
+      prepare?: (made: ReturnType<typeof store>) => void,
+    ) => {
+      const made = store(ordinary, refuse)
+      made.state.field = contextual
+      const { hook, moves } = await mount(made.http, 'case-1', shown)
+      prepare?.(made)
+      press(hook, 'pin', 'pin-key')
+      return { hook, moves, ...made }
+    }
+    const still = (moves: Awaited<ReturnType<typeof mount>>['moves']) => {
+      expect(moves.onAdvance).not.toHaveBeenCalled()
+      expect(moves.onComplete).not.toHaveBeenCalled()
+    }
+
+    it('stays put when the pin is recorded', async () => {
+      const { hook, moves } = await pressPin()
+      await waitFor(() => expect(hook.result.current.statusFor('title')).toBe('Pinned.'))
+      still(moves)
+    })
+
+    it.each([
+      [new ApiError(503, 'persistence'), 'The pin was not recorded. Press the pin again.'],
+      [
+        new ApiError(409, 'offer_changed', 'digest_mismatch'),
+        'Not recorded: Book matching changed what this field offers. Choose again.',
+      ],
+    ])('stays put when the pin fails with %s', async (error, words) => {
+      const { hook, moves } = await pressPin(() => error)
+      await waitFor(() => expect(hook.result.current.statusFor('title')).toBe(words))
+      expect(hook.result.current.alertFor('title')).toBe(true)
+      still(moves)
+    })
+
+    it('stays put when the work cannot be reloaded after the pin, recorded or not', async () => {
+      const recorded = await pressPin(undefined, ({ state }) => {
+        state.unavailable = true
+      })
+      await waitFor(() => expect(recorded.hook.result.current.reloadRequired).toBe(true))
+      still(recorded.moves)
+      const failed = await pressPin(
+        () => new ApiError(503, 'persistence'),
+        ({ http }) => {
+          vi.mocked(http.getCaseDetail).mockRejectedValue(new ApiError(503, 'unavailable'))
+        },
+      )
+      await waitFor(() => expect(failed.hook.result.current.reloadRequired).toBe(true))
+      expect(failed.hook.result.current.messageFor('title')).toBe(
+        'This work could not be reloaded after your choice. Choose Reload current case before choosing again.',
+      )
+      still(failed.moves)
+    })
   })
 
   it.each([

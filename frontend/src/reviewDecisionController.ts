@@ -280,19 +280,27 @@ export const useReviewDecisionController = ({
     void refreshAggregates().catch(() => undefined)
   }
   // The field whose choice was recorded on a case that could not be reloaded,
-  // so the pin that was to follow it was never sent.
-  const unsent = useRef<string | null>(null)
+  // so the pin that was to follow it was never sent. It is named once, on
+  // that case, when the case is next read, and not after a later command.
+  const unsent = useRef<{ caseId: string; destination: string } | null>(null)
+  const nameUnsent = (refreshed: CaseDetailView | undefined) => {
+    const pin = unsent.current
+    if (!refreshed || pin?.caseId !== reviewCaseId) return
+    unsent.current = null
+    const field = refreshed.fields.find((item) => item.destination === pin.destination)
+    if (field?.pin == null) announce(reviewCaseId, pin.destination, pinNotRecorded(field), true)
+  }
   const settle = async () => {
     converge()
     const refreshed = await refreshCase()
-    const destination = unsent.current
-    if (refreshed && destination !== null) {
-      unsent.current = null
-      const field = refreshed.fields.find((item) => item.destination === destination)
-      if (field?.pin == null) announce(reviewCaseId, destination, pinNotRecorded(field), true)
-    }
+    nameUnsent(refreshed)
     return refreshed
   }
+  // A field in the No change panel has no tab of its own to return to.
+  const returnTo = (destination: string) =>
+    fields.find((field) => field.destination === destination)?.inventoryRole === 'contextual'
+      ? undefined
+      : onAdvance(destination)
   const lock = (destination: string, message: string) =>
     queryClient.setQueryData(reconciliationKey(reviewCaseId), {
       destination,
@@ -361,7 +369,7 @@ export const useReviewDecisionController = ({
         halt()
         forget(command)
         // The pin that was to follow is named once the case can be read again.
-        unsent.current = pin ? command.destination : null
+        unsent.current = pin ? { caseId: reviewCaseId, destination: command.destination } : null
         lock(
           command.destination,
           'Your choice was recorded, but this work could not be reloaded. Choose Reload current case before choosing again.',
@@ -369,7 +377,7 @@ export const useReviewDecisionController = ({
         announce(reviewCaseId, command.destination, '')
         // The optimistic advance is withdrawn: the owner is returned to the
         // field whose outcome is in doubt rather than left on the next one.
-        await onAdvance(command.destination)
+        await returnTo(command.destination)
         return
       }
       release(command.destination)
@@ -449,7 +457,7 @@ export const useReviewDecisionController = ({
         return
       }
       if (!refreshed) {
-        await onAdvance(command.destination)
+        await returnTo(command.destination)
         lock(
           command.destination,
           classifyDecisionFailure(error) === 'uncertain'
@@ -465,7 +473,7 @@ export const useReviewDecisionController = ({
         // offers now, or the case shows it is being checked. Nothing to retry.
         forget(command)
         announce(reviewCaseId, command.destination, offerChanged, offerChanged !== '')
-        if (!active(command.destination)) await onAdvance(command.destination)
+        if (!active(command.destination)) await returnTo(command.destination)
         return
       }
       if (command.outcome === 'pin' || command.outcome === 'unpin') {
@@ -480,12 +488,12 @@ export const useReviewDecisionController = ({
             pinFailureCopy(command, refreshedField, wasFollowing),
             true,
           )
-        if (!active(command.destination)) await onAdvance(command.destination)
+        if (!active(command.destination)) await returnTo(command.destination)
         return
       }
       if (error instanceof ApiError && error.code === 'already_decided') {
         forget(command)
-        await onAdvance(command.destination)
+        await returnTo(command.destination)
         setStatus((current) =>
           current.caseId === reviewCaseId
             ? {
@@ -517,7 +525,7 @@ export const useReviewDecisionController = ({
       // The current field is already authoritative after reconciliation. Do
       // not make truthful failure feedback wait on a no-op same-field route
       // transition; only return from another field when the owner moved away.
-      if (!active(command.destination)) await onAdvance(command.destination)
+      if (!active(command.destination)) await returnTo(command.destination)
     },
   })
   useEffect(
@@ -534,9 +542,12 @@ export const useReviewDecisionController = ({
     if (
       reconciliation.data &&
       (detailState?.dataUpdatedAt ?? 0) > reconciliation.data.detailUpdatedAt
-    )
+    ) {
       queryClient.setQueryData(reconciliationKey(reviewCaseId), null)
-  }, [detailState?.dataUpdatedAt, queryClient, reconciliation.data, reviewCaseId])
+      // A read that lifts the lock without Reload names the pin as well.
+      nameUnsent(queryClient.getQueryData(detailKey))
+    }
+  })
   const entries = acknowledged.caseId === reviewCaseId ? acknowledged.entries : []
   const failed = [...entries].reverse().find((entry) => entry.phase === 'failed') ?? null
   const outstanding = entries.filter((entry) => entry.phase === 'recording')
@@ -563,6 +574,7 @@ export const useReviewDecisionController = ({
     // first is still in flight, are the same decision. Neither becomes a
     // second command.
     if (settled.has(command.destination)) return false
+    unsent.current = null
     // From here a Library frame naming this case might be this decision's own
     // echo, and the response that would say so is still in transit. Marked
     // before the request leaves, so no ordering between the two can be raced.
