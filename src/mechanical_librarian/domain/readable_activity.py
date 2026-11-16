@@ -147,8 +147,13 @@ class ReadableChange:
     sentence: str
 
 
+def plain_text(value: str) -> str:
+    """Collapse control characters and whitespace runs to single spaces."""
+    return _WHITESPACE.sub(" ", _CONTROL.sub(" ", value)).strip()
+
+
 def _tidy(value: str, limit: int) -> str:
-    text = _WHITESPACE.sub(" ", _CONTROL.sub(" ", value)).strip()
+    text = plain_text(value)
     if not text:
         return ABSENT
     if len(text) <= limit:

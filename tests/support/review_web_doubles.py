@@ -14,7 +14,7 @@ import os
 import shutil
 import tempfile
 from collections.abc import Callable, Iterator
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Generic, TypeVar, cast
@@ -54,6 +54,11 @@ from mechanical_librarian.application.review_web import (
     ReviewLibrarySnapshot,
     ValidatedDocumentCache,
     _single_source_choice,
+)
+from mechanical_librarian.application.write_plan import (
+    PlanFileEncoder,
+    PlanRow,
+    ProducedStream,
 )
 from mechanical_librarian.domain.automatic_decision import AutomaticSafetyState
 from mechanical_librarian.domain.description_advice import DescriptionAdviceBinding
@@ -1254,6 +1259,11 @@ class FakeActivityApplication(ContinuousGuardedApplication):
         self.enabled_libraries: set[str] = set()
         self.paused = False
 
+    def classify_request(self, work_class):
+        # Composed as the export reader too, which has no admission here.
+        del work_class
+        return nullcontext()
+
     def destinations_consented(
         self, connection: str, library: str, destinations: tuple[str, ...]
     ) -> bool:
@@ -1365,14 +1375,65 @@ class FakeActivityApplication(ContinuousGuardedApplication):
                 for key in ("configured_libraries", "capabilities", "prepared")
             },
             "backup_ready": True,
-            "example": {
-                "after": "After",
-                "before": "Before",
-                "destination": "title",
-                "library": "fiction",
-                "work_id": "book-1",
+            "plan": {
+                "total": 2,
+                "groups": [
+                    {
+                        "library": "fiction",
+                        "destination": "title",
+                        "kind": "human",
+                        "count": 1,
+                        "rows": [
+                            {
+                                "work": "Book One",
+                                "authors": "An Author",
+                                "current": "Before",
+                                "new": "After",
+                                "reason": "You chose this value",
+                                "sources": ["Hardcover"],
+                            }
+                        ],
+                    },
+                    {
+                        "library": "fiction",
+                        "destination": "title",
+                        "kind": "automatic",
+                        "count": 1,
+                        "rows": [],
+                    },
+                ],
             },
         }
+
+    # A test replaces this to drive the write plan route's stream (#1336).
+    plan_file: Callable[..., None] | None = None
+
+    def activity_write_plan_file(self, format, closing, library_labels):
+        def produce(emit, cancelled) -> None:
+            if self.plan_file is not None:
+                self.plan_file(format, emit, cancelled)
+                return
+            encoder = PlanFileEncoder(format, library_labels)
+            emit(encoder.head)
+            emit(
+                encoder.row(
+                    PlanRow(
+                        library="fiction",
+                        work="Book One",
+                        authors="An Author",
+                        destination="title",
+                        kind="human",
+                        current="=Before",
+                        new="After",
+                        reason="You chose this value",
+                        sources=("Hardcover",),
+                    )
+                )
+                or b""
+            )
+            emit(encoder.tail(total=1, unreadable=0, changed=0, made_at=1))
+
+        return ProducedStream(produce, closing)
 
     def activity_consent(self):
         history = self.activity()

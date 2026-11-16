@@ -606,6 +606,16 @@ set, metadata report, proposal policy, shadow decision policy and
 decision-set versions do not move. Every earlier application database is
 rejected before mutation and needs a clean rebuild; no adoption is supplied.
 
+Issue #1334 takes the clean-rebuild branch. The new
+`metadata_report_value_flags` table stores each report's Looks wrong findings,
+written when the report is inserted, and `browse_fact_identity` gains a
+`value_flag_rules` column holding `value-flag-rules-v1`, so a database whose
+findings were derived under another rule list is refused. `review-library-v7`
+carries the lens, its count and each work's findings. The metadata report,
+proposal policy and decision-set versions do not move. Every earlier
+application database is rejected before mutation and needs a clean rebuild;
+no adoption is supplied.
+
 Issue #1351 takes the clean-rebuild branch. The application database gains
 the `library_visit` singleton, which holds how far Library's listing had got
 at the owner's last visit

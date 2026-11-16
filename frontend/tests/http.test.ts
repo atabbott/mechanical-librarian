@@ -4402,6 +4402,97 @@ describe('Activity check group (#1281)', () => {
   })
 })
 
+describe('write plan file (#1336)', () => {
+  const encoder = new TextEncoder()
+  const streamed = (chunks: string[], fault?: Error) =>
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(encoder.encode(chunk))
+        if (fault) controller.error(fault)
+        else controller.close()
+      },
+    })
+
+  it('fetches the file once, counts rows as they arrive and keeps its bytes', async () => {
+    const chunks = ['{"changes":[\n', '{"work":"A"}\n,{"work":"B"}\n', '],"listed":2}']
+    const fetchMock = vi.fn<typeof fetch>(
+      async () =>
+        new Response(streamed(chunks), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    )
+    const rows: number[] = []
+
+    const file = await new ReviewApiClient({ csrf, fetch: fetchMock }).downloadActivityWritePlan(
+      'json',
+      undefined,
+      (count) => rows.push(count),
+    )
+
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const [path, init] = fetchMock.mock.calls[0] ?? []
+    expect(path).toBe('/api/v1/activity/write-plan?format=json')
+    expect(init).toMatchObject({ credentials: 'same-origin', cache: 'no-store' })
+    expect(init?.method ?? 'GET').toBe('GET')
+    expect(rows).toEqual([0, 2, 2])
+    expect(file.filename).toBe('mechanical-librarian-write-plan.json')
+    expect(file.blob.type).toBe('application/json')
+    expect(await file.blob.text()).toBe(chunks.join(''))
+  })
+
+  it('reads the whole body when it cannot be streamed', async () => {
+    const response = new Response('"Library"\r\n', { status: 200 })
+    Object.defineProperty(response, 'body', { value: null })
+    const file = await new ReviewApiClient({
+      csrf,
+      fetch: vi.fn<typeof fetch>(async () => response),
+    }).downloadActivityWritePlan('csv')
+
+    expect(file.filename).toBe('mechanical-librarian-write-plan.csv')
+    expect(await file.blob.text()).toBe('"Library"\r\n')
+  })
+
+  it('never returns a file whose connection ended before its end', async () => {
+    const client = new ReviewApiClient({
+      csrf,
+      fetch: vi.fn<typeof fetch>(
+        async () => new Response(streamed(['"Library"\r\n'], new TypeError('network'))),
+      ),
+    })
+
+    await expect(client.downloadActivityWritePlan('csv')).rejects.toBeInstanceOf(
+      NetworkUnavailableError,
+    )
+  })
+
+  it.each([
+    [
+      'session expiry',
+      () => Response.json({ error: { code: 'session' } }, { status: 401 }),
+      SessionExpiredError,
+    ],
+    [
+      'an earlier build',
+      () => new Response('x', { status: 200, headers: { 'x-ml-build-identity': 'e'.repeat(64) } }),
+      BuildMismatchError,
+    ],
+    [
+      'an unavailable plan',
+      () => Response.json({ error: { code: 'unavailable' } }, { status: 503 }),
+      ApiError,
+    ],
+  ])('refuses %s as every read does', async (_name, answer, refusal) => {
+    const client = new ReviewApiClient({
+      csrf,
+      buildIdentity: 'c'.repeat(64),
+      fetch: vi.fn<typeof fetch>(async () => answer()),
+    })
+
+    await expect(client.downloadActivityWritePlan('csv')).rejects.toBeInstanceOf(refusal)
+  })
+})
+
 describe('deferred Activity permission contract', () => {
   it('refuses a genuine earlier producer and requires both nullable fields', async () => {
     await expect(readActivity(activityV2Predecessor)).rejects.toBeInstanceOf(ResponseDecodeError)
@@ -4439,20 +4530,53 @@ describe('deferred Activity permission contract', () => {
         backup_ready,
         capabilities: [],
         configured_libraries: [],
-        prepared: { automatic: 0, human: 0, total: 0 },
-        example: {
-          after: 'After',
-          before: 'Before',
-          destination: 'title',
-          library: 'Fiction',
-          work_id: 'work-1',
+        prepared: { automatic: 0, human: 1, total: 1 },
+        plan: {
+          total: 1,
+          groups: [
+            {
+              library: 'Fiction',
+              destination: 'title',
+              kind: 'human',
+              count: 1,
+              rows: [
+                {
+                  work: 'Real Tigers',
+                  authors: 'Mick Herron',
+                  current: 'Not set',
+                  new: 'Real Tigers',
+                  reason: 'You chose this value',
+                  sources: ['Hardcover'],
+                },
+              ],
+            },
+          ],
         },
       }
-      expect(await readPermissionReadiness(response)).toEqual({
-        ...response,
-        example: { ...response.example, work_label: 'Work details unavailable' },
-      })
-      expect((await readPermissionReadiness({ ...response, example: null })).example).toBeNull()
+      expect(await readPermissionReadiness(response)).toEqual(response)
+      // The plan is required, its kinds are closed and a row states no identity.
+      await expect(readPermissionReadiness({ ...response, plan: undefined })).rejects.toMatchObject(
+        refused('required@/plan'),
+      )
+      await expect(readPermissionReadiness({ ...response, example: null })).rejects.toMatchObject(
+        refused('unknown_key@/example'),
+      )
+      const [group] = response.plan.groups as [(typeof response.plan.groups)[number]]
+      await expect(
+        readPermissionReadiness({
+          ...response,
+          plan: { ...response.plan, groups: [{ ...group, kind: 'policy' }] },
+        }),
+      ).rejects.toMatchObject({ name: 'ResponseDecodeError' })
+      await expect(
+        readPermissionReadiness({
+          ...response,
+          plan: {
+            ...response.plan,
+            groups: [{ ...group, rows: [{ ...group.rows[0], work_id: 'work-1' }] }],
+          },
+        }),
+      ).rejects.toMatchObject({ name: 'ResponseDecodeError' })
       await expect(readPermissionReadiness({ ...response, events: [] })).rejects.toMatchObject(
         refused('unknown_key@/events'),
       )

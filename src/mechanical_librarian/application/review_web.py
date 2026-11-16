@@ -93,7 +93,12 @@ from mechanical_librarian.domain.metadata_report import (
     field_evidence_providers,
     recording_variant_conflict,
 )
-from mechanical_librarian.domain.owner_settings import PROVIDER_LABELS
+from mechanical_librarian.domain.owner_settings import (
+    PROVIDER_LABELS,
+    audio_edition_label,
+    provider_label,
+    provider_source_labels,
+)
 from mechanical_librarian.domain.proposal_set import (
     audiobook_review_scope,
     canonical_target_fields,
@@ -1234,7 +1239,7 @@ def _automatic_field_decision(
     automatic_decision = context.automatic.get(destination)
     automatic_selection_sources: list[str] = []
     if automatic_decision is not None:
-        automatic_selection_sources = _provider_source_labels(
+        automatic_selection_sources = provider_source_labels(
             report,
             list(automatic_sources.get(automatic_source_outcome_ids[destination], ())),
         )
@@ -3204,7 +3209,7 @@ def _report_detail_provider_claims(
         if type(provider) is not dict or provider.get("provider") not in evidence:
             continue
         authority = provider.get("authority")
-        label = _provider_label(authority if type(authority) is str else None)
+        label = provider_label(authority if type(authority) is str else None)
         candidates = provider.get("candidates")
         if type(candidates) is not list:
             continue
@@ -3459,29 +3464,7 @@ def _corroboration_source_labels(
     """Project only closed provider authorities for #416 creator corroboration."""
     if reasons != ["explicit_author_corroborates_untyped_creator"]:
         return []
-    return _provider_source_labels(report, references)
-
-
-def _provider_source_labels(
-    report: MetadataReport,
-    references: list[str],
-) -> list[str]:
-    """Project provider labels for exact evidence references."""
-    by_reference = {
-        claim.reference: _provider_label(provider.authority)
-        for provider in report.providers
-        for candidate in (*provider.candidates, *provider.recording_lookup_candidates)
-        for claim in candidate.claims
-    } | {
-        claim.reference: _audio_edition_label(provider.authority)
-        for provider in report.providers
-        for edition in provider.audio_editions
-        for claim in edition.claims
-    }
-    labels = {
-        by_reference[reference] for reference in references if reference in by_reference
-    }
-    return sorted(labels)
+    return provider_source_labels(report, references)
 
 
 def _choice_contexts(
@@ -3621,7 +3604,7 @@ def _current_value_present(value: object) -> bool:
 def _choice_rationale(rows: list[dict[str, object]]) -> str:
     """Name the sources an alternative came from, or nothing when none is known (#1519)."""
     named = set(PROVIDER_LABELS.values()) | {
-        _audio_edition_label(authority) for authority in PROVIDER_LABELS
+        audio_edition_label(authority) for authority in PROVIDER_LABELS
     }
     return ", ".join(
         sorted(
@@ -3653,11 +3636,6 @@ def _choice_evidence(
         else "external_corroboration",
         "source": _choice_source_label(evidence),
     }
-
-
-def _audio_edition_label(authority: str | None) -> str:
-    """Name a provider's audio edition as such, never as its book (#1642)."""
-    return _provider_label(authority) + " audio edition"
 
 
 def _audio_edition_note(edition: dict[str, object]) -> str:
@@ -3692,7 +3670,7 @@ def _audio_edition_note(edition: dict[str, object]) -> str:
 def _choice_source_label(evidence: dict[str, str | None]) -> str:
     provider = evidence["provider"]
     if provider in PROVIDER_LABELS and evidence["source"] == "audio_edition":
-        return _audio_edition_label(provider)
+        return audio_edition_label(provider)
     if provider in PROVIDER_LABELS:
         return PROVIDER_LABELS[cast("str", provider)]
     if _choice_is_local(evidence):
@@ -3927,7 +3905,7 @@ def _review_unselectable_evidence(
                         "destinations": [destination],
                         "language": value if language else None,
                         "role": "external_observation",
-                        "source": _provider_label(provider.authority),
+                        "source": provider_label(provider.authority),
                         "observation": (
                             f"{label}: {value}. Not offered as a choice. {reason}"
                             + (
@@ -4399,7 +4377,7 @@ def _provider_outcomes(lanes: tuple[ProviderLaneFacts, ...]) -> list[dict[str, o
         {
             "provider_requests": lane.logical_requests,
             "lane_kind": lane.kind,
-            "provider": _provider_label(lane.authority),
+            "provider": provider_label(lane.authority),
             "reason": _ADAPTER_FAULT_REASON
             if lane.adapter_fault
             else _REFUSED_PROVIDER_REASON
@@ -4426,12 +4404,6 @@ def _provider_outcomes(lanes: tuple[ProviderLaneFacts, ...]) -> list[dict[str, o
         }
         for lane in lanes
     ]
-
-
-def _provider_label(authority: str | None) -> str:
-    if authority is None or authority not in PROVIDER_LABELS:
-        return "Provider (name unavailable)"
-    return PROVIDER_LABELS[authority]
 
 
 def _provider_comparison_notices(report: MetadataReport) -> list[str]:
@@ -4581,142 +4553,122 @@ _NOT_MATCHED_STATES = frozenset(
 )
 
 
-def _library_item(
-    case_document: str | None,
-    report_document: str,
-    decision_documents: tuple[str, ...],
-    automatic_attention_destinations: tuple[str, ...] = (),
-    suspended_destinations: tuple[str, ...] = (),
-    shadow_abstention_destinations: tuple[str, ...] = (),
-    terminal_document: str | None = None,
-    attention_count: int | None = None,
-    pinned_count: int = 0,
-    *,
-    decision_scope: DecisionScope | None = None,
-    validated: ValidatedDocumentCache | None = None,
-    match_state: str | None = None,
-    report_facts: LibraryReportFacts | None = None,
-) -> dict[str, object]:
-    if case_document is None:
-        try:
-            terminal = json.loads(report_document)
+def _terminal_library_item(document: str) -> dict[str, object] | None:
+    """The Library row of a work that stopped before a report.
+
+    None for any other document, which is a report and is read as one.
+    """
+    try:
+        terminal = json.loads(document)
+        if (
+            type(terminal) is dict
+            and terminal.get("schema_version") == "review-terminal-work-v1"
+        ):
+            status = terminal["status"]
+            lane = terminal["lane"]
+            root = terminal["failure_root"]
             if (
-                type(terminal) is dict
-                and terminal.get("schema_version") == "review-terminal-work-v1"
+                type(status) is not str
+                or type(lane) is not str
+                or (root is not None and type(root) is not str)
             ):
-                status = terminal["status"]
-                lane = terminal["lane"]
-                root = terminal["failure_root"]
-                if (
-                    type(status) is not str
-                    or type(lane) is not str
-                    or (root is not None and type(root) is not str)
-                ):
-                    raise ValueError
-                guidance = _TERMINAL_PREPARATION_GUIDANCE.get(status)
-                if guidance is None:
-                    raise ValueError
-                reason, recovery = guidance
-                reason += _refusing_track_sentence(status, root)
-                # Set by the store on a case's row whose Book matching check
-                # gave up, by the rule Policy counts it with (#1355).
-                check_given_up = terminal.get("check_given_up", False)
-                if type(check_given_up) is not bool:
-                    raise ValueError
-                media_health = _terminal_media_health(status, root)
-                work_id, item, library = (
-                    terminal["work_id"],
-                    terminal["item"],
-                    terminal["library"],
-                )
-                if (
-                    type(work_id) is not str
-                    or type(item) is not str
-                    or type(library) is not str
-                ):
-                    raise ValueError
-                title = terminal.get("title", "Preparation unavailable")
-                authors = terminal.get("authors", [])
-                media_kind = terminal.get("media_kind", "unknown")
-                if (
-                    type(title) is not str
-                    or type(authors) is not list
-                    or any(type(author) is not str for author in authors)
-                    or type(media_kind) is not str
-                ):
-                    raise ValueError
-                return {
-                    "authors": authors,
-                    "attention_count": 0,
-                    "pinned_count": 0,
-                    # Failed is its own lens, never counted as needing no
-                    # attention (#1413).
-                    "attention_state": "preparation_failed",
-                    # A work that stopped before a report has no retained cover.
-                    "cover": None,
-                    "detail_url": None,
-                    "detail_kind": None,
-                    "dispositions": ["terminal_failure"],
-                    "item": item,
-                    "library": library,
-                    "media_kind": media_kind,
-                    "review_case_id": None,
-                    "title": title,
-                    "work_id": work_id,
-                    "preparation": {
-                        "attempt": terminal["attempt"],
-                        "check_given_up": check_given_up,
-                        "diagnostic_reference": preparation_failure_reference(
-                            work_id,
-                            lane,
-                            terminal["attempt"],
-                            terminal["recovery_attempt"],
-                            status,
-                        ),
-                        # The same closed shape the report detail carries, so
-                        # a reader holds one media-health vocabulary whether
-                        # the item produced a report or stopped before one.
-                        "media_health": media_health,
-                        "provider": (
-                            "provider"
-                            if status in _TRACK_ROOT_STATUSES
-                            else (root or "provider")
-                        ),
-                        "reason": reason,
-                        "recovery": recovery,
-                        "recovery_attempt": terminal["recovery_attempt"],
-                        "stage": lane,
-                        "status": status,
-                    },
-                    "preparation_outcomes": [],
-                    "summary": {
-                        "fields": [],
-                        "reason": reason,
-                        "state": "preparation_failed",
-                    },
-                    # A work with no report has no current value to flag.
-                    "value_flags": [],
-                }
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
-            raise ReviewWebError("unavailable") from error
-    case: CaseBrowseFacts | None
-    if match_state is not None and (
-        case_document is not None or match_state not in _NOT_MATCHED_STATES
-    ):
-        raise ReviewWebError("unavailable")
-    if case_document is None:
-        report, case = (
-            (_report_facts(report_document) if report_facts is None else report_facts),
-            None,
-        )
-    else:
-        case, report = _reused_or_parsed(
-            validated,
-            BROWSE_FACTS_REUSE,
-            partial(_case_and_report, case_document, report_document),
-            case_document,
-            report_document,
-        )
+                raise ValueError
+            guidance = _TERMINAL_PREPARATION_GUIDANCE.get(status)
+            if guidance is None:
+                raise ValueError
+            reason, recovery = guidance
+            reason += _refusing_track_sentence(status, root)
+            # Set by the store on a case's row whose Book matching check
+            # gave up, by the rule Policy counts it with (#1355).
+            check_given_up = terminal.get("check_given_up", False)
+            if type(check_given_up) is not bool:
+                raise ValueError
+            media_health = _terminal_media_health(status, root)
+            work_id, item, library = (
+                terminal["work_id"],
+                terminal["item"],
+                terminal["library"],
+            )
+            if (
+                type(work_id) is not str
+                or type(item) is not str
+                or type(library) is not str
+            ):
+                raise ValueError
+            title = terminal.get("title", "Preparation unavailable")
+            authors = terminal.get("authors", [])
+            media_kind = terminal.get("media_kind", "unknown")
+            if (
+                type(title) is not str
+                or type(authors) is not list
+                or any(type(author) is not str for author in authors)
+                or type(media_kind) is not str
+            ):
+                raise ValueError
+            return {
+                "authors": authors,
+                "attention_count": 0,
+                "pinned_count": 0,
+                # Failed is its own lens, never counted as needing no
+                # attention (#1413).
+                "attention_state": "preparation_failed",
+                # A work that stopped before a report has no retained cover.
+                "cover": None,
+                "detail_url": None,
+                "detail_kind": None,
+                "dispositions": ["terminal_failure"],
+                "item": item,
+                "library": library,
+                "media_kind": media_kind,
+                "review_case_id": None,
+                "title": title,
+                "work_id": work_id,
+                "preparation": {
+                    "attempt": terminal["attempt"],
+                    "check_given_up": check_given_up,
+                    "diagnostic_reference": preparation_failure_reference(
+                        work_id,
+                        lane,
+                        terminal["attempt"],
+                        terminal["recovery_attempt"],
+                        status,
+                    ),
+                    # The same closed shape the report detail carries, so
+                    # a reader holds one media-health vocabulary whether
+                    # the item produced a report or stopped before one.
+                    "media_health": media_health,
+                    "provider": (
+                        "provider"
+                        if status in _TRACK_ROOT_STATUSES
+                        else (root or "provider")
+                    ),
+                    "reason": reason,
+                    "recovery": recovery,
+                    "recovery_attempt": terminal["recovery_attempt"],
+                    "stage": lane,
+                    "status": status,
+                },
+                "preparation_outcomes": [],
+                "summary": {
+                    "fields": [],
+                    "reason": reason,
+                    "state": "preparation_failed",
+                },
+                # A work with no report has no current value to flag.
+                "value_flags": [],
+            }
+        return None
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+        raise ReviewWebError("unavailable") from error
+
+
+def _decided_destinations(
+    case_document: str | None,
+    decision_documents: tuple[str, ...],
+    decision_scope: DecisionScope | None,
+    validated: ValidatedDocumentCache | None,
+) -> tuple[set[str], dict[str, str]]:
+    """The destinations a recorded decision settles, and each automatic outcome."""
     decisions: set[str] = set()
     automatic_outcomes: dict[str, str] = {}
     scope: DecisionScope | None = None
@@ -4766,6 +4718,50 @@ def _library_item(
             automatic_outcomes[destination] = str(automatic["outcome"])
             if automatic["outcome"] != "abstention":
                 decisions.add(destination)
+    return decisions, automatic_outcomes
+
+
+def _library_item(
+    case_document: str | None,
+    report_document: str,
+    decision_documents: tuple[str, ...],
+    automatic_attention_destinations: tuple[str, ...] = (),
+    suspended_destinations: tuple[str, ...] = (),
+    shadow_abstention_destinations: tuple[str, ...] = (),
+    terminal_document: str | None = None,
+    attention_count: int | None = None,
+    pinned_count: int = 0,
+    *,
+    decision_scope: DecisionScope | None = None,
+    validated: ValidatedDocumentCache | None = None,
+    match_state: str | None = None,
+    report_facts: LibraryReportFacts | None = None,
+) -> dict[str, object]:
+    if case_document is None:
+        stopped = _terminal_library_item(report_document)
+        if stopped is not None:
+            return stopped
+    case: CaseBrowseFacts | None
+    if match_state is not None and (
+        case_document is not None or match_state not in _NOT_MATCHED_STATES
+    ):
+        raise ReviewWebError("unavailable")
+    if case_document is None:
+        report, case = (
+            (_report_facts(report_document) if report_facts is None else report_facts),
+            None,
+        )
+    else:
+        case, report = _reused_or_parsed(
+            validated,
+            BROWSE_FACTS_REUSE,
+            partial(_case_and_report, case_document, report_document),
+            case_document,
+            report_document,
+        )
+    decisions, automatic_outcomes = _decided_destinations(
+        case_document, decision_documents, decision_scope, validated
+    )
     proposals = () if case is None else case.proposals
     attention = (
         []

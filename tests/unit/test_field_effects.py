@@ -58,6 +58,7 @@ from mechanical_librarian.application.field_effects import (
     GuardedFieldApplication,
 )
 from mechanical_librarian.application.operations import StageTimer, aggregate_incidents
+from mechanical_librarian.application.write_plan import inline_row, plan_reason
 from mechanical_librarian.domain import audiobook_decision_qualification
 from mechanical_librarian.domain.activity_records import readable_activity_event
 from mechanical_librarian.domain.automatic_decision import (
@@ -1215,20 +1216,382 @@ def test_activity_page_cache_declines_valid_reports_over_its_byte_budget(
     assert projection._activity_page_cache_bytes == first_bytes
 
 
-def test_activity_example_selector_returns_one_current_published_candidate(
+def test_plan_entries_list_the_current_published_candidate(
     effects: _EffectEnvironment,
 ) -> None:
     from tests.unit.test_activity_end_to_end import _automatic_candidate_decision
 
-    _automatic_candidate_decision(effects)
+    decision = _automatic_candidate_decision(effects)
 
-    document = effects.repository.pending_field_effect_activity_example_document()
-
-    assert document is not None
-    selected = AutomaticDecision.from_json(document)
+    entries = effects.repository.pending_field_effect_plan_entries(None, 100, ())
+    listed = [entry for entry in entries if entry[4] == decision.decision_id]
+    assert len(listed) == 1
+    assert listed[0][2:4] == ("automatic", "description")
+    documents = effects.repository.field_effect_plan_documents((decision.decision_id,))
+    selected = AutomaticDecision.from_json(documents[decision.decision_id])
     snapshot = PersistedFieldEffectAuthority(effects.repository).resolve(selected)
     assert snapshot.review_case_id == selected.review_case_id
     assert snapshot.destination == selected.destination
+    assert effects.repository.field_effect_plan_row(selected) == {
+        "work": "Real Tigers",
+        "authors": "Mick Herron",
+        "sources": ["Hardcover"],
+    }
+
+
+def _owner_accepted(effects: _EffectEnvironment) -> None:
+    from tests.unit.test_activity_end_to_end import _admitted_case
+
+    case, proposal = _admitted_case(effects)
+    effects.repository.record_human_decision(
+        HumanDecision.create(
+            case,
+            proposal_id=proposal["proposal_id"],
+            target_fingerprint=case.target_fingerprint,
+            destination=proposal["destination"],
+            actor="owner",
+            outcome="accept",
+            selected_value=proposal["result"]["alternatives"][0]["value"],
+            idempotency_key="activity-plan-reuse-0001",
+            occurred_at=1_000,
+        )
+    )
+
+
+def _automatic_prepared(effects: _EffectEnvironment) -> None:
+    from tests.unit.test_activity_end_to_end import _automatic_candidate_decision
+
+    _automatic_candidate_decision(effects)
+
+
+@pytest.mark.parametrize(
+    ("prepare", "origin"),
+    ((_owner_accepted, "human"), (_automatic_prepared, "automatic")),
+    ids=("owner", "automatic"),
+)
+def test_read_scoped_reuse_resolves_exactly_what_a_fresh_read_resolves(
+    effects: _EffectEnvironment,
+    prepare: Callable[[_EffectEnvironment], None],
+    origin: str,
+) -> None:
+    """Reuse inside one plan read changes nothing a resolve returns (#1336)."""
+    prepare(effects)
+    entries = effects.repository.pending_field_effect_plan_entries(None, 100, ())
+    assert {entry[2] for entry in entries} == {origin}
+    documents = effects.repository.field_effect_plan_documents(
+        tuple(entry[4] for entry in entries)
+    )
+    authority = PersistedFieldEffectAuthority(effects.repository)
+
+    def resolved() -> list[tuple[object, object]]:
+        values: list[tuple[object, object]] = []
+        for entry in entries:
+            source = ContinuousGuardedApplication._decision(documents[entry[4]])
+            values.append(
+                (
+                    authority.resolve(source),
+                    effects.repository.field_effect_plan_row(source),
+                )
+            )
+        return values
+
+    activity = effects.repository._field_effect_activity
+    fresh = resolved()
+    with activity._plan_documents():
+        assert activity._plan_reuse is not None
+        reused = resolved()
+        again = resolved()
+        # Every document parsed in the read is held, within its bound.
+        assert activity._plan_reuse.case.cache_info().currsize >= 1
+    assert activity._plan_reuse is None
+    assert fresh == reused == again
+    assert resolved() == fresh
+
+
+def _plan_application(repository: Any) -> ContinuousGuardedApplication:
+    return ContinuousGuardedApplication(
+        repository,
+        {},
+        {},
+        PersistedFieldEffectAuthority(repository),
+        (("primary", "ebooks"),),
+        lambda: 2_000_000_000,
+        lambda *_: None,
+        activity_only=True,
+    )
+
+
+def _resolved_with_and_without_reuse(repository: Any, decisions: list[Any]) -> None:
+    """A plan read's reuse changes nothing a resolve or a row returns (#1336)."""
+    authority = PersistedFieldEffectAuthority(repository)
+
+    def resolved() -> list[tuple[object, object]]:
+        return [
+            (authority.resolve(source), repository.field_effect_plan_row(source))
+            for source in decisions
+        ]
+
+    activity = repository._field_effect_activity
+    fresh = resolved()
+    with activity._plan_documents():
+        reused = resolved()
+        again = resolved()
+        assert activity._plan_reuse.report.cache_info().currsize >= 1
+    assert activity._plan_reuse is None
+    assert fresh == reused == again
+
+
+def _owner_choice(effects: _EffectEnvironment) -> HumanDecision:
+    _owner_accepted(effects)
+    repository = effects.repository
+    ((*_, decision_id, _),) = repository.pending_field_effect_plan_entries(
+        None, 100, ()
+    )
+    return HumanDecision.from_json(
+        repository.field_effect_plan_documents((decision_id,))[decision_id]
+    )
+
+
+def _report_again(effects: _EffectEnvironment) -> None:
+    """The work is reported again, so its earlier case is no longer current."""
+    report = metadata_report("Old title", "3", "4", item_id="book-1")
+    effects.repository.publish(report, lambda: True)
+    proposal_set = evaluate_report(report)
+    effects.repository.publish_proposal(proposal_set)
+    effects.repository.admit_review_case(proposal_set)
+
+
+def test_a_value_committed_between_two_plan_snapshots_is_read_fresh(
+    effects: _EffectEnvironment,
+) -> None:
+    """What one snapshot of a file validated is never served in the next (#1336)."""
+    decision = _owner_choice(effects)
+    repository = effects.repository
+    activity = repository._field_effect_activity
+    read: list[object] = []
+
+    def snapshot() -> dict[str, object]:
+        assert repository._connection.in_transaction
+        read.append(repository.prepared_field_effect_decisions((decision.decision_id,)))
+        for _ in range(2):
+            try:
+                read.append(repository.field_effect_plan_row(decision)["work"])
+            except FieldEffectError as error:
+                read.append(error.code)
+        # Inside a snapshot a validated case is reused; a refusal never is.
+        assert activity._plan_reuse is not None
+        read.append(activity._plan_reuse.case.cache_info().hits)
+        return {}
+
+    repository.field_effect_write_plan_snapshot(snapshot, lambda: False)
+    assert not repository._connection.in_transaction
+    assert activity._plan_reuse is None
+    _report_again(effects)
+    repository.field_effect_write_plan_snapshot(snapshot, lambda: False)
+
+    prepared = frozenset({decision.decision_id})
+    assert read == [
+        prepared,
+        "Old title",
+        "Old title",
+        1,
+        frozenset(),
+        "authority_binding",
+        "authority_binding",
+        0,
+    ]
+    with pytest.raises(FieldEffectError, match="invalid_limit"):
+        repository.prepared_field_effect_decisions(("x",) * 101)
+    assert repository.prepared_field_effect_decisions(()) == frozenset()
+
+
+@pytest.mark.parametrize("moved", (False, True), ids=("still-prepared", "moved"))
+def test_a_plan_file_holds_no_transaction_while_it_sends(
+    effects: _EffectEnvironment, monkeypatch: pytest.MonkeyPatch, moved: bool
+) -> None:
+    """Each read of a file has ended before bytes are sent, and a change that
+    moved after it was listed is left out and counted (#1336)."""
+    from mechanical_librarian.application.write_plan import ProducedStream
+
+    _owner_choice(effects)
+    repository = effects.repository
+    open_at_emit: list[bool] = []
+    emit = ProducedStream._emit
+
+    def recording(stream: ProducedStream, chunk: bytes) -> None:
+        open_at_emit.append(repository._connection.in_transaction)
+        if moved and len(open_at_emit) == 1:
+            # Between the list read and the read of its rows.
+            _report_again(effects)
+        emit(stream, chunk)
+
+    monkeypatch.setattr(ProducedStream, "_emit", recording)
+    stream = _plan_application(repository).activity_write_plan_file(
+        "json", lambda: False, {}
+    )
+    chunks = []
+    try:
+        while (chunk := stream.next_chunk()) is not None:
+            chunks.append(chunk)
+    finally:
+        stream.close()
+
+    # The head, the chunk of rows unless its one row moved, and the summary.
+    assert open_at_emit == [False] * (2 if moved else 3)
+    assert not repository._connection.in_transaction
+    document = json.loads(b"".join(chunks))
+    assert len(document["changes"]) == document["listed"]
+    assert {key: document[key] for key in document if key != "changes"} == {
+        "changed": int(moved),
+        "listed": int(not moved),
+        "made_at": 2_000_000_000,
+        "total": 1,
+        "truncated": False,
+        "unreadable": 0,
+    }
+
+
+def test_an_automatic_decision_is_planned_under_its_policy_setting(
+    effects: _EffectEnvironment,
+) -> None:
+    from tests.unit.test_activity_end_to_end import _automatic_candidate_decision
+
+    decision = _automatic_candidate_decision(effects)
+
+    assert plan_reason(decision) == (
+        f"{policy_setting_label(decision.policy_category)}: "
+        f"{policy_option_label(decision.policy_option, decision.policy_category)}"
+    )
+    assert plan_reason(decision).startswith("Description: ")
+    row = _plan_application(effects.repository)._plan_row(decision.to_json())
+    assert row is not None
+    assert (row.kind, row.reason, row.sources) == (
+        "automatic",
+        plan_reason(decision),
+        ("Hardcover",),
+    )
+
+
+def test_a_cover_decision_names_its_cited_cover_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D4: a cover names its candidate's sources; a local one is the library record."""
+    from mechanical_librarian.application.cover_packets import cover_source_reference
+    from mechanical_librarian.domain import cover_qualification_policy
+
+    monkeypatch.setattr(
+        cover_qualification_policy,
+        "MEASURED_REPLACEMENT_QUALIFICATION_SHA256",
+        SYNTHETIC_MEASURED_RECORD,
+    )
+    with audiobook_cover_environment(
+        tmp_path / "cover",
+        [(200, 200), (600, 600)],
+        measured_record=SYNTHETIC_MEASURED_RECORD,
+    ) as state:
+        (decision,) = state.decisions
+        assert decision.policy_category == "cover_order"
+        assert plan_reason(decision).startswith("Cover: ")
+        assert state.repo.field_effect_plan_row(decision) == {
+            "work": "Ember Tide Protocol",
+            "authors": "Corin Halloway",
+            "sources": ["Audible"],
+        }
+        row = _plan_application(state.repo)._plan_row(decision.to_json())
+        assert row is not None
+        assert (row.kind, row.destination, row.sources) == (
+            "automatic",
+            "cover",
+            ("Audible",),
+        )
+        # The owner reads words for a cover, never its identity.
+        assert inline_row(row)["new"] == "Selected cover"
+        # A citation of the library's own cover is named as the local record.
+        incumbent = next(
+            source
+            for source in state.report.cover_sources
+            if source.kind is CoverSourceKind.ABS
+        )
+        local = cover_source_reference(state.report.report_id, incumbent.source_id)
+        activity = state.repo._field_effect_activity
+        assert activity._plan_source_labels(state.report.report_id, (local,)) == [
+            "Local library record"
+        ]
+        assert activity._plan_source_labels(
+            state.report.report_id, (*decision.citation_ids, local)
+        ) == ["Audible", "Local library record"]
+        # A cover the owner chooses cites its source itself, and names it too.
+        proposal = next(
+            row for row in state.case.proposals if row["destination"] == "cover"
+        )
+        replacement = next(
+            alternative
+            for alternative in proposal["result"]["alternatives"]
+            if alternative["assessment"] == "replaces_target"
+        )
+        chosen = HumanDecision.create(
+            state.case,
+            proposal_id=proposal["proposal_id"],
+            target_fingerprint=state.case.target_fingerprint,
+            destination="cover",
+            actor="owner",
+            outcome="accept",
+            selected_value=replacement["value"],
+            idempotency_key="owner-cover-0001",
+            occurred_at=20,
+        )
+        assert state.repo.field_effect_plan_row(chosen)["sources"] == ["Audible"]
+        assert activity._plan_source_labels(
+            state.report.report_id, (incumbent.source_id,)
+        ) == ["Local library record"]
+        assert activity._plan_source_labels(state.report.report_id, ()) == []
+        _resolved_with_and_without_reuse(state.repo, [decision])
+
+
+@pytest.mark.parametrize(
+    ("origin", "kind", "reason"),
+    (
+        ("automatic_policy", "automatic", "Description advice"),
+        ("human", "human", "You chose this value"),
+    ),
+    ids=("automatic", "human"),
+)
+def test_description_advice_is_planned_naming_no_sources(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    origin: str,
+    kind: str,
+    reason: str,
+) -> None:
+    """D4: description advice keeps digests only, so it names no sources."""
+    from tests.support.description_advice import (
+        _prepared,
+        qualify_description_advice,
+    )
+
+    # Automatic advice is admitted only once a record names its adviser (#1901).
+    qualify_description_advice(monkeypatch)
+
+    repository, store, binding, candidate, _ = _prepared(tmp_path)
+    try:
+        decision = store.admit(candidate.candidate_id, binding, origin, "a" * 64, 11)
+        assert plan_reason(decision) == reason
+        assert repository.field_effect_plan_row(decision) == {
+            "work": "Real Tigers",
+            "authors": "Mick Herron",
+            "sources": [],
+        }
+        row = _plan_application(repository)._plan_row(decision.to_json())
+        assert row is not None
+        assert (row.kind, row.destination, row.reason, row.sources) == (
+            kind,
+            "description",
+            reason,
+            (),
+        )
+        _resolved_with_and_without_reuse(repository, [decision])
+    finally:
+        repository.close()
 
 
 def test_activity_backup_readiness_rechecks_each_exact_database_revision(
