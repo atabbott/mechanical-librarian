@@ -241,7 +241,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.domain.shadow_decision",
         "DECISION_POLICY_VERSION",
-        "deterministic-shadow-decision-policy-v28",
+        "deterministic-shadow-decision-policy-v29",
     ),
     (
         "mechanical_librarian.application.cover_observation",

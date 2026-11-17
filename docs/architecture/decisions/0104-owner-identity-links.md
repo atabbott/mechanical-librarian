@@ -127,6 +127,14 @@ about the work, and it should steer what preparation reads.
      manual with the closed reason `owner_link_unqualified`. It carries
      ADR-0092's would-admit note, the alternative the ungated engine selects,
      and the shadow outcome records the note under the rule `owner_link`.
+   - The rich fields' Automatic outcome (series, genres, tags, description
+     fill, subtitle fill, ISBN and ASIN) abstains the same way when the value
+     it would write cites only such records: reason `owner_link_unqualified`,
+     the note naming the projected value. No `automatic_decisions` row is
+     minted, so the scheduler writes nothing, and the field reads "Only the
+     book you linked supports this value, so it is left to you." The
+     installed qualifier's link phase found anchor-admitted Hardcover genres
+     decided and written before this gate (#1477).
    - A cover all of whose records were kept only through the link or its
      anchor reads `owner_link_match` when one of them is the link lane's own,
      and `owner_link_anchor_match` otherwise, with reason
@@ -173,7 +181,8 @@ about the work, and it should steer what preparation reads.
    ([data privacy](../data-privacy.md#what-is-never-retained)).
 10. **Versions; clean rebuild.** `metadata-report-v82` adds `owner_link`.
     `fixed-conservative-v48` covers the identifier rule.
-    `deterministic-shadow-decision-policy-v28`, `shadow-review-packet-v10`
+    `deterministic-shadow-decision-policy-v29` (v28 gated the decision
+    engine, v29 the rich fields' Automatic outcome too), `shadow-review-packet-v10`
     (the candidate summary's `owner_link_only`) and `shadow-outcome-set-v12`
     cover the gate and its note. `cover-identity-report-v4`,
     `cover-policy-report-v6` and `cover-consideration-v11` carry the two

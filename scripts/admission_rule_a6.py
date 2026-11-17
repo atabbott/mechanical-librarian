@@ -497,7 +497,8 @@ def table_for(version: str) -> Table | None:
     and every version from v23 through v27 shares that one
     _candidate_is_eligible. The checkout's v28 adds only the owner-link gate
     (#1477), which no measured snapshot's packet can meet: each predates the
-    owner link, so its summaries never mark a value link-only.
+    owner link, so its summaries never mark a value link-only. v29 extends that
+    gate to the rich fields' Automatic outcome, outside the mirrored clauses.
     """
     matched = _ENGINE.match(version)
     if matched is None:
@@ -507,7 +508,7 @@ def table_for(version: str) -> Table | None:
         return "v9"
     if number == 22:
         return "v22"
-    if 23 <= number <= 28:
+    if 23 <= number <= 29:
         return "v23"
     return None
 

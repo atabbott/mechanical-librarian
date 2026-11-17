@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from contextlib import ExitStack
+from contextlib import ExitStack, closing
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -57,6 +57,7 @@ from mechanical_librarian.application.owner_link_preparation import (
     owner_link_anchor_moved,
     resettled_owner_link,
 )
+from mechanical_librarian.application.review_web import InspectCurrentReviewCase
 from mechanical_librarian.domain import proposal_set, reviewer_decision_summary
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
@@ -94,7 +95,8 @@ from mechanical_librarian.domain.work_identity_levels import WorkIdentityLevel
 from tests.integration import test_owner_link_preparation as prep
 from tests.support.audiobook_providers import payload
 from tests.support.cover_producers import _preview
-from tests.support.hardcover_evidence import books_envelope
+from tests.support.genre_reports import publish_genre_case
+from tests.support.hardcover_evidence import books_envelope, hardcover_answer
 from tests.support.metadata_report_doubles import (
     FakeAudioInspector,
     FakeInspector,
@@ -800,3 +802,201 @@ def test_a_link_record_stays_when_the_phases_together_pass_the_bound(
     assert len(by_family[prep.ISBN].candidates) == 1
     assert by_family[OTHER_ISBN].status is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
     assert not by_family[OTHER_ISBN].candidates
+
+
+# --- The live automatic policy: rich fields decide nothing a link reached ---
+
+
+_GENRES = ["Synthetic Fantasy"]
+_DESCRIPTION = (
+    "A lighthouse keeper on a drowned coast finds a ledger that records the"
+    " tides of a sea that no longer exists, and follows it inland."
+)
+
+
+def _genre_book() -> dict[str, object]:
+    """The linked book, carrying one Hardcover genre."""
+    (book,) = prep._linked_book()
+    return {
+        **book,
+        "description": _DESCRIPTION,
+        "taggings": [
+            {
+                "id": 1,
+                "tag": {
+                    "id": 1,
+                    "tag": _GENRES[0],
+                    "tag_category": {"id": 1, "category": "Genre"},
+                },
+            }
+        ],
+    }
+
+
+def _anchored_hardcover() -> HardcoverMetadataProvider:
+    """Hardcover finds the linked book only when asked with the anchor."""
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        titles = (json.loads(request.content).get("variables") or {}).get(
+            "titles"
+        ) or []
+        books = [_genre_book()] if prep.LINKED_TITLE in titles else []
+        return prep._json(hardcover_answer(request, [], books))
+
+    return HardcoverMetadataProvider(
+        "hardcover",
+        httpx.Client(transport=httpx.MockTransport(handle)),
+        65_536,
+        sleep=lambda _: None,
+        jitter=lambda: 0.0,
+    )
+
+
+def _genre_report(tmp_path: Path, basis: str) -> MetadataReport:
+    """An ebook whose only genre is a Hardcover record the link reached.
+
+    `owner_link`: the Hardcover work link's own record. `owner_link_anchor`:
+    an Open Library edition link, and Hardcover's record found by the
+    anchor's title and creator, as in the installed qualifier's link phase.
+    """
+    path = prep._store(tmp_path)
+    google = ProviderBinding(
+        "google_books",
+        True,
+        lambda: prep._google(
+            [],
+            lambda query: (
+                prep._volume(prep.LINKED_TITLE, prep.LINKED_AUTHOR)
+                if query == f"isbn:{prep.ISBN}"
+                else {"totalItems": 0}
+            ),
+        ),
+        authority="google_books",
+    )
+    bindings: tuple[ProviderBinding, ...]
+    if basis == "owner_link":
+        prep._link(path, "ebooks", "ebook", prep.WORK_LINK)
+        bindings = (
+            ProviderBinding(
+                "hardcover",
+                True,
+                lambda: prep._hardcover(
+                    lambda: prep._json(books_envelope([_genre_book()]))
+                ),
+                authority="hardcover",
+            ),
+        )
+    else:
+        prep._link(path, "ebooks", "ebook", prep.EDITION_LINK)
+        bindings = (
+            ProviderBinding(
+                "open_library",
+                True,
+                lambda: prep._open_library([], "eBook"),
+                authority="open_library",
+            ),
+            google,
+            ProviderBinding(
+                "hardcover", True, _anchored_hardcover, authority="hardcover"
+            ),
+        )
+    report = prep._prepare_ebook(path, bindings)
+    assert report.owner_link is not None
+    assert report.owner_link.outcome == "admitted"
+    hardcover = prep._provider(report, "hardcover")
+    genre_records = [
+        candidate
+        for candidate in hardcover.candidates
+        if any(claim.kind is ClaimKind.GENRE for claim in candidate.claims)
+    ]
+    assert genre_records
+    assert {
+        owner_link_reached(report, hardcover, value) for value in genre_records
+    } == {basis}
+    return report
+
+
+def _automatic_outcome(
+    tmp_path: Path, report: MetadataReport, category: str, destination: str
+) -> tuple[Any, ...]:
+    """Publish the case with one category Automatic and read what was decided."""
+    tmp_path.mkdir(mode=0o700)
+    with closing(open_repository(tmp_path / "policy.sqlite3")) as repository:
+        case_id, _ = publish_genre_case(repository, report, category=category)
+        outcomes = json.loads(repository.persist_shadow_outcome(case_id, 4))
+        outcome = next(
+            value
+            for value in outcomes["outcomes"]
+            if value["destination"] == destination
+        )
+        decided = {
+            json.loads(raw)["destination"]
+            for raw in repository.get_review_case_decisions(case_id)
+        }
+        field = next(
+            value
+            for value in InspectCurrentReviewCase(repository).run(case_id)["fields"]
+            if value["destination"] == destination
+        )
+    return outcome, decided, field
+
+
+@pytest.mark.parametrize("basis", ["owner_link", "owner_link_anchor"])
+def test_automatic_genres_decide_nothing_only_the_link_reached(
+    tmp_path: Path, basis: str
+) -> None:
+    # The installed qualifier's link phase found an anchor-admitted Hardcover
+    # genre decided and written automatically (#1477 increment 2).
+    report = _genre_report(tmp_path, basis)
+    category = destination = "genres"
+    outcome, decided, field = _automatic_outcome(
+        tmp_path / "gated", report, category, destination
+    )
+    assert (outcome["policy_destination"], outcome["disposition"]) == (
+        "automatic",
+        "abstention",
+    )
+    assert outcome["reason_code"] == "owner_link_unqualified"
+    assert outcome["candidate_id"] is None
+    # ADR-0092's note names the value the ungated policy would have written.
+    assert outcome["would_admit"]["rule"] == "owner_link"
+    assert destination not in decided
+    assert field["automatic_decision"] is None
+    assert _GENRES in [option["value"] for option in field["proposed_values"]]
+    assert field["automatic_withheld_reason"] == (
+        "Only the book you linked supports this value, so it is left to you."
+    )
+    # Control: the same records with an ordinary admission decide.
+    with _ungated():
+        outcome, decided, field = _automatic_outcome(
+            tmp_path / "ungated", report, category, destination
+        )
+    assert (outcome["disposition"], outcome["reason_code"]) == (
+        "candidate",
+        "unique_supported_candidate",
+    )
+    assert outcome["candidate_id"] is not None
+    assert "would_admit" not in outcome
+    assert destination in decided
+
+
+@pytest.mark.parametrize("basis", ["owner_link", "owner_link_anchor"])
+def test_an_automatic_description_fill_decides_nothing_only_the_link_reached(
+    tmp_path: Path, basis: str
+) -> None:
+    """The linked book's description is offered and never filled for the owner.
+
+    Here the description rules' own applicability check already abstains, with
+    or without the gate; `test_shadow_outcome_owner_link` proves the gate on a
+    projected description.
+    """
+    report = _genre_report(tmp_path, basis)
+    for label, context in (("gated", ExitStack()), ("ungated", _ungated())):
+        with context:
+            outcome, decided, field = _automatic_outcome(
+                tmp_path / label, report, "description_fill", "description"
+            )
+        assert outcome["policy_destination"] == "automatic"
+        assert outcome["candidate_id"] is None
+        assert "description" not in decided
+        assert _DESCRIPTION in [value["value"] for value in field["proposed_values"]]

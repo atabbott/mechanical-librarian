@@ -234,7 +234,7 @@ def test_the_checkout_engine_is_mirrored_by_the_v23_table() -> None:
     assert a6.table_for("deterministic-shadow-decision-policy-v12") is None
     # Outside the mirrored range: a later engine is never read as v22.
     assert a6.table_for("deterministic-shadow-decision-policy-v21") is None
-    assert a6.table_for("deterministic-shadow-decision-policy-v29") is None
+    assert a6.table_for("deterministic-shadow-decision-policy-v30") is None
 
 
 def test_a_degraded_candidate_fails_its_own_check_from_v23() -> None:
