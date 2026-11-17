@@ -98,10 +98,16 @@ CEILING = {
     # and adapter factory, the pacers built once and passed to the pipeline,
     # and one keyword argument at each review application; and kept owner
     # search's hourly counts on the activation, one argument to each service.
-    "composition.py": 3427,
+    # 3486 since #1372 PR 4 wired the taste judge: one constructor of the
+    # judge service, one opener that binds the cover authority to the lane's
+    # repository, the two lanes passed to CoverTasteBackground, and one
+    # keyword argument for the judge's daily limit.
+    "composition.py": 3486,
     # 142 since #1372 PR 1c's run_taste_build_reviewer, the taste build's
-    # counterpart of run_description_reviewer.
-    "contained_reviewer.py": 142,
+    # counterpart of run_description_reviewer; PR 4 renamed it
+    # run_taste_reviewer, which takes a build or a judgement: 146 for the
+    # judge request's import and the union parameter.
+    "contained_reviewer.py": 146,
     **ENTRY_POINTS,
 }
 DEF_COUNT = {
@@ -111,9 +117,10 @@ DEF_COUNT = {
     # _OfflineSessionStore.end_review_sessions_except; 115 since #1385's
     # sign-out refusal, _OfflineSessionStore.end_other_review_sessions
     # (2026-11-15); 116 since #1477's _compose_owner_search, a one-call
-    # constructor.
-    "composition.py": 116,
-    # 7 since PR 1c's run_taste_build_reviewer and its dispatch recorder.
+    # constructor; 118 since #1372 PR 4's _compose_cover_taste_judge and
+    # _open_cover_taste_repository, one-call constructors.
+    "composition.py": 118,
+    # 7 since PR 1c's taste reviewer and its dispatch recorder.
     "contained_reviewer.py": 7,
 }
 # Set to the measured size only by an owner review; lowered by a refactor
@@ -149,8 +156,10 @@ RESIDUAL: dict[str, int | None] = {
     # 203 since it leases that lane's repository and closes it on stop; 216
     # since #1064 opens the provider-response store and closes it on stop;
     # 217 since #1523 passes the scan's time to admission; 219 since #1477
-    # accepts the generation's pacers its owner search shares.
-    _C + "create_review_pipeline": 219,
+    # accepts the generation's pacers its owner search shares; 236 since
+    # #1372 PR 4 passes the taste judge beside the build as the background
+    # lane and opens the lane's repository with the cover authority bound.
+    _C + "create_review_pipeline": 236,
     # Wires recovery to the built pipeline; catches an adapter error type.
     # 96 since #1064 passes the response store to the retry constructor.
     _C + "_provider_recovery_wiring": 96,
@@ -179,8 +188,9 @@ RESIDUAL: dict[str, int | None] = {
     # Constructs the Codex device-auth manager, which tests replace on
     # composition, and the reviewer access around it.
     # 168 since #1372 passed the taste profile daily limit; 182 since PR 1c
-    # bound the Codex taste build as description advice is bound.
-    _C + "_compose_reviewer_access": 182,
+    # bound the Codex taste build as description advice is bound; 186 since
+    # PR 4 passed the judge's daily limit and let the binding run a judgement.
+    _C + "_compose_reviewer_access": 186,
     # Opens the cover artifact store and binds the SQLite repository's cover
     # hooks to CoverConsiderationService; both are adapter calls. 84 since
     # #1363 passed the Current covers settings as two keyword arguments.

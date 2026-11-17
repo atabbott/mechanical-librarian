@@ -37,6 +37,9 @@ from mechanical_librarian.adapters.persistence.cover_considerations import (
 from mechanical_librarian.adapters.persistence.cover_taste import (
     SQLiteCoverTasteRepository,
 )
+from mechanical_librarian.adapters.persistence.cover_taste_judge import (
+    SQLiteCoverTasteJudgeRepository,
+)
 from mechanical_librarian.adapters.persistence.crash_recovery import (
     recover_private_bindings,
 )
@@ -394,6 +397,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         )
         self._review_scans = SQLiteReviewScanRepository(connection)
         self._cover_taste = SQLiteCoverTasteRepository(connection)
+        self._cover_taste_judge = SQLiteCoverTasteJudgeRepository(
+            connection, lambda: self._live_cover_authority()
+        )
         self._retained_covers = SQLiteRetainedCoverRepository(connection, binding)
         self._current_cover_authority: tuple[str | None, str | None] = (None, None)
         self._current_work_identity_level = "identifier"
@@ -741,6 +747,13 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             raise ValueError("work identity level is invalid")
         self._current_cover_authority = (policy_reference, replay_reference)
         self._current_work_identity_level = work_identity_level
+
+    def _live_cover_authority(self) -> tuple[str | None, str | None]:
+        """The live policy and replay references, read again as a browse read
+        captures them; the bound pair when nothing captures them."""
+        if self._capture_cover_read is None:
+            return self._current_cover_authority
+        return self._capture_cover_read()[0]
 
     def _cover_read_authority(self) -> tuple[str | None, str | None]:
         return (
@@ -1800,6 +1813,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
 
     def cover_taste_store(self) -> SQLiteCoverTasteRepository:
         return self._cover_taste
+
+    def cover_taste_judge_store(self) -> SQLiteCoverTasteJudgeRepository:
+        return self._cover_taste_judge
 
     def read_staged_description_preparation(
         self, action: PipelineAction

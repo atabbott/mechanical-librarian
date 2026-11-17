@@ -354,6 +354,8 @@ def test_current_authority_and_predecessor_refusal_without_history(
                 "DROP TABLE retained_cover_listings;"
                 "DROP TABLE retained_cover_removals;"
                 "DROP TABLE retained_cover_bindings;"
+                "DROP TABLE cover_taste_verdicts;"
+                "DROP TABLE cover_taste_judgements;"
                 "DROP TABLE cover_taste_profile_versions;"
                 "DROP TABLE cover_taste_builds;"
                 "DROP TABLE reviewer_task_requests;"

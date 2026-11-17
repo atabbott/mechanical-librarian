@@ -10,7 +10,7 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Callable
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from mechanical_librarian.application.cover_taste_contract import (
     TasteChargeUnknownError,
@@ -33,6 +33,11 @@ from mechanical_librarian.domain.cover_taste import (
     TasteRule,
     TasteSection,
 )
+
+if TYPE_CHECKING:
+    from mechanical_librarian.application.cover_taste_judge import (
+        CoverTasteJudgeRepository,
+    )
 
 # The cadence reads the eligible count, so it runs at most once a minute even
 # though the runner wakes every second.
@@ -98,6 +103,8 @@ class CoverTasteRetryError(RuntimeError):
 class CoverTasteRepositoryOwner(Protocol):
     def cover_taste_store(self) -> CoverTasteRepository: ...
 
+    def cover_taste_judge_store(self) -> CoverTasteJudgeRepository: ...
+
     def close(self) -> None: ...
 
 
@@ -111,13 +118,19 @@ class CoverTasteRepositoryLease:
         self._owner: CoverTasteRepositoryOwner | None = None
         self._closed = False
 
-    def store(self) -> CoverTasteRepository:
+    def _opened(self) -> CoverTasteRepositoryOwner:
         with self._lock:
             if self._closed:
                 raise RuntimeError("the taste repository is closed")
             if self._owner is None:
                 self._owner = self._factory()
-            return self._owner.cover_taste_store()
+            return self._owner
+
+    def store(self) -> CoverTasteRepository:
+        return self._opened().cover_taste_store()
+
+    def judge_store(self) -> CoverTasteJudgeRepository:
+        return self._opened().cover_taste_judge_store()
 
     def close(self) -> None:
         with self._lock:

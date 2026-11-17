@@ -637,7 +637,9 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("cover_considerations",),
             ("cover_selection_authorities",),
             ("cover_taste_builds",),
+            ("cover_taste_judgements",),
             ("cover_taste_profile_versions",),
+            ("cover_taste_verdicts",),
             ("current_cover_considerations",),
             ("current_cover_selection_authorities",),
             ("current_description_advice",),
@@ -947,6 +949,8 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
                 + "DROP TABLE retained_cover_listings;"
                 "DROP TABLE retained_cover_removals;"
                 "DROP TABLE retained_cover_bindings;"
+                "DROP TABLE cover_taste_verdicts;"
+                "DROP TABLE cover_taste_judgements;"
                 "DROP TABLE cover_taste_profile_versions;"
                 "DROP TABLE cover_taste_builds;"
                 "DROP TABLE reviewer_task_requests;"
@@ -2762,6 +2766,8 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
                     + "DROP TABLE retained_cover_listings;"
                     "DROP TABLE retained_cover_removals;"
                     "DROP TABLE retained_cover_bindings;"
+                    "DROP TABLE cover_taste_verdicts;"
+                    "DROP TABLE cover_taste_judgements;"
                     "DROP TABLE cover_taste_profile_versions;"
                     "DROP TABLE cover_taste_builds;"
                     "DROP TABLE reviewer_task_requests;"
@@ -2810,6 +2816,8 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
                     "DROP TABLE retained_cover_listings;"
                     "DROP TABLE retained_cover_removals;"
                     "DROP TABLE retained_cover_bindings;"
+                    "DROP TABLE cover_taste_verdicts;"
+                    "DROP TABLE cover_taste_judgements;"
                     "DROP TABLE cover_taste_profile_versions;"
                     "DROP TABLE cover_taste_builds;"
                     "DROP TABLE reviewer_task_requests;"

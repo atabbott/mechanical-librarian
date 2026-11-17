@@ -75,7 +75,10 @@ from mechanical_librarian.domain.cover_automatic_decision import (
 from mechanical_librarian.domain.cover_automatic_decision import (
     CoverAutomaticDecision,
 )
-from mechanical_librarian.domain.cover_taste import COVER_TASTE_PROFILE_SCHEMA
+from mechanical_librarian.domain.cover_taste import (
+    COVER_TASTE_PROFILE_SCHEMA,
+    COVER_TASTE_VERDICT_SCHEMA,
+)
 from mechanical_librarian.domain.human_decision import (
     AUTOMATIC_COVER_SELECTION_AUTHORITY_SCHEMA,
     COVER_SELECTION_AUTHORITY_SCHEMA,
@@ -1642,7 +1645,7 @@ _DESCRIPTION_ADVICE_TRIGGERS = {
 # per-task, per-UTC-day request count every reviewer ceiling reads.
 _COVER_TASTE_FAILURES = "'unavailable','invalid_output','ceiling','unknown_charge','interrupted','unconfigured'"
 _COVER_TASTE_TABLES = {
-    "reviewer_task_requests": "CREATE TABLE reviewer_task_requests (task TEXT NOT NULL CHECK(task IN ('cover_taste_build')), day INTEGER NOT NULL CHECK(typeof(day)='integer' AND day>=0), requests INTEGER NOT NULL CHECK(typeof(requests)='integer' AND requests>=0), stopped TEXT CHECK(stopped IS NULL OR stopped='unknown_charge'), PRIMARY KEY(task,day))",
+    "reviewer_task_requests": "CREATE TABLE reviewer_task_requests (task TEXT NOT NULL CHECK(task IN ('cover_taste_build','cover_taste_judge')), day INTEGER NOT NULL CHECK(typeof(day)='integer' AND day>=0), requests INTEGER NOT NULL CHECK(typeof(requests)='integer' AND requests>=0), stopped TEXT CHECK(stopped IS NULL OR stopped='unknown_charge'), PRIMARY KEY(task,day))",
     "cover_taste_builds": "CREATE TABLE cover_taste_builds (build_id TEXT PRIMARY KEY NOT NULL CHECK(typeof(build_id)='text' AND build_id GLOB 'taste_build_[0-9a-f]*' AND length(build_id)=44), trigger TEXT NOT NULL CHECK(trigger IN ('cadence','retry')), retry_of TEXT UNIQUE REFERENCES cover_taste_builds(build_id), state TEXT NOT NULL CHECK(state IN ('requested','running','succeeded','failed')), "
     f"failure TEXT CHECK(failure IN ({_COVER_TASTE_FAILURES})), "
     "model TEXT CHECK(model IS NULL OR length(model) BETWEEN 1 AND 256), day INTEGER NOT NULL CHECK(typeof(day)='integer' AND day>=0), selection_watermark INTEGER NOT NULL CHECK(typeof(selection_watermark)='integer' AND selection_watermark>=0), requested_at INTEGER NOT NULL CHECK(typeof(requested_at)='integer' AND requested_at>=0), updated_at INTEGER NOT NULL CHECK(typeof(updated_at)='integer' AND updated_at>=requested_at), CHECK((state='failed')=(failure IS NOT NULL)), CHECK(trigger='retry' OR retry_of IS NULL))",
@@ -1650,9 +1653,27 @@ _COVER_TASTE_TABLES = {
     "cover_taste_profile_versions": "CREATE TABLE cover_taste_profile_versions (version INTEGER PRIMARY KEY CHECK(typeof(version)='integer' AND version>=1), build_id TEXT UNIQUE REFERENCES cover_taste_builds(build_id), created_at INTEGER NOT NULL CHECK(typeof(created_at)='integer' AND created_at>=0), "
     f"document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 262144 AND json_valid(document) AND json_extract(document,'$.schema_version')='{COVER_TASTE_PROFILE_SCHEMA}'), "
     "CHECK((build_id IS NULL) = (json_extract(document,'$.source') IS 'edit')))",
+    # #1372 PR 4: one row per judge attempt, and its admitted verdict.
+    "cover_taste_judgements": "CREATE TABLE cover_taste_judgements (judgement_id TEXT PRIMARY KEY NOT NULL CHECK(typeof(judgement_id)='text' AND judgement_id GLOB 'taste_judgement_[0-9a-f]*' AND length(judgement_id)=48), consideration_id TEXT NOT NULL REFERENCES cover_considerations(consideration_id), version INTEGER NOT NULL REFERENCES cover_taste_profile_versions(version), trigger TEXT NOT NULL CHECK(trigger IN ('cadence','retry')), retry_of TEXT UNIQUE REFERENCES cover_taste_judgements(judgement_id), state TEXT NOT NULL CHECK(state IN ('requested','running','succeeded','failed','skipped')), "
+    "failure TEXT CHECK(failure IN ('unavailable','invalid_output','unknown_charge','interrupted')), "
+    "model TEXT CHECK(model IS NULL OR length(model) BETWEEN 1 AND 256), day INTEGER NOT NULL CHECK(typeof(day)='integer' AND day>=0), requested_at INTEGER NOT NULL CHECK(typeof(requested_at)='integer' AND requested_at>=0), updated_at INTEGER NOT NULL CHECK(typeof(updated_at)='integer' AND updated_at>=requested_at), CHECK((state='failed')=(failure IS NOT NULL)), CHECK(trigger='retry' OR retry_of IS NULL))",
+    "cover_taste_verdicts": "CREATE TABLE cover_taste_verdicts (verdict_id TEXT PRIMARY KEY NOT NULL CHECK(typeof(verdict_id)='text' AND verdict_id GLOB 'taste_verdict_[0-9a-f]*' AND length(verdict_id)=46), judgement_id TEXT NOT NULL UNIQUE REFERENCES cover_taste_judgements(judgement_id), consideration_id TEXT NOT NULL REFERENCES cover_considerations(consideration_id), version INTEGER NOT NULL REFERENCES cover_taste_profile_versions(version), "
+    f"document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 4096 AND json_valid(document) AND json_extract(document,'$.schema_version')='{COVER_TASTE_VERDICT_SCHEMA}'), "
+    "created_at INTEGER NOT NULL CHECK(typeof(created_at)='integer' AND created_at>=0))",
+}
+# One cadence attempt per (consideration, version) and one per explicit retry;
+# a NULL `retry_of` is folded so the cadence pair is unique too (J5).
+_COVER_TASTE_INDEXES = {
+    "cover_taste_judgements_pair": "CREATE UNIQUE INDEX cover_taste_judgements_pair ON cover_taste_judgements(consideration_id,version,coalesce(retry_of,''))",
+    "cover_taste_judgements_consideration": "CREATE INDEX cover_taste_judgements_consideration ON cover_taste_judgements(consideration_id)",
+    "cover_taste_verdicts_consideration": "CREATE INDEX cover_taste_verdicts_consideration ON cover_taste_verdicts(consideration_id,created_at)",
 }
 _COVER_TASTE_TRIGGERS = {
-    f"cover_taste_profile_versions_no_{operation}": f"CREATE TRIGGER cover_taste_profile_versions_no_{operation} BEFORE {operation.upper()} ON cover_taste_profile_versions BEGIN SELECT RAISE(ABORT, 'taste profile versions are append-only'); END"
+    f"{table}_no_{operation}": f"CREATE TRIGGER {table}_no_{operation} BEFORE {operation.upper()} ON {table} BEGIN SELECT RAISE(ABORT, '{label} are append-only'); END"
+    for table, label in (
+        ("cover_taste_profile_versions", "taste profile versions"),
+        ("cover_taste_verdicts", "taste verdicts"),
+    )
     for operation in ("update", "delete")
 }
 # A corrective keep_current's predecessor and an authored description's both
@@ -1919,6 +1940,7 @@ def _create_schema(connection: sqlite3.Connection) -> None:
         *_DESCRIPTION_ADVICE_TABLES.values(),
         *_DESCRIPTION_ADVICE_TRIGGERS.values(),
         *_COVER_TASTE_TABLES.values(),
+        *_COVER_TASTE_INDEXES.values(),
         *_COVER_TASTE_TRIGGERS.values(),
     ):
         connection.execute(statement)
@@ -2147,6 +2169,11 @@ def _cover_taste_objects() -> tuple[tuple[str, str, str | None], ...]:
         ("index", "sqlite_autoindex_cover_taste_builds_1", None),
         ("index", "sqlite_autoindex_cover_taste_builds_2", None),
         ("index", "sqlite_autoindex_cover_taste_profile_versions_1", None),
+        ("index", "sqlite_autoindex_cover_taste_judgements_1", None),
+        ("index", "sqlite_autoindex_cover_taste_judgements_2", None),
+        ("index", "sqlite_autoindex_cover_taste_verdicts_1", None),
+        ("index", "sqlite_autoindex_cover_taste_verdicts_2", None),
+        *_named_objects("index", _COVER_TASTE_INDEXES),
         *_named_objects("trigger", _COVER_TASTE_TRIGGERS),
     )
 

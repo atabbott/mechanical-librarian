@@ -75,6 +75,7 @@ CURRENT_VERSIONS: tuple[tuple[str, str], ...] = (
         "COVER_TASTE_BUILD_PACKET_SCHEMA",
     ),
     ("mechanical_librarian.domain.cover_taste", "COVER_TASTE_PROFILE_SCHEMA"),
+    ("mechanical_librarian.domain.cover_taste", "COVER_TASTE_VERDICT_SCHEMA"),
     (
         "mechanical_librarian.adapters.persistence.field_effect_validation",
         "FIELD_EFFECT_CONSENT_STATE_SCHEMA",
