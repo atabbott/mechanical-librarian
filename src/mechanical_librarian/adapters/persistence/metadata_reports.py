@@ -691,6 +691,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             self._description_advice,
             self._review_scans,
             self._cover_taste,
+            self._cover_taste_judge,
             self._retained_covers,
             self._field_effects,
             self._review_preparation,

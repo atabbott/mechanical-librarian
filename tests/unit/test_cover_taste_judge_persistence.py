@@ -400,3 +400,35 @@ def test_the_background_lane_runs_a_due_build_before_any_judgement() -> None:
     assert calls == ["build"]
     assert CoverTasteBackground(_Lane("build", False), _Lane("judge", True)).wake(1)  # type: ignore[arg-type]  # reason: as above
     assert calls == ["build", "build", "judge"]
+
+
+def test_binding_admission_reaches_every_aggregate_store(tmp_path: Path) -> None:
+    """The judge store shares the runtime's admission and connection lock, as
+    every other aggregate does, so its reads and writes queue with foreground
+    work instead of meeting it as a busy database."""
+    import threading
+
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        open_repository,
+    )
+    from mechanical_librarian.application.operation_admission import (
+        OperationAdmission,
+    )
+
+    repository = open_repository(tmp_path / "state.sqlite")
+    try:
+        admission = OperationAdmission()
+        repository.bind_operation_admission(admission, threading.RLock())
+        stores = {
+            name: value
+            for name, value in vars(repository).items()
+            if hasattr(value, "bind_operation_admission")
+            and hasattr(value, "_admission")
+        }
+        assert "_cover_taste_judge" in stores
+        unbound = sorted(
+            name for name, store in stores.items() if store._admission is not admission
+        )
+        assert unbound == []
+    finally:
+        repository.close()
