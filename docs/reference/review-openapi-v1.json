@@ -8112,6 +8112,10 @@
             "title": "Dispositions",
             "type": "array"
           },
+          "find_offered": {
+            "title": "Find Offered",
+            "type": "boolean"
+          },
           "item": {
             "title": "Item",
             "type": "string"
@@ -8224,6 +8228,7 @@
           "dispositions",
           "item",
           "library",
+          "find_offered",
           "link",
           "media_kind",
           "review_case_id",

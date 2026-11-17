@@ -1847,6 +1847,7 @@ describe('ReviewApiClient', () => {
               library_display_name: 'Reading Room',
               media_kind: 'epub',
               item: 'item-1',
+              find_offered: true,
               attention_count: 1,
               attention_state: 'needs_attention',
               detail_url: '/review/case-1',
@@ -1922,6 +1923,7 @@ describe('ReviewApiClient', () => {
       preparation: null,
       preparationOutcomes: [],
       valueFlags: [],
+      findOffered: true,
       link: null,
     })
     expect(view.works[1]).toEqual({
@@ -1961,6 +1963,7 @@ describe('ReviewApiClient', () => {
         ],
       },
       valueFlags: [],
+      findOffered: false,
       link: { state: 'waiting', provider: 'open_library' },
     })
     expect(JSON.stringify(view)).not.toContain('internal-item-2')

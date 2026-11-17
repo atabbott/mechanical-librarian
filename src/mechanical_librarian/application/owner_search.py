@@ -56,6 +56,7 @@ from mechanical_librarian.domain.owner_link import (
     owner_asin,
     owner_isbn,
     owner_search_cards,
+    owner_search_medium,
 )
 
 SEARCH_TTL_SECONDS = 15 * 60
@@ -147,6 +148,16 @@ class SearchableSource:
     marketplaces: tuple[str, ...] = ()
 
 
+def find_offered(could_not_finish: bool, sources: tuple[SearchableSource, ...]) -> bool:
+    """Whether Find this book is offered for a work (S7, L4).
+
+    The one rule both the link view's `offered` and the Library row's
+    `find_offered` read: never on a work that could not finish, and only where
+    the work's library has a source it can be searched at.
+    """
+    return not could_not_finish and bool(sources)
+
+
 @dataclass(frozen=True, slots=True)
 class OwnerSearchSubject:
     """The work a search or choice is about, read from the store (S13)."""
@@ -168,7 +179,7 @@ class OwnerSearchSubject:
 
     @property
     def offered(self) -> bool:
-        return not self.could_not_finish and bool(self.sources)
+        return find_offered(self.could_not_finish, self.sources)
 
     def to_offer(self) -> dict[str, object]:
         """`offered`, `sources` and `prefill` for the link view (S7, U6)."""
@@ -322,6 +333,38 @@ class OwnerSearchService:
             work,
             _offered_sources(work.medium, providers, selected.languages),
         )
+
+    def find_offer(self) -> Callable[[str, str, str, bool], bool]:
+        """Whether Find this book is offered, for one Library page's rows (#1477).
+
+        Called with a row's connection, library, report file format and
+        whether its latest preparation could not finish; the same rule as the
+        link view's `offered`, from this generation's configuration alone, with
+        no store read. Each library's sources are selected once per page.
+        """
+        sources: dict[tuple[str, str, str], tuple[SearchableSource, ...]] = {}
+
+        def offered(
+            connection: str, library: str, file_format: str, could_not_finish: bool
+        ) -> bool:
+            if could_not_finish:
+                return find_offered(True, ())
+            medium = owner_search_medium(file_format)
+            key = (connection, library, medium)
+            if key not in sources:
+                try:
+                    _, selected, _, providers = self._configuration.select(
+                        connection, library
+                    )
+                except ConfigurationError:
+                    sources[key] = ()
+                else:
+                    sources[key] = _offered_sources(
+                        medium, providers, selected.languages
+                    )
+            return find_offered(could_not_finish, sources[key])
+
+        return offered
 
     def search(
         self, session_token: str, request: OwnerSearchRequest
@@ -698,4 +741,5 @@ __all__ = [
     "OwnerSearchState",
     "OwnerSearchSubject",
     "SearchableSource",
+    "find_offered",
 ]

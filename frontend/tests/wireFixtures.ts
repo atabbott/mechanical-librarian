@@ -399,6 +399,7 @@ export const libraryWork = (overrides: Overrides = {}) => ({
   item: 'item-1',
   library: 'Books',
   library_display_name: null,
+  find_offered: false,
   link: null,
   media_kind: 'epub',
   pinned_count: 0,

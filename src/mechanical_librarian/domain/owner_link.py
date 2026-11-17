@@ -617,6 +617,11 @@ def owner_search_failure(
     )
 
 
+def owner_search_medium(file_format: str) -> str:
+    """The medium a work is searched and linked as, from its report's file format."""
+    return "audiobook" if file_format in AUDIO_FILE_FORMATS else "ebook"
+
+
 @dataclass(frozen=True, slots=True)
 class OwnerSearchWork:
     """What a card is judged against: the work's current report (S15)."""
@@ -658,7 +663,7 @@ class OwnerSearchWork:
         audio = report.audio
         fields = report.target.fields
         return cls(
-            "audiobook" if report.file.format in AUDIO_FILE_FORMATS else "ebook",
+            owner_search_medium(report.file.format),
             None if context is None else context[0],
             () if context is None else context[1],
             isbns.pop() if len(isbns) == 1 else None,

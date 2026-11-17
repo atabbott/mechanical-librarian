@@ -361,6 +361,10 @@ class CurrentReviewCaseSnapshot:
 
 # A row's current link and the `owner_link` facts its report records (#1477).
 LibraryRowLink = tuple[OwnerLink, dict[str, object] | None]
+# Whether Find this book is offered on a Library row, from its connection,
+# library, report file format and whether it could not finish (#1477): the
+# owner search's own rule, so the row and the link view cannot disagree.
+FindOffer = Callable[[str, str, str, bool], bool]
 
 
 @dataclass(frozen=True, slots=True)
@@ -2686,9 +2690,12 @@ class BrowseReviewLibrary:
         cursor: str | None,
         library_labels: LibraryLabels = (),
         now: int = 0,
+        find_offer: FindOffer | None = None,
     ) -> dict[str, object]:
         """One Library page. `now` is the clock the visit boundary is read at:
         a caller with no clock reads the boundary of the visit in progress.
+        `find_offer` says whether Find this book is offered on a row; with
+        none, it is offered on no row (#1477).
         """
         normalized = _review_search(search)
         if type(lens) is not str or lens not in _LIBRARY_LENSES:
@@ -2770,6 +2777,7 @@ class BrowseReviewLibrary:
                         ),
                         report_facts=unavailable.get(index),
                         link=_library_link(links[index]),
+                        find_offer=find_offer,
                     )
                 )
         except Exception as error:
@@ -4688,6 +4696,9 @@ def _terminal_library_item(document: str) -> dict[str, object] | None:
                 "dispositions": ["terminal_failure"],
                 "item": item,
                 "library": library,
+                # A work with no report could not finish and cannot be
+                # searched (S7, L4).
+                "find_offered": False,
                 # A work with no report was never searched, so never linked.
                 "link": None,
                 "media_kind": media_kind,
@@ -4874,6 +4885,7 @@ def _library_item(
     match_state: str | None = None,
     report_facts: LibraryReportFacts | None = None,
     link: dict[str, object] | None = None,
+    find_offer: FindOffer | None = None,
 ) -> dict[str, object]:
     if case_document is None:
         stopped = _terminal_library_item(report_document)
@@ -5001,6 +5013,15 @@ def _library_item(
         "dispositions": outcomes,
         "item": report.target.item,
         "library": report.target.library,
+        # Whether the header offers Find this book, so it shows its final
+        # entry with the row rather than when the link view answers (#1477).
+        "find_offered": find_offer is not None
+        and find_offer(
+            report.target.connection,
+            report.target.library,
+            report.file.format,
+            terminal_document is not None,
+        ),
         # The work's book link state, or None when it has none (#1477, S29).
         "link": link,
         "media_kind": report.file.format,

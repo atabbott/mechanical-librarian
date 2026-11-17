@@ -1474,6 +1474,9 @@ class ReviewApplication:
                         cursor=cursor,
                         library_labels=snapshot,
                         now=self._clock(),
+                        find_offer=None
+                        if self._owner_search is None
+                        else self._owner_search.find_offer(),
                     ),
                     labels,
                 )

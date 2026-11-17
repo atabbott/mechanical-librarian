@@ -21,7 +21,7 @@ import {
   withheldLines,
 } from '../src/findThisBook'
 import { createHttp, library, renderRoute } from './fixtures'
-import { card, linked } from './findThisBookFixtures'
+import { card, linked, withLinkView } from './findThisBookFixtures'
 import { reportDetail } from './wireFixtures'
 
 const offered: OwnerLinkView = {
@@ -73,11 +73,7 @@ const openDialog = async (http: ReviewHttp) => {
   const dialog = await screen.findByRole('dialog', { name: 'Find this book' })
   return { user, dialog, actions }
 }
-const withView = (view: OwnerLinkView, more: Partial<ReviewHttp> = {}): ReviewHttp => ({
-  ...createHttp(),
-  getOwnerLinkView: vi.fn(async () => view),
-  ...more,
-})
+const withView = withLinkView
 
 describe('the work header', () => {
   it('reads Evidence, Find this book and More in the one order, with History in More', async () => {
@@ -122,6 +118,28 @@ describe('the work header', () => {
     expect(within(actions).getByRole('button', { name: 'More for this work' })).toBeVisible()
   })
 
+  it.each([
+    ['Find this book', offered],
+    ['Linked on Hardcover', { ...offered, link: linked() }],
+  ])(
+    'shows %s with the header’s first frame and reads the link view only when it is opened',
+    async (name, view) => {
+      // A link view that never answers: the entry must come from the row alone.
+      const read = vi.fn<ReviewHttp['getOwnerLinkView']>(() => new Promise(() => undefined))
+      const http = withView(view, { getOwnerLinkView: read })
+      const user = userEvent.setup()
+      const actions = await openCase(http)
+      // In the same frame as the nav itself, with no read behind it.
+      const entry = within(actions).getByRole('button', { name })
+      expect(
+        Array.from(actions.querySelectorAll(':scope > a, :scope > button, :scope > div')),
+      ).toHaveLength(3)
+      expect(read).not.toHaveBeenCalled()
+      await user.click(entry)
+      await waitFor(() => expect(read).toHaveBeenCalledTimes(1))
+    },
+  )
+
   it('gives a work with no case one Work actions nav holding only Find this book', async () => {
     const user = userEvent.setup()
     const first = library.works[0]
@@ -134,6 +152,7 @@ describe('the work header', () => {
       detailUrl: '/api/v1/library/report?item=item-9',
       attention: 'not_matched',
       attentionCount: 0,
+      findOffered: true,
     }
     delete (work as { reviewCaseId?: string }).reviewCaseId
     const http = withView(offered, {
@@ -145,9 +164,14 @@ describe('the work header', () => {
     renderRoute('/library?lens=all', http)
     await user.click(await screen.findByRole('button', { name: /^A Book\./u }))
     const actions = await screen.findByRole('navigation', { name: 'Work actions' })
-    expect(await within(actions).findByRole('button', { name: 'Find this book' })).toBeVisible()
+    const find = await within(actions).findByRole('button', { name: 'Find this book' })
+    expect(find).toBeVisible()
     expect(within(actions).queryByRole('button', { name: 'More for this work' })).toBeNull()
     expect(screen.queryByRole('link', { name: 'History' })).toBeNull()
+    // The row says the entry is offered; the link view is read only to open it.
+    expect(http.getOwnerLinkView).not.toHaveBeenCalled()
+    await user.click(find)
+    expect(await screen.findByRole('dialog', { name: 'Find this book' })).toBeVisible()
     expect(http.getOwnerLinkView).toHaveBeenCalledWith(
       { connection: 'primary', library: 'audio', item: 'item-9' },
       expect.any(AbortSignal),

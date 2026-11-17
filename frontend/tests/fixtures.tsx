@@ -99,6 +99,8 @@ export const library: LibraryView = {
       preparation: null,
       preparationOutcomes: [],
       valueFlags: [],
+      // Find this book is not offered unless a test says so, as `unofferedLinkView` (#1477).
+      findOffered: false,
       link: null,
     },
   ],

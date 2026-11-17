@@ -7,6 +7,7 @@ import type { ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 
 import type {
+  LibraryWorkView,
   MediaKind,
   OwnerLinkScope,
   OwnerLinkView,
@@ -54,46 +55,80 @@ export interface FindWork {
   mediaKind: MediaKind
 }
 
+/** What the header needs to show its entry, as the Library row carries it. */
+export type FindEntryRow = Pick<LibraryWorkView, 'findOffered' | 'link'>
+
 /**
  * The header's entry: Find this book while the work has no link and is
- * offered, the link's pill once it has one, nothing otherwise. After a choose
- * or a withdraw, focus goes to whichever replaced the other.
+ * offered, the link's pill once it has one, nothing otherwise. The Library row
+ * says which, so the entry is there with the header's first frame and nothing
+ * moves when a read lands (#1477). The link view is read only to open the
+ * dialog; with no row to go by, it is read to decide. After a choose or a
+ * withdraw, the view read back stands until the row changes, and focus goes
+ * to whichever replaced the other.
  */
 export function FindThisBookEntry({
-  address: { connection, library, item },
+  address: target,
+  row,
   work,
   wrap,
 }: {
-  address: WorkAddress
+  /** The catalogue address, once known; the dialog waits for it. */
+  address: WorkAddress | undefined
+  row: FindEntryRow | undefined
   work: FindWork
   /** A work with no case has no Evidence or More, so the entry brings its own nav. */
   wrap?: (entry: ReactNode) => ReactNode
 }) {
-  const address = { connection, library, item }
   const { http } = useReviewContext()
-  const view = useQuery({
-    queryKey: ownerLinkKey(address),
-    queryFn: (context) => http.getOwnerLinkView(address, context.signal, queryWorkClass(context)),
-    staleTime: 15_000,
-    retry: false,
-  })
+  // Only the three parts that address the link travel, whatever else the target names.
+  const address = target && {
+    connection: target.connection,
+    library: target.library,
+    item: target.item,
+  }
   const [open, setOpen] = useState<'link' | 'form' | null>(null)
   const [said, setSaid] = useState('')
   const [refocus, setRefocus] = useState(0)
+  const [written, setWritten] = useState<{ row: string | null; view: OwnerLinkView } | null>(null)
+  const view = useQuery({
+    queryKey: ownerLinkKey(address ?? { connection: '', library: '', item: '' }),
+    queryFn: (context) =>
+      // `enabled` holds the read until the address is known.
+      http.getOwnerLinkView(address as WorkAddress, context.signal, queryWorkClass(context)),
+    enabled: address !== undefined && (open !== null || row === undefined),
+    staleTime: 15_000,
+    retry: false,
+  })
   const entry = useRef<HTMLButtonElement>(null)
   useLayoutEffect(() => {
     if (refocus) entry.current?.focus()
   }, [refocus])
   const data = view.data
-  const link = data?.link ?? null
+  const rowKey =
+    row === undefined
+      ? null
+      : `${String(row.findOffered)}|${row.link?.state ?? ''}|${row.link?.provider ?? ''}`
+  const shown =
+    written !== null && written.row === rowKey
+      ? { offered: written.view.offered, link: written.view.link }
+      : row
+        ? { offered: row.findOffered, link: row.link }
+        : data
+          ? { offered: data.offered, link: data.link }
+          : null
   const close = (said = '') => {
     setOpen(null)
     setSaid(said)
     setRefocus((count) => count + 1)
   }
+  // A view that could not be read opens nothing, and says so where the owner is.
+  if (open !== null && data === undefined && view.isError && !view.isFetching)
+    close('The book link could not be read. Try again.')
+  const link = shown?.link ?? null
   const control = link ? (
     <LinkPill ref={entry} link={link} onOpen={() => setOpen('link')} />
-  ) : data?.offered ? (
+  ) : shown?.offered ? (
     <button
       ref={entry}
       type="button"
@@ -113,14 +148,15 @@ export function FindThisBookEntry({
     <>
       {control === null ? null : wrap ? wrap(control) : control}
       {status}
-      {open && data ? (
+      {open && data && address ? (
         <FindThisBookDialog
           address={address}
           work={work}
           view={data}
           start={open}
           refresh={async () => {
-            await view.refetch()
+            const read = await view.refetch()
+            if (read.data) setWritten({ row: rowKey, view: read.data })
           }}
           close={close}
         />

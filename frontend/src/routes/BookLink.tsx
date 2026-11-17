@@ -15,7 +15,8 @@ export function LinkPill({
   onOpen,
   ref,
 }: {
-  link: OwnerLinkCurrent
+  /** The pill reads only the state and the source, which the Library row carries. */
+  link: Pick<OwnerLinkCurrent, 'state' | 'provider'>
   onOpen: () => void
   ref?: Ref<HTMLButtonElement>
 }) {

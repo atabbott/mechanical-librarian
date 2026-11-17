@@ -662,6 +662,11 @@ export interface LibraryWorkView {
   cover?: LibraryCoverView
   /** What looks wrong with the current values, one finding per rule (#1334). */
   valueFlags: readonly ValueFlagView[]
+  /**
+   * Whether the header offers Find this book, by the link view's own rule, so
+   * the header shows its final entry with the row (#1477).
+   */
+  findOffered: boolean
   /** The work's book link state and source, or null when it has none (#1477). */
   link: LibraryLinkView | null
 }
@@ -3160,6 +3165,7 @@ export const mapLibrary = (value: LibraryDto): LibraryView => ({
             },
       ...(item.cover === null ? {} : { cover: mapLibraryCover(item.cover) }),
       valueFlags: item.value_flags.map(mapValueFlag),
+      findOffered: item.find_offered,
       link: item.link === null ? null : { state: item.link.state, provider: item.link.provider },
     }
   }),

@@ -14,6 +14,7 @@ import { WORK_ACTIONS } from '../findThisBook'
 import { mediaKindLabels } from '../labels'
 import { normalizeDetailSearch } from '../router'
 import { FindThisBookEntry } from './FindThisBook'
+import type { FindEntryRow } from './FindThisBook'
 
 // A disclosure whose list lies over what is below it, so opening it moves
 // nothing. Escape and a press outside close it and give focus back to More.
@@ -84,6 +85,7 @@ export function SelectedWorkHeader({
   needsYou,
   selectedDestination,
   address,
+  row,
 }: {
   search: LibrarySearch
   identity: {
@@ -102,6 +104,8 @@ export function SelectedWorkHeader({
   selectedDestination: string | undefined
   /** The catalogue address the work's book link belongs to. */
   address: WorkAddress
+  /** The work's Library row, which says whether Find this book or its pill shows. */
+  row: FindEntryRow | undefined
 }) {
   const detail = (subview: 'evidence' | 'history') =>
     normalizeDetailSearch({ ...search, subview, field: selectedDestination })
@@ -116,7 +120,7 @@ export function SelectedWorkHeader({
         Evidence
       </Link>
     ),
-    find: <FindThisBookEntry key="find" address={address} work={identity} />,
+    find: <FindThisBookEntry key="find" address={address} row={row} work={identity} />,
     more: (
       <MoreMenu key="more">
         <Link params={{ reviewCaseId }} search={detail('history')} to="/review/$reviewCaseId">

@@ -186,8 +186,8 @@ about the work, and it should steer what preparation reads.
     (the candidate summary's `owner_link_only`) and `shadow-outcome-set-v12`
     cover the gate and its note. `cover-identity-report-v4`,
     `cover-policy-report-v6` and `cover-consideration-v11` carry the two
-    cover outcomes. `review-library-v9` (the row's link state and the `link`
-    lane kind), `review-report-detail-v7` and `review-case-evidence-v6`
+    cover outcomes. `review-library-v9` (the row's link state, whether it offers
+    Find this book, and the `link` lane kind), `review-report-detail-v7` and `review-case-evidence-v6`
     (`anchored` lanes) and `review-case-history-v5` (link events) carry them
     to the owner; `owner-search-v1`, `owner-link-view-v1` and
     `owner-link-history-event-v1` are new. The application database gains

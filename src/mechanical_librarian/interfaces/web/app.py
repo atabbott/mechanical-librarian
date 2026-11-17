@@ -1842,6 +1842,9 @@ class _LibraryWork(_ClosedModel):
     dispositions: list[str]
     item: str
     library: str
+    # Whether the header offers Find this book: the link view's `offered`
+    # rule, carried with the row so the header shows its final entry at once.
+    find_offered: bool
     link: _LibraryLink | None
     library_display_name: str | None = Field(default=None, max_length=512)
     media_kind: _MediaKind

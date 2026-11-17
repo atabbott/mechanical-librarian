@@ -9,7 +9,7 @@ import type { OwnerLinkCurrent, OwnerLinkView, ReviewHttp } from '../src/api/htt
 import { ApiError } from '../src/api/http'
 import { pillText, rowLinkPhrase, stateLine } from '../src/findThisBook'
 import { createHttp, library, renderRoute } from './fixtures'
-import { linked } from './findThisBookFixtures'
+import { linked, withLinkView } from './findThisBookFixtures'
 
 const view = (link: OwnerLinkCurrent | null, offered = true): OwnerLinkView => ({
   offered,
@@ -104,19 +104,16 @@ describe('the pill and the link view', () => {
   })
 
   it('opens the link view from the pill, with its lines, Change and Withdraw', async () => {
-    const http: ReviewHttp = {
-      ...createHttp(),
-      getOwnerLinkView: vi.fn(async () =>
-        view(
-          linked({
-            state: 'needs_replacing',
-            reason: 'source_disabled',
-            scope: 'edition',
-            identifier: '9780441172719',
-          }),
-        ),
+    const http = withLinkView(
+      view(
+        linked({
+          state: 'needs_replacing',
+          reason: 'source_disabled',
+          scope: 'edition',
+          identifier: '9780441172719',
+        }),
       ),
-    }
+    )
     const { user, actions, dialog } = await openLink(http, 'Link needs replacing')
     expect(within(actions).queryByRole('button', { name: 'Find this book' })).toBeNull()
     expect(within(dialog).getByRole('heading', { level: 2, name: 'Book link' })).toHaveFocus()
@@ -141,11 +138,10 @@ describe('the pill and the link view', () => {
         schema_version: 'owner-link-change-v1',
       }
     })
-    const http: ReviewHttp = {
-      ...createHttp(),
+    const http = withLinkView(current, {
       getOwnerLinkView: vi.fn(async () => current),
       withdrawOwnerLink: withdraw,
-    }
+    })
     const { user, actions, dialog } = await openLink(http, 'Linked on Hardcover')
     await user.click(within(dialog).getByRole('button', { name: 'Withdraw the link' }))
     const question = within(dialog).getByText(
@@ -169,13 +165,11 @@ describe('the pill and the link view', () => {
   })
 
   it('keeps the confirmation open with the race refusal beside Withdraw', async () => {
-    const http: ReviewHttp = {
-      ...createHttp(),
-      getOwnerLinkView: vi.fn(async () => view(linked())),
+    const http = withLinkView(view(linked()), {
       withdrawOwnerLink: vi.fn(async () => {
         throw new ApiError(409, 'link_changed')
       }),
-    }
+    })
     const { user, dialog } = await openLink(http, 'Linked on Hardcover')
     await user.click(within(dialog).getByRole('button', { name: 'Withdraw the link' }))
     await user.click(within(dialog).getByRole('button', { name: 'Withdraw' }))
@@ -185,10 +179,7 @@ describe('the pill and the link view', () => {
   })
 
   it('offers Withdraw only on a Could not finish work that is linked (L4)', async () => {
-    const http: ReviewHttp = {
-      ...createHttp(),
-      getOwnerLinkView: vi.fn(async () => view(linked({ state: 'waiting' }), false)),
-    }
+    const http = withLinkView(view(linked({ state: 'waiting' }), false))
     const { dialog } = await openLink(http, 'Linked, waiting for Hardcover')
     expect(within(dialog).queryByRole('button', { name: 'Change the link' })).toBeNull()
     expect(within(dialog).getByRole('button', { name: 'Withdraw the link' })).toBeVisible()

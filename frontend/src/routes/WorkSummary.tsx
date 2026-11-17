@@ -211,11 +211,13 @@ function WorkActions({ work, detailUrl }: { work: LibraryWorkView; detailUrl: st
     staleTime: 15_000,
     retry: false,
   })
-  if (!report.isSuccess) return null
-  const { connection, library, item } = report.data
+  const address = report.data
+    ? { connection: report.data.connection, library: report.data.library, item: report.data.item }
+    : undefined
   return (
     <FindThisBookEntry
-      address={{ connection, library, item }}
+      address={address}
+      row={work}
       work={work}
       wrap={(entry) => (
         <nav className="selected-work-diagnostics" aria-label="Work actions">

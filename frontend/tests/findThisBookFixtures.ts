@@ -1,5 +1,8 @@
 // Shared Find this book builders for the dialog and link tests (#1477).
-import type { OwnerLinkCurrent, OwnerSearchCard } from '../src/api/http'
+import { vi } from 'vitest'
+
+import type { OwnerLinkCurrent, OwnerLinkView, OwnerSearchCard, ReviewHttp } from '../src/api/http'
+import { createHttp, library } from './fixtures'
 
 export const card = (overrides: Partial<OwnerSearchCard> = {}): OwnerSearchCard => ({
   position: 0,
@@ -32,4 +35,21 @@ export const linked = (overrides: Partial<OwnerLinkCurrent> = {}): OwnerLinkCurr
   retry_at: null,
   paused: false,
   ...overrides,
+})
+
+// A double whose link view is `view` and whose Library row agrees with it, as
+// the server's row and view do: the header shows its entry from the row and
+// reads the view only to open the dialog (#1477).
+export const withLinkView = (view: OwnerLinkView, more: Partial<ReviewHttp> = {}): ReviewHttp => ({
+  ...createHttp(),
+  getOwnerLinkView: vi.fn(async () => view),
+  getLibrary: vi.fn(async () => ({
+    ...library,
+    works: library.works.map((work) => ({
+      ...work,
+      findOffered: view.offered,
+      link: view.link === null ? null : { state: view.link.state, provider: view.link.provider },
+    })),
+  })),
+  ...more,
 })
