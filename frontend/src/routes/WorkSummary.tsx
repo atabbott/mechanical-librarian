@@ -217,6 +217,8 @@ function WorkActions({ work, detailUrl }: { work: LibraryWorkView; detailUrl: st
   return (
     <FindThisBookEntry
       address={address}
+      addressFailed={report.isError && !report.isFetching}
+      readAddress={() => void report.refetch()}
       row={work}
       work={work}
       wrap={(entry) => (

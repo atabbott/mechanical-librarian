@@ -27,6 +27,7 @@ import {
   droppedLine,
   emptyLine,
   fieldRefusals,
+  isbnInput,
   isbnValid,
   laneLabels,
   marketplaceDomain,
@@ -63,18 +64,25 @@ export type FindEntryRow = Pick<LibraryWorkView, 'findOffered' | 'link'>
  * offered, the link's pill once it has one, nothing otherwise. The Library row
  * says which, so the entry is there with the header's first frame and nothing
  * moves when a read lands (#1477). The link view is read only to open the
- * dialog; with no row to go by, it is read to decide. After a choose or a
+ * dialog; with no row to go by, it is read to decide, and the entry's space is
+ * held until it answers. After a choose or a
  * withdraw, the view read back stands until the row changes, and focus goes
  * to whichever replaced the other.
  */
 export function FindThisBookEntry({
   address: target,
+  addressFailed = false,
+  readAddress,
   row,
   work,
   wrap,
 }: {
   /** The catalogue address, once known; the dialog waits for it. */
   address: WorkAddress | undefined
+  /** The address could not be read, so the dialog cannot open. */
+  addressFailed?: boolean
+  /** Reads the address again, when pressing the entry is trying again. */
+  readAddress?: () => void
   row: FindEntryRow | undefined
   work: FindWork
   /** A work with no case has no Evidence or More, so the entry brings its own nav. */
@@ -89,6 +97,8 @@ export function FindThisBookEntry({
   }
   const [open, setOpen] = useState<'link' | 'form' | null>(null)
   const [said, setSaid] = useState('')
+  // A failure to open, shown beside the entry until the owner moves on.
+  const [failed, setFailed] = useState('')
   const [refocus, setRefocus] = useState(0)
   const [written, setWritten] = useState<{ row: string | null; view: OwnerLinkView } | null>(null)
   const view = useQuery({
@@ -122,19 +132,61 @@ export function FindThisBookEntry({
     setSaid(said)
     setRefocus((count) => count + 1)
   }
-  // A view that could not be read opens nothing, and says so where the owner is.
-  if (open !== null && data === undefined && view.isError && !view.isFetching)
-    close('The book link could not be read. Try again.')
+  // A view or an address that could not be read opens nothing, and says so
+  // beside the entry, where the owner is, as well as to a screen reader.
+  if (
+    open !== null &&
+    data === undefined &&
+    ((view.isError && !view.isFetching) || (address === undefined && addressFailed))
+  ) {
+    close(unreadable)
+    setFailed(unreadable)
+  }
+  useEffect(() => {
+    if (!failed) return
+    const dismiss = (event: Event) => {
+      if (event instanceof KeyboardEvent && event.key !== 'Escape') return
+      setFailed('')
+    }
+    document.addEventListener('pointerdown', dismiss)
+    document.addEventListener('keydown', dismiss)
+    return () => {
+      document.removeEventListener('pointerdown', dismiss)
+      document.removeEventListener('keydown', dismiss)
+    }
+  }, [failed])
+  const press = (start: 'link' | 'form') => {
+    setFailed('')
+    if (address === undefined && addressFailed) readAddress?.()
+    setOpen(start)
+  }
+  // While the dialog waits on a read, the entry says it is busy, in place.
+  const busy = open !== null && !(data && address)
   const link = shown?.link ?? null
   const control = link ? (
-    <LinkPill ref={entry} link={link} onOpen={() => setOpen('link')} />
+    <LinkPill ref={entry} link={link} busy={busy} onOpen={() => press('link')} />
   ) : shown?.offered ? (
     <button
       ref={entry}
       type="button"
       className="work-action"
       aria-haspopup="dialog"
-      onClick={() => setOpen('form')}
+      aria-busy={busy || undefined}
+      onClick={() => press('form')}
+    >
+      Find this book
+    </button>
+  ) : row === undefined && data === undefined && !view.isError ? (
+    // With no row to go by, the entry's space is held while the view is read,
+    // so the controls below can only stay or rise when it answers, never drop.
+    // It is hidden, inert and disabled: never focused, pressed or announced.
+    <button
+      type="button"
+      className="work-action work-action-reserved"
+      aria-hidden="true"
+      tabIndex={-1}
+      disabled
+      inert
     >
       Find this book
     </button>
@@ -144,9 +196,23 @@ export function FindThisBookEntry({
       {said}
     </span>
   )
+  // Laid over what is below, so showing it moves nothing; the status above
+  // announces it, so this copy is not read twice.
+  const failure =
+    failed && control !== null ? (
+      <p className="work-action-failure" aria-hidden="true">
+        {failed}
+      </p>
+    ) : null
+  const entryParts = (
+    <>
+      {control}
+      {failure}
+    </>
+  )
   return (
     <>
-      {control === null ? null : wrap ? wrap(control) : control}
+      {control === null ? null : wrap ? wrap(entryParts) : entryParts}
       {status}
       {open && data && address ? (
         <FindThisBookDialog
@@ -164,6 +230,8 @@ export function FindThisBookEntry({
     </>
   )
 }
+
+const unreadable = 'The book link could not be read. Try again.'
 
 type Step =
   | { at: 'link' }
@@ -262,7 +330,7 @@ function FindThisBookDialog({
             ? { at: 'author', text: fieldRefusals.author }
             : null
         : draft.lane === 'isbn'
-          ? isbnValid(draft.isbn.trim())
+          ? isbnValid(isbnInput(draft.isbn))
             ? null
             : { at: 'isbn', text: fieldRefusals.isbn }
           : asinValid(draft.asin.trim().toUpperCase())
@@ -281,7 +349,7 @@ function FindThisBookDialog({
         ...(draft.lane === 'title_authors'
           ? { title: ownerText(draft.title), authors }
           : draft.lane === 'isbn'
-            ? { isbn: draft.isbn.trim() }
+            ? { isbn: isbnInput(draft.isbn) }
             : { asin: draft.asin.trim().toUpperCase() }),
         ...(draft.provider === 'audible_catalog' ? { marketplace: draft.marketplace } : {}),
       })

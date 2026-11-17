@@ -2033,17 +2033,28 @@ dialog.first-review-guide::backdrop { background:rgb(23 32 30 / .42); }
    (#1477, option B); their 44px targets overlap the space around them. Where
    the shell is under 50rem (a phone, or enlarged text) they keep their own
    line below, as before, so the title keeps its width and a longer link pill
-   never wraps them. */
+   never wraps them. Their column is as wide as the counts or a fixed width,
+   whichever is wider, and never as wide as a link pill: a long pill's label
+   wraps inside the pill, within the 44px row, so no link state narrows the
+   title or moves a field. */
 @media (min-width:761px) {
   @container shell (width >= 50rem) {
     .selected-work-header { display:grid; grid-template-columns:auto minmax(0,1fr) auto; grid-template-rows:auto auto; align-items:center; row-gap:0; }
     .selected-work-header > .library-book-mark { grid-column:1; grid-row:1 / span 2; }
     .selected-work-header > div { grid-column:2; grid-row:1 / span 2; }
     .selected-work-header > .selected-work-status { grid-column:3; grid-row:1; align-self:end; }
-    .selected-work-header > .selected-work-diagnostics { grid-column:3; grid-row:2; align-self:start; width:auto; flex-wrap:nowrap; white-space:nowrap; margin:-10px 0 -10px -2px; padding:0; border:0; }
+    .selected-work-header > .selected-work-diagnostics { grid-column:3; grid-row:2; align-self:start; width:auto; flex-wrap:nowrap; white-space:nowrap; margin:-7px 0 -15px -2px; padding:0; border:0; contain:inline-size; min-width:15rem; }
+    .selected-work-diagnostics > .work-action-pill { min-width:0; padding-block:.1rem; white-space:normal; overflow-wrap:normal; line-height:1.15; border-radius:.75rem; }
   }
 }
 .work-action { display:inline-flex; align-items:center; min-height:44px; padding:0; border:0; border-radius:0; background:none; color:var(--accent-strong); font-size:.76rem; font-weight:700; text-decoration:underline; text-underline-offset:.2em; }
+.work-action-reserved { visibility:hidden; pointer-events:none; }
+.selected-work-diagnostics { position:relative; }
+.work-action[aria-busy='true'], .work-action-pill[aria-busy='true'] { cursor:progress; }
+/* A failure to open Find this book, laid over the space below its entry so
+   showing it moves nothing; Escape or a press anywhere puts it away. */
+.work-action-failure { position:absolute; top:calc(100% - .25rem); right:0; z-index:20; width:max-content; max-width:min(20rem,calc(100vw - 2rem)); margin:0; padding:.6rem .75rem; border-left:3px solid var(--notice); border-radius:.25rem; color:var(--ink); background:linear-gradient(var(--notice-soft),var(--notice-soft)),var(--surface-strong); box-shadow:var(--shadow); font-size:.82rem; font-weight:400; line-height:1.4; white-space:normal; }
+@media (max-width:760px) { .work-action-failure { right:auto; left:0; } }
 .work-action:focus-visible, .work-action-pill:focus-visible, .work-more-list a:focus-visible { outline:2px solid var(--focus); outline-offset:2px; }
 button.work-action-pill { position:relative; min-height:0; padding:.18rem .55rem; border:0; line-height:1.3; text-align:left; cursor:pointer; }
 /* The pill keeps a 44px target without growing its row. */

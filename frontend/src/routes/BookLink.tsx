@@ -12,11 +12,14 @@ import { linkLine, linkTone, pillText, scopeLine, stateLine } from '../findThisB
 
 export function LinkPill({
   link,
+  busy = false,
   onOpen,
   ref,
 }: {
   /** The pill reads only the state and the source, which the Library row carries. */
   link: Pick<OwnerLinkCurrent, 'state' | 'provider'>
+  /** Its link view is being read to open it. */
+  busy?: boolean
   onOpen: () => void
   ref?: Ref<HTMLButtonElement>
 }) {
@@ -26,6 +29,7 @@ export function LinkPill({
       type="button"
       className={`work-action-pill status-pill is-${linkTone(link.state)}`}
       aria-haspopup="dialog"
+      aria-busy={busy || undefined}
       onClick={onOpen}
     >
       {pillText(link.state, link.provider)}

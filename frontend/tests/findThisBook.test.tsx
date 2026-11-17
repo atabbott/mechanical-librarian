@@ -15,6 +15,7 @@ import {
 import {
   WORK_ACTIONS,
   asinValid,
+  isbnInput,
   isbnValid,
   ownerTextValid,
   refusalFor,
@@ -137,8 +138,139 @@ describe('the work header', () => {
       expect(read).not.toHaveBeenCalled()
       await user.click(entry)
       await waitFor(() => expect(read).toHaveBeenCalledTimes(1))
+      // While the read is out, the entry says so in place.
+      expect(entry).toHaveAttribute('aria-busy', 'true')
     },
   )
+
+  it.each([
+    ['Find this book', offered, 'Find this book'],
+    ['the pill', { ...offered, link: linked() }, 'Linked on Hardcover'],
+    ['nothing', { ...offered, offered: false }, null],
+  ])(
+    'holds the entry’s space, unseen and unreachable, while a case with no Library row on the page reads its link view, then shows %s',
+    async (_, view, name) => {
+      // The selected case is not on the current Library page, so no row says
+      // which entry it has: only the link view can, and it answers late.
+      let answer: (value: OwnerLinkView) => void = () => undefined
+      const read = vi.fn<ReviewHttp['getOwnerLinkView']>(
+        () => new Promise((resolve) => (answer = resolve)),
+      )
+      const http = withView(view, {
+        getOwnerLinkView: read,
+        getLibrary: vi.fn(async () => ({
+          ...library,
+          works: library.works.filter((work) => work.reviewCaseId !== 'case-1'),
+        })),
+      })
+      const actions = await openCase(http)
+      await waitFor(() => expect(read).toHaveBeenCalledTimes(1))
+      const slots = () =>
+        Array.from(actions.querySelectorAll(':scope > a, :scope > button, :scope > div'))
+      // Three slots while the view is read: Evidence, the held space, More.
+      expect(slots()).toHaveLength(3)
+      const held = slots()[1] as HTMLButtonElement
+      expect(held).toHaveClass('work-action-reserved')
+      expect(held).toHaveAttribute('aria-hidden', 'true')
+      expect(held).toHaveAttribute('inert')
+      expect(held).toBeDisabled()
+      expect(held.tabIndex).toBe(-1)
+      expect(within(actions).queryByRole('button', { name: 'Find this book' })).toBeNull()
+      expect(within(actions).getAllByRole('button')).toHaveLength(1)
+      await act(async () => answer(view))
+      if (name === null) {
+        await waitFor(() => expect(slots()).toHaveLength(2))
+        expect(actions.querySelector('.work-action-reserved')).toBeNull()
+      } else {
+        const entry = await within(actions).findByRole('button', { name })
+        expect(slots()).toHaveLength(3)
+        expect(slots()[1]).toBe(entry)
+        expect(actions.querySelector('.work-action-reserved')).toBeNull()
+      }
+    },
+  )
+
+  it.each([
+    ['Find this book', offered],
+    ['Linked on Hardcover', { ...offered, link: linked() }],
+  ])(
+    'says beside %s, not only to a screen reader, that its link view could not be read',
+    async (name, view) => {
+      const user = userEvent.setup()
+      const read = vi.fn<ReviewHttp['getOwnerLinkView']>(async () => {
+        throw new ApiError(503, 'unavailable')
+      })
+      const actions = await openCase(withView(view, { getOwnerLinkView: read }))
+      const entry = within(actions).getByRole('button', { name })
+      // A read that fails opens nothing and says so where the owner looks.
+      await user.click(entry)
+      const line = await waitFor(() => {
+        const found = actions.querySelector('.work-action-failure')
+        if (!found) throw new Error('no failure line')
+        return found
+      })
+      expect(line).toHaveTextContent('The book link could not be read. Try again.')
+      expect(line).toBeVisible()
+      expect(line).toHaveAttribute('aria-hidden', 'true')
+      expect(screen.getAllByRole('status').map((node) => node.textContent)).toContain(
+        'The book link could not be read. Try again.',
+      )
+      expect(screen.queryByRole('dialog')).toBeNull()
+      expect(entry).toHaveFocus()
+      await user.keyboard('{Escape}')
+      expect(actions.querySelector('.work-action-failure')).toBeNull()
+    },
+  )
+
+  it('says beside Find this book when a work with no case could not read its address, and tries again on the next press', async () => {
+    const user = userEvent.setup()
+    const first = library.works[0]
+    if (!first) throw new Error('library fixture requires one work')
+    const work: LibraryWorkView = {
+      ...first,
+      id: 'library_work_9',
+      workId: 'library_work_9',
+      detailKind: 'report',
+      detailUrl: '/api/v1/library/report?item=item-9',
+      attention: 'not_matched',
+      attentionCount: 0,
+      findOffered: true,
+    }
+    delete (work as { reviewCaseId?: string }).reviewCaseId
+    const report = vi
+      .fn<ReviewHttp['getReportDetail']>()
+      .mockRejectedValueOnce(new ApiError(503, 'unavailable'))
+      .mockResolvedValue(
+        mapReportDetail(reportDetail({ schema_version: 'review-report-detail-v7' }) as never),
+      )
+    const http = withView(offered, {
+      getLibrary: vi.fn(async () => ({ ...library, works: [work] })),
+      getReportDetail: report,
+    })
+    renderRoute('/library?lens=all', http)
+    await user.click(await screen.findByRole('button', { name: /^A Book\./u }))
+    const actions = await screen.findByRole('navigation', { name: 'Work actions' })
+    await waitFor(() => expect(report).toHaveBeenCalled())
+    const find = await within(actions).findByRole('button', { name: 'Find this book' })
+    await user.click(find)
+    const line = await waitFor(() => {
+      const found = actions.querySelector('.work-action-failure')
+      if (!found) throw new Error('no failure line')
+      return found
+    })
+    expect(line).toHaveTextContent('The book link could not be read. Try again.')
+    expect(line).toBeVisible()
+    expect(screen.getAllByRole('status').map((node) => node.textContent)).toContain(
+      'The book link could not be read. Try again.',
+    )
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(http.getOwnerLinkView).not.toHaveBeenCalled()
+    // Pressing again is trying again: the address is read, then the dialog opens.
+    await user.click(find)
+    expect(actions.querySelector('.work-action-failure')).toBeNull()
+    expect(await screen.findByRole('dialog', { name: 'Find this book' })).toBeVisible()
+    expect(report.mock.calls.length).toBeGreaterThanOrEqual(2)
+  })
 
   it('gives a work with no case one Work actions nav holding only Find this book', async () => {
     const user = userEvent.setup()
@@ -317,6 +449,23 @@ describe('the dialog', () => {
         'Hardcover found nothing for this ISBN. Check it, or search by title and authors.',
       ),
     ).toBeVisible()
+  })
+
+  it.each([
+    ['978-0-441-17271-9', '9780441172719'],
+    [' 978 0441 172719 ', '9780441172719'],
+    ['0-8044-2957-x', '080442957X'],
+  ])('takes the ISBN %s the way books print it and sends %s', async (typed, sent) => {
+    const search = vi.fn<ReviewHttp['searchOwnerLink']>(async () => results({ cards: [] }))
+    const { user, dialog } = await openDialog(withView(offered, { searchOwnerLink: search }))
+    await user.click(within(dialog).getByRole('button', { name: 'ISBN' }))
+    const field = within(dialog).getByRole('textbox', { name: 'ISBN' })
+    await user.clear(field)
+    await user.type(field, typed)
+    await user.click(within(dialog).getByRole('button', { name: 'Search' }))
+    await waitFor(() => expect(search).toHaveBeenCalledTimes(1))
+    expect(search.mock.calls[0]?.[0]).toMatchObject({ lane: 'isbn', isbn: sent })
+    expect(within(dialog).queryByText('Enter an ISBN of 10 or 13 digits.')).toBeNull()
   })
 
   it('puts a busy source beside Search and keeps the query', async () => {
@@ -684,6 +833,9 @@ describe('request checks', () => {
     expect(isbnValid('0441172717')).toBe(true)
     expect(isbnValid('080442957X')).toBe(true)
     expect(isbnValid('978-0441172719')).toBe(false)
+    expect(isbnInput('978-0-441-17271-9')).toBe('9780441172719')
+    expect(isbnInput('0 8044 2957 x')).toBe('080442957X')
+    expect(isbnInput('x044117271')).toBe('x044117271')
     expect(asinValid('B00B7NPRY8')).toBe(true)
     expect(asinValid('b00b7npry8')).toBe(false)
     expect(asinValid('B00B7NPRY')).toBe(false)

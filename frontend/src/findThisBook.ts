@@ -247,6 +247,13 @@ export const ownerTextValid = (value: string) => {
     !/(?:^|\s)(?:~?\/|\.{1,2}\/|[A-Za-z]:\\)\S/u.test(text)
   )
 }
+/**
+ * An ISBN as the owner typed or pasted it, the way books print it: spaces and
+ * hyphens dropped and an ISBN-10's check character `x` upper-cased. It is then
+ * checked and sent exactly as it stands; nothing else is repaired.
+ */
+export const isbnInput = (value: string) =>
+  value.replace(/[\s\u2010\u2011-]/gu, '').replace(/x$/u, 'X')
 export const isbnValid = (value: string) => {
   if (/^\d{9}[\dX]$/.test(value)) {
     const sum = Array.from(value).reduce(

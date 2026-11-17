@@ -259,6 +259,8 @@ class _Served:
         default_factory=list
     )
     link_reads: int = 0
+    # The case work's title on its Library row, in place of the cohort's.
+    case_title: str | None = None
 
 
 def _fulfill(route: Route, body: Any, status: int = 200) -> None:
@@ -288,6 +290,8 @@ def _serve(page: Page, served: _Served) -> None:
                         "provider": view["link"]["provider"],
                     }
                 )
+                if served.case_title and work.get("review_case_id") == "case-1":
+                    work["title"] = served.case_title
                 for chosen in (_NOT_MATCHED, _COULD_NOT_FINISH):
                     if work["work_id"] == chosen["work_id"]:
                         work["detail_kind"] = "report"
@@ -892,15 +896,24 @@ _FIELD_TAB_Y = """() => {
 }"""
 
 
-def _field_tab_ys(browser: Browser, width: int, text: str = "") -> dict[str, float]:
-    states = {
-        "not-linked": (_view(), "Find this book"),
-        "linked": (_view(_current()), "Linked on Hardcover"),
-        "not-offered": (_view(offered=False), None),
-    }
+_HEADER_STATES = {
+    "not-linked": (_view(), "Find this book"),
+    "linked": (_view(_current()), "Linked on Hardcover"),
+    "not-offered": (_view(offered=False), None),
+}
+
+
+def _field_tab_ys(
+    browser: Browser,
+    width: int,
+    text: str = "",
+    *,
+    states: dict[str, tuple[dict[str, Any], str | None]] = _HEADER_STATES,
+    title: str | None = None,
+) -> dict[str, float]:
     measured: dict[str, float] = {}
     for name, (view, control) in states.items():
-        page = _page(browser, _Served(view=view), width)
+        page = _page(browser, _Served(view=view, case_title=title), width)
         try:
             _open_case(page)
             if text:
@@ -937,3 +950,26 @@ def test_the_field_tabs_stay_put_whether_the_work_is_linked_and_rise_only_when_n
     measured = _field_tab_ys(browser, width)
     assert measured["linked"] == measured["not-linked"], measured
     assert measured["not-offered"] <= measured["not-linked"], measured
+
+
+@pytest.mark.parametrize("width", [1280, 1100], ids=["1280", "1100"])
+def test_a_long_link_pill_takes_no_width_from_an_ordinary_title(
+    browser: Browser, width: int
+) -> None:
+    """The work actions' column is as wide whatever the link's state, so the
+    longest pill, the notice-toned waiting one, wraps inside itself rather than
+    narrowing an ordinary title and moving the field tabs (#1477)."""
+    measured = _field_tab_ys(
+        browser,
+        width,
+        states={
+            "not-linked": _HEADER_STATES["not-linked"],
+            "linked": _HEADER_STATES["linked"],
+            "waiting": (
+                _view(_current(provider="google_books", state="waiting")),
+                "Linked, waiting for Google Books",
+            ),
+        },
+        title="The Lighthouse Keeper's Daughter",
+    )
+    assert measured["waiting"] == measured["linked"] == measured["not-linked"], measured
