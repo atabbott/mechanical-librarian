@@ -111,6 +111,8 @@ def _work(
         # has one has a review case behind it.
         "detail_kind": "case" if case else None,
         "dispositions": dispositions,
+        # No cohort work is linked to a book (#1477).
+        "link": None,
         "preparation": preparation,
         "preparation_outcomes": preparation_outcomes or [],
         "summary": summary,
@@ -145,6 +147,7 @@ TERMINAL_LIBRARY_WORK = _work(
     preparation_outcomes=[
         {
             "companion_isbn": False,
+            "anchored": False,
             "cover_only": False,
             "provider_requests": 1,
             "lane_kind": "work",
@@ -264,6 +267,7 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
         preparation_outcomes=[
             {
                 "companion_isbn": False,
+                "anchored": False,
                 "cover_only": False,
                 "provider_requests": 2,
                 "lane_kind": "work",
@@ -273,6 +277,7 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
             },
             {
                 "companion_isbn": False,
+                "anchored": False,
                 "cover_only": False,
                 "provider_requests": 0,
                 "lane_kind": "work",
@@ -416,6 +421,7 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
         preparation_outcomes=[
             {
                 "companion_isbn": False,
+                "anchored": False,
                 "cover_only": False,
                 "provider_requests": 1,
                 "lane_kind": "work",
@@ -2537,6 +2543,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                 "source_ledger": [
                     {
                         "companion_isbn": False,
+                        "anchored": False,
                         "cover_only": False,
                         "provider_requests": 1,
                         "lane_kind": "work",
@@ -2546,6 +2553,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                     },
                     {
                         "companion_isbn": False,
+                        "anchored": False,
                         "cover_only": False,
                         "provider_requests": 2,
                         "lane_kind": "isbn",

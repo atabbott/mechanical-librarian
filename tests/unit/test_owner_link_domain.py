@@ -11,6 +11,8 @@ from mechanical_librarian.domain.metadata_report import (
     OwnerLinkFacts,
     ProviderCandidate,
     ProviderClaim,
+    ProviderEvidence,
+    ProviderEvidenceKind,
 )
 from mechanical_librarian.domain.owner_link import (
     OwnerLink,
@@ -387,6 +389,56 @@ def test_this_edition_is_offered_only_when_the_card_names_one(
     if OwnerLinkScope.EDITION in scopes:
         target = card.target(OwnerLinkScope.EDITION)
         assert (target.scope, target.identity) == (OwnerLinkScope.EDITION, isbn)
+
+
+@pytest.mark.parametrize(
+    ("stated", "reason"),
+    [
+        pytest.param("Paperback", WithheldScopeReason.FORMAT_PRINT, id="print"),
+        pytest.param("Audio CD", WithheldScopeReason.FORMAT_AUDIO, id="audio"),
+        pytest.param("Audiobook", WithheldScopeReason.FORMAT_AUDIO, id="audiobook"),
+        pytest.param("Ebook", None, id="ebook"),
+    ],
+)
+def test_this_edition_is_withheld_for_a_stated_print_or_audio_format(
+    stated: str, reason: WithheldScopeReason | None
+) -> None:
+    isbn = "9780306406157"
+    name = "candidate-1"
+    claims = (
+        _claim(name, ClaimKind.TITLE, "Current title", 0),
+        _claim(name, ClaimKind.CREATOR, "Ada Example", 1, role="author"),
+        _claim(
+            name,
+            ClaimKind.ISBN,
+            isbn,
+            2,
+            scope=ClaimScope.EDITION,
+            applicability="unknown",
+        ),
+    )
+    evidence = (
+        ProviderEvidence(
+            ProviderEvidenceKind.PHYSICAL_FORMAT, stated, ClaimScope.EDITION
+        ),
+    )
+    record = OwnerSearchRecord(
+        ProviderCandidate(name, name, claims, evidence), "/works/OL7W", isbn
+    )
+    (card,), _ = owner_search_cards("open_library", (record,), _work())
+    if reason is None:
+        assert (card.scopes, card.withheld) == (
+            (OwnerLinkScope.WORK, OwnerLinkScope.EDITION),
+            (),
+        )
+    else:
+        assert (card.scopes, card.withheld) == (
+            (OwnerLinkScope.WORK,),
+            ((OwnerLinkScope.EDITION, reason),),
+        )
+        assert card.to_data()["withheld"] == [
+            {"scope": "edition", "reason": reason.value}
+        ]
 
 
 def test_an_audible_card_without_a_runtime_withholds_this_recording() -> None:

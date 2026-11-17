@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { OwnerLinkCurrent, OwnerLinkView, ReviewHttp } from '../src/api/http'
 import { ApiError } from '../src/api/http'
-import { pillText, rowLinkPhrases, stateLine } from '../src/findThisBook'
+import { pillText, rowLinkPhrase, stateLine } from '../src/findThisBook'
 import { createHttp, library, renderRoute } from './fixtures'
 import { linked } from './findThisBookFixtures'
 
@@ -203,7 +203,9 @@ describe('the works list', () => {
       ...createHttp(),
       getLibrary: vi.fn(async () => ({
         ...library,
-        works: [{ ...first, link: 'contradicted' as const }],
+        works: [
+          { ...first, link: { state: 'contradicted' as const, provider: 'hardcover' as const } },
+        ],
       })),
     }
     renderRoute('/library?lens=all', http)
@@ -211,6 +213,24 @@ describe('the works list', () => {
     const pill = within(row.closest('li') ?? row).getByText('Link contradicted')
     expect(pill).toHaveClass('status-pill', 'is-notice')
     expect(pill.parentElement).toHaveClass('library-work-status')
-    expect(rowLinkPhrases.linked).toBe('Linked')
+    expect(rowLinkPhrase('linked', 'hardcover')).toBe('Linked')
+  })
+
+  it('names the source a waiting row waits for', async () => {
+    const first = library.works[0]
+    if (!first) throw new Error('library fixture requires one work')
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getLibrary: vi.fn(async () => ({
+        ...library,
+        works: [
+          { ...first, link: { state: 'waiting' as const, provider: 'open_library' as const } },
+        ],
+      })),
+    }
+    renderRoute('/library?lens=all', http)
+    const row = await screen.findByRole('button', { name: /^A Book\./u })
+    const pill = within(row.closest('li') ?? row).getByText('Linked, waiting for Open Library')
+    expect(pill).toHaveClass('status-pill', 'is-notice')
   })
 })

@@ -2147,9 +2147,12 @@ class CoverConsiderationService:
                 manual_eligible=manual_cover_eligible(candidate),
                 # Display only: the match state stays `match_not_confirmed`, so
                 # every unverified-match gate reads it as today (#1355, A2).
+                # The current cover names no reason, whichever record it
+                # matched: its card says it is the current one (#1477).
                 match_reason=(
                     _LINK_REASONS[cast("str", identity_row["outcome"])]
-                    if type(identity_row) is dict
+                    if candidate["incumbent"] is False
+                    and type(identity_row) is dict
                     and identity_row.get("outcome") in _LINK_REASONS
                     else "matched_book"
                     if candidate["reference"] in matched_book

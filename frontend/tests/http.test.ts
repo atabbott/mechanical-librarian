@@ -1864,7 +1864,7 @@ describe('ReviewApiClient', () => {
               library: 'Books',
               media_kind: 'epub',
               item: 'internal-item-2',
-              link: { state: 'waiting' },
+              link: { state: 'waiting', provider: 'open_library' },
               attention_count: 0,
               attention_state: 'no_attention_needed',
               detail_url: null,
@@ -1961,7 +1961,7 @@ describe('ReviewApiClient', () => {
         ],
       },
       valueFlags: [],
-      link: 'waiting',
+      link: { state: 'waiting', provider: 'open_library' },
     })
     expect(JSON.stringify(view)).not.toContain('internal-item-2')
     expect(fetchMock).toHaveBeenCalledWith(
@@ -7458,7 +7458,7 @@ describe('the book link wire (#1477)', () => {
     [
       'a scope both offered and withheld',
       {
-        cards: [searchCard({ withheld: [{ scope: 'edition', reason: 'format' }] })],
+        cards: [searchCard({ withheld: [{ scope: 'edition', reason: 'format_print' }] })],
       },
     ],
   ])('refuses a search with %s', async (_name, overrides) => {
@@ -7603,6 +7603,26 @@ describe('a cover from the linked book (#1477)', () => {
     ['with another reason', { match_reason: null }, 'contradictory_cover_match_reason'],
   ])('refuses one %s', (_name, overrides, code) => {
     expect(() => read(fromLink(overrides))).toThrow(expect.objectContaining({ code }))
+  })
+
+  it('reads the current cover from the linked book, unranked and with no reason', () => {
+    const current = fromLink({ incumbent: true, manual_eligible: false, match_reason: null })
+    const view = mapCoverConsideration(
+      coverConsideration({
+        candidates: [current],
+        choice_contexts: [choiceContext()],
+        incumbent: { state: 'available', reference: 'candidate-1' },
+        policy: coverPolicyReport({ acceptable_candidate_references: [] }),
+        ready: true,
+      }) as Parameters<typeof mapCoverConsideration>[0],
+    )
+    expect(view.candidates[0]).toMatchObject({
+      incumbent: true,
+      matchState: 'same_book',
+      selectable: false,
+      deterministicRankKey: null,
+    })
+    expect(view.candidates[0]).not.toHaveProperty('matchReason')
   })
 
   it('refuses the linked-book reason on any other cover', () => {

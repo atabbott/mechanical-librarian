@@ -3719,7 +3719,8 @@
           "reason": {
             "enum": [
               "no_isbn",
-              "format",
+              "format_print",
+              "format_audio",
               "no_runtime",
               "runtime",
               "narrators",
@@ -7737,8 +7738,19 @@
       },
       "_LibraryLink": {
         "additionalProperties": false,
-        "description": "A row's book link state; the selected work reads the rest (#1477).",
+        "description": "A row's book link state and source; the selected work reads the rest (#1477).",
         "properties": {
+          "provider": {
+            "enum": [
+              "audible_catalog",
+              "google_books",
+              "hardcover",
+              "inventaire",
+              "open_library"
+            ],
+            "title": "Provider",
+            "type": "string"
+          },
           "state": {
             "enum": [
               "linked",
@@ -7752,7 +7764,8 @@
           }
         },
         "required": [
-          "state"
+          "state",
+          "provider"
         ],
         "title": "_LibraryLink",
         "type": "object"

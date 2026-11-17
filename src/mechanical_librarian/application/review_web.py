@@ -4839,9 +4839,10 @@ def owner_link_view(
 
 
 def _library_link(entry: LibraryRowLink | None) -> dict[str, object] | None:
-    """A row's `link: {state}` from its current link and report facts (S29).
+    """A row's `link: {state, provider}` from its current link and report facts (S29).
 
-    The row says only the state; the selected work reads the full link view.
+    The row says only the state and the linked source; the selected work reads
+    the full link view.
     """
     if entry is None:
         return None
@@ -4850,7 +4851,8 @@ def _library_link(entry: LibraryRowLink | None) -> dict[str, object] | None:
         return {
             "state": link_state(
                 link, owner_link_facts_from_data(facts), paused=False
-            ).state
+            ).state,
+            "provider": link.provider,
         }
     except (OwnerLinkError, ReportValueError) as error:
         raise ReviewWebError("unavailable") from error
