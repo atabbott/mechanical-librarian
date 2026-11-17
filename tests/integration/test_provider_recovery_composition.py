@@ -122,6 +122,9 @@ class _ReviewerAccess:
     def current_taste_build_model(self):
         return None
 
+    def current_taste_judge_model(self):
+        return None
+
     def revision_is_current(self, _revision: int) -> bool:
         return True
 
