@@ -314,7 +314,9 @@ on any known advisory in runtime or development dependencies;
 
 The only way to hold a failure open is an `osv-scanner.toml` entry naming one
 advisory, a reason and an expiry at most 90 days out; there is no severity
-floor or package exclusion.
+floor or package exclusion. The frontend's `npm audit` goes through the same
+register: `scripts/verify_npm_advisories.py` fails on every reported advisory
+the register does not hold open.
 `tests/unit/test_security_scanning_contract.py` enforces the register and
 checks that every workflow has `contents: read`, pins actions to commits and
 sets `persist-credentials: false`.

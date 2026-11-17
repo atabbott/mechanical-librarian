@@ -2,11 +2,12 @@
 #
 # The `dependency-audit` job in `.github/workflows/public-gate.yml` scans
 # `uv.lock` with OSV-Scanner and fails on every known advisory affecting the
-# locked Python closure. This file is the only mechanism that may hold such a
-# failure open, and it can only do so for one named advisory at a time, for a
-# stated reason, until a stated date. There is no repository-wide severity
-# floor, package exclusion, or audit-level loosening: `[[IgnoredVulns]]` is the
-# only table this register accepts, and
+# locked Python closure. `scripts/verify_npm_advisories.py` fails `fast-source`
+# on every advisory `npm audit` reports for the frontend lockfile. This file is
+# the only mechanism that may hold either failure open, and it can only do so
+# for one named advisory at a time, for a stated reason, until a stated date.
+# There is no repository-wide severity floor, package exclusion, or audit-level
+# loosening: `[[IgnoredVulns]]` is the only table this register accepts, and
 # `tests/unit/test_security_scanning_contract.py` fails the gate if any other
 # table appears.
 #
@@ -21,12 +22,17 @@
 #   ignoreUntil = 2026-11-01     # bare TOML date; the acceptance expires here
 #   reason = "why this cannot be fixed now, and what unblocks it"
 #
-# The time box is enforced from both sides. OSV-Scanner stops filtering the
-# advisory once `ignoreUntil` has passed, so an expired acceptance fails the
-# audit again. `tests/unit/test_security_scanning_contract.py` independently
-# fails the required `fast-source` check when an entry is already expired, when
-# its window runs more than 90 days past the current date, or when it carries
-# no substantive reason -- so an acceptance cannot be written open-ended and
-# cannot rot unnoticed if the advisory itself is later withdrawn.
+# The time box is enforced from both sides. OSV-Scanner and the npm audit script
+# stop honouring an entry once `ignoreUntil` has passed, so an expired
+# acceptance fails the audit again.
+# `tests/unit/test_security_scanning_contract.py` independently fails the
+# required `fast-source` check when an entry is already expired, when its window
+# runs more than 90 days past the current date, or when it carries no
+# substantive reason -- so an acceptance cannot be written open-ended and cannot
+# rot unnoticed if the advisory itself is later withdrawn.
 #
-# There are no accepted advisories today.
+
+[[IgnoredVulns]]
+id = "GHSA-fc5q-39xc-vjpf"
+ignoreUntil = 2026-12-17
+reason = "No fixed picomatch release exists (4.0.7 is the latest and affected). It reaches only frontend build and test tooling (vite, vitest, typescript-eslint), never the shipped bundle, and matches only repository-authored globs. Remove when a fixed release lands; tracked in #1947."
