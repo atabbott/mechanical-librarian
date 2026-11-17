@@ -3,7 +3,7 @@
 Settings come from one of two places, never both:
 
 - **File mode.** When `/data/config.json` exists, it is the complete authority.
-  It is one strict UTF-8 JSON document with schema version `config-v12`,
+  It is one strict UTF-8 JSON document with schema version `config-v13`,
   described below.
 - **Store mode.** When that file is absent, settings live in
   `/data/application.sqlite3` and the owner edits them on the Settings page.
@@ -98,7 +98,7 @@ section:
 
 ```json
 {
-  "schema_version": "config-v12",
+  "schema_version": "config-v13",
   "provider_recovery_generation": 1,
   "connections": [
     {
@@ -170,7 +170,7 @@ section:
 
 | Field | Required | Rule |
 | --- | --- | --- |
-| `schema_version` | Yes | Exactly `config-v12` |
+| `schema_version` | Yes | Exactly `config-v13` |
 | `provider_recovery_generation` | Yes | Integer, at least 1 |
 | `connections` | Yes | 1–32 Audiobookshelf connections |
 | `libraries` | Yes | 1–128 libraries |
@@ -448,6 +448,7 @@ environment.
 | `description_remove_praise` | Boolean | `true` |
 | `description_automatic_application` | Boolean | `false` |
 | `cover_taste_build_daily_requests` | 1–100 | 8 |
+| `cover_taste_judge_daily_requests` | 1–50,000 | 5,000 |
 | `work_identity` | `identifier`, `title_and_creator_exact` or `title_and_creator` | `identifier` |
 
 No password, private-key contents, raw session token or CSRF token is stored
@@ -540,13 +541,13 @@ application never repairs a profile.
 
 ### Reviewer access
 
-Which reviewer serves each task is application state (`reviewer-access-v5`),
-not configuration. Cover review, description advice and the taste profile
-each select Codex or an optional OpenRouter model; the OpenRouter models share
+Which reviewer serves each task is application state (`reviewer-access-v6`),
+not configuration. Cover review, description advice, the taste profile
+and its suggestion model each select Codex or an optional OpenRouter model; the OpenRouter models share
 one write-only key that is never returned.
 
 A model is accepted only if it supports structured outputs, returns text and
-takes the task's input: images for cover review and the taste profile, text
+takes the task's input: images for cover review, the taste profile and its suggestion model, text
 for description advice.
 A description model also needs prompt and completion prices. Pricing and the
 cost estimate are described in
@@ -574,8 +575,11 @@ limit. Settings → Reviewer shows the limit read-only; in store mode it is 8.
 A first build needs a taste profile model and 25 recorded cover choices;
 later builds need 10 more. One build sends up to 50 choices and 100 cover
 images, within 24 MB. What is sent is in
-[AI boundary](../architecture/ai-boundary.md#where-models-are-used). The
-profile influences nothing yet (#1372).
+[AI boundary](../architecture/ai-boundary.md#where-models-are-used).
+
+`cover_taste_judge_daily_requests` is how many requests the suggestion model
+may be sent in one UTC day, one per work it compares with the profile, with
+the same counting and stops; its answers are not shown yet (#1372).
 
 ### Current covers
 

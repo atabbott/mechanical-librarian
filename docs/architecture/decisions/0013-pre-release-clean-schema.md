@@ -672,3 +672,14 @@ folder path, so a `catalogue-v2` database is refused. `review-library-v10`,
 No report, proposal or decision version moves. Every earlier application and
 catalogue database is rejected before mutation and needs a clean rebuild; no
 adoption is supplied.
+
+Issue #1372's taste judge (PR 4) takes the clean-rebuild branch.
+`reviewer-access-v6` adds the `cover_taste_judge` task and its prices, so a v5
+document is refused, and `reviewer-access-view-v6` carries them to the
+browser. `config-v13` adds `review.cover_taste_judge_daily_requests`; a
+`config-v12` file must be rewritten by hand. The application database gains
+the `cover_taste_judgements` table and the append-only `cover_taste_verdicts`
+table of `cover-taste-verdict-v1` documents, and the daily request count admits
+the new task. No report, consideration, decision or profile version moves.
+Every earlier application database is rejected before mutation and needs a
+clean rebuild; no adoption is supplied.

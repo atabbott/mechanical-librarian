@@ -406,14 +406,18 @@ the mapping revision and secret together and releases the owner-operation
 gate before network work; the result write rechecks the revision, so an A-B-A
 change cannot make old evidence current.
 
-Owner taste rules reach the builder only as sealed packet data; edits are
-capped at 8 KiB.
+Owner taste rules reach the builder and the
+[judge](ai-boundary.md#taste-judge) only as sealed packet data; edits are
+capped at 8 KiB. A judge verdict is admitted only by a reference sent in that
+request and rule numbers of its version, so it can pick only among the covers
+it was shown.
 
 ### OpenRouter
 
 Egress is fixed to `https://openrouter.ai` and one exact model, with
-`require_parameters: true`. Cover and [taste
-profile](ai-boundary.md#taste-profile-builder) requests deny data collection;
+`require_parameters: true`. Cover, [taste
+profile](ai-boundary.md#taste-profile-builder) and taste judge requests deny
+data collection;
 description requests set `allow_fallbacks: false`. Upstream data practice is
 unverified. Responses past each endpoint's cap are refused as
 `response_too_large`, whatever `Content-Length` says. One deadline spans the
@@ -456,8 +460,8 @@ the Book matching level the comparison binds.
 
 Each preview is verified against its report digest and re-encoded into a
 metadata-free single-frame PNG; admission requires byte equality after
-re-decoding. Bytes, and taste profile JPEGs (`/images/NN.jpg`), go into sealed
-memory descriptors, re-verified in the child before Bubblewrap copies them
+re-decoding. Bytes, taste profile JPEGs (`/images/NN.jpg`) and taste judge
+PNGs (`/images/NN.png`) go into sealed memory descriptors, re-verified in the child before Bubblewrap copies them
 read-only.
 
 ### Description advice

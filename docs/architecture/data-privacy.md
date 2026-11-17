@@ -87,7 +87,10 @@ description the reviewer authored. The taste profile keeps each build's
 state and closed failure code, the daily request count, and each admitted
 profile version with its model, the counts and one digest of the inputs it
 was built from, whether each rule is the model's, edited or the owner's, and
-the texts the owner removed or replaced.
+the texts the owner removed or replaced. Each taste judgement keeps its state
+and closed failure code, and an admitted verdict keeps only the comparison's
+own cover reference, the decision, a confidence, rule numbers and digests of
+what was sent: no rule text or image.
 None keeps prompts, raw model streams, reasoning or unadmitted output. A
 clean rebuild discards the profile with all derived state.
 
@@ -193,9 +196,12 @@ The product sends no telemetry. It contacts only:
   as JPEGs, with each cover's size, shape, same-art group and role and the
   book's format, and the rules the owner wrote or edited and the texts the
   owner removed; never a title, author, identifier, path or provider text.
+  The suggestion model receives one work's current and alternative covers as
+  previews with their sizes and the book's format, and the profile version's
+  rules, the owner's own included; never a title or file.
   With Codex selected, those covers go to OpenAI through the owner's ChatGPT
-  sign-in, as cover review's do. OpenRouter cover and taste profile requests
-  ask providers to deny data collection; description requests do not. Read the model provider's data
+  sign-in, as cover review's do. OpenRouter cover, taste profile and
+  suggestion requests ask providers to deny data collection; description requests do not. Read the model provider's data
   policy before enabling any of them.
 
 ## What surfaces show

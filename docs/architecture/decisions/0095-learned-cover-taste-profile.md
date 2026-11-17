@@ -374,3 +374,36 @@ nothing reads it. Three decisions made while building it amend the text above:
 - **Body cap.** The edit route takes at most 8 KiB, under the same session,
   CSRF, Origin and build-identity checks as the profile's Try again, and
   answers a version that is no longer newest as `stale`.
+
+## Note: the judge (#1372 PR 4)
+
+The status stays proposed. The judge runs and stores its verdicts; nothing
+reads them yet.
+
+- **Either engine.** The judge is its own task mapping, Codex or an OpenRouter
+  model, chosen apart from the builder. Each request is one attempt and one
+  counted request; Codex receives the same admitted request with its PNGs
+  mounted read-only as `/images/NN.png` in packet order.
+- **Where it is asked (Q9).** Besides a fault-free kept cover beside another
+  art, the judge is asked where the stage would cure a fault of the current
+  cover (`wrong_shape`, `below_floor`, `edition_language`, `sharper_copy`,
+  `unreadable`). The judge picks an art and the stage picks its copy: each
+  other art is sent as its group's representative, and the current art only
+  as a resolution fault's cure. A field with fewer than two alternatives, a
+  same-art sharper copy alone, a fill and an open choice stay deterministic;
+  an open choice with two arts is not reachable once ADR-0093's stage runs.
+- **Packet.** The rules of one profile version as data; per cover an opaque,
+  per-request reference in shuffled order, the original's decoded size and
+  the current marker; the medium. Previews are the normalised PNGs, each
+  re-checked against the digest its comparison recorded.
+- **Admission.** In order: one JSON object; the closed schema; `choose` names
+  a sent alternative; no candidate without `choose`; no `keep_current`
+  without a current cover; every rule number in the bound version. Nothing is
+  repaired. The current marker is kept and stored on each verdict.
+- **Ceiling and cadence.** `review.cover_taste_judge_daily_requests`, 1–50,000
+  and 5,000 by default, counted before dispatch. One judgement per runner
+  wake, after the builder; a new version is judged once it has stood 120
+  seconds, its pending `choose` verdicts first, and a field whose verdict
+  kept the current cover or abstained is not judged again. An engine failure
+  pauses judging for 10 minutes; a failed field waits for the owner's Try
+  again or a new version.

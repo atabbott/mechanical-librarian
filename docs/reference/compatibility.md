@@ -78,11 +78,11 @@ refused.
 
 | Identifier | What it is |
 | --- | --- |
-| `config-v12` | The file-mode configuration document at `/data/config.json` ([schema](config.schema.json)) |
+| `config-v13` | The file-mode configuration document at `/data/config.json` ([schema](config.schema.json)) |
 | `review-bootstrap-v2` | The store-mode bootstrap document at `/run/secrets/review-bootstrap.json` |
 | `owner-settings-v6` | Store-mode owner settings in the application database, including Book matching (`matching.work_identity`) and Current covers |
 | `setup-state-v5` | Incomplete first-run setup, with libraries and their folders recorded before sources, including the setup claim token digest ([ADR-0086](../architecture/decisions/0086-deployment-held-setup-claim-token.md)). A setup left unfinished by an earlier build is refused at startup |
-| `reviewer-access-v5` | Optional reviewer access for cover review, description advice and the taste profile |
+| `reviewer-access-v6` | Optional reviewer access for cover review, description advice, the taste profile and its suggestion model |
 
 ### Reports, proposals and policy
 
@@ -118,7 +118,8 @@ refused.
 | `cover-automatic-decision-v5` | An automatic cover decision, with the measured rule's reason for a replacement and which shadow identity admitted it: one for a confirmed current cover, one for a cover that is not confirmed |
 | `cover-selection-authority-v1`, `cover-selection-authority-v3` | Cover selections: v1 wraps an automatic choice, v3 an owner choice and the switch a Put back undoes |
 | `cover-taste-build-packet-v2` | The closed facts and image transports one taste profile build sends to its model, with the owner's kept rules, the rules the owner removed and the budget left |
-| `cover-taste-profile-v2` | A taste profile version, built or edited: up to 40 numbered rules in four sections, each written by the model, edited by the owner or the owner's own, with the texts the owner removed and the inputs it was built from. It influences nothing yet |
+| `cover-taste-profile-v2` | A taste profile version, built or edited: up to 40 numbered rules in four sections, each written by the model, edited by the owner or the owner's own, with the texts the owner removed and the inputs it was built from. The taste judge reads it; nothing shows its verdicts yet |
+| `cover-taste-verdict-v1` | One admitted taste judge verdict: the comparison's own chosen cover reference or none, the decision, a confidence and rule numbers, bound to the profile version, packet and model. Nothing shows it yet |
 | `field-effect-consent-state-v2` | A library consent and its basis: the owner's grant or the policy activation that carried it |
 | `field-effect-consent-envelope-v1` | The consent envelope whose identity digests the destination set |
 | `field-effect-plan-v1`, `field-effect-operation-v1`, `field-effect-event-v1` | Guarded write plans, operations and their append-only audit events |
@@ -174,7 +175,7 @@ These are refused rather than interpreted:
 
 - any earlier database, report, proposal, review, decision, outcome, consent,
   settings, setup or session state;
-- configuration documents other than `config-v12` and `review-bootstrap-v2`;
+- configuration documents other than `config-v13` and `review-bootstrap-v2`;
 - batch manifests other than `batch-manifest-v5`, subcommands not listed in
   Deployment, and any browser bundle whose identity does not match the build;
 - a database paired with an artifact store it did not create.
