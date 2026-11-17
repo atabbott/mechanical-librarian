@@ -60,6 +60,7 @@ export function CoverComparison({
   onReplaced,
   onSkip,
   onBack,
+  onRecording,
   calibration = false,
   focusTitle = true,
 }: {
@@ -69,6 +70,8 @@ export function CoverComparison({
   onReplaced: (reviewCaseId: string) => void
   onSkip?: () => void
   onBack?: () => void
+  /** A choice is sent (true), then settles either way (false). */
+  onRecording?: (recording: boolean) => void
   /** Covers' picks: the title is under the screen's heading, with no links (S7). */
   calibration?: boolean
   /** Whether opening this work moves focus to its title. */
@@ -110,9 +113,11 @@ export function CoverComparison({
     const command = coverCommand(field, outcome, value ?? null)
     setFailure(null)
     setProgress({ command, phase: 'recording' })
+    onRecording?.(true)
     submitCover(http, queryClient, work.review_case_id, command).then(
       () => {
         setProgress({ command, phase: 'confirmed' })
+        onRecording?.(false)
         onRecorded(
           outcome === 'keep_current'
             ? 'kept'
@@ -124,6 +129,7 @@ export function CoverComparison({
         )
       },
       (error: unknown) => {
+        onRecording?.(false)
         const next = failureOf(error, field)
         // A refused stale choice leaves nothing marked as chosen.
         setProgress(next.kind === 'stale' ? null : { command, phase: 'failed' })

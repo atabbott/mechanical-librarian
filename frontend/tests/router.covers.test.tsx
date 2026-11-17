@@ -2750,6 +2750,30 @@ describe("Covers' picks (#1372 PR 3)", () => {
     ).toBeVisible()
   })
 
+  it('ends a run-out only once the last read of the set has answered', async () => {
+    const user = userEvent.setup()
+    let answer: () => void = () => undefined
+    const http = picksHttp(['case-1'])
+    const { router } = renderRoute(picksRoute, http)
+    await screen.findByRole('heading', { level: 3, name: 'First Book' })
+    // The read after running out brings a work only once answered.
+    http.getCoverCalibration.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          answer = () => resolve(calibration(['case-1', 'case-2']))
+        }),
+    )
+    await user.click(screen.getByRole('button', { name: 'Skip for now' }))
+    await waitFor(() => expect(http.getCoverCalibration).toHaveBeenCalledTimes(2))
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    })
+    expect(router.state.location.search.tab).toBe('picks')
+    act(() => answer())
+    expect(await screen.findByRole('heading', { level: 3, name: 'Second Book' })).toBeVisible()
+    expect(router.state.location.search.tab).toBe('picks')
+  })
+
   it('passes over a work decided elsewhere, and Skip for now records nothing', async () => {
     const user = userEvent.setup()
     const http = picksHttp(['case-1', 'case-2', 'case-3'])
@@ -2839,6 +2863,52 @@ describe("Covers' picks (#1372 PR 3)", () => {
     expect(await screen.findByRole('heading', { level: 3, name: 'Second Book' })).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Skip for now' }))
     expect(await screen.findByRole('heading', { level: 3, name: 'Third Book' })).toBeVisible()
+  })
+
+  it('follows a stale pick to its successor on Reload', async () => {
+    const user = userEvent.setup()
+    const http = picksHttp(['case-1', 'case-2'])
+    http.recordDecision.mockRejectedValueOnce(new ApiError(409, 'stale'))
+    http.getCaseSuccessor.mockResolvedValue('case-9')
+    renderRoute(picksRoute, http)
+    await chooseOtherPick(user)
+    const reload = await screen.findByRole('button', { name: 'Reload' })
+    http.getCoverCalibration.mockImplementation(async () => calibration(['case-9', 'case-2']))
+    await user.click(reload)
+    await waitFor(() => expect(http.getCaseDetail.mock.calls.map(([id]) => id)).toContain('case-9'))
+    expect(await screen.findByRole('heading', { level: 3, name: 'First Book' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Reload' })).toBeNull()
+    await chooseOtherPick(user)
+    await waitFor(() => expect(http.recordDecision).toHaveBeenCalledTimes(2))
+    expect(http.recordDecision.mock.calls[1]?.[0]).toBe('case-9')
+  })
+
+  it('ends a Stop during a pick once the pick settles, at Taste profile for the 25th', async () => {
+    const user = userEvent.setup()
+    let chosen = 24
+    let land: () => void = () => undefined
+    const http = picksHttp(['case-1', 'case-2'], () => chosen)
+    const record = createHttp().recordDecision
+    http.recordDecision.mockImplementation(async (caseId, command) => {
+      await new Promise<void>((resolve) => {
+        land = resolve
+      })
+      chosen = 25
+      return record(caseId, command)
+    })
+    const { router } = renderRoute(picksRoute, http)
+    expect(await screen.findByText('25 of 25')).toBeVisible()
+    await chooseOtherPick(user)
+    await waitFor(() => expect(http.recordDecision).toHaveBeenCalled())
+    await user.click(screen.getByRole('button', { name: 'Stop' }))
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    })
+    expect(router.state.location.search.tab).toBe('picks')
+    expect(screen.queryByText('24 of 25 picks saved.')).toBeNull()
+    act(() => land())
+    await waitFor(() => expect(router.state.location.search.tab).toBe('taste'))
+    expect(await screen.findByRole('heading', { name: 'Writing your taste profile' })).toBeVisible()
   })
 
   it('waits for the count after a pick before Stop says it', async () => {

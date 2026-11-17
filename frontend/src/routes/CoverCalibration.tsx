@@ -62,8 +62,10 @@ export function CoverCalibration({
   // Every work this session picked, skipped or passed over, so a re-read
   // never offers it again.
   const [seen, setSeen] = useState<ReadonlySet<string>>(new Set())
-  // The seen count when the set was last read again after running out.
+  // The seen count when the set was last read again after running out, and
+  // the seen count whose read has answered: the run-out ends only after it.
   const [rereadAt, setRereadAt] = useState<number | null>(null)
+  const [rereadDone, setRereadDone] = useState<number | null>(null)
   const [picked, setPicked] = useState(0)
   const [pickedAt, setPickedAt] = useState(0)
   const heading = useRef<HTMLHeadingElement>(null)
@@ -100,12 +102,21 @@ export function CoverCalibration({
   if (ranOut && !empty && rereadAt !== seen.size) setRereadAt(seen.size)
   const { refetch } = set
   useEffect(() => {
-    if (rereadAt !== null) void refetch()
+    if (rereadAt === null) return
+    let live = true
+    void refetch().then(() => {
+      if (live) setRereadDone(rereadAt)
+    })
+    return () => {
+      live = false
+    }
   }, [rereadAt, refetch])
   // Stop, like running out, names the count only once taste is read again
-  // after the last pick, so it is never one short.
+  // after the last pick, so it is never one short; a pick still being
+  // recorded settles first.
   const [stopped, setStopped] = useState(false)
-  const counted = tasteReadAt >= pickedAt
+  const [recording, setRecording] = useState(0)
+  const counted = tasteReadAt >= pickedAt && recording === 0
   // Each end is said once.
   const ended = useRef(false)
   const end = done
@@ -114,7 +125,7 @@ export function CoverCalibration({
       ? ({ kind: 'notice', text: picksSaved(taste.chosen, required) } as const)
       : empty
         ? ({ kind: 'notice', text: emptyCopy } as const)
-        : ranOut && rereadAt === seen.size && counted
+        : ranOut && rereadAt === seen.size && rereadDone === seen.size && counted
           ? ({
               kind: 'notice',
               text: `${picksSaved(taste.chosen, required)} ${ranOutCopy}`,
@@ -129,6 +140,21 @@ export function CoverCalibration({
     setStopped(true)
     void queryClient.invalidateQueries({ queryKey: ['covers'] })
   }
+  // A case prepared again takes its predecessor's place in the walk.
+  const replace = (from: string, to: string) =>
+    setWalk((was) => {
+      const later = was.works.find((work) => work.review_case_id === to)
+      return {
+        read: was.read,
+        works: was.works.flatMap((work) =>
+          work.review_case_id === to
+            ? []
+            : work.review_case_id === from
+              ? [later ?? { ...work, review_case_id: to }]
+              : [work],
+        ),
+      }
+    })
   const position = Math.min(taste.chosen + 1, required)
   return (
     <section className="covers-picks" aria-labelledby="covers-picks-heading">
@@ -168,10 +194,13 @@ export function CoverCalibration({
             void queryClient.invalidateQueries({ queryKey: ['covers', 'taste'] })
             void queryClient.invalidateQueries({ queryKey: ['library'] })
           }}
-          onReplaced={() => {
-            // The work was prepared again; the set is read afresh.
+          onReplaced={(successor) => {
+            // The work was prepared again: its successor opens in its place,
+            // and the set is read afresh.
+            replace(current.review_case_id, successor)
             void set.refetch()
           }}
+          onRecording={(sent) => setRecording((count) => count + (sent ? 1 : -1))}
           onSkip={() => pass(current.review_case_id)}
         />
       ) : (
