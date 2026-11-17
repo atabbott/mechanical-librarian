@@ -133,7 +133,7 @@ Until a preparation reads the link, a decision on the work's case is refused
 with "Not recorded. The book link changed. Choose again when preparation has
 used the link." That covers choosing, pinning, withdrawing and the description
 choice. It holds while preparation is paused. After a preparation that could
-not finish, the refusal says so instead and gives the row's next step.
+not finish, a refusal in Library says so instead and gives the row's next step.
 
 Evidence that only the link supports never decides a field automatically.
 Such a value is left to you, with "Only the book you linked supports this

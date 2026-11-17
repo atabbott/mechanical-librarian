@@ -423,7 +423,8 @@ def test_the_owner_links_the_work_and_the_next_preparation_reads_the_link(
     # says Could not finish, and the link keeps the report's outcome (#1941).
     failed = sqlite3.connect(world.path, isolation_level=None)
     failed.execute(
-        "INSERT INTO review_preparation_work(work_id,scan_id,ordinal,connection_name,"
+        "INSERT OR REPLACE INTO review_preparation_work(work_id,scan_id,ordinal,"
+        "connection_name,"
         "library_name,library_id,item_id,file_identity,source_revision,"
         "source_fingerprint,producer_fingerprint,catalogue_generation,"
         "catalogue_fingerprint,stage,state,failure_code,updated_at) "

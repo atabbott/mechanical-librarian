@@ -306,7 +306,10 @@ describe('a choice refused because the link changed (#1941)', () => {
     stage: 'provider' as const,
     status: 'provider' as const,
   }
-  const refusedWith = async (state: 'preparing' | 'preparation_failed') => {
+  const refusedWith = async (
+    state: 'preparing' | 'preparation_failed',
+    preparation = failedPreparation,
+  ) => {
     const user = userEvent.setup()
     const http: ReviewHttp = {
       ...createHttp(),
@@ -315,7 +318,7 @@ describe('a choice refused because the link changed (#1941)', () => {
         works: library.works.map((work) => ({
           ...work,
           link: { state, provider: 'hardcover' as const },
-          ...(state === 'preparation_failed' ? { preparation: failedPreparation } : {}),
+          ...(state === 'preparation_failed' ? { preparation } : {}),
         })),
       })),
       recordDecision: vi.fn<ReviewHttp['recordDecision']>(async () => {
@@ -345,5 +348,14 @@ describe('a choice refused because the link changed (#1941)', () => {
       ),
     ).toBeVisible()
     expect(http.recordDecision).toHaveBeenCalledTimes(1)
+  })
+
+  it('gives a given-up check’s own words and retry when that check gave up', async () => {
+    await refusedWith('preparation_failed', { ...failedPreparation, checkGivenUp: true })
+    expect(
+      await screen.findByText(
+        /^Not recorded\. Could not be checked against the new Book matching setting, so the book link is not used yet\./u,
+      ),
+    ).toBeVisible()
   })
 })
