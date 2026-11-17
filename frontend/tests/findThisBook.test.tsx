@@ -21,7 +21,7 @@ import {
   refusalFor,
   withheldLines,
 } from '../src/findThisBook'
-import { createHttp, library, renderRoute } from './fixtures'
+import { createHttp, detail, library, renderRoute } from './fixtures'
 import { card, linked, withLinkView } from './findThisBookFixtures'
 import { reportDetail } from './wireFixtures'
 
@@ -618,6 +618,80 @@ describe('the dialog', () => {
       { position: 0, scope: 'edition' },
       expect.stringMatching(/^.{16,128}$/u),
     )
+  })
+
+  it('keeps a link it wrote to its own work, so the next work selected offers Find this book', async () => {
+    // Two unlinked works whose rows read alike; preparation stays paused, so
+    // neither row changes after the first is linked (#1477).
+    const linkedItems = new Set<string>()
+    const [first] = library.works
+    if (first === undefined) throw new Error('the library fixture has a work')
+    const second: LibraryWorkView = {
+      ...first,
+      id: 'case-2',
+      reviewCaseId: 'case-2',
+      workId: 'library_work_2',
+      title: 'Another Book',
+      detailUrl: '/review/case-2',
+    }
+    const http = withView(offered, {
+      getOwnerLinkView: vi.fn<ReviewHttp['getOwnerLinkView']>(async (address) =>
+        linkedItems.has(address.item)
+          ? { ...offered, link: linked({ state: 'preparing', paused: true }) }
+          : offered,
+      ),
+      getLibrary: vi.fn(async () => ({
+        ...library,
+        works: [first, second].map((work) => ({
+          ...work,
+          findOffered: true,
+          link: null,
+        })),
+      })),
+      getCaseDetail: vi.fn<ReviewHttp['getCaseDetail']>(async (id) =>
+        id === 'case-2'
+          ? {
+              ...detail,
+              id: 'case-2',
+              title: 'Another Book',
+              target: { ...detail.target, item: 'internal-item-2', title: 'Another Book' },
+            }
+          : detail,
+      ),
+      searchOwnerLink: vi.fn(async () => results({ cards: [card()], more: false, dropped: 0 })),
+      chooseOwnerLink: vi.fn(async () => {
+        linkedItems.add('internal-item-1')
+        return {
+          action: 'link' as const,
+          link_row_id: `owner_link_${'a'.repeat(64)}`,
+          scan_requested: true,
+          schema_version: 'owner-link-change-v1' as const,
+        }
+      }),
+    })
+    const { user, dialog, actions } = await openDialog(http)
+    await user.click(within(dialog).getByRole('button', { name: 'Search' }))
+    await user.click(await within(dialog).findByRole('button', { name: 'Choose Dune' }))
+    await user.click(within(dialog).getByRole('button', { name: 'This book' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(within(actions).getByRole('button', { name: 'Linked, preparing' })).toBeVisible()
+
+    // With the next work's detail already read, the header stays in place
+    // across the switch, as it does when the owner moves along the list.
+    const row = screen.getByRole('button', { name: /^Another Book\./u })
+    await user.hover(row)
+    await waitFor(() =>
+      expect(http.getCaseDetail).toHaveBeenCalledWith(
+        'case-2',
+        expect.any(AbortSignal),
+        'background',
+      ),
+    )
+    await user.click(row)
+    await screen.findByRole('heading', { name: 'Another Book' })
+    const next = await screen.findByRole('navigation', { name: 'Work actions' })
+    expect(await within(next).findByRole('button', { name: 'Find this book' })).toBeVisible()
+    expect(within(next).queryByRole('button', { name: 'Linked, preparing' })).toBeNull()
   })
 
   it('closes on Escape without recording anything', async () => {

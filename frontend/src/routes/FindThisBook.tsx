@@ -66,8 +66,8 @@ export type FindEntryRow = Pick<LibraryWorkView, 'findOffered' | 'link'>
  * moves when a read lands (#1477). The link view is read only to open the
  * dialog; with no row to go by, it is read to decide, and the entry's space is
  * held until it answers. After a choose or a
- * withdraw, the view read back stands until the row changes, and focus goes
- * to whichever replaced the other.
+ * withdraw, the view read back stands until the row or the selected work
+ * changes, and focus goes to whichever replaced the other.
  */
 export function FindThisBookEntry({
   address: target,
@@ -100,7 +100,7 @@ export function FindThisBookEntry({
   // A failure to open, shown beside the entry until the owner moves on.
   const [failed, setFailed] = useState('')
   const [refocus, setRefocus] = useState(0)
-  const [written, setWritten] = useState<{ row: string | null; view: OwnerLinkView } | null>(null)
+  const [written, setWritten] = useState<{ row: string; view: OwnerLinkView } | null>(null)
   const view = useQuery({
     queryKey: ownerLinkKey(address ?? { connection: '', library: '', item: '' }),
     queryFn: (context) =>
@@ -115,10 +115,17 @@ export function FindThisBookEntry({
     if (refocus) entry.current?.focus()
   }, [refocus])
   const data = view.data
-  const rowKey =
+  // The view read back after a write belongs to its own work: the header stays
+  // in place when the owner selects another, so the work's address is part of
+  // what it stands for, with the row it was read beside.
+  const rowKey = [
+    address?.connection ?? '',
+    address?.library ?? '',
+    address?.item ?? '',
     row === undefined
-      ? null
-      : `${String(row.findOffered)}|${row.link?.state ?? ''}|${row.link?.provider ?? ''}`
+      ? ''
+      : `${String(row.findOffered)}|${row.link?.state ?? ''}|${row.link?.provider ?? ''}`,
+  ].join('\u0000')
   const shown =
     written !== null && written.row === rowKey
       ? { offered: written.view.offered, link: written.view.link }
