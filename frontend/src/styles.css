@@ -2024,3 +2024,82 @@ dialog.first-review-guide::backdrop { background:rgb(23 32 30 / .42); }
 .review-keys-switch { display:flex; align-items:center; gap:.65rem; min-height:44px; margin-top:.75rem; font-weight:650; cursor:pointer; }
 .review-keys-switch input { flex:none; width:1.25rem; height:1.25rem; min-height:0; margin:0; accent-color:var(--accent-strong); }
 .review-keys-close { display:block; margin:.75rem 0 0 auto; }
+/* Find this book (#1477): the work's header actions, the More list that lies
+   over the page, the link pill, and the dialog with its search, results,
+   confirmation and link view. */
+.selected-work-diagnostics { flex-wrap:wrap; column-gap:.75rem; row-gap:0; }
+.work-action { display:inline-flex; align-items:center; min-height:44px; padding:0; border:0; border-radius:0; background:none; color:var(--accent-strong); font-size:.76rem; font-weight:700; text-decoration:underline; text-underline-offset:.2em; }
+.work-action:focus-visible, .work-action-pill:focus-visible, .work-more-list a:focus-visible { outline:2px solid var(--focus); outline-offset:2px; }
+button.work-action-pill { position:relative; min-height:0; padding:.18rem .55rem; border:0; line-height:1.3; text-align:left; cursor:pointer; }
+/* The pill keeps a 44px target without growing its row. */
+.work-action-pill::after { content:''; position:absolute; inset:-.75rem 0; }
+.work-more { position:relative; display:inline-flex; }
+.work-more-list { position:absolute; top:calc(100% - .25rem); right:0; z-index:20; min-width:12rem; max-width:calc(100vw - 2rem); margin:0; padding:.35rem; list-style:none; border:1px solid var(--line-strong); border-radius:.65rem; background:var(--surface-strong); box-shadow:var(--shadow); }
+.work-more-list[hidden] { display:none; }
+.work-more-list a { display:flex; align-items:center; min-height:2.75rem; padding:.6rem .85rem; border-radius:.5rem; color:var(--accent-strong); font-size:.875rem; font-weight:650; }
+.work-more-list a:hover { background:var(--accent-soft); }
+@media (max-width:760px) { .work-more-list { right:auto; left:0; } .work-more:last-child .work-more-list { right:0; left:auto; } }
+
+dialog.find-book-dialog { box-sizing:border-box; width:min(46rem,calc(100vw - 2rem)); max-height:calc(100dvh - 2rem); padding:0; overflow:hidden; border:1px solid var(--line); border-radius:1rem; color:var(--ink); background:var(--surface); box-shadow:0 16px 46px rgb(30 40 37 / .08); }
+:root[data-theme='dark'] dialog.find-book-dialog { box-shadow:0 18px 52px rgb(0 0 0 / .28); }
+dialog.find-book-dialog[open] { display:flex; flex-direction:column; }
+dialog.find-book-dialog::backdrop { background:rgb(23 32 30 / .42); }
+:root[data-theme='dark'] dialog.find-book-dialog::backdrop { background:rgb(0 0 0 / .6); }
+.find-book-head { display:flex; flex-wrap:wrap; align-items:flex-start; justify-content:space-between; gap:.75rem; padding:1rem 1.25rem .85rem; border-bottom:1px solid var(--line); }
+.find-book-head > div { flex:1 1 12rem; min-width:0; }
+.find-book-head h2 { margin:0 0 .45rem; font-family:Georgia,'Times New Roman',serif; font-size:1.45rem; letter-spacing:-.02em; }
+.find-book-head p { margin:0; color:var(--soft); font-size:.8rem; overflow-wrap:anywhere; }
+.find-book-body { display:grid; gap:1.1rem; min-height:0; overflow:auto; padding:1rem 1.25rem 1.25rem; }
+.find-book-dialog :is(h2, p)[tabindex='-1']:focus-visible { outline:3px solid var(--focus); outline-offset:3px; border-radius:2px; }
+.find-book-dialog :is(h2, p)[tabindex='-1']:focus:not(:focus-visible) { outline:none; }
+@media (max-width:760px) {
+  dialog.find-book-dialog { width:100%; max-width:100%; height:100dvh; max-height:100dvh; margin:0; border:0; border-radius:0; }
+  .find-book-head, .find-book-body { padding-left:1rem; padding-right:1rem; }
+}
+
+.find-book-form { display:grid; gap:.85rem; min-width:0; }
+.find-book-pickers { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,13rem),1fr)); gap:.75rem; }
+.find-book-field { display:grid; gap:.35rem; min-width:0; }
+.find-book-field > span, .find-book-authors legend { padding:0; color:var(--ink); font-size:.75rem; font-weight:700; }
+.find-book-query { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,15rem),1fr)); gap:.75rem; align-items:start; }
+.find-book-authors { display:grid; gap:.5rem; min-width:0; margin:0; padding:0; border:0; }
+.find-book-authors legend { margin-bottom:.35rem; }
+.find-book-author { display:flex; flex-wrap:wrap; gap:.5rem; }
+.find-book-author input { flex:1 1 10rem; }
+.find-book-add { justify-self:start; }
+.find-book-identifier { max-width:20rem; }
+.find-book-disclosure { margin:0; color:var(--soft); font-size:.8rem; }
+.find-book-actions { display:flex; flex-wrap:wrap; gap:.5rem; }
+.find-book-refusal { margin:0; padding:.6rem .75rem; border-left:3px solid var(--notice); border-radius:.25rem; color:var(--ink); background:var(--notice-soft); font-size:.82rem; }
+
+.find-book-results { display:grid; gap:.75rem; min-width:0; padding-top:1rem; border-top:1px solid var(--line); }
+.find-book-count { margin:0; font-size:.875rem; font-weight:700; }
+.find-book-cards { display:grid; margin:0; padding:0; list-style:none; border-top:1px solid var(--line); }
+.find-book-card { display:flex; flex-wrap:wrap; align-items:flex-start; gap:.6rem .85rem; padding:.75rem 0; border-bottom:1px solid var(--line); }
+.find-book-card-body { flex:1 1 10rem; min-width:0; }
+.find-book-card-body p { margin:0; font-size:.8rem; overflow-wrap:anywhere; }
+.find-book-card-title { font-family:Georgia,'Times New Roman',serif; font-size:.95rem!important; font-weight:700; line-height:1.3; }
+.find-book-card-line { color:var(--soft); }
+.find-book-card-refused { margin-top:.35rem!important; color:var(--ink); }
+.find-book-choose { flex:none; align-self:center; }
+.find-book-cover { flex:none; display:block; box-sizing:border-box; width:3.5rem; height:5.25rem; object-fit:cover; border-radius:2px 5px 5px 2px; background:var(--line); }
+.find-book-cover.is-spine { display:grid; place-items:center; padding:.2rem; color:var(--accent-strong); background:var(--accent-soft); box-shadow:inset 3px 0 0 color-mix(in srgb,var(--accent-strong) 35%,transparent); font-family:Georgia,'Times New Roman',serif; font-size:1rem; font-weight:700; letter-spacing:.04em; }
+.find-book-results-foot { display:grid; gap:.2rem; }
+.find-book-results-foot p { margin:0; color:var(--soft); font-size:.8rem; }
+
+.find-book-confirm { display:grid; gap:1rem; min-width:0; }
+.find-book-confirm-record { display:flex; flex-wrap:wrap; gap:.85rem 1rem; align-items:flex-start; }
+.find-book-confirm-record .find-book-cover { width:6rem; height:9rem; }
+.find-book-question { margin:0 0 .5rem!important; font-family:Georgia,'Times New Roman',serif; font-size:1.15rem!important; font-weight:700; line-height:1.3; }
+.find-book-differs { display:grid; gap:.3rem; margin:0; padding:.7rem .85rem .7rem 1.9rem; border-left:3px solid var(--notice); border-radius:.25rem; background:var(--notice-soft); font-size:.82rem; overflow-wrap:anywhere; }
+.find-book-withheld { margin:0; color:var(--soft); font-size:.8rem; }
+
+.book-link { display:grid; gap:.4rem; min-width:0; }
+.book-link p { margin:0; overflow-wrap:anywhere; }
+.book-link-title { font-family:Georgia,'Times New Roman',serif; font-size:1.05rem; font-weight:700; line-height:1.3; }
+.book-link-scope { color:var(--soft); font-size:.85rem; }
+.book-link-state { margin-top:.35rem!important; padding:.6rem .75rem; border-left:3px solid var(--accent); border-radius:.25rem; background:var(--accent-soft); font-size:.85rem; }
+.book-link-state.is-notice { border-left-color:var(--notice); background:var(--notice-soft); }
+.book-link .find-book-actions, .book-link-confirm { margin-top:.6rem; }
+.book-link-confirm { display:grid; gap:.6rem; }
+.book-link-confirm p { font-weight:650; }

@@ -1252,6 +1252,7 @@ export default function LibraryPage({
                 fields={detail.data.fields}
                 needsYou={attentionFields.length}
                 selectedDestination={selected?.destination}
+                address={detail.data.target}
               />
               {detail.data.comparisonNotices.length ? (
                 <aside className="comparison-notice" aria-label="Provider comparison condition">

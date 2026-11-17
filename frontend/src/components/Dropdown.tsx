@@ -41,6 +41,9 @@ export function Dropdown(props: {
   const [open, setOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(0)
   const [position, setPosition] = useState<DropdownPosition | null>(null)
+  // Inside a modal dialog the list joins the dialog, since the rest of the
+  // page is inert under it (#1477).
+  const [host, setHost] = useState<Element | null>(null)
   const selectedIndex = Math.max(
     0,
     props.options.findIndex((option) => option.value === props.value),
@@ -78,6 +81,7 @@ export function Dropdown(props: {
   const openMenu = useCallback(() => {
     if (props.disabled || props.options.length === 0) return
     updatePosition()
+    setHost(triggerRef.current?.closest('dialog') ?? document.body)
     setActiveIndex(selectedIndex)
     typedRef.current = { prefix: '', at: 0 }
     setOpen(true)
@@ -213,7 +217,7 @@ export function Dropdown(props: {
           <path d="m6 9 6 6 6-6" />
         </svg>
       </button>
-      {open && position
+      {open && position && host
         ? createPortal(
             <div
               id={listboxId}
@@ -245,7 +249,7 @@ export function Dropdown(props: {
                 </button>
               ))}
             </div>,
-            document.body,
+            host,
           )
         : null}
     </div>
