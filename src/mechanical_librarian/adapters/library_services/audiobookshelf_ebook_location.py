@@ -120,6 +120,15 @@ def _item_coordinates(
     return item_relative, item_is_file
 
 
+def item_relative_path(item: object, service_path: str | None) -> str | None:
+    """The item's own path within its library, or `None` when it states none.
+
+    Raises `ValueError` when the item's coordinates disagree, as preparation's
+    own reading does.
+    """
+    return _item_coordinates(item, service_path)[0]
+
+
 def _canonical_relative(
     item_relative: str | None, item_is_file: bool | None, file_relative: str
 ) -> str:
@@ -169,4 +178,9 @@ def relative_service_path(path: str, service_path: str) -> str:
     return path[len(prefix) :]
 
 
-__all__ = ["EbookLocation", "is_safe_relative_path", "normalize_ebook_location"]
+__all__ = [
+    "EbookLocation",
+    "is_safe_relative_path",
+    "item_relative_path",
+    "normalize_ebook_location",
+]

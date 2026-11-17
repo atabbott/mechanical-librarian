@@ -17,6 +17,7 @@ import { Disclosure } from '../components/Disclosure'
 import { Dropdown } from '../components/Dropdown'
 import { FieldInput, FieldRow } from '../components/FieldRow'
 import { FinishTray } from '../components/FinishTray'
+import { IdentifierImportEntry, IdentifierImportSheet } from '../components/IdentifierImport'
 import { OtherBrowsersSettings } from '../components/OtherBrowsersSettings'
 import type { OtherBrowsersState } from '../components/OtherBrowsersSettings'
 import { OwnerPasswordSettings } from '../components/OwnerPasswordSettings'
@@ -455,6 +456,10 @@ const SettingsEditor = ({
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [discardGeneration, setDiscardGeneration] = useState(0)
   const [libraryPage, setLibraryPage] = useState(0)
+  // The saved library whose identifiers file import is open, in the list's place.
+  const [importingName, setImporting] = useState<string | null>(null)
+  // While an import is being linked, the section menu cannot leave it.
+  const [importBusy, setImportBusy] = useState(false)
   const [focusTarget, setFocusTarget] = useState<string | null>(null)
   const statusTarget = useRef<HTMLParagraphElement>(null)
   // Set once a save meets a newer build: no later save can succeed in this tab.
@@ -535,6 +540,8 @@ const SettingsEditor = ({
     (capability) => !draft.providers.some((provider) => provider.adapter === capability.adapter),
   )
   const locked = view.authority === 'file'
+  const saved = (name: string | null) => view.document.libraries.find((item) => item.name === name)
+  const importing = saved(importingName)
   const update = (change: (value: Document) => void) => {
     const next = clone(draft)
     change(next)
@@ -718,6 +725,7 @@ const SettingsEditor = ({
       <div className="settings-compact-sections">
         <Dropdown
           ariaLabel="Settings section"
+          disabled={importBusy}
           value={active}
           options={sections.map((section) => ({
             value: section.id,
@@ -737,6 +745,7 @@ const SettingsEditor = ({
             <button
               type="button"
               key={section.id}
+              disabled={importBusy}
               aria-current={active === section.id ? 'page' : undefined}
               aria-describedby={`settings-${section.id}-changes`}
               onClick={() => void navigate({ search: { group: section.id } })}
@@ -975,7 +984,19 @@ const SettingsEditor = ({
                 ) : null}
               </>
             ) : null}
-            {active === 'libraries' ? (
+            {active === 'libraries' && importing ? (
+              <IdentifierImportSheet
+                connection={importing.connection}
+                library={importing.name}
+                label={importing.display_name ?? importing.name}
+                onBusy={setImportBusy}
+                onBack={() => {
+                  setImporting(null)
+                  setFocusTarget(`library.${importing.name}.identifier_import`)
+                }}
+              />
+            ) : null}
+            {active === 'libraries' && !importing ? (
               <>
                 {visibleLibraries.map(({ library, index }) => (
                   <div className="settings-record" key={library.name}>
@@ -1085,6 +1106,13 @@ const SettingsEditor = ({
                         }}
                       />
                     </FieldRow>
+                    {/* Saved libraries only, in either settings mode (#1478). */}
+                    {saved(library.name) ? (
+                      <IdentifierImportEntry
+                        id={controlId(`library.${library.name}.identifier_import`)}
+                        onOpen={() => setImporting(library.name)}
+                      />
+                    ) : null}
                   </div>
                 ))}
                 {libraryPageCount > 1 ? (

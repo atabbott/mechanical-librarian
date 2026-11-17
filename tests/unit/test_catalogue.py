@@ -40,6 +40,7 @@ def _entry(
     title: str = "Title",
     author: str = "Author",
     path: str = "book.epub",
+    item_path: str | None = None,
 ) -> CatalogueEntry:
     return CatalogueEntry(
         "primary",
@@ -56,6 +57,7 @@ def _entry(
         path,
         "epub",
         "books",
+        item_path=item_path,
     )
 
 
@@ -596,3 +598,55 @@ def test_library_admission_missing_then_available_and_drift_requires_reopen() ->
             (0, "main", "")
         ]
         connection.close()
+
+
+def test_item_path_round_trips_and_stays_out_of_the_source_fingerprint() -> None:
+    """The item's own path (#1478) is kept for identifiers files only."""
+    assert (
+        _entry(item_path="Shelf/Book").source_fingerprint == _entry().source_fingerprint
+    )
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "catalogue.sqlite"
+        repository = open_catalogue(path, create=True)
+        stored = (_entry(item_path="Shelf/Book"), _entry("item-2"))
+        repository.acquire_refresh()
+        generation = repository.publish("a" * 64, stored)
+        assert repository.inspect("a" * 64) == stored
+        key = ("primary", "books", "library-id", "item-1")
+        assert repository.current_entry(generation, "a" * 64, key) == stored[0]
+        assert repository.latest_entry("a" * 64, key) == stored[0]
+        with pytest.raises(sqlite3.IntegrityError):
+            repository._connection.execute(
+                "UPDATE catalogue_entries SET item_path='' WHERE item_id='item-1'"
+            )
+        repository.close()
+
+
+def test_a_catalogue_main_created_before_item_paths_is_refused_unchanged(
+    tmp_path: Path,
+) -> None:
+    """A catalogue-v2 database from 5f775fd, whose entries have no item path,
+    fails schema validation and is left as it was (#1478)."""
+    fixture = json.loads(
+        (
+            Path(__file__).parents[1] / "fixtures/predecessor-stores-5f775fd.json"
+        ).read_text(encoding="utf-8")
+    )["catalogue"]
+    path = tmp_path / "catalogue.sqlite"
+    connection = sqlite3.connect(path)
+    try:
+        connection.executescript("".join(sql + ";" for sql in fixture["sql"]))
+        connection.execute(
+            "INSERT INTO catalogue_schema(version) VALUES(?)", (fixture["version"],)
+        )
+        connection.commit()
+        columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(catalogue_entries)")
+        }
+    finally:
+        connection.close()
+    assert "item_path" not in columns
+    before = path.read_bytes()
+    with pytest.raises(CatalogueError):
+        open_catalogue(path)
+    assert path.read_bytes() == before

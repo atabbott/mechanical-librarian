@@ -2135,3 +2135,65 @@ dialog.find-book-dialog::backdrop { background:rgb(23 32 30 / .42); }
 .book-link .find-book-actions, .book-link-confirm { margin-top:.6rem; }
 .book-link-confirm { display:grid; gap:.6rem; }
 .book-link-confirm p { font-weight:650; }
+/* Import identifiers (#1478): the entry at the foot of each saved library's record, and the page that takes the list's place. */
+.identifier-import { padding:.8rem 1.25rem; border-top:1px solid var(--line); }
+.identifier-import-sheet, .identifier-import-flow, .identifier-import-file, .identifier-import-preview { display:grid; grid-template-columns:minmax(0,1fr); gap:.85rem; min-width:0; }
+.identifier-import-sheet { padding:1rem 1.25rem 1.25rem; }
+.identifier-import-sheet > h3 { margin:0; font:700 1.15rem/1.3 Georgia,'Times New Roman',serif; overflow-wrap:anywhere; }
+.identifier-import-sheet > h3:focus { outline:none; }
+.identifier-import-back button::before { content:'\2190'; margin-right:.4rem; }
+.identifier-import-file { position:relative; gap:.45rem; }
+.identifier-import-label { font-weight:700; }
+/* The file input stays the control a keyboard and screen reader reach; its label is what shows. */
+.identifier-import-input { position:absolute; width:1px; height:1px; opacity:0; }
+.identifier-import-choose { display:flex; flex-wrap:wrap; align-items:center; gap:.4rem .75rem; min-width:0; cursor:pointer; }
+.identifier-import-choose > span:first-child { display:inline-flex; align-items:center; min-height:2.75rem; padding:.6rem .85rem; border:1px solid var(--line-strong); border-radius:.5rem; color:var(--ink); background:var(--surface); font-size:.875rem; font-weight:650; }
+.identifier-import-choose:hover > span:first-child { border-color:var(--accent-strong); }
+.identifier-import-input:focus-visible + .identifier-import-choose > span:first-child { outline:3px solid var(--focus); outline-offset:3px; }
+.identifier-import-name { min-width:0; color:var(--soft); font-size:.8125rem; overflow-wrap:anywhere; }
+.identifier-import-file p { max-width:62ch; margin:0; color:var(--soft); font-size:.8125rem; line-height:1.5; }
+.identifier-import-flow code { padding:0; background:none; color:inherit; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-weight:400; }
+/* The example wraps on a phone rather than scroll sideways. */
+.identifier-import-example { margin:0; padding:.55rem .7rem; border:1px solid var(--line); border-radius:.45rem; background:var(--surface-strong); color:var(--ink); font:.8125rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; display:grid; gap:.15rem; }
+/* Each example line is its own block: a line that wraps hangs under its start, so the identifier never reads as a line of its own. */
+.identifier-import-example > code { display:block; padding-left:1.5rem; text-indent:-1.5rem; white-space:pre-wrap; overflow-wrap:anywhere; tab-size:2; }
+.identifier-import-actions { display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; }
+.identifier-import-status { margin:0; color:var(--soft); font-weight:650; }
+.identifier-import-refusal { margin:0; padding:.6rem .75rem; border:1px solid var(--danger); border-radius:.45rem; color:var(--danger); background:var(--danger-soft); font-weight:650; overflow-wrap:anywhere; }
+.identifier-import-success { margin:0; padding:.6rem .75rem; border:1px solid var(--accent); border-radius:.45rem; background:var(--accent-soft); color:var(--ink); font-weight:600; }
+.identifier-import-refusal:focus-visible, .identifier-import-success:focus-visible, .identifier-import-summary:focus-visible, .identifier-import-status:focus-visible { outline:2px solid var(--focus); outline-offset:2px; }
+.identifier-import-preview { gap:.7rem; }
+.identifier-import-summary { margin:0; font-size:1.05rem; font-weight:750; }
+.identifier-import-counts { display:flex; flex-wrap:wrap; gap:.35rem; margin:0; padding:0; list-style:none; }
+.identifier-import-counts li { padding:.2rem .6rem; border:1px solid var(--line-strong); border-radius:.85rem; background:var(--surface); font-size:.8125rem; overflow-wrap:anywhere; }
+.identifier-import-preview .cm-segmented { max-width:28rem; }
+.identifier-import-preview .cm-segmented button { font-size:.8125rem; }
+.identifier-import-list { display:grid; min-width:0; margin:0; padding:0; border:1px solid var(--line); border-radius:.5rem; background:var(--surface); list-style:none; }
+.identifier-import-list li { display:grid; grid-template-columns:4.5rem minmax(0,1fr) auto; align-items:baseline; gap:.2rem 1rem; min-width:0; padding:.5rem .75rem; border-top:1px solid var(--line); font-size:.875rem; line-height:1.4; }
+.identifier-import-list li:first-child { border-top:0; }
+.identifier-import-list li:focus { outline:2px solid var(--focus); outline-offset:-2px; }
+.identifier-import-row { color:var(--soft); font-size:.8125rem; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.identifier-import-work { display:grid; min-width:0; }
+.identifier-import-work strong, .identifier-import-work small { overflow-wrap:anywhere; }
+.identifier-import-work small { color:var(--soft); font-size:.8125rem; }
+/* An ISBN or ASIN may move below its kind, but never breaks inside the number. */
+.identifier-import-id { font:600 .8125rem ui-monospace, SFMono-Regular, Menlo, monospace; }
+.identifier-import-id > span { white-space:nowrap; }
+.identifier-import-list li > .identifier-import-reason { grid-column:2 / -1; overflow-wrap:anywhere; }
+.identifier-import-more { justify-self:start; }
+.identifier-import-flow { container:identifier-import / inline-size; }
+@container identifier-import (max-width:30rem) {
+  .identifier-import-list li { grid-template-columns:minmax(0,1fr); }
+  .identifier-import-list li > .identifier-import-reason { grid-column:1; }
+}
+@container settings-sheet (max-width:27rem) {
+  .identifier-import, .identifier-import-sheet { padding-inline:.85rem; }
+}
+.identifier-withdrawal { margin-top:.6rem; padding-top:.65rem; border-top:1px solid var(--line); }
+.identifier-withdrawal-confirm { display:grid; gap:.55rem; max-width:44rem; padding:.7rem .8rem; border:1px solid var(--danger); border-radius:.5rem; background:var(--danger-soft); }
+.identifier-withdrawal-confirm p { margin:0; font-weight:650; }
+.identifier-withdrawal-confirm p:focus { outline:none; }
+.identifier-withdrawal-confirm > div { display:flex; flex-wrap:wrap; gap:.5rem; }
+.identifier-withdrawal-status { margin:.6rem 0 0; padding-top:.65rem; border-top:1px solid var(--line); font-weight:650; }
+.identifier-withdrawal-status.is-empty { margin:0; padding:0; border:0; }
+.identifier-withdrawal.is-loading { min-height:2.75rem; box-sizing:content-box; }

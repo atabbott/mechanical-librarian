@@ -672,7 +672,9 @@ export interface LibraryWorkView {
 }
 export interface LibraryLinkView {
   state: OwnerLinkState
-  provider: OwnerLinkProvider
+  /** `file` for a link from an identifiers file, which names no source (#1478). */
+  source: 'search' | 'file'
+  provider: OwnerLinkProvider | null
 }
 export interface LibraryCounts {
   attention: number
@@ -1031,9 +1033,14 @@ export type HistoryItemView = (
       // withdrawal names the link it ended.
       category: 'owner_link'
       kind: OwnerLinkHistoryKind
-      provider: OwnerLinkProvider
+      // A link from an identifiers file names no source and no title, only
+      // its identifier (#1478).
+      source: 'search' | 'file'
+      withImport: boolean
+      identifier: string | null
+      provider: OwnerLinkProvider | null
       scope: OwnerLinkScope
-      title: string
+      title: string | null
     }
 ) & { occurredAt: number | null }
 export interface HistoryView {
@@ -1056,6 +1063,17 @@ export type OwnerSearchCard = OwnerSearchView['cards'][number]
 export type OwnerLinkChange = ResponseSchema<'_OwnerLinkChange'>
 export type OwnerLinkHistoryKind = ResponseSchema<'_HistoryOwnerLinkItem'>['kind']
 export type OwnerSearchRequest = Schema<'_OwnerSearchBody'>
+// Link many works from an identifiers file (#1478): the held preview, its
+// status after an uncertain import, what an import recorded and its live
+// state, and what Withdraw this import withdrew.
+export type IdentifierPreviewView = ResponseSchema<'_IdentifierPreview'>
+export type IdentifierCountKey = keyof IdentifierPreviewView['counts']
+export type IdentifierWillLinkRow = IdentifierPreviewView['will_link'][number]
+export type IdentifierRefusedRow = IdentifierPreviewView['refused'][number]
+export type IdentifierPreviewStatusView = ResponseSchema<'_IdentifierPreviewStatus'>
+export type IdentifierImportedView = ResponseSchema<'_IdentifierImported'>
+export type IdentifierImportStatusView = ResponseSchema<'_IdentifierImportStatus'>
+export type IdentifierImportWithdrawalView = ResponseSchema<'_IdentifierImportWithdrawal'>
 /** The catalogue address a book link belongs to. Never shown on the page. */
 export interface WorkAddress {
   connection: string
@@ -1543,6 +1561,35 @@ export interface ReviewHttp {
     idempotencyKey: string,
     signal?: AbortSignal,
   ): Promise<OwnerLinkChange>
+  /** Decide an identifiers file against a saved library; nothing is recorded (#1478). */
+  previewIdentifiers(
+    connection: string,
+    library: string,
+    file: Blob,
+    signal?: AbortSignal,
+  ): Promise<IdentifierPreviewView>
+  /** Whether a preview was imported, after an import whose answer was lost. */
+  getIdentifierPreviewStatus(
+    previewId: string,
+    signal?: AbortSignal,
+  ): Promise<IdentifierPreviewStatusView>
+  /** Link every will-link row of the preview; the key is reused only to replay this import. */
+  importIdentifiers(
+    previewId: string,
+    idempotencyKey: string,
+    signal?: AbortSignal,
+  ): Promise<IdentifierImportedView>
+  /** How many of an import's links are still current, read when its Details open. */
+  getIdentifierImport(
+    importId: string,
+    signal?: AbortSignal,
+    workClass?: ReadWorkClass,
+  ): Promise<IdentifierImportStatusView>
+  withdrawIdentifierImport(
+    importId: string,
+    idempotencyKey: string,
+    signal?: AbortSignal,
+  ): Promise<IdentifierImportWithdrawalView>
 }
 
 export interface CsrfTokenStore {
@@ -2447,6 +2494,57 @@ export class ReviewApiClient implements ReviewHttp {
     )
   }
 
+  // A preview records nothing and replaces the session's earlier one, so a
+  // CSRF renewal sends it again and an unreadable answer is a 502. The file
+  // goes as its own bytes: the server reads strict UTF-8 itself (#1478).
+  async previewIdentifiers(connection: string, library: string, file: Blob, signal?: AbortSignal) {
+    return this.mutate(
+      `/api/v1/libraries/${encodeURIComponent(connection)}/${encodeURIComponent(library)}/identifier-previews`,
+      file,
+      signal,
+      undefined,
+      'POST',
+      true,
+      true,
+      mapIdentifierPreview,
+    )
+  }
+  async getIdentifierPreviewStatus(previewId: string, signal?: AbortSignal) {
+    return mapIdentifierPreviewStatus(
+      await this.read(`/api/v1/identifier-previews/${encodeURIComponent(previewId)}`, signal),
+    )
+  }
+  async importIdentifiers(previewId: string, idempotencyKey: string, signal?: AbortSignal) {
+    return this.mutate(
+      `/api/v1/identifier-previews/${encodeURIComponent(previewId)}/import`,
+      undefined,
+      signal,
+      { 'idempotency-key': idempotencyKey },
+    )
+  }
+  async getIdentifierImport(
+    importId: string,
+    signal?: AbortSignal,
+    workClass: ReadWorkClass = 'foreground',
+  ) {
+    const value = await this.read(
+      `/api/v1/identifier-imports/${encodeURIComponent(importId)}`,
+      signal,
+      workClass,
+    )
+    if (value.still_linked > value.linked || (value.withdrawn && value.still_linked > 0))
+      throw new ApiError(502, 'contradictory_identifier_import')
+    return value
+  }
+  async withdrawIdentifierImport(importId: string, idempotencyKey: string, signal?: AbortSignal) {
+    return this.mutate(
+      `/api/v1/identifier-imports/${encodeURIComponent(importId)}/withdraw`,
+      undefined,
+      signal,
+      { 'idempotency-key': idempotencyKey },
+    )
+  }
+
   // Recording a use twice is the same use, so a CSRF renewal sends it again.
   async recordLibraryVisit(listing: LibraryListing | null, signal?: AbortSignal) {
     await this.mutate('/api/v1/library/visit', { listing }, signal, undefined, 'POST', true)
@@ -2487,7 +2585,10 @@ export class ReviewApiClient implements ReviewHttp {
     }
     const headers = new Headers(extraHeaders)
     headers.set('x-ml-build-identity', this.buildIdentity)
-    if (body !== undefined) headers.set('content-type', 'application/json')
+    // A file is sent as its own bytes, as plain text (#1478); every other body is JSON.
+    const file = body instanceof Blob
+    if (body !== undefined)
+      headers.set('content-type', file ? 'text/plain; charset=utf-8' : 'application/json')
     // `sideEffectFree` only lets a CSRF-renewed request be sent again;
     // `writesNothing` says the command changes nothing, so an answer that fails
     // decoding or a named check is a 502 rather than an uncertain write (#1685).
@@ -2496,7 +2597,7 @@ export class ReviewApiClient implements ReviewHttp {
       {
         method,
         headers,
-        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+        ...(body !== undefined ? { body: file ? body : JSON.stringify(body) } : {}),
         ...(signal ? { signal } : {}),
       },
       {
@@ -3141,6 +3242,8 @@ export const mapLibrary = (value: LibraryDto): LibraryView => ({
   works: value.items.map((item) => {
     const preparation = item.preparation
     const summary = item.summary
+    if (item.link !== null && fileLinkContradicts(item.link))
+      throw new ApiError(502, 'contradictory_owner_link')
     return {
       id: item.review_case_id ?? item.work_id,
       ...(item.review_case_id ? { reviewCaseId: item.review_case_id } : {}),
@@ -3186,7 +3289,10 @@ export const mapLibrary = (value: LibraryDto): LibraryView => ({
       ...(item.cover === null ? {} : { cover: mapLibraryCover(item.cover) }),
       valueFlags: item.value_flags.map(mapValueFlag),
       findOffered: item.find_offered,
-      link: item.link === null ? null : { state: item.link.state, provider: item.link.provider },
+      link:
+        item.link === null
+          ? null
+          : { state: item.link.state, source: item.link.source, provider: item.link.provider },
     }
   }),
 })
@@ -3508,15 +3614,22 @@ const mapHistoryItem = (item: HistoryDto['items'][number], index: number): Histo
     }
   if (item.schema_version === 'matching-changed-history-event-v1')
     return { category: 'matching_changed', occurredAt, destination: item.destination }
-  if (item.schema_version === 'owner-link-history-event-v1')
+  if (item.schema_version === 'owner-link-history-event-v2') {
+    // A file link reads by its ISBN or ASIN, which it always names.
+    if (fileLinkContradicts(item) || (item.source === 'file' && item.identifier === null))
+      throw new ApiError(502, 'contradictory_owner_link')
     return {
       category: 'owner_link',
       occurredAt,
       kind: item.kind,
+      source: item.source,
+      withImport: item.with_import,
+      identifier: item.identifier,
       provider: item.provider,
       scope: item.scope,
       title: item.title,
     }
+  }
   // What is left is the preview event.
   return {
     category: 'preview',
@@ -3545,11 +3658,23 @@ const linkReasonsByState: Readonly<Record<OwnerLinkState, readonly (OwnerLinkRea
 // The checks the link view's schema cannot state: a work link names no
 // identifier and a narrower one does, only waiting carries a retry, only
 // Audible has marketplaces, and the lanes are the source's own.
+// A link from an identifiers file names no source and no title, and is never
+// a work link; a link from a search always names its source (#1478).
+const fileLinkContradicts = (link: {
+  source: 'search' | 'file'
+  provider: OwnerLinkProvider | null
+  title?: string | null
+  scope?: OwnerLinkScope
+}) =>
+  link.source === 'file'
+    ? link.provider !== null || (link.title ?? null) !== null || link.scope === 'work'
+    : link.provider === null || link.title === null
 export const mapOwnerLinkView = (value: OwnerLinkView): OwnerLinkView => {
   const { link } = value
   if (
     link !== null &&
-    ((link.scope === 'work') !== (link.identifier === null) ||
+    (fileLinkContradicts(link) ||
+      (link.scope === 'work') !== (link.identifier === null) ||
       (link.retry_at !== null && link.state !== 'waiting') ||
       !linkReasonsByState[link.state].includes(link.reason))
   )
@@ -3586,6 +3711,26 @@ export const mapOwnerSearch = (
     )
   )
     throw new ApiError(502, 'contradictory_owner_search')
+  return value
+}
+// The checks the identifiers file preview's schema cannot state (#1478): its
+// counts add up to its rows, and each list holds exactly the rows it counts.
+const mapIdentifierPreview = (value: IdentifierPreviewView): IdentifierPreviewView => {
+  const counted = Object.values(value.counts).reduce((total, count) => total + count, 0)
+  if (
+    counted !== value.rows ||
+    value.will_link.length !== value.counts.will_link ||
+    value.refused.length !== value.rows - value.counts.will_link
+  )
+    throw new ApiError(502, 'contradictory_identifier_preview')
+  return value
+}
+// Only an imported preview names its import and how many works it linked.
+const mapIdentifierPreviewStatus = (
+  value: IdentifierPreviewStatusView,
+): IdentifierPreviewStatusView => {
+  if ((value.state === 'imported') !== (value.import_id !== null && value.linked !== null))
+    throw new ApiError(502, 'contradictory_identifier_preview')
   return value
 }
 // A withdraw answers a withdrawal; a choose answers a link or its replacement.

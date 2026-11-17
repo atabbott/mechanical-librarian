@@ -18,12 +18,12 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable, Mapping
-from typing import Annotated, Any, Literal, TypeAlias
+from typing import Annotated, Any, Literal, Self, TypeAlias
 
 from fastapi import Depends, FastAPI, Header, Query, Request, Response, Security
 from fastapi.responses import JSONResponse
 from fastapi.security import APIKeyCookie
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from mechanical_librarian.application.owner_search import (
     OwnerSearchRefused,
@@ -33,7 +33,10 @@ from mechanical_librarian.application.review_application import (
     ReviewApplication,
     ReviewApplicationError,
 )
-from mechanical_librarian.application.review_web import ReviewWebError
+from mechanical_librarian.application.review_web import (
+    OwnerLinkViewSchemaVersion,
+    ReviewWebError,
+)
 
 _Provider: TypeAlias = Literal[
     "audible_catalog", "google_books", "hardcover", "inventaire", "open_library"
@@ -108,8 +111,10 @@ class _OwnerLinkPrefill(_Closed):
 class _OwnerLinkCurrent(_Closed):
     link_row_id: str = Field(pattern=_LINK_ROW_ID)
     scope: _Scope
-    provider: _Provider
-    title: str = Field(min_length=1, max_length=512)
+    # A file link (#1478) names no source and keeps no title.
+    source: Literal["search", "file"]
+    provider: _Provider | None
+    title: str | None = Field(min_length=1, max_length=512)
     creators: list[Annotated[str, Field(max_length=512)]] = Field(max_length=10)
     # The edition's ISBN or the recording's ASIN; None for a whole book.
     identifier: str | None = Field(max_length=13)
@@ -131,15 +136,23 @@ class _OwnerLinkCurrent(_Closed):
     retry_at: _Instant | None
     paused: bool
 
+    @model_validator(mode="after")
+    def _a_file_link_names_no_source(self) -> Self:
+        if (self.source == "file") != (self.provider is None) or (
+            self.provider is None
+        ) != (self.title is None):
+            raise ValueError("owner link source is inconsistent")
+        return self
+
 
 class _OwnerLinkView(_Closed):
-    """The selected work's offer and link (`owner-link-view-v1`)."""
+    """The selected work's offer and link (`owner-link-view-v2`)."""
 
     offered: bool
     sources: list[_OwnerLinkSource] = Field(max_length=5)
     prefill: _OwnerLinkPrefill
     link: _OwnerLinkCurrent | None
-    schema_version: Literal["owner-link-view-v1"]
+    schema_version: OwnerLinkViewSchemaVersion
 
 
 class _OwnerSearchBody(_Closed):

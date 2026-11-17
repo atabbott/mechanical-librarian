@@ -349,6 +349,8 @@ def test_current_authority_and_predecessor_refusal_without_history(
                 )
                 + "DROP VIEW current_owner_links;"
                 "DROP TABLE owner_links;"
+                "DROP TABLE identifier_import_events;"
+                "DROP TABLE identifier_imports;"
                 "DROP TABLE retained_cover_listings;"
                 "DROP TABLE retained_cover_removals;"
                 "DROP TABLE retained_cover_bindings;"

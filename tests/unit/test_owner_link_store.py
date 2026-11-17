@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
@@ -16,6 +18,7 @@ from mechanical_librarian.adapters.persistence.owner_links import (
     OwnerLinkStoreError,
     choose_owner_link,
     current_owner_link,
+    current_owner_link_items,
     current_owner_link_row,
     owner_link_by_request,
     owner_link_rows,
@@ -277,7 +280,7 @@ def test_a_valid_raw_row_is_admitted(database: sqlite3.Connection) -> None:
     "changes",
     [
         pytest.param({"action": "relink"}, id="action"),
-        pytest.param({"source": "file"}, id="source"),
+        pytest.param({"source": "imported"}, id="source"),
         pytest.param({"medium": "comic"}, id="medium"),
         pytest.param({"scope": "series"}, id="scope"),
         pytest.param({"provider": "itunes_search"}, id="provider"),
@@ -543,3 +546,219 @@ def test_a_row_outside_its_grammar_fails_every_read_closed(
         current_owner_link_row(database, item)
     with pytest.raises(OwnerLinkStoreError, match="invalid"):
         owner_link_by_request(database, "request-raw-0001")
+
+
+# -- File links from an identifiers file import (#1478) -----------------------
+
+IMPORT_ID = "identifier_import_" + "f" * 64
+FILE_EDITION = OwnerLinkTarget(OwnerLinkScope.EDITION, None, "9780306406157", None)
+
+
+def _insert_import(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        "INSERT INTO identifier_imports(import_id,connection_name,library_name,"
+        "row_count,will_link,already_linked,no_item,ambiguous,invalid_identifier,"
+        "wrong_medium,repeated,conflicting,unreadable,actor,created_at,request_id,"
+        "request_sha256,preview_digest) "
+        "VALUES(?,'abs','Books',1,1,0,0,0,0,0,0,0,0,'owner',1,?,?,?)",
+        (IMPORT_ID, "import-request-0001", "a" * 64, "b" * 64),
+    )
+
+
+_FILE_ROW = {
+    "source": "file",
+    "scope": "edition",
+    "provider": None,
+    "record_identity": "9780306406157",
+    "display_title": None,
+    "display_creators": None,
+    "import_id": IMPORT_ID,
+}
+
+
+def test_a_valid_raw_file_row_is_admitted(database: sqlite3.Connection) -> None:
+    _insert_import(database)
+    _raw_insert(database, **_FILE_ROW)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        pytest.param({"provider": "google_books"}, id="file-with-provider"),
+        pytest.param({"display_title": "A Title"}, id="file-with-title"),
+        pytest.param({"display_creators": "[]"}, id="file-with-creators"),
+        pytest.param({"import_id": None}, id="file-without-import"),
+        pytest.param({"import_id": "identifier_import_x"}, id="import-id-shape"),
+        pytest.param(
+            {"scope": "work", "record_identity": "/works/OL1W"}, id="file-work"
+        ),
+        pytest.param({"action": "replace"}, id="file-replace"),
+        pytest.param(
+            {"import_id": "identifier_import_" + "e" * 64}, id="unknown-import"
+        ),
+        pytest.param(
+            {"scope": "recording", "record_identity": "B000000001"},
+            id="recording-on-ebook",
+        ),
+    ],
+)
+def test_file_rows_outside_their_grammar_are_refused(
+    database: sqlite3.Connection, changes: dict[str, object]
+) -> None:
+    database.execute("PRAGMA foreign_keys=ON")
+    _insert_import(database)
+    with pytest.raises(sqlite3.IntegrityError):
+        _raw_insert(database, **{**_FILE_ROW, **changes})
+
+
+def test_a_search_row_with_an_import_is_refused(database: sqlite3.Connection) -> None:
+    _insert_import(database)
+    with pytest.raises(sqlite3.IntegrityError):
+        _raw_insert(database, import_id=IMPORT_ID)
+
+
+def _record_file(
+    connection: sqlite3.Connection,
+    action: OwnerLinkAction,
+    expected: str | None,
+    target: OwnerLinkTarget | None,
+    request: str,
+    *,
+    import_id: str | None = IMPORT_ID,
+    source: str = "file",
+):
+    return record_owner_link(
+        connection,
+        item=ITEM,
+        action=action,
+        expected_current=expected,
+        target=target,
+        source=source,
+        medium="ebook",
+        actor="owner",
+        occurred_at=1_700_000_000,
+        request_id=request,
+        request_sha256="a" * 64,
+        import_id=import_id,
+    )
+
+
+def test_a_file_link_records_reads_back_and_is_replaced_by_a_search(
+    database: sqlite3.Connection,
+) -> None:
+    def link() -> object:
+        _insert_import(database)
+        return _record_file(
+            database, OwnerLinkAction.LINK, None, FILE_EDITION, "file-request-00001"
+        )
+
+    row = _in_transaction(database, link)
+    current = current_owner_link(database, "abs", "Books", "item-1")
+    assert current is not None and current.provider is None
+    assert current.source == "file"
+    (read,) = owner_link_rows(database, ITEM)
+    assert read == row
+    assert (read.source, read.import_id, read.target) == (
+        "file",
+        IMPORT_ID,
+        FILE_EDITION,
+    )
+    replaced = _in_transaction(
+        database,
+        lambda: _record(
+            database,
+            OwnerLinkAction.REPLACE,
+            read.link_row_id,
+            EDITION,
+            "request-00000009",
+        ),
+    )
+    now = current_owner_link_row(database, ITEM)
+    assert now is not None and now.link_row_id == replaced
+    assert current_owner_link_items(database, "abs", "Books") == {"item-1"}
+    assert current_owner_link_items(database, "abs", "Other") == frozenset()
+
+
+@pytest.mark.parametrize(
+    ("source", "target", "import_id"),
+    [
+        pytest.param("file", FILE_EDITION, None, id="file-without-import"),
+        pytest.param("file", EDITION, IMPORT_ID, id="file-with-provider"),
+        pytest.param("search", FILE_EDITION, None, id="search-without-provider"),
+        pytest.param("search", EDITION, IMPORT_ID, id="search-with-import"),
+        pytest.param("file", FILE_EDITION, "identifier_import_x", id="import-shape"),
+    ],
+)
+def test_a_file_row_out_of_grammar_is_refused_before_insert(
+    database: sqlite3.Connection,
+    source: str,
+    target: OwnerLinkTarget,
+    import_id: str | None,
+) -> None:
+    def link() -> object:
+        _insert_import(database)
+        return _record_file(
+            database,
+            OwnerLinkAction.LINK,
+            None,
+            target,
+            "file-request-00002",
+            import_id=import_id,
+            source=source,
+        )
+
+    with pytest.raises(OwnerLinkStoreError) as refused:
+        _in_transaction(database, link)
+    assert type(refused.value) is OwnerLinkStoreError
+    assert _count(database) == 0
+
+
+# -- The store before #1478 ------------------------------------------------------
+
+_PREDECESSORS = Path(__file__).parents[1] / "fixtures/predecessor-stores-5f775fd.json"
+
+
+def test_the_review_store_main_created_before_the_file_source_is_refused_unchanged(
+    tmp_path: Path,
+) -> None:
+    """A store from 5f775fd (search links only, no import tables) needs a
+    clean rebuild: it is refused before anything is written (ADR-0013)."""
+    fixture = json.loads(_PREDECESSORS.read_text(encoding="utf-8"))
+    path = tmp_path / "state.sqlite"
+    open_repository(path).close()
+    connection = sqlite3.connect(path, isolation_level=None)
+    try:
+        # Every owner_links object but the table itself reads as it did then.
+        kept = connection.execute(
+            "SELECT sql FROM sqlite_schema WHERE tbl_name IN "
+            "('owner_links','current_owner_links') AND type IN ('trigger','view') "
+            "ORDER BY type DESC,name"
+        ).fetchall()
+        connection.executescript(
+            "DROP VIEW current_owner_links;"
+            "DROP TABLE owner_links;"
+            "DROP TABLE identifier_import_events;"
+            "DROP TABLE identifier_imports;"
+            + fixture["review_store"]["owner_links_sql"]
+            + ";"
+            + "".join(sql + ";" for (sql,) in kept)
+        )
+        rows = connection.execute(
+            "SELECT type,name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' "
+            "ORDER BY type,name"
+        ).fetchall()
+    finally:
+        connection.close()
+    assert len(rows) == fixture["review_store"]["schema_objects"]
+    assert (
+        hashlib.sha256(
+            json.dumps(
+                [list(row) for row in rows], ensure_ascii=False, separators=(",", ":")
+            ).encode()
+        ).hexdigest()
+        == fixture["review_store"]["schema_inventory_sha256"]
+    )
+    before = path.read_bytes()
+    with pytest.raises(MetadataReportError):
+        open_repository(path, create=False)
+    assert path.read_bytes() == before

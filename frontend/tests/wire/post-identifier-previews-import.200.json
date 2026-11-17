@@ -1,0 +1,11 @@
+{
+  "method": "POST",
+  "path": "/api/v1/identifier-previews/identifier-preview-placeholder-000000000000/import",
+  "status": 200,
+  "body": {
+    "import_id": "identifier_import_0000000000000000000000000000000000000000000000000000000000000001",
+    "linked": 3,
+    "scan_requested": true,
+    "schema_version": "identifier-import-v1"
+  }
+}

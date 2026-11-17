@@ -582,6 +582,32 @@ def test_a_recording_link_the_anchored_search_also_finds_prepares(
     assert linked.provenance.designation is CoverDesignation.EXACT_EDITION
 
 
+def test_a_file_recording_link_decides_nothing_it_alone_reached(
+    tmp_path: Path,
+) -> None:
+    """An identifiers file's recording link (#1478) is shadow-first too: it
+    prepares as the search link to the same ASIN, and nothing it alone
+    reached decides."""
+    asin = payload("audible_search")["products"][0]["asin"]
+    (tmp_path / "search").mkdir(mode=0o700)
+    (tmp_path / "file").mkdir(mode=0o700)
+    searched = _audio_report(
+        tmp_path / "search",
+        link=OwnerLinkTarget(OwnerLinkScope.RECORDING, "audible_catalog", asin, "A"),
+    )
+    filed = _audio_report(
+        tmp_path / "file",
+        link=OwnerLinkTarget(OwnerLinkScope.RECORDING, None, asin, None),
+    )
+    assert filed.owner_link is not None and searched.owner_link is not None
+    assert filed.owner_link.outcome == "admitted"
+    assert filed.owner_link.to_data() == searched.owner_link.to_data()
+    # What only the link reached is cited by no decision, exactly as for the
+    # search link to the same ASIN.
+    assert not _asin_citations(filed) & _reached(filed)
+    assert _decisions(filed) == _decisions(searched)
+
+
 def test_a_successor_keeps_the_anchor_its_carried_lanes_were_asked_with(
     tmp_path: Path,
 ) -> None:

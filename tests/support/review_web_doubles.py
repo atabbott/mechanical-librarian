@@ -17,7 +17,7 @@ from collections.abc import Callable, Iterator
 from contextlib import ExitStack, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Generic, TypeVar, cast
+from typing import Generic, NoReturn, TypeVar, cast
 
 from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
@@ -30,6 +30,7 @@ from mechanical_librarian.application.continuous_field_effects import (
     CONTINUOUS_FIELD_ACTIVITY_SCHEMA,
     ContinuousGuardedApplication,
 )
+from mechanical_librarian.application.identifier_import import IdentifierImportRefused
 from mechanical_librarian.application.metadata_policy import (
     PolicyContentionError,
     PolicyPreviewCapture,
@@ -328,6 +329,27 @@ class FakeReviewRepository:
 
     def withdraw_owner_link(self, *args: object, **kwargs: object) -> dict[str, object]:
         raise OwnerSearchRefused("work_not_found")
+
+    # Identifiers file imports (#1478): the double has no catalogue, so a
+    # preview is refused unreadable and nothing is ever imported; the real
+    # store is proved in `test_identifier_import_web.py`.
+    def identifier_candidates(self, connection: str, library: str) -> NoReturn:
+        raise IdentifierImportRefused("library_unreadable")
+
+    def identifier_import_replay(self, request_id: str) -> None:
+        return None
+
+    def identifier_import_for_preview(self, preview_digest: str) -> None:
+        return None
+
+    def import_identifiers(self, *args: object, **kwargs: object) -> NoReturn:
+        raise IdentifierImportRefused("preview_not_found")
+
+    def withdraw_identifier_import(self, *args: object, **kwargs: object) -> NoReturn:
+        raise IdentifierImportRefused("import_not_found")
+
+    def identifier_import_status(self, import_id: str) -> None:
+        return None
 
     def review_case_ready_at(self, review_case_id: str) -> int | None:
         if review_case_id != self.case.review_case_id:

@@ -26,6 +26,7 @@ export const card = (overrides: Partial<OwnerSearchCard> = {}): OwnerSearchCard 
 export const linked = (overrides: Partial<OwnerLinkCurrent> = {}): OwnerLinkCurrent => ({
   link_row_id: `owner_link_${'a'.repeat(64)}`,
   scope: 'work',
+  source: 'search',
   provider: 'hardcover',
   title: 'Dune',
   creators: ['Frank Herbert'],
@@ -48,7 +49,10 @@ export const withLinkView = (view: OwnerLinkView, more: Partial<ReviewHttp> = {}
     works: library.works.map((work) => ({
       ...work,
       findOffered: view.offered,
-      link: view.link === null ? null : { state: view.link.state, provider: view.link.provider },
+      link:
+        view.link === null
+          ? null
+          : { state: view.link.state, source: view.link.source, provider: view.link.provider },
     })),
   })),
   ...more,

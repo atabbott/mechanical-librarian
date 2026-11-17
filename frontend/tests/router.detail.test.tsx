@@ -1935,3 +1935,47 @@ it.each([
     expect(article).not.toHaveTextContent('The Silent Orchard')
   },
 )
+
+describe('a book link in History (#1477, #1478)', () => {
+  const event = (overrides: Record<string, unknown>) => ({
+    category: 'owner_link' as const,
+    occurredAt: 1786000000,
+    kind: 'linked' as const,
+    source: 'search' as const,
+    withImport: false,
+    identifier: null,
+    provider: 'hardcover' as const,
+    scope: 'work' as const,
+    title: 'Dune',
+    ...overrides,
+  })
+  const file = { source: 'file', provider: null, title: null }
+  it('reads a search link by its title and a file link by its ISBN or ASIN', async () => {
+    const getHistory = vi.fn<ReviewHttp['getHistory']>(async () => ({
+      items: [
+        event({}),
+        event({ ...file, scope: 'edition', identifier: '9780441172719', withImport: true }),
+        event({ ...file, scope: 'recording', identifier: 'B00B7NPRY8', withImport: true }),
+        event({
+          ...file,
+          kind: 'link_withdrawn',
+          scope: 'edition',
+          identifier: '9780441172719',
+          withImport: true,
+        }),
+        event({ ...file, kind: 'link_withdrawn', scope: 'edition', identifier: '9780441172719' }),
+      ],
+    }))
+    renderRoute('/review/case-1?field=title&subview=history', { ...createHttp(), getHistory })
+    const sentences = (await screen.findAllByRole('heading', { name: 'Book link' })).map(
+      (heading) => heading.nextElementSibling?.textContent,
+    )
+    expect(sentences).toEqual([
+      'You linked this work to Dune on Hardcover, as this book.',
+      'You linked this work to ISBN 9780441172719 from an identifiers file, as this edition.',
+      'You linked this work to ASIN B00B7NPRY8 from an identifiers file, as this recording.',
+      'You withdrew the link to ISBN 9780441172719 with its identifiers file import.',
+      'You withdrew the link to ISBN 9780441172719.',
+    ])
+  })
+})

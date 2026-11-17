@@ -9,7 +9,7 @@ import stat
 import sys
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Final, Iterator, cast
+from typing import Any, Final, Iterator, cast
 from urllib.parse import quote
 
 from mechanical_librarian.adapters.persistence.binding import (
@@ -26,14 +26,41 @@ from mechanical_librarian.application.catalogue import (
     CatalogueStaleError,
 )
 
-CATALOGUE_SCHEMA: Final = "catalogue-v2"
+CATALOGUE_SCHEMA: Final = "catalogue-v3"
 
 _SQL = (
     f"CREATE TABLE catalogue_schema (version TEXT PRIMARY KEY CHECK (version = '{CATALOGUE_SCHEMA}'));",
     "CREATE TABLE catalogue_generations (generation INTEGER PRIMARY KEY, fingerprint TEXT NOT NULL CHECK(length(fingerprint)=64), current INTEGER NOT NULL CHECK(current IN (0,1)), CHECK(current = 0 OR generation > 0));",
     "CREATE UNIQUE INDEX catalogue_one_current ON catalogue_generations(current) WHERE current = 1;",
-    "CREATE TABLE catalogue_entries (generation INTEGER NOT NULL REFERENCES catalogue_generations(generation), connection TEXT NOT NULL, library TEXT NOT NULL, library_id TEXT NOT NULL, item_id TEXT NOT NULL, updated_at INTEGER NOT NULL, title TEXT NOT NULL, authors TEXT NOT NULL, has_ebook INTEGER NOT NULL CHECK(has_ebook IN (0,1)), has_audio INTEGER NOT NULL CHECK(has_audio IN (0,1)), classification TEXT NOT NULL CHECK(classification IN ('none','singular-supported','needs-attention')), file_identity TEXT, service_path TEXT, format TEXT, mount TEXT, source_fingerprint TEXT NOT NULL CHECK(length(source_fingerprint)=64 AND source_fingerprint NOT GLOB '*[^0-9a-f]*'), PRIMARY KEY(generation, connection, library, item_id));",
+    "CREATE TABLE catalogue_entries (generation INTEGER NOT NULL REFERENCES catalogue_generations(generation), connection TEXT NOT NULL, library TEXT NOT NULL, library_id TEXT NOT NULL, item_id TEXT NOT NULL, updated_at INTEGER NOT NULL, title TEXT NOT NULL, authors TEXT NOT NULL, has_ebook INTEGER NOT NULL CHECK(has_ebook IN (0,1)), has_audio INTEGER NOT NULL CHECK(has_audio IN (0,1)), classification TEXT NOT NULL CHECK(classification IN ('none','singular-supported','needs-attention')), file_identity TEXT, service_path TEXT, format TEXT, mount TEXT, source_fingerprint TEXT NOT NULL CHECK(length(source_fingerprint)=64 AND source_fingerprint NOT GLOB '*[^0-9a-f]*'), item_path TEXT CHECK(item_path IS NULL OR length(item_path)>0), PRIMARY KEY(generation, connection, library, item_id));",
 )
+_ENTRY_COLUMNS: Final = (
+    "connection,library,library_id,item_id,updated_at,title,authors,has_ebook,"
+    "has_audio,classification,file_identity,service_path,format,mount,"
+    "source_fingerprint,item_path"
+)
+
+
+def _entry(value: tuple[Any, ...]) -> CatalogueEntry:
+    """One stored entry, in `_ENTRY_COLUMNS` order."""
+    return CatalogueEntry(
+        value[0],
+        value[1],
+        value[2],
+        value[3],
+        value[4],
+        value[5],
+        tuple(json.loads(value[6])),
+        bool(value[7]),
+        bool(value[8]),
+        value[9],
+        value[10],
+        value[11],
+        value[12],
+        value[13],
+        value[14],
+        value[15],
+    )
 
 
 def _require_bound_name(
@@ -248,7 +275,7 @@ class SQLiteCatalogueRepository:
                 (generation, fingerprint),
             )
             self._connection.executemany(
-                "INSERT INTO catalogue_entries VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO catalogue_entries VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 [
                     (
                         generation,
@@ -269,6 +296,7 @@ class SQLiteCatalogueRepository:
                         item.format,
                         item.mount,
                         item.source_fingerprint,
+                        item.item_path,
                     )
                     for item in entries
                 ],
@@ -299,30 +327,11 @@ class SQLiteCatalogueRepository:
         if row[1] != fingerprint:
             raise CatalogueStaleError("catalogue requires refresh")
         values = self._connection.execute(
-            "SELECT connection,library,library_id,item_id,updated_at,title,authors,has_ebook,has_audio,classification,file_identity,service_path,format,mount,source_fingerprint FROM catalogue_entries WHERE generation=?",
+            f"SELECT {_ENTRY_COLUMNS} FROM catalogue_entries WHERE generation=?",  # noqa: S608 - fixed column list
             (row[0],),
         ).fetchall()
         try:
-            return tuple(
-                CatalogueEntry(
-                    value[0],
-                    value[1],
-                    value[2],
-                    value[3],
-                    value[4],
-                    value[5],
-                    tuple(json.loads(value[6])),
-                    bool(value[7]),
-                    bool(value[8]),
-                    value[9],
-                    value[10],
-                    value[11],
-                    value[12],
-                    value[13],
-                    value[14],
-                )
-                for value in values
-            )
+            return tuple(_entry(value) for value in values)
         except (TypeError, ValueError):
             raise CatalogueError("catalogue state is invalid") from None
 
@@ -354,30 +363,14 @@ class SQLiteCatalogueRepository:
             if row is None:
                 raise CatalogueStaleError("catalogue requires refresh")
             entries = self._connection.execute(
-                "SELECT connection,library,library_id,item_id,updated_at,title,authors,has_ebook,has_audio,classification,file_identity,service_path,format,mount,source_fingerprint FROM catalogue_entries WHERE generation=? AND connection=? AND library=? AND library_id=? AND item_id=?",
+                f"SELECT {_ENTRY_COLUMNS} FROM catalogue_entries WHERE generation=? "  # noqa: S608 - fixed column list
+                "AND connection=? AND library=? AND library_id=? AND item_id=?",
                 (generation, *key),
             ).fetchall()
             self._connection.execute("COMMIT")
             if len(entries) != 1:
                 return None
-            value = entries[0]
-            return CatalogueEntry(
-                value[0],
-                value[1],
-                value[2],
-                value[3],
-                value[4],
-                value[5],
-                tuple(json.loads(value[6])),
-                bool(value[7]),
-                bool(value[8]),
-                value[9],
-                value[10],
-                value[11],
-                value[12],
-                value[13],
-                value[14],
-            )
+            return _entry(entries[0])
         except Exception:
             if self._connection.in_transaction:
                 self._connection.execute("ROLLBACK")
@@ -396,8 +389,7 @@ class SQLiteCatalogueRepository:
             if current is None:
                 raise CatalogueStaleError("catalogue requires refresh")
             entries = self._connection.execute(
-                "SELECT connection,library,library_id,item_id,updated_at,title,authors,"
-                "has_ebook,has_audio,classification,file_identity,service_path,format,mount,source_fingerprint "
+                f"SELECT {_ENTRY_COLUMNS} "  # noqa: S608 - fixed column list
                 "FROM catalogue_entries WHERE generation=? AND connection=? "
                 "AND library=? AND library_id=? AND item_id=?",
                 (current[0], *key),
@@ -405,24 +397,7 @@ class SQLiteCatalogueRepository:
             self._connection.execute("COMMIT")
             if len(entries) != 1:
                 return None
-            value = entries[0]
-            return CatalogueEntry(
-                value[0],
-                value[1],
-                value[2],
-                value[3],
-                value[4],
-                value[5],
-                tuple(json.loads(value[6])),
-                bool(value[7]),
-                bool(value[8]),
-                value[9],
-                value[10],
-                value[11],
-                value[12],
-                value[13],
-                value[14],
-            )
+            return _entry(entries[0])
         except Exception:
             if self._connection.in_transaction:
                 self._connection.execute("ROLLBACK")

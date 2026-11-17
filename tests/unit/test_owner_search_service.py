@@ -708,6 +708,7 @@ def test_logout_discards_the_sessions_search() -> None:
         logout=lambda token, csrf: logged_out.append((token, csrf))
     )
     application._owner_search = harness.service
+    application._identifier_import = None
     application.logout(TOKEN, "csrf")
     assert logged_out == [(TOKEN, "csrf")]
     assert application.owner_search is harness.service

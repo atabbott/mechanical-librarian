@@ -223,3 +223,27 @@ def test_find_this_book_bodies_are_bounded_by_what_each_route_takes(
             content=body,
         )
         assert response.status_code == 401, (path, response.status_code)
+
+
+def test_an_identifiers_file_is_bounded_at_one_mebibyte(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    """#1478: only a saved library's preview path takes a file; nothing else
+    near it is raised."""
+    limits = _limits()
+    preview = "/api/v1/libraries/abs/books/identifier-previews"
+    assert limits.limit_for(preview) == 1_048_576
+    for path in (
+        "/api/v1/libraries/Abs/books/identifier-previews",
+        "/api/v1/libraries/abs/books/identifier-previews/x",
+        "/api/v1/libraries/abs/books/x/identifier-previews",
+        "/api/v1/identifier-previews/x/import",
+        "/api/v1/identifier-imports/x/withdraw",
+    ):
+        assert limits.limit_for(path) == DEFAULT_BODY_LIMIT_BYTES, path
+    largest = web.client.post(
+        preview,
+        headers={**web.origin, "Content-Type": "text/plain"},
+        content=b"x" * 1_048_576,
+    )
+    assert largest.status_code == 401, largest.status_code
