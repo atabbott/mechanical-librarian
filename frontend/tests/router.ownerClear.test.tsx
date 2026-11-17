@@ -952,6 +952,7 @@ describe('names that differ only by case or composition (#1523)', () => {
     ['Ada Example\nada EXAMPLE'],
     ['Zoé Example\nZoé Example'],
     ['Anna Straße\nANNA STRASSE'],
+    ['Anna Straße\nANNA STRAẞE'],
   ])('refuses %j as a repeated name', async (text) => {
     const user = userEvent.setup()
     const http = owner(field('narrators', ['Ada Reader'], namesControl(['Ada Reader'], true)))
@@ -964,6 +965,22 @@ describe('names that differ only by case or composition (#1523)', () => {
     await user.click(within(panel).getByRole('button', { name: 'Record these names' }))
     expect(within(panel).getByRole('alert')).toHaveTextContent('Enter each name once.')
     expect(http.recordDecision).not.toHaveBeenCalled()
+  })
+})
+
+describe('names the store keeps apart (#1523)', () => {
+  it('records a dotless ı and a dotted i as two names', async () => {
+    const user = userEvent.setup()
+    const http = owner(field('narrators', ['Ada Reader'], namesControl(['Ada Reader'], true)))
+    const panel = await open(http, 'narrators')
+    await user.click(within(panel).getByRole('button', { name: 'Change' }))
+    const names = within(panel).getByRole('textbox', { name: 'Your value for Narrators' })
+    await user.clear(names)
+    await user.click(names)
+    await user.paste('Nilay Yılmaz\nNilay Yilmaz')
+    await user.click(within(panel).getByRole('button', { name: 'Record these names' }))
+    expect(await within(panel).findByText('You entered 2 names.')).toBeVisible()
+    expect(http.recordDecision).toHaveBeenCalledOnce()
   })
 })
 

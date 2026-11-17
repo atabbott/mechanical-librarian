@@ -27,8 +27,13 @@ const ownerText = (value: string) => value.normalize('NFC').replace(/\s+/gu, ' '
 // One name per line; a blank line is not a name.
 const namesOf = (text: string) => text.split('\n').map(ownerText).filter(Boolean)
 // Names that differ only by case or composition are one name, as the store
-// compares them (#1523).
-const nameKey = (name: string) => name.normalize('NFC').toUpperCase().toLowerCase().normalize('NFC')
+// compares them (#1523). The store case-folds; this folds each character the
+// same way: the round trip through capitals takes ß and ẞ to "ss", and a
+// dotless ı stays itself, because case folding keeps it apart from i and I.
+const foldCharacter = (character: string) =>
+  character === 'ı' ? character : character.toUpperCase().toLowerCase().toUpperCase().toLowerCase()
+const nameKey = (name: string) =>
+  Array.from(name.normalize('NFC'), foldCharacter).join('').normalize('NFC')
 const sameList = (left: readonly string[], right: unknown) =>
   Array.isArray(right) &&
   left.length === right.length &&
