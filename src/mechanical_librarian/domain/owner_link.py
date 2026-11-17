@@ -19,7 +19,7 @@ import hashlib
 import re
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
-from typing import Final, Literal
+from typing import Final, Literal, cast
 
 from mechanical_librarian.domain.audio_inspection import AudioInspectionField
 from mechanical_librarian.domain.audiobook_corroboration import (
@@ -47,6 +47,9 @@ from mechanical_librarian.domain.metadata_report import (
     OwnerLinkFacts,
     ProviderCandidate,
     ProviderEvidenceKind,
+    TargetDestination,
+    TargetFacts,
+    TargetFieldState,
     canonical_asin,
     canonical_json,
     creator_comparison_key,
@@ -57,7 +60,6 @@ from mechanical_librarian.domain.metadata_report import (
     manifestation_publication_contradicted,
     normalize_title,
     recording_variant_conflict,
-    target_work_identity_context,
 )
 
 
@@ -622,6 +624,41 @@ def owner_search_medium(file_format: str) -> str:
     return "audiobook" if file_format in AUDIO_FILE_FORMATS else "ebook"
 
 
+def _target_title_and_authors(
+    target: TargetFacts,
+) -> tuple[str | None, tuple[str, ...]]:
+    """The target's normalized title and authors, each read on its own.
+
+    `target_work_identity_context` names a work only when both are present;
+    the search prefill and the confirmation's contradictions need whichever
+    one the work states, so a work with authors but no title keeps its
+    authors, and a title with no authors keeps its title.
+    """
+    if type(target) is not TargetFacts:
+        return None, ()
+    fields = {value.destination: value for value in target.fields}
+    title_field = fields[TargetDestination.TITLE]
+    title: str | None = None
+    if title_field.state is TargetFieldState.VALUE and type(title_field.value) is str:
+        title = normalize_title(title_field.value) or None
+    authors_field = fields[TargetDestination.AUTHORS]
+    authors: tuple[str, ...] = ()
+    if (
+        authors_field.state is TargetFieldState.VALUE
+        and type(authors_field.value) is tuple
+        and all(type(value) is str for value in authors_field.value)
+    ):
+        normalized = tuple(
+            normalize_title(value)
+            for value in cast("tuple[str, ...]", authors_field.value)
+        )
+        if all(normalized) and len({value.casefold() for value in normalized}) == len(
+            normalized
+        ):
+            authors = normalized
+    return title, authors
+
+
 @dataclass(frozen=True, slots=True)
 class OwnerSearchWork:
     """What a card is judged against: the work's current report (S15)."""
@@ -640,7 +677,7 @@ class OwnerSearchWork:
 
     @classmethod
     def from_report(cls, report: MetadataReport) -> OwnerSearchWork:
-        context = target_work_identity_context(report.target)
+        title, authors = _target_title_and_authors(report.target)
         local = tuple(
             claim
             for claim in report.local_claims
@@ -664,8 +701,8 @@ class OwnerSearchWork:
         fields = report.target.fields
         return cls(
             owner_search_medium(report.file.format),
-            None if context is None else context[0],
-            () if context is None else context[1],
+            title,
+            authors,
             isbns.pop() if len(isbns) == 1 else None,
             asins.pop() if len(asins) == 1 else None,
             local_claim_runtime_seconds(report.local_claims),

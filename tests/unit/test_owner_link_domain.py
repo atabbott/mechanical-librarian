@@ -8,11 +8,18 @@ from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
     FieldState,
+    FileFacts,
+    MetadataReport,
     OwnerLinkFacts,
     ProviderCandidate,
     ProviderClaim,
     ProviderEvidence,
     ProviderEvidenceKind,
+    TargetDestination,
+    TargetFacts,
+    TargetField,
+    TargetFieldState,
+    default_target_fields,
 )
 from mechanical_librarian.domain.owner_link import (
     OwnerLink,
@@ -475,6 +482,38 @@ def test_contradictions_name_only_what_applies_with_their_values() -> None:
     )
     # A contradiction informs the confirmation; the card stays choosable.
     assert card.choosable
+
+
+def _target_report(
+    title: str | None, authors: tuple[str, ...] | None
+) -> MetadataReport:
+    fields = tuple(
+        TargetField(TargetDestination.AUTHORS, TargetFieldState.VALUE, authors)
+        if value.destination is TargetDestination.AUTHORS and authors is not None
+        else value
+        for value in default_target_fields(title)
+    )
+    return MetadataReport.create(
+        target=TargetFacts("abs", "books", "item-1", fields),
+        file=FileFacts(0, "a" * 64, "b" * 64),
+        local_claims=(),
+        local_reasons=("opening_matter_title",),
+        providers=(),
+    )
+
+
+def test_a_work_with_authors_and_no_title_keeps_its_authors() -> None:
+    work = OwnerSearchWork.from_report(_target_report(None, ("Ada Example",)))
+    assert (work.title, work.authors) == (None, ("Ada Example",))
+    (card,), _ = owner_search_cards(
+        "open_library", (_record("/works/OL7W", creators=("Someone Else",)),), work
+    )
+    assert (OwnerSearchContradiction.CREATORS_DISJOINT, {}) in card.contradictions
+
+
+def test_a_work_with_a_title_and_no_authors_keeps_its_title() -> None:
+    work = OwnerSearchWork.from_report(_target_report("Current title", None))
+    assert (work.title, work.authors) == ("Current title", ())
 
 
 def test_a_card_that_agrees_with_the_work_states_no_contradiction() -> None:
