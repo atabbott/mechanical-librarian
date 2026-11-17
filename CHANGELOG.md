@@ -40,6 +40,9 @@ brackets are GitHub issues.
   in Settings › Libraries, previews a file of works and their ISBN or ASIN and
   links every row it can in one import. The import's Activity row offers
   Withdraw this import (#1478).
+- A book link whose next preparation could not finish now says "Link not used
+  yet", and its link view gives the work's next step, instead of saying it is
+  being prepared (#1941).
 
 ## 0.37.0 — Provider economy (in progress)
 

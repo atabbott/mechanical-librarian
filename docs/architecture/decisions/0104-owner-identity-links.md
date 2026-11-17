@@ -208,6 +208,8 @@ about the work, and it should steer what preparation reads.
     Every earlier application database is rejected
     before mutation and needs a clean rebuild
     ([ADR-0013](0013-pre-release-clean-schema.md)).
+    The `preparation_failed` link state (#1941) is read, not stored: it moves
+    `review-library-v11` and `owner-link-view-v3` and needs no rebuild.
 
 ## Consequences
 

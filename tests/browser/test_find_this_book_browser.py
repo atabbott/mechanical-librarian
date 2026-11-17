@@ -846,7 +846,8 @@ def test_a_decision_refused_because_the_link_changed_says_so(
             "radio", name=f"Choose proposed value: {_PROPOSED}", exact=True
         ).click()
         notice = page.get_by_text(
-            "The book link changed. This work is being prepared again."
+            "Not recorded. The book link changed. Choose again when preparation"
+            " has used the link."
         )
         expect(notice).to_be_visible()
         # Said right under the choices and brought into the window, so the

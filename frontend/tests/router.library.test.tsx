@@ -14707,7 +14707,10 @@ it('keeps focus on the failure line when a retry gets no answer and takes its bu
 })
 
 it.each([
-  ['link_changed', 'The book link changed. This work is being prepared again.'],
+  [
+    'link_changed',
+    'Not recorded. The book link changed. Choose again when preparation has used the link.',
+  ],
   ['decision_written', 'This decision has been written to your library, so it can’t be withdrawn.'],
 ] as const)(
   'says a %s refusal right under the choices, never at the field’s foot',

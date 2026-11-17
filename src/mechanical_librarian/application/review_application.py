@@ -224,7 +224,7 @@ class BrowserStateOwner(IdentifierImportStore, Protocol):
 
     def owner_link_view_inputs(
         self, connection: str, library: str, item: str
-    ) -> tuple[OwnerLink, OwnerLinkTarget, dict[str, object] | None] | None: ...
+    ) -> tuple[OwnerLink, OwnerLinkTarget, dict[str, object] | None, bool] | None: ...
 
 
 @dataclass(frozen=True, slots=True)
