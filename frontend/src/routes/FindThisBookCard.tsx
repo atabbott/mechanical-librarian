@@ -19,18 +19,21 @@ function Spine({ title }: { title: string }) {
   )
 }
 
+// A failure belongs to the one preview that failed: a new search's card at the
+// same position names another preview and tries it.
 export function Preview({ search, card }: { search: OwnerSearchView; card: OwnerSearchCard }) {
-  const [failed, setFailed] = useState(false)
-  if (!card.preview || failed) return <Spine title={card.title} />
+  const src = `/api/v1/library/find/searches/${encodeURIComponent(search.search_id)}/previews/${String(card.position)}`
+  const [failed, setFailed] = useState<string | null>(null)
+  if (!card.preview || failed === src) return <Spine title={card.title} />
   return (
     <img
       className="find-book-cover"
-      src={`/api/v1/library/find/searches/${encodeURIComponent(search.search_id)}/previews/${String(card.position)}`}
+      src={src}
       alt=""
       loading="lazy"
       decoding="async"
       referrerPolicy="no-referrer"
-      onError={() => setFailed(true)}
+      onError={() => setFailed(src)}
     />
   )
 }

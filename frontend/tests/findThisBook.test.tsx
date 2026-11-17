@@ -1,7 +1,7 @@
 // Find this book (#1477): the header entry, the More list, the dialog's form,
 // results and confirmation, each refusal's words, and what None of these and
 // Close send (nothing).
-import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -22,6 +22,7 @@ import {
   withheldLines,
 } from '../src/findThisBook'
 import { createHttp, detail, library, renderRoute } from './fixtures'
+import { Preview } from '../src/routes/FindThisBookCard'
 import { card, linked, withLinkView } from './findThisBookFixtures'
 import { reportDetail } from './wireFixtures'
 
@@ -428,6 +429,22 @@ describe('the dialog', () => {
     expect(within(actions).getByRole('button', { name: 'Find this book' })).toHaveFocus()
     expect(search).toHaveBeenCalledTimes(1)
     expect(http.chooseOwnerLink).not.toHaveBeenCalled()
+  })
+
+  it("tries a new search's preview after the last search's preview at that position failed", () => {
+    const shown = card({ position: 1, title: 'Dune Messiah', preview: true })
+    const first = results()
+    const { container, rerender } = render(<Preview search={first} card={shown} />)
+    const image = container.querySelector('img')
+    if (!image) throw new Error('the card shows its preview')
+    fireEvent.error(image)
+    expect(container.querySelector('img')).toBeNull()
+    expect(container.querySelector('.is-spine')).not.toBeNull()
+    rerender(<Preview search={results({ search_id: 'search_next' })} card={shown} />)
+    expect(container.querySelector('img')).toHaveAttribute(
+      'src',
+      '/api/v1/library/find/searches/search_next/previews/1',
+    )
   })
 
   it('says what an empty search found for each way of searching', async () => {

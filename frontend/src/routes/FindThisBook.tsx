@@ -708,7 +708,7 @@ function Results({
       {empty ? null : (
         <ol className="find-book-cards">
           {search.cards.map((card) => (
-            <li key={card.position} className="find-book-card">
+            <li key={`${search.search_id}:${String(card.position)}`} className="find-book-card">
               <Preview search={search} card={card} />
               <div className="find-book-card-body">
                 <CardLines card={card} />
