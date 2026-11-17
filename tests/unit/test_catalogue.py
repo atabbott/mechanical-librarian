@@ -620,3 +620,33 @@ def test_item_path_round_trips_and_stays_out_of_the_source_fingerprint() -> None
                 "UPDATE catalogue_entries SET item_path='' WHERE item_id='item-1'"
             )
         repository.close()
+
+
+def test_a_catalogue_main_created_before_item_paths_is_refused_unchanged(
+    tmp_path: Path,
+) -> None:
+    """A catalogue-v2 database from 5f775fd, whose entries have no item path,
+    fails schema validation and is left as it was (#1478)."""
+    fixture = json.loads(
+        (
+            Path(__file__).parents[1] / "fixtures/predecessor-stores-5f775fd.json"
+        ).read_text(encoding="utf-8")
+    )["catalogue"]
+    path = tmp_path / "catalogue.sqlite"
+    connection = sqlite3.connect(path)
+    try:
+        connection.executescript("".join(sql + ";" for sql in fixture["sql"]))
+        connection.execute(
+            "INSERT INTO catalogue_schema(version) VALUES(?)", (fixture["version"],)
+        )
+        connection.commit()
+        columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(catalogue_entries)")
+        }
+    finally:
+        connection.close()
+    assert "item_path" not in columns
+    before = path.read_bytes()
+    with pytest.raises(CatalogueError):
+        open_catalogue(path)
+    assert path.read_bytes() == before

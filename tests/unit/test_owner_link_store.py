@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
@@ -709,3 +711,54 @@ def test_a_file_row_out_of_grammar_is_refused_before_insert(
         _in_transaction(database, link)
     assert type(refused.value) is OwnerLinkStoreError
     assert _count(database) == 0
+
+
+# -- The store before #1478 ------------------------------------------------------
+
+_PREDECESSORS = Path(__file__).parents[1] / "fixtures/predecessor-stores-5f775fd.json"
+
+
+def test_the_review_store_main_created_before_the_file_source_is_refused_unchanged(
+    tmp_path: Path,
+) -> None:
+    """A store from 5f775fd (search links only, no import tables) needs a
+    clean rebuild: it is refused before anything is written (ADR-0013)."""
+    fixture = json.loads(_PREDECESSORS.read_text(encoding="utf-8"))
+    path = tmp_path / "state.sqlite"
+    open_repository(path).close()
+    connection = sqlite3.connect(path, isolation_level=None)
+    try:
+        # Every owner_links object but the table itself reads as it did then.
+        kept = connection.execute(
+            "SELECT sql FROM sqlite_schema WHERE tbl_name IN "
+            "('owner_links','current_owner_links') AND type IN ('trigger','view') "
+            "ORDER BY type DESC,name"
+        ).fetchall()
+        connection.executescript(
+            "DROP VIEW current_owner_links;"
+            "DROP TABLE owner_links;"
+            "DROP TABLE identifier_import_events;"
+            "DROP TABLE identifier_imports;"
+            + fixture["review_store"]["owner_links_sql"]
+            + ";"
+            + "".join(sql + ";" for (sql,) in kept)
+        )
+        rows = connection.execute(
+            "SELECT type,name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' "
+            "ORDER BY type,name"
+        ).fetchall()
+    finally:
+        connection.close()
+    assert len(rows) == fixture["review_store"]["schema_objects"]
+    assert (
+        hashlib.sha256(
+            json.dumps(
+                [list(row) for row in rows], ensure_ascii=False, separators=(",", ":")
+            ).encode()
+        ).hexdigest()
+        == fixture["review_store"]["schema_inventory_sha256"]
+    )
+    before = path.read_bytes()
+    with pytest.raises(MetadataReportError):
+        open_repository(path, create=False)
+    assert path.read_bytes() == before
