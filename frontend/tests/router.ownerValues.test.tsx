@@ -1486,6 +1486,8 @@ describe('a pin on each value', () => {
     expect(within(foot).getByRole('alert')).toHaveTextContent(
       'Your choice could not be confirmed. Choose Try the same decision again to send it once more.',
     )
+    // The pin's own line says what failed, so its retry stays after it.
+    expect(foot.compareDocumentPosition(retry) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(outcomes(http)).toEqual(['accept'])
     refused = false
     await user.click(retry)

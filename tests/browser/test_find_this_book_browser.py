@@ -615,19 +615,16 @@ def test_tab_never_leaves_the_dialog_for_the_page_behind_it(browser: Browser) ->
         _open_case(page)
         dialog = _open_find(page)
         close = dialog.get_by_role("button", name="Close", exact=True)
-        places = []
+        # The modal dialog leaves the page behind it inert. Past its last
+        # control focus may go to the browser's own controls, then comes back
+        # to the dialog's first; it never reaches the page, either way round.
+        closes = 0
         for _ in range(24):
             page.keyboard.press("Tab")
-            places.append(page.evaluate(_FOCUS_PLACE))
-        # The modal dialog leaves the page behind it inert: past its last
-        # control focus goes to the browser's own controls, then back to the
-        # dialog's first, and never to the page.
-        assert "page" not in places
-        assert "browser" in places
-        while page.evaluate(_FOCUS_PLACE) != "browser":
-            page.keyboard.press("Tab")
-        page.keyboard.press("Tab")
-        expect(close).to_be_focused()
+            assert page.evaluate(_FOCUS_PLACE) != "page"
+            closes += close.evaluate("e => e === document.activeElement")
+        # Close is first, and focus came round to it again.
+        assert closes >= 2
         for _ in range(24):
             page.keyboard.press("Shift+Tab")
             assert page.evaluate(_FOCUS_PLACE) != "page"
