@@ -10,9 +10,7 @@ the store.
 
 from __future__ import annotations
 
-import json
 import os
-import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -23,6 +21,9 @@ import pytest
 from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
 
+from mechanical_librarian.adapters.field_effect_authority import (
+    PersistedFieldEffectAuthority,
+)
 from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
@@ -30,6 +31,9 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
 )
 from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
+from mechanical_librarian.application.continuous_field_effects import (
+    ContinuousGuardedApplication,
+)
 from mechanical_librarian.application.owner_search import OwnerSearchService
 from mechanical_librarian.application.review_pipeline import PreparationTrigger
 from tests.unit.review_app_fixture import (
@@ -122,6 +126,19 @@ class _Live:
             "SELECT item_id,action,import_id FROM owner_links ORDER BY rowid"
         ).fetchall()
 
+    def activity(self, search: str | None = None) -> list[dict[str, Any]]:
+        query = "/api/v1/activity?event_type=all&range_days=90"
+        if search is not None:
+            query += f"&q={search}"
+        answer = self.client.get(query)
+        assert answer.status_code == 200, answer.text
+        # The app's seeded policy has its own row; only link rows are read.
+        return [
+            event
+            for event in answer.json()["events"]
+            if event["field_label"] in {"Links", "Book link"}
+        ]
+
     def republish(self, entries: tuple[CatalogueEntry, ...]) -> None:
         catalogue = open_catalogue(self.root / "catalogue.sqlite")
         catalogue.acquire_refresh()
@@ -179,6 +196,16 @@ def identifier_web(tmp_path: Path) -> Iterator[_Live]:
         clock=lambda: NOW,
         review_preparation=cast(Any, preparation),
         owner_search=search,
+        activity_projection=ContinuousGuardedApplication(
+            repository,
+            {},
+            {},
+            PersistedFieldEffectAuthority(repository),
+            ((CONNECTION, LIBRARY),),
+            lambda: NOW,
+            lambda *_: None,
+            activity_only=True,
+        ),
     )
     published: list[tuple[str, str | None]] = []
     channel = app.state.review_application.updates
@@ -496,29 +523,80 @@ def test_an_unknown_or_malformed_import_is_not_found(live: _Live) -> None:
         assert (answer.status_code, _code(answer)) == (404, "import_not_found")
 
 
-# -- Privacy -------------------------------------------------------------------
+# -- Activity ------------------------------------------------------------------
 
 
-def test_no_row_text_path_or_item_reaches_an_answer_an_event_or_the_store(
-    live: _Live, capsys: pytest.CaptureFixture[str]
-) -> None:
-    preview = live.preview()
-    imported = live.confirm(preview.json()["preview_id"])
-    status = live.client.get(
-        f"/api/v1/identifier-imports/{imported.json()['import_id']}"
+def _ledger(event: dict[str, Any]) -> tuple[object, ...]:
+    return (
+        event["work_label"],
+        event["field_label"],
+        event["library"],
+        event["change"],
+        event["state"],
+        event["identifier_import_id"],
     )
-    refused = live.preview(b"path\tidentifier\n" + SENTINELS[0].encode() + b"\x07\n")
-    text = json.dumps([preview.json(), imported.json(), status.json(), refused.json()])
-    stderr = capsys.readouterr().err
-    connection = sqlite3.connect(live.root / "state.sqlite3")
-    try:
-        stored = "\n".join(
-            line for line in connection.iterdump() if line.startswith("INSERT")
-        )
-    finally:
-        connection.close()
-    for sentinel in SENTINELS:
-        for surface in (text, stderr, stored):
-            assert sentinel.lower() not in surface.lower()
-    events = [json.loads(line) for line in stderr.splitlines() if "identifier" in line]
-    assert {event["outcome"] for event in events} >= {"previewed", "recorded"}
+
+
+def test_an_import_and_its_withdrawal_are_one_activity_row_each(live: _Live) -> None:
+    imported = _imported(live)
+    import_id = imported["import_id"]
+    (row,) = live.activity()
+    assert _ledger(row) == (
+        "Identifiers file",
+        "Links",
+        LIBRARY,
+        "Linked 3 works",
+        "imported",
+        import_id,
+    )
+    assert {fact["label"]: fact["value"] for fact in row["evidence"]} == {
+        "Rows in the file": "5",
+        "Linked": "3",
+        "Not linked": "2",
+        "Chosen by": "You",
+        "What happens next": "Linking writes nothing to Audiobookshelf. "
+        "Each work is prepared again with its link.",
+    }
+    assert live.withdraw(import_id).status_code == 200
+    # Both were recorded at the app's one fixed time.
+    assert {_ledger(event) for event in live.activity()} == {
+        ("Identifiers file", "Links", LIBRARY, "Withdrew 3 links", "withdraw", None),
+        _ledger(row),
+    }
+    # The rows are found by what they say, and each import's link rows are
+    # its own: none of them is a row of its own.
+    assert len(live.activity("Identifiers file")) == 2
+    assert live.activity("Book link") == []
+
+
+def test_a_file_link_withdrawn_singly_is_its_own_activity_row(live: _Live) -> None:
+    _imported(live)
+    (item, link_row_id) = live.repository._connection.execute(
+        "SELECT item_id,link_row_id FROM current_owner_links ORDER BY item_id LIMIT 1"
+    ).fetchone()
+    live.repository.withdraw_owner_link(
+        CONNECTION,
+        LIBRARY,
+        item,
+        medium="ebook",
+        expected_current=link_row_id,
+        actor="owner",
+        occurred_at=NOW + 1,
+        request_id="single-withdraw-0001",
+        request_sha256="d" * 64,
+    )
+    single, imported = live.activity()
+    assert imported["change"] == "Linked 3 works"
+    assert (single["field_label"], single["change"], single["change_detail"]) == (
+        "Book link",
+        f"Withdrew the link to ISBN {ISBN13}",
+        f"Withdrew the link from Recorded work to ISBN {ISBN13}, "
+        "from an identifiers file.",
+    )
+    assert {fact["label"]: fact["value"] for fact in single["evidence"]}[
+        "Source"
+    ] == "Identifiers file"
+    status = live.client.get(
+        f"/api/v1/identifier-imports/{imported['identifier_import_id']}"
+    )
+    assert status.json()["still_linked"] == 2

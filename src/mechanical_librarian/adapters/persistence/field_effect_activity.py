@@ -39,6 +39,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import stat
 import sys
@@ -574,6 +575,35 @@ _PENDING_PREPARED_FROM_SQL = (
 _PLAN_REUSE = 256
 
 
+_IDENTIFIER_IMPORT_ID = re.compile(r"identifier_import_[0-9a-f]{64}")
+_FILE_LINK_IDENTITY = {
+    "edition": re.compile(r"97[89][0-9]{10}"),
+    "recording": re.compile(r"[0-9A-Z]{10}"),
+}
+
+
+def _owner_link_source_valid(raw: dict[str, Any]) -> bool:
+    """A search link names its source and title; a file link names neither,
+    only its canonical ISBN-13 or ASIN (#1478)."""
+    title = raw.get("title")
+    if raw.get("source") == "search":
+        return (
+            raw.get("provider") in OWNER_LINK_PROVIDERS
+            and type(title) is str
+            and 1 <= len(title) <= 512
+        )
+    pattern = _FILE_LINK_IDENTITY.get(str(raw.get("scope")))
+    identity = raw.get("identity")
+    return (
+        raw.get("source") == "file"
+        and raw.get("provider") is None
+        and title is None
+        and pattern is not None
+        and type(identity) is str
+        and pattern.fullmatch(identity) is not None
+    )
+
+
 _ACTIVITY_SOURCE_KINDS = frozenset(
     {
         "field_effect",
@@ -586,6 +616,7 @@ _ACTIVITY_SOURCE_KINDS = frozenset(
         "cover_safeguard",
         "policy_transition",
         "owner_link",
+        "identifier_import",
     }
 )
 
@@ -1089,7 +1120,10 @@ def _owner_link_arm(scope: _ActivityArmScope, scalar: dict[str, str]) -> str:
     The work is named by its latest report, the one a new report for the
     item replaces (`item_report` in the fact witness); with none, the row
     names no report and reads as a recorded work. A withdrawal names the
-    link it withdrew. #1478 adds its file-import exclusion here.
+    link it withdrew. A link an identifiers file import made or withdrew is
+    left to that import's own row (#1478); a link from a file that Find this
+    book changed or withdrew is shown, naming its identity, since a file link
+    keeps no title or source.
     """
     return f"""
             SELECT link.link_row_id,
@@ -1097,7 +1131,7 @@ def _owner_link_arm(scope: _ActivityArmScope, scalar: dict[str, str]) -> str:
                    'book_link', link.library_name, link.occurred_at, 'human', report.report_id,
                    CASE link.action WHEN 'link' THEN 'linked' WHEN 'replace' THEN 'link_changed' ELSE 'link_withdrawn' END,
                    link.item_id,
-                   json_object('action',link.action,'scope',COALESCE(link.scope,prior.scope),'provider',COALESCE(link.provider,prior.provider),'title',COALESCE(link.display_title,prior.display_title)),
+                   json_object('action',link.action,'scope',COALESCE(link.scope,prior.scope),'provider',COALESCE(link.provider,prior.provider),'title',COALESCE(link.display_title,prior.display_title),'source',COALESCE(prior.source,link.source),'identity',COALESCE(link.record_identity,prior.record_identity)),
                    'review', NULL, NULL, 'owner_link', NULL, NULL, NULL, link.link_row_id, NULL, NULL, 1, 0, 0
               FROM owner_links link
          LEFT JOIN owner_links prior ON link.action='withdraw'
@@ -1107,7 +1141,24 @@ def _owner_link_arm(scope: _ActivityArmScope, scalar: dict[str, str]) -> str:
                    SELECT MAX(latest.rowid) FROM metadata_reports latest
                     WHERE latest.connection_name=link.connection_name
                       AND latest.library_name=link.library_name
-                      AND latest.item_id=link.item_id){scope("owner_link", "link.link_row_id", "WHERE")}"""
+                      AND latest.item_id=link.item_id)
+             WHERE link.import_id IS NULL{scope("owner_link", "link.link_row_id", "AND")}"""
+
+
+def _identifier_import_arm(scope: _ActivityArmScope, scalar: dict[str, str]) -> str:
+    """Every identifiers file import and its withdrawal, one row each (#1478).
+
+    Only the import's immutable facts are carried: how many links are still
+    current is read live when its details open, never cached here.
+    """
+    return f"""
+            SELECT event.event_id, NULL, 'links', held.library_name, event.occurred_at, 'human', NULL,
+                   CASE event.kind WHEN 'imported' THEN 'imported' ELSE 'withdraw' END,
+                   'Identifiers file',
+                   json_object('kind',event.kind,'import_id',event.import_id,'rows',held.row_count,'linked',held.will_link,'affected',event.affected),
+                   'review', 'Identifiers file', NULL, 'identifier_import', NULL, NULL, NULL, event.event_id, NULL, NULL, 1, 0, 0
+              FROM identifier_import_events event
+              JOIN identifier_imports held ON held.import_id=event.import_id{scope("identifier_import", "event.event_id", "WHERE")}"""
 
 
 def _isbn_refusal_arm(scoped: bool, title: str) -> str:
@@ -1148,6 +1199,7 @@ _ACTIVITY_ARMS: tuple[Callable[[_ActivityArmScope, dict[str, str]], str], ...] =
     _cover_safeguard_arm,
     _policy_transition_arm,
     _owner_link_arm,
+    _identifier_import_arm,
 )
 
 
@@ -3230,6 +3282,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             "cover_safeguard": self._project_cover_safeguard,
             "policy_transition": self._project_policy_transition,
             "owner_link": self._project_owner_link,
+            "identifier_import": self._project_identifier_import,
         }
         projected_events: list[dict[str, object]] = []
         for values in rows:
@@ -4035,7 +4088,11 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
     def _project_owner_link(
         self, row: _ActivityRow, dependencies: _ActivityDependencies
     ) -> dict[str, object]:
-        """One book link row: what was linked, from which source, as what."""
+        """One book link row: what was linked, from which source, as what.
+
+        A file link (#1478) names no source or title, only its identity: an
+        ISBN-13 as an edition or an ASIN as a recording.
+        """
         raw = row.raw
         state = {
             "link": "linked",
@@ -4044,19 +4101,52 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         }.get(str(raw.get("action")))
         title = raw.get("title")
         if (
-            set(raw) != {"action", "provider", "scope", "title"}
+            set(raw) != {"action", "provider", "scope", "title", "source", "identity"}
             or state is None
             or state != row.state
             or row.source_document is not None
             or row.event_id != row.source_identity
             or raw.get("scope") not in {"work", "edition", "recording"}
-            or raw.get("provider") not in OWNER_LINK_PROVIDERS
-            or type(title) is not str
-            or not 1 <= len(title) <= 512
+            or not _owner_link_source_valid(raw)
         ):
             raise FieldEffectError("persistence")
         durable = _shared_activity_record(row, dependencies.authored_records)
-        durable.update(provider=raw["provider"], scope=raw["scope"], title=title)
+        if raw["source"] == "file":
+            durable.update(source="file", scope=raw["scope"], identity=raw["identity"])
+        else:
+            durable.update(provider=raw["provider"], scope=raw["scope"], title=title)
+        return _finished_activity_event(row, durable)
+
+    def _project_identifier_import(
+        self, row: _ActivityRow, dependencies: _ActivityDependencies
+    ) -> dict[str, object]:
+        """One identifiers file import or its withdrawal: counts, no values."""
+        raw = row.raw
+        counts = [raw.get(name) for name in ("rows", "linked", "affected")]
+        if (
+            set(raw) != {"kind", "import_id", "rows", "linked", "affected"}
+            or (raw.get("kind"), row.state)
+            not in {("imported", "imported"), ("withdrawn", "withdraw")}
+            or row.source_document is not None
+            or row.event_id != row.source_identity
+            or row.connection is not None
+            or row.report_id is not None
+            or type(raw.get("import_id")) is not str
+            or _IDENTIFIER_IMPORT_ID.fullmatch(raw["import_id"]) is None
+            or any(
+                type(count) is not int or not 1 <= count <= 5_000 for count in counts
+            )
+            or not raw["affected"] <= raw["linked"] <= raw["rows"]
+        ):
+            raise FieldEffectError("persistence")
+        durable = _shared_activity_record(row, dependencies.authored_records)
+        durable.update(
+            kind=raw["kind"],
+            import_id=raw["import_id"],
+            rows=raw["rows"],
+            linked=raw["linked"],
+            affected=raw["affected"],
+        )
         return _finished_activity_event(row, durable)
 
     @local_operation
