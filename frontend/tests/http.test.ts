@@ -7458,16 +7458,14 @@ describe('the book link wire (#1477)', () => {
     [
       'a scope both offered and withheld',
       {
-        cards: [
-          searchCard({ withheld: [{ scope: 'edition', reason: 'format', format: 'print' }] }),
-        ],
+        cards: [searchCard({ withheld: [{ scope: 'edition', reason: 'format' }] })],
       },
     ],
   ])('refuses a search with %s', async (_name, overrides) => {
     const refusal: unknown = await answering(search(overrides))
       .http.searchOwnerLink(request)
       .catch((error: unknown) => error)
-    expect(refusal).toMatchObject({ status: 502 })
+    expect(refusal).toMatchObject({ status: 502, code: 'contradictory_owner_search' })
   })
 
   it('carries a refusal’s retry time and kind', async () => {
