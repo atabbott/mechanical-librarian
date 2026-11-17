@@ -993,6 +993,11 @@ class HumanDecision:
     # Absent for an owner's choice; `matching_changed` for the valueless row
     # the Book matching reconciliation appends.
     cause: str | None = None
+    # A keep's write it goes back on, frozen when the store records it: the
+    # decision whose verified write the keep follows in its own episode, as
+    # planning resolves it then, or none (#1523). Never part of the request,
+    # so a replay stays the same request.
+    follows: str | None = None
 
     @staticmethod
     def idempotency_digest_for(idempotency_key: str) -> str:
@@ -1360,6 +1365,7 @@ class HumanDecision:
             "cause": self.cause,
             "decision_id": self.decision_id,
             "destination": self.destination,
+            "follows": self.follows,
             "idempotency_digest": self.idempotency_digest,
             "occurred_at": self.occurred_at,
             "offered_alternatives_digest": self.offered_alternatives_digest,
@@ -1400,6 +1406,7 @@ class HumanDecision:
                 raw["application"],
                 raw["offered_alternatives_digest"],
                 raw["cause"],
+                raw["follows"],
             )
             if (
                 re.fullmatch(r"human_decision_[0-9a-f]{64}", value.decision_id) is None
@@ -1444,6 +1451,14 @@ class HumanDecision:
                         or value.selected_value is not None
                     )
                 )
+                or (
+                    value.follows is not None
+                    and (
+                        value.outcome != "keep_current"
+                        or type(value.follows) is not str
+                        or _FOLLOWED.fullmatch(value.follows) is None
+                    )
+                )
             ):
                 raise ValueError
             return value
@@ -1458,6 +1473,7 @@ _DOCUMENT_KEYS = frozenset(
         "cause",
         "decision_id",
         "destination",
+        "follows",
         "idempotency_digest",
         "occurred_at",
         "offered_alternatives_digest",
@@ -1470,6 +1486,10 @@ _DOCUMENT_KEYS = frozenset(
         "target_fingerprint",
     }
 )
+
+
+# A followed write's decision: an owner's, or an automatic or advised one.
+_FOLLOWED = re.compile(r"(?:human|automatic)_decision_[0-9a-f]{64}")
 
 
 def _decision_id(request_digest: str, occurred_at: int) -> str:

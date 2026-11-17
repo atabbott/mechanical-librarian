@@ -215,8 +215,9 @@ class OwnerStore:
             if outcome == "owner_entered" and destination in written
             else None,
         )
-        self.repository.record_human_decision(decision)
-        return decision
+        # The stored decision, as the web command returns it: a keep carries
+        # the write it goes back on, frozen when it is recorded (#1523).
+        return HumanDecision.from_json(self.repository.record_human_decision(decision))
 
     def plan(
         self, decision: HumanDecision | AutomaticDecision, *, seed: bool = True

@@ -64,7 +64,6 @@ MUTABLE = (
     "metadata_policy_transitions",
     "metadata_policy_resolutions",
     "current_cover_considerations",
-    "review_case_episodes",
 )
 QUERIES = (
     (None, "all", 90, 1, 25),
@@ -1378,55 +1377,43 @@ def test_only_unconditional_refusal_of_both_routes_classifies_a_table(
         connection.close()
 
 
-def test_an_owner_decision_row_depends_on_its_case_field_writes_and_episode() -> None:
-    """A keep's row reads the other writes of its case's field, a title's
-    subtitle companion among them, and the case's episode floors (#1523): a
-    move of any reaches that row, whatever decision's write moved."""
+def test_a_keep_row_depends_on_the_write_frozen_with_it() -> None:
+    """A keep's row reads its own writes and the write its decision names as
+    the one it goes back on (#1523); a write's own move reaches only its own
+    row and the rows of the decisions that name it."""
     key = activity_facts._key
     connection = sqlite3.connect(":memory:")
-    dependencies, _, candidates = activity_facts._bindings(
-        "human_decision_events",
-        {
-            "event_id": "event-1",
-            "decision_id": "keep-1",
-            "review_case_id": "case-1",
-            "destination": "subtitle",
-        },
-        connection,
+    connection.execute("CREATE TABLE human_decisions(decision_id TEXT, document TEXT)")
+    connection.execute(
+        "INSERT INTO human_decisions VALUES(?,?)",
+        ("keep-1", json.dumps({"follows": "accept-1"})),
     )
-    assert {
-        key("decision_effects", "keep-1"),
-        key("case_field_writes", "case-1", "subtitle"),
-        key("case_episode", "case-1"),
-    } <= dependencies
-    assert candidates == {("human_decision", "event-1")}
-    for destination, companion, provided in (
-        ("genres", None, {"genres"}),
-        ("title", {"pre_value": None}, {"title", "subtitle"}),
+    connection.execute(
+        "INSERT INTO human_decisions VALUES(?,?)",
+        ("plain-1", json.dumps({"follows": None})),
+    )
+    for decision, expected in (
+        ("keep-1", {"keep-1", "accept-1"}),
+        ("plain-1", {"plain-1"}),
     ):
-        _, aliases, candidates = activity_facts._bindings(
-            "field_effects",
+        dependencies, _, candidates = activity_facts._bindings(
+            "human_decision_events",
             {
-                "plan_id": "plan-1",
-                "decision_id": "accept-1",
-                "destination": destination,
-                "document": json.dumps(
-                    {
-                        "plan": {
-                            "authority": {"review_case_id": "case-1"},
-                            "subtitle_companion": companion,
-                        }
-                    }
-                ),
+                "event_id": f"event-{decision}",
+                "decision_id": decision,
+                "review_case_id": "case-1",
+                "destination": "genres",
             },
             connection,
         )
-        assert aliases == {key("decision_effects", "accept-1")} | {
-            key("case_field_writes", "case-1", name) for name in provided
-        }
-        # Only the write's own row is projected again by its own move.
-        assert candidates == {("field_effect", "plan-1")}
-    _, aliases, _ = activity_facts._bindings(
-        "review_case_episodes", {"review_case_id": "case-1"}, connection
+        assert {
+            dependency
+            for dependency in dependencies
+            if dependency[0] == "decision_effects"
+        } == {key("decision_effects", value) for value in expected}
+        assert candidates == {("human_decision", f"event-{decision}")}
+    _, aliases, candidates = activity_facts._bindings(
+        "field_effects", {"plan_id": "plan-1", "decision_id": "accept-1"}, connection
     )
-    assert aliases == {key("case_episode", "case-1")}
+    assert aliases == {key("decision_effects", "accept-1")}
+    assert candidates == {("field_effect", "plan-1")}

@@ -913,7 +913,11 @@ _HUMAN_DECISIONS_SQL = (
     "AND json_extract(selected_value_document,'$.kind') IN ('text','list','series','boolean','cover','empty'))), "
     "CHECK(json_valid(selected_value_document)=0 OR json_type(selected_value_document)<>'object' "
     "OR json_extract(selected_value_document,'$.kind') IS NOT 'empty' "
-    "OR (outcome='owner_entered' AND json_type(selected_value_document,'$.value')='null')))"
+    "OR (outcome='owner_entered' AND json_type(selected_value_document,'$.value')='null')), "
+    # Only a keep names the write it goes back on, frozen when it is
+    # recorded (ADR-0105).
+    "CHECK(json_type(document,'$.follows')='null' OR (outcome='keep_current' "
+    "AND json_type(document,'$.follows')='text')))"
 )
 # Browse, counts and detail ask for a case's decisions per destination, and the
 # latest by ordinal (the rowid, so the index carries it); without this every

@@ -37,7 +37,6 @@ _TABLES = (
     "metadata_policy_transitions",
     "metadata_policy_resolutions",
     "current_cover_considerations",
-    "review_case_episodes",
 )
 Key = tuple[str, bytes]
 Candidate = tuple[str, str]
@@ -346,14 +345,16 @@ def _bindings(
         # An owner decision's row reads its own write: what an accept replaced
         # (#1286) and whether a keep's write-back has landed (#1523).
         dependency("decision_effects", row["decision_id"])
-        # A keep not yet planned reads the write it follows: the case's other
-        # writes of the field, a title's subtitle companion among them, and
-        # the case's episode floors (#1523).
-        dependency("case_field_writes", row["review_case_id"], row["destination"])
-        dependency("case_episode", row["review_case_id"])
+        # A keep not yet planned reads the write it goes back on, the one
+        # frozen in its decision when it was recorded (#1523).
+        followed = connection.execute(
+            "SELECT json_extract(document,'$.follows') FROM human_decisions "
+            "WHERE decision_id=?",
+            (row["decision_id"],),
+        ).fetchone()
+        if followed is not None and type(followed[0]) is str:
+            dependency("decision_effects", followed[0])
         candidate("human_decision", row["event_id"])
-    elif table == "review_case_episodes":
-        aliases.add(_key("case_episode", row["review_case_id"]))
     elif table == "automatic_decisions":
         document = json.loads(row["document"])
         dependency("metadata_reports", document["report_id"])
@@ -399,13 +400,6 @@ def _bindings(
         candidate("field_effect", row["plan_id"])
     elif table == "field_effects":
         aliases.add(_key("decision_effects", row["decision_id"]))
-        # Every write of a case's field, a title's subtitle companion among
-        # them, for the keeps that read the write they follow (#1523).
-        plan = json.loads(row["document"])["plan"]
-        case_id = plan["authority"]["review_case_id"]
-        aliases.add(_key("case_field_writes", case_id, row["destination"]))
-        if plan.get("subtitle_companion") is not None:
-            aliases.add(_key("case_field_writes", case_id, "subtitle"))
         for name in (
             "human_identity",
             "automatic_decisions",

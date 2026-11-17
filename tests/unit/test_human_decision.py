@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 
 import pytest
@@ -1162,3 +1163,32 @@ def test_a_chosen_clear_is_pinned_as_the_empty_state() -> None:
     # A field that cannot be emptied has no empty choice to pin.
     with pytest.raises(FieldEffectError):
         chosen_value_fingerprint("title", dict(_EMPTY))
+
+
+def test_only_a_keep_names_the_write_it_goes_back_on(case: ReviewCase) -> None:
+    """`follows` is frozen by the store when a keep is recorded and is no part
+    of the request: it round-trips on a keep, leaves the decision's identity
+    and request digest alone, and is refused anywhere else or malformed
+    (#1523)."""
+    keep = _owner(case, "title", None, outcome="keep_current")
+    written = "human_decision_" + "a" * 64
+    frozen = dataclasses.replace(keep, follows=written)
+    assert HumanDecision.from_json(frozen.to_json()) == frozen
+    assert (frozen.decision_id, frozen.request_digest) == (
+        keep.decision_id,
+        keep.request_digest,
+    )
+    raw = json.loads(keep.to_json())
+    assert raw["follows"] is None
+    other = json.loads(_owner(case, "title", "Another Title").to_json())
+    for document in (
+        {**raw, "follows": "effect_" + "a" * 64},
+        {**raw, "follows": ""},
+        {**raw, "follows": 1},
+        {**other, "follows": written},
+        {key: value for key, value in raw.items() if key != "follows"},
+    ):
+        with pytest.raises(HumanDecisionError):
+            HumanDecision.from_json(
+                json.dumps(document, separators=(",", ":"), sort_keys=True)
+            )

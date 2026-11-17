@@ -8,6 +8,7 @@ nothing anywhere.
 from __future__ import annotations
 
 import json
+import sqlite3
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any, cast
@@ -23,6 +24,7 @@ from mechanical_librarian.adapters.persistence.metadata_reports import open_repo
 from mechanical_librarian.adapters.persistence.review_sql import (
     _ATTENTION_FACT_SOURCE_SQL,
 )
+from mechanical_librarian.adapters.persistence.schema import _HUMAN_DECISIONS_SQL
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
@@ -35,7 +37,7 @@ from mechanical_librarian.domain.field_effect import (
     FieldEffectError,
     FieldEffectOperation,
 )
-from mechanical_librarian.domain.human_decision import HumanDecisionError
+from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecisionError
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyProfile,
     resolve_policy,
@@ -1708,3 +1710,116 @@ def test_the_served_activity_follows_a_write_that_verifies_after_a_keep(
         assert _served(store, borrower) == _activity(store)
     finally:
         borrower.close()
+
+
+def _keep_history(store: OwnerStore, keep: HumanDecision) -> dict[str, object]:
+    (entry,) = (
+        event
+        for event in store.repository.get_review_case_history(
+            store.case.review_case_id, 50
+        )
+        if event.get("decision_id") == keep.decision_id
+    )
+    return entry
+
+
+def test_a_keep_in_a_middle_episode_reads_alike_after_the_next_return(
+    store: OwnerStore, served: Callable[[], list[dict[str, Any]]]
+) -> None:
+    """A keep recorded in an episode that wrote nothing is a plain keep, and
+    stays one in Activity and History after the case returns again: what it
+    goes back on is frozen when it is recorded, never read from episode
+    floors a later return moves (#1358, #1523)."""
+    first = store.case.review_case_id
+    store.write(
+        store.decide(
+            "accept", {"kind": "list", "value": ["Fantasy"]}, destination="genres"
+        )
+    )
+    _successor(store, genres=("Fantasy",))
+    assert store.publish(genre_report()).review_case_id == first
+    keep = store.decide("keep_current", destination="genres")
+    assert keep.follows is None
+    rows, entry = _genres_owner(served()), _keep_history(store, keep)
+    assert ("keep_current", "Left genres unset") in rows
+    assert entry["previous_value"] == entry["selected_value"]
+    _successor(store, genres=("Other",))
+    assert store.publish(genre_report()).review_case_id == first
+    assert _genres_owner(served()) == rows
+    assert _keep_history(store, keep) == entry
+
+
+def test_a_keep_freezes_the_write_planning_resolves_for_it(
+    store: OwnerStore,
+) -> None:
+    """In one episode, the write a keep's document names is the one planning
+    resolves for it when it is recorded, and the one its plan goes back on
+    (#1523)."""
+    accept = store.decide(
+        "accept", {"kind": "list", "value": ["Fantasy"]}, destination="genres"
+    )
+    store.write(accept)
+    keep = store.decide("keep_current", destination="genres")
+    resolved = store.repository._field_effect_activity._human_predecessor(keep)
+    assert resolved is not None
+    assert (
+        keep.follows
+        == FieldEffectOperation.from_json(resolved[0]).plan.authority.decision_id
+        == accept.decision_id
+    )
+    assert store.write(keep).plan.pre_value == ["Fantasy"]
+    assert _keep_history(store, keep)["previous_value"] == {
+        "kind": "list",
+        "value": ["Fantasy"],
+    }
+
+
+def test_the_store_admits_a_named_write_only_on_a_keep(store: OwnerStore) -> None:
+    """The `human_decisions` table holds `follows` as null, or as text on a
+    keep only (#1523)."""
+    accept = store.decide(
+        "accept", {"kind": "list", "value": ["Fantasy"]}, destination="genres"
+    )
+    store.write(accept)
+    store.decide("keep_current", destination="genres")
+    connection = store.repository._connection
+    connection.row_factory = sqlite3.Row
+    try:
+        rows = {
+            row["outcome"]: dict(row)
+            for row in connection.execute(
+                "SELECT * FROM human_decisions WHERE destination='genres'"
+            )
+        }
+    finally:
+        connection.row_factory = None
+    assert json.loads(rows["keep_current"]["document"])["follows"] == (
+        accept.decision_id
+    )
+
+    def admitted(outcome: str, follows: object) -> bool:
+        row = dict(rows[outcome])
+        row["document"] = json.dumps(
+            {**json.loads(row["document"]), "follows": follows},
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        memory = sqlite3.connect(":memory:")
+        try:
+            memory.execute(_HUMAN_DECISIONS_SQL)
+            memory.execute(
+                f"INSERT INTO human_decisions ({','.join(row)}) "
+                f"VALUES ({','.join('?' for _ in row)})",
+                tuple(row.values()),
+            )
+        except sqlite3.IntegrityError:
+            return False
+        finally:
+            memory.close()
+        return True
+
+    assert admitted("keep_current", accept.decision_id)
+    assert admitted("keep_current", None)
+    assert admitted("accept", None)
+    assert not admitted("keep_current", 1)
+    assert not admitted("accept", accept.decision_id)

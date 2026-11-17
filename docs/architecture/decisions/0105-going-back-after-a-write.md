@@ -80,14 +80,16 @@ changes nothing. An emptied scalar reads back as `null` and an emptied list as
    back to the value before your change.", its To an empty value as Not set,
    and Activity reads it as a change from the written value to that value,
    from the keep's own first plan, or before one exists from the write it
-   follows in the episode it was recorded in, read as History reads it, so
-   a later return changes neither. Its result is Went back once that write
-   back verifies; until then it is the write's own word (Planned, Closed and
-   so on, with the reason), or Recorded while unplanned, and never Kept
+   follows. That write is frozen when the keep is recorded: the stored keep
+   names the decision of the write planning resolves for it then, or null
+   when it follows none, and History's From and To and Activity's values
+   read that write's own verified effect, never episode floors, so a later
+   return changes neither. Its result is Went back once that write back
+   verifies; until then it is the write's own word (Planned, Closed and so
+   on, with the reason), or Recorded while unplanned, and never Kept
    current. Activity's shared fact store re-reads an owner decision's row
-   when any write of its case's field, or the case's episode, moves
-   (ADR-0082). The server path and its refusal stay for API
-   callers.
+   when its own effects or the named write's effects move (ADR-0082). The
+   server path and its refusal stay for API callers.
 5. **The kept case.** When the pipeline admits a ProposalSet with nothing
    actionable while the work's latest verified write, of any origin and
    destination, covers included, is under 2,592,000 seconds old by the

@@ -911,7 +911,10 @@ def test_a_corrective_restore_writes_back_only_a_form_the_service_keeps_exactly(
         )
 
         def applied(decision: HumanDecision) -> FieldEffectOperation:
-            repository.record_human_decision(decision)
+            # The stored decision: a keep carries the write it goes back on.
+            decision = HumanDecision.from_json(
+                repository.record_human_decision(decision)
+            )
             source = repository.field_effect_authority_source(decision)
             operation = service.plan(
                 decision,
