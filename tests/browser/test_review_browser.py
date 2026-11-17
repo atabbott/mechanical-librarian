@@ -18,6 +18,7 @@ from dataclasses import replace
 from functools import partial
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Literal, cast
 from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, quote, urlparse
@@ -49,7 +50,10 @@ from mechanical_librarian.adapters.persistence.review_sessions import (
     SQLiteReviewSessionRepository,
 )
 from mechanical_librarian.application.catalogue import CatalogueEntry
-from mechanical_librarian.application.configuration import ReviewWebConfiguration
+from mechanical_librarian.application.configuration import (
+    LibraryConfiguration,
+    ReviewWebConfiguration,
+)
 from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
 )
@@ -58,6 +62,7 @@ from mechanical_librarian.application.metadata_report import (
     MetadataLookup,
     qualify_provider_observation,
 )
+from mechanical_librarian.application.owner_search import OwnerSearchService
 from mechanical_librarian.application.owner_settings import (
     FileOwnerSettingsRepository,
     OwnerSettingsOperations,
@@ -475,6 +480,36 @@ def _consent_applications(repository: Any, root: Path, libraries: tuple[str, ...
         lambda *_: None,
     )
     return activity, application
+
+
+class _NoSourcesConfiguration:
+    """The served libraries with no metadata source configured, as this
+    harness's settings document has none: Find this book is not offered, and
+    the header reads its book link like any other (#1477)."""
+
+    limits = SimpleNamespace(timeout_seconds=30)
+
+    def select(self, connection: str, library: str) -> tuple[Any, ...]:
+        selected = LibraryConfiguration(
+            library, connection, f"{library}-id", "book", None, ()
+        )
+        return None, selected, None, ()
+
+
+def _owner_search(repository: Any) -> OwnerSearchService:
+    def never(*_args: object, **_kwargs: object) -> Any:
+        raise AssertionError("no source is searched in this harness")
+
+    return OwnerSearchService(
+        configuration=cast(Any, _NoSourcesConfiguration()),
+        works=repository,
+        adapter=never,
+        pacers={},
+        throttling=lambda: {"entries": []},
+        fetch_preview=never,
+        clock=lambda: 1_000,
+        monotonic=time.monotonic,
+    )
 
 
 @contextmanager
@@ -1875,6 +1910,7 @@ def _server(
         session_store=session_store,
         clock=lambda: 1_000,
         close_repository=True,
+        owner_search=_owner_search(repository),
         policy_libraries=(
             tuple((library, None) for library in consent_libraries)
             or (
@@ -6256,6 +6292,11 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
                 held_library_requests: list[Any] = []
 
                 def hold_library_request(route: Any) -> None:
+                    # Only the whole-Library read: the work's book link is
+                    # read under Library too, and is never awaited (#1477).
+                    if urlparse(route.request.url).path != "/api/v1/library":
+                        route.fallback()
+                        return
                     held_library_requests.append(route)
 
                 page.route("**/api/v1/library**", hold_library_request)
