@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import contextmanager
 from typing import Iterator, cast
 
@@ -104,6 +104,7 @@ from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ReportValueError,
+    TargetFieldState,
 )
 from mechanical_librarian.domain.proposal_set import ProposalSet
 from mechanical_librarian.domain.review_case import (
@@ -147,8 +148,10 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             [str], ResolvedMetadataPolicy | None
         ],
         previous_field_values: Callable[
-            [str, str, str], tuple[tuple[str, object], ...]
+            [str, str, str, Mapping[str, object] | None],
+            tuple[tuple[str, object], ...],
         ],
+        written_field_values: Callable[[str], tuple[tuple[str, object], ...]],
     ) -> None:
         super().__init__(connection, binding)
         self._require_staged_shadow_projection_current = (
@@ -167,6 +170,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         self._current_cover_authority = current_cover_authority
         self.current_resolved_metadata_policy = current_resolved_metadata_policy
         self._previous_field_values = previous_field_values
+        self._written_field_values = written_field_values
 
     @contextmanager
     def _consistent_review_read(self) -> Iterator[None]:
@@ -281,6 +285,9 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 source_documents,
             )
             checking = case_level_unreconciled(self._connection, review_case_id)
+            # What the case's own verified writes put in each owner-entry
+            # field: owner entry reads it as current (#1523, S5).
+            written = dict(self._written_field_values(review_case_id))
             snapshot = CurrentReviewCaseSnapshot(
                 level_offer_document=current_level_offer(
                     self._connection, review_case_id
@@ -427,7 +434,16 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                     report.target.connection,
                     report.target.library,
                     report.target.item,
+                    {
+                        **{
+                            field.destination.value: field.value
+                            for field in report.target.fields
+                            if field.state is TargetFieldState.VALUE
+                        },
+                        **written,
+                    },
                 ),
+                written_values=tuple(written.items()),
             )
         return snapshot
 

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 
 import pytest
 
+from mechanical_librarian.domain.field_effect import FieldEffectError
 from mechanical_librarian.domain.human_decision import (
     HUMAN_DECISION_SCHEMA,
     HumanDecision,
@@ -12,10 +14,13 @@ from mechanical_librarian.domain.human_decision import (
     admitted_applications,
     chosen_value_fingerprint,
     decision_actions,
+    genre_subset_available,
     identity_contradicts,
     list_union,
     manual_cover_eligible,
+    owner_entry_admitted,
     owner_text,
+    owner_value_admitted,
     owner_value_suggestions,
     pinned_field_fingerprint,
 )
@@ -31,6 +36,7 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
+from tests.support.audiobook_reports import admitted_audiobook_report
 from tests.support.genre_reports import genre_report
 from tests.support.review_cases import _report
 
@@ -131,7 +137,7 @@ def _owner(
         ("The Silent Orchard", None),
         ("x" * 512, None),
         ("x" * 513, "owner_value_invalid"),
-        ("", "owner_value_invalid"),
+        ("", "owner_value_required"),
         ("The\u0000Orchard", "owner_value_invalid"),
         ("The\u200bOrchard", "owner_value_invalid"),
         (" The Silent Orchard", "owner_value_invalid"),
@@ -706,12 +712,12 @@ def test_an_unreadable_value_cannot_be_pinned() -> None:
     _owner(case, "title", None, outcome="unpin")
 
 
-def test_a_v4_decision_document_is_refused(case: ReviewCase) -> None:
+def test_a_v5_decision_document_is_refused(case: ReviewCase) -> None:
     raw = json.loads(_owner(case, "title", None, outcome="keep_current").to_json())
     with pytest.raises(HumanDecisionError):
         HumanDecision.from_json(
             json.dumps(
-                {**raw, "schema_version": "human-decision-v4"},
+                {**raw, "schema_version": "human-decision-v5"},
                 separators=(",", ":"),
                 sort_keys=True,
             )
@@ -886,3 +892,303 @@ def test_keep_current_is_admitted_on_a_description_every_source_repeats() -> Non
     with pytest.raises(HumanDecisionError) as empty:
         validate_decision_action(_description_proposal(), "keep_current", None)
     assert empty.value.code == "unsupported"
+
+
+# --- going back, clearing and names (#1523, ADR-0105) --------------------------
+
+_EMPTY = {"kind": "empty", "value": None}
+
+
+def _audiobook(narrators: tuple[str, ...] | None = None) -> ReviewCase:
+    report = admitted_audiobook_report()
+    if narrators is not None:
+        target = report.target
+        report = MetadataReport.create(
+            target=TargetFacts(
+                target.connection,
+                target.library,
+                target.item,
+                tuple(
+                    TargetField(field.destination, TargetFieldState.VALUE, narrators)
+                    if field.destination is TargetDestination.NARRATORS
+                    else field
+                    for field in target.fields
+                ),
+            ),
+            file=report.file,
+            local_claims=report.local_claims,
+            local_reasons=report.local_reasons,
+            providers=report.providers,
+            audio=report.audio,
+        )
+    return ReviewCase.create(evaluate_report(report), report)
+
+
+_AUTHORS = TargetField(TargetDestination.AUTHORS, TargetFieldState.VALUE, ("Ada",))
+
+
+def _entered(
+    case: ReviewCase, destination: str, selected_value: dict[str, object] | None
+) -> HumanDecision:
+    proposal = next(
+        value for value in case.proposals if value["destination"] == destination
+    )
+    return HumanDecision.create(
+        case,
+        proposal_id=proposal["proposal_id"],
+        target_fingerprint=case.target_fingerprint,
+        destination=destination,
+        actor="owner",
+        outcome="owner_entered",
+        selected_value=selected_value,
+        idempotency_key="domain-owner-value-0001",
+        occurred_at=1_000,
+    )
+
+
+def _refusal(
+    case: ReviewCase, destination: str, value: dict[str, object] | None
+) -> str:
+    with pytest.raises(HumanDecisionError) as refused:
+        _entered(case, destination, value)
+    return refused.value.code
+
+
+@pytest.mark.parametrize(
+    ("destination", "held"),
+    (
+        (TargetDestination.SUBTITLE, "An Old Subtitle"),
+        (TargetDestination.PUBLISHER, "Harbour Press"),
+        (TargetDestination.GENRES, ("Drama",)),
+    ),
+    ids=("subtitle", "publisher", "genres"),
+)
+def test_a_clear_is_the_closed_empty_kind_on_a_clearable_field(
+    destination: TargetDestination, held: object
+) -> None:
+    case = _case_with(TargetField(destination, TargetFieldState.VALUE, held))
+    decision = _entered(case, destination.value, dict(_EMPTY))
+    assert decision.selected_value == _EMPTY
+    assert HumanDecision.from_json(decision.to_json()) == decision
+    decision.validate_for(case)
+    decision.validate_new_for(case)
+    # The same intent in another spelling is refused, never rewritten.
+    kind = "list" if destination is TargetDestination.GENRES else "text"
+    empty = [] if kind == "list" else ""
+    assert (
+        _refusal(case, destination.value, {"kind": kind, "value": empty})
+        == "owner_value_invalid"
+    )
+
+
+def test_narrators_clear_on_an_audiobook_and_an_empty_field_is_unchanged() -> None:
+    held = _audiobook(("Old Reader",))
+    assert _entered(held, "narrators", dict(_EMPTY)).selected_value == _EMPTY
+    # A field that reads empty refuses a clear as unchanged.
+    assert _refusal(_audiobook(), "narrators", dict(_EMPTY)) == "owner_value_unchanged"
+    genres = ReviewCase.create(evaluate_report(genre_report()), genre_report())
+    assert _refusal(genres, "genres", dict(_EMPTY)) == "owner_value_unchanged"
+
+
+@pytest.mark.parametrize(
+    ("destination", "value"),
+    (
+        ("title", _EMPTY),
+        ("title", {"kind": "text", "value": ""}),
+        ("authors", _EMPTY),
+        ("authors", {"kind": "list", "value": []}),
+    ),
+    ids=(
+        "title-empty-kind",
+        "title-empty-text",
+        "authors-empty-kind",
+        "authors-no-name",
+    ),
+)
+def test_title_and_authors_refuse_an_empty_value_as_required(
+    destination: str, value: dict[str, object]
+) -> None:
+    case = _case_with(_AUTHORS)
+    assert _refusal(case, destination, dict(value)) == "owner_value_required"
+
+
+def test_refusals_follow_their_fixed_order() -> None:
+    case = _case_with(_AUTHORS)
+    # Unsupported outranks required: ISBN is never entered.
+    assert _refusal(case, "isbn", dict(_EMPTY)) == "unsupported"
+    # A non-clearable field outside owner entry is unsupported before invalid.
+    assert _refusal(case, "series", dict(_EMPTY)) == "unsupported"
+    # Required outranks invalid: an empty authors list is the same intent.
+    assert (
+        _refusal(case, "authors", {"kind": "list", "value": []})
+        == "owner_value_required"
+    )
+    # An ineligible field takes no owner value at all.
+    assert _refusal(case, "subtitle", dict(_EMPTY)) == "unsupported"
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    ("accept", "keep_current", "withdraw"),
+    ids=("accept", "keep", "withdraw"),
+)
+def test_only_an_owner_entered_decision_carries_the_empty_kind(
+    case: ReviewCase, proposal: dict[str, object], outcome: str
+) -> None:
+    with pytest.raises(HumanDecisionError) as refused:
+        _create(case, proposal, outcome, dict(_EMPTY))
+    assert refused.value.code == "invalid_selection"
+    raw = json.loads(_owner(case, "title", None, outcome="keep_current").to_json())
+    for tampered in (
+        {**raw, "selected_value": dict(_EMPTY)},
+        {**raw, "outcome": "accept", "selected_value": dict(_EMPTY)},
+    ):
+        with pytest.raises(HumanDecisionError):
+            HumanDecision.from_json(
+                json.dumps(tampered, separators=(",", ":"), sort_keys=True)
+            )
+    entered = json.loads(
+        _entered(
+            _case_with(
+                TargetField(TargetDestination.SUBTITLE, TargetFieldState.VALUE, "Sub")
+            ),
+            "subtitle",
+            dict(_EMPTY),
+        ).to_json()
+    )
+    with pytest.raises(HumanDecisionError):
+        HumanDecision.from_json(
+            json.dumps(
+                {**entered, "selected_value": {"kind": "empty", "value": "x"}},
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    ("value", "code"),
+    (
+        (["Ada Example"], None),
+        (["Ada Example", "Bea Example"], None),
+        (["Bea Example", "Ada Example"], None),
+        ([f"Name {index}" for index in range(32)], None),
+        ([f"Name {index}" for index in range(33)], "owner_value_invalid"),
+        (["Ada Example", "Ada Example"], "owner_value_invalid"),
+        # Names that differ only by case are one name (#1523).
+        (["Ada Example", "ada EXAMPLE"], "owner_value_invalid"),
+        (["Anna Straße", "Anna Strasse"], "owner_value_invalid"),
+        (["x" * 513], "owner_value_invalid"),
+        (["Ada\u0007Example"], "owner_value_invalid"),
+        (["/srv/library/book.epub"], "owner_value_invalid"),
+        (["Bearer abcdefghijklmnopqrstuvwxyz0123456789ABCD"], "owner_value_invalid"),
+        (["https://example.invalid/author"], "owner_value_invalid"),
+        ([" Ada Example"], "owner_value_invalid"),
+        (["Corin Halloway"], "owner_value_unchanged"),
+    ),
+    ids=(
+        "one",
+        "two",
+        "owner-order",
+        "thirty-two",
+        "thirty-three",
+        "duplicate",
+        "duplicate-by-case",
+        "duplicate-by-folding",
+        "over-long",
+        "control-character",
+        "path",
+        "credential",
+        "uri",
+        "not-canonical",
+        "unchanged",
+    ),
+)
+@pytest.mark.parametrize(
+    "destination", ("authors", "narrators"), ids=("authors", "narrators")
+)
+def test_names_are_one_to_thirty_two_owner_texts_in_the_owner_order(
+    destination: str, value: list[str], code: str | None
+) -> None:
+    case = _audiobook(("Corin Halloway",))
+    selected = {"kind": "list", "value": value}
+    if code is None:
+        assert _entered(case, destination, selected).selected_value == selected
+        return
+    assert _refusal(case, destination, selected) == code
+
+
+def test_narrators_take_no_owner_entry_on_an_ebook() -> None:
+    case = _case_with(
+        _AUTHORS,
+        TargetField(TargetDestination.NARRATORS, TargetFieldState.VALUE, ("Reader",)),
+    )
+    narrators = next(
+        value for value in case.proposals if value["destination"] == "narrators"
+    )
+    assert owner_value_admitted(narrators)
+    assert not owner_entry_admitted(narrators, case.media_kind)
+    for value in (_EMPTY, {"kind": "list", "value": ["Another Reader"]}):
+        assert _refusal(case, "narrators", dict(value)) == "unsupported"
+    # Authors take names on both media.
+    assert _entered(
+        case, "authors", {"kind": "list", "value": ["Ada Example"]}
+    ).selected_value == {"kind": "list", "value": ["Ada Example"]}
+
+
+def test_a_single_current_genre_is_offered_so_it_can_be_cleared() -> None:
+    case = _case_with(
+        TargetField(TargetDestination.GENRES, TargetFieldState.VALUE, ("Drama",))
+    )
+    proposal = next(
+        value for value in case.proposals if value["destination"] == "genres"
+    )
+    assert genre_subset_available(proposal, ["Drama"])
+    assert not genre_subset_available(proposal, None)
+
+
+def test_a_chosen_clear_is_pinned_as_the_empty_state() -> None:
+    chosen = chosen_value_fingerprint("subtitle", dict(_EMPTY))
+    for state in (
+        TargetFieldState.MISSING,
+        TargetFieldState.NULL,
+        TargetFieldState.EMPTY,
+    ):
+        empty = _case_with(TargetField(TargetDestination.SUBTITLE, state, None))
+        assert chosen == pinned_field_fingerprint(empty, "subtitle")
+    held = _case_with(
+        TargetField(TargetDestination.SUBTITLE, TargetFieldState.VALUE, "Sub")
+    )
+    assert chosen != pinned_field_fingerprint(held, "subtitle")
+    # A field that cannot be emptied has no empty choice to pin.
+    with pytest.raises(FieldEffectError):
+        chosen_value_fingerprint("title", dict(_EMPTY))
+
+
+def test_only_a_keep_names_the_write_it_goes_back_on(case: ReviewCase) -> None:
+    """`follows` is frozen by the store when a keep is recorded and is no part
+    of the request: it round-trips on a keep, leaves the decision's identity
+    and request digest alone, and is refused anywhere else or malformed
+    (#1523)."""
+    keep = _owner(case, "title", None, outcome="keep_current")
+    written = "human_decision_" + "a" * 64
+    frozen = dataclasses.replace(keep, follows=written)
+    assert HumanDecision.from_json(frozen.to_json()) == frozen
+    assert (frozen.decision_id, frozen.request_digest) == (
+        keep.decision_id,
+        keep.request_digest,
+    )
+    raw = json.loads(keep.to_json())
+    assert raw["follows"] is None
+    other = json.loads(_owner(case, "title", "Another Title").to_json())
+    for document in (
+        {**raw, "follows": "effect_" + "a" * 64},
+        {**raw, "follows": ""},
+        {**raw, "follows": 1},
+        {**other, "follows": written},
+        {key: value for key, value in raw.items() if key != "follows"},
+    ):
+        with pytest.raises(HumanDecisionError):
+            HumanDecision.from_json(
+                json.dumps(document, separators=(",", ":"), sort_keys=True)
+            )

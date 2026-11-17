@@ -12,12 +12,14 @@ import type {
   HistoryView,
   TargetDestination,
 } from '../api/http'
-import { BuildMismatchError, displayValue } from '../api/http'
+import { BuildMismatchError, CLEARED_TEXT, displayValue, isClear } from '../api/http'
 import { humanReasons } from '../fieldReasons'
 import { StaleBuildRead } from '../components/StaleBuildRead'
 import { railOffers } from '../reviewChoiceCounts'
 import { RecordedTime } from '../components/RecordedTime'
 import {
+  clearedSentence,
+  namesEnteredSentence,
   coverHistoryLabels,
   coverNoteLabel,
   coverReviewerLabel,
@@ -34,13 +36,20 @@ import {
 import { detailRoute, normalizeDetailSearch, useReviewContext } from '../router'
 import { sourceName } from '../findThisBook'
 
-// A recorded value, a language read by its name (#1286).
-const historyValue = (destination: TargetDestination, value: HistoryValueView | null) =>
+// A recorded value, a language read by its name (#1286). `empty` is what an
+// empty field reads as where the item's null is known to mean empty (#1523).
+const historyValue = (
+  destination: TargetDestination,
+  value: HistoryValueView | null,
+  empty = 'No value is recorded.',
+) =>
   value === null
-    ? 'No value is recorded.'
-    : destination === 'language' && typeof value.value === 'string'
-      ? languageName(value.value)
-      : displayValue(value.value)
+    ? empty
+    : isClear(value)
+      ? CLEARED_TEXT
+      : destination === 'language' && typeof value.value === 'string'
+        ? languageName(value.value)
+        : displayValue(value.value)
 const reviewerStatusWords = {
   completed: 'looked at',
   failed: 'failed on',
@@ -123,14 +132,20 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
     const valueless =
       item.category === 'owner' &&
       (item.outcome === 'withdraw' || item.outcome === 'pin' || item.outcome === 'unpin')
+    // A keep after the case's own write wrote back what the case read before
+    // it, so its From and To differ; a plain keep's match (#1523).
     const action =
       item.category === 'owner'
         ? item.outcome === 'accept'
           ? 'You chose a proposed value.'
           : item.outcome === 'keep_current'
-            ? 'You kept the current value.'
+            ? !isRetention(item)
+              ? 'You went back to the value before your change.'
+              : 'You kept the current value.'
             : item.outcome === 'owner_entered'
-              ? 'You entered a value.'
+              ? isClear(item.selectedValue)
+                ? clearedSentence(item.destination)
+                : enteredSentence(item.destination, item.selectedValue)
               : item.outcome === 'withdraw'
                 ? 'You withdrew your choice.'
                 : item.outcome === 'pin' || item.outcome === 'unpin'
@@ -155,10 +170,18 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
         ) : valueless ? null : (
           <>
             <p className="diagnostic-value">
-              <span>From</span> {historyValue(item.destination, item.previousValue)}
+              <span>From</span>{' '}
+              {historyValue(item.destination, item.previousValue, emptyWords(item, NOT_SET))}
             </p>
             <p className="diagnostic-value">
-              <span>To</span> {historyValue(item.destination, item.selectedValue)}
+              <span>To</span>{' '}
+              {historyValue(
+                item.destination,
+                item.selectedValue,
+                // A keep that went back to an empty field restores Not set,
+                // as its card said; only a clear reads Cleared (#1523).
+                emptyWords(item, item.outcome === 'keep_current' ? NOT_SET : CLEARED_TEXT),
+              )}
             </p>
           </>
         )}
@@ -246,6 +269,14 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
   )
 }
 
+// Names say how many were entered, as where they were recorded (#1523).
+function enteredSentence(destination: TargetDestination, value: HistoryValueView | null) {
+  const count = Array.isArray(value?.value) ? value.value.length : null
+  return count !== null && (destination === 'authors' || destination === 'narrators')
+    ? namesEnteredSentence(count)
+    : 'You entered a value.'
+}
+
 function isRetention(
   item: Extract<HistoryView['items'][number], { category: 'owner' | 'automatic' }>,
 ) {
@@ -261,7 +292,26 @@ function isRetention(
 function displayRetainedHistoryValue(
   item: Extract<HistoryView['items'][number], { category: 'owner' | 'automatic' }>,
 ) {
-  return historyValue(item.destination, item.selectedValue ?? item.previousValue)
+  return historyValue(
+    item.destination,
+    item.selectedValue ?? item.previousValue,
+    emptyWords(item, NOT_SET),
+  )
+}
+
+// An empty field before a change reads as Activity says it, and a change that
+// ends in an empty field reads as a clear does, unless a keep restored it
+// (#1523).
+const NOT_SET = 'Not set'
+// An owner item's null is always an empty field. An automatic item with
+// neither value was not matched to its outcome, so its null is unknown.
+function emptyWords(
+  item: Extract<HistoryView['items'][number], { category: 'owner' | 'automatic' }>,
+  words: string,
+) {
+  return item.category === 'owner' || item.previousValue !== null || item.selectedValue !== null
+    ? words
+    : undefined
 }
 
 function historyValuesMatch(previous: HistoryValueView | null, selected: HistoryValueView | null) {

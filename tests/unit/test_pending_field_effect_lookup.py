@@ -618,6 +618,13 @@ _ORIGINAL_LOOKUPS = {
 }
 
 
+def _authority_unbound(
+    repository: SQLiteMetadataReportRepository, decision: HumanDecision
+) -> None:
+    with pytest.raises(FieldEffectError, match="authority_binding"):
+        repository.field_effect_authority_source(decision)
+
+
 def _lookups(
     connection: sqlite3.Connection,
 ) -> tuple[str, dict[str, tuple[str, tuple[object, ...]]]]:
@@ -647,6 +654,22 @@ def _lookups(
         idempotency_key="pending-field-effect-lookup-later",
         occurred_at=earlier.occurred_at + 1,
     )
+    # A keep reads the write frozen with it (#1523), so History asks its
+    # question of a later accept.
+    proposal = next(
+        value for value in case.proposals if value["proposal_id"] == earlier.proposal_id
+    )
+    accept = HumanDecision.create(
+        case,
+        proposal_id=earlier.proposal_id,
+        target_fingerprint=earlier.target_fingerprint,
+        destination=earlier.destination,
+        actor="owner",
+        outcome="accept",
+        selected_value=proposal["result"]["alternatives"][0]["value"],
+        idempotency_key="pending-field-effect-lookup-history",
+        occurred_at=earlier.occurred_at + 2,
+    )
     connection.execute(
         "INSERT INTO field_effect_authorities(decision_id,current,updated_at,document) "
         "VALUES(?,1,0,'{}')",
@@ -665,11 +688,16 @@ def _lookups(
             "SELECT 1 FROM field_effects WHERE rowid IN",
         ),
         "history": (
-            lambda: repository.get_review_case_history(case_id, 20),
+            lambda: (
+                repository.record_human_decision(accept),
+                repository.get_review_case_history(case_id, 20),
+            ),
             "SELECT earlier.decision_id,earlier.ordinal",
         ),
         "authority": (
-            lambda: repository.field_effect_authority_source(later),
+            # With no write to go back from, the keep binds nothing (#1523);
+            # its predecessor lookup has run by then.
+            lambda: _authority_unbound(repository, later),
             "SELECT ordinal FROM human_decisions WHERE decision_id=",
         ),
         "override": (
@@ -686,9 +714,9 @@ def _lookups(
         }
     (ordinal,) = connection.execute(
         "SELECT ordinal FROM human_decisions WHERE decision_id=?",
-        (later.decision_id,),
+        (accept.decision_id,),
     ).fetchone()
-    # History asks once per event; keep the later decision's question.
+    # History asks once per event; keep the accept's question.
     traced["history"] = {
         statement
         for statement in traced["history"]
@@ -1372,6 +1400,34 @@ _LINEAGE_REWRITES = {
 }
 # SHA-256 of each statement's text at 2dcf75cd, as this module's store traces it.
 _HUMAN_PLANS = "human.outcome IN ('accept','owner_entered')"
+# #1523 let a keep on a clearable field the case read empty go back to empty.
+_KEEP_GOES_BACK_TO_EMPTY = (
+    (
+        "AND ((human.destination IN ('genres','narrators','publisher','subtitle') "
+        "AND json_extract(target.value,'$.state') IN ('null','empty','missing')) OR "
+        "json_extract(target.value,'$.state')='value' AND ",
+        "AND json_extract(target.value,'$.state')='value' AND ",
+    ),
+    (
+        "length(json_extract(target.value,'$.value'))>0))) AND EXISTS",
+        "length(json_extract(target.value,'$.value'))>0)) AND EXISTS",
+    ),
+    # #1523 also read a keep's earlier write in the case's own episode only.
+    (
+        "WHERE prior.state='verified' AND +prior.rowid>COALESCE((SELECT "
+        "effect_floor FROM review_case_episodes WHERE "
+        "review_case_id=human.review_case_id),0)))",
+        "WHERE prior.state='verified'))",
+    ),
+)
+
+
+def _before_1523(statement: str) -> str:
+    for after, before in _KEEP_GOES_BACK_TO_EMPTY:
+        statement = statement.replace(after, before)
+    return statement
+
+
 _HELD_DESCRIPTION = (
     " WHERE (json_extract(d.document,'$.origin')='human' OR NOT EXISTS ("
     "SELECT 1 FROM field_effect_manual_holds hold WHERE "
@@ -1475,7 +1531,7 @@ def test_lineage_membership_restores_the_1204_text(
     # of the owner's latest decision.
     restored = {
         name: hashlib.sha256(
-            _before_1568(_before_1573(_before_1205(name, statement)))
+            _before_1523(_before_1568(_before_1573(_before_1205(name, statement))))
             .replace(_HUMAN_PLANS, "human.outcome='accept'", 1)
             .replace(_HELD_DESCRIPTION, "", 1)
             .replace(_FIELD_EFFECT_HOLDS_DECISION_SQL, _HELD_1204)

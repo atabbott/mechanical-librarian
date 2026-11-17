@@ -92,12 +92,13 @@ CEILING = {
     # permission reader: one more query-only projection, its window and close,
     # and one keyword argument at each review application. 3368 since #1494
     # passed the recovery store's answered sources to the throttling read: one
-    # argument. 3420 since #1477 composed each generation's owner search: one
-    # constructor of the service on the pipeline's own pacers and adapter
-    # factory, the pacers built once and passed to the pipeline, and one
-    # keyword argument at each review application. 3425 since #1477 kept owner
+    # argument. 3370 since #1523 passed the scan's time to admission: one
+    # parameter and one argument. 3427 since #1477 composed each generation's
+    # owner search: one constructor of the service on the pipeline's own pacers
+    # and adapter factory, the pacers built once and passed to the pipeline,
+    # and one keyword argument at each review application; and kept owner
     # search's hourly counts on the activation, one argument to each service.
-    "composition.py": 3425,
+    "composition.py": 3427,
     # 142 since #1372 PR 1c's run_taste_build_reviewer, the taste build's
     # counterpart of run_description_reviewer.
     "contained_reviewer.py": 142,
@@ -146,9 +147,10 @@ RESIDUAL: dict[str, int | None] = {
     # into ReviewPipelineStages; the stage logic moved to application in stage 4.
     # 202 since #1372 passed the taste build's wake as the background lane;
     # 203 since it leases that lane's repository and closes it on stop; 216
-    # since #1064 opens the provider-response store and closes it on stop.
-    # 218 since #1477 accepts the generation's pacers its owner search shares.
-    _C + "create_review_pipeline": 218,
+    # since #1064 opens the provider-response store and closes it on stop;
+    # 217 since #1523 passes the scan's time to admission; 219 since #1477
+    # accepts the generation's pacers its owner search shares.
+    _C + "create_review_pipeline": 219,
     # Wires recovery to the built pipeline; catches an adapter error type.
     # 96 since #1064 passes the response store to the retry constructor.
     _C + "_provider_recovery_wiring": 96,

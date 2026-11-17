@@ -17,6 +17,12 @@ brackets are GitHub issues.
   browser (#1385).
 - Settings can sign out every other browser from Access and diagnostics, in
   store and file mode, and keeps this browser signed in (#1385).
+- **Clean rebuild required.** Straight after a write, Enter a value offers the
+  value it replaced, and a work written in the last 30 days stays in Library
+  with nothing to decide. You can clear a subtitle, publisher, genres or
+  narrators, and enter authors and narrators by name. A cleared field stays out
+  of automatic handling until you choose Resume automatic handling. A character
+  or name count shows only once a value is over its limit (#1523).
 
 ## 0.38.0 — Owner-directed matching (in progress)
 

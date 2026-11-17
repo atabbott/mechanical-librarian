@@ -497,7 +497,7 @@ describe('Covers view (#1633)', () => {
         decision_id: 'decision-1',
         destination: command.destination,
         invalidation_sequences: [],
-        schema_version: 'review-decision-v1',
+        schema_version: 'human-decision-ack-v2' as const,
         occurred_at: 1,
         outcome: command.outcome,
         proposal_id: command.proposalId,
@@ -758,7 +758,7 @@ describe('Covers view (#1633)', () => {
         },
         {
           invalidation_sequences: [],
-          schema_version: 'review-decision-v1',
+          schema_version: 'human-decision-ack-v2' as const,
           actor: 'owner',
           application: 'apply' as const,
           application_reason: null,

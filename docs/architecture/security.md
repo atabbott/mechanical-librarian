@@ -488,8 +488,10 @@ it, after its scan succeeds and if no later decision replaced it
 
 Owner-entered text is refused, never rewritten, unless it is 1 to 512 code
 points of NFC text with no control, path, credential or URI. No automatic path
-reads an owner-entered value. Clearing, rollback and undo are unavailable
-([ADR-0085](decisions/0085-owner-entered-values-withdrawal-and-reselection.md)).
+reads an owner-entered value. Rollback and undo are unavailable; only a
+subtitle, publisher, genres or narrators can be cleared
+([ADR-0085](decisions/0085-owner-entered-values-withdrawal-and-reselection.md),
+[ADR-0105](decisions/0105-going-back-after-a-write.md)).
 An owner may choose a retained cover whose match is unconfirmed, but not
 one with a positive contradiction.
 

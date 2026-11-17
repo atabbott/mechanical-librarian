@@ -425,10 +425,24 @@ assert (
 
 
 # Every producer before #1285 admitted only the three original human outcomes.
-PRIOR_HUMAN_DECISIONS_SQL = persistence_schema._HUMAN_DECISIONS_SQL.replace(
+# Every producer before #1523 kept no check on the selected value's kind.
+WITHOUT_SELECTED_KIND_HUMAN_DECISIONS_SQL = (
+    persistence_schema._HUMAN_DECISIONS_SQL[
+        : persistence_schema._HUMAN_DECISIONS_SQL.index(
+            ", CHECK(selected_value_document='null'"
+        )
+    ]
+    + ")"
+)
+PRIOR_HUMAN_DECISIONS_SQL = WITHOUT_SELECTED_KIND_HUMAN_DECISIONS_SQL.replace(
     "'reject','owner_entered','withdraw','pin','unpin')", "'reject')"
 )
-assert PRIOR_HUMAN_DECISIONS_SQL != persistence_schema._HUMAN_DECISIONS_SQL
+assert PRIOR_HUMAN_DECISIONS_SQL != WITHOUT_SELECTED_KIND_HUMAN_DECISIONS_SQL
+# Every producer before #1523 recorded no recent_write transition.
+PRIOR_REVIEW_TRANSITIONS_SQL = persistence_schema._REVIEW_TRANSITIONS_SQL.replace(
+    "'actionable','recent_write','nonactionable'", "'actionable','nonactionable'"
+).replace("reason IN ('actionable','recent_write')", "reason='actionable'")
+assert PRIOR_REVIEW_TRANSITIONS_SQL.count("recent_write") == 0
 
 
 # Every producer before #1346 kept no pin: a pin in force settled nothing, a

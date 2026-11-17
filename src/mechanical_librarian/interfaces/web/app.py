@@ -93,6 +93,7 @@ from mechanical_librarian.application.review_application import (
 )
 from mechanical_librarian.application.review_web import (
     AutomaticWithheldCondition,
+    HumanDecisionAckSchemaVersion,
     OwnerCredential,
     OwnerVerifierStore,
     ReviewAttentionSchemaVersion,
@@ -607,6 +608,18 @@ class _ProposedValue(_ClosedModel):
     )
 
 
+class _EmptyValue(_ClosedModel):
+    """An owner's clear: it empties the field and carries no value (ADR-0105)."""
+
+    kind: Literal["empty"]
+    value: None
+
+
+# What an owner decision may select: a proposed value, or the owner's clear.
+# Automatic projections keep `_ProposedValue`, which has no empty kind.
+_OwnerValue: TypeAlias = _EmptyValue | _ProposedValue
+
+
 # Every owner decision outcome, `reject` as readable history and `pin` and
 # `unpin` as standing instructions (ADR-0085, Amendment 2).
 _HumanDecisionOutcome: TypeAlias = Literal[
@@ -624,7 +637,7 @@ class _DecisionProjection(_ClosedModel):
     outcome: _HumanDecisionOutcome
     proposal_id: str
     review_case_id: str
-    selected_value: _ProposedValue | None
+    selected_value: _OwnerValue | None
     target_fingerprint: str
 
 
@@ -984,11 +997,33 @@ class _OwnerSubset(_ClosedModel):
     options: list[_OwnerSubsetOption] = Field(min_length=1, max_length=160)
 
 
+class _OwnerNames(_ClosedModel):
+    """Names entry, one per line in the owner's order (ADR-0105).
+
+    It opens with the field's current names; `previous` is what the field
+    held before its latest verified write, when that was a list of names.
+    """
+
+    max_items: Literal[32]
+    max_characters: Literal[512]
+    previous: list[Annotated[StrictStr, Field(min_length=1, max_length=512)]] | None = (
+        Field(max_length=32)
+    )
+
+
 class _OwnerControl(_ClosedModel):
-    """F59's owner controls for one field; each part is offered or null."""
+    """F59's owner controls for one field; each part is offered or null.
+
+    `current` is the value owner entry compares with, raw: the case's value,
+    or on the case that wrote the field, the written value (ADR-0105). `clear`
+    says an empty value is accepted here.
+    """
 
     entry: _OwnerEntry | None
     subset: _OwnerSubset | None
+    names: _OwnerNames | None
+    clear: StrictBool
+    current: StrictStr | list[StrictStr] | None
     withdraw: Literal["available", "automatic_hold", "in_progress", "written"] | None
 
 
@@ -1046,6 +1081,8 @@ class _ReviewField(_ClosedModel):
     navigation_role: Literal["attention", "inspect"]
     notices: list[str]
     owner_control: _OwnerControl | None
+    # The case wrote this field itself (#1523).
+    written_by_case: bool
     pin: _FieldPin | None
     pin_control: _PinControl | None
     proposed_values: list[_ProposedValue]
@@ -1285,7 +1322,7 @@ class _HistoryDecisionItem(_ClosedModel):
     previous_value: _ProposedValue | None
     review_case_id: str
     schema_version: HumanDecisionEventSchemaVersion
-    selected_value: _ProposedValue | None
+    selected_value: _OwnerValue | None
 
 
 class _HistoryPreviewItem(_ClosedModel):
@@ -2530,7 +2567,7 @@ class _DecisionRequest(_ClosedModel):
     destination: StrictStr = Field(min_length=1, max_length=64)
     outcome: _HumanDecisionOutcome
     proposal_id: StrictStr = Field(pattern=r"^review_proposal_[0-9a-f]{64}$")
-    selected_value: _ProposedValue | None = None
+    selected_value: _OwnerValue | None = None
     target_fingerprint: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
     consideration_id: StrictStr | None = Field(
         default=None, pattern=r"^cover_consideration_[0-9a-f]{64}$"
@@ -2546,7 +2583,7 @@ class _DecisionAcknowledgement(_DecisionProjection):
     # row, and the write queue. Bounded because it is a fixed set of
     # announcements, not a log.
     invalidation_sequences: list[Annotated[int, Field(ge=1)]] = Field(max_length=8)
-    schema_version: str
+    schema_version: HumanDecisionAckSchemaVersion
 
 
 class _PolicyDraftRequest(_ClosedModel):
@@ -6376,6 +6413,7 @@ def _decision_call(call: Callable[[], dict[str, object]]) -> dict[str, object]:
             "unsupported": 422,
             "persistence": 503,
             "owner_value_invalid": 422,
+            "owner_value_required": 422,
             "owner_value_unchanged": 422,
             "nothing_to_withdraw": 409,
             "automatic_hold": 409,

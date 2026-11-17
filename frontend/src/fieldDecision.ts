@@ -4,7 +4,7 @@ import type {
   DecisionCommand,
   TargetDestination,
 } from './api/http'
-import { displayValue } from './api/http'
+import { CLEARED_TEXT, displayValue, isClear } from './api/http'
 import { coverSourceLabels, destinationPhrase, languageName, writeHoldReasons } from './labels'
 import { automaticChoiceSelected, humanChoiceSelected } from './reviewAutomaticSelection'
 
@@ -159,6 +159,58 @@ export const choiceSelected = (
     commandSelected(progress?.command ?? null, field.destination, outcome, selectedValue)) ||
   ((progress === null || progress.phase === 'failed') &&
     recordedSelected(field, outcome, selectedValue))
+// Fields an owner may leave empty (ADR-0105); the store's own list.
+const CLEARABLE: readonly TargetDestination[] = ['subtitle', 'publisher', 'genres', 'narrators']
+const emptyRaw = (value: unknown) =>
+  value === null ||
+  value === undefined ||
+  value === '' ||
+  (Array.isArray(value) && value.length === 0)
+const sameNames = (left: readonly string[], right: unknown) =>
+  Array.isArray(right) &&
+  left.length === right.length &&
+  left.every((name, index) => name === right[index])
+const sameGenres = (left: readonly string[], right: unknown) =>
+  Array.isArray(right) &&
+  left.length === right.length &&
+  left.every((genre) => right.includes(genre))
+// Whether owner entry already offers the way back to the value the case read
+// before its write: Clear for an empty one, or that value as the previous
+// value, names or genres (#1523).
+const wayBackInEntry = (field: ReviewField) => {
+  const control = field.ownerControl
+  const before = field.currentRaw
+  if (!control) return false
+  if (emptyRaw(before)) return control.clear
+  if (control.entry?.suggestions.some(({ rule, value }) => rule === 'previous' && value === before))
+    return true
+  if (control.names?.previous && sameNames(control.names.previous, before)) return true
+  const previousGenres =
+    control.subset?.options.filter((option) => option.previous).map((option) => option.value) ?? []
+  return previousGenres.length > 0 && sameGenres(previousGenres, before)
+}
+// Whether a field this case wrote had nothing before the write and can't be
+// emptied, so there is no way back to that value (#1523).
+export const noWayBack = (field: ReviewField) =>
+  field.writtenByCase === true &&
+  field.decisionActions.includes('keep_current') &&
+  emptyRaw(field.currentRaw) &&
+  !CLEARABLE.includes(field.destination)
+// The card that keeps the value the case read. Elsewhere it is Keep current
+// value. On the case that wrote the field that value is no longer the
+// library's, so it reads Before your change, and pressing it writes that value
+// back. It is left out where owner entry already offers the same way back, and
+// where there is none: nothing to restore and a field that can't be emptied
+// (#1523, ADR-0105).
+export const keepCard = (field: ReviewField): 'keep' | 'before' | null =>
+  !field.decisionActions.includes('keep_current')
+    ? null
+    : field.writtenByCase !== true
+      ? 'keep'
+      : wayBackInEntry(field) || noWayBack(field)
+        ? null
+        : 'before'
+export const keepOffered = (field: ReviewField) => keepCard(field) !== null
 export const isLongDescription = (destination: string, value: string) =>
   destination === 'description' && value.length > 280
 export const decisionQuestion = (destination: TargetDestination) =>
@@ -190,7 +242,11 @@ export const decisionValue = (field: ReviewField) => {
   }
   return valueText(
     field.destination,
-    selected === null || selected === undefined ? field.currentValue : displayValue(selected.value),
+    selected === null || selected === undefined
+      ? field.currentValue
+      : isClear(selected)
+        ? CLEARED_TEXT
+        : displayValue(selected.value),
   )
 }
 export const completionOutcome = (field: ReviewField) =>

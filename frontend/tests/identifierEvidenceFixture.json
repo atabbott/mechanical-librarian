@@ -36,7 +36,19 @@
         "needs_attention": true,
         "navigation_role": "attention",
         "notices": ["competing_evidence"],
-        "owner_control": null,
+        "owner_control": {
+          "entry": null,
+          "subset": null,
+          "names": {
+            "max_items": 32,
+            "max_characters": 512,
+            "previous": null
+          },
+          "clear": true,
+          "current": null,
+          "withdraw": null
+        },
+        "written_by_case": false,
         "proposed_values": [
           {
             "kind": "list",
@@ -156,6 +168,7 @@
         "navigation_role": "attention",
         "notices": ["competing_evidence"],
         "owner_control": null,
+        "written_by_case": false,
         "proposed_values": [
           {
             "kind": "text",
@@ -266,8 +279,12 @@
             "suggestions": []
           },
           "subset": null,
-          "withdraw": null
+          "withdraw": null,
+          "clear": false,
+          "current": "Synthetic Journey",
+          "names": null
         },
+        "written_by_case": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -372,6 +389,7 @@
         "navigation_role": "attention",
         "notices": ["no_supported_evidence"],
         "owner_control": null,
+        "written_by_case": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -430,7 +448,19 @@
         "needs_attention": false,
         "navigation_role": "attention",
         "notices": ["positive_preservation_evidence"],
-        "owner_control": null,
+        "owner_control": {
+          "entry": null,
+          "subset": null,
+          "names": {
+            "max_items": 32,
+            "max_characters": 512,
+            "previous": null
+          },
+          "clear": false,
+          "current": ["Example Author"],
+          "withdraw": null
+        },
+        "written_by_case": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -535,6 +565,7 @@
         "navigation_role": "attention",
         "notices": ["no_supported_evidence"],
         "owner_control": null,
+        "written_by_case": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -594,6 +625,7 @@
         "navigation_role": "inspect",
         "notices": ["no_supported_evidence"],
         "owner_control": null,
+        "written_by_case": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -653,6 +685,7 @@
         "navigation_role": "inspect",
         "notices": ["no_supported_evidence"],
         "owner_control": null,
+        "written_by_case": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -712,6 +745,7 @@
         "navigation_role": "inspect",
         "notices": ["no_supported_evidence"],
         "owner_control": null,
+        "written_by_case": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -771,6 +805,7 @@
         "navigation_role": "inspect",
         "notices": ["no_supported_evidence"],
         "owner_control": null,
+        "written_by_case": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -830,6 +865,7 @@
         "navigation_role": "attention",
         "notices": ["identifier_applicability_unresolved"],
         "owner_control": null,
+        "written_by_case": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -889,6 +925,7 @@
         "navigation_role": "inspect",
         "notices": ["no_supported_evidence"],
         "owner_control": null,
+        "written_by_case": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -948,6 +985,7 @@
         "navigation_role": "inspect",
         "notices": ["no_supported_evidence"],
         "owner_control": null,
+        "written_by_case": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -1007,6 +1045,7 @@
         "navigation_role": "inspect",
         "notices": ["no_supported_evidence"],
         "owner_control": null,
+        "written_by_case": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -1066,6 +1105,7 @@
         "navigation_role": "inspect",
         "notices": ["no_supported_evidence"],
         "owner_control": null,
+        "written_by_case": false,
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -1096,7 +1136,7 @@
     ],
     "media_health": [],
     "review_case_id": "review_case_a441009f289e33ef0de0eafd434ac2e62fc000afc53dbfe71b5e7df98203c283",
-    "schema_version": "review-case-detail-v9",
+    "schema_version": "review-case-detail-v10",
     "target": {
       "authors": ["Example Author"],
       "connection": "primary",

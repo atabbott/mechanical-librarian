@@ -11,6 +11,15 @@ executed SQL, and a rewrap would change statements this unit must leave alone.
 
 from __future__ import annotations
 
+# When the work was last written: its latest verified effect, of any origin
+# and destination, covers included. Admission keeps a case on a recent write
+# and preparation sends that case back to admission once it is old (#1523).
+_LATEST_VERIFIED_WRITE_SQL = (
+    "SELECT MAX(event.occurred_at) FROM field_effects effect "
+    "JOIN field_effect_events event ON event.plan_id=effect.plan_id "
+    "AND event.kind='verified' WHERE effect.connection_name=? "
+    "AND effect.library_name=? AND effect.work_id=?"
+)
 _CURRENT_REVIEW_FROM_SQL = (
     "FROM current_review_packages c "
     "JOIN current_review_packages ml ON ml.connection_name=c.connection_name "

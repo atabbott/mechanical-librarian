@@ -8,19 +8,23 @@ nothing anywhere.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+import sqlite3
+from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
 from mechanical_librarian.adapters.field_effect_authority import (
     PersistedFieldEffectAuthority,
 )
+from mechanical_librarian.adapters.field_effect_fakes import FakeCapabilityObserver
+from mechanical_librarian.adapters.persistence.activity_facts import ActivityFactStore
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.persistence.review_sql import (
     _ATTENTION_FACT_SOURCE_SQL,
 )
+from mechanical_librarian.adapters.persistence.schema import _HUMAN_DECISIONS_SQL
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
@@ -29,14 +33,19 @@ from mechanical_librarian.application.review_web import (
     ReviewWebError,
 )
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
-from mechanical_librarian.domain.human_decision import HumanDecisionError
+from mechanical_librarian.domain.field_effect import (
+    FieldEffectError,
+    FieldEffectOperation,
+)
+from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecisionError
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyProfile,
     resolve_policy,
 )
-from mechanical_librarian.domain.metadata_report import MetadataReport
+from mechanical_librarian.domain.metadata_report import ClaimScope, MetadataReport
 from tests.support.genre_reports import genre_report, publish_genre_case
-from tests.support.owner_values import OwnerStore, rewritten
+from tests.support.owner_values import CAPABILITY, OwnerStore, rewritten
+from tests.support.proposal_evidence import _local_subtitle
 
 ORCHARD = {"kind": "text", "value": "The Silent Orchard"}
 _FACTS_SQL = (
@@ -243,12 +252,415 @@ def test_the_previous_value_is_offered_after_a_write(store: OwnerStore) -> None:
     assert store.previous() == {}
     assert {"rule": "previous", "value": "Real Tigers"} not in _suggestions(store)
     store.write(store.decide("owner_entered", ORCHARD))
-    # On the writing case the field still reads as before the write, so the
-    # earlier value is the current one and is not suggested.
+    # On the writing case the written value is current at once, so the value
+    # it replaced is suggested with no scan (#1523, S5).
     assert store.previous() == {"title": "Real Tigers"}
-    assert {"rule": "previous", "value": "Real Tigers"} not in _suggestions(store)
+    assert _suggestions(store)[-1] == {"rule": "previous", "value": "Real Tigers"}
+    assert _field(store, "title")["owner_control"]["current"] == ORCHARD["value"]
     _successor(store, title="The Silent Orchard")
     assert _suggestions(store)[-1] == {"rule": "previous", "value": "Real Tigers"}
+
+
+# #1523 S5: going back on the case that was just written is an ordinary
+# owner-entered decision through the existing correction path.
+def test_going_back_on_the_written_case_writes_the_previous_value(
+    store: OwnerStore,
+) -> None:
+    written = store.write(store.decide("owner_entered", ORCHARD))
+    deciding = store.case.review_case_id
+    # The written value is the one refused as unchanged.
+    _refused(store, "owner_value_unchanged", "owner_entered", ORCHARD)
+    back = store.decide("owner_entered", {"kind": "text", "value": "Real Tigers"})
+    assert store.case.review_case_id == deciding
+    operation = store.write(back)
+    assert (operation.plan.pre_value, operation.plan.desired_value) == (
+        written.plan.desired_value,
+        "Real Tigers",
+    )
+    assert store.target.read(operation.plan).value == "Real Tigers"
+    # Now the value written last is current, and the one before it is offered.
+    assert _field(store, "title")["owner_control"]["current"] == "Real Tigers"
+    assert store.previous() == {"title": "The Silent Orchard"}
+    assert _suggestions(store)[-1] == {
+        "rule": "previous",
+        "value": "The Silent Orchard",
+    }
+
+
+def test_going_back_while_the_write_is_in_flight_refuses_as_today(
+    store: OwnerStore,
+) -> None:
+    # Until the write is verified the case reads its target, so the earlier
+    # value is still the current one; another value meets `already_decided`.
+    operation = store.plan(store.decide("owner_entered", ORCHARD))
+    refusals: list[str] = []
+
+    def back(_plan) -> None:
+        before = _rows(store)
+        try:
+            store.decide("owner_entered", {"kind": "text", "value": "Real Tigers"})
+        except HumanDecisionError as error:
+            refusals.append(error.code)
+        assert _rows(store) == before
+
+    store.target.before_apply = back
+    assert store.service.apply(operation.plan.plan_id).state == "verified"
+    assert refusals == ["owner_value_unchanged"]
+    assert store.patches == [operation.plan.plan_id]
+
+
+def test_going_back_after_an_external_change_stales_unwritten(
+    store: OwnerStore,
+) -> None:
+    store.write(store.decide("owner_entered", ORCHARD))
+    operation = store.plan(
+        store.decide("owner_entered", {"kind": "text", "value": "Real Tigers"})
+    )
+    assert operation.plan.pre_value == "The Silent Orchard"
+    store.target.drift(operation.plan, "Edited in the library")
+    staled = store.service.apply(operation.plan.plan_id)
+    assert (staled.state, staled.failure) == ("stale", "target_changed")
+
+
+# #1523 S6: on a successor the earlier value is offered only while the field
+# still reads what the latest write left.
+def test_a_successor_changed_elsewhere_offers_no_previous_value(
+    store: OwnerStore,
+) -> None:
+    store.write(store.decide("owner_entered", ORCHARD))
+    _successor(store, title="Edited in the library")
+    assert store.previous() == {"title": "Real Tigers"}
+    assert {"rule": "previous", "value": "Real Tigers"} not in _suggestions(store)
+    assert _field(store, "title")["owner_control"]["current"] == (
+        "Edited in the library"
+    )
+
+
+# #1523, amendment 1: after a write that filled an empty subtitle, emptying
+# the input is going back. No empty suggestion is sent; the clear is recorded
+# on the writing case and written through the guarded path.
+def test_a_clear_after_a_fill_goes_back_to_the_empty_field(tmp_path: Path) -> None:
+    base = genre_report()
+    report = MetadataReport.create(
+        target=base.target,
+        file=base.file,
+        local_claims=(
+            *base.local_claims,
+            _local_subtitle("A Quiet Subtitle", ClaimScope.WORK),
+        ),
+        local_reasons=base.local_reasons,
+        providers=base.providers,
+    )
+    store = OwnerStore(tmp_path, report)
+    try:
+        filled = store.write(
+            store.decide(
+                "accept",
+                {"kind": "text", "value": "A Quiet Subtitle"},
+                destination="subtitle",
+            )
+        )
+        assert filled.plan.pre_value is None
+        assert store.previous() == {}
+        control = _field(store, "subtitle")["owner_control"]
+        assert (control["clear"], control["current"]) == (True, "A Quiet Subtitle")
+        assert all(
+            item["rule"] != "previous" for item in control["entry"]["suggestions"]
+        )
+        clear = store.decide(
+            "owner_entered", {"kind": "empty", "value": None}, destination="subtitle"
+        )
+        written = store.write(clear)
+        assert (written.plan.pre_value, written.plan.desired_value) == (
+            "A Quiet Subtitle",
+            None,
+        )
+        assert store.target.read(written.plan).value is None
+        assert (
+            store.repository.field_effect_manual_hold_token(
+                store.case.review_case_id, "subtitle"
+            )
+            == clear.decision_id
+        )
+        # History and Activity read the clear as a removal, never as a value.
+        history = InspectCurrentReviewCase(store.repository).history(
+            store.case.review_case_id
+        )
+        assert [
+            (item["outcome"], item["previous_value"], item["selected_value"])
+            for item in history["items"]
+            if item.get("destination") == "subtitle"
+            and item.get("outcome") == "owner_entered"
+        ] == [
+            (
+                "owner_entered",
+                {"kind": "text", "value": "A Quiet Subtitle"},
+                {"kind": "empty", "value": None},
+            )
+        ]
+        target = store.case.target
+        events = ContinuousGuardedApplication(
+            store.repository,
+            {},
+            {},
+            PersistedFieldEffectAuthority(store.repository),
+            ((str(target["connection"]), str(target["library"])),),
+            lambda: 2_000,
+            lambda *_: None,
+            activity_only=True,
+        ).activity()["events"]
+        cleared = [
+            (event["state"], event["change"], event["evidence"])
+            for event in events
+            if event["field_label"] == "Subtitle"
+            and event["change"] == "Cleared subtitle"
+        ]
+        assert [state for state, *_ in cleared] == ["verified", "owner_entered"]
+        assert all(
+            {"label": "New value", "value": "Not set"} in evidence
+            for *_, evidence in cleared
+        )
+        # Cleared again, the field is empty, so another clear is unchanged.
+        _refused(
+            store,
+            "owner_value_unchanged",
+            "owner_entered",
+            {"kind": "empty", "value": None},
+            destination="subtitle",
+        )
+    finally:
+        store.close()
+
+
+def _pending(store: OwnerStore) -> list[str]:
+    return [
+        json.loads(document)["decision_id"]
+        for document in store.repository.pending_field_effect_decision_documents(50)
+    ]
+
+
+# #1523: on the case that wrote a field the case read empty, Keep current
+# goes back to empty. A clearable field writes the empty value through the
+# guarded path, as a clear does; any other field refuses the keep.
+def test_keeping_an_empty_genres_after_a_write_goes_back_to_empty(
+    store: OwnerStore,
+) -> None:
+    written = store.write(
+        store.decide(
+            "accept", {"kind": "list", "value": ["Fantasy"]}, destination="genres"
+        )
+    )
+    assert (written.plan.pre_value, written.plan.desired_value) == (None, ["Fantasy"])
+    keep = store.decide("keep_current", destination="genres")
+    assert keep.decision_id in _pending(store)
+    back = store.write(keep)
+    assert (back.plan.pre_value, back.plan.desired_value) == (["Fantasy"], None)
+    assert store.target.read(back.plan).value is None
+    assert (
+        store.repository.field_effect_manual_hold_token(
+            store.case.review_case_id, "genres"
+        )
+        == keep.decision_id
+    )
+    assert keep.decision_id not in _pending(store)
+    # Activity says the keep went back on the write, never that it kept the
+    # current value (#1523).
+    (row,) = (
+        event
+        for event in _activity(store)
+        if event["field_label"] == "Genres"
+        and event["state"] in {"keep_current", "went_back"}
+    )
+    assert (row["state"], row["change"], row["change_detail"]) == (
+        "went_back",
+        "Fantasy → Not set",
+        "Set Genres back from Fantasy to Not set",
+    )
+    assert row["evidence"][:2] == [
+        {"label": "Written value", "value": "Fantasy"},
+        {"label": "Value before your change", "value": "Not set"},
+    ]
+    assert "Kept" not in row["change"] and "Current value" not in str(row["evidence"])
+
+
+def _activity(store: OwnerStore) -> list[dict[str, Any]]:
+    target = store.case.target
+    events = ContinuousGuardedApplication(
+        store.repository,
+        {},
+        {},
+        PersistedFieldEffectAuthority(store.repository),
+        ((str(target["connection"]), str(target["library"])),),
+        lambda: 2_000,
+        lambda *_: None,
+        activity_only=True,
+    ).activity()["events"]
+    return cast("list[dict[str, Any]]", events)
+
+
+def _genres_keep(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    (row,) = (
+        event
+        for event in rows
+        if event["field_label"] == "Genres"
+        and event["category"] == "owner"
+        and event["change"] == "Fantasy → Not set"
+    )
+    return row
+
+
+def test_a_keep_reads_went_back_only_once_its_write_back_verifies(
+    store: OwnerStore,
+) -> None:
+    """Not planned, it is recorded; planned, it is planned; verified, it went
+    back. Every step reads as the change it makes, never Kept current, with
+    the written value its plan or the write it follows names (#1523)."""
+    store.write(
+        store.decide(
+            "accept", {"kind": "list", "value": ["Fantasy"]}, destination="genres"
+        )
+    )
+    keep = store.decide("keep_current", destination="genres")
+    for step in ("recorded", "planned", "went_back"):
+        if step == "planned":
+            store.plan(keep)
+        elif step == "went_back":
+            store.service.apply(
+                store.repository._connection.execute(
+                    "SELECT plan_id FROM field_effects WHERE decision_id=?",
+                    (keep.decision_id,),
+                ).fetchone()[0]
+            )
+        row = _genres_keep(_activity(store))
+        assert row["state"] == step
+        assert row["evidence"][:2] == [
+            {"label": "Written value", "value": "Fantasy"},
+            {"label": "Value before your change", "value": "Not set"},
+        ]
+        assert "Kept" not in str(row) and "Current value" not in str(row)
+
+
+def _served(store: OwnerStore, borrower: Any) -> list[dict[str, Any]]:
+    target = store.case.target
+    return cast(
+        "list[dict[str, Any]]",
+        ContinuousGuardedApplication(
+            borrower,
+            {},
+            {},
+            PersistedFieldEffectAuthority(borrower),
+            ((str(target["connection"]), str(target["library"])),),
+            lambda: 2_000,
+            lambda *_: None,
+            activity_only=True,
+        ).activity()["events"],
+    )
+
+
+def _genres_owner(rows: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    return [
+        (str(event["state"]), str(event["change"]))
+        for event in rows
+        if event["field_label"] == "Genres" and event["category"] == "owner"
+    ]
+
+
+@pytest.fixture
+def served(store: OwnerStore) -> Iterator[Callable[[], list[dict[str, Any]]]]:
+    """Activity as a borrowed fact store serves it (ADR-0082), checked against
+    the canonical read at every call."""
+    borrower = open_repository(
+        store.root / "owner.sqlite",
+        create=False,
+        authority=store.repository.authority,
+    )
+    borrower.configure_activity_page_reader(ActivityFactStore())
+
+    def read() -> list[dict[str, Any]]:
+        rows = _served(store, borrower)
+        assert rows == _activity(store)
+        return rows
+
+    try:
+        yield read
+    finally:
+        borrower.close()
+
+
+def test_the_served_activity_follows_a_keep_write_back(
+    store: OwnerStore, served: Callable[[], list[dict[str, Any]]]
+) -> None:
+    """The served Activity re-reads an owner decision's row when its own write
+    moves, as the canonical read does (ADR-0082, #1286, #1523)."""
+    store.write(
+        store.decide(
+            "accept", {"kind": "list", "value": ["Fantasy"]}, destination="genres"
+        )
+    )
+    keep = store.decide("keep_current", destination="genres")
+    assert _genres_keep(served())["state"] == "recorded"
+    store.write(keep)
+    assert _genres_keep(served())["state"] == "went_back"
+
+
+def test_an_unplanned_keep_reads_its_own_episode_after_the_case_returns(
+    store: OwnerStore, served: Callable[[], list[dict[str, Any]]]
+) -> None:
+    """A keep recorded after a write and never planned keeps reading that
+    write once the case returns as a new episode: the library held Fantasy
+    when it was recorded (#1358, #1523)."""
+    first = store.case.review_case_id
+    store.write(
+        store.decide(
+            "accept", {"kind": "list", "value": ["Fantasy"]}, destination="genres"
+        )
+    )
+    store.decide("keep_current", destination="genres")
+    assert _genres_keep(served())["state"] == "recorded"
+    _successor(store, genres=("Fantasy",))
+    assert store.publish(genre_report()).review_case_id == first
+    assert _genres_keep(served())["state"] == "recorded"
+
+
+def test_a_plain_keep_still_reads_kept_in_activity(store: OwnerStore) -> None:
+    keep = store.decide("keep_current", destination="genres")
+    assert keep.decision_id not in _pending(store)
+    (row,) = (
+        event
+        for event in _activity(store)
+        if event["field_label"] == "Genres" and event["category"] == "owner"
+    )
+    assert row["state"] == "keep_current"
+    assert row["change"] == "Left genres unset"
+
+
+def test_keeping_an_empty_isbn_after_a_write_is_refused(store: OwnerStore) -> None:
+    written = store.write(
+        store.decide(
+            "accept", {"kind": "text", "value": "9780306406157"}, destination="isbn"
+        )
+    )
+    assert written.plan.pre_value is None
+    effects = store.repository._connection.execute(
+        "SELECT count(*) FROM field_effects"
+    ).fetchone()
+    pending = _pending(store)
+    _refused(store, "owner_value_required", "keep_current", destination="isbn")
+    assert _pending(store) == pending
+    assert (
+        store.repository._connection.execute(
+            "SELECT count(*) FROM field_effects"
+        ).fetchone()
+        == effects
+    )
+    assert store.target.read(written.plan).value == "9780306406157"
+
+
+def test_keeping_an_empty_isbn_before_any_write_is_recorded(
+    store: OwnerStore,
+) -> None:
+    keep = store.decide("keep_current", destination="isbn")
+    assert keep.decision_id not in _pending(store)
 
 
 def test_reselecting_the_previous_value_writes_it_back_under_the_guards(
@@ -1149,3 +1561,265 @@ def test_pin_and_unpin_history_events(store: OwnerStore) -> None:
         events[unpin.decision_id]["outcome"],
         events[unpin.decision_id]["selected_value"],
     ) == ("unpin", None)
+
+
+# #1523 review B1: a keep on a case that returned as a new episode (#1358)
+# has nothing in its own episode to go back from. It is not pending work, and
+# it never stops the scheduler from applying another write.
+_KEPT_THEN_RETURNED: dict[
+    str,
+    tuple[dict[str, object], dict[str, tuple[str, ...]], str, dict[str, object]],
+] = {
+    # A clearable field the case read empty: filled on it, cleared on the
+    # kept case, and read empty again.
+    "genres": (
+        {"kind": "list", "value": ["Fantasy"]},
+        {"genres": ("Fantasy",)},
+        "owner_entered",
+        {"kind": "empty", "value": None},
+    ),
+    # A field the case read a value: changed on it, entered back on the kept
+    # case, and read with its first value again.
+    "authors": (
+        {"kind": "list", "value": ["Example, Ada"]},
+        {"authors": ("Example, Ada",)},
+        "owner_entered",
+        {"kind": "list", "value": ["Ada Example"]},
+    ),
+}
+
+
+@pytest.mark.parametrize("destination", sorted(_KEPT_THEN_RETURNED))
+def test_a_keep_on_a_returned_episode_plans_nothing_and_stops_nothing(
+    store: OwnerStore, destination: str
+) -> None:
+    chosen, read_back, outcome, back = _KEPT_THEN_RETURNED[destination]
+    first = store.case.review_case_id
+    store.write(store.decide("accept", chosen, destination=destination))
+    # The case that wrote a field says so, and only for that field (#1523).
+    assert _field(store, destination)["written_by_case"] is True
+    assert _field(store, "isbn")["written_by_case"] is False
+    _successor(store, **read_back)
+    assert store.case.review_case_id != first
+    assert _field(store, destination)["written_by_case"] is False
+    store.write(store.decide(outcome, back, destination=destination))
+    assert _field(store, destination)["written_by_case"] is True
+    assert store.publish(genre_report()).review_case_id == first
+    # The returned episode wrote nothing yet: its earlier write no longer counts.
+    assert _field(store, destination)["written_by_case"] is False
+    keep = store.decide("keep_current", destination=destination)
+    pending = _pending(store)
+    assert keep.decision_id not in pending
+    # Resolved anyway, the keep binds nothing rather than planning a value.
+    with pytest.raises(FieldEffectError, match="authority_binding"):
+        PersistedFieldEffectAuthority(store.repository).resolve(keep)
+    # An unrelated write on the same case still applies in the next cycle.
+    isbn = store.decide(
+        "accept", {"kind": "text", "value": "9780306406157"}, destination="isbn"
+    )
+    target = store.case.target
+    context = (str(target["connection"]), str(target["library"]))
+    store.consent.allow(connection=context[0], library=context[1], destination="isbn")
+    store.repository.grant_field_effect_consents(
+        context[0], (context[1],), ("isbn",), store.clock()
+    )
+    assert isbn.decision_id in _pending(store)
+    scheduler = ContinuousGuardedApplication(
+        store.repository,
+        {context: store.service},
+        {context: FakeCapabilityObserver(CAPABILITY)},
+        PersistedFieldEffectAuthority(store.repository),
+        (context,),
+        store.clock,
+        lambda *_: None,
+    )
+    # Planning walks the pending queue past the keep to the ISBN; before
+    # #1523's fix the keep's plan raised here on every cycle.
+    scheduler.schedule(10)
+    (planned,) = store.repository._connection.execute(
+        "SELECT document FROM field_effects WHERE decision_id=?", (isbn.decision_id,)
+    ).fetchone()
+    store.target.seed(FieldEffectOperation.from_json(planned).plan)
+    for _ in range(4):
+        scheduler.run_cycle()
+    assert store.repository._connection.execute(
+        "SELECT state FROM field_effects WHERE decision_id=?", (isbn.decision_id,)
+    ).fetchall() == [("verified",)]
+    assert not store.repository._connection.execute(
+        "SELECT 1 FROM field_effects WHERE decision_id=?", (keep.decision_id,)
+    ).fetchall()
+
+
+@pytest.mark.parametrize("destination", sorted(_KEPT_THEN_RETURNED))
+def test_a_keep_on_a_returned_episode_reads_from_its_own_episode(
+    store: OwnerStore, destination: str
+) -> None:
+    """History's From for a keep follows only the writes of the case's current
+    episode, so a keep after the work returns never reads as going back over
+    a write of an earlier episode (#1523)."""
+    chosen, read_back, outcome, back = _KEPT_THEN_RETURNED[destination]
+    first = store.case.review_case_id
+    store.write(store.decide("accept", chosen, destination=destination))
+    _successor(store, **read_back)
+    store.write(store.decide(outcome, back, destination=destination))
+    assert store.publish(genre_report()).review_case_id == first
+    keep = store.decide("keep_current", destination=destination)
+    (entry,) = (
+        event
+        for event in store.repository.get_review_case_history(first, 50)
+        if event.get("decision_id") == keep.decision_id
+    )
+    # The episode wrote nothing, so the keep keeps what the case read: From and
+    # To are the same value, never C's first-episode write as From.
+    assert entry["previous_value"] == entry["selected_value"], entry
+    assert entry["previous_value"] != chosen
+
+
+def test_the_served_activity_follows_a_write_that_verifies_after_a_keep(
+    held: tuple[OwnerStore, str], tmp_path: Path
+) -> None:
+    """A keep recorded before any write of its field, then the field returned
+    to automatic and written: the served Activity reads the keep's row as the
+    canonical read does once that write verifies (ADR-0082, #1523)."""
+    store, _ = held
+    borrower = open_repository(
+        store.root / "owner.sqlite",
+        create=False,
+        authority=store.repository.authority,
+    )
+    try:
+        borrower.configure_activity_page_reader(ActivityFactStore())
+        assert ("keep_current", "Kept Drama") in _genres_owner(_activity(store))
+        assert _served(store, borrower) == _activity(store)
+        store.publish(rewritten(_HELD, publisher="Changed Elsewhere"))
+        completed = [0]
+        application, scheduler, _ = _resume_service(store, tmp_path, completed)
+        application.return_to_automatic(store.case.review_case_id, "genres")
+        completed[0] = 10**9
+        scheduler.schedule()
+        automatic = next(
+            AutomaticDecision.from_json(raw)
+            for raw in store.repository.get_review_case_decisions(
+                store.case.review_case_id
+            )
+            if json.loads(raw)["schema_version"] == "automatic-decision-v1"
+            and json.loads(raw)["destination"] == "genres"
+        )
+        assert _served(store, borrower) == _activity(store)
+        store.write(automatic)
+        assert _served(store, borrower) == _activity(store)
+    finally:
+        borrower.close()
+
+
+def _keep_history(store: OwnerStore, keep: HumanDecision) -> dict[str, object]:
+    (entry,) = (
+        event
+        for event in store.repository.get_review_case_history(
+            store.case.review_case_id, 50
+        )
+        if event.get("decision_id") == keep.decision_id
+    )
+    return entry
+
+
+def test_a_keep_in_a_middle_episode_reads_alike_after_the_next_return(
+    store: OwnerStore, served: Callable[[], list[dict[str, Any]]]
+) -> None:
+    """A keep recorded in an episode that wrote nothing is a plain keep, and
+    stays one in Activity and History after the case returns again: what it
+    goes back on is frozen when it is recorded, never read from episode
+    floors a later return moves (#1358, #1523)."""
+    first = store.case.review_case_id
+    store.write(
+        store.decide(
+            "accept", {"kind": "list", "value": ["Fantasy"]}, destination="genres"
+        )
+    )
+    _successor(store, genres=("Fantasy",))
+    assert store.publish(genre_report()).review_case_id == first
+    keep = store.decide("keep_current", destination="genres")
+    assert keep.follows is None
+    rows, entry = _genres_owner(served()), _keep_history(store, keep)
+    assert ("keep_current", "Left genres unset") in rows
+    assert entry["previous_value"] == entry["selected_value"]
+    _successor(store, genres=("Other",))
+    assert store.publish(genre_report()).review_case_id == first
+    assert _genres_owner(served()) == rows
+    assert _keep_history(store, keep) == entry
+
+
+def test_a_keep_freezes_the_write_planning_resolves_for_it(
+    store: OwnerStore,
+) -> None:
+    """In one episode, the write a keep's document names is the one planning
+    resolves for it when it is recorded, and the one its plan goes back on
+    (#1523)."""
+    accept = store.decide(
+        "accept", {"kind": "list", "value": ["Fantasy"]}, destination="genres"
+    )
+    store.write(accept)
+    keep = store.decide("keep_current", destination="genres")
+    resolved = store.repository._field_effect_activity._human_predecessor(keep)
+    assert resolved is not None
+    assert (
+        keep.follows
+        == FieldEffectOperation.from_json(resolved[0]).plan.authority.decision_id
+        == accept.decision_id
+    )
+    assert store.write(keep).plan.pre_value == ["Fantasy"]
+    assert _keep_history(store, keep)["previous_value"] == {
+        "kind": "list",
+        "value": ["Fantasy"],
+    }
+
+
+def test_the_store_admits_a_named_write_only_on_a_keep(store: OwnerStore) -> None:
+    """The `human_decisions` table holds `follows` as null, or as text on a
+    keep only (#1523)."""
+    accept = store.decide(
+        "accept", {"kind": "list", "value": ["Fantasy"]}, destination="genres"
+    )
+    store.write(accept)
+    store.decide("keep_current", destination="genres")
+    connection = store.repository._connection
+    connection.row_factory = sqlite3.Row
+    try:
+        rows = {
+            row["outcome"]: dict(row)
+            for row in connection.execute(
+                "SELECT * FROM human_decisions WHERE destination='genres'"
+            )
+        }
+    finally:
+        connection.row_factory = None
+    assert json.loads(rows["keep_current"]["document"])["follows"] == (
+        accept.decision_id
+    )
+
+    def admitted(outcome: str, follows: object) -> bool:
+        row = dict(rows[outcome])
+        row["document"] = json.dumps(
+            {**json.loads(row["document"]), "follows": follows},
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        memory = sqlite3.connect(":memory:")
+        try:
+            memory.execute(_HUMAN_DECISIONS_SQL)
+            memory.execute(
+                f"INSERT INTO human_decisions ({','.join(row)}) "
+                f"VALUES ({','.join('?' for _ in row)})",
+                tuple(row.values()),
+            )
+        except sqlite3.IntegrityError:
+            return False
+        finally:
+            memory.close()
+        return True
+
+    assert admitted("keep_current", accept.decision_id)
+    assert admitted("keep_current", None)
+    assert admitted("accept", None)
+    assert not admitted("keep_current", 1)
+    assert not admitted("accept", accept.decision_id)

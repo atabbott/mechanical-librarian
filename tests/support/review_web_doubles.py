@@ -289,6 +289,11 @@ class FakeReviewRepository:
     ) -> tuple[tuple[str, object], ...]:
         return self.previous_values
 
+    def written_field_values(
+        self, _review_case_id: str
+    ) -> tuple[tuple[str, object], ...]:
+        return ()
+
     def preparation_presentation(self, _now: int) -> PreparationPresentation | None:
         return self.preparation_presentation_value
 

@@ -29,6 +29,7 @@ import hashlib
 import json
 import sqlite3
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any
 
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
@@ -79,6 +80,7 @@ from mechanical_librarian.domain.description_advice import (
     DescriptionAdviceCandidate,
 )
 from mechanical_librarian.domain.field_effect import (
+    CLEARABLE_DESTINATIONS,
     FieldEffectOperation,
     decision_value_kind,
 )
@@ -92,6 +94,7 @@ from mechanical_librarian.domain.human_decision import (
     HumanDecisionError,
     chosen_value_fingerprint,
     pinned_field_fingerprint,
+    target_value,
 )
 from mechanical_librarian.domain.owner_link import OwnerLinkAction
 from mechanical_librarian.domain.review_case import (
@@ -289,6 +292,11 @@ class SQLiteDecisionRepository(ConnectionScoped):
         previous_field_values: Callable[
             [str, str, str], tuple[tuple[str, object], ...]
         ],
+        written_field_values: Callable[[str], tuple[tuple[str, object], ...]],
+        human_predecessor: Callable[
+            [HumanDecision], sqlite3.Row | tuple[str, ...] | None
+        ],
+        followed_write: Callable[[HumanDecision], sqlite3.Row | tuple[str, ...] | None],
     ) -> None:
         super().__init__(connection, binding)
         self._requeue_title_projections = requeue_title_projections
@@ -302,6 +310,9 @@ class SQLiteDecisionRepository(ConnectionScoped):
         self._set_field_effect_manual_hold = set_field_effect_manual_hold
         self._validate_shadow_outcome_row = validate_shadow_outcome_row
         self._previous_field_values = previous_field_values
+        self._written_field_values = written_field_values
+        self._human_predecessor = human_predecessor
+        self._followed_write = followed_write
 
     def _record_automatic_outcomes(
         self, outcome: ShadowOutcomeSet, occurred_at: int
@@ -680,6 +691,10 @@ class SQLiteDecisionRepository(ConnectionScoped):
             if case_level_unreconciled(self._connection, case.review_case_id):
                 raise _UnreconciledCase
             offer = self._require_current_offer(case)
+            entered = decision.outcome == "owner_entered"
+            written = (
+                dict(self._written_field_values(case.review_case_id)) if entered else {}
+            )
             decision.validate_new_for(
                 case,
                 dict(
@@ -689,10 +704,35 @@ class SQLiteDecisionRepository(ConnectionScoped):
                         str(target["item"]),
                     )
                 ).get(decision.destination)
-                if decision.outcome == "owner_entered"
+                if entered
                 else None,
                 offer,
+                (written[decision.destination],)
+                if decision.destination in written
+                else None,
             )
+            if decision.outcome == "keep_current":
+                # The write a keep goes back on is frozen with it, by the rule
+                # planning reads now, so neither a later return nor a later
+                # write changes what it went back on (#1523).
+                predecessor = self._human_predecessor(decision)
+                if (
+                    predecessor is not None
+                    and decision.destination not in CLEARABLE_DESTINATIONS
+                    and decision.destination != "cover"
+                    and target_value(case, decision.destination) is None
+                ):
+                    # Keeping the empty value the case read would go back to
+                    # empty, which this field cannot be (#1523).
+                    raise HumanDecisionError("owner_value_required")
+                decision = replace(
+                    decision,
+                    follows=None
+                    if predecessor is None
+                    else FieldEffectOperation.from_json(
+                        predecessor[0]
+                    ).plan.authority.decision_id,
+                )
             self._record_cover_decision_outcome(
                 decision, cover_consideration_id, cover_confirmation, validate_only=True
             )
@@ -1808,25 +1848,41 @@ class SQLiteDecisionRepository(ConnectionScoped):
         if type(target) is not dict:
             raise MetadataReportError("review history is invalid")
         previous = target.get("value") if target.get("state") == "value" else None
-        prior = self._connection.execute(
-            "SELECT effect.document FROM field_effects effect JOIN ("
-            "SELECT earlier.decision_id,earlier.ordinal FROM human_decisions earlier "
-            "WHERE earlier.review_case_id=? AND earlier.destination=? AND earlier.ordinal<? "
-            "UNION ALL SELECT earlier.decision_id,-1 FROM automatic_decisions earlier "
-            "WHERE earlier.review_case_id=? AND earlier.destination=?"
-            ") recorded ON (recorded.decision_id=effect.decision_id "
-            "OR recorded.decision_id="
-            + _FIELD_EFFECT_COMPANION_DECISION_SQL
-            + ") WHERE effect.state='verified' "
-            "ORDER BY recorded.ordinal DESC,effect.rowid LIMIT 1",
-            (
-                review_case_id,
-                decision.destination,
-                decision_row[0],
-                review_case_id,
-                decision.destination,
-            ),
-        ).fetchone()
+        # A keep goes back on the write frozen with it when it was recorded,
+        # never one read again from episode floors that later returns move
+        # (#1523); every other decision follows the latest earlier write.
+        prior = (
+            self._followed_write(decision)
+            if decision.outcome == "keep_current"
+            else self._connection.execute(
+                "SELECT effect.document FROM field_effects effect JOIN ("
+                "SELECT earlier.decision_id,earlier.ordinal FROM human_decisions earlier "
+                "WHERE earlier.review_case_id=? AND earlier.destination=? AND earlier.ordinal<? "
+                "UNION ALL SELECT earlier.decision_id,-1 FROM automatic_decisions earlier "
+                "WHERE earlier.review_case_id=? AND earlier.destination=?"
+                ") recorded ON (recorded.decision_id=effect.decision_id "
+                "OR recorded.decision_id="
+                + _FIELD_EFFECT_COMPANION_DECISION_SQL
+                + ") WHERE effect.state='verified' "
+                # A decision of the case's current episode follows only that
+                # episode's writes: one planned before the work left the case and
+                # returned is not what the library held (#1523, #1358).
+                "AND (?<=COALESCE((SELECT decision_floor FROM review_case_episodes "
+                "WHERE review_case_id=?),0) OR +effect.rowid>COALESCE((SELECT "
+                "effect_floor FROM review_case_episodes WHERE review_case_id=?),0)) "
+                "ORDER BY recorded.ordinal DESC,effect.rowid LIMIT 1",
+                (
+                    review_case_id,
+                    decision.destination,
+                    decision_row[0],
+                    review_case_id,
+                    decision.destination,
+                    decision_row[0],
+                    review_case_id,
+                    review_case_id,
+                ),
+            ).fetchone()
+        )
         if prior is not None:
             plan = FieldEffectOperation.from_json(prior[0]).plan
             previous = (

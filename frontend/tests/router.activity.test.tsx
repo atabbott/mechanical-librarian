@@ -902,6 +902,21 @@ describe('Activity route', () => {
       'Kept current',
     ],
     [
+      'went back on a write',
+      {
+        events: [
+          {
+            work_label: 'Went back work',
+            state: 'went_back',
+            origin: 'human',
+            change: 'Anarres → The Dispossessed',
+          },
+        ],
+      },
+      // A keep that went back on the case's own write never reads Kept (#1523).
+      'Went back',
+    ],
+    [
       'rejected',
       { events: [{ work_label: 'Rejected work', state: 'reject', origin: 'human' }] },
       'Rejected',

@@ -109,8 +109,8 @@ refused.
 
 | Identifier | What it is |
 | --- | --- |
-| `human-decision-v5` | An owner decision, including `owner_entered`, `withdraw`, `pin` and `unpin` outcomes; it binds the digest of the field offer it was made in (`offered_alternatives_digest`) and may name a closed `cause` (`matching_changed`) for the valueless row Book matching writes |
-| `human-decision-event-v1`, `human-decision-ack-v1` | The decision event and its acknowledgement |
+| `human-decision-v6` | An owner decision, including `owner_entered`, `withdraw`, `pin` and `unpin` outcomes; it binds the digest of the field offer it was made in (`offered_alternatives_digest`), may name a closed `cause` (`matching_changed`) for the valueless row Book matching writes, and on a keep names the decision of the write it goes back on (`follows`) |
+| `human-decision-event-v1`, `human-decision-ack-v2` | The decision event and its acknowledgement |
 | `cover-consideration-v11` | A cover consideration, bound to its report by identity and digest and to the Book matching level it was made under; each candidate names its kind, so the original an automatic switch replaced can be put back, even one the decoder refused, which has no size or preview, and a larger copy of the current cover's own picture can replace it; it stores the would-admit note, which nothing shows, and how many distinct pictures the stage kept |
 | `cover-identity-report-v4` | Cover identity classification under one Book matching level, with the title-and-author outcome and level reasons |
 | `cover-policy-v2` | The cover policy, including when a current cover may be replaced and whether an edition's cover is preferred |
@@ -144,8 +144,8 @@ exact schemas of their own and no separate version string.
 
 The owner API is served under `/api/v1`, and each response names its version
 in `schema_version`. The main ones are `review-session-v1`,
-`review-library-v9`, `review-preparation-v2`, `review-case-detail-v9`,
-`review-case-evidence-v6`, `review-report-detail-v7`, `review-case-history-v5`,
+`review-library-v9`, `review-preparation-v2`, `review-case-detail-v10`,
+`review-case-evidence-v6`, `review-report-detail-v7`, `review-case-history-v6`,
 `review-attention-v1` and `continuous-field-activity-v3`. The generated
 [OpenAPI document](review-openapi-v1.json) pins each of them except
 `review-session-v1`, which the server sets.

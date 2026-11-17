@@ -3,23 +3,45 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import type { KeyboardEvent, RefObject, SyntheticEvent } from 'react'
 
-import { displayValue } from '../api/http'
+import { displayValue, isClear } from '../api/http'
 import type { DecisionCommand } from '../api/http'
 import type { ReviewField } from '../fieldDecision'
-import { destinationLabel } from '../labels'
+import {
+  clearedSentence,
+  destinationLabel,
+  destinationPhrase,
+  namesEnteredSentence,
+} from '../labels'
 import { writtenRefusal } from '../reviewDecisionController'
 import { StatusPill } from '../components/StatusPill'
 import type { PinControl } from '../fieldPin'
 import { PinButton } from './FieldDecisionPin'
 
-// F59's owner controls (ADR-0085): enter a value, choose genres and withdraw a
-// decision. Going back to an earlier value is choosing it again, from the same
-// suggestions. Each is offered only where the store would accept it now; the
+// F59's owner controls (ADR-0085): enter a value, choose genres, enter names
+// and withdraw a decision. Going back to an earlier value is choosing it
+// again, from the same suggestions; emptying a clearable field clears it
+// (ADR-0105). Each is offered only where the store would accept it now; the
 // store still decides, and a refusal is said here, beside the control used.
 export type OwnerOutcome = 'owner_entered' | 'withdraw'
 const ownerText = (value: string) => value.normalize('NFC').replace(/\s+/gu, ' ').trim()
-const quotedValue = (value: { value: unknown } | null | undefined) =>
-  value ? `“${displayValue(value.value)}”` : 'nothing'
+// One name per line; a blank line is not a name.
+const namesOf = (text: string) => text.split('\n').map(ownerText).filter(Boolean)
+// Names that differ only by case or composition are one name, as the store
+// compares them (#1523). The store case-folds; this folds each character the
+// same way: the round trip through capitals takes ß and ẞ to "ss", and a
+// dotless ı stays itself, because case folding keeps it apart from i and I.
+const foldCharacter = (character: string) =>
+  character === 'ı' ? character : character.toUpperCase().toLowerCase().toUpperCase().toLowerCase()
+const nameKey = (name: string) =>
+  Array.from(name.normalize('NFC'), foldCharacter).join('').normalize('NFC')
+const sameList = (left: readonly string[], right: unknown) =>
+  Array.isArray(right) &&
+  left.length === right.length &&
+  left.every((item, index) => item === right[index])
+const EMPTY_VALUE = { kind: 'empty', value: null } as const
+// A clear has no value to quote; its own sentence says it (#1523).
+const quotedValue = (value: { kind: string; value: unknown } | null | undefined) =>
+  value && !isClear(value) ? `“${displayValue(value.value)}”` : 'nothing'
 const withdrawCopy = {
   automatic_hold:
     'This decision is holding automatic handling, so it can’t be withdrawn. Use Resume automatic handling to release it.',
@@ -48,9 +70,9 @@ export function OwnerControls({
 }) {
   const control = field.ownerControl ?? null
   const label = destinationLabel(field.destination)
-  const [mode, setMode] = useState<'idle' | 'entry' | 'subset'>('idle')
+  const [mode, setMode] = useState<'idle' | 'entry' | 'subset' | 'names'>('idle')
   const [draft, setDraft] = useState('')
-  const [typed, setTyped] = useState(false)
+  const [namesDraft, setNamesDraft] = useState('')
   const [chosen, setChosen] = useState<readonly string[]>([])
   const [problem, setProblem] = useState('')
   // The notice or refusal the owner has moved past by opening or closing a
@@ -60,7 +82,9 @@ export function OwnerControls({
   const inputId = useId()
   const countId = useId()
   const problemId = useId()
+  const hintId = useId()
   const input = useRef<HTMLInputElement>(null)
+  const namesInput = useRef<HTMLTextAreaElement>(null)
   const subsetGroup = useRef<HTMLFieldSetElement>(null)
   const trigger = useRef<HTMLButtonElement>(null)
   const recorded = useRef<HTMLParagraphElement>(null)
@@ -86,6 +110,7 @@ export function OwnerControls({
   const refocus = useRef<RefObject<HTMLButtonElement | null> | null>(null)
   useEffect(() => {
     if (mode === 'entry') input.current?.focus()
+    if (mode === 'names') namesInput.current?.focus()
     if (mode === 'subset') subsetGroup.current?.querySelector('input')?.focus()
     if (mode === 'idle') refocus.current?.current?.focus({ preventScroll: true })
     refocus.current = null
@@ -115,8 +140,26 @@ export function OwnerControls({
     })
   }, [progress])
   if (!control) return null
-  const { entry, subset } = control
+  const { entry, subset, names, current } = control
   const writing = control.withdraw === 'in_progress'
+  const noun = destinationPhrase(field.destination)
+  const currentEmpty =
+    current === null || current === '' || (Array.isArray(current) && current.length === 0)
+  const recordedValue = decision?.selected_value
+  const recordedClear = changing && isClear(recordedValue)
+  // The owner's standing value, which a new one must differ from as well as
+  // from the field's current value; each refusal says which it matched (#1523).
+  const standing = changing && !recordedClear ? (recordedValue?.value ?? null) : null
+  // An emptied form clears a clearable field that holds a value, unless the
+  // owner's standing value is already a clear (ADR-0105).
+  const clearing = (empty: boolean) => control.clear && empty && !currentEmpty && !recordedClear
+  // An emptied form that clears nothing says why, or what to enter (#1523).
+  const emptied = (remedy: string) =>
+    recordedClear
+      ? clearedSentence(field.destination, true)
+      : changing && control.clear && currentEmpty && control.withdraw === 'available'
+        ? 'This field is already empty. Use Withdraw to remove your value.'
+        : remedy
   const blocked = disabled || busy
   const send = (outcome: OwnerOutcome, value: DecisionCommand['selectedValue']) => {
     // The ref is the guard a second press meets before React re-renders.
@@ -141,35 +184,88 @@ export function OwnerControls({
     event.preventDefault()
     close(trigger)
   }
+  // What each form opens holding. A clearable field opens with its value, so
+  // emptying it is the owner's act; names entry opens with the field's names.
+  const recordedText = recordedValue?.value
+  const entryOpening =
+    changing && typeof recordedText === 'string'
+      ? recordedText
+      : !recordedClear && control.clear && typeof current === 'string'
+        ? current
+        : ''
+  const subsetOpening: readonly string[] =
+    changing && Array.isArray(recordedText)
+      ? (recordedText as string[])
+      : recordedClear
+        ? []
+        : (subset?.options.filter((option) => option.current).map((option) => option.value) ?? [])
+  const namesOpening: readonly string[] =
+    changing && Array.isArray(recordedText)
+      ? (recordedText as string[])
+      : !recordedClear && Array.isArray(current)
+        ? current
+        : []
+  // A form that opens holding a value changes it (#1523).
+  const triggerLabel = (opening: boolean, otherwise: string) =>
+    changing || opening ? 'Change' : otherwise
   const openEntry = () => {
-    const recordedText = decision?.selected_value?.value
-    setDraft(changing && typeof recordedText === 'string' ? recordedText : '')
-    setTyped(false)
+    setDraft(entryOpening)
     setProblem('')
     setDismissed(status)
     setMode('entry')
   }
   const openSubset = () => {
-    const recordedList = decision?.selected_value?.value
-    setChosen(
-      changing && Array.isArray(recordedList)
-        ? (recordedList as string[])
-        : (subset?.options.filter((option) => option.current).map((option) => option.value) ?? []),
-    )
+    setChosen(subsetOpening)
     setProblem('')
     setDismissed(status)
     setMode('subset')
+  }
+  const openNames = () => {
+    setNamesDraft(namesOpening.join('\n'))
+    setProblem('')
+    setDismissed(status)
+    setMode('names')
   }
   const recordEntry = (event: SyntheticEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!entry || blocked) return
     const value = ownerText(draft)
     setDraft(value)
-    if (!value) setProblem('Enter a value first.')
-    else if (Array.from(value).length > entry.maxCharacters)
+    if (!value) {
+      if (clearing(true)) send('owner_entered', EMPTY_VALUE)
+      else
+        setProblem(
+          emptied(field.destination === 'title' ? 'Enter a title.' : 'Enter a value first.'),
+        )
+    } else if (Array.from(value).length > entry.maxCharacters)
       setProblem(`Use up to ${String(entry.maxCharacters)} characters.`)
-    else if (value === field.currentRaw) setProblem('That is already the current value.')
+    else if (value === current) setProblem('That is already the current value.')
+    else if (value === standing) setProblem('You already entered this value.')
     else send('owner_entered', { kind: 'text', value })
+  }
+  const recordNames = (event: SyntheticEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!names || blocked) return
+    const value = namesOf(namesDraft)
+    setNamesDraft(value.join('\n'))
+    if (!value.length) {
+      if (clearing(true)) send('owner_entered', EMPTY_VALUE)
+      else
+        setProblem(
+          emptied(
+            field.destination === 'authors'
+              ? 'Enter at least one author.'
+              : 'Enter at least one name.',
+          ),
+        )
+    } else if (value.length > names.maxItems)
+      setProblem(`Use up to ${String(names.maxItems)} names.`)
+    else if (new Set(value.map(nameKey)).size !== value.length) setProblem('Enter each name once.')
+    else if (value.some((name) => Array.from(name).length > names.maxCharacters))
+      setProblem(`Use up to ${String(names.maxCharacters)} characters for each name.`)
+    else if (sameList(value, current)) setProblem('Those are already the current names.')
+    else if (sameList(value, standing)) setProblem('You already entered these names.')
+    else send('owner_entered', { kind: 'list', value })
   }
   const recordSubset = (event: SyntheticEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -178,20 +274,41 @@ export function OwnerControls({
     const value = subset.options
       .map((option) => option.value)
       .filter((option) => chosen.includes(option))
-    const current = Array.isArray(field.currentRaw) ? (field.currentRaw as unknown[]) : []
-    if (!value.length) setProblem('Choose at least one genre.')
-    else if (value.length > subset.maxItems)
+    if (!value.length) {
+      if (clearing(true)) send('owner_entered', EMPTY_VALUE)
+      else setProblem(emptied('Choose at least one genre.'))
+    } else if (value.length > subset.maxItems)
       setProblem(`Choose up to ${String(subset.maxItems)} genres.`)
-    else if (value.length === current.length && value.every((item, i) => item === current[i]))
-      setProblem('Those are already the current genres.')
+    else if (sameList(value, current)) setProblem('Those are already the current genres.')
+    else if (sameList(value, standing)) setProblem('You already chose these genres.')
     else send('owner_entered', { kind: 'list', value })
   }
+  const recordedCount = Array.isArray(recordedValue?.value) ? recordedValue.value.length : null
   const recordedCopy =
-    decision?.outcome === 'owner_entered'
-      ? Array.isArray(decision.selected_value?.value)
-        ? `You chose ${String(decision.selected_value.value.length)} ${decision.selected_value.value.length === 1 ? 'genre' : 'genres'}.`
-        : `You entered ${quotedValue(decision.selected_value)}.`
-      : null
+    decision?.outcome !== 'owner_entered'
+      ? null
+      : isClear(recordedValue)
+        ? clearedSentence(field.destination)
+        : recordedCount === null
+          ? `You entered ${quotedValue(recordedValue)}.`
+          : field.destination === 'genres'
+            ? `You chose ${String(recordedCount)} ${recordedCount === 1 ? 'genre' : 'genres'}.`
+            : namesEnteredSentence(recordedCount)
+  // The record button of a form, which clears the field once it is emptied.
+  const submitLabel = (empty: boolean, record: string) =>
+    clearing(empty) ? (busy ? 'Clearing…' : `Clear ${noun}`) : busy ? 'Recording…' : record
+  const actions = (empty: boolean, record: string) => (
+    <div className="owner-actions">
+      <button type="submit" aria-disabled={blocked}>
+        {submitLabel(empty, record)}
+      </button>
+      <button type="button" onClick={() => close(trigger)}>
+        Cancel
+      </button>
+    </div>
+  )
+  const characters = Array.from(draft).length
+  const namesCount = namesOf(namesDraft).length
   // A refusal is said in one place: beside the input while a form is open,
   // and at the end of the section otherwise. Each place is mounted empty.
   const shown = status === dismissed ? '' : status
@@ -228,7 +345,21 @@ export function OwnerControls({
             if (!blocked) openEntry()
           }}
         >
-          {changing ? 'Change' : 'Enter a value'}
+          {triggerLabel(entryOpening !== '', 'Enter a value')}
+        </button>
+      ) : null}
+      {names && mode !== 'names' && !writing ? (
+        <button
+          ref={trigger}
+          type="button"
+          className="owner-trigger"
+          data-review-key="e"
+          aria-disabled={blocked}
+          onClick={() => {
+            if (!blocked) openNames()
+          }}
+        >
+          {triggerLabel(namesOpening.length > 0, 'Enter names')}
         </button>
       ) : null}
       {subset && mode !== 'subset' && !writing ? (
@@ -242,7 +373,7 @@ export function OwnerControls({
             if (!blocked) openSubset()
           }}
         >
-          {changing ? 'Change' : 'Choose genres'}
+          {triggerLabel(subsetOpening.length > 0, 'Choose genres')}
         </button>
       ) : null}
       {entry && mode === 'entry' ? (
@@ -256,15 +387,13 @@ export function OwnerControls({
             autoComplete="off"
             aria-invalid={refusal ? true : undefined}
             aria-describedby={`${countId} ${problemId}`}
-            onChange={(event) => {
-              setDraft(event.target.value)
-              setTyped(true)
-            }}
+            onChange={(event) => setDraft(event.target.value)}
             onBlur={() => setDraft((value) => ownerText(value))}
           />
+          {/* Said only once the value is too long (#1523). */}
           <small id={countId} className="owner-count" aria-live="polite">
-            {typed
-              ? `${String(Array.from(draft).length)} of ${String(entry.maxCharacters)} characters`
+            {characters > entry.maxCharacters
+              ? `${String(characters)} of ${String(entry.maxCharacters)} characters`
               : ''}
           </small>
           {refusalNotice}
@@ -276,7 +405,6 @@ export function OwnerControls({
                   type="button"
                   onClick={() => {
                     setDraft(suggestion.value)
-                    setTyped(true)
                     input.current?.focus()
                   }}
                 >
@@ -291,14 +419,46 @@ export function OwnerControls({
               ))}
             </div>
           ) : null}
-          <div className="owner-actions">
-            <button type="submit" aria-disabled={blocked}>
-              {busy ? 'Recording…' : 'Record this value'}
-            </button>
-            <button type="button" onClick={() => close(trigger)}>
-              Cancel
-            </button>
-          </div>
+          {actions(!ownerText(draft), 'Record this value')}
+        </form>
+      ) : null}
+      {names && mode === 'names' ? (
+        <form className="owner-entry" onSubmit={recordNames} onKeyDown={escape} noValidate>
+          <label htmlFor={inputId}>{`Your value for ${label}`}</label>
+          <small id={hintId} className="owner-hint">
+            One name per line
+          </small>
+          <textarea
+            ref={namesInput}
+            id={inputId}
+            rows={Math.min(8, Math.max(3, namesDraft.split('\n').length))}
+            value={namesDraft}
+            autoComplete="off"
+            aria-invalid={refusal ? true : undefined}
+            aria-describedby={`${hintId} ${countId} ${problemId}`}
+            onChange={(event) => setNamesDraft(event.target.value)}
+          />
+          <small id={countId} className="owner-count" aria-live="polite">
+            {namesCount > names.maxItems
+              ? `${String(namesCount)} of ${String(names.maxItems)} names`
+              : ''}
+          </small>
+          {refusalNotice}
+          {names.previous ? (
+            <div className="owner-suggestions">
+              <button
+                type="button"
+                onClick={() => {
+                  setNamesDraft((names.previous ?? []).join('\n'))
+                  namesInput.current?.focus()
+                }}
+              >
+                {'Use previous names '}
+                <span className="owner-suggestion-value">“{displayValue(names.previous)}”</span>
+              </button>
+            </div>
+          ) : null}
+          {actions(namesCount === 0, 'Record these names')}
         </form>
       ) : null}
       {subset && mode === 'subset' ? (
@@ -330,14 +490,7 @@ export function OwnerControls({
             ))}
           </fieldset>
           {refusalNotice}
-          <div className="owner-actions">
-            <button type="submit" aria-disabled={blocked}>
-              {busy ? 'Recording…' : 'Record these genres'}
-            </button>
-            <button type="button" onClick={() => close(trigger)}>
-              Cancel
-            </button>
-          </div>
+          {actions(chosen.length === 0, 'Record these genres')}
         </form>
       ) : null}
       {control.withdraw === 'available' ? (

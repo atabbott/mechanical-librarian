@@ -45,6 +45,13 @@ SERIES_DESTINATION = "series"
 SUPPORTED_DESTINATIONS = (
     SCALAR_DESTINATIONS | LIST_DESTINATIONS | {SERIES_DESTINATION, "explicit"}
 )
+# Owner entry may empty exactly these fields, and a plan carries an empty
+# desired value (`None`, distinct from a missing key) only for them and only
+# under an owner's authority (ADR-0105). Title and authors are never emptied:
+# identity admission and provider searches read them.
+CLEARABLE_DESTINATIONS = frozenset({"subtitle", "publisher", "genres", "narrators"})
+# The closed envelope of an owner's clear; it carries no value.
+EMPTY_DECISION_KIND: Final = "empty"
 TERMINAL_STATES = frozenset({"verified", "stale", "superseded", "abandoned"})
 FIELD_EFFECT_FAILURES = frozenset(
     {
@@ -201,9 +208,17 @@ def decision_value_kind(destination: str) -> str:
 
 
 def project_decision_value(destination: str, value: object) -> object:
-    """Convert the exact existing ProposalValue envelope to a target value."""
+    """Convert the exact existing ProposalValue envelope to a target value.
+
+    The owner's empty envelope converts to ``None`` on a clearable field.
+    """
     if type(value) is not dict or set(value) != {"kind", "value"}:
         raise FieldEffectError("invalid_decision_value")
+    if value["kind"] == EMPTY_DECISION_KIND:
+        # An owner's clear projects to the empty target value (ADR-0105).
+        if destination not in CLEARABLE_DESTINATIONS or value["value"] is not None:
+            raise FieldEffectError("invalid_decision_value")
+        return None
     if value["kind"] != decision_value_kind(destination):
         raise FieldEffectError("invalid_decision_value")
     return validate_effect_value(destination, value["value"])
@@ -526,7 +541,13 @@ class FieldEffectPlan:
                 raise FieldEffectError("invalid_service_token")
         if type(created_at) is not int or created_at < 0:
             raise FieldEffectError("invalid_time")
-        desired = validate_effect_value(destination, desired_value)
+        desired = (
+            None
+            if desired_value is None
+            and destination in CLEARABLE_DESTINATIONS
+            and authority.origin == "human"
+            else validate_effect_value(destination, desired_value)
+        )
         if pre_value is not None:
             validate_effect_value(destination, pre_value)
         if (

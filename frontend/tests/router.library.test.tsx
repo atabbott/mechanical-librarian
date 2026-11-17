@@ -5316,7 +5316,7 @@ describe('Library route', () => {
         return {
           confirmation: { status: 'confirmed' as const, case: current },
           ...owner,
-          schema_version: 'review-decision-v1',
+          schema_version: 'human-decision-ack-v2' as const,
           invalidation_sequences: [],
         }
       }),
@@ -7062,7 +7062,7 @@ describe('Library route', () => {
           ...decision,
           confirmation: { status: 'confirmed' as const, case: current },
           invalidation_sequences: [],
-          schema_version: 'review-decision-v1' as const,
+          schema_version: 'human-decision-ack-v2' as const,
         }
       }),
     }
@@ -8073,7 +8073,7 @@ describe('Library route', () => {
         return {
           confirmation: { status: 'confirmed' as const, case: current },
           invalidation_sequences: [],
-          schema_version: 'review-decision-v1' as const,
+          schema_version: 'human-decision-ack-v2' as const,
           actor: 'owner' as const,
           application: 'apply' as const,
           application_reason: null,
@@ -8153,7 +8153,7 @@ describe('Library route', () => {
         return {
           confirmation: { status: 'confirmed' as const, case: current },
           invalidation_sequences: [],
-          schema_version: 'review-decision-v1' as const,
+          schema_version: 'human-decision-ack-v2' as const,
           actor: 'owner' as const,
           application: 'apply' as const,
           application_reason: null,
@@ -8258,7 +8258,7 @@ describe('Library route', () => {
         return {
           confirmation: { status: 'confirmed' as const, case: currentDetail },
           invalidation_sequences: [],
-          schema_version: 'review-decision-v1' as const,
+          schema_version: 'human-decision-ack-v2' as const,
           actor: 'owner' as const,
           application: 'apply' as const,
           application_reason: null,
@@ -8334,7 +8334,7 @@ describe('Library route', () => {
         return {
           confirmation: { status: 'confirmed' as const, case: current },
           invalidation_sequences: [],
-          schema_version: 'review-decision-v1' as const,
+          schema_version: 'human-decision-ack-v2' as const,
           actor: 'owner' as const,
           application: 'apply' as const,
           application_reason: null,
@@ -8398,7 +8398,7 @@ describe('Library route', () => {
         return {
           confirmation: { status: 'confirmed' as const, case: current },
           invalidation_sequences: [],
-          schema_version: 'review-decision-v1' as const,
+          schema_version: 'human-decision-ack-v2' as const,
           actor: 'owner' as const,
           application: 'apply' as const,
           application_reason: null,
@@ -8482,7 +8482,7 @@ describe('Library route', () => {
         return {
           confirmation: { status: 'confirmed' as const, case: await refresh },
           invalidation_sequences: [],
-          schema_version: 'review-decision-v1' as const,
+          schema_version: 'human-decision-ack-v2' as const,
           actor: 'owner' as const,
           application: 'apply' as const,
           application_reason: null,
@@ -8600,7 +8600,7 @@ describe('Library route', () => {
           { ...detail, fields },
           {
             invalidation_sequences: [],
-            schema_version: 'review-decision-v1',
+            schema_version: 'human-decision-ack-v2' as const,
             actor: 'owner',
             application: 'apply' as const,
             application_reason: null,
@@ -8914,7 +8914,7 @@ describe('Library route', () => {
         return {
           confirmation: { status: 'confirmed' as const, case: current },
           invalidation_sequences: [],
-          schema_version: 'review-decision-v1' as const,
+          schema_version: 'human-decision-ack-v2' as const,
           actor: 'owner' as const,
           application: 'apply' as const,
           application_reason: null,
@@ -9135,7 +9135,7 @@ describe('Library route', () => {
         return {
           confirmation: { status: 'confirmed' as const, case: current },
           invalidation_sequences: [],
-          schema_version: 'review-decision-v1' as const,
+          schema_version: 'human-decision-ack-v2' as const,
           ...decision,
         }
       })
@@ -9336,7 +9336,7 @@ describe('Library route', () => {
           return {
             confirmation: { status: 'confirmed' as const, case: current },
             invalidation_sequences: [],
-            schema_version: 'review-decision-v1' as const,
+            schema_version: 'human-decision-ack-v2' as const,
             ...decision,
           }
         }),
@@ -9870,7 +9870,7 @@ describe('Library route', () => {
           return {
             confirmation: { status: 'confirmed' as const, case: current },
             invalidation_sequences: [],
-            schema_version: 'review-decision-v1',
+            schema_version: 'human-decision-ack-v2' as const,
             actor: 'owner',
             application: 'apply' as const,
             application_reason: null,
@@ -10978,7 +10978,7 @@ describe('Library route', () => {
         return {
           confirmation: { status: 'confirmed' as const, case: current },
           invalidation_sequences: [],
-          schema_version: 'review-decision-v1',
+          schema_version: 'human-decision-ack-v2' as const,
           actor: 'owner',
           application: 'apply' as const,
           application_reason: null,
@@ -11104,7 +11104,7 @@ describe('Library route', () => {
         return {
           confirmation: { status: 'confirmed' as const, case: current },
           invalidation_sequences: [90, 91, 92],
-          schema_version: 'review-decision-v1',
+          schema_version: 'human-decision-ack-v2' as const,
           actor: 'owner',
           application: 'apply' as const,
           application_reason: null,
@@ -11206,7 +11206,7 @@ describe('Library route', () => {
           ...decision,
           confirmation: { status: 'confirmed' as const, case: current },
           invalidation_sequences: [90],
-          schema_version: 'review-decision-v1',
+          schema_version: 'human-decision-ack-v2' as const,
         }
       }),
     }
@@ -11766,7 +11766,7 @@ describe('Library route', () => {
         return {
           confirmation: { status: 'confirmed' as const, case: current },
           invalidation_sequences: [40, 41, 42],
-          schema_version: 'review-decision-v1' as const,
+          schema_version: 'human-decision-ack-v2' as const,
           actor: 'owner' as const,
           application: 'apply' as const,
           application_reason: null,
@@ -11883,7 +11883,7 @@ describe('Library route', () => {
         return {
           confirmation: { status: 'confirmed' as const, case: current },
           invalidation_sequences: [70, 71, 72],
-          schema_version: 'review-decision-v1' as const,
+          schema_version: 'human-decision-ack-v2' as const,
           actor: 'owner' as const,
           application: 'apply' as const,
           application_reason: null,
@@ -11969,7 +11969,7 @@ describe('Library route', () => {
         return {
           confirmation: { status: 'confirmed' as const, case: current },
           invalidation_sequences: [80, 81, 82],
-          schema_version: 'review-decision-v1' as const,
+          schema_version: 'human-decision-ack-v2' as const,
           actor: 'owner' as const,
           application: 'apply' as const,
           application_reason: null,
@@ -12070,7 +12070,7 @@ describe('Library route', () => {
           { ...detail, fields: [titleField, authorsField] },
           {
             invalidation_sequences: [],
-            schema_version: 'review-decision-v1',
+            schema_version: 'human-decision-ack-v2' as const,
             actor: 'owner',
             application: 'apply' as const,
             application_reason: null,
@@ -12136,7 +12136,7 @@ describe('Library route', () => {
         { ...detail, fields: [titleField, authorsField] },
         {
           invalidation_sequences: [],
-          schema_version: 'review-decision-v1' as const,
+          schema_version: 'human-decision-ack-v2' as const,
           actor: 'owner' as const,
           application: 'apply' as const,
           application_reason: null,
@@ -12200,7 +12200,7 @@ describe('Library route', () => {
         { ...detail, fields: [titleField, authorsField] },
         {
           invalidation_sequences: [],
-          schema_version: 'review-decision-v1' as const,
+          schema_version: 'human-decision-ack-v2' as const,
           actor: 'owner' as const,
           application: 'apply' as const,
           application_reason: null,
@@ -12267,7 +12267,7 @@ describe('Library route', () => {
         { ...detail, fields: [titleField, authorsField] },
         {
           invalidation_sequences: [],
-          schema_version: 'review-decision-v1' as const,
+          schema_version: 'human-decision-ack-v2' as const,
           actor: 'owner' as const,
           application: 'apply' as const,
           application_reason: null,
@@ -12358,7 +12358,7 @@ describe('Library route', () => {
           return {
             confirmation: { status: 'confirmed' as const, case: current },
             invalidation_sequences: [],
-            schema_version: 'review-decision-v1',
+            schema_version: 'human-decision-ack-v2' as const,
             actor: 'owner',
             application: 'apply' as const,
             application_reason: null,
@@ -12804,6 +12804,9 @@ describe('Library route', () => {
           ownerControl: {
             entry: { maxCharacters: 512, suggestions: [] },
             subset: null,
+            names: null,
+            clear: false,
+            current: null,
             withdraw: null,
           },
         }),
@@ -12821,6 +12824,9 @@ describe('Library route', () => {
           ownerControl: {
             entry: { maxCharacters: 512, suggestions: [] },
             subset: null,
+            names: null,
+            clear: false,
+            current: null,
             withdraw: null,
           },
         }),
@@ -13178,7 +13184,7 @@ describe('Library route', () => {
         return {
           confirmation: { status: 'confirmed' as const, case: current },
           invalidation_sequences: [],
-          schema_version: 'review-decision-v1',
+          schema_version: 'human-decision-ack-v2' as const,
           actor: 'owner',
           application: 'apply' as const,
           application_reason: null,
@@ -16746,7 +16752,7 @@ describe('Library counts, search scope and grouped Attention (#1284)', () => {
         return {
           confirmation: { status: 'confirmed' as const, case: current },
           invalidation_sequences: [],
-          schema_version: 'review-decision-v1' as const,
+          schema_version: 'human-decision-ack-v2' as const,
           actor: 'owner' as const,
           application: 'apply' as const,
           application_reason: null,

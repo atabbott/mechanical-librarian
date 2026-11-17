@@ -1,7 +1,7 @@
 // A Library field's settled reading: its current value, its recorded outcome
 // and the automatic statements beside it. Moved out of the Library route under
 // the route-size rule (#1571).
-import { displayValue } from '../api/http'
+import { displayValue, isClear } from '../api/http'
 import { completionOutcome, decisionValue, sameSelectedValue, valueText } from '../fieldDecision'
 import type { ReviewField } from '../fieldDecision'
 import {
@@ -11,7 +11,7 @@ import {
   ownerContext,
   selectedAutomaticLanguageForm,
 } from '../fieldReasons'
-import { destinationLabel } from '../labels'
+import { clearedSentence, destinationLabel } from '../labels'
 import { ChoiceEvidencePanel, DescriptionText } from './FieldDecisionChoices'
 import type { PinControl } from '../fieldPin'
 import { PinButton } from './FieldDecisionPin'
@@ -43,7 +43,7 @@ export function SettledFieldContext({
       {reasonShown ? (
         <p className={actionable ? 'decision-recorded' : 'decision-context'}>
           {actionable
-            ? `${fieldReason(field)}${field.humanDecision || field.automaticDecision ? ` The recorded value remains ${decisionValue(field)}.` : ''}`
+            ? `${fieldReason(field)}${field.humanDecision || field.automaticDecision ? ` ${recordedValueSentence(field)}` : ''}`
             : field.earlierAutomaticValue
               ? 'Automatic chose a value before you entered Preview mode. Automatic doesn’t write in Preview, and turning it on decides this field again.'
               : 'No source offered a different value.'}
@@ -55,6 +55,12 @@ export function SettledFieldContext({
     </>
   )
 }
+
+// A recorded clear has no value to remain; its sentence says what was done (#1523).
+const recordedValueSentence = (field: ReviewField) =>
+  isClear(field.humanDecision?.selected_value)
+    ? clearedSentence(field.destination)
+    : `The recorded value remains ${decisionValue(field)}.`
 
 export function ContextValue({
   field,

@@ -2,6 +2,9 @@
 
 - Status: accepted
 - Date: 2026-07-26
+- Amended by: [ADR-0105](0105-going-back-after-a-write.md) (proposed: a work
+  written in the last 30 days keeps its case with the transition reason
+  `recent_write` when nothing is actionable)
 
 ## Decision
 

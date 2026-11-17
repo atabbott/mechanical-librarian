@@ -5,7 +5,7 @@ import json
 import os
 from collections.abc import Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import patch
 
 import httpx
@@ -40,9 +40,11 @@ from mechanical_librarian.application.field_effects import (
 from mechanical_librarian.domain.field_effect import (
     EffectAuthority,
     EffectConsent,
+    FieldEffectError,
     FieldEffectOperation,
     FieldEffectPlan,
     field_value_version,
+    project_decision_value,
 )
 from mechanical_librarian.domain.metadata_report import (
     MAX_DESCRIPTION_CHARACTERS,
@@ -340,6 +342,167 @@ def test_empty_collections_and_service_series_shape_are_normalized(
     assert case.target.read(_plan("series", None, desired["series"])).value == [
         {"name": "Old", "sequence": "2.5"}
     ]
+
+
+def test_a_plan_admits_an_empty_desired_value_only_for_an_owner_clear() -> None:
+    plan = _plan("subtitle", "Old subtitle", None)
+    raw = plan.to_data()
+    # The empty desired value is present and null, never a missing key.
+    assert "desired_value" in raw and raw["desired_value"] is None
+    assert FieldEffectPlan.from_data(raw) == plan
+    assert project_decision_value("genres", {"kind": "empty", "value": None}) is None
+    for destination in ("title", "authors", "isbn", "series"):
+        with pytest.raises(FieldEffectError):
+            project_decision_value(destination, {"kind": "empty", "value": None})
+        with pytest.raises(FieldEffectError, match="invalid_value"):
+            _plan(destination, None, None)
+    with pytest.raises(FieldEffectError):
+        project_decision_value("subtitle", {"kind": "empty", "value": ""})
+    automatic = EffectAuthority(
+        "automatic_decision_" + "a" * 64,
+        "review_case_" + "b" * 64,
+        "c" * 64,
+        "persisted_review_case",
+        "automatic_policy",
+        "candidate",
+        "policy",
+        "f" * 64,
+    )
+    with pytest.raises(FieldEffectError, match="invalid_value"):
+        FieldEffectPlan.create(
+            **{
+                **{
+                    key: getattr(plan, key)
+                    for key in (
+                        "connection",
+                        "library",
+                        "work_id",
+                        "destination",
+                        "pre_value",
+                        "desired_value",
+                        "target_fingerprint",
+                        "target_version",
+                        "dependency_digests",
+                        "consent",
+                        "capability_digest",
+                        "created_at",
+                    )
+                },
+                "authority": automatic,
+            }
+        )
+
+
+# Probe D2 (#1523): the payload that empties each clearable field on every
+# pinned Audiobookshelf, and the form the service reads it back in.
+_CLEARS: tuple[tuple[str, object, object, object], ...] = (
+    ("subtitle", "Old subtitle", None, None),
+    ("publisher", "Old Press", None, None),
+    ("genres", ["Old genre"], [], []),
+    ("narrators", ["Old Reader"], [], []),
+)
+
+
+@pytest.mark.parametrize(
+    ("destination", "held", "payload", "stored"),
+    _CLEARS,
+    ids=("subtitle", "publisher", "genres", "narrators"),
+)
+def test_a_clear_sends_the_one_payload_that_empties_its_field(
+    case: _Case,
+    destination: str,
+    held: object,
+    payload: object,
+    stored: object,
+) -> None:
+    case.detail["media"]["metadata"][destination] = held
+    plan = _plan(destination, held, None)
+    assert plan.desired_value is None
+    assert case.target.apply(plan).outcome == "accepted"
+    patch = next(request for request in case.requests if request.method == "PATCH")
+    assert json.loads(patch.content) == {"metadata": {destination: payload}}
+    assert case.detail["media"]["metadata"][destination] == stored
+    after = case.target.read(plan)
+    assert (after.value, after.version) == (
+        None,
+        field_value_version(destination, None),
+    )
+    assert after.matches(plan, desired=True, check_version=True)
+
+
+@pytest.mark.parametrize(
+    "form",
+    ("null", "empty-string", "absent", "empty-list"),
+    ids=("null", "empty-string", "absent", "empty-list"),
+)
+@pytest.mark.parametrize(
+    "destination",
+    ("title", "subtitle", "publisher", "authors", "genres", "narrators", "tags"),
+    ids=("title", "subtitle", "publisher", "authors", "genres", "narrators", "tags"),
+)
+def test_every_empty_form_reads_as_no_value(
+    case: _Case, destination: str, form: str
+) -> None:
+    media = cast("dict[str, Any]", case.detail["media"])
+    holder = cast(
+        "dict[str, object]", media if destination == "tags" else media["metadata"]
+    )
+    if destination == "tags":
+        media["metadata"].pop("tags", None)
+    holder.pop(destination, None)
+    if form != "absent":
+        holder[destination] = {"null": None, "empty-string": "", "empty-list": []}[form]
+    observed = case.target.read(
+        _plan(
+            destination,
+            None,
+            ["New"]
+            if destination in {"authors", "genres", "narrators", "tags"}
+            else "New",
+        )
+    )
+    assert (observed.value, observed.version) == (
+        None,
+        field_value_version(destination, None),
+    )
+
+
+@pytest.mark.parametrize(
+    ("destination", "wrong"),
+    (
+        ("subtitle", []),
+        ("publisher", []),
+        ("genres", None),
+        ("genres", ""),
+        ("narrators", None),
+        ("narrators", ""),
+    ),
+    ids=(
+        "subtitle-list",
+        "publisher-list",
+        "genres-null",
+        "genres-empty-string",
+        "narrators-null",
+        "narrators-empty-string",
+    ),
+)
+def test_a_wrong_empty_form_is_ignored_and_only_the_read_back_shows_it(
+    case: _Case, destination: str, wrong: object
+) -> None:
+    held: object = ["Old"] if destination in {"genres", "narrators"} else "Old"
+    case.detail["media"]["metadata"][destination] = held
+    with patch(
+        "mechanical_librarian.adapters.library_services."
+        "audiobookshelf_field_effect._media_payload",
+        lambda name, value: {"metadata": {name: wrong}},
+    ):
+        plan = _plan(destination, held, None)
+        assert case.target.apply(plan).outcome == "accepted"
+    # The service answered 200 and kept the value: the read-back is what
+    # tells, so the guarded path never verifies such a write.
+    after = case.target.read(plan)
+    assert after.value == held
+    assert not after.matches(plan, desired=True, check_version=True)
 
 
 def test_immediate_prewrite_destination_or_version_drift_refuses_patch(

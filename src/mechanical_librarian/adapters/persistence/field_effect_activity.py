@@ -44,7 +44,7 @@ import stat
 import sys
 import time
 from collections import deque
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import closing, contextmanager, nullcontext
 from copy import deepcopy
 from dataclasses import KW_ONLY, dataclass, replace
@@ -127,6 +127,8 @@ from mechanical_librarian.domain.description_advice import (
     DescriptionAdviceCandidate,
 )
 from mechanical_librarian.domain.field_effect import (
+    CLEARABLE_DESTINATIONS,
+    EMPTY_DECISION_KIND,
     FIELD_EFFECT_EVENT_SCHEMA,
     FIELD_EFFECT_FAILURES,
     SUPPORTED_DESTINATIONS,
@@ -146,8 +148,7 @@ from mechanical_librarian.domain.field_effect import (
 )
 from mechanical_librarian.domain.human_decision import (
     HUMAN_DECISION_EVENT_SCHEMA,
-    OWNER_SUBSET_DESTINATION,
-    OWNER_TEXT_DESTINATIONS,
+    OWNER_ENTRY_DESTINATIONS,
     VALUE_OUTCOMES,
     DecisionScope,
     HumanDecision,
@@ -261,11 +262,24 @@ _OWNER_ACTION_COUNT_SQL = (
     + ")"
 )
 
+# The fields a case's own write can set: a cover is chosen through its
+# consideration, never kept or entered.
+_WRITTEN_DESTINATIONS = tuple(
+    sorted(
+        destination for destination in SUPPORTED_DESTINATIONS if destination != "cover"
+    )
+)
+
 _CORRECTIVE_KEEP_CURRENT_SQL = (
     "human.outcome='keep_current' AND EXISTS (SELECT 1 FROM review_cases review, "
     "json_each(review.document,'$.target.fields') target WHERE review.review_case_id=human.review_case_id "
     "AND json_extract(target.value,'$.destination')=human.destination "
-    "AND json_extract(target.value,'$.state')='value' AND ((human.destination IN "
+    # A clearable field the case read empty goes back to empty (#1523).
+    "AND ((human.destination IN ("
+    + ",".join(f"'{name}'" for name in sorted(CLEARABLE_DESTINATIONS))
+    + ") "
+    "AND json_extract(target.value,'$.state') IN ('null','empty','missing')) OR "
+    "json_extract(target.value,'$.state')='value' AND ((human.destination IN "
     "('authors','genres','narrators','tags','series') AND "
     "json_type(target.value,'$.value')='array' "
     "AND json_array_length(json_extract(target.value,'$.value'))>0) OR "
@@ -274,7 +288,7 @@ _CORRECTIVE_KEEP_CURRENT_SQL = (
     "(human.destination NOT IN "
     "('authors','genres','narrators','tags','series','cover') "
     "AND json_type(target.value,'$.value')='text' "
-    "AND length(json_extract(target.value,'$.value'))>0)) AND EXISTS (SELECT 1 FROM field_effects prior "
+    "AND length(json_extract(target.value,'$.value'))>0))) AND EXISTS (SELECT 1 FROM field_effects prior "
     "JOIN (SELECT decision_id,ordinal FROM human_decisions earlier WHERE "
     "earlier.review_case_id=human.review_case_id AND earlier.destination=human.destination "
     "AND earlier.ordinal<human.ordinal UNION ALL SELECT decision_id,-1 FROM "
@@ -282,8 +296,35 @@ _CORRECTIVE_KEEP_CURRENT_SQL = (
     "AND earlier.destination=human.destination UNION ALL SELECT decision_id,-1 FROM "
     "description_decisions earlier WHERE earlier.review_case_id=human.review_case_id "
     "AND human.destination='description') recorded ON recorded.decision_id=prior.decision_id "
-    "WHERE prior.state='verified'))"
+    "WHERE prior.state='verified' "
+    # Only a write in the case's own episode, as `_episode_write` reads it: a
+    # returned case's earlier write is not what the library holds (#1358).
+    "AND +prior.rowid>COALESCE((SELECT effect_floor FROM review_case_episodes "
+    "WHERE review_case_id=human.review_case_id),0)))"
 )
+
+
+def _written_plan(
+    document: str, review_case_id: str, destination: str
+) -> FieldEffectPlan:
+    """The plan of a case's verified write to one field, as that field reads it.
+
+    A subtitle a title plan wrote as its companion is read from the
+    companion. A plan that names another case or field is a corrupt binding.
+    """
+    try:
+        plan: FieldEffectPlan | None = FieldEffectOperation.from_json(document).plan
+    except FieldEffectError as error:
+        raise FieldEffectError("authority_binding") from error
+    if destination == "subtitle" and plan is not None and plan.subtitle_companion:
+        plan = plan.subtitle_plan()
+    if (
+        plan is None
+        or plan.authority.review_case_id != review_case_id
+        or plan.destination != destination
+    ):
+        raise FieldEffectError("authority_binding")
+    return plan
 
 
 def _operational_signal(
@@ -565,6 +606,8 @@ class _ActivityDependencies:
         str, tuple[AuthoredDescriptionDecision, DescriptionAdviceCandidate]
     ]
     replaced: dict[str, object]
+    # Each owner decision's first plan and latest state, for a keep (#1523).
+    went_back: dict[str, dict[str, object]]
 
 
 @dataclass(slots=True)
@@ -1319,28 +1362,18 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         if type(decision) is HumanDecision:
             predecessor = self._human_predecessor(decision)
         if predecessor is not None:
-            try:
-                previous = FieldEffectOperation.from_json(predecessor[0])
-            except FieldEffectError as error:
-                raise FieldEffectError("authority_binding") from error
-            previous_plan = (
-                previous.plan.subtitle_plan()
-                if decision.destination == "subtitle"
-                and previous.plan.subtitle_companion is not None
-                else previous.plan
-            )
-            if (
-                previous_plan is None
-                or previous_plan.authority.review_case_id != decision.review_case_id
-                or previous_plan.destination != decision.destination
-            ):
-                raise FieldEffectError("authority_binding")
-            pre_value = previous_plan.desired_value
+            pre_value = _written_plan(
+                predecessor[0], decision.review_case_id, decision.destination
+            ).desired_value
         if type(decision) is HumanDecision and decision.outcome == "keep_current":
-            if predecessor is not None:
-                value = self._decision_value_for_target(
-                    decision.destination, case_pre_value
-                )
+            # A keep writes only after a write it goes back from. Without one
+            # it binds nothing, and the scheduler names and skips it rather
+            # than planning an empty value (#1523).
+            if predecessor is None:
+                raise FieldEffectError("authority_binding")
+            value = self._decision_value_for_target(
+                decision.destination, case_pre_value
+            )
         dependency_digests: tuple[str, ...] = (decision.target_fingerprint,)
         if type(decision) is CoverAutomaticDecision:
             dependency_digests = (
@@ -1559,6 +1592,19 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             else cached.case(review_case_id)
         )
 
+    def _recorded_case(self, review_case_id: str) -> ReviewCase:
+        """Read one validated case by its id, current or not."""
+        row = self._connection.execute(
+            "SELECT document FROM review_cases WHERE review_case_id=?",
+            (review_case_id,),
+        ).fetchone()
+        if row is None:
+            raise FieldEffectError("authority_binding")
+        try:
+            return ReviewCase.from_json(row[0])
+        except ValueError as error:
+            raise FieldEffectError("authority_binding") from error
+
     def _read_current_case(self, review_case_id: str) -> ReviewCase:
         envelope = json.loads(self.get_review_case(review_case_id))
         if (
@@ -1716,16 +1762,22 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             case_pre_value = self._cover_pre_value(case)
         return case_pre_value
 
-    def _human_predecessor(
-        self, decision: HumanDecision
+    def _episode_write(
+        self, review_case_id: str, destination: str, before: str | None
     ) -> sqlite3.Row | tuple[str, ...] | None:
-        """Find the verified effect an owner decision follows."""
-        predecessor: sqlite3.Row | tuple[str, ...] | None
-        predecessor = self._connection.execute(
+        """The verified effect of the case's latest decision on a field that
+        wrote it in the case's episode, or of the latest before ``before``.
+
+        One read for both of its uses: the write an owner decision follows,
+        whose desired value is its plan's pre-value, and the value a case that
+        wrote a field treats as current for owner entry (#1523, S5).
+        """
+        row: sqlite3.Row | tuple[str, ...] | None = self._connection.execute(
             "SELECT effect.document FROM field_effects effect JOIN ("
             "SELECT decision_id,ordinal FROM human_decisions earlier WHERE "
-            "earlier.review_case_id=? AND earlier.destination=? AND earlier.ordinal<("
-            "SELECT ordinal FROM human_decisions WHERE decision_id=?) UNION ALL "
+            "earlier.review_case_id=? AND earlier.destination=? AND earlier.ordinal<"
+            "COALESCE((SELECT ordinal FROM human_decisions WHERE decision_id=?),"
+            "9223372036854775807) UNION ALL "
             "SELECT decision_id,-1 FROM automatic_decisions earlier WHERE "
             "earlier.review_case_id=? AND earlier.destination=?"
             ") recorded ON (recorded.decision_id=effect.decision_id OR recorded.decision_id="
@@ -1738,14 +1790,59 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             "review_case_episodes WHERE review_case_id=?),0) "
             "ORDER BY recorded.ordinal DESC,effect.rowid LIMIT 1",
             (
-                decision.review_case_id,
-                decision.destination,
-                decision.decision_id,
-                decision.review_case_id,
-                decision.destination,
-                decision.review_case_id,
+                review_case_id,
+                destination,
+                before,
+                review_case_id,
+                destination,
+                review_case_id,
             ),
         ).fetchone()
+        return row
+
+    @local_operation
+    def written_field_values(
+        self, review_case_id: str
+    ) -> tuple[tuple[str, object], ...]:
+        return self._written_field_values(review_case_id)
+
+    def _written_field_values(
+        self, review_case_id: str
+    ) -> tuple[tuple[str, object], ...]:
+        """What the case's own latest verified write in its episode put in
+        each field but the cover; ``None`` is a write that emptied it (#1523,
+        S5).
+
+        Owner entry on the case that wrote a field compares with this value
+        rather than the target its report read before the write, so the
+        written value is the one refused as unchanged and the value it
+        replaced can be chosen at once. The case detail also says which
+        fields the case wrote, so it offers no keep of what it replaced.
+        """
+        try:
+            values: list[tuple[str, object]] = []
+            for destination in _WRITTEN_DESTINATIONS:
+                row = self._episode_write(review_case_id, destination, None)
+                if row is not None:
+                    values.append(
+                        (
+                            destination,
+                            _written_plan(
+                                row[0], review_case_id, destination
+                            ).desired_value,
+                        )
+                    )
+            return tuple(values)
+        except sqlite3.Error as error:
+            raise FieldEffectError("persistence") from error
+
+    def _human_predecessor(
+        self, decision: HumanDecision
+    ) -> sqlite3.Row | tuple[str, ...] | None:
+        """Find the verified effect an owner decision follows."""
+        predecessor = self._episode_write(
+            decision.review_case_id, decision.destination, decision.decision_id
+        )
         if decision.destination == "description":
             authored_predecessor = self._connection.execute(
                 "SELECT effect.document FROM field_effects effect "
@@ -1763,6 +1860,48 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             ):
                 predecessor = authored_predecessor
         return predecessor
+
+    def _followed_write(
+        self, decision: HumanDecision
+    ) -> sqlite3.Row | tuple[str, ...] | None:
+        """The verified write a keep went back on, by the reference frozen
+        when it was recorded (#1523): never read again from episodes."""
+        if decision.follows is None:
+            return None
+        row: sqlite3.Row | tuple[str, ...] | None = self._connection.execute(
+            "SELECT document FROM field_effects WHERE decision_id=? "
+            "AND state='verified' ORDER BY rowid LIMIT 1",
+            (decision.follows,),
+        ).fetchone()
+        return row
+
+    def _unplanned_keep_values(
+        self, decision: HumanDecision
+    ) -> dict[str, object] | None:
+        """What a keep with no plan yet will write back, as planning would
+        bind it: from the write it follows to the case's own value (#1523).
+
+        A keep that follows no write of the case is a plain keep: ``None``.
+        Both come from immutable records, the write its document names and
+        its own case, so no later return or write changes them.
+        """
+        followed = self._followed_write(decision)
+        if followed is None:
+            return None
+        try:
+            case = self._recorded_case(decision.review_case_id)
+            before = self._case_target_pre_value(case, decision.destination)
+            written = _written_plan(
+                followed[0], decision.review_case_id, decision.destination
+            ).desired_value
+        except FieldEffectError:
+            return None
+        return {
+            "written": written,
+            "before": before,
+            "state": None,
+            "failure": None,
+        }
 
     def _cover_pre_value(self, case: ReviewCase) -> str | None:
         """Bind a cover write to the bytes its case's report read (#1362)."""
@@ -1854,7 +1993,11 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         return self._previous_field_values(connection, library, work_id)
 
     def _previous_field_values(
-        self, connection: str, library: str, work_id: str
+        self,
+        connection: str,
+        library: str,
+        work_id: str,
+        reading: Mapping[str, object] | None = None,
     ) -> tuple[tuple[str, object], ...]:
         """What each owner-entry field held before the work's latest verified write.
 
@@ -1865,6 +2008,11 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         a title plan wrote as its companion is that destination's latest write
         too, and offers nothing. A pre-image the plan and its verified audit
         disagree about is a corruption signal and is never offered (ADR-0085).
+
+        An empty pre-image offers nothing: emptying the input is that choice
+        (#1523, amendment 1). ``reading`` is what a case reads in each field
+        for owner entry; given, a pre-image is offered only while its field
+        still reads the value the write left (#1523, S6).
         """
         try:
             rows = self._connection.execute(
@@ -1899,10 +2047,14 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             for destination, (_, plan_id, _, document, _) in sorted(latest.items()):
                 plan = FieldEffectOperation.from_json(document).plan
                 if (
-                    destination
-                    not in (*OWNER_TEXT_DESTINATIONS, OWNER_SUBSET_DESTINATION)
+                    destination not in OWNER_ENTRY_DESTINATIONS
                     or plan.destination != destination
                     or plan.pre_value is None
+                    or (
+                        reading is not None
+                        and _canonical_json(reading.get(destination))
+                        != _canonical_json(plan.desired_value)
+                    )
                 ):
                     continue
                 verified = self._connection.execute(
@@ -1927,7 +2079,14 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
     def _decision_value_for_target(
         destination: str, value: object
     ) -> dict[str, object]:
+        """The value a keep on a written case writes back: the case's own.
+
+        A clearable field the case read empty goes back to empty, as an
+        owner's clear does (#1523).
+        """
         if value is None:
+            if destination in CLEARABLE_DESTINATIONS:
+                return {"kind": EMPTY_DECISION_KIND, "value": None}
             raise FieldEffectError("authority_binding")
         return {"kind": decision_value_kind(destination), "value": value}
 
@@ -3044,6 +3203,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         )
         policy_profiles = self._activity_policy_profiles(rows, dependency_limit)
         automatic_decisions = _activity_automatic_decisions(rows, document_limit)
+        replaced, went_back = self._activity_replaced_values(rows)
         dependencies = _ActivityDependencies(
             report_documents=report_documents,
             reports=reports,
@@ -3053,7 +3213,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 automatic_decisions, dependency_limit, document_limit
             ),
             authored_records=self._activity_authored_records(rows),
-            replaced=self._activity_replaced_values(rows),
+            replaced=replaced,
+            went_back=went_back,
         )
         builders: dict[
             str,
@@ -3293,8 +3454,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
 
     def _activity_replaced_values(
         self, rows: list[tuple[Any, ...]]
-    ) -> dict[str, object]:
-        """Return what each owner decision's own first plan replaced."""
+    ) -> tuple[dict[str, object], dict[str, dict[str, object]]]:
+        """Return what each owner decision's own first plan replaced, and
+        where each owner decision's latest write stands (#1523)."""
         # An earlier write on the same case can leave it different from the
         # pinned report, and the decision's row names the same value its
         # Verified row does (#1286).
@@ -3306,6 +3468,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             }
         )
         replaced: dict[str, object] = {}
+        # A keep plans a write only to go back on the case's own write, so its
+        # first plan names the written value and the value before it (#1523).
+        went_back: dict[str, dict[str, object]] = {}
         if human_ids:
             for decision_id, effect_document in self._connection.execute(
                 "SELECT decision_id,document FROM field_effects WHERE decision_id IN ("
@@ -3313,10 +3478,20 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 + ") ORDER BY rowid DESC",
                 human_ids,
             ):
-                replaced[decision_id] = FieldEffectOperation.from_json(
-                    effect_document
-                ).plan.pre_value
-        return replaced
+                effect = FieldEffectOperation.from_json(effect_document)
+                plan = effect.plan
+                replaced[decision_id] = plan.pre_value
+                # Rows come newest first: the first seen is where the
+                # decision's write stands now (#1523).
+                latest = went_back.get(decision_id, {})
+                went_back[decision_id] = {
+                    "destination": plan.destination,
+                    "written": plan.pre_value,
+                    "before": plan.desired_value,
+                    "state": latest.get("state", effect.state),
+                    "failure": latest.get("failure", effect.failure),
+                }
+        return replaced, went_back
 
     def _project_field_effect(
         self, row: _ActivityRow, dependencies: _ActivityDependencies
@@ -3589,13 +3764,26 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         durable["selected_value"] = decision.selected_value
         durable["target_fingerprint"] = decision.target_fingerprint
         # Only a decision that chose a new value names what its write
-        # replaced; a keep-current restore states the value it kept,
-        # not the one its corrective write overwrote (#1286).
+        # replaced as its pre-value (#1286); a keep-current restore
+        # reads below as the change its own plan made (#1523).
         if (
             decision.outcome in VALUE_OUTCOMES
             and decision.decision_id in dependencies.replaced
         ):
             durable["pre_value"] = dependencies.replaced[decision.decision_id]
+        if decision.outcome == "keep_current":
+            planned = dependencies.went_back.get(decision.decision_id)
+            if planned is None:
+                # Not planned yet (writes off for the field, say):
+                # the write it follows names what it will undo.
+                unplanned = self._unplanned_keep_values(decision)
+                if unplanned is not None:
+                    durable["went_back"] = unplanned
+            elif planned["destination"] == decision.destination:
+                durable["went_back"] = {
+                    key: planned[key]
+                    for key in ("written", "before", "state", "failure")
+                }
         return _finished_activity_event(row, durable)
 
     def _project_automatic_decision(

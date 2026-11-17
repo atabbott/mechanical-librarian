@@ -35,6 +35,7 @@ __all__ = [
     "failure_reason",
     "field_phrase",
     "keep_change",
+    "went_back_change",
     "policy_destination_label",
     "policy_option_label",
     "policy_setting_label",
@@ -179,8 +180,8 @@ def destination_label(destination: str) -> str:
 def field_phrase(label: str) -> str:
     """Set a field's label inside a compact sentence.
 
-    An ordinary label is lowercased ("Removed subtitle") and an all-capitals
-    acronym keeps its capitals ("Removed ISBN"); a whole sentence keeps the
+    An ordinary label is lowercased ("Cleared subtitle") and an all-capitals
+    acronym keeps its capitals ("Cleared ISBN"); a whole sentence keeps the
     label as it stands.
     """
     return label if label.isupper() else label.lower()
@@ -342,7 +343,8 @@ def set_change(
     before = value_text(destination, previous, limit=CHANGE_LIMIT)
     after = value_text(destination, new, limit=CHANGE_LIMIT)
     if after == ABSENT:
-        return ReadableChange(f"Removed {field_phrase(field)}", f"Removed {field}")
+        # A change that ends empty reads as a clear does in the review (#1523).
+        return ReadableChange(f"Cleared {field_phrase(field)}", f"Cleared {field}")
     # Kept only when the whole values read alike, not just their first
     # CHANGE_LIMIT characters: a late difference is still a change (#1281).
     if value_text(destination, previous, limit=sys.maxsize) == value_text(
@@ -354,6 +356,25 @@ def set_change(
         if named
         else f"{before} {_ARROW} {after}",
         f"Set {field} from {before} to {after}",
+    )
+
+
+def went_back_change(
+    destination: str, written: object, before: object
+) -> ReadableChange:
+    """State a keep that went back on the case's own write: from the written
+    value to the value before it, never as a value kept (#1523)."""
+    field = destination_label(destination)
+    if destination == "cover":
+        # Cover values are opaque image identities, as in ``set_change``.
+        return ReadableChange(
+            f"Written cover {_ARROW} earlier cover",
+            f"Set {field} back from the written image to the earlier image",
+        )
+    was = value_text(destination, written, limit=CHANGE_LIMIT)
+    back = value_text(destination, before, limit=CHANGE_LIMIT)
+    return ReadableChange(
+        f"{was} {_ARROW} {back}", f"Set {field} back from {was} to {back}"
     )
 
 

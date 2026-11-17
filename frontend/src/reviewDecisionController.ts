@@ -7,10 +7,12 @@ import {
   ApiError,
   CsrfRenewedError,
   PRE_CALL_SERVER_CODES,
+  isClear,
   refusalCopy,
 } from './api/http'
 import type { CaseDetailView, DecisionCommand, DecisionOutcome } from './api/http'
 import { STILL_PINNED } from './fieldPin'
+import { destinationPhrase } from './labels'
 import {
   beginDecisionEcho,
   confirmDecisionCase,
@@ -111,14 +113,32 @@ export const linkChanged = (error: unknown) =>
 export const ownerRefusalCopy = (
   error: unknown,
   field: CaseDetailView['fields'][number] | undefined,
+  command?: DecisionCommand,
 ): string | undefined => {
   if (!(error instanceof ApiError)) return undefined
+  const names = field?.destination === 'authors' || field?.destination === 'narrators'
   return {
+    // Keep current on the case that wrote a field it read empty would empty
+    // a field that can't be (#1523).
+    owner_value_required:
+      command?.outcome === 'keep_current' && field
+        ? `The ${destinationPhrase(field.destination)} can’t be emptied. Choose a new value.`
+        : field?.destination === 'authors'
+          ? 'Enter at least one author.'
+          : 'Enter a title.',
     owner_value_invalid:
       field?.destination === 'genres'
         ? 'These genres can’t be recorded. Choose up to 32 from the list.'
-        : 'This value can’t be recorded. Use plain text of up to 512 characters, with no links or file paths.',
-    owner_value_unchanged: 'That is already the current value.',
+        : names
+          ? 'These names can’t be recorded. Enter up to 32 different names, one per line, with no links or file paths.'
+          : 'This value can’t be recorded. Use plain text of up to 512 characters, with no links or file paths.',
+    owner_value_unchanged: isClear(command?.selectedValue)
+      ? 'This field is already empty.'
+      : names
+        ? 'Those are already the current names.'
+        : field?.destination === 'genres'
+          ? 'Those are already the current genres.'
+          : 'That is already the current value.',
     nothing_to_withdraw: 'No decision is recorded for this field.',
     automatic_hold:
       'This decision is holding automatic handling. Use Resume automatic handling to release it.',
@@ -416,7 +436,12 @@ export const useReviewDecisionController = ({
         return
       }
       const settledInPlace = ownerOutcomes[command.outcome]
-      announce(reviewCaseId, command.destination, settledInPlace ?? 'Your choice is recorded.')
+      // A clear's recorded line says it once, beside its pin (#1523).
+      announce(
+        reviewCaseId,
+        command.destination,
+        isClear(command.selectedValue) ? '' : (settledInPlace ?? 'Your choice is recorded.'),
+      )
       followed.current.delete(command.idempotencyKey)
       if (settledInPlace) {
         refreshAggregatesInBackground()
@@ -533,7 +558,7 @@ export const useReviewDecisionController = ({
             ? 'Your choice could not be confirmed. Choose Try the same decision again to send it once more.'
             : refusalCopy(
                 error,
-                ownerRefusalCopy(error, refreshedField) ??
+                ownerRefusalCopy(error, refreshedField, command) ??
                   'Your choice was not recorded. Choose again.',
               ),
         true,
