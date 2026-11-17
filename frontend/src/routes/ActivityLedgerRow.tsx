@@ -3,6 +3,7 @@ import { useRef, useState, type ReactNode } from 'react'
 import { BuildMismatchError } from '../api/http'
 import type { ActivityEventView, ActivityTransitionView } from '../api/http'
 import { categoryLabel, noteDetail, noteLabel, stateLabel } from '../activityLabels'
+import { IdentifierImportWithdrawal } from '../components/IdentifierImportWithdrawal'
 import { RecordedTime } from '../components/RecordedTime'
 import { StaleBuildRead } from '../components/StaleBuildRead'
 import { formatWhen } from '../dates'
@@ -376,6 +377,14 @@ export function ActivityEventRow({
               </div>
             ))}
           </dl>
+          {/* Only an identifiers file import's own row names it (#1478). */}
+          {event.identifier_import_id ? (
+            <IdentifierImportWithdrawal
+              event={event}
+              importId={event.identifier_import_id}
+              library={library}
+            />
+          ) : null}
           {event.transition_id ? (
             <ActivityTransitions
               key={changeId}

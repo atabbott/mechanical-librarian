@@ -380,6 +380,21 @@ export const createHttp = (): ReviewHttp => ({
   withdrawOwnerLink: vi.fn(async () => {
     throw new Error('not configured')
   }),
+  previewIdentifiers: vi.fn(async () => {
+    throw new Error('not configured')
+  }),
+  getIdentifierPreviewStatus: vi.fn(async () => {
+    throw new Error('not configured')
+  }),
+  importIdentifiers: vi.fn(async () => {
+    throw new Error('not configured')
+  }),
+  getIdentifierImport: vi.fn(async () => {
+    throw new Error('not configured')
+  }),
+  withdrawIdentifierImport: vi.fn(async () => {
+    throw new Error('not configured')
+  }),
   getReportDetail: vi.fn(async () => {
     throw new Error('not configured')
   }),
