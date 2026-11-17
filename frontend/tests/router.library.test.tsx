@@ -14590,6 +14590,37 @@ it('names Reload current case on the button its sentence names when the work cou
   expect(within(alert as HTMLElement).queryByRole('button', { name: 'Try again' })).toBeNull()
 })
 
+it('returns focus to the work after the page’s Reload current case reads it', async () => {
+  const authored = readCaseDetail(descriptionAdviceFixture)
+  const field = authored.fields.find((item) => item.destination === 'description')
+  if (!field) throw new Error('description fixture requires its field')
+  const http = createHttp()
+  let failing = false
+  http.getCaseDetail = vi.fn(async () => {
+    if (failing) throw new ApiError(503, 'persistence')
+    return { ...authored, id: 'case-1', fields: [field] }
+  })
+  http.recordDecision = vi.fn(async () => {
+    failing = true
+    throw new ApiError(503, 'persistence')
+  })
+  renderRoute('/library?lens=all&preview=case-1&field=description', http)
+  const user = userEvent.setup()
+  await user.click(
+    await screen.findByRole('radio', {
+      name: 'Choose advised value: Authored synthetic description.',
+    }),
+  )
+  const reload = await screen.findByRole('button', { name: 'Reload current case' })
+  failing = false
+  await user.click(reload)
+  await waitFor(() =>
+    expect(screen.queryByText(/could not be reloaded after your choice/u)).toBeNull(),
+  )
+  // The read that worked hands focus to the work, never to a stale line.
+  await waitFor(() => expect(document.activeElement).toHaveAttribute('data-route-focus'))
+})
+
 it('keeps focus on the failure line when a retry gets no answer and takes its button away', async () => {
   const authored = readCaseDetail(descriptionAdviceFixture)
   const field = authored.fields.find((item) => item.destination === 'description')

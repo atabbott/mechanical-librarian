@@ -142,9 +142,14 @@ export function FieldDecisionCanvas({
   const failureLine = useRef<HTMLParagraphElement>(null)
   // A line that arrives below the window is brought just into view, so a
   // choice that changed nothing never looks as if nothing happened.
+  // Only a line that arrives while the field is shown: a canvas that mounts
+  // after the page's own Reload leaves focus to the page's retry handling.
+  const shown = useRef(false)
   useEffect(() => {
     const line = failureLine.current
-    if (!choiceFailure || !line) return
+    const arrived = shown.current
+    shown.current = true
+    if (!arrived || !choiceFailure || !line) return
     line.scrollIntoView({ block: 'nearest' })
     // A retry that fails without one to offer again takes its button away:
     // the line holds the focus it had, never the page body.
