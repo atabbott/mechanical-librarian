@@ -30,7 +30,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from functools import partial
 from pathlib import Path
 from typing import Final, cast
@@ -3015,570 +3015,696 @@ def _installed_automatic_series_qualification(
     return {"installed_composition": True, "synthetic_cases": 3, "outcomes": outcomes}
 
 
-def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
-    image = IMAGES[version]
-    owner = "ml-f14-" + uuid.uuid4().hex
-    root = Path(tempfile.mkdtemp(prefix=owner + "-"))
-    key_ids: list[str] = []
+@dataclass
+class _QualificationRun:
+    """What one run owns and must clean up: its Docker container and keys."""
+
+    owner: str
+    root: Path
+    key_ids: list[str] = field(default_factory=list)
     root_token: str | None = None
     base: str | None = None
-    try:
-        library_dir = root / "library"
-        library_dir.mkdir(mode=0o700)
-        alpha_dir = library_dir / "alpha"
-        alpha_dir.mkdir(mode=0o700)
-        beta_dir = library_dir / "beta"
-        beta_dir.mkdir(mode=0o700)
-        gamma_dir = library_dir / "gamma"
-        gamma_dir.mkdir(mode=0o700)
-        audiobook_dir = gamma_dir / "Qualification Audiobook"
-        audiobook_dir.mkdir(mode=0o700)
-        _audiobook(audiobook_dir / "qualification-audiobook.m4b")
-        series_dir = library_dir / "series"
-        series_dir.mkdir(mode=0o700)
-        series_titles = {
-            "9780306406157": "Series supplied control",
-            "9780140328721": "Series missing control",
-            "9780261103573": "Series wrong author control",
-        }
-        series_scenarios = dict(
-            zip(
-                series_titles.values(),
-                ("supplied", "missing", "wrong_author"),
-                strict=True,
-            )
-        )
-        for isbn, title in series_titles.items():
-            _epub(series_dir / (isbn + ".epub"), title=title, isbn=isbn)
-        config_dir = root / "config"
-        config_dir.mkdir(mode=0o700)
-        metadata_dir = root / "metadata"
-        metadata_dir.mkdir(mode=0o700)
-        corpus_sources = _corpus_sources(corpus)
-        operator_metadata: dict[str, str] = {}
-        operator_authors: dict[str, str] = {}
-        if not corpus_sources:
-            _epub(alpha_dir / "qualification-alpha.epub")
-        if not corpus_sources:
-            _epub(beta_dir / "qualification-beta.epub")
-        if corpus_sources:
-            for index, source in enumerate(corpus_sources, 1):
-                destination = alpha_dir if index % 2 else beta_dir
-                isbn, title, author = _operator_epub(
-                    source, destination / f"operator-{index:03d}.epub", index
-                )
-                operator_metadata[isbn] = title
-                operator_authors[isbn] = author
-        _run(
-            "docker",
-            "run",
-            "-d",
-            "--name",
-            owner,
-            "--label",
-            OWNERSHIP_LABEL + "=" + owner,
-            "-p",
-            "127.0.0.1::80",
-            "-v",
-            str(config_dir) + ":/config",
-            "-v",
-            str(metadata_dir) + ":/metadata",
-            "-v",
-            str(library_dir) + ":/library:ro",
-            image,
-        )
-        port = _run("docker", "port", owner, "80/tcp").stdout.strip().rsplit(":", 1)[1]
-        base = "http://127.0.0.1:" + port
-        _wait(base)
-        username, password = "canary", secrets.token_urlsafe(24)
-        _request(
-            "POST",
-            base,
-            "/init",
-            payload={"newRoot": {"username": username, "password": password}},
-        )
-        login = _request(
-            "POST", base, "/login", payload={"username": username, "password": password}
-        )
-        root_token = _string(
-            _mapping(
-                _mapping(login, "root_login_invalid").get("user"), "root_login_invalid"
-            ).get("token"),
-            "root_login_invalid",
-        )
-        created = _mapping(
-            _request(
-                "POST",
-                base,
-                "/api/libraries",
-                token=root_token,
-                payload={
-                    "name": "canary-alpha",
-                    "folders": [{"fullPath": "/library/alpha"}],
-                    "mediaType": "book",
-                    "provider": "openlibrary",
-                    "settings": {"disableWatcher": True},
-                },
-            ),
-            "library_response_invalid",
-        )
-        library_id = _string(created.get("id"), "library_response_invalid")
-        second_created = _mapping(
-            _request(
-                "POST",
-                base,
-                "/api/libraries",
-                token=root_token,
-                payload={
-                    "name": "canary-beta",
-                    "folders": [{"fullPath": "/library/beta"}],
-                    "mediaType": "book",
-                    "provider": "openlibrary",
-                    "settings": {"disableWatcher": True},
-                },
-            ),
-            "library_response_invalid",
-        )
-        second_library_id = _string(
-            second_created.get("id"), "library_response_invalid"
-        )
-        series_created = _mapping(
-            _request(
-                "POST",
-                base,
-                "/api/libraries",
-                token=root_token,
-                payload={
-                    "name": "canary-series",
-                    "folders": [{"fullPath": "/library/series"}],
-                    "mediaType": "book",
-                    "provider": "openlibrary",
-                    "settings": {"disableWatcher": True},
-                },
-            ),
-            "series_library_response_invalid",
-        )
-        series_library_id = _string(
-            series_created.get("id"), "series_library_response_invalid"
-        )
-        # The audiobook item lives in its own library so the two EPUB libraries
-        # keep their exact `*.epub` listing counts and the continuous chain
-        # sees nothing new (#968).
-        third_created = _mapping(
-            _request(
-                "POST",
-                base,
-                "/api/libraries",
-                token=root_token,
-                payload={
-                    "name": "canary-gamma",
-                    "folders": [{"fullPath": "/library/gamma"}],
-                    "mediaType": "book",
-                    "provider": "openlibrary",
-                    "settings": {"disableWatcher": True},
-                },
-            ),
-            "library_response_invalid",
-        )
-        third_library_id = _string(third_created.get("id"), "library_response_invalid")
-        library_ids = (
-            library_id,
-            second_library_id,
-            series_library_id,
-            third_library_id,
-        )
-        writer_id = _create_user(
-            base,
-            root_token,
-            username="writer",
-            password=password,
-            library_ids=library_ids,
-            update=True,
-            upload=True,
-        )
-        writer_key_id, writer_key = _create_api_key(
-            base, root_token, writer_id, "canary-writer"
-        )
-        key_ids.append(writer_key_id)
-        read_only_id = _create_user(
-            base,
-            root_token,
-            username="read-only",
-            password=password,
-            library_ids=library_ids,
-            update=False,
-            upload=False,
-        )
-        read_only_key_id, read_only_key = _create_api_key(
-            base, root_token, read_only_id, "canary-read-only"
-        )
-        key_ids.append(read_only_key_id)
-        update_only_id = _create_user(
-            base,
-            root_token,
-            username="update-only",
-            password=password,
-            library_ids=library_ids,
-            update=True,
-            upload=False,
-        )
-        update_only_key_id, update_only_key = _create_api_key(
-            base, root_token, update_only_id, "canary-update-only"
-        )
-        key_ids.append(update_only_key_id)
-        _request(
-            "POST",
-            base,
-            "/api/libraries/" + library_id + "/scan?force=1",
-            token=root_token,
-        )
-        _request(
-            "POST",
-            base,
-            "/api/libraries/" + second_library_id + "/scan?force=1",
-            token=root_token,
-        )
-        _request(
-            "POST",
-            base,
-            "/api/libraries/" + third_library_id + "/scan?force=1",
-            token=root_token,
-        )
 
-        def current_title(item_id: str) -> str:
+
+@dataclass(frozen=True)
+class _CanaryFiles:
+    """The generated library folders and the operator corpus overlay."""
+
+    library_dir: Path
+    alpha_dir: Path
+    beta_dir: Path
+    series_dir: Path
+    config_dir: Path
+    metadata_dir: Path
+    series_titles: dict[str, str]
+    series_scenarios: dict[str, str]
+    corpus_sources: tuple[Path, ...]
+    operator_metadata: dict[str, str]
+    operator_authors: dict[str, str]
+
+
+@dataclass(frozen=True)
+class _CanaryService:
+    """The running Audiobookshelf container, its libraries and its keys."""
+
+    base: str
+    root_token: str
+    writer_key: str
+    read_only_key: str
+    update_only_key: str
+    library_id: str
+    second_library_id: str
+    series_library_id: str
+    third_library_id: str
+
+
+@dataclass(frozen=True)
+class _CanaryItems:
+    """The scanned items the phases write to."""
+
+    item: str
+    items: list[object]
+    second_item: str
+    audiobook_item: str
+    operator_item_ids: set[str]
+    original_alpha_title: str
+    original_beta_title: str
+
+
+@dataclass(frozen=True)
+class _AdapterRig:
+    """The guarded-write rig the adapter canary builds and later phases reuse."""
+
+    artifacts: CoverArtifactStore
+    writes: list[str]
+    client_factory: Callable[[], httpx.Client]
+    current: object
+    clock: Callable[[], int]
+    recovery: _ObservedRecovery
+    repository: SQLiteMetadataReportRepository
+    outcomes: list[dict[str, object]]
+
+
+_LibraryCanaries = tuple[
+    list[dict[str, object]], dict[str, object], list[dict[str, object]]
+]
+
+
+def _canary_files(root: Path, corpus: Path | None) -> _CanaryFiles:
+    """Generate the library folders, the audiobook and the EPUBs."""
+    library_dir = root / "library"
+    library_dir.mkdir(mode=0o700)
+    alpha_dir = library_dir / "alpha"
+    alpha_dir.mkdir(mode=0o700)
+    beta_dir = library_dir / "beta"
+    beta_dir.mkdir(mode=0o700)
+    gamma_dir = library_dir / "gamma"
+    gamma_dir.mkdir(mode=0o700)
+    audiobook_dir = gamma_dir / "Qualification Audiobook"
+    audiobook_dir.mkdir(mode=0o700)
+    _audiobook(audiobook_dir / "qualification-audiobook.m4b")
+    series_dir = library_dir / "series"
+    series_dir.mkdir(mode=0o700)
+    series_titles = {
+        "9780306406157": "Series supplied control",
+        "9780140328721": "Series missing control",
+        "9780261103573": "Series wrong author control",
+    }
+    series_scenarios = dict(
+        zip(
+            series_titles.values(),
+            ("supplied", "missing", "wrong_author"),
+            strict=True,
+        )
+    )
+    for isbn, title in series_titles.items():
+        _epub(series_dir / (isbn + ".epub"), title=title, isbn=isbn)
+    config_dir = root / "config"
+    config_dir.mkdir(mode=0o700)
+    metadata_dir = root / "metadata"
+    metadata_dir.mkdir(mode=0o700)
+    corpus_sources = _corpus_sources(corpus)
+    operator_metadata: dict[str, str] = {}
+    operator_authors: dict[str, str] = {}
+    if not corpus_sources:
+        _epub(alpha_dir / "qualification-alpha.epub")
+    if not corpus_sources:
+        _epub(beta_dir / "qualification-beta.epub")
+    if corpus_sources:
+        for index, source in enumerate(corpus_sources, 1):
+            destination = alpha_dir if index % 2 else beta_dir
+            isbn, title, author = _operator_epub(
+                source, destination / f"operator-{index:03d}.epub", index
+            )
+            operator_metadata[isbn] = title
+            operator_authors[isbn] = author
+    return _CanaryFiles(
+        library_dir,
+        alpha_dir,
+        beta_dir,
+        series_dir,
+        config_dir,
+        metadata_dir,
+        series_titles,
+        series_scenarios,
+        corpus_sources,
+        operator_metadata,
+        operator_authors,
+    )
+
+
+def _start_canary_service(
+    run: _QualificationRun, image: str, files: _CanaryFiles
+) -> _CanaryService:
+    """Start the container, create its libraries, users and keys, and scan.
+
+    The base URL, root token and key IDs are recorded on `run` as soon as they
+    exist, so a failure part way through still cleans them up.
+    """
+    config_dir, metadata_dir = files.config_dir, files.metadata_dir
+    library_dir = files.library_dir
+    _run(
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        run.owner,
+        "--label",
+        OWNERSHIP_LABEL + "=" + run.owner,
+        "-p",
+        "127.0.0.1::80",
+        "-v",
+        str(config_dir) + ":/config",
+        "-v",
+        str(metadata_dir) + ":/metadata",
+        "-v",
+        str(library_dir) + ":/library:ro",
+        image,
+    )
+    port = _run("docker", "port", run.owner, "80/tcp").stdout.strip().rsplit(":", 1)[1]
+    base = "http://127.0.0.1:" + port
+    run.base = base
+    _wait(base)
+    username, password = "canary", secrets.token_urlsafe(24)
+    _request(
+        "POST",
+        base,
+        "/init",
+        payload={"newRoot": {"username": username, "password": password}},
+    )
+    login = _request(
+        "POST", base, "/login", payload={"username": username, "password": password}
+    )
+    root_token = _string(
+        _mapping(
+            _mapping(login, "root_login_invalid").get("user"), "root_login_invalid"
+        ).get("token"),
+        "root_login_invalid",
+    )
+    run.root_token = root_token
+    created = _mapping(
+        _request(
+            "POST",
+            base,
+            "/api/libraries",
+            token=root_token,
+            payload={
+                "name": "canary-alpha",
+                "folders": [{"fullPath": "/library/alpha"}],
+                "mediaType": "book",
+                "provider": "openlibrary",
+                "settings": {"disableWatcher": True},
+            },
+        ),
+        "library_response_invalid",
+    )
+    library_id = _string(created.get("id"), "library_response_invalid")
+    second_created = _mapping(
+        _request(
+            "POST",
+            base,
+            "/api/libraries",
+            token=root_token,
+            payload={
+                "name": "canary-beta",
+                "folders": [{"fullPath": "/library/beta"}],
+                "mediaType": "book",
+                "provider": "openlibrary",
+                "settings": {"disableWatcher": True},
+            },
+        ),
+        "library_response_invalid",
+    )
+    second_library_id = _string(second_created.get("id"), "library_response_invalid")
+    series_created = _mapping(
+        _request(
+            "POST",
+            base,
+            "/api/libraries",
+            token=root_token,
+            payload={
+                "name": "canary-series",
+                "folders": [{"fullPath": "/library/series"}],
+                "mediaType": "book",
+                "provider": "openlibrary",
+                "settings": {"disableWatcher": True},
+            },
+        ),
+        "series_library_response_invalid",
+    )
+    series_library_id = _string(
+        series_created.get("id"), "series_library_response_invalid"
+    )
+    # The audiobook item lives in its own library so the two EPUB libraries
+    # keep their exact `*.epub` listing counts and the continuous chain
+    # sees nothing new (#968).
+    third_created = _mapping(
+        _request(
+            "POST",
+            base,
+            "/api/libraries",
+            token=root_token,
+            payload={
+                "name": "canary-gamma",
+                "folders": [{"fullPath": "/library/gamma"}],
+                "mediaType": "book",
+                "provider": "openlibrary",
+                "settings": {"disableWatcher": True},
+            },
+        ),
+        "library_response_invalid",
+    )
+    third_library_id = _string(third_created.get("id"), "library_response_invalid")
+    library_ids = (
+        library_id,
+        second_library_id,
+        series_library_id,
+        third_library_id,
+    )
+    writer_id = _create_user(
+        base,
+        root_token,
+        username="writer",
+        password=password,
+        library_ids=library_ids,
+        update=True,
+        upload=True,
+    )
+    writer_key_id, writer_key = _create_api_key(
+        base, root_token, writer_id, "canary-writer"
+    )
+    run.key_ids.append(writer_key_id)
+    read_only_id = _create_user(
+        base,
+        root_token,
+        username="read-only",
+        password=password,
+        library_ids=library_ids,
+        update=False,
+        upload=False,
+    )
+    read_only_key_id, read_only_key = _create_api_key(
+        base, root_token, read_only_id, "canary-read-only"
+    )
+    run.key_ids.append(read_only_key_id)
+    update_only_id = _create_user(
+        base,
+        root_token,
+        username="update-only",
+        password=password,
+        library_ids=library_ids,
+        update=True,
+        upload=False,
+    )
+    update_only_key_id, update_only_key = _create_api_key(
+        base, root_token, update_only_id, "canary-update-only"
+    )
+    run.key_ids.append(update_only_key_id)
+    _request(
+        "POST",
+        base,
+        "/api/libraries/" + library_id + "/scan?force=1",
+        token=root_token,
+    )
+    _request(
+        "POST",
+        base,
+        "/api/libraries/" + second_library_id + "/scan?force=1",
+        token=root_token,
+    )
+    _request(
+        "POST",
+        base,
+        "/api/libraries/" + third_library_id + "/scan?force=1",
+        token=root_token,
+    )
+    return _CanaryService(
+        base,
+        root_token,
+        writer_key,
+        read_only_key,
+        update_only_key,
+        library_id,
+        second_library_id,
+        series_library_id,
+        third_library_id,
+    )
+
+
+def _scanned_canary_items(service: _CanaryService, files: _CanaryFiles) -> _CanaryItems:
+    """Wait for each library's scan and find the items the phases write to."""
+    base, root_token = service.base, service.root_token
+    writer_key = service.writer_key
+    library_id, second_library_id = service.library_id, service.second_library_id
+    third_library_id = service.third_library_id
+    alpha_dir, beta_dir = files.alpha_dir, files.beta_dir
+    corpus_sources = files.corpus_sources
+    operator_metadata = files.operator_metadata
+
+    def current_title(item_id: str) -> str:
+        detail = _mapping(
+            _request("GET", base, "/api/items/" + item_id, token=writer_key),
+            "item_detail_invalid",
+        )
+        media = _mapping(detail.get("media"), "item_detail_invalid")
+        metadata = _mapping(media.get("metadata"), "item_detail_invalid")
+        return _string(metadata.get("title"), "item_detail_invalid")
+
+    deadline = time.monotonic() + 90
+    item = None
+    items: list[object] = []
+    while time.monotonic() < deadline:
+        listing = _mapping(
+            _request(
+                "GET",
+                base,
+                "/api/libraries/" + library_id + "/items?limit=10&page=0",
+                token=root_token,
+            ),
+            "listing_invalid",
+        )
+        results = listing.get("results")
+        expected = len(tuple(alpha_dir.glob("*.epub")))
+        if (
+            listing.get("total") == expected
+            and type(results) is list
+            and len(results) == expected
+            and all(type(value) is dict for value in results)
+        ):
+            items = [value.get("id") for value in results]
+            item = next(
+                (
+                    value
+                    for value in items
+                    if type(value) is str and current_title(value) == "Before"
+                ),
+                None,
+            )
+            break
+        time.sleep(1)
+    if not isinstance(item, str):
+        raise RuntimeError("synthetic library did not scan")
+    if not isinstance(item, str):
+        raise QualificationError("synthetic_library_did_not_scan")
+    if not isinstance(items, list) or any(
+        not isinstance(value, str) for value in items
+    ):
+        raise QualificationError("synthetic_library_did_not_scan")
+    deadline = time.monotonic() + 90
+    second_expected = len(tuple(beta_dir.glob("*.epub")))
+    second_item = None
+    while time.monotonic() < deadline:
+        second_listing = _mapping(
+            _request(
+                "GET",
+                base,
+                "/api/libraries/" + second_library_id + "/items?limit=10&page=0",
+                token=root_token,
+            ),
+            "listing_invalid",
+        )
+        second_results = second_listing.get("results")
+        if (
+            second_listing.get("total") == second_expected
+            and type(second_results) is list
+            and second_results
+            and type(second_results[0]) is dict
+            and type(second_results[0].get("id")) is str
+        ):
+            candidate_ids = [value.get("id") for value in second_results]
+            second_item = next(
+                (
+                    value
+                    for value in candidate_ids
+                    if type(value) is str
+                    and current_title(value) == operator_metadata.get("9780306406157")
+                ),
+                next(
+                    (value for value in candidate_ids if type(value) is str),
+                    None,
+                ),
+            )
+            break
+        time.sleep(1)
+    else:
+        raise QualificationError("second_library_did_not_scan")
+    assert isinstance(second_item, str)
+    deadline = time.monotonic() + 120
+    audiobook_item: str | None = None
+    while time.monotonic() < deadline:
+        third_listing = _mapping(
+            _request(
+                "GET",
+                base,
+                "/api/libraries/"
+                + third_library_id
+                + "/items?limit=10&page=0&expanded=1",
+                token=root_token,
+            ),
+            "listing_invalid",
+        )
+        third_results = third_listing.get("results")
+        if (
+            third_listing.get("total") == 1
+            and type(third_results) is list
+            and len(third_results) == 1
+            and type(third_results[0]) is dict
+            and type(third_results[0].get("id")) is str
+        ):
             detail = _mapping(
-                _request("GET", base, "/api/items/" + item_id, token=writer_key),
+                _request(
+                    "GET",
+                    base,
+                    "/api/items/" + str(third_results[0]["id"]),
+                    token=writer_key,
+                ),
                 "item_detail_invalid",
             )
             media = _mapping(detail.get("media"), "item_detail_invalid")
             metadata = _mapping(media.get("metadata"), "item_detail_invalid")
-            return _string(metadata.get("title"), "item_detail_invalid")
+            audio_files = media.get("audioFiles")
+            if (
+                detail.get("mediaType") == "book"
+                and metadata.get("title") == AUDIOBOOK_TITLE
+                and (
+                    media.get("numAudioFiles") == 1
+                    or (type(audio_files) is list and len(audio_files) == 1)
+                )
+            ):
+                audiobook_item = str(third_results[0]["id"])
+                break
+        time.sleep(1)
+    if not isinstance(audiobook_item, str):
+        raise QualificationError("audiobook_library_did_not_scan")
+    scanned_item_ids = {
+        value for value in (*items, *candidate_ids) if type(value) is str
+    }
+    operator_titles = set(operator_metadata.values())
+    operator_item_ids = {
+        value
+        for value in scanned_item_ids
+        if (corpus_sources or value != item) and current_title(value) in operator_titles
+    }
+    if corpus_sources and len(operator_item_ids) != len(corpus_sources):
+        raise QualificationError("operator_corpus_identity_failed")
+    original_alpha_title = current_title(item)
+    original_beta_title = current_title(second_item)
+    return _CanaryItems(
+        item,
+        items,
+        second_item,
+        audiobook_item,
+        operator_item_ids,
+        original_alpha_title,
+        original_beta_title,
+    )
 
-        deadline = time.monotonic() + 90
-        item = None
-        items: list[object] = []
-        while time.monotonic() < deadline:
-            listing = _mapping(
-                _request(
-                    "GET",
-                    base,
-                    "/api/libraries/" + library_id + "/items?limit=10&page=0",
-                    token=root_token,
-                ),
-                "listing_invalid",
-            )
-            results = listing.get("results")
-            expected = len(tuple(alpha_dir.glob("*.epub")))
-            if (
-                listing.get("total") == expected
-                and type(results) is list
-                and len(results) == expected
-                and all(type(value) is dict for value in results)
-            ):
-                items = [value.get("id") for value in results]
-                item = next(
-                    (
-                        value
-                        for value in items
-                        if type(value) is str and current_title(value) == "Before"
-                    ),
-                    None,
-                )
-                break
-            time.sleep(1)
-        if not isinstance(item, str):
-            raise RuntimeError("synthetic library did not scan")
-        if not isinstance(item, str):
-            raise QualificationError("synthetic_library_did_not_scan")
-        if not isinstance(items, list) or any(
-            not isinstance(value, str) for value in items
-        ):
-            raise QualificationError("synthetic_library_did_not_scan")
-        deadline = time.monotonic() + 90
-        second_expected = len(tuple(beta_dir.glob("*.epub")))
-        second_item = None
-        while time.monotonic() < deadline:
-            second_listing = _mapping(
-                _request(
-                    "GET",
-                    base,
-                    "/api/libraries/" + second_library_id + "/items?limit=10&page=0",
-                    token=root_token,
-                ),
-                "listing_invalid",
-            )
-            second_results = second_listing.get("results")
-            if (
-                second_listing.get("total") == second_expected
-                and type(second_results) is list
-                and second_results
-                and type(second_results[0]) is dict
-                and type(second_results[0].get("id")) is str
-            ):
-                candidate_ids = [value.get("id") for value in second_results]
-                second_item = next(
-                    (
-                        value
-                        for value in candidate_ids
-                        if type(value) is str
-                        and current_title(value)
-                        == operator_metadata.get("9780306406157")
-                    ),
-                    next(
-                        (value for value in candidate_ids if type(value) is str),
-                        None,
-                    ),
-                )
-                break
-            time.sleep(1)
-        else:
-            raise QualificationError("second_library_did_not_scan")
-        assert isinstance(second_item, str)
-        deadline = time.monotonic() + 120
-        audiobook_item: str | None = None
-        while time.monotonic() < deadline:
-            third_listing = _mapping(
-                _request(
-                    "GET",
-                    base,
-                    "/api/libraries/"
-                    + third_library_id
-                    + "/items?limit=10&page=0&expanded=1",
-                    token=root_token,
-                ),
-                "listing_invalid",
-            )
-            third_results = third_listing.get("results")
-            if (
-                third_listing.get("total") == 1
-                and type(third_results) is list
-                and len(third_results) == 1
-                and type(third_results[0]) is dict
-                and type(third_results[0].get("id")) is str
-            ):
-                detail = _mapping(
-                    _request(
-                        "GET",
-                        base,
-                        "/api/items/" + str(third_results[0]["id"]),
-                        token=writer_key,
-                    ),
-                    "item_detail_invalid",
-                )
-                media = _mapping(detail.get("media"), "item_detail_invalid")
-                metadata = _mapping(media.get("metadata"), "item_detail_invalid")
-                audio_files = media.get("audioFiles")
-                if (
-                    detail.get("mediaType") == "book"
-                    and metadata.get("title") == AUDIOBOOK_TITLE
-                    and (
-                        media.get("numAudioFiles") == 1
-                        or (type(audio_files) is list and len(audio_files) == 1)
-                    )
-                ):
-                    audiobook_item = str(third_results[0]["id"])
-                    break
-            time.sleep(1)
-        if not isinstance(audiobook_item, str):
-            raise QualificationError("audiobook_library_did_not_scan")
-        scanned_item_ids = {
-            value for value in (*items, *candidate_ids) if type(value) is str
-        }
-        operator_titles = set(operator_metadata.values())
-        operator_item_ids = {
-            value
-            for value in scanned_item_ids
-            if (corpus_sources or value != item)
-            and current_title(value) in operator_titles
-        }
-        if corpus_sources and len(operator_item_ids) != len(corpus_sources):
-            raise QualificationError("operator_corpus_identity_failed")
-        original_alpha_title = current_title(item)
-        original_beta_title = current_title(second_item)
-        seeded = _mapping(
-            _request(
-                "PATCH",
-                base,
-                "/api/items/" + second_item + "/media",
-                token=writer_key,
-                payload={
-                    "metadata": {
-                        "authors": [{"name": "Seed Author"}],
-                        "language": "en",
-                        "publishedDate": "2020-01-01",
-                        "publishedYear": "2020",
-                        "publisher": "Seed Press",
-                        "title": "Beta qualification seed",
-                    }
-                },
-            ),
-            "second_library_seed_invalid",
-        )
-        if seeded.get("updated") is not True:
-            raise QualificationError("second_library_seed_failed")
-        # The service must reject a key inherited from an active but read-only
-        # user before the least-authority writer is allowed to mutate anything.
-        read_only_patch = _mapping(
-            _request(
-                "PATCH",
-                base,
-                "/api/items/" + item + "/media",
-                token=read_only_key,
-                payload={"tags": ["forbidden"]},
-            ),
-            "read_only_response_invalid",
-        )
-        if read_only_patch.get("status") not in {401, 403}:
-            raise QualificationError("read_only_metadata_was_not_refused")
-        denied_cover = httpx.post(
-            base + "/api/items/" + item + "/cover",
-            headers={"Authorization": "Bearer " + read_only_key},
-            files={"cover": ("forbidden.png", _png(1, 1, 1), "image/png")},
-            timeout=20,
-        )
-        if denied_cover.status_code not in {401, 403}:
-            raise QualificationError("read_only_cover_was_not_refused")
-        update_only_patch = _mapping(
-            _request(
-                "PATCH",
-                base,
-                "/api/items/" + item + "/media",
-                token=update_only_key,
-                payload={"tags": ["update-only"]},
-            ),
-            "update_only_response_invalid",
-        )
-        if update_only_patch.get("updated") is not True:
-            raise QualificationError("update_only_metadata_was_not_allowed")
-        update_only_cover = httpx.post(
-            base + "/api/items/" + item + "/cover",
-            headers={"Authorization": "Bearer " + update_only_key},
-            files={"cover": ("forbidden.png", _png(2, 2, 2), "image/png")},
-            timeout=20,
-        )
-        if update_only_cover.status_code not in {401, 403}:
-            raise QualificationError("update_only_cover_was_not_refused")
+
+def _least_authority_phase(service: _CanaryService, scanned: _CanaryItems) -> None:
+    """Seed the beta item and prove each key's authority before a guarded write."""
+    base, writer_key = service.base, service.writer_key
+    read_only_key, update_only_key = service.read_only_key, service.update_only_key
+    item, second_item = scanned.item, scanned.second_item
+    seeded = _mapping(
+        _request(
+            "PATCH",
+            base,
+            "/api/items/" + second_item + "/media",
+            token=writer_key,
+            payload={
+                "metadata": {
+                    "authors": [{"name": "Seed Author"}],
+                    "language": "en",
+                    "publishedDate": "2020-01-01",
+                    "publishedYear": "2020",
+                    "publisher": "Seed Press",
+                    "title": "Beta qualification seed",
+                }
+            },
+        ),
+        "second_library_seed_invalid",
+    )
+    if seeded.get("updated") is not True:
+        raise QualificationError("second_library_seed_failed")
+    # The service must reject a key inherited from an active but read-only
+    # user before the least-authority writer is allowed to mutate anything.
+    read_only_patch = _mapping(
         _request(
             "PATCH",
             base,
             "/api/items/" + item + "/media",
-            token=writer_key,
-            payload={"tags": ["before"]},
+            token=read_only_key,
+            payload={"tags": ["forbidden"]},
+        ),
+        "read_only_response_invalid",
+    )
+    if read_only_patch.get("status") not in {401, 403}:
+        raise QualificationError("read_only_metadata_was_not_refused")
+    denied_cover = httpx.post(
+        base + "/api/items/" + item + "/cover",
+        headers={"Authorization": "Bearer " + read_only_key},
+        files={"cover": ("forbidden.png", _png(1, 1, 1), "image/png")},
+        timeout=20,
+    )
+    if denied_cover.status_code not in {401, 403}:
+        raise QualificationError("read_only_cover_was_not_refused")
+    update_only_patch = _mapping(
+        _request(
+            "PATCH",
+            base,
+            "/api/items/" + item + "/media",
+            token=update_only_key,
+            payload={"tags": ["update-only"]},
+        ),
+        "update_only_response_invalid",
+    )
+    if update_only_patch.get("updated") is not True:
+        raise QualificationError("update_only_metadata_was_not_allowed")
+    update_only_cover = httpx.post(
+        base + "/api/items/" + item + "/cover",
+        headers={"Authorization": "Bearer " + update_only_key},
+        files={"cover": ("forbidden.png", _png(2, 2, 2), "image/png")},
+        timeout=20,
+    )
+    if update_only_cover.status_code not in {401, 403}:
+        raise QualificationError("update_only_cover_was_not_refused")
+    _request(
+        "PATCH",
+        base,
+        "/api/items/" + item + "/media",
+        token=writer_key,
+        payload={"tags": ["before"]},
+    )
+
+
+def _adapter_canary(
+    root: Path, canary: _CanaryService, files: _CanaryFiles, scanned: _CanaryItems
+) -> _AdapterRig:
+    """Write title, tags, authors and cover through the guarded adapter."""
+    base, writer_key = canary.base, canary.writer_key
+    library_id = canary.library_id
+    item, items = scanned.item, scanned.items
+    corpus_sources = files.corpus_sources
+    operator_item_ids = scanned.operator_item_ids
+    before_cover = _png(0, 0, 255)
+    response = httpx.post(
+        base + "/api/items/" + item + "/cover",
+        headers={"Authorization": "Bearer " + writer_key},
+        files={"cover": ("before.png", before_cover, "image/png")},
+        timeout=20,
+    )
+    if response.status_code not in {200, 201}:
+        raise RuntimeError("synthetic initial cover was refused")
+    artifacts = CoverArtifactStore(root / "artifacts")
+    desired_cover = _png(255, 0, 0)
+    artifact = CoverArtifact.create(desired_cover, b"preview", "image/png", 2, 2)
+    artifacts.stage(artifact, desired_cover, b"preview")
+    writes: list[str] = []
+
+    def client_factory() -> httpx.Client:
+        client = target_client_token(base, writer_key, 20)
+
+        def observe_request(request: httpx.Request) -> None:
+            if request.method in {"PATCH", "POST"}:
+                writes.append(request.method)
+
+        client.event_hooks["request"].append(observe_request)
+        return client
+
+    target = AudiobookshelfFieldEffectTarget(
+        client_factory=client_factory,
+        endpoint=base,
+        library_id=library_id,
+        artifacts=artifacts,
+    )
+    capabilities = AudiobookshelfFieldEffectCapabilities(
+        client_factory=client_factory,
+        endpoint=base,
+        library_id=library_id,
+    )
+    repository = open_repository(_database_path(root, "effects"))
+    current = type("Current", (), {"current": lambda self, value: True})()
+    time_value = [100]
+
+    def clock() -> int:
+        time_value[0] += 1
+        return time_value[0]
+
+    if (
+        capabilities.result(
+            type("Plan", (), {"work_id": item, "destination": "title"})()
+        ).category
+        != "allowed"
+    ):
+        raise QualificationError("writer_capability_not_allowed")
+    recovery = _ObservedRecovery(
+        PrivateCoverRecoveryStore(
+            root / "recovery",
+            lambda _: _raw_cover(base, writer_key, item, before_cover),
         )
-        before_cover = _png(0, 0, 255)
-        response = httpx.post(
-            base + "/api/items/" + item + "/cover",
-            headers={"Authorization": "Bearer " + writer_key},
-            files={"cover": ("before.png", before_cover, "image/png")},
-            timeout=20,
-        )
-        if response.status_code not in {200, 201}:
-            raise RuntimeError("synthetic initial cover was refused")
-        artifacts = CoverArtifactStore(root / "artifacts")
-        desired_cover = _png(255, 0, 0)
-        artifact = CoverArtifact.create(desired_cover, b"preview", "image/png", 2, 2)
-        artifacts.stage(artifact, desired_cover, b"preview")
-        writes: list[str] = []
-
-        def client_factory() -> httpx.Client:
-            client = target_client_token(base, writer_key, 20)
-
-            def observe_request(request: httpx.Request) -> None:
-                if request.method in {"PATCH", "POST"}:
-                    writes.append(request.method)
-
-            client.event_hooks["request"].append(observe_request)
-            return client
-
-        target = AudiobookshelfFieldEffectTarget(
-            client_factory=client_factory,
-            endpoint=base,
-            library_id=library_id,
-            artifacts=artifacts,
-        )
-        capabilities = AudiobookshelfFieldEffectCapabilities(
-            client_factory=client_factory,
-            endpoint=base,
-            library_id=library_id,
-        )
-        repository = open_repository(_database_path(root, "effects"))
-        current = type("Current", (), {"current": lambda self, value: True})()
-        time_value = [100]
-
-        def clock() -> int:
-            time_value[0] += 1
-            return time_value[0]
-
-        if (
-            capabilities.result(
-                type("Plan", (), {"work_id": item, "destination": "title"})()
-            ).category
-            != "allowed"
-        ):
-            raise QualificationError("writer_capability_not_allowed")
-        recovery = _ObservedRecovery(
-            PrivateCoverRecoveryStore(
-                root / "recovery",
-                lambda _: _raw_cover(base, writer_key, item, before_cover),
-            )
-        )
-        service = GuardedFieldApplication(
+    )
+    service = GuardedFieldApplication(
+        repository,
+        target,
+        FakeBackupReadiness(),
+        capabilities,
+        current,
+        FakeDependencyCurrentness(),
+        current,
+        recovery,
+        FakeForwardReevaluation(),
+        clock,
+    )
+    adapter_outcomes = [
+        _apply(
+            service,
             repository,
             target,
-            FakeBackupReadiness(),
             capabilities,
-            current,
-            FakeDependencyCurrentness(),
-            current,
+            writes,
             recovery,
-            FakeForwardReevaluation(),
-            clock,
+            item,
+            "title",
+            "After",
+            clock(),
+        ),
+        _apply(
+            service,
+            repository,
+            target,
+            capabilities,
+            writes,
+            recovery,
+            item,
+            "tags",
+            ["canary"],
+            clock(),
+        ),
+    ]
+    if corpus_sources:
+        authors_item = next(
+            value for value in items if value in operator_item_ids and value != item
         )
-        adapter_outcomes = [
-            _apply(
-                service,
-                repository,
-                target,
-                capabilities,
-                writes,
-                recovery,
-                item,
-                "title",
-                "After",
-                clock(),
-            ),
-            _apply(
-                service,
-                repository,
-                target,
-                capabilities,
-                writes,
-                recovery,
-                item,
-                "tags",
-                ["canary"],
-                clock(),
-            ),
-        ]
-        if corpus_sources:
-            authors_item = next(
-                value for value in items if value in operator_item_ids and value != item
-            )
-            adapter_outcomes.append(
-                _apply(
-                    service,
-                    repository,
-                    target,
-                    capabilities,
-                    writes,
-                    recovery,
-                    authors_item,
-                    "authors",
-                    ["Seed Author"],
-                    clock(),
-                )
-            )
-        _stable_cover_observation(target, item)
         adapter_outcomes.append(
             _apply(
                 service,
@@ -3587,254 +3713,349 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
                 capabilities,
                 writes,
                 recovery,
-                item,
-                "cover",
-                artifact.artifact_id,
+                authors_item,
+                "authors",
+                ["Seed Author"],
                 clock(),
             )
         )
-        beta_target = AudiobookshelfFieldEffectTarget(
-            client_factory=client_factory,
-            endpoint=base,
-            library_id=second_library_id,
-            artifacts=artifacts,
+    _stable_cover_observation(target, item)
+    adapter_outcomes.append(
+        _apply(
+            service,
+            repository,
+            target,
+            capabilities,
+            writes,
+            recovery,
+            item,
+            "cover",
+            artifact.artifact_id,
+            clock(),
         )
-        beta_capabilities = AudiobookshelfFieldEffectCapabilities(
-            client_factory=client_factory,
-            endpoint=base,
-            library_id=second_library_id,
-        )
-        beta_repository = open_repository(_database_path(root, "effects-beta"))
-        beta_service = GuardedFieldApplication(
+    )
+    return _AdapterRig(
+        artifacts,
+        writes,
+        client_factory,
+        current,
+        clock,
+        recovery,
+        repository,
+        adapter_outcomes,
+    )
+
+
+def _library_canaries(
+    root: Path, service: _CanaryService, scanned: _CanaryItems, rig: _AdapterRig
+) -> _LibraryCanaries:
+    """The beta automatic writes, the audiobook canary and description landings."""
+    base, writer_key = service.base, service.writer_key
+    second_library_id = service.second_library_id
+    third_library_id = service.third_library_id
+    second_item, audiobook_item = scanned.second_item, scanned.audiobook_item
+    artifacts, writes, client_factory = rig.artifacts, rig.writes, rig.client_factory
+    current, clock, recovery = rig.current, rig.clock, rig.recovery
+    beta_target = AudiobookshelfFieldEffectTarget(
+        client_factory=client_factory,
+        endpoint=base,
+        library_id=second_library_id,
+        artifacts=artifacts,
+    )
+    beta_capabilities = AudiobookshelfFieldEffectCapabilities(
+        client_factory=client_factory,
+        endpoint=base,
+        library_id=second_library_id,
+    )
+    beta_repository = open_repository(_database_path(root, "effects-beta"))
+    beta_service = GuardedFieldApplication(
+        beta_repository,
+        beta_target,
+        FakeBackupReadiness(),
+        beta_capabilities,
+        current,
+        FakeDependencyCurrentness(),
+        current,
+        recovery,
+        FakeForwardReevaluation(),
+        clock,
+    )
+    real_automatic_adapter = [
+        _apply(
+            beta_service,
             beta_repository,
             beta_target,
-            FakeBackupReadiness(),
             beta_capabilities,
-            current,
-            FakeDependencyCurrentness(),
-            current,
-            recovery,
-            FakeForwardReevaluation(),
-            clock,
-        )
-        real_automatic_adapter = [
-            _apply(
-                beta_service,
-                beta_repository,
-                beta_target,
-                beta_capabilities,
-                writes,
-                recovery,
-                second_item,
-                "title",
-                "Before",
-                clock(),
-                origin="automatic_policy",
-            ),
-            _apply(
-                beta_service,
-                beta_repository,
-                beta_target,
-                beta_capabilities,
-                writes,
-                recovery,
-                second_item,
-                "authors",
-                ["Synthetic Author", "Second Qualified Author"],
-                clock(),
-                origin="automatic_policy",
-            ),
-        ]
-        gamma_target = AudiobookshelfFieldEffectTarget(
-            client_factory=client_factory,
-            endpoint=base,
-            library_id=third_library_id,
-            artifacts=artifacts,
-        )
-        gamma_capabilities = AudiobookshelfFieldEffectCapabilities(
-            client_factory=client_factory,
-            endpoint=base,
-            library_id=third_library_id,
-        )
-        gamma_repository = open_repository(_database_path(root, "effects-gamma"))
-        gamma_service = GuardedFieldApplication(
-            gamma_repository,
-            gamma_target,
-            FakeBackupReadiness(),
-            gamma_capabilities,
-            current,
-            FakeDependencyCurrentness(),
-            current,
-            recovery,
-            FakeForwardReevaluation(),
-            clock,
-        )
-        audiobook = _audiobook_canary(
-            gamma_service,
-            gamma_repository,
-            gamma_target,
-            gamma_capabilities,
             writes,
             recovery,
-            audiobook_item,
-            clock,
-        )
-        # Fail closed on the section as a whole: the only two states this
-        # receipt may carry are a verified write and a destination the service
-        # cannot shape. Anything else is a defect that must stop the run
-        # rather than be published (#968).
-        if any(
-            row["state"] not in {"verified", "field_unavailable"}
-            for row in cast("list[dict[str, object]]", audiobook["outcomes"])
-        ):
-            raise QualificationError("audiobook_outcome_state_invalid")
+            second_item,
+            "title",
+            "Before",
+            clock(),
+            origin="automatic_policy",
+        ),
+        _apply(
+            beta_service,
+            beta_repository,
+            beta_target,
+            beta_capabilities,
+            writes,
+            recovery,
+            second_item,
+            "authors",
+            ["Synthetic Author", "Second Qualified Author"],
+            clock(),
+            origin="automatic_policy",
+        ),
+    ]
+    gamma_target = AudiobookshelfFieldEffectTarget(
+        client_factory=client_factory,
+        endpoint=base,
+        library_id=third_library_id,
+        artifacts=artifacts,
+    )
+    gamma_capabilities = AudiobookshelfFieldEffectCapabilities(
+        client_factory=client_factory,
+        endpoint=base,
+        library_id=third_library_id,
+    )
+    gamma_repository = open_repository(_database_path(root, "effects-gamma"))
+    gamma_service = GuardedFieldApplication(
+        gamma_repository,
+        gamma_target,
+        FakeBackupReadiness(),
+        gamma_capabilities,
+        current,
+        FakeDependencyCurrentness(),
+        current,
+        recovery,
+        FakeForwardReevaluation(),
+        clock,
+    )
+    audiobook = _audiobook_canary(
+        gamma_service,
+        gamma_repository,
+        gamma_target,
+        gamma_capabilities,
+        writes,
+        recovery,
+        audiobook_item,
+        clock,
+    )
+    # Fail closed on the section as a whole: the only two states this
+    # receipt may carry are a verified write and a destination the service
+    # cannot shape. Anything else is a defect that must stop the run
+    # rather than be published (#968).
+    if any(
+        row["state"] not in {"verified", "field_unavailable"}
+        for row in cast("list[dict[str, object]]", audiobook["outcomes"])
+    ):
+        raise QualificationError("audiobook_outcome_state_invalid")
 
-        def description_service(case: str):
-            description_repository = open_repository(
-                _database_path(root, "effects-description-" + case)
-            )
-            return (
-                GuardedFieldApplication(
-                    description_repository,
-                    gamma_target,
-                    FakeBackupReadiness(),
-                    gamma_capabilities,
-                    current,
-                    FakeDependencyCurrentness(),
-                    current,
-                    recovery,
-                    FakeForwardReevaluation(),
-                    clock,
-                ),
+    def description_service(case: str):
+        description_repository = open_repository(
+            _database_path(root, "effects-description-" + case)
+        )
+        return (
+            GuardedFieldApplication(
                 description_repository,
-            )
-
-        description_landings = _description_landings(
-            description_service,
-            gamma_target,
-            gamma_capabilities,
-            writes,
-            base,
-            writer_key,
-            audiobook_item,
-            clock,
-        )
-        gamma_repository.close()
-        beta_repository.close()
-        reseeded_beta = _mapping(
-            _request(
-                "PATCH",
-                base,
-                "/api/items/" + second_item + "/media",
-                token=writer_key,
-                payload={
-                    "metadata": {
-                        "authors": [{"name": "Seed Author"}],
-                        # Empty, so Language is an automatic fill: replacing a
-                        # different populated language stays manual (#1097).
-                        "language": None,
-                        "publishedDate": "2020-01-01",
-                        "publishedYear": "2020",
-                        "publisher": "Seed Press",
-                        "title": "Beta qualification seed",
-                    }
-                },
+                gamma_target,
+                FakeBackupReadiness(),
+                gamma_capabilities,
+                current,
+                FakeDependencyCurrentness(),
+                current,
+                recovery,
+                FakeForwardReevaluation(),
+                clock,
             ),
-            "second_library_reseed_invalid",
+            description_repository,
         )
-        if reseeded_beta.get("updated") is not True:
-            raise QualificationError("second_library_reseed_failed")
-        installed = _installed_continuous_qualification(
-            root,
-            base,
-            writer_key,
-            (("alpha", library_id, alpha_dir), ("beta", second_library_id, beta_dir)),
-            item,
-            {
-                "After": original_alpha_title,
-                "Beta qualification seed": (
-                    "Before" if corpus_sources else original_beta_title
-                ),
-                "Guarded qualification title": original_alpha_title,
-                **{
-                    title: ("Before" if index == 6 else title)
-                    for index, title in enumerate(operator_metadata.values(), start=1)
-                },
-            },
-            operator_item_ids,
-            operator_metadata,
-            operator_authors,
-            set(),
-        )
+
+    description_landings = _description_landings(
+        description_service,
+        gamma_target,
+        gamma_capabilities,
+        writes,
+        base,
+        writer_key,
+        audiobook_item,
+        clock,
+    )
+    gamma_repository.close()
+    beta_repository.close()
+    return real_automatic_adapter, audiobook, description_landings
+
+
+def _installed_phases(
+    root: Path, service: _CanaryService, files: _CanaryFiles, scanned: _CanaryItems
+) -> tuple[dict[str, object], dict[str, object]]:
+    """The installed continuous chain, then the installed automatic series."""
+    base, writer_key, root_token = (
+        service.base,
+        service.writer_key,
+        service.root_token,
+    )
+    library_id, second_library_id = service.library_id, service.second_library_id
+    series_library_id = service.series_library_id
+    alpha_dir, beta_dir = files.alpha_dir, files.beta_dir
+    series_dir = files.series_dir
+    corpus_sources = files.corpus_sources
+    operator_metadata = files.operator_metadata
+    operator_authors = files.operator_authors
+    series_titles, series_scenarios = files.series_titles, files.series_scenarios
+    item, second_item = scanned.item, scanned.second_item
+    operator_item_ids = scanned.operator_item_ids
+    original_alpha_title = scanned.original_alpha_title
+    original_beta_title = scanned.original_beta_title
+    reseeded_beta = _mapping(
         _request(
-            "POST",
+            "PATCH",
             base,
-            "/api/libraries/" + series_library_id + "/scan?force=1",
-            token=root_token,
-        )
-        deadline = time.monotonic() + 90
-        while time.monotonic() < deadline:
-            series_listing = _request(
-                "GET",
-                base,
-                "/api/libraries/" + series_library_id + "/items?limit=10",
-                token=writer_key,
-            )
-            if series_listing.get("total") == 3:
-                break
-            time.sleep(0.25)
-        else:
-            raise QualificationError("series_library_did_not_scan")
-        automatic_series = _installed_automatic_series_qualification(
-            root,
+            "/api/items/" + second_item + "/media",
+            token=writer_key,
+            payload={
+                "metadata": {
+                    "authors": [{"name": "Seed Author"}],
+                    # Empty, so Language is an automatic fill: replacing a
+                    # different populated language stays manual (#1097).
+                    "language": None,
+                    "publishedDate": "2020-01-01",
+                    "publishedYear": "2020",
+                    "publisher": "Seed Press",
+                    "title": "Beta qualification seed",
+                }
+            },
+        ),
+        "second_library_reseed_invalid",
+    )
+    if reseeded_beta.get("updated") is not True:
+        raise QualificationError("second_library_reseed_failed")
+    installed = _installed_continuous_qualification(
+        root,
+        base,
+        writer_key,
+        (("alpha", library_id, alpha_dir), ("beta", second_library_id, beta_dir)),
+        item,
+        {
+            "After": original_alpha_title,
+            "Beta qualification seed": (
+                "Before" if corpus_sources else original_beta_title
+            ),
+            "Guarded qualification title": original_alpha_title,
+            **{
+                title: ("Before" if index == 6 else title)
+                for index, title in enumerate(operator_metadata.values(), start=1)
+            },
+        },
+        operator_item_ids,
+        operator_metadata,
+        operator_authors,
+        set(),
+    )
+    _request(
+        "POST",
+        base,
+        "/api/libraries/" + series_library_id + "/scan?force=1",
+        token=root_token,
+    )
+    deadline = time.monotonic() + 90
+    while time.monotonic() < deadline:
+        series_listing = _request(
+            "GET",
             base,
-            writer_key,
-            series_library_id,
-            series_dir,
-            series_titles,
-            series_scenarios,
+            "/api/libraries/" + series_library_id + "/items?limit=10",
+            token=writer_key,
         )
-        repository.close()
-        digest = _run(
-            "docker", "image", "inspect", image, "--format", "{{index .RepoDigests 0}}"
-        ).stdout.strip()
-        expected_digest = image.rsplit("@", 1)[1]
-        if not digest.endswith("@" + expected_digest) or any(
-            row["state"] != "verified" for row in adapter_outcomes
-        ):
-            raise QualificationError("guarded_write_not_verified")
-        installed_outcomes = installed["outcomes"]
-        return {
-            "version": version,
-            "image_digest": expected_digest,
-            "resolved_image_digest": digest.rsplit("@", 1)[1],
-            "authentication": "api_key_accepted",
-            "least_authority_refusal": True,
-            "operator_cases": len(corpus_sources),
-            "destinations": installed["destinations"],
-            "mixed_origins": set(installed["full_chain_origins"].values())
-            == {"human", "automatic_policy"},
-            "metadata_tags": True,
-            "cover": installed["full_chain_origins"].get("cover") == "human",
-            "installed_continuous": installed,
-            "installed_automatic_series": automatic_series,
-            "real_automatic_adapter": real_automatic_adapter,
-            "adapter_canary": adapter_outcomes,
-            "audiobook": audiobook,
-            "description_landings": description_landings,
-            "outcomes": installed_outcomes,
-        }
+        if series_listing.get("total") == 3:
+            break
+        time.sleep(0.25)
+    else:
+        raise QualificationError("series_library_did_not_scan")
+    automatic_series = _installed_automatic_series_qualification(
+        root,
+        base,
+        writer_key,
+        series_library_id,
+        series_dir,
+        series_titles,
+        series_scenarios,
+    )
+    return installed, automatic_series
+
+
+def _qualification_receipt(
+    version: str,
+    image: str,
+    files: _CanaryFiles,
+    rig: _AdapterRig,
+    library: _LibraryCanaries,
+    installed: dict[str, object],
+    automatic_series: dict[str, object],
+) -> dict[str, object]:
+    """Check the image digest and every adapter write, then shape the receipt."""
+    adapter_outcomes, corpus_sources = rig.outcomes, files.corpus_sources
+    real_automatic_adapter, audiobook, description_landings = library
+    digest = _run(
+        "docker", "image", "inspect", image, "--format", "{{index .RepoDigests 0}}"
+    ).stdout.strip()
+    expected_digest = image.rsplit("@", 1)[1]
+    if not digest.endswith("@" + expected_digest) or any(
+        row["state"] != "verified" for row in adapter_outcomes
+    ):
+        raise QualificationError("guarded_write_not_verified")
+    installed_outcomes = installed["outcomes"]
+    return {
+        "version": version,
+        "image_digest": expected_digest,
+        "resolved_image_digest": digest.rsplit("@", 1)[1],
+        "authentication": "api_key_accepted",
+        "least_authority_refusal": True,
+        "operator_cases": len(corpus_sources),
+        "destinations": installed["destinations"],
+        "mixed_origins": set(installed["full_chain_origins"].values())
+        == {"human", "automatic_policy"},
+        "metadata_tags": True,
+        "cover": installed["full_chain_origins"].get("cover") == "human",
+        "installed_continuous": installed,
+        "installed_automatic_series": automatic_series,
+        "real_automatic_adapter": real_automatic_adapter,
+        "adapter_canary": adapter_outcomes,
+        "audiobook": audiobook,
+        "description_landings": description_landings,
+        "outcomes": installed_outcomes,
+    }
+
+
+def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
+    image = IMAGES[version]
+    owner = "ml-f14-" + uuid.uuid4().hex
+    run = _QualificationRun(owner, Path(tempfile.mkdtemp(prefix=owner + "-")))
+    try:
+        files = _canary_files(run.root, corpus)
+        service = _start_canary_service(run, image, files)
+        scanned = _scanned_canary_items(service, files)
+        _least_authority_phase(service, scanned)
+        rig = _adapter_canary(run.root, service, files, scanned)
+        library = _library_canaries(run.root, service, scanned, rig)
+        installed, automatic_series = _installed_phases(
+            run.root, service, files, scanned
+        )
+        rig.repository.close()
+        return _qualification_receipt(
+            version, image, files, rig, library, installed, automatic_series
+        )
     finally:
-        if base is not None and root_token is not None:
-            for key_id in key_ids:
-                _delete_key(base, root_token, key_id)
+        if run.base is not None and run.root_token is not None:
+            for key_id in run.key_ids:
+                _delete_key(run.base, run.root_token, key_id)
         if subprocess.run(
             ("docker", "inspect", owner), capture_output=True, text=True
         ).returncode == 0 and not _owned(owner, owner):
             raise RuntimeError("refusing cleanup of unowned Docker resource")
         if _owned(owner, owner):
             _run("docker", "rm", "-f", owner)
-        shutil.rmtree(root, ignore_errors=True)
+        shutil.rmtree(run.root, ignore_errors=True)
 
 
 def main() -> None:

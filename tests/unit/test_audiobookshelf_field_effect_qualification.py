@@ -1229,3 +1229,162 @@ def test_no_product_import_precedes_the_import_root_selection() -> None:
         )
     ]
     assert early == []
+
+
+_RECEIPT_KEYS = {
+    "adapter_canary",
+    "audiobook",
+    "authentication",
+    "cover",
+    "description_landings",
+    "destinations",
+    "image_digest",
+    "installed_automatic_series",
+    "installed_continuous",
+    "least_authority_refusal",
+    "metadata_tags",
+    "mixed_origins",
+    "operator_cases",
+    "outcomes",
+    "real_automatic_adapter",
+    "resolved_image_digest",
+    "version",
+}
+
+
+def _staged_qualify(
+    monkeypatch: pytest.MonkeyPatch, *, fail_at: str | None = None
+) -> tuple[list[str], list[str], dict[str, Path]]:
+    """Replace each qualify phase with a recorder; Docker and the service stay out."""
+    calls: list[str] = []
+    deleted: list[str] = []
+    roots: dict[str, Path] = {}
+    version = "2.37.2"
+    digest = qualification.IMAGES[version].rsplit("@", 1)[1]
+
+    def step(name: str, value: object) -> Callable[..., object]:
+        def run(*args: object) -> object:
+            calls.append(name)
+            if name == fail_at:
+                raise QualificationError("staged_failure")
+            return value
+
+        return run
+
+    def files(root: Path, corpus: Path | None) -> object:
+        calls.append("files")
+        roots["root"] = root
+        return SimpleNamespace(corpus_sources=())
+
+    def service(run: object, image: str, files: object) -> object:
+        calls.append("service")
+        assert isinstance(run, qualification._QualificationRun)
+        assert image == qualification.IMAGES[version]
+        run.base, run.root_token = "http://canary", "root-token"
+        run.key_ids.extend(("writer", "read-only"))
+        if fail_at == "service":
+            raise QualificationError("staged_failure")
+        return SimpleNamespace()
+
+    repository = SimpleNamespace(close=lambda: calls.append("close"))
+    rig = SimpleNamespace(repository=repository, outcomes=[{"state": "verified"}])
+    installed = {
+        "destinations": ["title", "cover"],
+        "full_chain_origins": {"title": "automatic_policy", "cover": "human"},
+        "outcomes": [{"state": "verified"}],
+    }
+    monkeypatch.setattr(qualification, "_canary_files", files)
+    monkeypatch.setattr(qualification, "_start_canary_service", service)
+    monkeypatch.setattr(
+        qualification, "_scanned_canary_items", step("scanned", SimpleNamespace())
+    )
+    monkeypatch.setattr(
+        qualification, "_least_authority_phase", step("authority", None)
+    )
+    monkeypatch.setattr(qualification, "_adapter_canary", step("adapter", rig))
+    monkeypatch.setattr(
+        qualification,
+        "_library_canaries",
+        step("library", ([{"state": "verified"}], {"outcomes": []}, [])),
+    )
+    monkeypatch.setattr(
+        qualification,
+        "_installed_phases",
+        step("installed", (installed, {"installed_composition": True})),
+    )
+    monkeypatch.setattr(
+        qualification,
+        "_run",
+        lambda *command, timeout=120: SimpleNamespace(
+            stdout="ghcr.io/advplyr/audiobookshelf@" + digest + "\n"
+        ),
+    )
+    monkeypatch.setattr(
+        qualification.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=1),
+    )
+    monkeypatch.setattr(qualification, "_owned", lambda name, owner: False)
+    monkeypatch.setattr(
+        qualification,
+        "_delete_key",
+        lambda base, token, key_id: deleted.append(f"{base} {token} {key_id}"),
+    )
+    return calls, deleted, roots
+
+
+def test_qualify_runs_its_phases_in_order_and_shapes_the_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls, deleted, roots = _staged_qualify(monkeypatch)
+
+    receipt = qualification.qualify("2.37.2")
+
+    assert calls == [
+        "files",
+        "service",
+        "scanned",
+        "authority",
+        "adapter",
+        "library",
+        "installed",
+        "close",
+    ]
+    assert set(receipt) == _RECEIPT_KEYS
+    assert receipt["version"] == "2.37.2"
+    assert receipt["image_digest"] == receipt["resolved_image_digest"]
+    assert receipt["mixed_origins"] is True and receipt["cover"] is True
+    assert receipt["operator_cases"] == 0
+    assert deleted == [
+        "http://canary root-token writer",
+        "http://canary root-token read-only",
+    ]
+    assert not roots["root"].exists()
+
+
+@pytest.mark.parametrize("fail_at", ["service", "adapter", "installed"])
+def test_a_failed_phase_still_deletes_its_keys_and_files(
+    monkeypatch: pytest.MonkeyPatch, fail_at: str
+) -> None:
+    calls, deleted, roots = _staged_qualify(monkeypatch, fail_at=fail_at)
+
+    with pytest.raises(QualificationError, match="staged_failure"):
+        qualification.qualify("2.37.2")
+
+    assert calls[-1] == fail_at and "close" not in calls
+    assert len(deleted) == 2
+    assert not roots["root"].exists()
+
+
+def test_an_unverified_adapter_write_fails_the_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _staged_qualify(monkeypatch)
+    rig = SimpleNamespace(
+        repository=SimpleNamespace(close=lambda: None),
+        outcomes=[{"state": "stale"}],
+    )
+    monkeypatch.setattr(qualification, "_adapter_canary", lambda *args: rig)
+
+    with pytest.raises(QualificationError, match="guarded_write_not_verified"):
+        qualification.qualify("2.37.2")
