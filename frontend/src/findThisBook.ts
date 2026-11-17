@@ -28,8 +28,9 @@ export type WorkAction = (typeof WORK_ACTIONS)[number]
 export const ownerLinkKey = (address: WorkAddress) =>
   ['library', 'link', address.connection, address.library, address.item] as const
 
-export const sourceName = (provider: OwnerLinkProvider) =>
-  settingsVocabulary.provider_labels[provider]
+// A link from an identifiers file names no source (#1478): its sources read it.
+export const sourceName = (provider: OwnerLinkProvider | null) =>
+  provider === null ? 'its sources' : settingsVocabulary.provider_labels[provider]
 
 // The Audible marketplaces as the owner reads them: the store's own domain.
 const marketplaceDomains: Readonly<Record<string, string>> = {
@@ -53,15 +54,15 @@ export const laneLabels = {
 } as const satisfies Record<OwnerSearchLane, string>
 
 // Header pill (L2) and the works list's status phrase.
-export const pillText = (state: OwnerLinkState, provider: OwnerLinkProvider) =>
+export const pillText = (state: OwnerLinkState, provider: OwnerLinkProvider | null) =>
   ({
-    linked: `Linked on ${sourceName(provider)}`,
+    linked: provider === null ? 'Linked from a file' : `Linked on ${sourceName(provider)}`,
     preparing: 'Linked, preparing',
     waiting: `Linked, waiting for ${sourceName(provider)}`,
     contradicted: 'Link contradicted',
     needs_replacing: 'Link needs replacing',
   })[state]
-export const rowLinkPhrase = (state: OwnerLinkState, provider: OwnerLinkProvider) =>
+export const rowLinkPhrase = (state: OwnerLinkState, provider: OwnerLinkProvider | null) =>
   ({
     linked: 'Linked',
     preparing: 'Linked, preparing',
@@ -76,18 +77,34 @@ const creatorsText = (creators: readonly string[]) => creators.join(', ')
 const byCreators = (creators: readonly string[]) =>
   creators.length ? ` by ${creatorsText(creators)}` : ''
 
+/**
+ * What a link names: its record's title, or for a link from an identifiers
+ * file, which keeps no title, its ISBN or ASIN (#1478).
+ */
+export const linkName = (link: Pick<OwnerLinkCurrent, 'title' | 'scope' | 'identifier'>): string =>
+  link.title ?? `${link.scope === 'recording' ? 'ASIN' : 'ISBN'} ${link.identifier ?? ''}`
+
 // The link view's two lines and its state line (§6).
 export const linkLine = (link: OwnerLinkCurrent) =>
-  `Linked to ${link.title}${byCreators(link.creators)} on ${sourceName(link.provider)}`
-export const scopeLine = (link: Pick<OwnerLinkCurrent, 'scope' | 'identifier'>) =>
+  link.provider === null
+    ? `Linked to ${linkName(link)} from an identifiers file`
+    : `Linked to ${linkName(link)}${byCreators(link.creators)} on ${sourceName(link.provider)}`
+// A file link's line above already names its identifier (#1478).
+export const scopeLine = (link: Pick<OwnerLinkCurrent, 'scope' | 'identifier' | 'provider'>) =>
   link.scope === 'work'
     ? 'As this book'
     : link.scope === 'edition'
-      ? `As this edition, ISBN ${link.identifier ?? ''}`
-      : `As this recording, ASIN ${link.identifier ?? ''}`
+      ? link.provider === null
+        ? 'As this edition'
+        : `As this edition, ISBN ${link.identifier ?? ''}`
+      : link.provider === null
+        ? 'As this recording'
+        : `As this recording, ASIN ${link.identifier ?? ''}`
 
+// A link from an identifiers file names no source, so its lines say what any
+// of the library's sources found (#1478).
 const contradictedReason = (link: OwnerLinkCurrent) => {
-  const source = sourceName(link.provider)
+  const source = link.provider === null ? 'A source' : sourceName(link.provider)
   switch (link.reason) {
     case 'format':
       return `${source} now lists ISBN ${link.identifier ?? ''} as a print edition.`
@@ -101,14 +118,17 @@ const contradictedReason = (link: OwnerLinkCurrent) => {
   }
 }
 const replacingReason = (link: OwnerLinkCurrent, mediaKind: 'ebook' | 'audiobook') => {
-  const source = sourceName(link.provider)
+  const file = link.provider === null
+  const source = file ? 'A source' : sourceName(link.provider)
   switch (link.reason) {
     case 'missing':
-      return `${source} no longer has this record.`
+      return file ? `No source lists ${linkName(link)}.` : `${source} no longer has this record.`
     case 'merged':
       return `${source} merged this record into another one.`
     case 'source_disabled':
-      return `${source} is turned off for this library.`
+      return file
+        ? `No source that reads ${link.scope === 'recording' ? 'ASINs' : 'ISBNs'} is turned on for this library.`
+        : `${source} is turned off for this library.`
     default:
       return mediaKind === 'audiobook'
         ? 'This work is now an audiobook.'
@@ -117,7 +137,7 @@ const replacingReason = (link: OwnerLinkCurrent, mediaKind: 'ebook' | 'audiobook
 }
 /** The state line under the link, or null for a link that holds. */
 export const stateLine = (link: OwnerLinkCurrent, mediaKind: 'ebook' | 'audiobook', now: Date) => {
-  const source = sourceName(link.provider)
+  const source = link.provider === null ? 'Its sources' : sourceName(link.provider)
   switch (link.state) {
     case 'linked':
       return null
@@ -126,9 +146,11 @@ export const stateLine = (link: OwnerLinkCurrent, mediaKind: 'ebook' | 'audioboo
         ? 'Preparation is paused. The link is used when it resumes.'
         : 'Preparing this work with the link.'
     case 'waiting':
-      return link.retry_at === null
-        ? `${source} did not answer. The link is used once it does.`
-        : `${source} did not answer. Next automatic retry ${formatWhen(link.retry_at, now)}.`
+      return link.provider === null && link.retry_at === null
+        ? 'Its sources did not answer. The link is used once they do.'
+        : link.retry_at === null
+          ? `${source} did not answer. The link is used once it does.`
+          : `${source} did not answer. Next automatic retry ${formatWhen(link.retry_at, now)}.`
     case 'contradicted':
       return `Link contradicted. ${contradictedReason(link)} Change the link or withdraw it.`
     case 'needs_replacing':
@@ -291,11 +313,11 @@ export const uncertainLinkCopy =
   'No answer came back. Check whether the work is linked before choosing again.'
 export const refusalFor = (
   error: unknown,
-  provider: OwnerLinkProvider,
+  provider: OwnerLinkProvider | null,
   action: 'search' | 'choose' | 'withdraw',
   now: Date,
 ): Refusal => {
-  const source = sourceName(provider)
+  const source = provider === null ? 'Its sources' : sourceName(provider)
   // A write whose answer was lost, or a 503 after it, may have landed.
   if (
     action !== 'search' &&

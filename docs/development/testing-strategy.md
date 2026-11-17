@@ -380,15 +380,18 @@ generated audiobook is linked as This recording, its ASIN must reach the
 Audible catalog, Audnexus and AudioSilo, and a product outside the file's
 runtime band is offered as This book only. The EPUB's link is then withdrawn:
 History shows the link and the withdrawal, and the next preparation reads no
-link or anchored lane.
+link or anchored lane. An identifiers file then links the EPUB again by the
+path the service gives it, beside a row that matches no work; the work is
+prepared as a file link, the import has one Activity row, and Withdraw this
+import ends its link.
 
 `--corpus` replaces those libraries' two generated EPUBs with a private
 operator batch: a directory outside the repository holding 6 to 8 `*.epub`
 files, or the run fails `operator_corpus_invalid`. The aggregate
-`audiobookshelf-field-effect-v5` receipt holds the source SHA, image digests,
+`audiobookshelf-field-effect-v6` receipt holds the source SHA, image digests,
 field outcomes, the installed lifecycle summary, the outcome for each of seven
 synthetic descriptions, the owner-value steps, the going-back summary, the
-link phase's observations (`installed_owner_link`) and, with a batch,
+link phase's observations, the import's among them (`installed_owner_link`) and, with a batch,
 `operator_corpus: true` and each image's `operator_cases`. It never holds
 credentials, tokens, source metadata
 or image bytes.

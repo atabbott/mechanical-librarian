@@ -18,7 +18,7 @@ const view = (link: OwnerLinkCurrent | null, offered = true): OwnerLinkView => (
     : [],
   prefill: { title: 'A Book', authors: ['Ada Example'], isbn: null, asin: null },
   link,
-  schema_version: 'owner-link-view-v1',
+  schema_version: 'owner-link-view-v2',
 })
 const openLink = async (http: ReviewHttp, pill: string) => {
   const user = userEvent.setup()
@@ -195,7 +195,14 @@ describe('the works list', () => {
       getLibrary: vi.fn(async () => ({
         ...library,
         works: [
-          { ...first, link: { state: 'contradicted' as const, provider: 'hardcover' as const } },
+          {
+            ...first,
+            link: {
+              state: 'contradicted' as const,
+              source: 'search' as const,
+              provider: 'hardcover' as const,
+            },
+          },
         ],
       })),
     }
@@ -215,7 +222,14 @@ describe('the works list', () => {
       getLibrary: vi.fn(async () => ({
         ...library,
         works: [
-          { ...first, link: { state: 'waiting' as const, provider: 'open_library' as const } },
+          {
+            ...first,
+            link: {
+              state: 'waiting' as const,
+              source: 'search' as const,
+              provider: 'open_library' as const,
+            },
+          },
         ],
       })),
     }
@@ -223,5 +237,106 @@ describe('the works list', () => {
     const row = await screen.findByRole('button', { name: /^A Book\./u })
     const pill = within(row.closest('li') ?? row).getByText('Linked, waiting for Open Library')
     expect(pill).toHaveClass('status-pill', 'is-notice')
+  })
+})
+
+describe('a link from an identifiers file (#1478)', () => {
+  const now = new Date('2026-11-16T10:00:00Z')
+  const fileLink = (overrides: Partial<OwnerLinkCurrent> = {}) =>
+    linked({
+      source: 'file',
+      provider: null,
+      title: null,
+      creators: [],
+      scope: 'edition',
+      identifier: '9780441172719',
+      ...overrides,
+    })
+  const recording = { scope: 'recording', identifier: 'B00B7NPRY8' } as const
+  it.each([
+    [fileLink(), 'Linked from a file', null],
+    [
+      fileLink({ state: 'waiting' }),
+      'Linked, waiting for its sources',
+      'Its sources did not answer. The link is used once they do.',
+    ],
+    [
+      fileLink({ state: 'contradicted', reason: 'format' }),
+      'Link contradicted',
+      'Link contradicted. A source now lists ISBN 9780441172719 as a print edition. Change the link or withdraw it.',
+    ],
+    [
+      fileLink({ state: 'contradicted', reason: 'variant', ...recording }),
+      'Link contradicted',
+      'Link contradicted. A source now lists this recording as abridged. Change the link or withdraw it.',
+    ],
+    [
+      fileLink({ state: 'needs_replacing', reason: 'missing' }),
+      'Link needs replacing',
+      'Link needs replacing. No source lists ISBN 9780441172719. Change the link.',
+    ],
+    [
+      fileLink({ state: 'needs_replacing', reason: 'missing', ...recording }),
+      'Link needs replacing',
+      'Link needs replacing. No source lists ASIN B00B7NPRY8. Change the link.',
+    ],
+    [
+      fileLink({ state: 'needs_replacing', reason: 'merged' }),
+      'Link needs replacing',
+      'Link needs replacing. A source merged this record into another one. Change the link.',
+    ],
+    [
+      fileLink({ state: 'needs_replacing', reason: 'source_disabled' }),
+      'Link needs replacing',
+      'Link needs replacing. No source that reads ISBNs is turned on for this library. Change the link.',
+    ],
+    [
+      fileLink({ state: 'needs_replacing', reason: 'source_disabled', ...recording }),
+      'Link needs replacing',
+      'Link needs replacing. No source that reads ASINs is turned on for this library. Change the link.',
+    ],
+  ] as const)('reads %o as its pill and line', (link, pill, line) => {
+    expect(pillText(link.state, link.provider)).toBe(pill)
+    expect(stateLine(link, 'ebook', now)).toBe(line)
+  })
+
+  it('names the identifier in the link view and its withdrawal question', async () => {
+    const http = withLinkView(view(fileLink()))
+    const { user, dialog } = await openLink(http, 'Linked from a file')
+    expect(
+      within(dialog).getByText('Linked to ISBN 9780441172719 from an identifiers file'),
+    ).toBeVisible()
+    // The line above names the ISBN; the scope line does not repeat it.
+    expect(within(dialog).getByText('As this edition', { exact: true })).toBeVisible()
+    expect(within(dialog).getByRole('button', { name: 'Change the link' })).toBeVisible()
+    await user.click(within(dialog).getByRole('button', { name: 'Withdraw the link' }))
+    expect(
+      within(dialog).getByText(
+        'Withdraw the link to ISBN 9780441172719? Its evidence leaves this work at the next preparation.',
+      ),
+    ).toHaveFocus()
+  })
+
+  it('reads Linked in the works list, and waits for its sources', async () => {
+    expect(rowLinkPhrase('linked', null)).toBe('Linked')
+    const first = library.works[0]
+    if (!first) throw new Error('library fixture requires one work')
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getLibrary: vi.fn(async () => ({
+        ...library,
+        works: [
+          {
+            ...first,
+            link: { state: 'waiting' as const, source: 'file' as const, provider: null },
+          },
+        ],
+      })),
+    }
+    renderRoute('/library?lens=all', http)
+    const row = await screen.findByRole('button', { name: /^A Book\./u })
+    expect(
+      within(row.closest('li') ?? row).getByText('Linked, waiting for its sources'),
+    ).toHaveClass('status-pill', 'is-notice')
   })
 })

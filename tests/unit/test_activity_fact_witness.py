@@ -1419,3 +1419,33 @@ def test_a_keep_row_depends_on_the_write_frozen_with_it() -> None:
     )
     assert aliases == {key("decision_effects", "accept-1")}
     assert candidates == {("field_effect", "plan-1")}
+
+
+def test_an_imports_rows_project_its_own_entry_and_never_their_links() -> None:
+    """#1478: an import's event is its Activity row and depends on its import;
+    the link rows it wrote, and those Withdraw this import wrote, are not
+    rows of their own, while a link Find this book wrote still is."""
+    key = activity_facts._key
+    connection = sqlite3.connect(":memory:")
+    dependencies, _, candidates = activity_facts._bindings(
+        "identifier_import_events",
+        {"event_id": "identifier_import_event_1", "import_id": "import-1"},
+        connection,
+    )
+    assert dependencies == {key("identifier_imports", "import-1")}
+    assert candidates == {("identifier_import", "identifier_import_event_1")}
+    link = {
+        "link_row_id": "owner_link_1",
+        "connection_name": "abs",
+        "library_name": "books",
+        "item_id": "item-1",
+    }
+    imported = activity_facts._bindings(
+        "owner_links", {**link, "import_id": "import-1"}, connection
+    )
+    assert imported == (frozenset(), frozenset(), frozenset())
+    _, _, searched = activity_facts._bindings(
+        "owner_links", {**link, "import_id": None}, connection
+    )
+    assert searched == {("owner_link", "owner_link_1")}
+    assert {"identifier_imports", "identifier_import_events"} <= set(_TABLES)

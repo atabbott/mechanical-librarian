@@ -63,6 +63,9 @@ authority.
 
 List output carries `eligible`, `ineligible`, `ebook` or `audio` facets and
 never a path. An exact lookup may include the service-relative media path.
+The catalogue also keeps each supported item's folder path within its
+library, which only an [identifiers file](../reference/identifiers-file.md)
+row is matched against, in memory.
 Errors are value-free, and logs redact titles, authors, identities, paths and
 credentials.
 

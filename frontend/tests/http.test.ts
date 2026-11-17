@@ -1871,7 +1871,7 @@ describe('ReviewApiClient', () => {
               library: 'Books',
               media_kind: 'epub',
               item: 'internal-item-2',
-              link: { state: 'waiting', provider: 'open_library' },
+              link: { state: 'waiting', source: 'search', provider: 'open_library' },
               attention_count: 0,
               attention_state: 'no_attention_needed',
               detail_url: null,
@@ -1970,7 +1970,7 @@ describe('ReviewApiClient', () => {
       },
       valueFlags: [],
       findOffered: false,
-      link: { state: 'waiting', provider: 'open_library' },
+      link: { state: 'waiting', source: 'search', provider: 'open_library' },
     })
     expect(JSON.stringify(view)).not.toContain('internal-item-2')
     expect(fetchMock).toHaveBeenCalledWith(
@@ -3303,7 +3303,7 @@ describe('ReviewApiClient', () => {
       csrf,
       fetch: vi.fn(async () =>
         Response.json(
-          { schema_version: 'review-library-v9', error: { code: 'busy' } },
+          { schema_version: 'review-library-v10', error: { code: 'busy' } },
           { status: 503 },
         ),
       ),
@@ -3403,7 +3403,7 @@ describe('ReviewApiClient', () => {
     ).rejects.toMatchObject(refused('const@/schema_version'))
     // v9 added each row's book link (#1477); a v8 row lacks it.
     await expect(
-      readLibrary({ ...page, schema_version: 'review-library-v9' }),
+      readLibrary({ ...page, schema_version: 'review-library-v10' }),
     ).resolves.toBeDefined()
   })
 
@@ -7338,6 +7338,7 @@ describe('the book link wire (#1477)', () => {
     reason: null,
     retry_at: null,
     scope: 'work',
+    source: 'search',
     state: 'linked',
     title: 'Dune',
     ...overrides,
@@ -7346,7 +7347,7 @@ describe('the book link wire (#1477)', () => {
     link: null,
     offered: true,
     prefill: { asin: null, authors: ['Frank Herbert'], isbn: null, title: 'Dune' },
-    schema_version: 'owner-link-view-v1',
+    schema_version: 'owner-link-view-v2',
     sources: [
       { lanes: ['title_authors', 'isbn'], marketplaces: null, provider: 'hardcover' },
       { lanes: ['title_authors', 'asin'], marketplaces: ['us', 'uk'], provider: 'audible_catalog' },
@@ -7528,23 +7529,58 @@ describe('the book link wire (#1477)', () => {
 
   it('reads a link event in a work’s History', async () => {
     const item = {
+      identifier: 'B000000001',
       kind: 'link_changed',
       link_row_id: linkRow,
       occurred_at: 5,
       provider: 'audible_catalog',
       review_case_id: 'case-1',
-      schema_version: 'owner-link-history-event-v1',
+      schema_version: 'owner-link-history-event-v2',
       scope: 'recording',
+      source: 'search',
       title: 'Dune',
+      with_import: false,
     }
     expect((await readHistory(caseHistory({ items: [item] }))).items).toEqual([
       {
         category: 'owner_link',
         occurredAt: 5,
         kind: 'link_changed',
+        source: 'search',
+        withImport: false,
+        identifier: 'B000000001',
         provider: 'audible_catalog',
         scope: 'recording',
         title: 'Dune',
+      },
+    ])
+  })
+
+  it('reads a file link event, which names no source or title (#1478)', async () => {
+    const item = {
+      identifier: '9780441172719',
+      kind: 'linked',
+      link_row_id: linkRow,
+      occurred_at: 5,
+      provider: null,
+      review_case_id: 'case-1',
+      schema_version: 'owner-link-history-event-v2',
+      scope: 'edition',
+      source: 'file',
+      title: null,
+      with_import: true,
+    }
+    expect((await readHistory(caseHistory({ items: [item] }))).items).toEqual([
+      {
+        category: 'owner_link',
+        occurredAt: 5,
+        kind: 'linked',
+        source: 'file',
+        withImport: true,
+        identifier: '9780441172719',
+        provider: null,
+        scope: 'edition',
+        title: null,
       },
     ])
   })
@@ -7779,5 +7815,211 @@ describe('owner clear and names on the wire', () => {
     await expect(answer({ schema_version: 'human-decision-ack-v1' })).rejects.toMatchObject({
       reason: 'const',
     })
+  })
+})
+
+describe('the identifiers file wire (#1478)', () => {
+  const build = 'e'.repeat(64)
+  const preview = (overrides: Record<string, unknown> = {}) => ({
+    preview_id: 'preview-1',
+    expires_at: 1900,
+    rows: 2,
+    counts: {
+      will_link: 1,
+      already_linked: 0,
+      no_item: 1,
+      ambiguous: 0,
+      invalid_identifier: 0,
+      wrong_medium: 0,
+      repeated: 0,
+      conflicting: 0,
+      unreadable: 0,
+    },
+    will_link: [
+      {
+        row: 2,
+        title: 'Title 1',
+        authors: [],
+        identifier_kind: 'isbn',
+        identifier: '9780306406157',
+      },
+    ],
+    refused: [{ row: 3, reason: 'no_item' }],
+    schema_version: 'identifier-preview-v1',
+    ...overrides,
+  })
+  const client = (...answers: Response[]) => {
+    const fetchMock = vi.fn<typeof fetch>()
+    for (const answer of answers) fetchMock.mockResolvedValueOnce(answer)
+    const keys = { current: vi.fn(() => token), renew: vi.fn(async () => renewedToken) }
+    return {
+      fetchMock,
+      keys,
+      http: new ReviewApiClient({ csrf: keys, fetch: fetchMock, buildIdentity: build }),
+    }
+  }
+  const challenge = () => Response.json({ error: { code: 'csrf' } }, { status: 403 })
+  const file = new Blob(['path\tidentifier\nA/B\t9780306406157\n'], { type: 'text/plain' })
+
+  it('sends the file as its own bytes, as plain text, with the build and CSRF token', async () => {
+    const { fetchMock, http } = client(Response.json(preview()))
+    await expect(http.previewIdentifiers('abs', 'my books', file)).resolves.toMatchObject({
+      preview_id: 'preview-1',
+    })
+    const [path, init] = fetchMock.mock.calls[0] ?? []
+    expect(path).toBe('/api/v1/libraries/abs/my%20books/identifier-previews')
+    const headers = new Headers(init?.headers)
+    expect(headers.get('content-type')).toBe('text/plain; charset=utf-8')
+    expect(headers.get('x-ml-build-identity')).toBe(build)
+    expect(headers.get('x-csrf-token')).toBe(token)
+    expect(init?.body).toBe(file)
+  })
+
+  it('reads a row that blank lines pushed past line 5,001', async () => {
+    const pushed = preview({ refused: [{ row: 1_048_577, reason: 'no_item' }] })
+    await expect(
+      client(Response.json(pushed)).http.previewIdentifiers('abs', 'books', file),
+    ).resolves.toMatchObject({ refused: [{ row: 1_048_577 }] })
+    await expect(
+      client(
+        Response.json(preview({ refused: [{ row: 1_048_578, reason: 'no_item' }] })),
+      ).http.previewIdentifiers('abs', 'books', file),
+    ).rejects.toMatchObject({ status: 502 })
+  })
+
+  it('sends a preview again once after a CSRF renewal, with the renewed token', async () => {
+    const { fetchMock, http, keys } = client(challenge(), Response.json(preview()))
+    await http.previewIdentifiers('abs', 'books', file)
+    expect(keys.renew).toHaveBeenCalledOnce()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get('x-csrf-token')).toBe(
+      renewedToken,
+    )
+    expect(fetchMock.mock.calls[1]?.[1]?.body).toBe(file)
+  })
+
+  it.each([
+    ['counts that do not add up to the rows', { rows: 3 }],
+    ['a will-link list that is not its count', { will_link: [] }],
+    ['a refused list that is not the rest', { refused: [] }],
+  ])('refuses a preview with %s', async (_name, overrides) => {
+    await expect(
+      client(Response.json(preview(overrides))).http.previewIdentifiers('abs', 'books', file),
+    ).rejects.toMatchObject({ status: 502, code: 'contradictory_identifier_preview' })
+  })
+
+  it('sends an import again after a CSRF renewal only with its own key', async () => {
+    const imported = {
+      import_id: `identifier_import_${'1'.repeat(64)}`,
+      linked: 1,
+      scan_requested: true,
+      schema_version: 'identifier-import-v1',
+    }
+    const { fetchMock, http } = client(challenge(), Response.json(imported))
+    await expect(http.importIdentifiers('preview-1', 'key-'.repeat(5))).resolves.toEqual(imported)
+    const [first, second] = fetchMock.mock.calls
+    expect(first?.[0]).toBe('/api/v1/identifier-previews/preview-1/import')
+    expect(new Headers(first?.[1]?.headers).get('idempotency-key')).toBe('key-'.repeat(5))
+    expect(new Headers(second?.[1]?.headers).get('idempotency-key')).toBe('key-'.repeat(5))
+    expect(first?.[1]?.body).toBeUndefined()
+  })
+
+  it('reports a lost import answer as uncertain', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockRejectedValueOnce(new TypeError('lost'))
+    const http = new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: build })
+    await expect(http.importIdentifiers('preview-1', 'key-'.repeat(5))).rejects.toBeInstanceOf(
+      AmbiguousMutationError,
+    )
+  })
+
+  it('reads a preview’s status, and refuses an import named outside imported', async () => {
+    const status = (state: string, importId: string | null, linked: number | null) =>
+      Response.json({
+        state,
+        import_id: importId,
+        linked,
+        schema_version: 'identifier-preview-status-v1',
+      })
+    const id = `identifier_import_${'1'.repeat(64)}`
+    await expect(
+      client(status('imported', id, 2)).http.getIdentifierPreviewStatus('preview-1'),
+    ).resolves.toMatchObject({ state: 'imported', linked: 2 })
+    await expect(
+      client(status('open', id, 2)).http.getIdentifierPreviewStatus('preview-1'),
+    ).rejects.toMatchObject({ code: 'contradictory_identifier_preview' })
+    await expect(
+      client(status('imported', null, null)).http.getIdentifierPreviewStatus('preview-1'),
+    ).rejects.toMatchObject({ code: 'contradictory_identifier_preview' })
+  })
+
+  it('reads an import’s live state and withdraws it with a key', async () => {
+    const id = `identifier_import_${'1'.repeat(64)}`
+    const state = (still: number, withdrawn: boolean) =>
+      Response.json({
+        import_id: id,
+        linked: 3,
+        still_linked: still,
+        withdrawn,
+        schema_version: 'identifier-import-v1',
+      })
+    const read = client(state(2, false))
+    await expect(read.http.getIdentifierImport(id)).resolves.toMatchObject({ still_linked: 2 })
+    expect(read.fetchMock.mock.calls[0]?.[0]).toBe(`/api/v1/identifier-imports/${id}`)
+    for (const [still, withdrawn] of [
+      [4, false],
+      [1, true],
+    ] as const)
+      await expect(
+        client(state(still, withdrawn)).http.getIdentifierImport(id),
+      ).rejects.toMatchObject({ code: 'contradictory_identifier_import' })
+    const withdrew = client(
+      Response.json({
+        import_id: id,
+        withdrawn: 2,
+        scan_requested: true,
+        schema_version: 'identifier-import-withdrawal-v1',
+      }),
+    )
+    await expect(
+      withdrew.http.withdrawIdentifierImport(id, 'key-'.repeat(5)),
+    ).resolves.toMatchObject({ withdrawn: 2 })
+    expect(withdrew.fetchMock.mock.calls[0]?.[0]).toBe(`/api/v1/identifier-imports/${id}/withdraw`)
+  })
+
+  it('refuses a file link that names a source, a title or the whole work', async () => {
+    const view = (link: Record<string, unknown>) =>
+      Response.json({
+        link: {
+          creators: [],
+          identifier: '9780306406157',
+          link_row_id: `owner_link_${'a'.repeat(64)}`,
+          paused: false,
+          provider: null,
+          reason: null,
+          retry_at: null,
+          scope: 'edition',
+          source: 'file',
+          state: 'linked',
+          title: null,
+          ...link,
+        },
+        offered: true,
+        prefill: { asin: null, authors: [], isbn: null, title: null },
+        schema_version: 'owner-link-view-v2',
+        sources: [],
+      })
+    const address = { connection: 'abs', library: 'books', item: 'item-1' }
+    await expect(client(view({})).http.getOwnerLinkView(address)).resolves.toMatchObject({
+      link: { source: 'file', provider: null },
+    })
+    for (const link of [
+      { provider: 'hardcover' },
+      { title: 'Dune' },
+      { scope: 'work', identifier: null },
+      { source: 'search' },
+    ])
+      await expect(client(view(link)).http.getOwnerLinkView(address)).rejects.toMatchObject({
+        code: 'contradictory_owner_link',
+      })
   })
 })

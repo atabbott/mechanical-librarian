@@ -93,6 +93,7 @@ class ActivityResult(StrEnum):
     LINKED = "Linked"
     LINK_CHANGED = "Link changed"
     LINK_WITHDRAWN = "Link withdrawn"
+    IMPORTED = "Imported"
 
 
 # The write lifecycle states that are still moving or already closed without
@@ -147,6 +148,7 @@ _RESULT_LABELS = {
     "linked": ActivityResult.LINKED,
     "link_changed": ActivityResult.LINK_CHANGED,
     "link_withdrawn": ActivityResult.LINK_WITHDRAWN,
+    "imported": ActivityResult.IMPORTED,
     "recorded": ActivityResult.RECORDED,
 }
 
@@ -580,13 +582,26 @@ def _cover_facts(state: str) -> tuple[ReadableChange, list[dict[str, str]]]:
 def _owner_link_facts(
     record: dict[str, object], state: str, work: str
 ) -> tuple[ReadableChange, list[dict[str, str]]]:
-    """A book link made, changed or withdrawn, in the owner's words (S31)."""
-    title = plain_text(str(record.get("title", ""))) or ABSENT
-    source = provider_label(cast("str | None", record.get("provider")))
+    """A book link made, changed or withdrawn, in the owner's words (S31).
+
+    A link from an identifiers file (#1478) names its ISBN or ASIN, since it
+    keeps no title and names no source.
+    """
+    if record.get("source") == "file":
+        kind = "ISBN" if record.get("scope") == "edition" else "ASIN"
+        title = f"{kind} {plain_text(str(record.get('identity', ''))) or ABSENT}"
+        source = "Identifiers file"
+        on_source = "from an identifiers file"
+    else:
+        title = plain_text(str(record.get("title", ""))) or ABSENT
+        source = provider_label(cast("str | None", record.get("provider")))
+        on_source = f"on {source}"
     if state == "link_withdrawn":
         return ReadableChange(
             f"Withdrew the link to {title}",
-            f"Withdrew the link from {work} to {title} on {source}.",
+            f"Withdrew the link from {work} to {title}, {on_source}."
+            if record.get("source") == "file"
+            else f"Withdrew the link from {work} to {title} {on_source}.",
         ), [
             {"label": "Source", "value": source},
             {
@@ -599,8 +614,8 @@ def _owner_link_facts(
         cast(str, record.get("scope")), ("Not recorded", "as recorded")
     )
     return ReadableChange(
-        f"Linked to {title} on {source}",
-        f"Linked {work} to {title} on {source}, {clause}.",
+        f"Linked to {title} {on_source}",
+        f"Linked {work} to {title} {on_source}, {clause}.",
     ), [
         {"label": "Source", "value": source},
         {"label": "Linked as", "value": linked_as},
@@ -608,6 +623,56 @@ def _owner_link_facts(
             "label": "What happens next",
             "value": "Linking writes nothing to Audiobookshelf. "
             "This work is prepared again with the link.",
+        },
+    ]
+
+
+def _counted(count: int, one: str, many: str) -> str:
+    return f"{count} {one if count == 1 else many}"
+
+
+def _identifier_import_facts(
+    record: dict[str, object],
+) -> tuple[ReadableChange, list[dict[str, str]]]:
+    """An identifiers file import or its withdrawal, by its counts (#1478).
+
+    Only immutable counts: how many links are still current is read live
+    when the row's details open.
+    """
+    rows, linked, affected = (
+        cast(int, record.get(name, 0)) for name in ("rows", "linked", "affected")
+    )
+    if record.get("kind") == "withdrawn":
+        withdrew = _counted(affected, "link", "links")
+        facts = [{"label": "Linked", "value": str(linked)}]
+        if linked > affected:
+            facts.append(
+                {"label": "Changed since the import", "value": str(linked - affected)}
+            )
+        return ReadableChange(
+            f"Withdrew {withdrew}",
+            f"Withdrew {withdrew} with their identifiers file import.",
+        ), [
+            *facts,
+            {"label": "Chosen by", "value": "You"},
+            {
+                "label": "What happens next",
+                "value": "Withdrawing writes nothing to Audiobookshelf. "
+                "Each work is prepared again without its link.",
+            },
+        ]
+    works = _counted(linked, "work", "works")
+    return ReadableChange(
+        f"Linked {works}", f"Linked {works} from an identifiers file."
+    ), [
+        {"label": "Rows in the file", "value": str(rows)},
+        {"label": "Linked", "value": str(linked)},
+        {"label": "Not linked", "value": str(rows - linked)},
+        {"label": "Chosen by", "value": "You"},
+        {
+            "label": "What happens next",
+            "value": "Linking writes nothing to Audiobookshelf. "
+            "Each work is prepared again with its link.",
         },
     ]
 
@@ -733,6 +798,11 @@ def readable_activity_event(
         change, facts = _owner_link_facts(
             record, state, str(event.get("work_label", "Recorded work"))
         )
+    elif source_kind == "identifier_import":
+        change, facts = _identifier_import_facts(record)
+        if record.get("kind") == "imported":
+            # Its Details read the import live and offer Withdraw this import.
+            event["identifier_import_id"] = record.get("import_id")
     elif source_kind == "degraded":
         degraded_reason = cast(str, record.get("degraded_reason", ""))
         unavailable = {

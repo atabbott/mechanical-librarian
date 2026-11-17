@@ -26,6 +26,8 @@ How the pipeline prepares each work, stage by stage:
   [example](examples/synthetic-config.json)
 - [Review HTTP API](reference/review-openapi-v1.json) (generated)
 - [Compatibility and clean-state rules](reference/compatibility.md)
+- [Identifiers file](reference/identifiers-file.md): the format Import
+  identifiers reads
 - [Glossary](reference/glossary.md)
 
 ## Product

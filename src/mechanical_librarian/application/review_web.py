@@ -165,14 +165,22 @@ HUMAN_DECISION_ACK_SCHEMA: Final[HumanDecisionAckSchemaVersion] = (
 ReviewAttentionSchemaVersion = Literal["review-attention-v1"]
 REVIEW_ATTENTION_SCHEMA: Final[ReviewAttentionSchemaVersion] = "review-attention-v1"
 # v5: a keep says which write it went back on (#1523); v6: the book link's
-# history events (#1477).
-ReviewCaseHistorySchemaVersion = Literal["review-case-history-v6"]
+# history events (#1477); v7: a link named by an identifiers file (#1478).
+ReviewCaseHistorySchemaVersion = Literal["review-case-history-v7"]
 REVIEW_CASE_HISTORY_SCHEMA: Final[ReviewCaseHistorySchemaVersion] = (
-    "review-case-history-v6"
+    "review-case-history-v7"
 )
 
-ReviewLibrarySchemaVersion = Literal["review-library-v9"]
-REVIEW_LIBRARY_SCHEMA: Final[ReviewLibrarySchemaVersion] = "review-library-v9"
+# One book link History event; v2: a file link's identifier, source and
+# import (#1478).
+OwnerLinkHistoryEventSchemaVersion = Literal["owner-link-history-event-v2"]
+OWNER_LINK_HISTORY_EVENT_SCHEMA: Final[OwnerLinkHistoryEventSchemaVersion] = (
+    "owner-link-history-event-v2"
+)
+
+# v10: a row's link says how it was made, and a file link names no source (#1478).
+ReviewLibrarySchemaVersion = Literal["review-library-v10"]
+REVIEW_LIBRARY_SCHEMA: Final[ReviewLibrarySchemaVersion] = "review-library-v10"
 
 ReviewReportDetailSchemaVersion = Literal["review-report-detail-v7"]
 REVIEW_REPORT_DETAIL_SCHEMA: Final[ReviewReportDetailSchemaVersion] = (
@@ -4856,7 +4864,9 @@ def _decided_destinations(
     return decisions, automatic_outcomes
 
 
-OWNER_LINK_VIEW_SCHEMA: Final = "owner-link-view-v1"
+# v2: a file link (#1478) names no source and keeps no title.
+OwnerLinkViewSchemaVersion = Literal["owner-link-view-v2"]
+OWNER_LINK_VIEW_SCHEMA: Final[OwnerLinkViewSchemaVersion] = "owner-link-view-v2"
 
 
 def owner_link_view(
@@ -4866,12 +4876,13 @@ def owner_link_view(
     paused: bool,
     next_retry_at: int | None,
 ) -> dict[str, object]:
-    """The selected work's link view (`owner-link-view-v1`, S7, S29, L4).
+    """The selected work's link view (`owner-link-view-v2`, S7, S29, L4).
 
     `offer` says whether Find this book is offered, from which sources and
     with what prefill; a Could not finish work is not offered but still
     shows its link, so it can be withdrawn. `inputs` is the current link,
-    its display snapshot and the current report's link facts.
+    its display snapshot and the current report's link facts. A file link
+    (#1478) has no source and no snapshot: `provider` and `title` are null.
     """
     link: dict[str, object] | None = None
     if inputs is not None:
@@ -4896,6 +4907,7 @@ def owner_link_view(
             "reason": state.reason,
             "retry_at": state.retry_at,
             "scope": target.scope.value,
+            "source": target.source,
             "state": state.state,
             "title": target.display_title,
         }
@@ -4903,10 +4915,10 @@ def owner_link_view(
 
 
 def _library_link(entry: LibraryRowLink | None) -> dict[str, object] | None:
-    """A row's `link: {state, provider}` from its current link and report facts (S29).
+    """A row's `link: {state, source, provider}` from its current link (S29).
 
-    The row says only the state and the linked source; the selected work reads
-    the full link view.
+    The row says only the state, how the link was made and the linked source
+    (none for a file link, #1478); the selected work reads the full view.
     """
     if entry is None:
         return None
@@ -4916,6 +4928,7 @@ def _library_link(entry: LibraryRowLink | None) -> dict[str, object] | None:
             "state": link_state(
                 link, owner_link_facts_from_data(facts), paused=False
             ).state,
+            "source": link.source,
             "provider": link.provider,
         }
     except (OwnerLinkError, ReportValueError) as error:

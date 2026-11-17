@@ -508,7 +508,7 @@ _PROVIDER_EVENT_FIELDS: dict[str, FieldCheck] = {
 # the source, the lane and closed outcomes, and bounded counts. Never the query
 # text, a title, a record identity, an item id, a URL or a path.
 _OWNER_EVENT_FIELDS: dict[str, FieldCheck] = {
-    "event": one_of("owner_search", "owner_link"),
+    "event": one_of("owner_search", "owner_link", "identifier_import"),
     "adapter": one_of(
         "hardcover", "open_library", "google_books", "inventaire", "audible_catalog"
     ),
@@ -536,12 +536,31 @@ _OWNER_EVENT_FIELDS: dict[str, FieldCheck] = {
         "work_changed",
         "link_changed",
         "failed",
+        # Identifiers file imports (#1478).
+        "previewed",
+        "file_encoding",
+        "file_control_character",
+        "file_header",
+        "file_too_many_rows",
+        "file_no_rows",
+        "library_not_found",
+        "library_unreadable",
+        "preview_not_found",
+        "preview_stale",
+        "preview_imported",
+        "nothing_to_link",
+        "import_not_found",
+        "import_withdrawn",
+        "nothing_to_withdraw",
+        "unavailable",
     ),
     "cards": bounded_integer(0, 10),
     "dropped": bounded_integer(0, 11),
     "more": bounded_integer(0, 1),
     "scope": one_of("work", "edition", "recording"),
-    "action": one_of("link", "replace", "withdraw"),
+    "action": one_of("link", "replace", "withdraw", "preview", "import"),
+    "rows": bounded_integer(0, 5000),
+    "linked": bounded_integer(0, 5000),
 }
 
 
@@ -600,6 +619,22 @@ def owner_link_event(
             "scope": scope,
             "action": action,
             "outcome": outcome,
+        },
+    )
+
+
+def identifier_import_event(
+    *, action: str, outcome: str, rows: int, linked: int
+) -> tuple[dict[str, object]]:
+    """One identifiers file preview, import or withdrawal (#1478): its closed
+    outcome and how many rows and links. Never a path, row, title or item."""
+    return (
+        {
+            "event": "identifier_import",
+            "action": action,
+            "outcome": outcome,
+            "rows": rows,
+            "linked": linked,
         },
     )
 

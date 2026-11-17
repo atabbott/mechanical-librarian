@@ -3,7 +3,7 @@
 - Status: proposed
 - Date: 2026-11-16
 - Owners: project maintainers
-- Issues: #1477, #1937
+- Issues: #1477, #1937, #1478
 - Amends: ADR-0088 (a standing link supersedes the carried ASIN), ADR-0013
   (one more clean rebuild)
 - Relates to: ADR-0092, ADR-0096, ADR-0101, ADR-0102
@@ -29,10 +29,17 @@ about the work, and it should steer what preparation reads.
    edition* or *this recording*. Each item has at most one current link. Rows
    in `owner_links` are append-only (link, replace, withdraw): update and
    delete abort, a trigger enforces the sequence, and the row is its own audit
-   record. `source` is a closed set, `search` today. `record_owner_link`
-   writes a row inside the caller's write transaction and marks the work
-   fresh in the same transaction, so the next scan prepares it again. It
-   takes no import ID. A link grants no write authority. It never fills an
+   record. `source` is a closed set: `search`, or `file` for a link from an
+   [identifiers file](../../reference/identifiers-file.md) (#1478). A file
+   link is this edition by its ISBN-13 or this recording by its ASIN, names
+   no source record or snapshot, and carries the `import_id` of the import
+   that made it; only that import's Withdraw this import writes a withdrawal
+   with the same `import_id`. `record_owner_link` writes a row inside the
+   caller's write transaction and marks the work fresh in the same
+   transaction, so the next scan prepares it again. An import records its
+   links, its row in `identifier_imports` and its `identifier_import_events`
+   entry in one transaction; the link rows stay their own audit records, and
+   the import has one Activity row. A link grants no write authority. It never fills an
    identifier field and never withdraws an owner decision.
 2. **Owner search.** The owner finds the record from Library's
    [Find this book](../../product/find-this-book.md) by searching one source
@@ -192,7 +199,13 @@ about the work, and it should steer what preparation reads.
     to the owner; `owner-search-v1`, `owner-link-view-v1` and
     `owner-link-history-event-v1` are new. The application database gains
     `owner_links` and `current_owner_links`, and the preparation trigger
-    check admits `book_linked`. Every earlier application database is rejected
+    check admits `book_linked`. The file source (#1478) moves
+    `review-library-v10` (the link's source), `review-case-history-v7` with
+    `owner-link-history-event-v2`, `owner-link-view-v2` and `catalogue-v3`
+    (each item's folder path), and adds the import tables; the
+    `audiobookshelf-field-effect-v6` receipt records the import phase. The link digest
+    leaves out the source, so no report or proposal version moves for it.
+    Every earlier application database is rejected
     before mutation and needs a clean rebuild
     ([ADR-0013](0013-pre-release-clean-schema.md)).
 

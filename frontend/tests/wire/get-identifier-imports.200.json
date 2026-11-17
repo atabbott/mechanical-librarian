@@ -1,0 +1,12 @@
+{
+  "method": "GET",
+  "path": "/api/v1/identifier-imports/identifier_import_0000000000000000000000000000000000000000000000000000000000000001",
+  "status": 200,
+  "body": {
+    "import_id": "identifier_import_0000000000000000000000000000000000000000000000000000000000000001",
+    "linked": 3,
+    "still_linked": 3,
+    "withdrawn": false,
+    "schema_version": "identifier-import-v1"
+  }
+}

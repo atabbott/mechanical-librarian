@@ -247,6 +247,7 @@ export const activity = (
         change: 'Not set \u2192 9780060512750',
         change_detail: 'Set ISBN from Not set to 9780060512750',
         field_label: 'ISBN',
+        identifier_import_id: null,
         policy_changes: [],
         evidence: [
           { label: 'Previous value', value: 'Not set' },
@@ -366,7 +367,7 @@ export const unofferedLinkView: OwnerLinkView = {
   sources: [],
   prefill: { title: null, authors: [], isbn: null, asin: null },
   link: null,
-  schema_version: 'owner-link-view-v1',
+  schema_version: 'owner-link-view-v2',
 }
 export const createHttp = (): ReviewHttp => ({
   getOwnerLinkView: vi.fn(async () => unofferedLinkView),
@@ -377,6 +378,21 @@ export const createHttp = (): ReviewHttp => ({
     throw new Error('not configured')
   }),
   withdrawOwnerLink: vi.fn(async () => {
+    throw new Error('not configured')
+  }),
+  previewIdentifiers: vi.fn(async () => {
+    throw new Error('not configured')
+  }),
+  getIdentifierPreviewStatus: vi.fn(async () => {
+    throw new Error('not configured')
+  }),
+  importIdentifiers: vi.fn(async () => {
+    throw new Error('not configured')
+  }),
+  getIdentifierImport: vi.fn(async () => {
+    throw new Error('not configured')
+  }),
+  withdrawIdentifierImport: vi.fn(async () => {
     throw new Error('not configured')
   }),
   getReportDetail: vi.fn(async () => {

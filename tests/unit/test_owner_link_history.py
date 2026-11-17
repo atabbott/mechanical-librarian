@@ -18,6 +18,9 @@ from mechanical_librarian.adapters.persistence.owner_links import (
     record_owner_link,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.review_web import (
+    OWNER_LINK_HISTORY_EVENT_SCHEMA,
+)
 from mechanical_librarian.domain.owner_link import (
     OwnerLinkAction,
     OwnerLinkScope,
@@ -72,7 +75,7 @@ def _link_events(store: OwnerStore, limit: int = 50) -> list[dict[str, object]]:
         for event in store.repository.get_review_case_history(
             store.case.review_case_id, limit
         )
-        if event.get("schema_version") == "owner-link-history-event-v1"
+        if event.get("schema_version") == OWNER_LINK_HISTORY_EVENT_SCHEMA
     ]
 
 
@@ -89,34 +92,43 @@ def test_link_change_and_withdrawal_are_history_events_newest_first(
     case_id = store.case.review_case_id
     assert events == [
         {
+            "identifier": "9780306406157",
             "kind": "link_withdrawn",
             "link_row_id": third,
             "occurred_at": 4_000,
             "provider": "google_books",
             "review_case_id": case_id,
-            "schema_version": "owner-link-history-event-v1",
+            "schema_version": OWNER_LINK_HISTORY_EVENT_SCHEMA,
             "scope": "edition",
+            "source": "search",
             "title": "An Edition",
+            "with_import": False,
         },
         {
+            "identifier": "9780306406157",
             "kind": "link_changed",
             "link_row_id": second,
             "occurred_at": 3_000,
             "provider": "google_books",
             "review_case_id": case_id,
-            "schema_version": "owner-link-history-event-v1",
+            "schema_version": OWNER_LINK_HISTORY_EVENT_SCHEMA,
             "scope": "edition",
+            "source": "search",
             "title": "An Edition",
+            "with_import": False,
         },
         {
+            "identifier": None,
             "kind": "linked",
             "link_row_id": first,
             "occurred_at": 2_000,
             "provider": "open_library",
             "review_case_id": case_id,
-            "schema_version": "owner-link-history-event-v1",
+            "schema_version": OWNER_LINK_HISTORY_EVENT_SCHEMA,
             "scope": "work",
+            "source": "search",
             "title": "A Title",
+            "with_import": False,
         },
     ]
     # Each event is exactly the closed wire item.
@@ -160,3 +172,111 @@ def test_a_malformed_link_row_fails_the_history_closed(tmp_path: Path) -> None:
     )
     with pytest.raises(MetadataReportError):
         store.repository.get_review_case_history(store.case.review_case_id, 50)
+
+
+IMPORT_ID = "identifier_import_" + "c" * 64
+FILE_EDITION = OwnerLinkTarget(OwnerLinkScope.EDITION, None, "9780306406157", None)
+
+
+def _write_file(
+    connection: sqlite3.Connection,
+    item: OwnerLinkItem,
+    action: OwnerLinkAction,
+    expected: str | None,
+    target: OwnerLinkTarget | None,
+    at: int,
+    *,
+    source: str = "file",
+) -> str:
+    connection.execute("BEGIN IMMEDIATE")
+    row = record_owner_link(
+        connection,
+        item=item,
+        action=action,
+        expected_current=expected,
+        target=target,
+        source=source,
+        medium="ebook",
+        actor="owner",
+        occurred_at=at,
+        request_id=f"request-file-{at:010d}",
+        request_sha256="a" * 64,
+        import_id=IMPORT_ID if source == "file" else None,
+    )
+    connection.execute("COMMIT")
+    return row.link_row_id
+
+
+def _insert_import(connection: sqlite3.Connection, item: OwnerLinkItem) -> None:
+    connection.execute(
+        "INSERT INTO identifier_imports(import_id,connection_name,library_name,"
+        "row_count,will_link,already_linked,no_item,ambiguous,invalid_identifier,"
+        "wrong_medium,repeated,conflicting,unreadable,actor,created_at,request_id,"
+        "request_sha256,preview_digest) VALUES(?,?,?,1,1,0,0,0,0,0,0,0,0,'owner',1,"
+        "'import-request-0001',?,?)",
+        (IMPORT_ID, item.connection_name, item.library_name, "a" * 64, "b" * 64),
+    )
+
+
+def test_a_file_link_names_its_identifier_and_its_import(tmp_path: Path) -> None:
+    """A file link (#1478) has no source or title; History names its ISBN."""
+    store = OwnerStore(tmp_path, isbn_title_report())
+    connection = store.repository._connection
+    item = _item(store)
+    _insert_import(connection, item)
+    first = _write_file(
+        connection, item, OwnerLinkAction.LINK, None, FILE_EDITION, 2_000
+    )
+    second = _write_file(connection, item, OwnerLinkAction.WITHDRAW, first, None, 3_000)
+    third = _write_file(
+        connection, item, OwnerLinkAction.LINK, None, EDITION, 4_000, source="search"
+    )
+    events = _link_events(store)
+    assert [
+        (
+            event["link_row_id"],
+            event["kind"],
+            event["source"],
+            event["provider"],
+            event["title"],
+            event["identifier"],
+            event["with_import"],
+        )
+        for event in events
+    ] == [
+        (
+            third,
+            "linked",
+            "search",
+            "google_books",
+            "An Edition",
+            "9780306406157",
+            False,
+        ),
+        (second, "link_withdrawn", "file", None, None, "9780306406157", True),
+        (first, "linked", "file", None, None, "9780306406157", True),
+    ]
+    for event in events:
+        assert _HistoryOwnerLinkItem.model_validate(event).model_dump() == event
+
+
+def test_find_this_book_withdrawing_a_file_link_is_not_its_import(
+    tmp_path: Path,
+) -> None:
+    store = OwnerStore(tmp_path, isbn_title_report())
+    connection = store.repository._connection
+    item = _item(store)
+    _insert_import(connection, item)
+    first = _write_file(
+        connection, item, OwnerLinkAction.LINK, None, FILE_EDITION, 2_000
+    )
+    _write_file(
+        connection, item, OwnerLinkAction.WITHDRAW, first, None, 3_000, source="search"
+    )
+    withdrawn, linked = _link_events(store)
+    assert (withdrawn["kind"], withdrawn["source"], withdrawn["with_import"]) == (
+        "link_withdrawn",
+        "file",
+        False,
+    )
+    assert linked["with_import"] is True

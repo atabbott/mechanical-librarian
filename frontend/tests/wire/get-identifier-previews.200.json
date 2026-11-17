@@ -1,0 +1,11 @@
+{
+  "method": "GET",
+  "path": "/api/v1/identifier-previews/identifier-preview-placeholder-000000000000",
+  "status": 200,
+  "body": {
+    "state": "imported",
+    "import_id": "identifier_import_0000000000000000000000000000000000000000000000000000000000000001",
+    "linked": 3,
+    "schema_version": "identifier-preview-status-v1"
+  }
+}

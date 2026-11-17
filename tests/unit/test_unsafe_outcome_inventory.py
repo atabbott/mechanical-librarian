@@ -251,6 +251,30 @@ _OWNER_LINK_WRITE: Row = {
     (503, "*"): "pre-commit",
     (503, "unavailable"): "post-commit",
 }
+# Identifiers file import (#1478, `interfaces/web/identifier_import.py`). The
+# preview writes nothing: its media type is checked in the handler, its
+# catalogue read is a deferred read, and its file is decided in memory. An
+# import and a withdrawal raise every refusal inside `serialized`, before
+# `record_identifier_import` or `withdraw_identifier_import` commit, or in
+# their BEGIN IMMEDIATE transaction, which rolls back. After the commit only
+# the event, the swallowed scan request, the live topics and the answer's own
+# validation run; a fault there is the catch-all 503.
+_IDENTIFIER_PREVIEW: Row = {
+    (404, "library_not_found"): "no-commit",
+    (415, "unsupported_media_type"): "no-commit",
+    (422, "file_encoding"): "no-commit",
+    (422, "file_control_character"): "no-commit",
+    (422, "file_header"): "no-commit",
+    (422, "file_too_many_rows"): "no-commit",
+    (422, "file_no_rows"): "no-commit",
+    (503, "library_unreadable"): "no-commit",
+    (503, "unavailable"): "no-commit",
+}
+_IDENTIFIER_IMPORT_WRITE: Row = {
+    (409, "idempotency_conflict"): "pre-commit",
+    (503, "*"): "pre-commit",
+    (503, "unavailable"): "post-commit",
+}
 
 INVENTORY: dict[tuple[str, str], Row] = {
     # --- session and operations -------------------------------------------
@@ -474,6 +498,22 @@ INVENTORY: dict[tuple[str, str], Row] = {
         (422, "scope_not_offered"): "pre-commit",
     },
     ("POST", "/api/v1/library/link/withdraw"): _OWNER_LINK_WRITE,
+    ("POST", "/api/v1/libraries/{connection}/{library}/identifier-previews"): (
+        _IDENTIFIER_PREVIEW
+    ),
+    ("POST", "/api/v1/identifier-previews/{preview_id}/import"): {
+        **_IDENTIFIER_IMPORT_WRITE,
+        (404, "preview_not_found"): "pre-commit",
+        (409, "preview_stale"): "pre-commit",
+        (409, "preview_imported"): "pre-commit",
+        (409, "nothing_to_link"): "pre-commit",
+    },
+    ("POST", "/api/v1/identifier-imports/{import_id}/withdraw"): {
+        **_IDENTIFIER_IMPORT_WRITE,
+        (404, "import_not_found"): "pre-commit",
+        (409, "import_withdrawn"): "pre-commit",
+        (409, "nothing_to_withdraw"): "pre-commit",
+    },
     # --- review preparation -----------------------------------------------------
     ("POST", "/api/v1/review-preparation/dismiss"): _PREPARATION,
     ("POST", "/api/v1/review-preparation/first-boot/acknowledge"): {

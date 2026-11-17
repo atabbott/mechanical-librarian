@@ -92,6 +92,7 @@ text, credential or path.
 | `provider_recovery_schedule` | The review library cannot read the recovery schedule, so it withdraws the retry promise (WARNING, `code: unavailable`). |
 | `owner_password_change` | An owner password change reached the sign-in throttle. `outcome` is `changed` or the refusal code; `sessions_ended` counts the other session rows removed, or is null when nothing changed or their removal failed. Info, or WARNING for `persistence`, `runtime` or a failed removal. |
 | `owner_sign_out_others` | Sign out other browsers reached the session store. `outcome` is `signed_out`, `csrf`, `unauthorized` or `persistence`; `sessions_ended` counts the other session rows removed, or is null for a refusal or a failure. Info, or WARNING for `persistence`. |
+| `identifier_import` | An identifiers file preview, import or withdrawal finished. `action` is `preview`, `import` or `withdraw`; `outcome` is `previewed`, `recorded`, `replayed`, a refusal code or `failed`; `rows` counts the file's rows and `linked` the links made or withdrawn. Never a path, row, title or item ID. |
 | `provider_request_failed`, `provider_throttled`, `provider_deadline_stop`, `provider_adapter_fault`, `provider_recovery_job`, `provider_response_store` | See [provider logs](#provider-logs). |
 
 `preparation_unknown_failure` holds only validated code identities and

@@ -243,6 +243,14 @@ work's fresh mark commit in one write transaction or not at all. A fault after
 it answers `503 unavailable`, and the browser asks the owner to check the
 link before choosing again.
 
+An [identifiers file](../reference/identifiers-file.md) is sent as its own
+bytes, as `text/plain`, and refused above 1 MiB before it is read. It is
+decoded as strict UTF-8 and parsed in process in linear time. Its paths are matched in memory only: no path, row or item ID is
+kept, logged or answered. The preview is held in process memory for its
+session for 15 minutes. Import and withdraw each need an `Idempotency-Key`.
+An import's links, its record and its event commit in one transaction, and
+Withdraw this import changes only links that are still current.
+
 ### Transport
 
 Transport modes and their rules are in
