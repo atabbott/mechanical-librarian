@@ -43,7 +43,8 @@ _IMPORT_ID = r"^identifier_import_[0-9a-f]{64}$"
 _Instant: TypeAlias = Annotated[int, Field(ge=0, le=8_640_000_000_000)]
 _Count: TypeAlias = Annotated[int, Field(ge=0, le=MAX_ROWS)]
 # A row is numbered by its line in the file; the header is line 1.
-_Row: TypeAlias = Annotated[int, Field(ge=2, le=MAX_ROWS + 1)]
+# Blank lines count, so a row may sit on any line a 1 MiB file can hold.
+_Row: TypeAlias = Annotated[int, Field(ge=2, le=MAX_FILE_BYTES + 1)]
 _Display: TypeAlias = Annotated[str, Field(max_length=MAX_DISPLAY_CHARACTERS)]
 _RowReason: TypeAlias = Literal[
     "row_too_long",

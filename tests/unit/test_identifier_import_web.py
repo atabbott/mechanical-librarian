@@ -373,6 +373,16 @@ def test_a_file_of_exactly_one_mebibyte_is_read_and_one_byte_more_is_not(
     assert (over.status_code, _code(over)) == (413, "body_too_large")
 
 
+def test_blank_lines_may_push_a_row_past_line_5001(live: _Live) -> None:
+    """Rows are numbered by their line, and blank lines count (D1)."""
+    data = b"path\tidentifier\n" + b"\n" * 6_000 + f"Shelf/Book 1\t{ISBN13}\n".encode()
+    answer = live.preview(data)
+    assert answer.status_code == 200, answer.text
+    body = answer.json()
+    assert (body["rows"], body["counts"]["will_link"]) == (1, 1)
+    assert body["will_link"][0]["row"] == 6_002
+
+
 def test_an_unreadable_catalogue_is_unavailable(live: _Live) -> None:
     (live.root / "catalogue.sqlite").unlink()
     answer = live.preview()
