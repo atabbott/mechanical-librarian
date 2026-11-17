@@ -157,7 +157,7 @@ from it for a manual one, so the table can be checked against the workflow.
 | Documentation reachability, relative links, the ADR index, issue-free headings and the word budget | gate | `scripts/verify_documentation_integrity.py` in `fast-source` |
 | Every direct dependency carries an authority grant, and no grant outlives its dependency | gate | `scripts/verify_dependency_authority.py` in `fast-source` |
 | Frontend typing, lint, formatting and Vitest suite | gate | `npm run typecheck`, `npm run lint`, `npm test`; `npm run lint` is what fails on unformatted source |
-| Frontend licence inventory and dependency advisories | gate | `npm run licenses`, `scripts/verify_npm_advisories.py` (`npm audit` through the advisory acceptance register) |
+| Frontend licence inventory and dependency advisories | gate | `npm run licenses`, `scripts/verify_npm_advisories.py` (npm audit through the advisory acceptance register) |
 | The exact Node and npm toolchain, in every job that builds the frontend | gate | `test "$(node --version)"` and `test "$(npm --version)"` |
 | DTO generation is deterministic | gate | `cmp "$RUNNER_TEMP/a/review-api.d.ts"` in `fast-source` |
 | Decoder generation is deterministic | gate | `cmp "$RUNNER_TEMP/a/review-api-response.d.ts"` and `cmp "$RUNNER_TEMP/a/review-decoders.ts"` in `fast-source` |

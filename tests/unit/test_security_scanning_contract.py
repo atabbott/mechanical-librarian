@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import re
+import subprocess
 import tempfile
 import tomllib
 from collections.abc import Callable, Mapping, Sequence
@@ -8,7 +10,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from scripts.verify_npm_advisories import accepted_advisories, unaccepted
+from scripts.verify_npm_advisories import accepted_advisories, audit, unaccepted
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
@@ -462,6 +464,7 @@ def _npm_report(*urls: str) -> Mapping[str, object]:
     """A minimal `npm audit --json` report naming one advisory per URL."""
 
     return {
+        "auditReportVersion": 2,
         "vulnerabilities": {
             f"package-{position}": {
                 "via": [
@@ -470,7 +473,7 @@ def _npm_report(*urls: str) -> Mapping[str, object]:
                 ]
             }
             for position, url in enumerate(urls)
-        }
+        },
     }
 
 
@@ -520,3 +523,39 @@ def test_the_public_gate_audits_the_frontend_through_the_register() -> None:
     # A bare `npm audit` would bypass the register; a severity floor or an
     # omitted dependency type would loosen the audit for every advisory.
     assert "npm audit" not in workflow
+
+
+def _npm_run(stdout: str, returncode: int) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(
+        ["npm", "audit", "--json"], returncode, stdout, ""
+    )
+
+
+_CLEAN = json.dumps({"auditReportVersion": 2, "vulnerabilities": {}})
+
+
+@pytest.mark.parametrize(
+    ("stdout", "returncode", "expected"),
+    (
+        (_CLEAN, 0, 0),
+        (json.dumps(_npm_report(_ADVISORY)), 1, 1),
+        ("npm ERR! network", 1, 1),
+        (json.dumps({"message": "offline", "error": {"code": "ENOTFOUND"}}), 1, 1),
+        (json.dumps({"vulnerabilities": {}}), 0, 1),
+        (json.dumps({"auditReportVersion": 2}), 0, 1),
+        (_CLEAN, 1, 1),
+    ),
+    ids=(
+        "clean",
+        "unaccepted",
+        "not_json",
+        "npm_error",
+        "unknown_report_version",
+        "no_vulnerabilities_table",
+        "failing_exit_with_nothing_reported",
+    ),
+)
+def test_the_frontend_audit_fails_closed(
+    stdout: str, returncode: int, expected: int
+) -> None:
+    assert audit(_npm_run(stdout, returncode), {}, _TODAY) == expected

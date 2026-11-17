@@ -58,8 +58,10 @@ def reported_advisories(report: Mapping[str, object]) -> dict[str, str]:
     keyed by its URL, so it can never match a register entry.
     """
 
-    vulnerabilities = report.get("vulnerabilities", {})
-    if not isinstance(vulnerabilities, Mapping):
+    vulnerabilities = report.get("vulnerabilities")
+    if report.get("auditReportVersion") != 2 or not isinstance(
+        vulnerabilities, Mapping
+    ):
         raise ValueError("npm audit report has no vulnerabilities table")
     advisories: dict[str, str] = {}
     for finding in vulnerabilities.values():
@@ -93,10 +95,13 @@ def unaccepted(
     }
 
 
-def main() -> int:
-    completed = subprocess.run(
-        ["npm", "audit", "--json"], capture_output=True, text=True, check=False
-    )
+def audit(
+    completed: subprocess.CompletedProcess[str],
+    register: Mapping[str, object],
+    today: date,
+) -> int:
+    """Judge one `npm audit --json` run against the register; 0 means pass."""
+
     try:
         report = json.loads(completed.stdout)
     except json.JSONDecodeError:
@@ -107,10 +112,19 @@ def main() -> int:
         sys.stderr.write(completed.stdout + completed.stderr)
         print("npm audit reported an error", file=sys.stderr)
         return 1
-    register = tomllib.loads(ACCEPTANCE_REGISTER.read_text(encoding="utf-8"))
-    today = date.today()
+    try:
+        reported = reported_advisories(report)
+    except ValueError as error:
+        print(f"npm audit report is malformed: {error}", file=sys.stderr)
+        return 1
+    # npm exits non-zero exactly when it reports an advisory. A failing exit
+    # with nothing reported means the report is not the whole story.
+    if completed.returncode != 0 and not reported:
+        sys.stderr.write(completed.stderr)
+        print("npm audit failed without reporting an advisory", file=sys.stderr)
+        return 1
     failing = unaccepted(report, register, today)
-    for key in sorted(set(reported_advisories(report)) - set(failing)):
+    for key in sorted(set(reported) - set(failing)):
         print(f"accepted until its register expiry: {key}")
     for key, title in failing.items():
         print(f"unaccepted advisory: {key} {title}", file=sys.stderr)
@@ -118,6 +132,14 @@ def main() -> int:
         return 1
     print("npm audit: no unaccepted advisories")
     return 0
+
+
+def main() -> int:
+    completed = subprocess.run(
+        ["npm", "audit", "--json"], capture_output=True, text=True, check=False
+    )
+    register = tomllib.loads(ACCEPTANCE_REGISTER.read_text(encoding="utf-8"))
+    return audit(completed, register, date.today())
 
 
 if __name__ == "__main__":
