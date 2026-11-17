@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 from collections.abc import Iterator
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -30,6 +31,9 @@ from mechanical_librarian.adapters.field_effect_authority import (
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
     open_repository,
+)
+from mechanical_librarian.adapters.persistence.review_preparation import (
+    preparation_work_id,
 )
 from mechanical_librarian.adapters.providers.hardcover_metadata import (
     HardcoverMetadataProvider,
@@ -414,6 +418,39 @@ def test_the_owner_links_the_work_and_the_next_preparation_reads_the_link(
     (row,) = [item for item in page["items"] if item["item"] == ITEM]
     assert row["link"] == {"state": "linked", "provider": "hardcover"}
     assert world.get(view)["link"]["state"] == "linked"
+
+    # A later preparation that could not finish leaves the link read: the row
+    # says Could not finish, and the link keeps the report's outcome (#1941).
+    failed = sqlite3.connect(world.path, isolation_level=None)
+    failed.execute(
+        "INSERT INTO review_preparation_work(work_id,scan_id,ordinal,connection_name,"
+        "library_name,library_id,item_id,file_identity,source_revision,"
+        "source_fingerprint,producer_fingerprint,catalogue_generation,"
+        "catalogue_fingerprint,stage,state,failure_code,updated_at) "
+        "VALUES(?,'scan',0,?,?,'library-1',?,?,0,?,?,1,?,'complete',"
+        "'failed','provider',?)",
+        (
+            preparation_work_id(CONNECTION, LIBRARY, ITEM),
+            CONNECTION,
+            LIBRARY,
+            ITEM,
+            "b" * 64,
+            "c" * 64,
+            "d" * 64,
+            "e" * 64,
+            NOW + 1,
+        ),
+    )
+    failed.close()
+    assert world.row()["preparation"] is not None
+    assert world.row()["link"] == {"state": "linked", "provider": "hardcover"}
+    assert world.get(view)["link"]["state"] == "linked"
+    failed = sqlite3.connect(world.path, isolation_level=None)
+    failed.execute(
+        "DELETE FROM review_preparation_work WHERE work_id=?",
+        (preparation_work_id(CONNECTION, LIBRARY, ITEM),),
+    )
+    failed.close()
 
     # The owner withdraws it later; the work is prepared again without it.
     world.app_clock[0] += 10

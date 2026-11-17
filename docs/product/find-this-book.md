@@ -107,7 +107,7 @@ place of Linked on {source}.
 | Pill | When |
 | --- | --- |
 | Linked on {source} | the latest preparation read the record through the link |
-| Linked, preparing | no preparation has read the current link yet |
+| Linked, preparing | no preparation has read the current link yet, and the latest one did not fail |
 | Link not used yet | no preparation has read the current link, and the latest one could not finish; the link view gives the row's next step |
 | Linked, waiting for {source} | the source did not answer; provider recovery asks it again |
 | Link contradicted | an edition or recording no longer agrees with the record, with the reason |

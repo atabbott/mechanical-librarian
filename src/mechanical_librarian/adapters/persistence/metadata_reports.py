@@ -2900,8 +2900,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         whether the work's latest preparation could not finish (#1941).
 
         `None` when the work has no link. The facts are the `owner_link`
-        member of the work's current report, or `None` when it has none; the
-        flag is read in the same statement, by Library's Could not finish rule.
+        member of the work's current report, or `None` when it has none. The
+        flag follows Library's Could not finish rule and is read in the facts'
+        statement; the caller serializes this read with the link row's.
         """
         row = current_owner_link_row(
             self._connection, OwnerLinkItem(connection, library, item)
