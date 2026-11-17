@@ -42,7 +42,8 @@ decisions" and an edit "Edited {date}".
 
 While the taste profile model is set up, no profile exists and fewer than 25
 choices count toward one, To decide's list starts with "Pick 25 covers to get
-suggestions" and Start. On a first visit a four-step walkthrough explains
+suggestions", Start and Hide. Hide removes it from To decide in this browser;
+Taste profile keeps Start 25 picks. On a first visit a four-step walkthrough explains
 Covers, with Next and Skip, then Start 25 picks and Later on the last step.
 Skip, Later, Escape and Start 25 picks each close it for good in this browser.
 

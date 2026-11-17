@@ -2936,6 +2936,38 @@ describe("Covers' picks (#1372 PR 3)", () => {
     expect(within(entry).getByRole('button', { name: 'Start' })).toBeVisible()
   })
 
+  it('hides the Start entry in this browser and keeps Start 25 picks in Taste profile', async () => {
+    const user = userEvent.setup()
+    try {
+      const http = picksHttp([])
+      renderRoute('/library?lens=all&view=covers', http)
+      const phrase = 'Pick 25 covers to get suggestions'
+      const entry = await screen.findByRole('region', { name: phrase })
+      await user.click(within(entry).getByRole('button', { name: 'Hide' }))
+      expect(screen.queryByRole('region', { name: phrase })).toBeNull()
+      expect(document.cookie).toMatch(/ml_covers_picks=hidden/u)
+      // Focus goes to the selected tab, not to the page's start.
+      await waitFor(() =>
+        expect(document.activeElement).toBe(
+          document.querySelector('.covers-tabs [aria-pressed="true"]'),
+        ),
+      )
+      expect(document.activeElement).toHaveTextContent(/^To decide/u)
+      await user.click(screen.getByRole('button', { name: 'Taste profile' }))
+      expect(await screen.findByRole('button', { name: 'Start 25 picks' })).toBeVisible()
+      cleanup()
+      // A later visit in this browser shows no entry.
+      renderRoute('/library?lens=all&view=covers', picksHttp([]))
+      expect(await screen.findByRole('button', { name: /^First Book/u })).toBeVisible()
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      })
+      expect(screen.queryByText(phrase)).toBeNull()
+    } finally {
+      document.cookie = 'ml_covers_picks=; Path=/; Max-Age=0'
+    }
+  })
+
   it('offers Reload when the set cannot be read', async () => {
     const user = userEvent.setup()
     const http = picksHttp(['case-1'])

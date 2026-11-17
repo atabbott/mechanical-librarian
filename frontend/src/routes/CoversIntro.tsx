@@ -10,14 +10,20 @@ import { createPortal } from 'react-dom'
 
 const cookie = 'ml_covers_intro'
 const seenNow = () => new RegExp(`(?:^|; )${cookie}=seen(?:;|$)`, 'u').test(document.cookie)
-const rememberSeen = () => {
+const remember = (name: string, value: string) => {
   try {
     const secure = location.protocol === 'https:' ? '; Secure' : ''
-    document.cookie = `${cookie}=seen; Path=/; Max-Age=31536000; SameSite=Strict${secure}`
+    document.cookie = `${name}=${value}; Path=/; Max-Age=31536000; SameSite=Strict${secure}`
   } catch {
-    // Cookies refused: it closes for this page view and shows again on the next.
+    // Cookies refused: it goes for this page view and shows again on the next.
   }
 }
+const rememberSeen = () => remember(cookie, 'seen')
+// Hide takes the Start entry out of To decide in this browser; Taste
+// profile keeps its own Start 25 picks.
+const hiddenCookie = 'ml_covers_picks'
+const hiddenNow = () =>
+  new RegExp(`(?:^|; )${hiddenCookie}=hidden(?:;|$)`, 'u').test(document.cookie)
 
 // One list: the counter takes its length.
 const steps = [
@@ -28,7 +34,10 @@ const steps = [
 ]
 const last = steps.length - 1
 
-/** The entry at the top of To decide's list (placement A2). */
+/**
+ * The entry at the top of To decide's list (placement A2). Hide takes it away
+ * in this browser and hands focus to the selected Covers tab.
+ */
 export function CalibrationStart({
   onStart,
   startRef,
@@ -36,12 +45,26 @@ export function CalibrationStart({
   onStart: () => void
   startRef: RefObject<HTMLButtonElement | null>
 }) {
+  const [hidden, setHidden] = useState(hiddenNow)
+  if (hidden) return null
+  const hide = () => {
+    remember(hiddenCookie, 'hidden')
+    setHidden(true)
+    requestAnimationFrame(() =>
+      document.querySelector<HTMLElement>('.covers-tabs [aria-pressed="true"]')?.focus(),
+    )
+  }
   // The line names the region and is not read again as its content.
   return (
     <section className="covers-picks-start" aria-labelledby="covers-picks-start">
-      <p id="covers-picks-start" aria-hidden="true">
-        Pick 25 covers to get suggestions
-      </p>
+      <div className="covers-picks-start-head">
+        <p id="covers-picks-start" aria-hidden="true">
+          Pick 25 covers to get suggestions
+        </p>
+        <button type="button" className="covers-picks-hide" onClick={hide}>
+          Hide
+        </button>
+      </div>
       <button ref={startRef} type="button" className="button-primary" onClick={onStart}>
         Start
       </button>
