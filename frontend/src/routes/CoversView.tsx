@@ -1023,7 +1023,10 @@ function CoverPicks({
   return admitted === false ? null : taste.data ? (
     <CoverCalibration
       taste={taste.data}
-      tasteReadAt={Math.max(taste.dataUpdatedAt, taste.errorUpdatedAt)}
+      // Only a read that answered counts: a failed one keeps the old count.
+      tasteReadAt={taste.dataUpdatedAt}
+      countFailure={taste.errorUpdatedAt > taste.dataUpdatedAt ? taste.error : null}
+      onRecount={() => void taste.refetch()}
       onEnd={onEnd}
     />
   ) : taste.isError ? (

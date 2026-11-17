@@ -20,14 +20,34 @@ const ranOutCopy = 'No more works have two different covers to pick from.'
 /** How the screen ends: Stop, an empty set, the set run out, or 25 picks. */
 export type CalibrationEnd = { kind: 'notice'; text: string } | { kind: 'done' }
 
+/**
+ * A read that failed, with Reload. After a pick whose count could not be read
+ * again, no end names a count until Reload reads it.
+ */
+function Failure({ error, onReload }: { error: unknown; onReload: () => void }) {
+  return (
+    <div className="covers-failure" role="alert">
+      <p>{routeFailureCopy(error).message}</p>
+      <button type="button" onClick={onReload}>
+        Reload
+      </button>
+    </div>
+  )
+}
+
 export function CoverCalibration({
   taste,
   tasteReadAt,
+  countFailure,
+  onRecount,
   onEnd,
 }: {
   taste: TasteProfileView
   /** When the count was last read, so an end that names it waits for a read after the last pick. */
   tasteReadAt: number
+  /** The count's last read failed after its last answer. */
+  countFailure: unknown
+  onRecount: () => void
   onEnd: (end: CalibrationEnd) => void
 }) {
   const { http } = useReviewContext()
@@ -174,13 +194,11 @@ export function CoverCalibration({
           </button>
         </div>
       </header>
+      {countFailure !== null && pickedAt > tasteReadAt ? (
+        <Failure error={countFailure} onReload={onRecount} />
+      ) : null}
       {set.isError ? (
-        <div className="covers-failure" role="alert">
-          <p>{routeFailureCopy(set.error).message}</p>
-          <button type="button" onClick={() => void set.refetch()}>
-            Reload
-          </button>
-        </div>
+        <Failure error={set.error} onReload={() => void set.refetch()} />
       ) : current && !unpickable ? (
         <CoverComparison
           key={current.review_case_id}

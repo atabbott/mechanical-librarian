@@ -2911,6 +2911,32 @@ describe("Covers' picks (#1372 PR 3)", () => {
     expect(await screen.findByRole('heading', { name: 'Writing your taste profile' })).toBeVisible()
   })
 
+  it('names no count after a pick whose count read failed, until Reload reads it', async () => {
+    const user = userEvent.setup()
+    let chosen = 3
+    const http = picksHttp(['case-1', 'case-2'], () => chosen)
+    const read = http.getTasteProfile.getMockImplementation()
+    if (!read) throw new Error('no taste read')
+    const record = createHttp().recordDecision
+    http.recordDecision.mockImplementation(async (caseId, command) => {
+      chosen = 4
+      http.getTasteProfile.mockRejectedValue(new ApiError(503, 'unavailable'))
+      return record(caseId, command)
+    })
+    const { router } = renderRoute(picksRoute, http)
+    expect(await screen.findByText('4 of 25')).toBeVisible()
+    await chooseOtherPick(user)
+    await screen.findByRole('heading', { level: 3, name: 'Second Book' })
+    await user.click(screen.getByRole('button', { name: 'Stop' }))
+    const failure = await screen.findByRole('alert')
+    expect(router.state.location.search.tab).toBe('picks')
+    expect(screen.queryByText('3 of 25 picks saved.')).toBeNull()
+    http.getTasteProfile.mockImplementation(read)
+    await user.click(within(failure).getByRole('button', { name: 'Reload' }))
+    await waitFor(() => expect(router.state.location.search.tab).toBe('decide'))
+    expect(await screen.findByText('4 of 25 picks saved.')).toBeVisible()
+  })
+
   it('waits for the count after a pick before Stop says it', async () => {
     const user = userEvent.setup()
     let chosen = 3
