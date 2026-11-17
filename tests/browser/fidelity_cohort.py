@@ -2412,6 +2412,25 @@ def _shadow_outcome_set(
     }
 
 
+def _owner_link_view(query: dict[str, list[str]]) -> dict[str, object]:
+    """`GET /api/v1/library/link` (#1477): every cohort work may be searched
+    on Hardcover, and none is linked, so its header offers Find this book."""
+    assert set(query) == {"connection", "library", "item"}, query
+    return {
+        "link": None,
+        "offered": True,
+        "prefill": {"asin": None, "authors": [], "isbn": None, "title": None},
+        "schema_version": "owner-link-view-v1",
+        "sources": [
+            {
+                "lanes": ["title_authors", "isbn"],
+                "marketplaces": None,
+                "provider": "hardcover",
+            }
+        ],
+    }
+
+
 def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
     """Return a fresh response for one synthetic API target or absolute URL."""
     parsed = urlsplit(target)
@@ -2499,6 +2518,8 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
         }
     if path == "/api/v1/library":
         return _library(query)
+    if path == "/api/v1/library/link":
+        return _owner_link_view(query)
     if path == "/api/v1/library/progress":
         return _library_progress()
     if path == "/api/v1/attention":

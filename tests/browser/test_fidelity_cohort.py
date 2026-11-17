@@ -26,6 +26,7 @@ from mechanical_librarian.interfaces.web.app import (
     _LibraryResponse,
     _PreparationResponse,
 )
+from mechanical_librarian.interfaces.web.find_this_book import _OwnerLinkView
 from tests.browser import fidelity_cohort
 from tests.browser.fidelity_cohort import (
     COHORT_WRITE_PLANS,
@@ -432,3 +433,12 @@ def test_each_works_findings_are_what_the_looks_wrong_rules_find() -> None:
         "not_matched",
     }
     assert rich_payload("/api/v1/library?lens=flagged&q=absent-term")["items"] == []
+
+
+def test_the_cohort_link_view_is_one_the_server_could_answer() -> None:
+    """Every cohort work's header reads its book link (#1477)."""
+    view = rich_payload(
+        "/api/v1/library/link?connection=primary&library=Household+ebooks"
+        "&item=internal-case-1"
+    )
+    _OwnerLinkView.model_validate(view)
