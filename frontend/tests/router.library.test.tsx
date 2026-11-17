@@ -14561,6 +14561,68 @@ it('places the decision failure directly under its retry, both under the choices
   expect(message.compareDocumentPosition(status) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 })
 
+it('names Reload current case on the button its sentence names when the work could not be reloaded', async () => {
+  const authored = readCaseDetail(descriptionAdviceFixture)
+  const field = authored.fields.find((item) => item.destination === 'description')
+  if (!field) throw new Error('description fixture requires its field')
+  const http = createHttp()
+  let decided = false
+  http.getCaseDetail = vi.fn(async () => {
+    if (decided) throw new ApiError(503, 'persistence')
+    return { ...authored, id: 'case-1', fields: [field] }
+  })
+  http.recordDecision = vi.fn(async () => {
+    decided = true
+    throw new ApiError(503, 'persistence')
+  })
+  renderRoute('/library?lens=all&preview=case-1&field=description', http)
+  await userEvent.setup().click(
+    await screen.findByRole('radio', {
+      name: 'Choose advised value: Authored synthetic description.',
+    }),
+  )
+  const message = await screen.findByText(/could not be reloaded after your choice/u)
+  const alert = message.closest('[role="alert"]') ?? message
+  expect(alert).toHaveTextContent('Choose Reload current case before choosing again.')
+  expect(
+    within(alert as HTMLElement).getByRole('button', { name: 'Reload current case' }),
+  ).toBeVisible()
+  expect(within(alert as HTMLElement).queryByRole('button', { name: 'Try again' })).toBeNull()
+})
+
+it('keeps focus on the failure line when a retry gets no answer and takes its button away', async () => {
+  const authored = readCaseDetail(descriptionAdviceFixture)
+  const field = authored.fields.find((item) => item.destination === 'description')
+  if (!field) throw new Error('description fixture requires its field')
+  const http = createHttp()
+  http.getCaseDetail = vi.fn(async () => ({ ...authored, id: 'case-1', fields: [field] }))
+  let sent = 0
+  http.recordDecision = vi.fn(async () => {
+    sent += 1
+    if (sent === 1) throw new ApiError(503, 'persistence')
+    throw new UncertainMutationError({
+      operation: 'POST /api/v1/review-cases/{review_case_id}/decisions',
+      responseStatus: 200,
+      at: '/presentation/now',
+      reason: 'required',
+    })
+  })
+  renderRoute('/library?lens=all&preview=case-1&field=description', http)
+  const user = userEvent.setup()
+  await user.click(
+    await screen.findByRole('radio', {
+      name: 'Choose advised value: Authored synthetic description.',
+    }),
+  )
+  await user.click(await screen.findByRole('button', { name: 'Try the same decision again' }))
+  const message = await screen.findByText(
+    'No answer came back. Check whether your choice was recorded before choosing again.',
+  )
+  expect(screen.queryByRole('button', { name: 'Try the same decision again' })).toBeNull()
+  await waitFor(() => expect(message).toHaveFocus())
+  expect(document.activeElement).not.toBe(document.body)
+})
+
 it.each([
   ['link_changed', 'The book link changed. This work is being prepared again.'],
   ['decision_written', 'This decision has been written to your library, so it can’t be withdrawn.'],

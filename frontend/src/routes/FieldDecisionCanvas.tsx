@@ -143,7 +143,13 @@ export function FieldDecisionCanvas({
   // A line that arrives below the window is brought just into view, so a
   // choice that changed nothing never looks as if nothing happened.
   useEffect(() => {
-    if (choiceFailure) failureLine.current?.scrollIntoView({ block: 'nearest' })
+    const line = failureLine.current
+    if (!choiceFailure || !line) return
+    line.scrollIntoView({ block: 'nearest' })
+    // A retry that fails without one to offer again takes its button away:
+    // the line holds the focus it had, never the page body.
+    if (document.activeElement === null || document.activeElement === document.body)
+      line.focus({ preventScroll: true })
   }, [choiceFailure, choiceStatus.text])
   const pinBusy = controller.recording || controller.checking || controller.reloadRequired
   const pinControl = pinControls({
@@ -554,7 +560,7 @@ export function FieldDecisionCanvas({
       {choiceStatus.offerChanged ? <p role="status">{choiceStatus.text}</p> : null}
       {choiceFailure ? recovery : null}
       {choiceFailure ? (
-        <p ref={failureLine} className="decision-failure" role="alert">
+        <p ref={failureLine} tabIndex={-1} className="decision-failure" role="alert">
           {choiceStatus.text}
         </p>
       ) : null}
