@@ -159,6 +159,21 @@ _ISBN_QUERY = (
     f"tags:tags(where:{{taggings:{{book:{{editions:{{_or:[{{isbn_13:{{_in:$isbns}}}},{{isbn_10:{{_in:$isbns}}}}]}}}}}}}},order_by:{{id:asc}},limit:{_MAX_TAG_ROWS + 1})"
     "{id tag tag_category{id category}}}"
 )
+# The members an ISBN answer's edition row is read with.
+_EDITION_ROW_KEYS = (
+    "id",
+    "book_id",
+    "isbn_10",
+    "isbn_13",
+    "asin",
+    "title",
+    "subtitle",
+    "release_date",
+    "image",
+    "publisher",
+    "language",
+    "contributions",
+)
 # The books-first search both media's WORK lanes send (#1380, ADR-0056): one
 # constant document whose only inputs are the rung's spelling lists. It reads
 # the members the edition search read for books, plus `canonical_id` and
@@ -1719,7 +1734,10 @@ def _owner_search_answer(
 
     Each book is read alone, as a books-first search reads one, so a
     malformed book is dropped and counted rather than failing the answer.
-    An ISBN search's cards state that ISBN as their edition.
+    An ISBN search's cards state that ISBN as their edition, and a book
+    whose edition of that ISBN the answer lists is projected as that
+    edition: its title, publisher, language and cover, joined to the book
+    whose id the work-scope link records.
     """
     source = json.loads(
         payload.decode("utf-8", "strict"),
@@ -1737,6 +1755,7 @@ def _owner_search_answer(
         data["tags"], _MAX_BOOK_TAG_ROWS if books_query else _MAX_TAG_ROWS, rejected
     )
     keys = _book_keys(books_query)
+    editions = {} if isbn is None else _owner_isbn_editions(data["editions"], isbn)
 
     def project(raw: object) -> OwnerSearchRecord | None:
         indexed = _index_books([raw], tags, keys, rejected, books_query=books_query)
@@ -1744,8 +1763,15 @@ def _owner_search_answer(
         canonical = book.get("canonical_id")
         if canonical is not None and canonical != book_id:
             return None
-        (candidate,) = _book_candidates(provider, indexed, (), rejected, False)
-        url, _ = _cover_url(book["image"])
+        edition = editions.get(book_id)
+        if edition is None:
+            (candidate,) = _book_candidates(provider, indexed, (), rejected, False)
+            url, _ = _cover_url(book["image"])
+        else:
+            candidate = _owner_edition_candidate(provider, edition, book, rejected)
+            url, _ = _cover_url(edition["image"])
+            if url is None:
+                url, _ = _cover_url(book["image"])
         return OwnerSearchRecord(
             candidate,
             str(book_id),
@@ -1758,6 +1784,72 @@ def _owner_search_answer(
         data["books"],
         project,
         page=OWNER_SEARCH_PAGE if books_query else MAX_CANDIDATES,
+    )
+
+
+def _owner_isbn_editions(rows: object, isbn: str) -> dict[int, dict[str, Any]]:
+    """Each book's first listed edition of the searched ISBN, by book id.
+
+    The edition rows are the answer's own anchors: a row without an edition
+    and book id makes the answer unreadable, as it does the metadata lane.
+    """
+    if type(rows) is not list or len(rows) > MAX_CANDIDATES + 1:
+        raise ValueError("provider rows invalid")
+    family = isbn_family(isbn)
+    found: dict[int, dict[str, Any]] = {}
+    for value in rows:
+        if type(value) is dict and "image" not in value:
+            value = {**value, "image": None}
+        row = _anchored_projection(value, {"id", "book_id"}, set(_EDITION_ROW_KEYS))
+        row = {key: row.get(key) for key in _EDITION_ROW_KEYS}
+        edition_id, book_id = _identifier(row["id"]), _identifier(row["book_id"])
+        row["id"] = edition_id
+        if family is None or book_id in found:
+            continue
+        if family in {
+            isbn_family(row[key])
+            for key in ("isbn_13", "isbn_10")
+            if type(row[key]) is str
+        }:
+            found[book_id] = row
+    return found
+
+
+def _owner_edition_candidate(
+    provider: str,
+    row: dict[str, Any],
+    book: dict[str, Any],
+    rejected: _OptionalRejections,
+) -> ProviderCandidate:
+    """One ISBN card's candidate: the edition's claims, then its book's."""
+    book_id = _identifier(book["id"])
+    identity = f"hardcover-edition-{row['id']:010d}"
+    claims = _edition_claims(provider, identity, row, (), rejected)
+    bindings: list[ProviderIdentityBinding] = []
+    claims.extend(
+        _work_claims(provider, identity, book, (), len(claims), rejected, bindings)
+    )
+    return finalize_candidate_comparisons(
+        ProviderCandidate(
+            identity,
+            f"hardcover-work-{book_id:010d}",
+            tuple(claims),
+            _work_evidence(book),
+            tuple(
+                sorted(
+                    bindings,
+                    key=lambda value: (
+                        value.scope.value,
+                        value.role or "",
+                        value.source_ordinal,
+                        value.identity,
+                        value.claim_reference,
+                    ),
+                )
+            ),
+        ),
+        (),
+        provider,
     )
 
 

@@ -41,6 +41,7 @@ from mechanical_librarian.adapters.providers.open_library_metadata import (
 from mechanical_librarian.domain.owner_link import (
     OwnerLinkScope,
     OwnerSearchAnswer,
+    OwnerSearchContradiction,
     OwnerSearchFailure,
     OwnerSearchQuery,
     OwnerSearchWork,
@@ -240,6 +241,45 @@ def test_hardcover_isbn_search_keeps_its_own_limit_of_six() -> None:
     assert "limit:6" in body["query"]
     assert not any(operator in body["query"] for operator in _PATTERN_OPERATORS)
     assert answer.records[0].isbn == ISBN
+
+
+def test_hardcover_isbn_card_is_the_listed_edition_joined_to_its_book() -> None:
+    french = {
+        "id": 50,
+        "book_id": 1,
+        "isbn_13": ISBN,
+        "title": "Titre courant",
+        "image": {"url": "https://assets.hardcover.app/edition/50.jpg"},
+        "publisher": {"id": 3, "name": "Gallimard", "parent_id": None},
+        "language": {"id": 2, "code2": "fr", "code3": "fre", "language": "French"},
+    }
+    other = {**french, "id": 49, "isbn_13": "9781861972712", "title": "Other"}
+    provider, _ = _hardcover(
+        lambda _: _json(hardcover_envelope([other, french], [_book(1)]))
+    )
+    answer = _search(provider, BY_ISBN)
+    (record,) = answer.records
+    # The work-scope link still records the book's id.
+    assert (record.identity, record.isbn) == ("1", ISBN)
+    assert record.cover is not None
+    assert record.cover.url == "https://assets.hardcover.app/edition/50.jpg"
+    (card,), dropped = owner_search_cards(
+        "hardcover",
+        answer.records,
+        OwnerSearchWork(
+            "ebook", "Current title", ("Ada",), None, None, None, ("en",), ()
+        ),
+    )
+    assert dropped == 0
+    assert (card.title, card.publisher, card.language, card.isbn) == (
+        "Titre courant",
+        "Gallimard",
+        "fr",
+        ISBN,
+    )
+    assert (OwnerSearchContradiction.LANGUAGE, {"language": "fr"}) in (
+        card.contradictions
+    )
 
 
 def test_hardcover_drops_a_book_merged_into_another() -> None:
