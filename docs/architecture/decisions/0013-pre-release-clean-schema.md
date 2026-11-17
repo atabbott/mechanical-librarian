@@ -634,3 +634,15 @@ report's `owner_link` facts; `fixed-conservative-v48`,
 evidence shadow-first. The decision-set, proposal-set and every review response
 version do not move. Every earlier application database is rejected before
 mutation and needs a clean rebuild; no adoption is supplied.
+
+Issue #1477's owner-facing increment takes the clean-rebuild branch again. The
+review preparation presentation's trigger check admits `book_linked`, with
+trigger ordinals 0 to 6, so a link change can start a preparation
+([ADR-0104](0104-owner-identity-links.md)). `cover-identity-report-v4`,
+`cover-policy-report-v6` and `cover-consideration-v11` carry the cover
+outcomes `owner_link_match` and `owner_link_anchor_match`.
+`review-library-v9`, `review-report-detail-v7`, `review-case-evidence-v6` and
+`review-case-history-v5` carry a work's link state, the `link` lane and its
+history events. `review-preparation-v2` and `review-case-detail-v9` do not
+move. Every earlier application database is rejected before mutation and
+needs a clean rebuild; no adoption is supplied.

@@ -111,7 +111,11 @@ No store, log, diagnostic, support bundle or API response contains:
   provider's requests (it is also kept out of every report identity and
   fingerprint);
 - reviewer job files, raw streams, reasoning or auth state outside the
-  reviewer directory.
+  reviewer directory;
+- a [Find this book](../product/find-this-book.md) search's text, results or
+  cover previews. They are held only in server memory, for the session that
+  searched, for 15 minutes, and a new search, logout or restart discards
+  them. A preview is never written to disk or the artifact store.
 
 Fixed stderr lines contain no rejected value
 ([observability](../operations/observability.md)). Diagnostic timings are off
@@ -167,7 +171,9 @@ The product sends no telemetry. It contacts only:
   id, to list its editions' covers, and its asset host receives the cover
   image requests. Neither carries an item value. iTunes Search receives an
   audiobook's title and author once, to find its cover, and only while its
-  cover switch is on;
+  cover switch is on. Find this book sends the title and authors, ISBN or
+  ASIN the owner typed to the one source the owner picked
+  ([provider egress](provider-egress.md#owner-search));
 - **an AI reviewer**, only if the owner selected one
   ([AI trust boundary](ai-boundary.md)). Cover review sends opaque candidate
   references, re-encoded previews, incumbent state and bounded public provider
