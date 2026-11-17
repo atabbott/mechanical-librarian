@@ -1587,3 +1587,109 @@ def test_a_link_row_without_a_work_label_reads_as_the_recorded_work() -> None:
     assert event["change_detail"] == (
         "Linked Recorded work to A Title on Hardcover, as this book."
     )
+
+
+# --- links from an identifiers file (#1478) -----------------------------------
+
+
+@pytest.mark.parametrize(
+    ("scope", "identity", "named"),
+    [
+        ("edition", "9780306406157", "ISBN 9780306406157"),
+        ("recording", "B00TEST001", "ASIN B00TEST001"),
+    ],
+)
+def test_a_file_link_withdrawn_singly_names_its_identifier(
+    scope: str, identity: str, named: str
+) -> None:
+    event = _project(
+        _event(
+            destination="book_link",
+            state="link_withdrawn",
+            work_label="The Silent Orchard",
+            record={
+                "source_kind": "owner_link",
+                "source": "file",
+                "scope": scope,
+                "identity": identity,
+            },
+        ),
+        None,
+    )
+    assert event["change"] == f"Withdrew the link to {named}"
+    assert event["change_detail"] == (
+        f"Withdrew the link from The Silent Orchard to {named}, "
+        "from an identifiers file."
+    )
+    assert _facts(event) == {
+        "Source": "Identifiers file",
+        "What happens next": "Withdrawing writes nothing to Audiobookshelf. "
+        "This work is prepared again without the link.",
+    }
+
+
+def _import_record(kind: str, **counts: int) -> dict[str, object]:
+    record: dict[str, object] = {
+        "source_kind": "identifier_import",
+        "kind": kind,
+        "import_id": "identifier_import_" + "a" * 64,
+        "rows": 20,
+        "linked": 15,
+        "affected": 15,
+    }
+    record.update(counts)
+    return _project(
+        _event(
+            destination="links",
+            state="imported" if kind == "imported" else "withdraw",
+            work_id="Identifiers file",
+            work_label="Identifiers file",
+            record=record,
+        ),
+        None,
+    )
+
+
+def test_an_import_reads_as_one_row_with_its_counts() -> None:
+    event = _import_record("imported")
+    assert (event["work_label"], event["field_label"]) == ("Identifiers file", "Links")
+    assert (event["change"], event["change_detail"]) == (
+        "Linked 15 works",
+        "Linked 15 works from an identifiers file.",
+    )
+    assert event["category"] == "owner"
+    assert event["identifier_import_id"] == "identifier_import_" + "a" * 64
+    assert _facts(event) == {
+        "Rows in the file": "20",
+        "Linked": "15",
+        "Not linked": "5",
+        "Chosen by": "You",
+        "What happens next": "Linking writes nothing to Audiobookshelf. "
+        "Each work is prepared again with its link.",
+    }
+    assert activity_result_label("imported").value == "Imported"
+
+
+def test_one_linked_work_is_singular() -> None:
+    event = _import_record("imported", rows=1, linked=1, affected=1)
+    assert event["change"] == "Linked 1 work"
+
+
+def test_a_withdrawal_names_what_it_withdrew_and_what_changed_since() -> None:
+    event = _import_record("withdrawn", affected=13)
+    assert "identifier_import_id" not in event
+    assert (event["change"], event["change_detail"]) == (
+        "Withdrew 13 links",
+        "Withdrew 13 links with their identifiers file import.",
+    )
+    assert _facts(event) == {
+        "Linked": "15",
+        "Changed since the import": "2",
+        "Chosen by": "You",
+        "What happens next": "Withdrawing writes nothing to Audiobookshelf. "
+        "Each work is prepared again without its link.",
+    }
+    assert activity_result_label("withdraw").value == "Withdrawn"
+    single = _import_record("withdrawn", rows=1, linked=1, affected=1)
+    assert single["change"] == "Withdrew 1 link"
+    assert "Changed since the import" not in _facts(single)

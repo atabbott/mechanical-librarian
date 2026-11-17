@@ -662,3 +662,13 @@ the link or its anchor reached, so the decision policy moves to
 state a write v29 refuses. `review-preparation-v2` and `review-case-detail-v10`
 do not move. Every earlier application database is rejected before mutation and
 needs a clean rebuild; no adoption is supplied.
+
+Issue #1478 takes the clean-rebuild branch. `owner_links` admits the `file`
+source and gains `import_id`, and the application database gains the
+append-only `identifier_imports` and `identifier_import_events` tables
+([ADR-0104](0104-owner-identity-links.md)). `catalogue-v3` keeps each item's
+folder path, so a `catalogue-v2` database is refused. `review-library-v10`,
+`review-case-history-v7` and `owner-link-view-v2` carry the link's source.
+No report, proposal or decision version moves. Every earlier application and
+catalogue database is rejected before mutation and needs a clean rebuild; no
+adoption is supplied.

@@ -30,6 +30,15 @@ from mechanical_librarian.application.field_effects import (
     GuardedApplicationError,
     GuardedFieldApplication,
 )
+from mechanical_librarian.application.identifier_import import (
+    IMPORT_SCHEMA,
+    WITHDRAWAL_SCHEMA,
+    IdentifierImportRecord,
+    IdentifierImportRefused,
+    IdentifierImportService,
+    IdentifierImportStore,
+    emit_identifier_import,
+)
 from mechanical_librarian.application.live_updates import LiveUpdateChannel
 from mechanical_librarian.application.metadata_policy import (
     AutomaticSafetyControls,
@@ -156,8 +165,11 @@ class ReviewPolicyStore(PolicyImpactRepository, AutomaticSafetyRepository, Proto
     """
 
 
-class BrowserStateOwner(Protocol):
-    """Composition-only lifecycle and status capabilities of the SQLite owner."""
+class BrowserStateOwner(IdentifierImportStore, Protocol):
+    """Composition-only lifecycle and status capabilities of the SQLite owner.
+
+    It is also the identifiers file import store (#1478).
+    """
 
     def close(self) -> None: ...
 
@@ -675,6 +687,7 @@ class ReviewApplication:
         provider_throttling: Callable[[], dict[str, object]] | None = None,
         align_book_matching: Callable[[int], object] | None = None,
         owner_search: OwnerSearchService | None = None,
+        identifier_import: IdentifierImportService | None = None,
     ) -> None:
         self._updates = updates
         self._state_owner = state_owner
@@ -718,6 +731,7 @@ class ReviewApplication:
         self._provider_throttling = provider_throttling
         self._align_book_matching = align_book_matching
         self._owner_search = owner_search
+        self._identifier_import = identifier_import
 
     @property
     def owner_search(self) -> OwnerSearchService | None:
@@ -913,6 +927,155 @@ class ReviewApplication:
             "scan_requested": scan_requested,
             "schema_version": "owner-link-change-v1",
         }
+
+    def _require_identifier_import(self) -> IdentifierImportService:
+        if self._identifier_import is None:
+            raise ReviewApplicationError("unavailable")
+        return self._identifier_import
+
+    def preview_identifiers(
+        self, session_token: str, connection: str, library: str, data: bytes
+    ) -> dict[str, object]:
+        """Decide an identifiers file against the library and hold it (#1478).
+
+        Only the catalogue read takes the gate; the file is classified outside
+        it, and nothing is written.
+        """
+        service = self._require_identifier_import()
+        service.require_library(connection, library)
+        try:
+            read = self.serialized(
+                lambda: service.store.identifier_candidates(connection, library)
+            )
+        except IdentifierImportRefused as refusal:
+            emit_identifier_import("preview", refusal.code)
+            raise
+        return service.preview(session_token, connection, library, data, read)
+
+    def identifier_preview_status(
+        self, session_token: str, preview_id: str
+    ) -> dict[str, object]:
+        """After an uncertain confirm: imported, still open, or closed (S11)."""
+        service = self._require_identifier_import()
+        return self.serialized(
+            lambda: service.preview_status(session_token, preview_id)
+        )
+
+    def identifier_import_status(self, import_id: str) -> dict[str, object]:
+        """An import's live state for Withdraw this import, never cached."""
+        service = self._require_identifier_import()
+        return self.serialized(lambda: service.import_status(import_id))
+
+    def import_identifiers(
+        self,
+        session_token: str,
+        actor: str,
+        preview_id: str,
+        request_id: str,
+        request_sha256: str,
+    ) -> dict[str, object]:
+        """Record the session's preview as one import (S9, S11).
+
+        The replay is read first, so a lost answer is given again after the
+        preview closed; the links are the held preview's, never the browser's.
+        """
+        service = self._require_identifier_import()
+        rows: list[int] = []
+
+        def write() -> tuple[IdentifierImportRecord, int, bool]:
+            replay = service.replayed(request_id, request_sha256)
+            if replay is not None:
+                return replay, replay.linked, True
+            preview = service.open_preview(session_token, preview_id)
+            rows.append(preview.result.rows)
+            recorded, replayed = service.store.import_identifiers(
+                preview.connection,
+                preview.library,
+                preview_digest=preview.digest,
+                catalogue_digest=preview.catalogue_digest,
+                rows=preview.result.rows,
+                counts=preview.result.counts,
+                links=preview.result.will_link,
+                actor=actor,
+                occurred_at=self._clock(),
+                request_id=request_id,
+                request_sha256=request_sha256,
+            )
+            service.forget(session_token)
+            return recorded, recorded.linked, replayed
+
+        recorded, linked, _ = self._identifier_import_written(
+            write, "import", lambda: rows[0] if rows else 0
+        )
+        return {
+            "import_id": recorded.import_id,
+            "linked": linked,
+            "scan_requested": self._identifier_scan(recorded),
+            "schema_version": IMPORT_SCHEMA,
+        }
+
+    def withdraw_identifier_import(
+        self, actor: str, import_id: str, request_id: str, request_sha256: str
+    ) -> dict[str, object]:
+        """Withdraw each of the import's links still current (S11)."""
+        service = self._require_identifier_import()
+        recorded, withdrawn, _ = self._identifier_import_written(
+            lambda: service.store.withdraw_identifier_import(
+                import_id,
+                actor=actor,
+                occurred_at=self._clock(),
+                request_id=request_id,
+                request_sha256=request_sha256,
+            ),
+            "withdraw",
+            lambda: 0,
+        )
+        return {
+            "import_id": recorded.import_id,
+            "withdrawn": withdrawn,
+            "scan_requested": self._identifier_scan(recorded),
+            "schema_version": WITHDRAWAL_SCHEMA,
+        }
+
+    def _identifier_import_written(
+        self,
+        write: Callable[[], tuple[IdentifierImportRecord, int, bool]],
+        action: str,
+        rows: Callable[[], int],
+    ) -> tuple[IdentifierImportRecord, int, bool]:
+        """Run one import write under the gate and emit its one event."""
+        try:
+            answer = self.serialized(write)
+        except IdentifierImportRefused as refusal:
+            emit_identifier_import(action, refusal.code, rows=rows())
+            raise
+        except Exception:
+            emit_identifier_import(action, "failed", rows=rows())
+            raise
+        emit_identifier_import(
+            action,
+            "replayed" if answer[2] else "recorded",
+            rows=rows(),
+            linked=answer[1],
+        )
+        return answer
+
+    def _identifier_scan(self, recorded: IdentifierImportRecord) -> bool:
+        """Ask for the library's scan after an import write, a replay
+        included, and announce it; a refused request is only reported."""
+        try:
+            self._preparation_request(
+                "request",
+                recorded.connection_name,
+                recorded.library_name,
+                trigger=PreparationTrigger.BOOK_LINKED,
+            )
+            scan_requested = True
+        except Exception:
+            scan_requested = False
+        self._updates.publish("library")
+        self._updates.publish("activity")
+        return scan_requested
 
     def _reviewer_changed(self) -> None:
         # Other sessions still invalidate when a rescan request is refused.
@@ -1260,9 +1423,12 @@ class ReviewApplication:
 
     def logout(self, session_token: str, csrf_token: str) -> None:
         self._sessions.logout(session_token, csrf_token)
-        # The session's search state goes with it (#1477 S13).
+        # The session's search state and identifiers file preview go with it
+        # (#1477 S13, #1478 S7).
         if self._owner_search is not None:
             self._owner_search.forget(session_token)
+        if self._identifier_import is not None:
+            self._identifier_import.forget(session_token)
 
     def logout_others(self, session_token: str, csrf_token: str) -> int:
         return self._sessions.logout_others(session_token, csrf_token)
@@ -2430,6 +2596,13 @@ def compose_review_application(
         provider_throttling=provider_throttling,
         align_book_matching=align_book_matching,
         owner_search=owner_search,
+        identifier_import=None
+        if owner_search is None
+        else IdentifierImportService(
+            store=state_owner,
+            library_configured=owner_search.library_configured,
+            clock=clock,
+        ),
     )
     return application
 

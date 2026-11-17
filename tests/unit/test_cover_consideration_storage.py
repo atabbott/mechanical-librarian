@@ -252,6 +252,8 @@ def test_actual_embedded_predecessor_refused_without_mutation(
         + "DROP TABLE library_visit;"
         "DROP VIEW current_owner_links;"
         "DROP TABLE owner_links;"
+        "DROP TABLE identifier_import_events;"
+        "DROP TABLE identifier_imports;"
         "DROP TRIGGER metadata_reports_project_browse_facts;"
         "DROP TABLE metadata_report_browse_authors;"
         "DROP TABLE metadata_report_value_flags;"

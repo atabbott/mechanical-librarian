@@ -8,7 +8,7 @@ import type { Ref } from 'react'
 
 import type { OwnerLinkCurrent } from '../api/http'
 import { Button } from '../components/Button'
-import { linkLine, linkTone, pillText, scopeLine, stateLine } from '../findThisBook'
+import { linkLine, linkName, linkTone, pillText, scopeLine, stateLine } from '../findThisBook'
 
 export function LinkPill({
   link,
@@ -94,7 +94,7 @@ export function LinkView({
       {confirming ? (
         <div className="book-link-confirm" role="group" aria-labelledby="book-link-withdraw">
           <p id="book-link-withdraw" tabIndex={-1} ref={question}>
-            {`Withdraw the link to ${link.title}? Its evidence leaves this work at the next preparation.`}
+            {`Withdraw the link to ${linkName(link)}? Its evidence leaves this work at the next preparation.`}
           </p>
           <div className="find-book-actions">
             <Button

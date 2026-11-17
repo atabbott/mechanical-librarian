@@ -250,6 +250,69 @@ def test_display_snapshot_is_bounded(display: dict[str, object]) -> None:
         OwnerLinkTarget(**values)  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize(
+    ("scope", "identity", "valid"),
+    [
+        (OwnerLinkScope.EDITION, "9780306406157", True),
+        (OwnerLinkScope.EDITION, "0306406152", False),
+        (OwnerLinkScope.RECORDING, "B00TEST001", True),
+        (OwnerLinkScope.RECORDING, "b00test001", False),
+        (OwnerLinkScope.WORK, "9780306406157", False),
+        (OwnerLinkScope.WORK, "1", False),
+    ],
+)
+def test_a_file_link_names_an_edition_or_recording_without_a_source(
+    scope: OwnerLinkScope, identity: str, valid: bool
+) -> None:
+    """A file link (#1478) has no source and no snapshot, and never a work."""
+    if not valid:
+        with pytest.raises(OwnerLinkError):
+            OwnerLinkTarget(scope, None, identity, None)
+        return
+    target = OwnerLinkTarget(scope, None, identity, None)
+    assert target.source == "file"
+    medium = "ebook" if scope is OwnerLinkScope.EDITION else "audiobook"
+    link = OwnerLink("owner_link_" + "a" * 64, medium, scope, None, identity)
+    assert link.source == "file"
+    assert link.lookup.provider is None
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        pytest.param({"display_title": "T"}, id="title-without-source"),
+        pytest.param({"display_creators": ("A",)}, id="creators-without-source"),
+        pytest.param({"provider": "open_library"}, id="source-without-title"),
+    ],
+)
+def test_a_file_link_keeps_no_snapshot(values: dict[str, object]) -> None:
+    arguments: dict[str, object] = {
+        "scope": OwnerLinkScope.EDITION,
+        "provider": None,
+        "identity": "9780306406157",
+        "display_title": None,
+        **values,
+    }
+    with pytest.raises(OwnerLinkError):
+        OwnerLinkTarget(**arguments)  # type: ignore[arg-type]
+
+
+def test_a_file_link_prepares_as_a_search_link_to_the_same_record() -> None:
+    """The digest a report binds ignores the source for an edition or recording."""
+    for medium, scope, identity in (
+        ("ebook", OwnerLinkScope.EDITION, "9780306406157"),
+        ("audiobook", OwnerLinkScope.RECORDING, "B00TEST001"),
+    ):
+        provider = "open_library" if medium == "ebook" else "audible_catalog"
+        searched = OwnerLink(
+            "owner_link_" + "b" * 64, medium, scope, provider, identity
+        )
+        filed = OwnerLink("owner_link_" + "c" * 64, medium, scope, None, identity)
+        assert (searched.source, filed.source) == ("search", "file")
+        assert filed.digest == searched.digest
+        assert filed.lookup == searched.lookup
+
+
 # -- Owner search cards, eligibility and contradictions (S9, S15) ------------
 
 

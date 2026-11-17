@@ -95,6 +95,7 @@ from mechanical_librarian.application.review_web import (
     AutomaticWithheldCondition,
     HumanDecisionAckSchemaVersion,
     OwnerCredential,
+    OwnerLinkHistoryEventSchemaVersion,
     OwnerVerifierStore,
     ReviewAttentionSchemaVersion,
     ReviewCaseDetailSchemaVersion,
@@ -161,6 +162,7 @@ from mechanical_librarian.domain.reviewer_access import (
 from mechanical_librarian.domain.value_flags import ValueFlagDestination, ValueFlagRule
 from mechanical_librarian.interfaces.web import (
     find_this_book,
+    identifier_import,
     live_stream,
     review_frontend,
 )
@@ -1429,17 +1431,30 @@ _OwnerLinkScope = Literal["work", "edition", "recording"]
 class _HistoryOwnerLinkItem(_ClosedModel):
     """A book link the owner made, changed or withdrew (#1477, S31).
 
-    A withdrawal names the link it withdrew.
+    A withdrawal names the link it withdrew. A file link (#1478) names its
+    ISBN or ASIN and no source or title; `with_import` marks the rows an
+    identifiers file import made, its links and its Withdraw this import.
     """
 
+    identifier: str | None = Field(max_length=13)
     kind: Literal["linked", "link_changed", "link_withdrawn"]
     link_row_id: str = Field(pattern=r"^owner_link_[0-9a-f]{64}$")
     occurred_at: _Instant
-    provider: _OwnerLinkProvider
+    provider: _OwnerLinkProvider | None
     review_case_id: str
-    schema_version: Literal["owner-link-history-event-v1"]
+    schema_version: OwnerLinkHistoryEventSchemaVersion
     scope: _OwnerLinkScope
-    title: str = Field(min_length=1, max_length=512)
+    source: Literal["search", "file"]
+    title: str | None = Field(min_length=1, max_length=512)
+    with_import: bool
+
+    @model_validator(mode="after")
+    def _a_file_link_names_no_source(self) -> Self:
+        if (self.source == "file") != (self.provider is None) or (
+            self.provider is None
+        ) != (self.title is None):
+            raise ValueError("owner link source is inconsistent")
+        return self
 
 
 class _HistoryResponse(_ClosedModel):
@@ -1866,8 +1881,17 @@ class _LibraryLink(_ClosedModel):
         "contradicted",
         "needs_replacing",
     ]
+    # How the link was made: chosen from a source, or named by an identifiers
+    # file (#1478), which names no source.
+    source: Literal["search", "file"]
     # The linked source, so a waiting row can say which source it waits for.
-    provider: _OwnerLinkProvider
+    provider: _OwnerLinkProvider | None
+
+    @model_validator(mode="after")
+    def _a_file_link_names_no_source(self) -> Self:
+        if (self.source == "file") != (self.provider is None):
+            raise ValueError("owner link source is inconsistent")
+        return self
 
 
 class _LibraryWork(_ClosedModel):
@@ -2203,6 +2227,11 @@ class _ActivityEvent(_ClosedModel):
     evidence: list[_ActivityEvidence] = Field(default_factory=list, max_length=8)
     failure: str | None = Field(default=None, max_length=512)
     field_label: str = Field(default="Recorded field", max_length=64)
+    # Set only on an identifiers file import's row (#1478): the import its
+    # Details read live and Withdraw this import names.
+    identifier_import_id: str | None = Field(
+        default=None, pattern=r"^identifier_import_[0-9a-f]{64}$"
+    )
     # A Policy row's exact From/To. Every other category keeps the compact
     # detail density rather than inheriting policy-detail bulk.
     policy_changes: list[_ActivityPolicyChange] = Field(
@@ -3341,7 +3370,17 @@ _BODY_PATH_LIMITS = {
     "/api/v1/library/link/withdraw": 4_096,
 }
 # A Find this book choice, a position and a scope, stays at the default.
-_BODY_PATTERN_LIMITS = ((re.compile(r"/api/v1/review-cases/[^/]+/decisions"), 8_192),)
+_BODY_PATTERN_LIMITS = (
+    (re.compile(r"/api/v1/review-cases/[^/]+/decisions"), 8_192),
+    # An identifiers file (#1478): read whole, then refused past 1 MiB.
+    (
+        re.compile(
+            r"/api/v1/libraries/[a-z][a-z0-9_-]{0,63}/[a-z][a-z0-9_-]{0,63}"
+            r"/identifier-previews"
+        ),
+        1_048_576,
+    ),
+)
 
 
 def create_review_app(
@@ -3624,6 +3663,9 @@ def _register_routes(
         app, application, session_cookie, authenticated_session_cookie
     )
     find_this_book.register_routes(
+        app, application, session_cookie, authenticated_session_cookie, _require_session
+    )
+    identifier_import.register_routes(
         app, application, session_cookie, authenticated_session_cookie, _require_session
     )
     _register_taste_routes(

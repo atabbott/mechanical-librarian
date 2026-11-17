@@ -34,7 +34,7 @@ import {
   transitionLabels,
 } from '../labels'
 import { detailRoute, normalizeDetailSearch, useReviewContext } from '../router'
-import { sourceName } from '../findThisBook'
+import { linkName, sourceName } from '../findThisBook'
 
 // A recorded value, a language read by its name (#1286). `empty` is what an
 // empty field reads as where the item's null is known to mean empty (#1523).
@@ -93,12 +93,20 @@ const coverPolicySentences = {
 } as const
 
 const ownerLinkAs = { work: 'this book', edition: 'this edition', recording: 'this recording' }
+// A link from an identifiers file reads by its ISBN or ASIN (#1478).
 const ownerLinkSentence = (
   item: Extract<HistoryView['items'][number], { category: 'owner_link' }>,
-) =>
-  item.kind === 'link_withdrawn'
-    ? `You withdrew the link to ${item.title}.`
-    : `${item.kind === 'linked' ? 'You linked this work to' : 'You changed the link to'} ${item.title} on ${sourceName(item.provider)}, as ${ownerLinkAs[item.scope]}.`
+) => {
+  const name = linkName(item)
+  if (item.kind === 'link_withdrawn')
+    return item.withImport
+      ? `You withdrew the link to ${name} with its identifiers file import.`
+      : `You withdrew the link to ${name}.`
+  const verb = item.kind === 'linked' ? 'You linked this work to' : 'You changed the link to'
+  const source =
+    item.source === 'file' ? 'from an identifiers file' : `on ${sourceName(item.provider)}`
+  return `${verb} ${name} ${source}, as ${ownerLinkAs[item.scope]}.`
+}
 
 function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
   if (item.category === 'description')

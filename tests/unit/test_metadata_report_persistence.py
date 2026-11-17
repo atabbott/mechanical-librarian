@@ -662,6 +662,8 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("field_effects",),
             ("human_decision_events",),
             ("human_decisions",),
+            ("identifier_import_events",),
+            ("identifier_imports",),
             ("level_decision_notes",),
             ("level_proposal_sets",),
             ("library_visit",),
@@ -951,6 +953,8 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
                 "DROP TABLE library_visit;"
                 "DROP VIEW current_owner_links;"
                 "DROP TABLE owner_links;"
+                "DROP TABLE identifier_import_events;"
+                "DROP TABLE identifier_imports;"
                 "DROP TRIGGER metadata_reports_project_browse_facts;"
                 "DROP TABLE metadata_report_browse_authors;"
                 "DROP TABLE metadata_report_value_flags;"
@@ -2764,6 +2768,8 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
                     "DROP TABLE library_visit;"
                     "DROP VIEW current_owner_links;"
                     "DROP TABLE owner_links;"
+                    "DROP TABLE identifier_import_events;"
+                    "DROP TABLE identifier_imports;"
                     "DROP TRIGGER metadata_reports_project_browse_facts;"
                     "DROP TABLE metadata_report_browse_authors;"
                     "DROP TABLE metadata_report_value_flags;"
@@ -2797,6 +2803,8 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
                     "DROP TABLE library_visit;"
                     "DROP VIEW current_owner_links;"
                     "DROP TABLE owner_links;"
+                    "DROP TABLE identifier_import_events;"
+                    "DROP TABLE identifier_imports;"
                     "DROP TABLE metadata_report_value_flags;"
                     "ALTER TABLE browse_fact_identity DROP COLUMN value_flag_rules;"
                     "DROP TABLE retained_cover_listings;"

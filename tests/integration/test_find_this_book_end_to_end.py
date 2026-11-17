@@ -28,6 +28,7 @@ from fastapi.testclient import TestClient
 from mechanical_librarian.adapters.field_effect_authority import (
     PersistedFieldEffectAuthority,
 )
+from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
     open_repository,
@@ -41,6 +42,7 @@ from mechanical_librarian.adapters.providers.hardcover_metadata import (
 from mechanical_librarian.adapters.providers.retry_safety import (
     ProviderRequestPacer,
 )
+from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.configuration import (
     LibraryConfiguration,
     MediaMountConfiguration,
@@ -61,7 +63,10 @@ from mechanical_librarian.application.metadata_report import (
 )
 from mechanical_librarian.application.owner_search import OwnerSearchService
 from mechanical_librarian.application.review_pipeline import PreparationTrigger
-from mechanical_librarian.application.review_web import BrowseReviewLibrary
+from mechanical_librarian.application.review_web import (
+    OWNER_LINK_HISTORY_EVENT_SCHEMA,
+    BrowseReviewLibrary,
+)
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ProviderQueryKind,
@@ -84,6 +89,7 @@ NOW = 1_000
 CONNECTION, LIBRARY, ITEM = "primary", "ebooks", "item-1"
 LOCAL_TITLE, LOCAL_AUTHOR = "Local Title", "Local Author"
 LINKED_TITLE, LINKED_AUTHOR = "Linked Title", "Linked Author"
+ISBN = "9780306406157"
 PROVIDER = ProviderConnectionConfiguration("hardcover", True, False, None)
 SELECTED = LibraryConfiguration(
     LIBRARY, CONNECTION, "library-id", "ebook", "books", ("hardcover",)
@@ -380,7 +386,11 @@ def test_the_owner_links_the_work_and_the_next_preparation_reads_the_link(
         (CONNECTION, LIBRARY, PreparationTrigger.BOOK_LINKED)
     ]
     # Until the scan prepares it, the link is waiting on its preparation.
-    assert world.row()["link"] == {"state": "preparing", "provider": "hardcover"}
+    assert world.row()["link"] == {
+        "state": "preparing",
+        "source": "search",
+        "provider": "hardcover",
+    }
     link = world.get(view)["link"]
     assert (link["title"], link["provider"], link["scope"], link["state"]) == (
         LINKED_TITLE,
@@ -392,7 +402,7 @@ def test_the_owner_links_the_work_and_the_next_preparation_reads_the_link(
     assert [
         (item["kind"], item["title"], item["provider"])
         for item in history
-        if item.get("schema_version") == "owner-link-history-event-v1"
+        if item.get("schema_version") == OWNER_LINK_HISTORY_EVENT_SCHEMA
     ] == [("linked", LINKED_TITLE, "hardcover")]
     (linked,) = world.activity()
     assert (linked["change"], linked["work_label"]) == (
@@ -416,7 +426,11 @@ def test_the_owner_links_the_work_and_the_next_preparation_reads_the_link(
         lens="all", search=None, limit=50, cursor=None
     )
     (row,) = [item for item in page["items"] if item["item"] == ITEM]
-    assert row["link"] == {"state": "linked", "provider": "hardcover"}
+    assert row["link"] == {
+        "state": "linked",
+        "source": "search",
+        "provider": "hardcover",
+    }
     assert world.get(view)["link"]["state"] == "linked"
 
     # A later preparation that could not finish leaves the link read: the row
@@ -474,3 +488,134 @@ def test_the_owner_links_the_work_and_the_next_preparation_reads_the_link(
     assert [trigger for *_, trigger in world.preparation.requests] == [
         PreparationTrigger.BOOK_LINKED
     ] * 2
+
+
+def _import(world: _World, key: str) -> dict[str, Any]:
+    """Preview and import a one-row identifiers file naming the work."""
+    preview = world.client.post(
+        f"/api/v1/libraries/{CONNECTION}/{LIBRARY}/identifier-previews",
+        content=f"item\tidentifier\n{ITEM}\t{ISBN}\n".encode(),
+        headers={**world.headers, "Content-Type": "text/plain; charset=utf-8"},
+    )
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["counts"]["will_link"] == 1
+    return cast(
+        "dict[str, Any]",
+        world.post(
+            f"/api/v1/identifier-previews/{preview.json()['preview_id']}/import",
+            None,
+            key=key,
+        ),
+    )
+
+
+def test_a_link_from_an_identifiers_file_is_withdrawn_and_changed_by_search(
+    world: _World, tmp_path: Path
+) -> None:
+    """A file link shows as from the file everywhere it shows (#1478); the
+    owner withdraws it on its own, and after a second import changes it with
+    Find this book."""
+    catalogue = open_catalogue(tmp_path / "catalogue.sqlite", create=True)
+    catalogue.acquire_refresh()
+    catalogue.publish(
+        "f" * 64,
+        (
+            CatalogueEntry(
+                CONNECTION,
+                LIBRARY,
+                "library-id",
+                ITEM,
+                1,
+                LOCAL_TITLE,
+                (LOCAL_AUTHOR,),
+                True,
+                False,
+                "singular-supported",
+                "a" * 64,
+                "book.epub",
+                "epub",
+                "books",
+                item_path="Shelf/Local Title",
+            ),
+        ),
+    )
+    catalogue.close()
+    world.repository.bind_library_catalogue(tmp_path / "catalogue.sqlite", "f" * 64)
+    view = f"/api/v1/library/link?connection={CONNECTION}&library={LIBRARY}&item={ITEM}"
+    case = world.case_id()
+
+    imported = _import(world, "file-import-request-01")
+    assert imported["linked"] == 1
+    assert world.row()["link"] == {
+        "state": "preparing",
+        "source": "file",
+        "provider": None,
+    }
+    link = world.get(view)["link"]
+    assert (link["source"], link["provider"], link["title"]) == ("file", None, None)
+    assert (link["scope"], link["identifier"]) == ("edition", ISBN)
+    history = world.get(f"/api/v1/review-cases/{case}/history")["items"]
+    assert [
+        (item["kind"], item["source"], item["provider"], item["identifier"])
+        for item in history
+        if item.get("schema_version") == OWNER_LINK_HISTORY_EVENT_SCHEMA
+    ] == [("linked", "file", None, ISBN)]
+
+    # Withdrawn on its own, from Find this book, as any link is.
+    world.app_clock[0] += 10
+    withdrawn = world.post(
+        "/api/v1/library/link/withdraw",
+        {
+            "connection": CONNECTION,
+            "library": LIBRARY,
+            "item": ITEM,
+            "link_row_id": link["link_row_id"],
+        },
+        key="file-withdraw-request-1",
+    )
+    assert withdrawn["action"] == "withdraw"
+    assert world.get(view)["link"] is None
+    assert (
+        world.get(f"/api/v1/identifier-imports/{imported['import_id']}")["still_linked"]
+        == 0
+    )
+    assert [event["change"] for event in world.activity()] == [
+        f"Withdrew the link to ISBN {ISBN}"
+    ]
+
+    # Linked again by a second import, then changed with Find this book.
+    world.app_clock[0] += 10
+    again = _import(world, "file-import-request-02")
+    world.clock[0] += 5
+    search = world.post(
+        "/api/v1/library/find/searches",
+        {
+            "connection": CONNECTION,
+            "library": LIBRARY,
+            "item": ITEM,
+            "provider": "hardcover",
+            "lane": "title_authors",
+            "title": LINKED_TITLE,
+            "authors": [LINKED_AUTHOR],
+        },
+    )
+    world.app_clock[0] += 10
+    changed = world.post(
+        f"/api/v1/library/find/searches/{search['search_id']}/choice",
+        {"position": 0, "scope": "work"},
+        key="file-change-request-01",
+    )
+    assert changed["action"] == "replace"
+    assert world.row()["link"] == {
+        "state": "preparing",
+        "source": "search",
+        "provider": "hardcover",
+    }
+    assert (
+        world.get(f"/api/v1/identifier-imports/{again['import_id']}")["still_linked"]
+        == 0
+    )
+    assert world.activity()[0]["change"] == f"Linked to {LINKED_TITLE} on Hardcover"
+    assert [trigger for *_, trigger in world.preparation.requests] == [
+        PreparationTrigger.BOOK_LINKED
+    ] * 4

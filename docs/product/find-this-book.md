@@ -113,6 +113,10 @@ place of Linked on {source}.
 | Link contradicted | an edition or recording no longer agrees with the record, with the reason |
 | Link needs replacing | the source no longer has the record, merged it into another, is turned off for the library, or the work changed between ebook and audiobook |
 
+A link from an identifiers file names no source and no title. Its pill reads
+Linked from a file, or Linked, waiting for its sources, and its lines name the
+ISBN or ASIN: "Linked to ISBN {isbn} from an identifiers file".
+
 The pill opens the Book link view: the record, the scope, the state line,
 Change and Withdraw. Change turns the dialog into a search, and choosing
 there replaces the link. Withdraw asks first, "Withdraw the link to {title}?
@@ -141,9 +145,29 @@ value, so it is left to you." A cover that only the link supports is offered
 for your choice and is never switched automatically. A link never fills an
 ISBN or ASIN and never withdraws a decision you made.
 
+## Linking from a file
+
+Settings › Libraries ends each saved library's record with Import
+identifiers, in both settings modes. It opens a page in the list's place.
+Choose a tab-separated file that names each work by its Audiobookshelf item
+ID or its path in the library, with an ebook's ISBN or an audiobook's ASIN
+([identifiers file](../reference/identifiers-file.md)).
+
+Preview counts the rows and lists the ones that will be linked, with each
+work's title and authors, and the ones that will not, with the reason. Nothing
+is recorded until you choose Link. Every row that will be linked then becomes
+a link as this edition or this recording, in one import, and each work is
+prepared again. A row whose work is already linked is left alone.
+
+The import's Activity row offers Withdraw this import in its Details. After a
+confirmation that names the count, it withdraws each link from the import
+that is still current. A link you changed or withdrew since is left as it is.
+
 ## History and Activity
 
 A work's History lists each link, change and withdrawal with its time, for
-example "You linked this work to {title} on {source}, as this book." Activity
-lists them under the field Book link as Linked, Link changed and Link
-withdrawn, with the source, the scope and what happens next.
+example "You linked this work to {title} on {source}, as this book." or "You
+linked this work to ISBN {isbn} from an identifiers file, as this edition."
+Activity lists them under the field Book link as Linked, Link changed and Link
+withdrawn, with the source, the scope and what happens next. An identifiers
+file import has one Activity row of its own, and so does its withdrawal.

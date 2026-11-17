@@ -27,6 +27,7 @@ from mechanical_librarian.application.review_application import (
     REVIEW_PREPARATION_SCHEMA,
 )
 from mechanical_librarian.application.review_web import (
+    OWNER_LINK_VIEW_SCHEMA,
     REVIEW_CASE_DETAIL_SCHEMA,
     REVIEW_CASE_EVIDENCE_SCHEMA,
     REVIEW_CASE_HISTORY_SCHEMA,
@@ -2175,6 +2176,8 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
                 "change": _cohort_change(work, destination)[0],
                 "change_detail": _cohort_change(work, destination)[1],
                 "check_group": CHECK_GROUP if work == CHECKED_WORK else None,
+                # Only an identifiers file import's row names it (#1478).
+                "identifier_import_id": None,
                 "field_label": _COHORT_FIELD_LABELS[destination],
                 "policy_changes": (
                     _COHORT_POLICY_CHANGES if destination == "policy" else []
@@ -2429,7 +2432,7 @@ def _owner_link_view(query: dict[str, list[str]]) -> dict[str, object]:
         "link": None,
         "offered": True,
         "prefill": {"asin": None, "authors": [], "isbn": None, "title": None},
-        "schema_version": "owner-link-view-v1",
+        "schema_version": OWNER_LINK_VIEW_SCHEMA,
         "sources": [
             {
                 "lanes": ["title_authors", "isbn"],

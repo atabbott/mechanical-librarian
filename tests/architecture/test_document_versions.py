@@ -120,7 +120,17 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.application.review_web",
         "REVIEW_CASE_HISTORY_SCHEMA",
-        "review-case-history-v6",
+        "review-case-history-v7",
+    ),
+    (
+        "mechanical_librarian.application.review_web",
+        "OWNER_LINK_HISTORY_EVENT_SCHEMA",
+        "owner-link-history-event-v2",
+    ),
+    (
+        "mechanical_librarian.application.review_web",
+        "OWNER_LINK_VIEW_SCHEMA",
+        "owner-link-view-v2",
     ),
     (
         "mechanical_librarian.application.metadata_policy",
@@ -135,7 +145,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.application.review_web",
         "REVIEW_LIBRARY_SCHEMA",
-        "review-library-v9",
+        "review-library-v10",
     ),
     (
         "mechanical_librarian.application.review_web",
@@ -276,7 +286,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "mechanical_librarian.adapters.persistence.catalogue",
         "CATALOGUE_SCHEMA",
-        "catalogue-v2",
+        "catalogue-v3",
     ),
     ("scripts.cold_start_report", "COLD_START_REPORT_SCHEMA", "cold-start-report-v10"),
     (
@@ -299,7 +309,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "scripts.qualify_audiobookshelf_field_effect",
         "AUDIOBOOKSHELF_FIELD_EFFECT_SCHEMA",
-        "audiobookshelf-field-effect-v5",
+        "audiobookshelf-field-effect-v6",
     ),
     (
         "scripts.qualify_container_lifecycle",

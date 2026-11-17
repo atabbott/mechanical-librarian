@@ -107,8 +107,12 @@ No store, log, diagnostic, support bundle or API response contains:
   provider-answer store above, request URLs or bodies;
 - provider cover URLs, endpoint paths or arbitrary upstream properties;
 - private filesystem paths (only the catalogue database keeps each supported
-  item's service and mount path, and no report, list or API response shows
-  one), arbitrary EPUB text or audio content;
+  item's service and mount path and its folder path in the library, and no
+  report, list or API response shows one), arbitrary EPUB text or audio
+  content;
+- an identifiers file, its paths or its rows (its preview, held in memory for
+  15 minutes, keeps each row's number and reason and the work it would link;
+  an import keeps its counts and the links it made);
 - an inventory beyond the bounded current catalogue;
 - prior cover bytes, except in the recovery and retained directories below;
 - secrets outside the settings stores above;

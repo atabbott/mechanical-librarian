@@ -9,7 +9,7 @@ import sqlite3
 import stat
 import sys
 from _thread import RLock
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager, nullcontext
 from pathlib import Path
 from threading import Event, Lock
@@ -51,6 +51,14 @@ from mechanical_librarian.adapters.persistence.field_effect_activity import (
 )
 from mechanical_librarian.adapters.persistence.field_effects import (
     SQLiteFieldEffectRepository,
+)
+from mechanical_librarian.adapters.persistence.identifier_imports import (
+    identifier_import_by_preview,
+    identifier_import_by_request,
+    identifier_import_status,
+    library_identifier_candidates,
+    record_identifier_import,
+    withdraw_identifier_import,
 )
 from mechanical_librarian.adapters.persistence.level_reconciliation import (
     case_level_unreconciled,
@@ -138,6 +146,11 @@ from mechanical_librarian.application.cover_consideration import (
     cover_currentness_facts,
     cover_currentness_from_facts,
 )
+from mechanical_librarian.application.identifier_import import (
+    IdentifierImportRecord,
+    IdentifierImportRefused,
+    LibraryCandidates,
+)
 from mechanical_librarian.application.metadata_policy import (
     PolicyPreviewCapture,
     PolicyTransition,
@@ -193,6 +206,7 @@ from mechanical_librarian.domain.human_decision import (
     HumanDecision,
     HumanDecisionError,
 )
+from mechanical_librarian.domain.identifier_file import WillLink
 from mechanical_librarian.domain.library_visit import ListingPositions
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyError,
@@ -2933,6 +2947,134 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             None if facts is None else json.loads(facts),
             bool(failed),
         )
+
+    # Identifiers file imports (#1478): reads and the two writes.
+
+    @contextmanager
+    def _identifier_catalogue(self) -> Iterator[str]:
+        """The catalogue attached read-only, answering its fingerprint.
+
+        A failure to attach it is `library_unreadable`; one after the work
+        completed is a plain failure, since that work may have committed.
+        """
+        admission = self._library_catalogue
+        if admission is None:
+            raise IdentifierImportRefused("library_unreadable")
+        attached = completed = False
+        try:
+            with admission.attach(self._connection):
+                attached = True
+                yield admission.fingerprint
+                completed = True
+        except (CatalogueError, OSError, sqlite3.Error) as error:
+            if completed:
+                # Detaching failed after the work committed: never a refusal.
+                raise MetadataReportError("identifier import is unavailable") from error
+            if attached and isinstance(error, sqlite3.Error):
+                raise
+            raise IdentifierImportRefused("library_unreadable") from error
+
+    @local_operation
+    def identifier_candidates(self, connection: str, library: str) -> LibraryCandidates:
+        """The library's eligible entries, digest and linked items, read together."""
+        with self._identifier_catalogue() as fingerprint:
+            scope = self._transaction("identifier_candidates", deferred=True)
+            scope.begin()
+            try:
+                return library_identifier_candidates(
+                    self._connection, fingerprint, connection, library
+                )
+            finally:
+                scope.rollback()
+
+    @local_operation
+    def identifier_import_replay(
+        self, request_id: str
+    ) -> IdentifierImportRecord | None:
+        return identifier_import_by_request(self._connection, request_id)
+
+    @local_operation
+    def identifier_import_for_preview(
+        self, preview_digest: str
+    ) -> IdentifierImportRecord | None:
+        return identifier_import_by_preview(self._connection, preview_digest)
+
+    @local_operation
+    def identifier_import_status(self, import_id: str) -> dict[str, object] | None:
+        return identifier_import_status(self._connection, import_id)
+
+    @local_operation
+    def import_identifiers(
+        self,
+        connection: str,
+        library: str,
+        *,
+        preview_digest: str,
+        catalogue_digest: str,
+        rows: int,
+        counts: Mapping[str, int],
+        links: tuple[WillLink, ...],
+        actor: str,
+        occurred_at: int,
+        request_id: str,
+        request_sha256: str,
+    ) -> tuple[IdentifierImportRecord, bool]:
+        """Record an import in one BEGIN IMMEDIATE with the catalogue attached (S9)."""
+        with self._identifier_catalogue() as fingerprint:
+            scope = self._transaction("import_identifiers")
+            scope.begin()
+            try:
+                current = library_identifier_candidates(
+                    self._connection, fingerprint, connection, library
+                )
+                result = record_identifier_import(
+                    self._connection,
+                    connection_name=connection,
+                    library_name=library,
+                    preview_digest=preview_digest,
+                    catalogue_digest=catalogue_digest,
+                    current_digest=current.digest,
+                    rows=rows,
+                    counts=counts,
+                    links=links,
+                    actor=actor,
+                    occurred_at=occurred_at,
+                    request_id=request_id,
+                    request_sha256=request_sha256,
+                )
+                scope.commit()
+            except BaseException:
+                scope.rollback()
+                raise
+        return result
+
+    @local_operation
+    def withdraw_identifier_import(
+        self,
+        import_id: str,
+        *,
+        actor: str,
+        occurred_at: int,
+        request_id: str,
+        request_sha256: str,
+    ) -> tuple[IdentifierImportRecord, int, bool]:
+        """Withdraw the import's still-current links in one transaction."""
+        scope = self._transaction("withdraw_identifier_import")
+        scope.begin()
+        try:
+            result = withdraw_identifier_import(
+                self._connection,
+                import_id=import_id,
+                actor=actor,
+                occurred_at=occurred_at,
+                request_id=request_id,
+                request_sha256=request_sha256,
+            )
+            scope.commit()
+        except BaseException:
+            scope.rollback()
+            raise
+        return result
 
     @local_operation
     def read_owner_search_work(

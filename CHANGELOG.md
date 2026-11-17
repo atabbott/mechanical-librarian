@@ -31,6 +31,10 @@ brackets are GitHub issues.
   the record that is its book. Preparation then reads that record first and
   asks the other sources about that book. Evidence only the link supports is
   never decided automatically. History moves under More (#1477).
+- **Clean rebuild required.** Import identifiers, at the foot of each library
+  in Settings › Libraries, previews a file of works and their ISBN or ASIN and
+  links every row it can in one import. The import's Activity row offers
+  Withdraw this import (#1478).
 - A book link whose next preparation could not finish now says "Link not used
   yet", and its link view gives the work's next step, instead of saying it is
   being prepared (#1941).

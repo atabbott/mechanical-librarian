@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import Any, Final, cast
 from unittest.mock import patch
 
-AUDIOBOOKSHELF_FIELD_EFFECT_SCHEMA: Final = "audiobookshelf-field-effect-v5"
+AUDIOBOOKSHELF_FIELD_EFFECT_SCHEMA: Final = "audiobookshelf-field-effect-v6"
 
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLED_ROOT = os.environ.get("MECHANICAL_LIBRARIAN_QUALIFICATION_INSTALL")
@@ -97,6 +97,9 @@ from mechanical_librarian.application.field_effects import (
 from mechanical_librarian.application.operation_admission import OperationAdmission
 from mechanical_librarian.application.review_application import (
     compose_review_application,
+)
+from mechanical_librarian.application.review_web import (
+    OWNER_LINK_HISTORY_EVENT_SCHEMA,
 )
 from mechanical_librarian.application.reviewer_access import ReviewerAccessOperations
 from mechanical_librarian.bootstrap.composition import (
@@ -3403,6 +3406,10 @@ OWNER_LINK_GENRES = ("Fantasy", "Adventure")
 OWNER_LINK_ASIN = "B0SYNE7P1K"
 OWNER_LINK_OUT_OF_BAND_ASIN = "B0SYNOB002"
 OWNER_LINK_OUT_OF_BAND_MINUTES = 200
+# The ISBN an identifiers file gives the EPUB once its search link is
+# withdrawn (#1478), and the file's path for it as the service sees it.
+OWNER_LINK_IMPORT_ISBN = "9780306406157"
+OWNER_LINK_IMPORT_PATH = "/library/link/scan_0042.epub"
 _OWNER_LINK_PASSWORD = "installed-owner-link-qualification"
 _OWNER_LINK_PROVIDERS = (
     ("qualification-open-library", "open_library"),
@@ -4364,8 +4371,88 @@ def _owner_link_withdrawal(
             entry["kind"]
             for entry in history.json().get("items", [])
             if type(entry) is dict
-            and entry.get("schema_version") == "owner-link-history-event-v1"
+            and entry.get("schema_version") == OWNER_LINK_HISTORY_EVENT_SCHEMA
         ],
+    }
+
+
+def _owner_link_import(
+    client: TestClient, headers: dict[str, str], libraries: _LinkLibraries
+) -> dict[str, object]:
+    """Link the EPUB again from an identifiers file, then withdraw the import.
+
+    The file names the work by its path as the service sees it, so the
+    catalogue's item path is what matches it; a second row matches no work.
+    """
+    item = libraries.ebook_item
+    previewed = client.post(
+        "/api/v1/libraries/canary/link/identifier-previews",
+        headers={**headers, "Content-Type": "text/plain; charset=utf-8"},
+        content=(
+            "path\tidentifier\n"
+            f"{OWNER_LINK_IMPORT_PATH}\t{OWNER_LINK_IMPORT_ISBN}\n"
+            f"/library/link/absent.epub\t{OWNER_LINK_IMPORT_ISBN}\n"
+        ).encode(),
+    )
+    if previewed.status_code != 200:
+        raise QualificationError(
+            "owner_link_import_preview_failed:" + _owner_link_refusal(previewed)
+        )
+    preview = previewed.json()
+    imported: list[dict[str, object]] = []
+    for _ in range(2):
+        answer = client.post(
+            f"/api/v1/identifier-previews/{preview['preview_id']}/import",
+            headers={**headers, "Idempotency-Key": "owner-link-import-0001"},
+        )
+        if answer.status_code != 200:
+            raise QualificationError(
+                "owner_link_import_failed:" + _owner_link_refusal(answer)
+            )
+        imported.append(answer.json())
+    import_id = str(imported[0]["import_id"])
+    linked = _owner_link_settled(
+        client,
+        item,
+        lambda row: (
+            type(row.get("link")) is dict
+            and row["link"].get("source") == "file"
+            and row["link"].get("state") != "preparing"
+        ),
+        "owner_link_import_not_prepared",
+    )
+    status = client.get(f"/api/v1/identifier-imports/{import_id}").json()
+    activity = client.get("/api/v1/activity").json()
+    rows = [
+        event
+        for event in cast("list[dict[str, object]]", activity.get("events", []))
+        if event.get("identifier_import_id") == import_id
+    ]
+    withdrawn = client.post(
+        f"/api/v1/identifier-imports/{import_id}/withdraw",
+        headers={**headers, "Idempotency-Key": "owner-link-import-withdraw-01"},
+    )
+    if withdrawn.status_code != 200:
+        raise QualificationError(
+            "owner_link_import_withdraw_failed:" + _owner_link_refusal(withdrawn)
+        )
+    row = _owner_link_settled(
+        client,
+        item,
+        lambda row: row.get("link") is None and not _link_lanes(row),
+        "owner_link_import_withdrawal_not_prepared",
+    )
+    return {
+        "rows": preview["rows"],
+        "counts": preview["counts"],
+        "refused": preview["refused"],
+        "linked": imported[0]["linked"],
+        "replay_same_import": imported[0] == imported[1],
+        "link": linked.get("link"),
+        "status": [status.get("linked"), status.get("still_linked")],
+        "activity_rows": [event.get("state") for event in rows],
+        "withdrawn": withdrawn.json().get("withdrawn"),
+        "after": row.get("link"),
     }
 
 
@@ -4375,6 +4462,7 @@ def _require_installed_owner_link_evidence(evidence: dict[str, object]) -> None:
     recording = cast("dict[str, Any]", evidence.get("recording") or {})
     out_of_band = cast("dict[str, Any]", evidence.get("out_of_band") or {})
     withdrawal = cast("dict[str, Any]", evidence.get("withdrawal") or {})
+    imported = cast("dict[str, Any]", evidence.get("identifier_import") or {})
     checks = {
         "ebook_was_not_matched": ebook.get("before") == "not_matched"
         and ebook.get("before_link") is None,
@@ -4426,6 +4514,20 @@ def _require_installed_owner_link_evidence(evidence: dict[str, object]) -> None:
         and withdrawal.get("anchored_lanes") == [],
         "history_link_and_withdrawal": {"linked", "link_withdrawn"}
         <= set(withdrawal.get("history") or ()),
+        # An identifiers file links the EPUB again by the path the service
+        # gives it, and Withdraw this import ends that link (#1478).
+        "import_matched_by_path": imported.get("rows") == 2
+        and (imported.get("counts") or {}).get("will_link") == 1
+        and imported.get("refused") == [{"row": 3, "reason": "no_item"}],
+        "import_linked_once": imported.get("linked") == 1
+        and imported.get("replay_same_import") is True
+        and imported.get("status") == [1, 1],
+        "import_prepared_as_file_link": (imported.get("link") or {}).get("source")
+        == "file"
+        and (imported.get("link") or {}).get("provider") is None,
+        "import_activity_row": imported.get("activity_rows") == ["imported"],
+        "import_withdrawn": imported.get("withdrawn") == 1
+        and imported.get("after") is None,
         "no_unexpected_request": evidence.get("unexpected_requests") == 0,
     }
     if not all(checks.values()):
@@ -4500,7 +4602,8 @@ def _owner_link_client(
 def _owner_link_phase(
     run: _QualificationRun, service: _CanaryService, files: _CanaryFiles
 ) -> dict[str, object]:
-    """Row 21: link, prepare, choose, write, link a recording, then withdraw.
+    """Row 21: link, prepare, choose, write, link a recording, then withdraw;
+    then link from an identifiers file and withdraw that import (#1478).
 
     Only each source's HTTP boundary and the cover fetch are synthetic; the
     routes, preparation, decision, consent and guarded write are installed.
@@ -4573,6 +4676,7 @@ def _owner_link_phase(
                     client, headers, catalogue, libraries
                 )
                 withdrawal = _owner_link_withdrawal(client, headers, libraries)
+                identifier_import = _owner_link_import(client, headers, libraries)
     finally:
         repository.close()
     evidence: dict[str, object] = {
@@ -4581,6 +4685,7 @@ def _owner_link_phase(
         "recording": recording,
         "out_of_band": out_of_band,
         "withdrawal": withdrawal,
+        "identifier_import": identifier_import,
         "unexpected_requests": len(catalogue.asins("unexpected")),
     }
     _require_installed_owner_link_evidence(evidence)

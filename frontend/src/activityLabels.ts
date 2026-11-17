@@ -21,6 +21,8 @@ const ledgerStateLabels: Readonly<Record<string, string>> = {
   linked: 'Linked',
   link_changed: 'Link changed',
   link_withdrawn: 'Link withdrawn',
+  // An identifiers file import (#1478); its withdrawal reads `Recorded`.
+  imported: 'Imported',
 }
 // A change stopped only by a lost connection is still waiting to be prepared
 // again, so it reads as waiting rather than as a stopped stale (#1402). One
