@@ -552,6 +552,7 @@ _OWNER_EVENT_FIELDS: dict[str, FieldCheck] = {
         "import_not_found",
         "import_withdrawn",
         "nothing_to_withdraw",
+        "unavailable",
     ),
     "cards": bounded_integer(0, 10),
     "dropped": bounded_integer(0, 11),

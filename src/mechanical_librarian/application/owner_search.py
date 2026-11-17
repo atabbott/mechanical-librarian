@@ -343,6 +343,14 @@ class OwnerSearchService:
         """Discard the session's search, as logout does (S13)."""
         self._memory.discard(session_token)
 
+    def library_configured(self, connection: str, library: str) -> bool:
+        """Whether the saved settings name this library (#1478 Q-A2-1)."""
+        try:
+            self._configuration.select(connection, library)
+        except ConfigurationError:
+            return False
+        return True
+
     def subject(self, connection: str, library: str, item: str) -> OwnerSearchSubject:
         """Read the work, or refuse `work_not_found` (S11 step 3)."""
         try:
