@@ -294,7 +294,7 @@ PINS: tuple[tuple[str, str, str], ...] = (
     (
         "scripts.qualify_audiobookshelf_field_effect",
         "AUDIOBOOKSHELF_FIELD_EFFECT_SCHEMA",
-        "audiobookshelf-field-effect-v3",
+        "audiobookshelf-field-effect-v4",
     ),
     (
         "scripts.qualify_container_lifecycle",

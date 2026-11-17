@@ -1241,6 +1241,7 @@ _RECEIPT_KEYS = {
     "image_digest",
     "installed_automatic_series",
     "installed_continuous",
+    "installed_owner_link",
     "least_authority_refusal",
     "metadata_tags",
     "mixed_origins",
@@ -1314,6 +1315,11 @@ def _staged_qualify(
     )
     monkeypatch.setattr(
         qualification,
+        "_owner_link_phase",
+        step("owner_link", {"installed_composition": True}),
+    )
+    monkeypatch.setattr(
+        qualification,
         "_run",
         lambda *command, timeout=120: SimpleNamespace(
             stdout="ghcr.io/advplyr/audiobookshelf@" + digest + "\n"
@@ -1348,9 +1354,11 @@ def test_qualify_runs_its_phases_in_order_and_shapes_the_receipt(
         "adapter",
         "library",
         "installed",
+        "owner_link",
         "close",
     ]
     assert set(receipt) == _RECEIPT_KEYS
+    assert receipt["installed_owner_link"] == {"installed_composition": True}
     assert receipt["version"] == "2.37.2"
     assert receipt["image_digest"] == receipt["resolved_image_digest"]
     assert receipt["mixed_origins"] is True and receipt["cover"] is True
@@ -1362,7 +1370,7 @@ def test_qualify_runs_its_phases_in_order_and_shapes_the_receipt(
     assert not roots["root"].exists()
 
 
-@pytest.mark.parametrize("fail_at", ["service", "adapter", "installed"])
+@pytest.mark.parametrize("fail_at", ["service", "adapter", "installed", "owner_link"])
 def test_a_failed_phase_still_deletes_its_keys_and_files(
     monkeypatch: pytest.MonkeyPatch, fail_at: str
 ) -> None:
@@ -1388,3 +1396,157 @@ def test_an_unverified_adapter_write_fails_the_receipt(
 
     with pytest.raises(QualificationError, match="guarded_write_not_verified"):
         qualification.qualify("2.37.2")
+
+
+def _owner_link_evidence() -> dict[str, object]:
+    """Every link-phase observation as a passing installed run records it."""
+    asin = qualification.OWNER_LINK_ASIN
+    return {
+        "installed_composition": True,
+        "ebook": {
+            "before": "not_matched",
+            "before_link": None,
+            "card_choosable": True,
+            "card_scopes": ["work"],
+            "action": "link",
+            "replay_same_row": True,
+            "scan_requested": True,
+            "trigger_book_linked": True,
+            "after": "needs_attention",
+            "link_state": "linked",
+            "link_lanes": ["Open Library"],
+            "anchored_lanes": ["Hardcover"],
+            "offered": ["authors", "cover", "description", "genres", "title"],
+            "automatic_fields": [],
+            "automatic_decisions": [["authors", "keep_current"]],
+            "cover_selections": 0,
+            "unqualified_reason": ["cover"],
+            "chosen_destination": "description",
+            "effects": [["description", "human", "verified"]],
+            "readback_matches": True,
+            "chosen_digest": "a" * 64,
+            "readback_digest": "a" * 64,
+        },
+        "recording": {
+            "before": "not_matched",
+            "action": "link",
+            "replay_same_row": True,
+            "link_state": "linked",
+            "audible_lookup_asins": [asin],
+            "audnexus_asins": [asin],
+            "audiosilo_asins": [asin],
+            "confirmed_by": ["AudioSilo"],
+        },
+        "out_of_band": {
+            "choosable": True,
+            "scopes": ["work"],
+            "withheld": [{"scope": "recording", "reason": "runtime"}],
+        },
+        "withdrawal": {
+            "action": "withdraw",
+            "link": None,
+            "link_lanes": [],
+            "anchored_lanes": [],
+            "history": ["link_withdrawn", "linked"],
+        },
+        "unexpected_requests": 0,
+    }
+
+
+def test_owner_link_evidence_passes_only_when_every_row_21_claim_holds() -> None:
+    qualification._require_installed_owner_link_evidence(_owner_link_evidence())
+
+
+@pytest.mark.parametrize(
+    ("section", "key", "value", "failed"),
+    [
+        # The defect the first installed run found: anchor-admitted genres
+        # decided and written automatically (contract line 53, S26).
+        (
+            "ebook",
+            "automatic_decisions",
+            [["authors", "keep_current"], ["genres", "candidate"]],
+            "no_automatic_decision",
+        ),
+        (
+            "ebook",
+            "effects",
+            [
+                ["description", "human", "verified"],
+                ["genres", "automatic_policy", "verified"],
+            ],
+            "no_automatic_effect",
+        ),
+        ("ebook", "automatic_fields", ["genres"], "no_automatic_decision"),
+        ("ebook", "cover_selections", 1, "no_cover_selection"),
+        ("ebook", "before", "no_attention_needed", "ebook_was_not_matched"),
+        ("ebook", "after", "not_matched", "ebook_left_not_matched"),
+        ("ebook", "trigger_book_linked", False, "book_linked_trigger"),
+        ("ebook", "offered", ["cover", "description"], "offered_for_review"),
+        ("ebook", "readback_digest", "b" * 64, "exact_readback"),
+        ("ebook", "anchored_lanes", [], "anchor_steers_other_source"),
+        ("recording", "audiosilo_asins", [], "asin_reached_audiosilo"),
+        ("recording", "audnexus_asins", ["B000OTHER1"], "asin_reached_audnexus"),
+        ("recording", "link_state", "contradicted", "recording_linked"),
+        ("out_of_band", "scopes", ["work", "recording"], "out_of_band_book_only"),
+        ("withdrawal", "link_lanes", ["Open Library"], "link_evidence_gone"),
+        ("withdrawal", "history", ["linked"], "history_link_and_withdrawal"),
+    ],
+)
+def test_owner_link_evidence_names_each_unproved_claim(
+    section: str, key: str, value: object, failed: str
+) -> None:
+    evidence = _owner_link_evidence()
+    cast_section = evidence[section]
+    assert isinstance(cast_section, dict)
+    cast_section[key] = value
+
+    with pytest.raises(QualificationError) as raised:
+        qualification._require_installed_owner_link_evidence(evidence)
+
+    assert failed in json.loads(str(raised.value).split(":", 1)[1])
+
+
+def test_link_catalogue_answers_the_owner_search_and_records_each_asin() -> None:
+    """Real-consumer dry proof: the real adapters read the synthetic sources."""
+    from mechanical_librarian.adapters.providers.audible_catalog_metadata import (
+        AudibleCatalogMetadataProvider,
+    )
+    from mechanical_librarian.adapters.providers.open_library_metadata import (
+        OpenLibraryMetadataProvider,
+    )
+    from mechanical_librarian.domain.owner_link import OwnerSearchQuery
+
+    catalogue = qualification._LinkCatalogue()
+    client = qualification._owner_link_catalogue(catalogue)
+    open_library = OpenLibraryMetadataProvider("catalogue", client(), 262_144)
+    audible = AudibleCatalogMetadataProvider(
+        "audible", client(), 262_144, marketplaces=("us",)
+    )
+    title = OwnerSearchQuery("title_authors", title="scan", authors=("A",))
+    audio = OwnerSearchQuery(
+        "title_authors", title="track01", authors=("A",), marketplace="us"
+    )
+
+    # Preparation's own discovery finds nothing: the works start Not matched.
+    assert open_library.owner_search(title, deadline=1e12).records == ()
+    catalogue.owner_search = True
+    (record,) = open_library.owner_search(title, deadline=1e12).records
+    products = audible.owner_search(audio, deadline=1e12).records
+    catalogue.owner_search = False
+
+    assert record.identity == qualification.OWNER_LINK_WORK
+    assert {value.identity for value in products} == {
+        qualification.OWNER_LINK_ASIN,
+        qualification.OWNER_LINK_OUT_OF_BAND_ASIN,
+    }
+    for host, path in (
+        ("api.audnex.us", "/books/" + qualification.OWNER_LINK_ASIN),
+        ("meta.audiosilo.app", "/api/v1/lookup"),
+    ):
+        client().get(
+            f"https://{host}{path}", params={"asin": qualification.OWNER_LINK_ASIN}
+        )
+    assert catalogue.asins("audnexus") == [qualification.OWNER_LINK_ASIN]
+    assert catalogue.asins("audiosilo") == [qualification.OWNER_LINK_ASIN]
+    assert catalogue.asins("unexpected") == []
