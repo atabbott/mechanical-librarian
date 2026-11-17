@@ -571,9 +571,50 @@ def _facts(outcome: str, reason: str | None = None) -> OwnerLinkFacts:
 def test_link_state_reads_the_reports_outcome(
     facts: OwnerLinkFacts | None, expected: OwnerLinkState
 ) -> None:
-    assert link_state(_LINK, facts, paused=True, next_retry_at=900) == expected
+    assert (
+        link_state(
+            _LINK, facts, paused=True, preparation_failed=False, next_retry_at=900
+        )
+        == expected
+    )
 
 
 def test_a_report_for_another_link_reads_as_preparing() -> None:
     other = OwnerLinkFacts("ebook", "work", "hardcover", "9999", "admitted")
-    assert link_state(_LINK, other, paused=False) == OwnerLinkState("preparing")
+    assert link_state(
+        _LINK, other, paused=False, preparation_failed=False
+    ) == OwnerLinkState("preparing")
+
+
+@pytest.mark.parametrize(
+    "facts",
+    [None, OwnerLinkFacts("ebook", "work", "hardcover", "9999", "admitted")],
+    ids=["no-report", "another-link"],
+)
+@pytest.mark.parametrize("paused", [False, True], ids=["running", "paused"])
+def test_a_link_no_report_read_after_a_failed_preparation_says_so(
+    facts: OwnerLinkFacts | None, paused: bool
+) -> None:
+    # #1941: no preparation is on its way to read the link, so it is not
+    # `preparing`; the paused flag still travels.
+    assert link_state(
+        _LINK, facts, paused=paused, preparation_failed=True
+    ) == OwnerLinkState("preparation_failed", paused=paused)
+
+
+@pytest.mark.parametrize(
+    ("outcome", "expected"),
+    [
+        ("admitted", OwnerLinkState("linked")),
+        ("unavailable", OwnerLinkState("waiting")),
+        ("missing", OwnerLinkState("needs_replacing", "missing")),
+    ],
+    ids=["linked", "waiting", "missing"],
+)
+def test_a_report_that_read_the_link_outlasts_a_later_failed_preparation(
+    outcome: str, expected: OwnerLinkState
+) -> None:
+    assert (
+        link_state(_LINK, _facts(outcome), paused=False, preparation_failed=True)
+        == expected
+    )

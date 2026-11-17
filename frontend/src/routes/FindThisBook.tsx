@@ -56,8 +56,11 @@ export interface FindWork {
   mediaKind: MediaKind
 }
 
-/** What the header needs to show its entry, as the Library row carries it. */
-export type FindEntryRow = Pick<LibraryWorkView, 'findOffered' | 'link'>
+/**
+ * What the header needs to show its entry, as the Library row carries it, and
+ * the row's next step for a preparation that could not finish (#1941).
+ */
+export type FindEntryRow = Pick<LibraryWorkView, 'findOffered' | 'link' | 'preparation'>
 
 /**
  * The header's entry: Find this book while the work has no link and is
@@ -226,6 +229,9 @@ export function FindThisBookEntry({
           address={address}
           work={work}
           view={data}
+          recovery={
+            row?.preparation && !row.preparation.checkGivenUp ? row.preparation.recovery : undefined
+          }
           start={open}
           refresh={async () => {
             const read = await view.refetch()
@@ -265,6 +271,7 @@ function FindThisBookDialog({
   address,
   work,
   view,
+  recovery,
   start,
   refresh,
   close,
@@ -272,6 +279,8 @@ function FindThisBookDialog({
   address: WorkAddress
   work: FindWork
   view: OwnerLinkView
+  /** The Library row's next step when the work could not finish. */
+  recovery: string | undefined
   start: 'link' | 'form'
   refresh: () => Promise<void>
   close: (said?: string) => void
@@ -444,6 +453,7 @@ function FindThisBookDialog({
             medium={medium}
             canChange={view.offered}
             now={new Date()}
+            recovery={recovery}
             onChange={() => {
               setRefusal(null)
               setStep({ at: 'form' })

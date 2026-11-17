@@ -108,6 +108,7 @@ place of Linked on {source}.
 | --- | --- |
 | Linked on {source} | the latest preparation read the record through the link |
 | Linked, preparing | no preparation has read the current link yet |
+| Link not used yet | no preparation has read the current link, and the latest one could not finish; the link view gives the row's next step |
 | Linked, waiting for {source} | the source did not answer; provider recovery asks it again |
 | Link contradicted | an edition or recording no longer agrees with the record, with the reason |
 | Link needs replacing | the source no longer has the record, merged it into another, is turned off for the library, or the work changed between ebook and audiobook |
@@ -128,10 +129,11 @@ leaves Not matched once the linked source, or another source asked about the
 linked book, returns records. The preparation panel says the run started
 when a book link changed.
 
-Until that preparation runs, a decision on the work's case is refused with
-"The book link changed. This work is being prepared again." That covers
-choosing, pinning, withdrawing and the description choice. It holds while
-preparation is paused.
+Until a preparation reads the link, a decision on the work's case is refused
+with "The book link changed. Decisions wait until this work is prepared with
+the link." That covers choosing, pinning, withdrawing and the description
+choice. It holds while preparation is paused, and after a preparation that
+could not finish.
 
 Evidence that only the link supports never decides a field automatically.
 Such a value is left to you, with "Only the book you linked supports this

@@ -2895,24 +2895,30 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     @local_operation
     def owner_link_view_inputs(
         self, connection: str, library: str, item: str
-    ) -> tuple[OwnerLink, OwnerLinkTarget, dict[str, object] | None] | None:
-        """The current link, its display and the current report's link facts.
+    ) -> tuple[OwnerLink, OwnerLinkTarget, dict[str, object] | None, bool] | None:
+        """The current link, its display, the current report's link facts and
+        whether the work's latest preparation could not finish (#1941).
 
         `None` when the work has no link. The facts are the `owner_link`
-        member of the work's current report, or `None` when it has none.
+        member of the work's current report, or `None` when it has none; the
+        flag is read in the same statement, by Library's Could not finish rule.
         """
         row = current_owner_link_row(
             self._connection, OwnerLinkItem(connection, library, item)
         )
         if row is None or row.target is None:
             return None
-        facts = self._connection.execute(
-            "SELECT json_extract(report.document,'$.owner_link') "
-            "FROM current_review_packages package JOIN metadata_reports report "
-            "ON report.report_id=package.report_id WHERE package.connection_name=? "
-            "AND package.library_name=? AND package.item_id=?",
+        read = self._connection.execute(
+            "SELECT json_extract(report.document,'$.owner_link'),"
+            + _LATEST_PREPARATION_FAILED_SQL
+            + " FROM current_review_packages ml JOIN metadata_reports report "
+            "ON report.report_id=ml.report_id WHERE ml.connection_name=? "
+            "AND ml.library_name=? AND ml.item_id=?",
             (connection, library, item),
         ).fetchone()
+        facts, failed = (None, 0) if read is None else read
+        if failed not in {0, 1}:
+            raise MetadataReportError("owner link view is unavailable")
         target = row.target
         return (
             OwnerLink(
@@ -2923,7 +2929,8 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 target.identity,
             ),
             target,
-            None if facts is None or facts[0] is None else json.loads(facts[0]),
+            None if facts is None else json.loads(facts),
+            bool(failed),
         )
 
     @local_operation

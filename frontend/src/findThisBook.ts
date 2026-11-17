@@ -57,6 +57,7 @@ export const pillText = (state: OwnerLinkState, provider: OwnerLinkProvider) =>
   ({
     linked: `Linked on ${sourceName(provider)}`,
     preparing: 'Linked, preparing',
+    preparation_failed: 'Link not used yet',
     waiting: `Linked, waiting for ${sourceName(provider)}`,
     contradicted: 'Link contradicted',
     needs_replacing: 'Link needs replacing',
@@ -65,6 +66,7 @@ export const rowLinkPhrase = (state: OwnerLinkState, provider: OwnerLinkProvider
   ({
     linked: 'Linked',
     preparing: 'Linked, preparing',
+    preparation_failed: 'Link not used yet',
     waiting: `Linked, waiting for ${sourceName(provider)}`,
     contradicted: 'Link contradicted',
     needs_replacing: 'Link needs replacing',
@@ -115,8 +117,17 @@ const replacingReason = (link: OwnerLinkCurrent, mediaKind: 'ebook' | 'audiobook
         : 'This work is now an ebook.'
   }
 }
-/** The state line under the link, or null for a link that holds. */
-export const stateLine = (link: OwnerLinkCurrent, mediaKind: 'ebook' | 'audiobook', now: Date) => {
+/**
+ * The state line under the link, or null for a link that holds. `recovery` is
+ * the next step the work's Library row gives for a preparation that could not
+ * finish, when the row is at hand.
+ */
+export const stateLine = (
+  link: OwnerLinkCurrent,
+  mediaKind: 'ebook' | 'audiobook',
+  now: Date,
+  recovery?: string | undefined,
+) => {
   const source = sourceName(link.provider)
   switch (link.state) {
     case 'linked':
@@ -125,6 +136,10 @@ export const stateLine = (link: OwnerLinkCurrent, mediaKind: 'ebook' | 'audioboo
       return link.paused
         ? 'Preparation is paused. The link is used when it resumes.'
         : 'Preparing this work with the link.'
+    case 'preparation_failed': {
+      const line = 'Preparation could not finish, so the link is not used yet.'
+      return recovery ? `${line} ${recovery}` : line
+    }
     case 'waiting':
       return link.retry_at === null
         ? `${source} did not answer. The link is used once it does.`

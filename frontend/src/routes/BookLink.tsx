@@ -46,6 +46,7 @@ export function LinkView({
   medium,
   canChange,
   now,
+  recovery,
   onChange,
   onWithdraw,
   withdrawing,
@@ -55,6 +56,8 @@ export function LinkView({
   medium: 'ebook' | 'audiobook'
   canChange: boolean
   now: Date
+  /** The Library row's next step when the work could not finish (#1941). */
+  recovery?: string | undefined
   onChange: () => void
   onWithdraw: () => void
   withdrawing: boolean
@@ -70,7 +73,7 @@ export function LinkView({
     else if (asked.current) withdrawButton.current?.focus()
     asked.current = confirming
   }, [confirming])
-  const line = stateLine(link, medium, now)
+  const line = stateLine(link, medium, now, recovery)
   return (
     <section className={`book-link is-${link.state}`} aria-label="Book link">
       <p className="book-link-title">{linkLine(link)}</p>

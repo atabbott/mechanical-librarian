@@ -105,8 +105,10 @@ const pinFailureCopy = (
 export const writtenRefusal =
   'This decision has been written to your library, so it can’t be withdrawn.'
 // A choice refused because the work's book link changed since its case was
-// prepared (#1477, Q6): nothing is recorded until preparation runs again.
-export const linkChangedNotice = 'The book link changed. This work is being prepared again.'
+// prepared (#1477, Q6): nothing is recorded until a preparation reads the
+// link, which holds while preparation runs, waits or could not finish (#1941).
+export const linkChangedNotice =
+  'The book link changed. Decisions wait until this work is prepared with the link.'
 export const linkChanged = (error: unknown) =>
   error instanceof ApiError && error.code === 'link_changed'
 // The store's refusal for an owner command, in the words the owner acts on.

@@ -31,6 +31,9 @@ brackets are GitHub issues.
   the record that is its book. Preparation then reads that record first and
   asks the other sources about that book. Evidence only the link supports is
   never decided automatically. History moves under More (#1477).
+- A book link whose next preparation could not finish now says "Link not used
+  yet", and its link view gives the work's next step, instead of saying it is
+  being prepared (#1941).
 
 ## 0.37.0 — Provider economy (in progress)
 

@@ -7793,6 +7793,7 @@
             "enum": [
               "linked",
               "preparing",
+              "preparation_failed",
               "waiting",
               "contradicted",
               "needs_replacing"
@@ -8946,6 +8947,7 @@
             "enum": [
               "linked",
               "preparing",
+              "preparation_failed",
               "waiting",
               "contradicted",
               "needs_replacing"

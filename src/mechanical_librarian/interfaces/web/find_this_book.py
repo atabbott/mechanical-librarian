@@ -113,7 +113,14 @@ class _OwnerLinkCurrent(_Closed):
     creators: list[Annotated[str, Field(max_length=512)]] = Field(max_length=10)
     # The edition's ISBN or the recording's ASIN; None for a whole book.
     identifier: str | None = Field(max_length=13)
-    state: Literal["linked", "preparing", "waiting", "contradicted", "needs_replacing"]
+    state: Literal[
+        "linked",
+        "preparing",
+        "preparation_failed",
+        "waiting",
+        "contradicted",
+        "needs_replacing",
+    ]
     # A contradicted link's re-check, or why a link needs replacing.
     reason: (
         Literal[

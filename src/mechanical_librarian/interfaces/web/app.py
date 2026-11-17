@@ -1858,7 +1858,14 @@ class _LibraryValueFlag(_ClosedModel):
 class _LibraryLink(_ClosedModel):
     """A row's book link state and source; the selected work reads the rest (#1477)."""
 
-    state: Literal["linked", "preparing", "waiting", "contradicted", "needs_replacing"]
+    state: Literal[
+        "linked",
+        "preparing",
+        "preparation_failed",
+        "waiting",
+        "contradicted",
+        "needs_replacing",
+    ]
     # The linked source, so a waiting row can say which source it waits for.
     provider: _OwnerLinkProvider
 

@@ -40,6 +40,16 @@ describe('the pill and the link view', () => {
       'Preparation is paused. The link is used when it resumes.',
     ],
     [
+      linked({ state: 'preparation_failed' }),
+      'Link not used yet',
+      'Preparation could not finish, so the link is not used yet.',
+    ],
+    [
+      linked({ state: 'preparation_failed', paused: true }),
+      'Link not used yet',
+      'Preparation could not finish, so the link is not used yet.',
+    ],
+    [
       linked({ state: 'waiting' }),
       'Linked, waiting for Hardcover',
       'Hardcover did not answer. The link is used once it does.',
@@ -176,6 +186,45 @@ describe('the pill and the link view', () => {
     expect(await within(dialog).findByRole('alert')).toHaveTextContent(
       'The link was changed in another window. Check it, then withdraw again.',
     )
+  })
+
+  it('says a link no preparation read is not used yet, with the row’s next step (#1941)', async () => {
+    const link = linked({ state: 'preparation_failed' })
+    const base = withLinkView(view(link, false))
+    const http: ReviewHttp = {
+      ...base,
+      getLibrary: vi.fn(async () => {
+        const read = await base.getLibrary({ lens: 'all' })
+        return {
+          ...read,
+          works: read.works.map((work) => ({
+            ...work,
+            attention: 'preparation_failed' as const,
+            preparation: {
+              attempt: 1,
+              checkGivenUp: false,
+              diagnosticReference: 'prep-0123456789abcdef',
+              mediaHealth: [],
+              provider: 'hardcover-main',
+              reason: 'A source stopped without a usable answer.',
+              recovery: 'Scan this library again to retry it.',
+              recoveryAttempt: 0,
+              stage: 'provider' as const,
+              status: 'provider' as const,
+            },
+          })),
+        }
+      }),
+    }
+    const { dialog } = await openLink(http, 'Link not used yet')
+    expect(
+      within(dialog).getByText(
+        'Preparation could not finish, so the link is not used yet. Scan this library again to retry it.',
+      ),
+    ).toHaveClass('book-link-state', 'is-notice')
+    expect(within(dialog).queryByRole('button', { name: 'Change the link' })).toBeNull()
+    expect(within(dialog).getByRole('button', { name: 'Withdraw the link' })).toBeVisible()
+    expect(rowLinkPhrase('preparation_failed', 'hardcover')).toBe('Link not used yet')
   })
 
   it('offers Withdraw only on a Could not finish work that is linked (L4)', async () => {

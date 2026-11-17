@@ -2804,7 +2804,7 @@ class BrowseReviewLibrary:
                             else match_reason
                         ),
                         report_facts=unavailable.get(index),
-                        link=_library_link(links[index]),
+                        link=_library_link(links[index], terminal_document is not None),
                         find_offer=find_offer,
                     )
                 )
@@ -4861,7 +4861,7 @@ OWNER_LINK_VIEW_SCHEMA: Final = "owner-link-view-v1"
 
 def owner_link_view(
     offer: dict[str, object],
-    inputs: tuple[OwnerLink, OwnerLinkTarget, dict[str, object] | None] | None,
+    inputs: tuple[OwnerLink, OwnerLinkTarget, dict[str, object] | None, bool] | None,
     *,
     paused: bool,
     next_retry_at: int | None,
@@ -4871,16 +4871,18 @@ def owner_link_view(
     `offer` says whether Find this book is offered, from which sources and
     with what prefill; a Could not finish work is not offered but still
     shows its link, so it can be withdrawn. `inputs` is the current link,
-    its display snapshot and the current report's link facts.
+    its display snapshot, the current report's link facts and whether the
+    work's latest preparation could not finish.
     """
     link: dict[str, object] | None = None
     if inputs is not None:
-        current, target, facts = inputs
+        current, target, facts, preparation_failed = inputs
         try:
             state = link_state(
                 current,
                 owner_link_facts_from_data(facts),
                 paused=paused,
+                preparation_failed=preparation_failed,
                 next_retry_at=next_retry_at,
             )
         except (OwnerLinkError, ReportValueError) as error:
@@ -4902,11 +4904,14 @@ def owner_link_view(
     return {**offer, "link": link, "schema_version": OWNER_LINK_VIEW_SCHEMA}
 
 
-def _library_link(entry: LibraryRowLink | None) -> dict[str, object] | None:
+def _library_link(
+    entry: LibraryRowLink | None, preparation_failed: bool
+) -> dict[str, object] | None:
     """A row's `link: {state, provider}` from its current link and report facts (S29).
 
     The row says only the state and the linked source; the selected work reads
-    the full link view.
+    the full link view. `preparation_failed` is the row's own Could not finish,
+    so the two never disagree (#1941).
     """
     if entry is None:
         return None
@@ -4914,7 +4919,10 @@ def _library_link(entry: LibraryRowLink | None) -> dict[str, object] | None:
     try:
         return {
             "state": link_state(
-                link, owner_link_facts_from_data(facts), paused=False
+                link,
+                owner_link_facts_from_data(facts),
+                paused=False,
+                preparation_failed=preparation_failed,
             ).state,
             "provider": link.provider,
         }
