@@ -643,6 +643,9 @@ trigger ordinals 0 to 6, so a link change can start a preparation
 outcomes `owner_link_match` and `owner_link_anchor_match`.
 `review-library-v9`, `review-report-detail-v7`, `review-case-evidence-v6` and
 `review-case-history-v5` carry a work's link state, the `link` lane and its
-history events. `review-preparation-v2` and `review-case-detail-v9` do not
-move. Every earlier application database is rejected before mutation and
+history events. The rich fields' Automatic outcome abstains on a value only
+the link or its anchor reached, so the decision policy moves to
+`deterministic-shadow-decision-policy-v29`: an outcome minted under v28 could
+state a write v29 refuses. `review-preparation-v2` and `review-case-detail-v9`
+do not move. Every earlier application database is rejected before mutation and
 needs a clean rebuild; no adoption is supplied.

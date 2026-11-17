@@ -363,12 +363,26 @@ application as the product does: preparation, continuous scheduling and the
 review application all queue at the root repository's one operation
 admission.
 
+A last phase drives [Find this book](../product/find-this-book.md) through
+the installed routes, with only each source's HTTP boundary synthetic. A
+junk-titled EPUB in its own library is searched on Open Library and linked as
+This book; the next preparation must leave Not matched, read the record
+through the link, ask Hardcover with the linked title, and offer description,
+genres and cover for review with no automatic decision and no cover
+selection. The owner's description is then written and read back. A
+generated audiobook is linked as This recording, its ASIN must reach the
+Audible catalog, Audnexus and AudioSilo, and a product outside the file's
+runtime band is offered as This book only. The EPUB's link is then withdrawn:
+History shows the link and the withdrawal, and the next preparation reads no
+link or anchored lane.
+
 `--corpus` replaces those libraries' two generated EPUBs with a private
 operator batch: a directory outside the repository holding 6 to 8 `*.epub`
 files, or the run fails `operator_corpus_invalid`. The aggregate
-`audiobookshelf-field-effect-v3` receipt holds the source SHA, image digests,
+`audiobookshelf-field-effect-v4` receipt holds the source SHA, image digests,
 field outcomes, the installed lifecycle summary, the outcome for each of seven
-synthetic descriptions and, with a batch, `operator_corpus: true` and each
+synthetic descriptions, the link phase's observations (`installed_owner_link`)
+and, with a batch, `operator_corpus: true` and each
 image's `operator_cases`. It never holds credentials, tokens, source metadata
 or image bytes.
 

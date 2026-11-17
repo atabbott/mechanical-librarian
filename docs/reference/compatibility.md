@@ -99,8 +99,8 @@ refused.
 | `bibliographic-relationships-v1` | The allowed title, subtitle and series combinations inside a proposal set and review case |
 | `google-books-html-visible-text-v1` | The inert visible-text projection of Google Books descriptions |
 | `shadow-review-packet-v10` | The deterministic decision packet |
-| `shadow-decision-set-v1` | Decisions under `deterministic-shadow-decision-policy-v28` |
-| `deterministic-shadow-decision-policy-v28` | The shadow decision policy |
+| `shadow-decision-set-v1` | Decisions under `deterministic-shadow-decision-policy-v29` |
+| `deterministic-shadow-decision-policy-v29` | The shadow decision policy |
 | `shadow-review-action-policy-v5` | Which actions a decision may take |
 | `shadow-outcome-set-v12` | Automatic outcomes; action identities embed the qualification digest ([ADR-0087](../architecture/decisions/0087-operation-bound-qualification-authority.md)) |
 | `value-flag-rules-v1` | The Looks wrong rules: which titles, authors and narrators the Library flags as probably wrong, stored beside each report |
