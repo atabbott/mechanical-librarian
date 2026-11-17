@@ -471,8 +471,8 @@ the list. At 1024 or narrower the list comes first, and Back to works returns
 to it. One tap records your choice and opens the next work. Skip for now
 decides nothing. In All, a work opens below its row with Close, and a choice
 closes it. If a work's covers changed since the page loaded, Covers refuses
-the choice and offers Reload with its current covers. If no answer comes back,
-the work asks you to check before choosing again.
+the choice under its covers and offers Reload. An unconfirmed choice asks you
+there to check before choosing again.
 
 Switched lists automatic cover writes you have not answered since, newest
 first. Each row shows Before and Now with each cover's size; a write that
@@ -493,8 +493,9 @@ that write runs, and leaves Switched once the write is verified, releasing the
 copy. If the cover was changed in Audiobookshelf first, the row says it was not
 put back and offers Keep and Others again.
 
-A cover field's Covers link opens its work in All, wherever it falls. The
-fifth tab is [Taste profile](cover-taste-profile.md).
+A cover field's Covers link opens its work in All. The
+fifth tab is [Taste profile](cover-taste-profile.md); its
+[picks](cover-taste-profile.md#picks) start from To decide.
 
 ## Evidence and History
 

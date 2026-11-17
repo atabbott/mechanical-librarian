@@ -162,6 +162,7 @@ from mechanical_librarian.application.metadata_report import (
 from mechanical_librarian.application.operation_admission import OperationAdmission
 from mechanical_librarian.application.owner_search import OwnerSearchRefused
 from mechanical_librarian.application.review_covers import (
+    CalibrationRow,
     CoverKey,
     CoverPageSnapshot,
     CoverView,
@@ -1898,6 +1899,13 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 return self._review_projections.read_review_covers(
                     view, limit, after, review_case_id
                 )
+        except sqlite3.Error as error:
+            raise MetadataReportError("review covers are unavailable") from error
+
+    def read_cover_calibration(self) -> tuple[CalibrationRow, ...]:
+        try:
+            with self.browse_observation():
+                return self._review_projections.read_cover_calibration()
         except sqlite3.Error as error:
             raise MetadataReportError("review covers are unavailable") from error
 

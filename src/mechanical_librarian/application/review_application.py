@@ -69,6 +69,7 @@ from mechanical_librarian.application.owner_search import (
 from mechanical_librarian.application.owner_settings import OwnerSettingsOperations
 from mechanical_librarian.application.review_covers import (
     CoverBrowseStore,
+    cover_calibration,
     cover_page,
     replaced_cover_preview,
 )
@@ -1735,6 +1736,15 @@ class ReviewApplication:
         return self._browse_serialized(
             lambda: cover_page(store, view, cursor, cover), check_active
         )
+
+    def cover_calibration(
+        self, *, check_active: Callable[[], None] | None = None
+    ) -> dict[str, object]:
+        """Read the works calibration offers now (#1372 PR 3)."""
+        store = self._cover_store
+        if store is None:
+            raise ReviewWebError("unavailable")
+        return self._browse_serialized(lambda: cover_calibration(store), check_active)
 
     def replaced_cover(self, plan: str, preview: str) -> bytes:
         """Read the preview of an original a listed switch replaced."""

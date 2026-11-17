@@ -244,6 +244,7 @@ CoverReadObservation = tuple[tuple[str, str], frozenset[tuple[str, str, str, str
 
 if TYPE_CHECKING:
     from mechanical_librarian.application.review_covers import (
+        CalibrationRow,
         CoverKey,
         CoverPageSnapshot,
         CoverView,
@@ -743,6 +744,7 @@ class ReviewLibraryStore(Protocol):
         review_case_id: str | None = None,
     ) -> CoverPageSnapshot: ...
     def read_switch_cover_previews(self, plan_id: str) -> frozenset[str]: ...
+    def read_cover_calibration(self) -> tuple[CalibrationRow, ...]: ...
 
 
 class HumanDecisionStore(CurrentReviewCaseStore, Protocol):

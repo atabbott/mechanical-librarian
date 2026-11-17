@@ -1857,6 +1857,13 @@ class _CoversResponse(_ClosedModel):
     view: Literal["decide", "kept", "switched", "all"]
 
 
+class _CoverCalibrationResponse(_ClosedModel):
+    """The works calibration offers now, in the order to pick (#1372 PR 3)."""
+
+    items: list[_CoverWork] = Field(max_length=25)
+    schema_version: Literal["review-cover-calibration-v1"]
+
+
 class _LibraryValueFlag(_ClosedModel):
     """One Looks wrong finding: the rule and the field it names, never a value."""
 
@@ -5404,7 +5411,8 @@ def _register_taste_routes(
 def _register_cover_routes(
     app: FastAPI, application: ReviewApplication, session_cookie: APIKeyCookie
 ) -> None:
-    """Library's Covers view (#1633): its pages and a switch's replaced preview."""
+    """Library's Covers view (#1633): its pages, the calibration set and a
+    switch's replaced preview."""
     sessions = application
 
     @app.get(
@@ -5437,6 +5445,29 @@ def _register_cover_routes(
                         cover=cover,
                         check_active=check_active,
                     )
+                )
+            )
+
+        return await _browse_response(request, read)
+
+    @app.get(
+        "/api/v1/covers/calibration",
+        response_model=_CoverCalibrationResponse,
+        responses={status: {"model": _ErrorResponse} for status in (401, 503)},
+    )
+    async def cover_calibration(
+        request: Request, ml_session: str | None = Security(session_cookie)
+    ) -> _CoverCalibrationResponse | Response:
+        """Read-only: up to 25 works whose cover the owner can pick now.
+
+        Computed on each read and never stored (#1372 S14).
+        """
+
+        def read(check_active: Callable[[], None]) -> _CoverCalibrationResponse:
+            _require_session(sessions, ml_session)
+            return _CoverCalibrationResponse.model_validate(
+                _query_call(
+                    lambda: application.cover_calibration(check_active=check_active)
                 )
             )
 

@@ -4238,6 +4238,31 @@
         "title": "_CoverAutomaticDecisionProjection",
         "type": "object"
       },
+      "_CoverCalibrationResponse": {
+        "additionalProperties": false,
+        "description": "The works calibration offers now, in the order to pick (#1372 PR 3).",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/_CoverWork"
+            },
+            "maxItems": 25,
+            "title": "Items",
+            "type": "array"
+          },
+          "schema_version": {
+            "const": "review-cover-calibration-v1",
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "items",
+          "schema_version"
+        ],
+        "title": "_CoverCalibrationResponse",
+        "type": "object"
+      },
       "_CoverCandidate": {
         "additionalProperties": false,
         "properties": {
@@ -15548,6 +15573,50 @@
           }
         ],
         "summary": "Covers"
+      }
+    },
+    "/api/v1/covers/calibration": {
+      "get": {
+        "description": "Read-only: up to 25 works whose cover the owner can pick now.\n\nComputed on each read and never stored (#1372 S14).",
+        "operationId": "cover_calibration_api_v1_covers_calibration_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_CoverCalibrationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Cover Calibration"
       }
     },
     "/api/v1/covers/replaced": {

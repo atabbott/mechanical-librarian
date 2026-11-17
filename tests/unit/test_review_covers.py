@@ -1,4 +1,5 @@
-"""The Covers view's page read, its replaced-cover preview and Keep (#1633)."""
+"""The Covers view's page read, its replaced-cover preview and Keep (#1633),
+and the calibration set (#1372 PR 3)."""
 
 from __future__ import annotations
 
@@ -27,18 +28,25 @@ from mechanical_librarian.application.cover_consideration import (
 from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.review_covers import (
     COVER_PAGE_SIZE,
+    CalibrationRow,
+    CoverRow,
+    cover_calibration,
     cover_page,
     replaced_cover_preview,
+    select_calibration,
 )
 from mechanical_librarian.application.review_web import ReviewWebError
 from mechanical_librarian.domain import field_effect
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
+    CoverDesignation,
+    CoverProvenance,
     CoverSource,
     CoverSourceKind,
     CoverSourceState,
     cover_source_id,
 )
+from mechanical_librarian.domain.cover_rules import CoverMeasures
 from mechanical_librarian.domain.human_decision import COVER_SELECTION_AUTHORITY_SCHEMA
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
@@ -83,14 +91,76 @@ def _page(
     return cast(dict[str, Any], cover_page(store, view, cursor, cover))
 
 
+# A calibration library's base report offers up to three more candidates,
+# each its own art, which a work keeps or drops (``_Work.extra``).
+_EXTRA_MAX = 3
+
+
+def _extra_source_id(index: int) -> str:
+    return cover_source_id(CoverSourceKind.HARDCOVER, f"extra-{index}")
+
+
+def _extra_sources(root: Path) -> tuple[CoverSource, ...]:
+    artifacts = CoverArtifactStore(root / "artifacts")
+    sources = []
+    for index in range(_EXTRA_MAX):
+        payload = _preview(20 + index)
+        original = f"extra-original-{index}".encode()
+        artifact = CoverArtifact.create(
+            original, payload, "image/png", 320 + index, 480 + index
+        )
+        artifacts.stage(artifact, original, payload)
+        sources.append(
+            CoverSource(
+                _extra_source_id(index),
+                CoverSourceKind.HARDCOVER,
+                CoverSourceState.RETRIEVED,
+                artifact,
+                provenance=CoverProvenance(
+                    "hardcover", CoverDesignation.EXACT_EDITION, "work-3", "edition-3"
+                ),
+            )
+        )
+    return tuple(sources)
+
+
+@dataclass(frozen=True)
+class _Work:
+    """One work's own facts in a calibration library: its authors, its series
+    and how many of the library's extra candidates it offers."""
+
+    authors: tuple[str, ...] = ()
+    series: tuple[str, ...] = ()
+    extra: int = 0
+
+
 def _for_item(
-    report: MetadataReport, item: str, title: str | None = None
+    report: MetadataReport,
+    item: str,
+    title: str | None = None,
+    work: _Work | None = None,
 ) -> MetadataReport:
-    """The same synthetic report for another work, under its own identity."""
+    """The same synthetic report for another work, under its own identity.
+
+    With ``work``, the report names its authors and series, and offers only
+    the first ``work.extra`` of the base report's extra candidates."""
     data = json.loads(report.to_json())
     data["target"]["item"] = item
     if title is not None:
         data["target"]["fields"][0]["value"] = title
+    if work is not None:
+        for field in data["target"]["fields"]:
+            if field["destination"] == "authors" and work.authors:
+                field.update(state="value", value=list(work.authors))
+            if field["destination"] == "series" and work.series:
+                field.update(
+                    state="value",
+                    value=[{"name": name, "sequence": None} for name in work.series],
+                )
+        dropped = {_extra_source_id(index) for index in range(work.extra, _EXTRA_MAX)}
+        data["covers"] = [
+            source for source in data["covers"] if source["source_id"] not in dropped
+        ]
     data.pop("report_id")
     data["report_id"] = report_content_address(data)
     return MetadataReport.from_json(_canonical_json(data))
@@ -108,8 +178,17 @@ def _library(
     abs_state: CoverSourceState | None = None,
     abs_digest: str | None = None,
     fetching: bool = False,
+    works: dict[str, _Work] | None = None,
+    shared_measures: CoverMeasures | None = None,
+    small_current: bool = False,
+    larger_copy: bool = False,
 ) -> Iterator[_Library]:
     """With ``fetching``, every report still waits on a provider lookup.
+    With ``works``, the base report offers three extra candidates and each
+    named work keeps its own authors, series and share of them; with
+    ``shared_measures`` every image is one art; with ``small_current`` the current
+    cover is under the size floor, and with ``larger_copy`` too a larger copy
+    of it is offered.
     With ``put_back``, item-1's current cover is a verified automatic switch
     whose original is listed, and its report offers that original (#1363).
     With ``undecodable`` too, the decoder refused that original, so the
@@ -120,7 +199,24 @@ def _library(
         readable_current=readable_current,
         abs_state=abs_state,
         abs_digest=abs_digest,
+        shared_measures=shared_measures,
+        incumbent_size=(200, 300) if small_current or larger_copy else None,
+        incumbent_duplicate_size=(2_000, 3_000) if larger_copy else None,
     )
+    if works is not None:
+        base = MetadataReport.create(
+            target=base.target,
+            file=base.file,
+            local_claims=base.local_claims,
+            local_reasons=base.local_reasons,
+            providers=base.providers,
+            cover_sources=tuple(
+                sorted(
+                    (*base.cover_sources, *_extra_sources(root)),
+                    key=lambda value: value.source_id,
+                )
+            ),
+        )
     artifacts = CoverArtifactStore(root / "artifacts")
     repository = open_repository(root / "application.sqlite3", cross_thread=True)
     switch = None
@@ -181,10 +277,11 @@ def _library(
     cases: dict[str, str] = {}
     try:
         for item in items:
+            work = None if works is None else works.get(item, _Work())
             report = (
                 base
-                if item == "item-1" and title is None
-                else _for_item(base, item, title)
+                if item == "item-1" and title is None and work is None
+                else _for_item(base, item, title, work)
             )
             repository.publish(report, lambda: True)
             proposal = evaluate_report(report)
@@ -1332,3 +1429,320 @@ def test_python_and_sql_attention_agree_on_holds_and_kept_covers(
         if expected_stage[0] == "hold" and case != "contradicted_while_fetching"
         else None
     )
+
+
+# Calibration (#1372 PR 3): the works whose cover the owner can pick now, where
+# every pick counts toward the taste profile.
+
+
+def _calibrated(library: _Library) -> list[str]:
+    """The calibration set's works, in order, by item."""
+    by_case = {case: item for item, case in library.cases.items()}
+    return [
+        by_case[item["review_case_id"]]
+        for item in cast(dict[str, Any], cover_calibration(library.repository))["items"]
+    ]
+
+
+def test_calibration_offers_works_with_three_arts_first_then_by_preparation(
+    tmp_path: Path,
+) -> None:
+    works = {
+        "item-1": _Work(extra=0),
+        "item-2": _Work(extra=1),
+        "item-3": _Work(extra=0),
+        "item-4": _Work(extra=2),
+    }
+    with _library(tmp_path, tuple(works), works=works) as library:
+        connection = library.repository._connection
+        # Each comparison prepared at its own time, later items first.
+        connection.execute("DROP TRIGGER cover_considerations_no_update")
+        for at, item in enumerate(reversed(works)):
+            connection.execute(
+                "UPDATE cover_considerations SET occurred_at=? WHERE review_case_id=?",
+                (at, library.cases[item]),
+            )
+        connection.commit()
+        before = connection.total_changes
+        assert _calibrated(library) == ["item-4", "item-2", "item-3", "item-1"]
+        # Computed on each read: nothing is written (S1).
+        assert connection.total_changes == before
+        document = cast(dict[str, Any], cover_calibration(library.repository))
+    assert document["schema_version"] == "review-cover-calibration-v1"
+    assert {item["group"] for item in document["items"]} == {"kept"}
+
+
+def test_calibration_offers_a_suggested_switch_and_an_open_choice(
+    tmp_path: Path,
+) -> None:
+    with _library(
+        tmp_path / "proposal", works={"item-1": _Work()}, small_current=True
+    ) as library:
+        assert _page(library.repository, "decide", None)["items"][0]["group"] == (
+            "proposal"
+        )
+        assert _calibrated(library) == ["item-1"]
+    with _library(tmp_path / "choice", works={"item-1": _Work()}) as library:
+        # A synthetic attention fact over the case's open cover choice.
+        connection = library.repository._connection
+        connection.execute(
+            "INSERT INTO review_attention_facts(connection_name,library_name,"
+            "item_id,report_id,destination) SELECT connection_name,library_name,"
+            "item_id,report_id,'cover' FROM current_review_packages"
+        )
+        connection.commit()
+        assert _page(library.repository, "decide", None)["items"][0]["group"] == (
+            "choice"
+        )
+        assert _calibrated(library) == ["item-1"]
+
+
+def _hold(library: _Library) -> None:
+    connection = library.repository._connection
+    connection.execute("DROP TRIGGER cover_considerations_no_update")
+    connection.execute(
+        "UPDATE cover_considerations SET currentness_document=json_set("
+        "currentness_document,'$.cover_stage.outcome','hold',"
+        "'$.cover_stage.reason','title_names_other_work')"
+    )
+    connection.commit()
+
+
+@pytest.mark.parametrize(
+    "exclusion",
+    (
+        "held",
+        "fetching",
+        "not_current",
+        "decided",
+        "one_art",
+        "switched",
+        "larger_copy",
+        "retained_original",
+        "unreadable_current",
+    ),
+)
+def test_calibration_leaves_out_a_work_whose_pick_would_not_count(
+    tmp_path: Path, exclusion: str
+) -> None:
+    from mechanical_librarian.domain.cover_rules import COLOUR_BINS, LAYOUT_VALUES
+
+    exclusions: dict[str, dict[str, Any]] = {
+        "fetching": {"fetching": True},
+        "one_art": {
+            "shared_measures": CoverMeasures(
+                "0" * 16, "0" * 16, (1,) * COLOUR_BINS, (0,) * LAYOUT_VALUES
+            )
+        },
+        "larger_copy": {"larger_copy": True},
+        "retained_original": {"put_back": True},
+        "unreadable_current": {
+            "readable_current": False,
+            "abs_state": CoverSourceState.DECODE_FAILED,
+            "abs_digest": "d" * 64,
+        },
+    }
+    options = exclusions.get(exclusion, {})
+    # Put back offers item-1's own original only.
+    items = ("item-1",) if exclusion == "retained_original" else ("item-1", "item-2")
+    with _library(tmp_path, items, **options) as library:
+        if exclusion == "held":
+            _hold(library)
+        elif exclusion == "not_current":
+            # The live authority no longer admits the comparison.
+            library.repository.bind_cover_consideration_currentness(
+                lambda *_target: True
+            )
+        elif exclusion == "decided":
+            with _client(library) as (client, headers):
+                for item in ("item-1", "item-2"):
+                    response = _post_cover_decision(
+                        client, headers, library.cases[item], f"keep-{item}-0001"
+                    )
+                    assert response.status_code == 200, response.text
+        elif exclusion == "switched":
+            original = _abs_digest(library.report)
+            for index, item in enumerate(("item-1", "item-2"), start=1):
+                _switch(
+                    library,
+                    item,
+                    plan=str(index),
+                    at=100,
+                    original=original,
+                    sequence=index,
+                )
+        assert _calibrated(library) == []
+
+
+def test_without_an_exclusion_the_same_library_is_offered(tmp_path: Path) -> None:
+    """The control for each exclusion above: two plain works are both offered."""
+    with _library(tmp_path, ("item-1", "item-2")) as library:
+        # Prepared at the same time, so in case order.
+        assert _calibrated(library) == sorted(
+            ("item-1", "item-2"), key=library.cases.__getitem__
+        )
+
+
+def _rows(tmp_path: Path, works: list[_Work]) -> list[CalibrationRow]:
+    """Calibration rows as the store reads them, each with its own report."""
+    base, _ = _qualified_cover_report(tmp_path)
+    return [
+        CalibrationRow(
+            CoverRow(
+                f"review_case_{index:064x}",
+                _for_item(base, f"item-{index}", work=work).to_json(),
+                "kept",
+                True,
+                None,
+                False,
+                None,
+                None,
+                (),
+            ),
+            work.authors[0] if work.authors else None,
+            work.series,
+        )
+        for index, work in enumerate(works)
+    ]
+
+
+def _selected(rows: list[CalibrationRow]) -> list[int]:
+    return [int(row.review_case_id[-8:], 16) for row, _ in select_calibration(rows)]
+
+
+def test_calibration_keeps_at_most_two_works_of_one_first_author(
+    tmp_path: Path,
+) -> None:
+    rows = _rows(
+        tmp_path,
+        [
+            _Work(authors=("Ann Author", "Bob")),
+            _Work(authors=("ANN AUTHOR",)),
+            _Work(authors=("ann author",)),
+            # A second author is not capped.
+            _Work(authors=("Cat", "Ann Author")),
+            _Work(),
+        ],
+    )
+    assert _selected(rows) == [0, 1, 3, 4]
+
+
+def test_calibration_keeps_at_most_two_works_of_one_series(tmp_path: Path) -> None:
+    rows = _rows(
+        tmp_path,
+        [
+            _Work(authors=("A",), series=("Saga", "Cycle")),
+            _Work(authors=("B",), series=("saga",)),
+            _Work(authors=("C",), series=("SAGA",)),
+            # Two works already count against Cycle's cap only once.
+            _Work(authors=("D",), series=("Cycle",)),
+            _Work(authors=("E",), series=("Cycle",)),
+            _Work(authors=("F",)),
+        ],
+    )
+    assert _selected(rows) == [0, 1, 3, 5]
+
+
+def test_the_store_reads_the_facts_the_caps_count(tmp_path: Path) -> None:
+    """The first author and series the store reads are the report's own."""
+    works = {
+        "item-1": _Work(authors=("Ann", "Bob"), series=("Saga", "Cycle")),
+        "item-2": _Work(),
+        "item-3": _Work(authors=("ann",), series=("saga",)),
+        "item-4": _Work(authors=("ANN",)),
+    }
+    with _library(tmp_path, tuple(works), works=works) as library:
+        facts = {
+            row.row.review_case_id: (row.first_author, row.series)
+            for row in library.repository.read_cover_calibration()
+        }
+        assert facts[library.cases["item-1"]] == ("Ann", ("Saga", "Cycle"))
+        assert facts[library.cases["item-2"]] == (None, ())
+        calibrated = _calibrated(library)
+    # A third work of Ann is left out wherever it falls in the order.
+    assert len(calibrated) == 3
+    assert "item-2" in calibrated
+
+
+def test_calibration_stops_reading_reports_at_twenty_five(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mechanical_librarian.application import review_covers
+
+    rows = _rows(tmp_path, [_Work(authors=(f"Author {n}",)) for n in range(30)])
+    read: list[str] = []
+    real = review_covers._report_facts
+
+    def counted(document: str) -> Any:
+        read.append(document)
+        return real(document)
+
+    monkeypatch.setattr(review_covers, "_report_facts", counted)
+    assert _selected(rows) == list(range(25))
+    assert len(read) == 25
+    assert _selected(rows[:10]) == list(range(10))
+
+
+def test_the_calibration_route_is_private_and_reads_the_set(tmp_path: Path) -> None:
+    works = {"item-1": _Work(extra=1), "item-2": _Work()}
+    with _library(tmp_path, tuple(works), works=works) as library:
+        anonymous = TestClient(
+            create_transport_test_app(
+                library.repository,
+                ReviewWebConfiguration(
+                    tls_certificate_file="/synthetic/review.crt",
+                    tls_private_key_file="/synthetic/review.key",
+                    canonical_origin=ORIGIN,
+                    owner_password_hash_file=str(_hash(library.root)),
+                ),
+                clock=lambda: 1_000,
+            ),
+            base_url=ORIGIN,
+        )
+        try:
+            assert anonymous.get("/api/v1/covers/calibration").status_code == 401
+        finally:
+            anonymous.close()
+        with _client(library) as (client, _headers):
+            response = client.get("/api/v1/covers/calibration")
+            assert response.status_code == 200, response.text
+            assert response.headers["cache-control"] == "no-store, private"
+            body = response.json()
+    assert set(body) == {"items", "schema_version"}
+    assert body["schema_version"] == "review-cover-calibration-v1"
+    # Three arts first.
+    assert [item["review_case_id"] for item in body["items"]] == [
+        library.cases["item-1"],
+        library.cases["item-2"],
+    ]
+    assert str(body["items"][0]["cover"]["url"]).startswith("/api/v1/library/cover?")
+
+
+def test_every_calibration_pick_counts_toward_the_taste_profile(
+    tmp_path: Path,
+) -> None:
+    """A pick is the work's ordinary decision, and both kinds count (S2)."""
+    from mechanical_librarian.adapters.persistence.cover_taste import (
+        SQLiteCoverTasteRepository,
+    )
+
+    with _library(tmp_path, ("item-1", "item-2")) as library:
+        taste = SQLiteCoverTasteRepository(library.repository._connection)
+        first, second = _calibrated(library)
+        with _client(library) as (client, headers):
+            accept = _post_cover_decision(
+                client,
+                headers,
+                library.cases[first],
+                "calibration-accept-1",
+                outcome="accept",
+                kind="candidate",
+            )
+            assert accept.status_code == 200, accept.text
+            assert taste.eligible_count() == 1
+            keep = _post_cover_decision(
+                client, headers, library.cases[second], "calibration-keep-01"
+            )
+            assert keep.status_code == 200, keep.text
+            assert taste.eligible_count() == 2
+        assert _calibrated(library) == []

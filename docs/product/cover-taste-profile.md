@@ -10,11 +10,13 @@ what the model receives is in the
 Before the first profile, it reads "No taste profile yet" and says what is
 missing: "Set up the taste profile model in Settings.", linking to Settings →
 Reviewer (no model is chosen, or its Codex sign-in or OpenRouter key is not
-ready), or "Mechanical Librarian writes it once you have chosen 25 covers in
-To decide. You have chosen {n}.", linking to To decide. A first profile needs
-25 recorded choices and a later one 10 more; at most 4 are scheduled a day.
+ready), or "{n} of 25 picks saved." once any count, then Start 25 picks, which
+opens Covers' [picks](#picks). A
+first profile needs 25 recorded choices and a later one 10 more; at most 4
+are scheduled a day.
 
-While a first profile is written, "Writing your taste profile" is the
+While a first profile is written, and from the 25th choice until its build
+starts (within a minute), "Writing your taste profile" is the
 heading, and the tab checks again every 5 seconds. A build that starts while
 the tab is open appears without a reload. After 10 seconds without input, it
 appears on your next input. A failed build says what
@@ -35,6 +37,31 @@ switch. Every heading is shown with Add rule, even one with no rules yet.
 Versions, beside the rules above 1024 pixels, lists every version, newest
 first, the one in use marked "(in use)": a build reads "Built {date} from {n}
 decisions" and an edit "Edited {date}".
+
+## Picks
+
+While the taste profile model is set up, no profile exists and fewer than 25
+choices count toward one, To decide's list starts with "Pick 25 covers to get
+suggestions" and Start. On a first visit a four-step walkthrough explains
+Covers, with Next and Skip, then Start 25 picks and Later on the last step.
+Skip, Later, Escape and Start 25 picks each close it for good in this browser.
+
+Start opens "Pick the cover you like" in the tabs' place, with "{i} of 25",
+where {i} follows every choice that counts, and Stop. It
+offers up to 25 works whose cover you can choose now from at least two
+different covers: no held, fetching or already answered work, none whose
+pick would not count, and at most two works of one first author or one
+series. Works with three or more different covers come first. Each work's
+covers are shuffled the same way every time, its current cover is marked
+Current cover rather than placed first, and nothing is recommended. A pick is
+the work's ordinary cover choice; Skip for now records nothing. A work decided
+elsewhere meanwhile is passed over.
+
+Stop returns to To decide with "{n} of 25 picks saved.". When no work has two
+different covers, Start says "No works have two different covers to pick
+from yet."; when the works run out first, it says how many picks are saved
+and that no more works have two different covers. After the 25th pick Covers
+opens Taste profile, which reads "Writing your taste profile".
 
 ## Editing rules
 

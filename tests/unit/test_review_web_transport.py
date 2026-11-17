@@ -3117,6 +3117,7 @@ def test_openapi_is_deterministic_and_secret_free(
         ("get", "/api/v1/library/find/searches/{search_id}/previews/{position}"),
         ("post", "/api/v1/library/find/searches/{search_id}/choice"),
         ("get", "/api/v1/covers"),
+        ("get", "/api/v1/covers/calibration"),
         ("get", "/api/v1/covers/replaced"),
         ("get", "/api/v1/covers/taste"),
         ("post", "/api/v1/covers/taste/retry"),

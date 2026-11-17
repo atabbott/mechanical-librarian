@@ -72,6 +72,12 @@ interface CoverChoiceWording {
   /** The current cover card's accessible name: keeping it, in the label's words. */
   keepLabel?: string
   coversLink?: boolean
+  /**
+   * Covers' picks (#1372 S6): the owner says which cover they like, so the
+   * cards are shuffled for the work in one grid, the current cover is marked
+   * rather than first, and no recommendation, header or status shows.
+   */
+  calibration?: boolean
 }
 export function LibraryCoverChoices(
   props: {
@@ -355,6 +361,34 @@ const coverComparisonShape = (consideration: CoverConsideration, mediaKind: stri
   }
 }
 type CoverShape = ReturnType<typeof coverComparisonShape>
+// FNV-1a over 32 bits: one stable order for a work's cards, the same on every
+// render and every read of the same case, and different from case to case.
+const fnv1a = (text: string) => {
+  let hash = 0x811c9dc5
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index)
+    hash = Math.imul(hash, 0x01000193) >>> 0
+  }
+  return hash
+}
+/** A comparison's shape as Covers' picks show it (S6). */
+const calibrationShape = (shape: CoverShape, reviewCaseId: string): CoverShape => {
+  const keyed = shape.candidates.map((candidate) => ({
+    candidate,
+    key: fnv1a(`${reviewCaseId}\u0000${candidate.reference}`),
+  }))
+  keyed.sort(
+    (left, right) =>
+      left.key - right.key || (left.candidate.reference < right.candidate.reference ? -1 : 1),
+  )
+  return {
+    ...shape,
+    candidates: keyed.map((item) => item.candidate),
+    expanded: false,
+    recommendedReference: null,
+    suggesting: false,
+  }
+}
 // A card's choice: what it records, whether it is chosen, and whether it can
 // be chosen now.
 const coverCardState =
@@ -875,6 +909,7 @@ function LibraryCoverChoicesContent({
   currentLabel = 'Current cover',
   keepLabel = 'Keep current cover',
   coversLink = true,
+  calibration = false,
 }: {
   reviewCaseId: string
   mediaKind: string
@@ -893,7 +928,8 @@ function LibraryCoverChoicesContent({
   const accepts = field.decisionActions.includes('accept')
   if (consideration?.current !== true)
     return <PrepareCoverComparison disabled={disabled} cover={cover} failure={failure} />
-  const shape = coverComparisonShape(consideration, mediaKind)
+  const prepared = coverComparisonShape(consideration, mediaKind)
+  const shape = calibration ? calibrationShape(prepared, reviewCaseId) : prepared
   const { candidates, expanded, incumbent, alternatives } = shape
   const coverContexts = consideration.choiceContexts
   const currentContext = coverContexts[0]
@@ -950,9 +986,13 @@ function LibraryCoverChoicesContent({
       className={`library-cover-comparison${expanded ? ' is-expanded' : ''}`}
       aria-label="Choose a cover"
     >
-      <CoverComparisonHeader consideration={consideration} field={field} shape={shape} />
-      <CoverReviewStatus consideration={consideration} field={field} />
-      {coversLink ? (
+      {calibration ? null : (
+        <>
+          <CoverComparisonHeader consideration={consideration} field={field} shape={shape} />
+          <CoverReviewStatus consideration={consideration} field={field} />
+        </>
+      )}
+      {coversLink && !calibration ? (
         <Link
           className="covers-link"
           to="/library"
@@ -961,7 +1001,7 @@ function LibraryCoverChoicesContent({
           Covers
         </Link>
       ) : null}
-      {reviewerUnavailable && canRetryReviewer ? (
+      {reviewerUnavailable && canRetryReviewer && !calibration ? (
         <Button
           className="secondary-action"
           type="button"

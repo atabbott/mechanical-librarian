@@ -16,6 +16,10 @@ write's state, so a Put back the target refused can say so (#1363, Q18).
 
 A proposed cover the owner chose whose write has not verified is `chosen`,
 listed only under All, never as kept (#1866).
+
+The calibration set (#1372 PR 3) reads the same relation: the works whose
+cover the owner can pick now, where every pick counts toward the taste
+profile.
 """
 
 from __future__ import annotations
@@ -30,6 +34,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_covers import (
     COVER_GROUPS,
+    CalibrationRow,
     CoverGroup,
     CoverKey,
     CoverPageSnapshot,
@@ -38,6 +43,7 @@ from mechanical_librarian.application.review_covers import (
     PutBack,
     SwitchCover,
 )
+from mechanical_librarian.domain.cover_taste import TASTE_MIN_ARTS
 
 _PREVIEW_VARIANT = "preview-320x480-rgba-png-v1"
 # Each work's newest verified cover write, when it is automatic and the owner
@@ -227,6 +233,53 @@ _WORKS_SQL = (
     "LEFT JOIN switch ON switch.connection_name=ml.connection_name "
     "AND switch.library_name=ml.library_name AND switch.work_id=ml.item_id "
     "WHERE ml.review_case_id IS NOT NULL) "
+)
+# The works calibration offers (#1372 S2): a cover the owner can pick now,
+# from at least two arts, on a current comparison that is ready and not held,
+# with no owner answer yet. A comparison offering a larger copy or a retained
+# original is left out, and so is a report naming no file format, because a
+# pick there would not count toward the taste profile (cover_taste.py).
+# Works offering three or more arts come first, then by when each comparison
+# was prepared. It binds the cover authority again.
+_CALIBRATION_SQL = (
+    "SELECT work.review_case_id,work.report_document,work.cover_group,"
+    # The first author and the series names the caps count, read here so the
+    # selector parses only the reports of the works it keeps (S3).
+    "(SELECT json_extract(field.value,'$.value[0]') "
+    "FROM json_each(work.report_document,'$.target.fields') field "
+    "WHERE json_extract(field.value,'$.destination')='authors' "
+    "AND json_extract(field.value,'$.state')='value'),"
+    "(SELECT json_group_array(json_extract(member.value,'$.name')) "
+    "FROM json_each(work.report_document,'$.target.fields') field,"
+    "json_each(field.value,'$.value') member "
+    "WHERE json_extract(field.value,'$.destination')='series' "
+    "AND json_extract(field.value,'$.state')='value') "
+    "FROM work JOIN current_cover_considerations pointer "
+    "ON pointer.review_case_id=work.review_case_id "
+    "JOIN cover_considerations consideration "
+    "ON consideration.consideration_id=pointer.consideration_id "
+    "JOIN metadata_report_browse_facts facts "
+    "ON facts.report_id=consideration.report_id "
+    "WHERE work.cover_group IN ('proposal','choice','kept') AND work.choosable=1 "
+    "AND json_extract(consideration.document,'$.policy_reference')=? "
+    "AND ml_cover_consideration_current(consideration.currentness_document,?)=1 "
+    "AND json_extract(consideration.currentness_document,'$.manual_ready')=1 "
+    "AND json_extract(consideration.currentness_document,'$.provider_fetching')=0 "
+    "AND json_extract(consideration.currentness_document,'$.cover_stage.outcome') "
+    "IS NOT 'hold' "
+    "AND json_extract(consideration.currentness_document,'$.cover_stage.arts')>=? "
+    "AND typeof(facts.format)='text' "
+    "AND NOT EXISTS (SELECT 1 FROM current_cover_selection_authorities current "
+    "JOIN cover_selection_authorities answered "
+    "ON answered.selection_id=current.selection_id "
+    "WHERE current.connection_name=work.connection_name "
+    "AND current.library_name=work.library_name AND current.item_id=work.item_id "
+    "AND answered.kind='owner') "
+    "AND NOT EXISTS (SELECT 1 FROM json_each(consideration.document,'$.candidates') "
+    "offered WHERE json_extract(offered.value,'$.candidate_kind') "
+    "IN ('retained','larger_copy')) "
+    "ORDER BY json_extract(consideration.currentness_document,'$.cover_stage.arts')"
+    ">=3 DESC,consideration.occurred_at,work.review_case_id"
 )
 _VIEW_FILTER_SQL: dict[CoverView, str] = {
     "decide": "cover_group IN ('proposal','choice')",
@@ -435,6 +488,46 @@ def read_cover_page(
             "all": sum(grouped.values()),
         },
     )
+
+
+def read_calibration_rows(
+    connection: sqlite3.Connection, cover_authority: tuple[str | None, str | None]
+) -> tuple[CalibrationRow, ...]:
+    """Every work calibration may offer, in its order (#1372 S2, S3)."""
+    rows = connection.execute(
+        _WORKS_SQL + _CALIBRATION_SQL,
+        (*cover_authority, *cover_authority, *cover_authority, TASTE_MIN_ARTS),
+    ).fetchall()
+    calibration: list[CalibrationRow] = []
+    for case_id, report, group, author, series_document in rows:
+        series = json.loads(series_document)
+        if (
+            type(case_id) is not str
+            or type(report) is not str
+            or group not in ("proposal", "choice", "kept")
+            or (author is not None and type(author) is not str)
+            or type(series) is not list
+            or any(type(name) is not str for name in series)
+        ):
+            raise MetadataReportError("review covers are unavailable")
+        calibration.append(
+            CalibrationRow(
+                CoverRow(
+                    case_id,
+                    report,
+                    cast(CoverGroup, group),
+                    True,
+                    None,
+                    False,
+                    None,
+                    None,
+                    (),
+                ),
+                author,
+                tuple(series),
+            )
+        )
+    return tuple(calibration)
 
 
 def read_switch_previews(

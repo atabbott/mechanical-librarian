@@ -62,6 +62,7 @@ import type { OperationKey } from '../src/generated/review-decoders'
 import type {
   ActivityCommandPath,
   AutomaticSafetyView,
+  CoverCalibrationView,
   OperationOf,
   PolicyCommandAnswer,
   PolicyCommandBody,
@@ -6720,6 +6721,60 @@ const failedBuild = (failure: string, retryAfter: number | null) => ({
   state: 'failed',
   failure,
   retry_after: retryAfter,
+})
+
+// Covers' picks (#1372 PR 3): the calibration set, decoded whole.
+describe('cover calibration read (#1372 PR 3)', () => {
+  const calibrationWork = (index: number) => ({
+    authors: ['An Author'],
+    choosable: true,
+    cover: {
+      height: 900,
+      preview_sha256: 'a'.repeat(64),
+      url: `/api/v1/library/cover?preview=${'a'.repeat(64)}`,
+      width: 600,
+    },
+    group: 'kept',
+    hold: null,
+    media_kind: 'epub',
+    review_case_id: `review_case_${String(index).padStart(64, '0')}`,
+    suggestion: null,
+    switched: null,
+    title: `Work ${String(index)}`,
+    unreadable_cover: false,
+  })
+  const readCalibration = (document: unknown) => {
+    const fetcher = vi.fn<typeof fetch>(async () => Response.json(document))
+    return {
+      fetcher,
+      read: new ReviewApiClient({ csrf, fetch: fetcher }).getCoverCalibration(),
+    }
+  }
+
+  it('reads the set from its route as decoded', async () => {
+    const document = {
+      items: [calibrationWork(1), calibrationWork(2)],
+      schema_version: 'review-cover-calibration-v1',
+    }
+    const { fetcher, read } = readCalibration(document)
+    const view = await read
+    expectTypeOf(view.items).toEqualTypeOf<CoverCalibrationView['items']>()
+    expect(view).toEqual(document)
+    expect(fetcher.mock.calls[0]?.[0]).toBe('/api/v1/covers/calibration')
+  })
+
+  it('refuses an extra member and more than 25 works', async () => {
+    await expect(
+      readCalibration({ items: [], schema_version: 'review-cover-calibration-v1', next: null })
+        .read,
+    ).rejects.toMatchObject({ code: 'invalid_response' })
+    await expect(
+      readCalibration({
+        items: Array.from({ length: 26 }, (_, index) => calibrationWork(index)),
+        schema_version: 'review-cover-calibration-v1',
+      }).read,
+    ).rejects.toMatchObject({ code: 'invalid_response' })
+  })
 })
 
 describe('taste profile decoder (#1372)', () => {

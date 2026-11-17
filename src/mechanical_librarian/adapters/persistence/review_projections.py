@@ -54,6 +54,7 @@ from mechanical_librarian.adapters.persistence.review_cases import (
     ReviewLibraryPage,
 )
 from mechanical_librarian.adapters.persistence.review_covers import (
+    read_calibration_rows,
     read_cover_page,
     read_switch_previews,
 )
@@ -77,6 +78,7 @@ from mechanical_librarian.adapters.persistence.transactions import (
 from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_covers import (
+    CalibrationRow,
     CoverKey,
     CoverPageSnapshot,
     CoverView,
@@ -1143,6 +1145,12 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 after,
                 review_case_id,
                 self._current_cover_authority(),
+            )
+
+    def read_cover_calibration(self) -> tuple[CalibrationRow, ...]:
+        with self._consistent_review_read():
+            return read_calibration_rows(
+                self._connection, self._current_cover_authority()
             )
 
     def read_switch_cover_previews(self, plan_id: str) -> frozenset[str]:

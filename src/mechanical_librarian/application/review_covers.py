@@ -16,6 +16,10 @@ under a tab. A work's group is decided by the store from persisted facts:
 
 Decisions are not made here: each goes through the work's existing decision
 command, so this module only reads. A page names covers by preview only.
+
+Calibration (#1372 PR 3) reads up to 25 works the owner can pick a cover for
+while no taste profile exists. The set is computed on each read and never
+stored.
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ from __future__ import annotations
 import base64
 import json
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Literal, Protocol
 from urllib.parse import urlencode
@@ -34,6 +39,7 @@ from mechanical_librarian.application.review_web import (
     _report_authors,
     _report_facts,
 )
+from mechanical_librarian.domain.review_browse import LibraryReportFacts
 
 CoverView = Literal["decide", "kept", "switched", "all"]
 CoverGroup = Literal["proposal", "choice", "kept", "chosen", "auto", "none"]
@@ -48,6 +54,10 @@ COVER_GROUPS: tuple[CoverGroup, ...] = (
 )
 # Pages of 50 books, with "Show more covers" for the next (#1363 Q9).
 COVER_PAGE_SIZE = 50
+# One calibration session's picks (#1372 S3), and how many of them may share
+# a first author, or a series.
+CALIBRATION_SIZE = 25
+_CALIBRATION_SHARE = 2
 # A row's place in its tab's order, as the store sorts it: decide by
 # (choice, title, item, case), kept and all by (title, item, case), switched
 # by (verified at, listing sequence, plan), newest first. A page resumes after
@@ -122,6 +132,16 @@ class CoverRow:
 
 
 @dataclass(frozen=True, slots=True)
+class CalibrationRow:
+    """A work calibration may offer, with the report facts its caps count,
+    read by the store so a report is parsed only for a work that is kept."""
+
+    row: CoverRow
+    first_author: str | None
+    series: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class CoverPageSnapshot:
     rows: tuple[CoverRow, ...]
     counts: dict[CoverView, int]
@@ -136,6 +156,7 @@ class CoverBrowseStore(Protocol):
         review_case_id: str | None = None,
     ) -> CoverPageSnapshot: ...
     def read_switch_cover_previews(self, plan_id: str) -> frozenset[str]: ...
+    def read_cover_calibration(self) -> tuple[CalibrationRow, ...]: ...
 
 
 def _preview(
@@ -149,8 +170,11 @@ def _preview(
     }
 
 
-def _cover_item(row: CoverRow) -> dict[str, object]:
-    report = _report_facts(row.report_document)
+def _cover_item(
+    row: CoverRow, report: LibraryReportFacts | None = None
+) -> dict[str, object]:
+    if report is None:
+        report = _report_facts(row.report_document)
     target = report.target
     identity = {
         "connection": target.connection,
@@ -302,6 +326,61 @@ def cover_page(
         "schema_version": "review-covers-v1",
         "view": view,
     }
+
+
+def select_calibration(
+    rows: Iterable[CalibrationRow],
+) -> list[tuple[CoverRow, LibraryReportFacts]]:
+    """Walk the store's order and keep a work unless two kept works already
+    share its first author, or one of its series (#1372 S3).
+
+    Names are compared case-folded. A work with no author or no series has no
+    cap on that fact, and a work with no readable current cover is passed
+    over. A report is read only for a work the caps keep, until 25 are kept.
+    """
+    kept: list[tuple[CoverRow, LibraryReportFacts]] = []
+    authors: dict[str, int] = {}
+    series: dict[str, int] = {}
+    for candidate in rows:
+        if len(kept) == CALIBRATION_SIZE:
+            break
+        author = (
+            None
+            if candidate.first_author is None
+            else candidate.first_author.casefold()
+        )
+        names = {name.casefold() for name in candidate.series}
+        if (author is not None and authors.get(author, 0) >= _CALIBRATION_SHARE) or any(
+            series.get(name, 0) >= _CALIBRATION_SHARE for name in names
+        ):
+            continue
+        report = _report_facts(candidate.row.report_document)
+        # Keeping a current cover that could not be read, or none, names no
+        # preview, so that pick would not count toward the taste profile.
+        if report.cover is None:
+            continue
+        if author is not None:
+            authors[author] = authors.get(author, 0) + 1
+        for name in names:
+            series[name] = series.get(name, 0) + 1
+        kept.append((candidate.row, report))
+    return kept
+
+
+def cover_calibration(store: CoverBrowseStore) -> dict[str, object]:
+    """The works calibration offers now, at most 25, in the order to pick."""
+    try:
+        items = [
+            _cover_item(row, report)
+            for row, report in select_calibration(store.read_cover_calibration())
+        ]
+    except ReviewWebError:
+        raise
+    except Exception as error:
+        # As a page: the store declares no error type, and a set this view
+        # cannot render fails whole.
+        raise ReviewWebError("unavailable") from error
+    return {"items": items, "schema_version": "review-cover-calibration-v1"}
 
 
 def replaced_cover_preview(store: CoverBrowseStore, plan: str, preview: str) -> str:

@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiError, UncertainMutationError } from '../src/api/http'
 import { coalesceMilliseconds, ownerIdleMilliseconds } from '../src/liveInvalidation'
@@ -23,6 +23,12 @@ import {
 } from './fixtures'
 
 afterEach(cleanup)
+// Covers' first-visit walkthrough (#1372 PR 3) is seen unless a test says so.
+const introSeen = (seen: boolean) => {
+  document.cookie = seen ? 'ml_covers_intro=seen; Path=/' : 'ml_covers_intro=; Path=/; Max-Age=0'
+}
+beforeEach(() => introSeen(true))
+afterEach(() => introSeen(false))
 
 const base = detail.fields[0]
 if (!base) throw new Error('the cover fixture needs a field')
@@ -196,6 +202,11 @@ const library0 = {
   stages: [],
 }
 const decide = page('decide', [work('case-1', 'proposal'), work('case-2', 'choice')])
+// A choice that did not record is said right under the choices (#1372 Q3).
+const expectUnderChoices = (line: HTMLElement, question = 'Which cover should this work use?') => {
+  const group = screen.getByRole('radiogroup', { name: question })
+  expect(group.compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+}
 const chooseOther = async (user: ReturnType<typeof userEvent.setup>) => {
   const group = await screen.findByRole('radiogroup', { name: 'Which cover should this work use?' })
   await user.click(within(group).getByRole('radio', { name: /Open Library cover/u }))
@@ -400,11 +411,11 @@ describe('Covers view (#1633)', () => {
     http.recordDecision.mockRejectedValueOnce(new ApiError(409, 'stale'))
     renderRoute('/library?lens=all&view=covers&cover=case-1', http)
     await chooseOther(user)
-    expect(
-      await screen.findByText(
-        "This work's covers changed since the page loaded. Nothing was changed.",
-      ),
-    ).toBeVisible()
+    const stale = await screen.findByText(
+      "This work's covers changed since the page loaded. Nothing was changed.",
+    )
+    expect(stale).toBeVisible()
+    expectUnderChoices(stale)
     await waitFor(() => expect(screen.getByRole('button', { name: 'Reload' })).toHaveFocus())
     expect(screen.queryByRole('radio', { checked: true })).toBeNull()
     await user.click(screen.getByRole('button', { name: /^Second Book/u }))
@@ -441,11 +452,12 @@ describe('Covers view (#1633)', () => {
     )
     renderRoute('/library?lens=all&view=covers&cover=case-1', http)
     await chooseOther(user)
-    expect(
-      await screen.findByText(
-        'No answer came back. Check whether your choice was recorded before choosing again.',
-      ),
-    ).toBeVisible()
+    const lost = await screen.findByRole('alert')
+    expect(lost).toHaveTextContent(
+      'No answer came back. Check whether your choice was recorded before choosing again.',
+    )
+    expectUnderChoices(lost)
+    await waitFor(() => expect(lost).toHaveFocus())
   })
 
   it('says a refused choice was not recorded (#1866)', async () => {
@@ -1500,13 +1512,36 @@ describe('Covers → Taste profile (#1372)', () => {
     expect(screen.getByText(/Set up the taste profile model in/u)).toBeVisible()
   })
 
-  it.each([0, 1, 24])('says how many covers are chosen, %i of 25', async (chosen) => {
-    renderRoute(tasteRoute, tasteHttp(tasteView({ chosen })))
-    const line = await screen.findByText(/Mechanical Librarian writes it once you have chosen 25/u)
-    expect(line).toHaveTextContent(
-      `Mechanical Librarian writes it once you have chosen 25 covers in To decide. You have chosen ${String(chosen)}.`,
-    )
-    expect(within(line).getByRole('link', { name: 'To decide' })).toBeVisible()
+  it.each([0, 1, 24])(
+    'says how many picks are saved, %i of 25, and offers Start',
+    async (chosen) => {
+      const user = userEvent.setup()
+      const http = {
+        ...tasteHttp(tasteView({ chosen })),
+        // The set is still being read, so the picks stay open.
+        getCoverCalibration: vi.fn(() => new Promise<never>(() => undefined)),
+      }
+      const { router } = renderRoute(tasteRoute, http)
+      const empty = (await screen.findByRole('heading', { name: 'No taste profile yet' })).closest(
+        'section',
+      )
+      if (!empty) throw new Error('the empty state is required')
+      // Nothing is said of none saved (#1372 PR 3, S9).
+      if (chosen > 0)
+        expect(within(empty).getByText(`${String(chosen)} of 25 picks saved.`)).toBeVisible()
+      else expect(within(empty).queryByText(/picks saved/u)).toBeNull()
+      expect(screen.queryByText(/You have chosen/u)).toBeNull()
+      await user.click(within(empty).getByRole('button', { name: 'Start 25 picks' }))
+      expect(router.state.location.search).toEqual({ lens: 'all', view: 'covers', tab: 'picks' })
+      expect(await screen.findByRole('heading', { name: 'Pick the cover you like' })).toHaveFocus()
+    },
+  )
+
+  it('says a first build is being written once 25 picks count, before it starts', async () => {
+    renderRoute(tasteRoute, tasteHttp(tasteView({ chosen: 25 })))
+    expect(await screen.findByRole('heading', { name: 'Writing your taste profile' })).toBeVisible()
+    expect(screen.queryByRole('heading', { name: 'No taste profile yet' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Start 25 picks' })).toBeNull()
   })
 
   it('makes a first build the heading while it is written', async () => {
@@ -1535,7 +1570,8 @@ describe('Covers → Taste profile (#1372)', () => {
     let view = tasteView({ chosen: 25 })
     const http = tasteHttp(async () => view)
     renderRoute(tasteRoute, http, updates)
-    expect(await screen.findByText(/You have chosen 25\./u)).toBeVisible()
+    // Due within one schedule check, so it is said as being written (S8).
+    expect(await screen.findByRole('heading', { name: 'Writing your taste profile' })).toBeVisible()
     const reads = http.getTasteProfile.mock.calls.length
     const realNow = performance.now.bind(performance)
     const clock = vi
@@ -1556,12 +1592,9 @@ describe('Covers → Taste profile (#1372)', () => {
         await new Promise((resolve) => setTimeout(resolve, coalesceMilliseconds + 20))
       })
       expect(http.getTasteProfile).toHaveBeenCalledTimes(reads)
-      expect(screen.getByText(/You have chosen 25\./u)).toBeVisible()
       fireEvent.wheel(document)
-      expect(
-        await screen.findByRole('heading', { name: 'Writing your taste profile' }),
-      ).toBeVisible()
-      expect(http.getTasteProfile.mock.calls.length).toBeGreaterThan(reads)
+      await waitFor(() => expect(http.getTasteProfile.mock.calls.length).toBeGreaterThan(reads))
+      expect(screen.getByRole('heading', { name: 'Writing your taste profile' })).toBeVisible()
     } finally {
       clock.mockRestore()
     }
@@ -2364,4 +2397,435 @@ describe('Covers → Taste profile edits (#1372 PR 2)', () => {
       release(owned)
     })
   })
+})
+
+describe("Covers' picks (#1372 PR 3)", () => {
+  const calibration = (ids: string[]) => ({
+    items: ids.map((id) => work(id, 'kept')),
+    schema_version: 'review-cover-calibration-v1' as const,
+  })
+  // Five cards: the current cover and four others, with the second others'
+  // card recommended, as the measured rules would.
+  const fiveCovers = (id: string, title: string): CaseDetailView => {
+    const value = coverDetail(id, title)
+    return {
+      ...value,
+      fields: value.fields.map((field) =>
+        field.coverConsideration
+          ? {
+              ...field,
+              coverConsideration: {
+                ...field.coverConsideration,
+                candidates: [
+                  candidate('1', true),
+                  candidate('2', false),
+                  { ...candidate('5', false), sourceKinds: ['hardcover' as const] },
+                  { ...candidate('6', false), sourceKinds: ['epub' as const] },
+                  { ...candidate('7', false), sourceKinds: ['inventaire' as const] },
+                ],
+                policy: {
+                  status: 'recommended',
+                  recommended_candidate_reference: `cover_ref_${'5'.repeat(64)}`,
+                },
+              },
+            }
+          : field,
+      ),
+    }
+  }
+  const picksHttp = (
+    ids: string[],
+    chosen: number | (() => number) = 0,
+    taste: Partial<TasteProfileView> = {},
+  ) => {
+    const http = coversHttp({ decide })
+    return {
+      ...http,
+      getCoverCalibration: vi.fn<ReviewHttp['getCoverCalibration']>(async () => calibration(ids)),
+      getTasteProfile: vi.fn<ReviewHttp['getTasteProfile']>(async () => ({
+        schema_version: 'review-taste-profile-v2',
+        configured: true,
+        chosen: typeof chosen === 'function' ? chosen() : chosen,
+        required: 25,
+        daily_limit: 8,
+        build: null,
+        profile: null,
+        versions: [],
+        ...taste,
+      })),
+    }
+  }
+  const picksRoute = '/library?lens=all&view=covers&tab=picks'
+  const question = 'Which cover do you like?'
+
+  it.each([
+    ['configured, no profile, 0 picks', {}, true],
+    ['configured, no profile, 24 picks', { chosen: 24 }, true],
+    ['25 picks', { chosen: 25 }, false],
+    ['not configured', { configured: false }, false],
+    ['a profile exists', { profile: ready.profile, versions: ready.versions }, false],
+  ] as const)('offers Start on To decide when %s: %s', async (_name, taste, shown) => {
+    const http = picksHttp([], 0, taste)
+    renderRoute('/library?lens=all&view=covers', http)
+    expect(await screen.findByRole('button', { name: /^First Book/u })).toBeVisible()
+    await waitFor(() => expect(http.getTasteProfile).toHaveBeenCalled())
+    if (shown) {
+      const entry = await screen.findByRole('region', { name: 'Pick 25 covers to get suggestions' })
+      expect(within(entry).getByRole('button', { name: 'Start' })).toBeVisible()
+      // The first block of the list column (A2).
+      expect(entry.parentElement).toHaveClass('covers-queue-list')
+      expect(entry.parentElement?.firstElementChild).toBe(entry)
+    } else {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      })
+      expect(screen.queryByText('Pick 25 covers to get suggestions')).toBeNull()
+    }
+  })
+
+  it('offers no Start when the taste read fails, and the list works', async () => {
+    const http = picksHttp([])
+    http.getTasteProfile.mockRejectedValue(new ApiError(503, 'unavailable'))
+    renderRoute('/library?lens=all&view=covers', http)
+    expect(await screen.findByRole('button', { name: /^First Book/u })).toBeVisible()
+    await waitFor(() => expect(http.getTasteProfile).toHaveBeenCalled())
+    expect(screen.queryByText('Pick 25 covers to get suggestions')).toBeNull()
+  })
+
+  it('offers no Start on another tab', async () => {
+    const http = picksHttp([])
+    renderRoute('/library?lens=all&view=covers&tab=kept', http)
+    expect(await screen.findByRole('button', { name: 'Kept 1' })).toBeVisible()
+    await waitFor(() => expect(http.getTasteProfile).toHaveBeenCalled())
+    expect(screen.queryByText('Pick 25 covers to get suggestions')).toBeNull()
+  })
+
+  it('walks through four steps on a first visit and remembers Later', async () => {
+    introSeen(false)
+    const user = userEvent.setup()
+    const http = picksHttp([])
+    renderRoute('/library?lens=all&view=covers', http)
+    const intro = await screen.findByRole('dialog', { name: 'Introduction' })
+    expect(within(intro).getByText('1 of 4')).toBeVisible()
+    expect(
+      within(intro).getByText('To decide lists the works whose cover needs your choice.'),
+    ).toBeVisible()
+    const next = within(intro).getByRole('button', { name: 'Next' })
+    expect(next).toHaveFocus()
+    await user.click(next)
+    expect(within(intro).getByText('2 of 4')).toBeVisible()
+    await user.click(within(intro).getByRole('button', { name: 'Next' }))
+    await user.click(within(intro).getByRole('button', { name: 'Next' }))
+    expect(within(intro).getByText('4 of 4')).toBeVisible()
+    expect(
+      within(intro).getByText(
+        'Switching by taste stays off until you turn it on. Each switch is listed in Switched, where you can put it back.',
+      ),
+    ).toBeVisible()
+    expect(within(intro).getByRole('button', { name: 'Start 25 picks' })).toHaveFocus()
+    await user.click(within(intro).getByRole('button', { name: 'Later' }))
+    expect(screen.queryByRole('dialog', { name: 'Introduction' })).toBeNull()
+    expect(document.cookie).toMatch(/ml_covers_intro=seen/u)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Start' })).toHaveFocus())
+    cleanup()
+    // A second visit shows none.
+    renderRoute('/library?lens=all&view=covers', picksHttp([]))
+    expect(await screen.findByRole('button', { name: 'Start' })).toBeVisible()
+    expect(screen.queryByRole('dialog', { name: 'Introduction' })).toBeNull()
+  })
+
+  it.each(['Skip', 'Escape'])('closes the walkthrough with %s and remembers it', async (how) => {
+    introSeen(false)
+    const user = userEvent.setup()
+    renderRoute('/library?lens=all&view=covers', picksHttp([]))
+    const intro = await screen.findByRole('dialog', { name: 'Introduction' })
+    if (how === 'Skip') await user.click(within(intro).getByRole('button', { name: 'Skip' }))
+    else fireEvent(intro, new Event('cancel', { cancelable: true }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Introduction' })).toBeNull())
+    expect(document.cookie).toMatch(/ml_covers_intro=seen/u)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Start' })).toHaveFocus())
+  })
+
+  it('starts the picks from the last step', async () => {
+    introSeen(false)
+    const user = userEvent.setup()
+    const http = picksHttp(['case-1', 'case-2'])
+    const { router } = renderRoute('/library?lens=all&view=covers', http)
+    const intro = await screen.findByRole('dialog', { name: 'Introduction' })
+    for (let step = 0; step < 3; step += 1)
+      await user.click(within(intro).getByRole('button', { name: 'Next' }))
+    await user.click(within(intro).getByRole('button', { name: 'Start 25 picks' }))
+    await waitFor(() => expect(router.state.location.search.tab).toBe('picks'))
+    expect(document.cookie).toMatch(/ml_covers_intro=seen/u)
+    expect(await screen.findByRole('heading', { name: 'Pick the cover you like' })).toBeVisible()
+  })
+
+  it('closes for this page view when the cookie cannot be written', async () => {
+    introSeen(false)
+    const user = userEvent.setup()
+    const descriptor = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie')
+    Object.defineProperty(document, 'cookie', {
+      configurable: true,
+      get: () => '',
+      set: () => {
+        throw new Error('refused')
+      },
+    })
+    try {
+      renderRoute('/library?lens=all&view=covers', picksHttp([]))
+      const intro = await screen.findByRole('dialog', { name: 'Introduction' })
+      await user.click(within(intro).getByRole('button', { name: 'Skip' }))
+      expect(screen.queryByRole('dialog', { name: 'Introduction' })).toBeNull()
+      cleanup()
+      renderRoute('/library?lens=all&view=covers', picksHttp([]))
+      expect(await screen.findByRole('dialog', { name: 'Introduction' })).toBeVisible()
+    } finally {
+      delete (document as { cookie?: string }).cookie
+      if (descriptor) Object.defineProperty(Document.prototype, 'cookie', descriptor)
+    }
+  })
+
+  it('keeps focus in the walkthrough while a wide screen opens the first book', async () => {
+    introSeen(false)
+    wideScreen()
+    const { router } = renderRoute('/library?lens=all&view=covers', picksHttp([]))
+    const intro = await screen.findByRole('dialog', { name: 'Introduction' })
+    await waitFor(() => expect(router.state.location.search.cover).toBe('case-1'))
+    await screen.findByRole('heading', { level: 2, name: 'First Book' })
+    expect(within(intro).getByRole('button', { name: 'Next' })).toHaveFocus()
+  })
+
+  it('opens from Start with its heading focused and says where the owner is', async () => {
+    const user = userEvent.setup()
+    const http = picksHttp(['case-1', 'case-2'], 2)
+    const { router } = renderRoute('/library?lens=all&view=covers', http)
+    await user.click(await screen.findByRole('button', { name: 'Start' }))
+    await waitFor(() => expect(router.state.location.search.tab).toBe('picks'))
+    expect(await screen.findByRole('heading', { name: 'Pick the cover you like' })).toHaveFocus()
+    expect(screen.getByText('3 of 25')).toBeVisible()
+    expect(screen.queryByRole('navigation', { name: 'Cover views' })).toBeNull()
+    expect(await screen.findByRole('heading', { level: 3, name: 'First Book' })).toBeVisible()
+    expect(screen.queryByRole('link', { name: 'Open in Works' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Back to works' })).toBeNull()
+  })
+
+  it('records a pick as the To decide choice of the same field, then opens the next', async () => {
+    const user = userEvent.setup()
+    const toDecide = coversHttp({ decide })
+    renderRoute('/library?lens=all&view=covers&cover=case-1', toDecide)
+    await chooseOther(user)
+    await waitFor(() => expect(toDecide.recordDecision).toHaveBeenCalled())
+    cleanup()
+    const http = picksHttp(['case-1', 'case-2'])
+    renderRoute(picksRoute, http)
+    const group = await screen.findByRole('radiogroup', { name: question })
+    await user.click(within(group).getByRole('radio', { name: /Open Library cover/u }))
+    await waitFor(() => expect(http.recordDecision).toHaveBeenCalled())
+    const withoutKey = (command: unknown) => ({
+      ...(command as Record<string, unknown>),
+      idempotencyKey: undefined,
+    })
+    expect(http.recordDecision.mock.calls[0]?.[0]).toBe('case-1')
+    expect(withoutKey(http.recordDecision.mock.calls[0]?.[1])).toEqual(
+      withoutKey(toDecide.recordDecision.mock.calls[0]?.[1]),
+    )
+    await waitFor(() =>
+      expect(screen.getByRole('heading', { level: 3, name: 'Second Book' })).toHaveFocus(),
+    )
+    // Each pick reads the count again.
+    expect(http.getTasteProfile.mock.calls.length).toBeGreaterThan(1)
+  })
+
+  it('keeps the current cover as a pick', async () => {
+    const user = userEvent.setup()
+    const http = picksHttp(['case-1'])
+    renderRoute(picksRoute, http)
+    const group = await screen.findByRole('radiogroup', { name: question })
+    await user.click(within(group).getByRole('radio', { name: 'Keep current cover' }))
+    await waitFor(() =>
+      expect(http.recordDecision).toHaveBeenCalledWith(
+        'case-1',
+        expect.objectContaining({ outcome: 'keep_current', selectedValue: null }),
+      ),
+    )
+  })
+
+  it('shuffles the cards for each work, marks the current cover and recommends nothing', async () => {
+    const http = picksHttp(['case-1', 'case-2'])
+    http.getCaseDetail.mockImplementation(async (id) => fiveCovers(id, titles[id] ?? id))
+    const order = () =>
+      within(screen.getByRole('radiogroup', { name: question }))
+        .getAllByRole('radio')
+        .map((radio) => radio.getAttribute('aria-label'))
+    renderRoute(picksRoute, http)
+    await screen.findByRole('radiogroup', { name: question })
+    const first = order()
+    // One grid, no pinned aside, and the radios in the cards' order.
+    expect(document.querySelector('.library-cover-pinned')).toBeNull()
+    const radios = within(screen.getByRole('radiogroup', { name: question })).getAllByRole('radio')
+    expect(radios.map((radio) => radio.getAttribute('aria-posinset'))).toEqual([
+      '1',
+      '2',
+      '3',
+      '4',
+      '5',
+    ])
+    expect(first).not.toEqual(first.slice().sort())
+    const current = screen.getByRole('radio', { name: 'Keep current cover' })
+    expect(current).toHaveClass('is-current')
+    expect(current).toHaveTextContent('Current cover')
+    expect(screen.queryByText(/Recommended|Suggested/u)).toBeNull()
+    expect(document.querySelector('.is-recommended')).toBeNull()
+    expect(screen.queryByRole('link', { name: 'Covers' })).toBeNull()
+    // The same case reads in the same order again.
+    cleanup()
+    renderRoute(picksRoute, http)
+    await screen.findByRole('radiogroup', { name: question })
+    expect(order()).toEqual(first)
+    // Another case with the same covers reads in its own order.
+    cleanup()
+    const other = picksHttp(['case-2'])
+    other.getCaseDetail.mockImplementation(async (id) => fiveCovers(id, titles[id] ?? id))
+    renderRoute(picksRoute, other)
+    await screen.findByRole('heading', { level: 3, name: 'Second Book' })
+    await screen.findByRole('radiogroup', { name: question })
+    expect(order()).not.toEqual(first)
+  })
+
+  it('stops with the picks saved and focus on Start', async () => {
+    const user = userEvent.setup()
+    const http = picksHttp(['case-1', 'case-2'], 3)
+    const { router } = renderRoute(picksRoute, http)
+    await screen.findByRole('heading', { level: 3, name: 'First Book' })
+    await user.click(screen.getByRole('button', { name: 'Stop' }))
+    await waitFor(() => expect(router.state.location.search.tab).toBe('decide'))
+    expect(await screen.findByText('3 of 25 picks saved.')).toBeVisible()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Start' })).toHaveFocus())
+  })
+
+  it('opens Taste profile, being written, after the 25th pick', async () => {
+    const user = userEvent.setup()
+    let chosen = 24
+    const http = picksHttp(['case-1', 'case-2'], () => chosen)
+    const record = createHttp().recordDecision
+    http.recordDecision.mockImplementation(async (caseId, command) => {
+      chosen = 25
+      return record(caseId, command)
+    })
+    const { router } = renderRoute(picksRoute, http)
+    expect(await screen.findByText('25 of 25')).toBeVisible()
+    await chooseOtherPick(user)
+    await waitFor(() => expect(router.state.location.search.tab).toBe('taste'))
+    const writing = await screen.findByRole('heading', { name: 'Writing your taste profile' })
+    await waitFor(() => expect(writing.closest('section')).toHaveFocus())
+  })
+
+  it('says when no work has two different covers to pick from', async () => {
+    const http = picksHttp([])
+    const { router } = renderRoute(picksRoute, http)
+    await waitFor(() => expect(router.state.location.search.tab).toBe('decide'))
+    expect(
+      await screen.findByText('No works have two different covers to pick from yet.'),
+    ).toBeVisible()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Start' })).toHaveFocus())
+  })
+
+  it('reads the set once more when it runs out, then says so', async () => {
+    const user = userEvent.setup()
+    let chosen = 0
+    const http = picksHttp(['case-1'], () => chosen)
+    const record = createHttp().recordDecision
+    http.recordDecision.mockImplementation(async (caseId, command) => {
+      chosen = 1
+      return record(caseId, command)
+    })
+    const { router } = renderRoute(picksRoute, http)
+    await chooseOtherPick(user)
+    await waitFor(() => expect(router.state.location.search.tab).toBe('decide'))
+    expect(http.getCoverCalibration).toHaveBeenCalledTimes(2)
+    expect(
+      await screen.findByText(
+        '1 of 25 picks saved. No more works have two different covers to pick from.',
+      ),
+    ).toBeVisible()
+  })
+
+  it('passes over a work decided elsewhere, and Skip for now records nothing', async () => {
+    const user = userEvent.setup()
+    const http = picksHttp(['case-1', 'case-2', 'case-3'])
+    http.getCaseDetail.mockImplementation(async (id) => {
+      const value = coverDetail(id, titles[id] ?? id)
+      return id === 'case-1'
+        ? {
+            ...value,
+            fields: value.fields.map((field) => ({ ...field, humanDecision: {} as never })),
+          }
+        : value
+    })
+    renderRoute(picksRoute, http)
+    expect(await screen.findByRole('heading', { level: 3, name: 'Second Book' })).toBeVisible()
+    expect(screen.queryByRole('heading', { level: 3, name: 'First Book' })).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Skip for now' }))
+    expect(await screen.findByRole('heading', { level: 3, name: 'Third Book' })).toBeVisible()
+    expect(http.recordDecision).not.toHaveBeenCalled()
+  })
+
+  it('says a stale pick under the cards with Reload', async () => {
+    const user = userEvent.setup()
+    const http = picksHttp(['case-1', 'case-2'])
+    http.recordDecision.mockRejectedValueOnce(new ApiError(409, 'stale'))
+    renderRoute(picksRoute, http)
+    await chooseOtherPick(user)
+    const stale = await screen.findByText(
+      "This work's covers changed since the page loaded. Nothing was changed.",
+    )
+    expectUnderChoices(stale, question)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Reload' })).toHaveFocus())
+    expect(screen.getByRole('heading', { level: 3, name: 'First Book' })).toBeVisible()
+  })
+
+  it('says a lost answer under the cards and keeps the work open', async () => {
+    const user = userEvent.setup()
+    const http = picksHttp(['case-1', 'case-2'])
+    http.recordDecision.mockRejectedValueOnce(
+      new UncertainMutationError({
+        operation: 'POST /api/v1/review-cases/{review_case_id}/decisions',
+        responseStatus: 0,
+        at: '',
+        reason: 'network',
+      }),
+    )
+    renderRoute(picksRoute, http)
+    await chooseOtherPick(user)
+    const lost = await screen.findByRole('alert')
+    expect(lost).toHaveTextContent(/^No answer came back\./u)
+    expectUnderChoices(lost, question)
+    await waitFor(() => expect(lost).toHaveFocus())
+    expect(screen.getByRole('heading', { level: 3, name: 'First Book' })).toBeVisible()
+  })
+
+  it('says a refused pick was not recorded', async () => {
+    const user = userEvent.setup()
+    const http = picksHttp(['case-1'])
+    http.recordDecision.mockRejectedValueOnce(new ApiError(422, 'invalid_choice'))
+    renderRoute(picksRoute, http)
+    await chooseOtherPick(user)
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      /^Your choice was not recorded\. Choose again\.$/u,
+    )
+  })
+
+  it('offers Reload when the set cannot be read', async () => {
+    const user = userEvent.setup()
+    const http = picksHttp(['case-1'])
+    http.getCoverCalibration.mockRejectedValueOnce(new ApiError(503, 'unavailable'))
+    renderRoute(picksRoute, http)
+    await user.click(await screen.findByRole('button', { name: 'Reload' }))
+    expect(await screen.findByRole('heading', { level: 3, name: 'First Book' })).toBeVisible()
+  })
+
+  const chooseOtherPick = async (user: ReturnType<typeof userEvent.setup>) => {
+    const group = await screen.findByRole('radiogroup', { name: question })
+    await user.click(within(group).getByRole('radio', { name: /Open Library cover/u }))
+  }
 })

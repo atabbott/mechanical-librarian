@@ -107,7 +107,11 @@ const libraryLens = (value: unknown): LibraryLens =>
     ? value
     : 'all'
 const coverTab = (value: unknown) =>
-  value === 'kept' || value === 'switched' || value === 'all' || value === 'taste'
+  value === 'kept' ||
+  value === 'switched' ||
+  value === 'all' ||
+  value === 'taste' ||
+  value === 'picks'
     ? value
     : 'decide'
 export const normalizeLibrarySearch = (search: Record<string, unknown>): LibrarySearch => {
